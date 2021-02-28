@@ -1,0 +1,21 @@
+Line editor
+
+X Get crossterm working
+X Line input
+X Printing a prompt
+X Raw input mode
+X Backspace
+X Exiting
+X Arrow key input
+X Left/right and inserting text
+X Backspace from middle of buffer
+X Deleting from middle of buffer
+* History
+* Up/down history
+* Home/end
+* Under status
+* Async/parallel prompt
+* Validation
+* Autocompletion
+* Hinting
+
