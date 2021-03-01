@@ -3,7 +3,7 @@ use std::io::{stdout, Write};
 use crossterm::{
     cursor::{position, MoveLeft, MoveRight, MoveToColumn},
     event::read,
-    event::{Event, KeyCode, KeyEvent},
+    event::{Event, KeyCode, KeyEvent, KeyModifiers},
     style::{Color, Print, ResetColor, SetForegroundColor},
     terminal, ExecutableCommand, QueueableCommand, Result,
 };
@@ -45,7 +45,7 @@ fn main() -> Result<()> {
 
         'input: loop {
             match read()? {
-                Event::Key(KeyEvent { code, .. }) => {
+                Event::Key(KeyEvent { code, modifiers }) => {
                     match code {
                         KeyCode::Char(c) => {
                             let insertion_point = caret_pos as usize - input_start_col as usize;
@@ -104,16 +104,66 @@ fn main() -> Result<()> {
                         }
                         KeyCode::Left => {
                             if caret_pos > input_start_col {
-                                stdout.queue(MoveLeft(1))?;
+                                // If the ALT modifier is set, we want to jump words for more
+                                // natural editing. Jumping words basically means: move to next
+                                // whitespace in the given direction.
+                                if modifiers == KeyModifiers::ALT {
+                                    let whitespace_index = buffer
+                                        .rmatch_indices(&[' ', '\t'][..])
+                                        .find(|(index, _)| {
+                                            index
+                                                < &(caret_pos as usize
+                                                    - input_start_col as usize
+                                                    - 1)
+                                        });
+
+                                    match whitespace_index {
+                                        Some((index, _)) => {
+                                            stdout.queue(MoveToColumn(
+                                                index as u16 + input_start_col + 1,
+                                            ))?;
+                                            caret_pos = input_start_col + index as u16 + 1;
+                                        }
+                                        None => {
+                                            stdout.queue(MoveToColumn(input_start_col))?;
+                                            caret_pos = input_start_col;
+                                        }
+                                    }
+                                } else {
+                                    stdout.queue(MoveLeft(1))?;
+                                    caret_pos -= 1;
+                                }
                                 stdout.flush()?;
-                                caret_pos -= 1;
                             }
                         }
                         KeyCode::Right => {
                             if (caret_pos as usize) < ((input_start_col as usize) + buffer.len()) {
-                                stdout.queue(MoveRight(1))?;
+                                if modifiers == KeyModifiers::ALT {
+                                    let whitespace_index = buffer
+                                        .match_indices(&[' ', '\t'][..])
+                                        .find(|(index, _)| {
+                                            index > &(caret_pos as usize - input_start_col as usize)
+                                        });
+
+                                    match whitespace_index {
+                                        Some((index, _)) => {
+                                            stdout.queue(MoveToColumn(
+                                                index as u16 + input_start_col + 1,
+                                            ))?;
+                                            caret_pos = input_start_col + index as u16 + 1;
+                                        }
+                                        None => {
+                                            stdout.queue(MoveToColumn(
+                                                buffer.len() as u16 + input_start_col,
+                                            ))?;
+                                            caret_pos = buffer.len() as u16 + input_start_col;
+                                        }
+                                    }
+                                } else {
+                                    stdout.queue(MoveRight(1))?;
+                                    caret_pos += 1;
+                                }
                                 stdout.flush()?;
-                                caret_pos += 1;
                             }
                         }
                         _ => {}
