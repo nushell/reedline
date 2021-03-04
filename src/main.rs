@@ -1,7 +1,7 @@
 use std::io::{stdout, Write};
 
 use crossterm::{
-    cursor::{position, MoveLeft, MoveRight, MoveToColumn},
+    cursor::{position, MoveLeft, MoveRight, MoveToColumn, MoveToNextLine},
     event::read,
     event::{Event, KeyCode, KeyEvent, KeyModifiers},
     style::{Color, Print, ResetColor, SetForegroundColor},
@@ -48,6 +48,12 @@ fn main() -> Result<()> {
                 Event::Key(KeyEvent { code, modifiers }) => {
                     match code {
                         KeyCode::Char(c) => {
+                            if modifiers == KeyModifiers::CONTROL {
+                                if c == 'd' {
+                                    stdout.queue(MoveToNextLine(1))?.queue(Print("exit"))?;
+                                    break 'repl;
+                                }
+                            }
                             let insertion_point = caret_pos as usize - input_start_col as usize;
                             if insertion_point == buffer.len() {
                                 stdout.queue(Print(c))?;
