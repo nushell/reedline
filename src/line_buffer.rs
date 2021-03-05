@@ -136,5 +136,5 @@ impl LineBuffer {
 fn emoji_test() {
     //TODO
     "😊";
-    "🤦🏼♂️";
+    "🤦🏼‍♂️";
 }
