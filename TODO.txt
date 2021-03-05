@@ -10,6 +10,12 @@ X Arrow key input
 X Left/right and inserting text
 X Backspace from middle of buffer
 X Deleting from middle of buffer
+X Fixed the scroll-off-the-bottom issue
+* Editing engine
+  X Create the engine
+  X Initial commands for the engine
+  * Output commands from engine to the line editor
+* UTF-8 support
 * History
 * Up/down history
 * Home/end
