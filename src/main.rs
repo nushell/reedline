@@ -88,9 +88,7 @@ fn main() -> Result<()> {
                                     .queue(MoveLeft(1))?
                                     .queue(Print(buffer.slice_buffer(insertion_point)))?
                                     .queue(Print(' '))?
-                                    .queue(MoveToColumn(
-                                        insertion_point as u16 + prompt_offset - 1,
-                                    ))?;
+                                    .queue(MoveToColumn(insertion_point as u16 + prompt_offset))?;
                                 stdout.flush()?;
                             }
                         }

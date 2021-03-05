@@ -52,14 +52,21 @@ impl LineBuffer {
 
     pub fn dec_insertion_point(&mut self) {
         let grapheme_indices = self.get_grapheme_indices();
-        for i in 0..grapheme_indices.len() {
-            if grapheme_indices[i].0 == self.insertion_point && i > 1 {
-                //println!("{} {}", grapheme_indices[i].0, i);
-                self.insertion_point = grapheme_indices[i - 1].0;
-                return;
+        if self.insertion_point == self.buffer.len() {
+            if let Some(index_pair) = grapheme_indices.last() {
+                self.insertion_point = index_pair.0;
+            } else {
+                self.insertion_point = 0;
             }
+        } else {
+            for i in 0..grapheme_indices.len() {
+                if grapheme_indices[i].0 == self.insertion_point && i > 1 {
+                    self.insertion_point = grapheme_indices[i - 1].0;
+                    return;
+                }
+            }
+            self.insertion_point = 0;
         }
-        self.insertion_point = 0;
 
         // self.insertion_point -= 1;
     }
