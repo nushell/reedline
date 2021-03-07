@@ -100,33 +100,37 @@ impl LineBuffer {
     }
 
     pub fn move_word_left(&mut self) -> usize {
-        let mut words = self.buffer[..self.insertion_point - 1] // valid UTF-8 slice when insertion_point at grapheme boundary
+        let mut words = self.buffer[..self.insertion_point]
             .split_word_bound_indices()
-            .rev();
+            .filter(|(_, word)| !is_word_boundary(word));
 
-        while let Some((index, word)) = words.next() {
-            if !is_word_boundary(word) {
+        match words.next_back() {
+            Some((index, _)) => {
                 self.insertion_point = index;
-                return self.insertion_point;
+            }
+            None => {
+                self.insertion_point = 0;
             }
         }
 
-        self.insertion_point = 0;
         self.insertion_point
     }
 
     pub fn move_word_right(&mut self) -> usize {
-        let mut words = self.buffer[self.insertion_point..].split_word_bound_indices();
+        let mut words = self.buffer[self.insertion_point..]
+            .split_word_bound_indices()
+            .filter(|(_, word)| !is_word_boundary(word));
 
-        while let Some((offset, word)) = words.next() {
-            if !is_word_boundary(word) {
+        match words.next() {
+            Some((offset, word)) => {
                 // Move the insertion point just past the end of the next word
                 self.insertion_point += offset + word.len();
-                return self.insertion_point;
+            }
+            None => {
+                self.insertion_point = self.buffer.len();
             }
         }
 
-        self.insertion_point = self.buffer.len();
         self.insertion_point
     }
 }
