@@ -104,51 +104,30 @@ impl LineBuffer {
             .split_word_bound_indices()
             .rev();
 
-        loop {
-            match words.next() {
-                Some((_, word)) if is_word_boundary(word) => {
-                    // This is a word boundary, go to the next one
-                    continue;
-                }
-                Some((index, _)) => {
-                    self.insertion_point = index;
-                }
-                None => {
-                    self.insertion_point = 0;
-                }
+        while let Some((index, word)) = words.next() {
+            if !is_word_boundary(word) {
+                self.insertion_point = index;
+                return self.insertion_point;
             }
-
-            return self.insertion_point;
         }
+
+        self.insertion_point = 0;
+        self.insertion_point
     }
 
     pub fn move_word_right(&mut self) -> usize {
-        let mut words = self.buffer[self.insertion_point..]
-            .split_word_bound_indices();
+        let mut words = self.buffer[self.insertion_point..].split_word_bound_indices();
 
-        let mut word_found = false;
-
-        loop {
-            match words.next() {
-                Some((offset, word)) => {
-                    if word_found {
-                        self.insertion_point += offset;
-                    } else {
-                        // If the current word isn't a word boundary we have found the word to move
-                        // past
-                        word_found = !is_word_boundary(word);
-
-                        // Go to the next word
-                        continue;
-                    }
-                }
-                None => {
-                    self.insertion_point = self.buffer.len();
-                }
+        while let Some((offset, word)) = words.next() {
+            if !is_word_boundary(word) {
+                // Move the insertion point just past the end of the next word
+                self.insertion_point += offset + word.len();
+                return self.insertion_point;
             }
-
-            return self.insertion_point;
         }
+
+        self.insertion_point = self.buffer.len();
+        self.insertion_point
     }
 }
 
