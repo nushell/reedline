@@ -100,36 +100,61 @@ impl LineBuffer {
     }
 
     pub fn move_word_left(&mut self) -> usize {
-        match self
-            .buffer
-            .rmatch_indices(&[' ', '\t'][..])
-            .find(|(index, _)| index < &(self.insertion_point - 1))
-        {
-            Some((index, _)) => {
-                self.insertion_point = index + 1;
+        let mut words = self.buffer[..self.insertion_point - 1] // valid UTF-8 slice when insertion_point at grapheme boundary
+            .split_word_bound_indices()
+            .rev();
+
+        loop {
+            match words.next() {
+                Some((_, word)) if is_word_boundary(word) => {
+                    // This is a word boundary, go to the next one
+                    continue;
+                }
+                Some((index, _)) => {
+                    self.insertion_point = index;
+                }
+                None => {
+                    self.insertion_point = 0;
+                }
             }
-            None => {
-                self.insertion_point = 0;
-            }
+
+            return self.insertion_point;
         }
-        self.insertion_point
     }
 
     pub fn move_word_right(&mut self) -> usize {
-        match self
-            .buffer
-            .match_indices(&[' ', '\t'][..])
-            .find(|(index, _)| index > &(self.insertion_point))
-        {
-            Some((index, _)) => {
-                self.insertion_point = index + 1;
+        let mut words = self.buffer[self.insertion_point..]
+            .split_word_bound_indices();
+
+        let mut word_found = false;
+
+        loop {
+            match words.next() {
+                Some((offset, word)) => {
+                    if word_found {
+                        self.insertion_point += offset;
+                    } else {
+                        // If the current word isn't a word boundary we have found the word to move
+                        // past
+                        word_found = !is_word_boundary(word);
+
+                        // Go to the next word
+                        continue;
+                    }
+                }
+                None => {
+                    self.insertion_point = self.buffer.len();
+                }
             }
-            None => {
-                self.insertion_point = self.get_buffer_len();
-            }
+
+            return self.insertion_point;
         }
-        self.insertion_point
     }
+}
+
+/// Match any sequence of characters that are considered a word boundary
+fn is_word_boundary(s: &str) -> bool {
+    !s.chars().any(char::is_alphanumeric)
 }
 
 #[test]
