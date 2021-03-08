@@ -35,7 +35,8 @@ fn main() -> Result<()> {
 
     let mut buffer = LineBuffer::new();
     let mut history = VecDeque::with_capacity(HISTORY_SIZE);
-    let mut history_cursor = 0usize;
+    let mut history_cursor = -1i64;
+    let mut has_history = false;
 
     'repl: loop {
         // print our prompt
@@ -118,9 +119,10 @@ fn main() -> Result<()> {
                                     history.pop_back();
                                 }
                                 history.push_front(String::from(buffer.get_buffer()));
+                                has_history = true;
                                 // reset the history cursor - we want to start at the bottom of the
                                 // history again.
-                                history_cursor = 0;
+                                history_cursor = -1;
                                 print_message(
                                     &mut stdout,
                                     &format!("Our buffer: {}", buffer.get_buffer()),
@@ -132,12 +134,14 @@ fn main() -> Result<()> {
                         }
                         KeyCode::Up => {
                             // Up means: navigate through the history.
-                            if let Some(history_entry) = history.get(history_cursor) {
+                            if has_history && history_cursor < (history.len() as i64 - 1) {
+                                history_cursor += 1;
+                                let history_entry =
+                                    history.get(history_cursor as usize).unwrap().clone();
                                 let previous_buffer_len = buffer.get_buffer_len();
                                 buffer.set_buffer(history_entry.clone());
                                 let new_buffer_len = buffer.get_buffer_len();
                                 let new_insertion_point = buffer.move_to_end();
-                                history_cursor += 1;
 
                                 // After changing the buffer, we also need to repaint the whole
                                 // line.
@@ -148,7 +152,10 @@ fn main() -> Result<()> {
 
                                 // Print over the rest of the line with spaces if the typed stuff
                                 // was longer than the history entry length
-                                for _ in 0..(previous_buffer_len - new_buffer_len) {
+                                for _ in 0..std::cmp::max(
+                                    0,
+                                    previous_buffer_len as i64 - new_buffer_len as i64,
+                                ) {
                                     stdout.queue(Print(" "))?;
                                 }
                                 stdout
@@ -157,6 +164,45 @@ fn main() -> Result<()> {
                                     ))?
                                     .flush()?;
                             }
+                        }
+                        KeyCode::Down => {
+                            // Down means: navigate forward through the history. If we reached the
+                            // bottom of the history, we clear the buffer, to make it feel like
+                            // zsh/bash/whatever
+                            if history_cursor >= 0 {
+                                history_cursor -= 1;
+                            }
+                            let new_buffer = if history_cursor < 0 {
+                                String::new()
+                            } else {
+                                // We can be sure that we always have an entry on hand, that's why
+                                // unwrap is fine.
+                                history.get(history_cursor as usize).unwrap().clone()
+                            };
+
+                            let previous_buffer_len = buffer.get_buffer_len();
+                            buffer.set_buffer(new_buffer.clone());
+                            let new_buffer_len = buffer.get_buffer_len();
+                            let new_insertion_point = buffer.move_to_end();
+
+                            // After changing the buffer, we also need to repaint the whole
+                            // line.
+                            // TODO: Centralize painting of the line?!
+                            stdout
+                                .queue(MoveToColumn(prompt_offset))?
+                                .queue(Print(buffer.get_buffer()))?;
+
+                            // Print over the rest of the line with spaces if the typed stuff
+                            // was longer than the history entry length
+                            for _ in 0..std::cmp::max(
+                                0,
+                                previous_buffer_len as i64 - new_buffer_len as i64,
+                            ) {
+                                stdout.queue(Print(" "))?;
+                            }
+                            stdout
+                                .queue(MoveToColumn(new_insertion_point as u16 + prompt_offset))?
+                                .flush()?;
                         }
                         KeyCode::Left => {
                             if buffer.get_insertion_point() > 0 {
