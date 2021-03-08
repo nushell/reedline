@@ -8,10 +8,13 @@ use crossterm::{
     terminal, ExecutableCommand, QueueableCommand, Result,
 };
 
+use std::collections::VecDeque;
 use std::io::Stdout;
 
 mod line_buffer;
 use line_buffer::LineBuffer;
+
+const HISTORY_SIZE: usize = 100;
 
 fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
     stdout
@@ -31,6 +34,8 @@ fn main() -> Result<()> {
     terminal::enable_raw_mode()?;
 
     let mut buffer = LineBuffer::new();
+    let mut history = VecDeque::with_capacity(HISTORY_SIZE);
+    let mut history_cursor = 0usize;
 
     'repl: loop {
         // print our prompt
@@ -107,6 +112,15 @@ fn main() -> Result<()> {
                             if buffer.get_buffer() == "exit" {
                                 break 'repl;
                             } else {
+                                if history.len() + 1 == HISTORY_SIZE {
+                                    // History is "full", so we delete the oldest entry first,
+                                    // before adding a new one.
+                                    history.pop_back();
+                                }
+                                history.push_front(String::from(buffer.get_buffer()));
+                                // reset the history cursor - we want to start at the bottom of the
+                                // history again.
+                                history_cursor = 0;
                                 print_message(
                                     &mut stdout,
                                     &format!("Our buffer: {}", buffer.get_buffer()),
@@ -114,6 +128,34 @@ fn main() -> Result<()> {
                                 buffer.clear();
                                 buffer.set_insertion_point(0);
                                 break 'input;
+                            }
+                        }
+                        KeyCode::Up => {
+                            // Up means: navigate through the history.
+                            if let Some(history_entry) = history.get(history_cursor) {
+                                let previous_buffer_len = buffer.get_buffer_len();
+                                buffer.set_buffer(history_entry.clone());
+                                let new_buffer_len = buffer.get_buffer_len();
+                                let new_insertion_point = buffer.move_to_end();
+                                history_cursor += 1;
+
+                                // After changing the buffer, we also need to repaint the whole
+                                // line.
+                                // TODO: Centralize painting of the line?!
+                                stdout
+                                    .queue(MoveToColumn(prompt_offset))?
+                                    .queue(Print(buffer.get_buffer()))?;
+
+                                // Print over the rest of the line with spaces if the typed stuff
+                                // was longer than the history entry length
+                                for _ in 0..(previous_buffer_len - new_buffer_len) {
+                                    stdout.queue(Print(" "))?;
+                                }
+                                stdout
+                                    .queue(MoveToColumn(
+                                        new_insertion_point as u16 + prompt_offset,
+                                    ))?
+                                    .flush()?;
                             }
                         }
                         KeyCode::Left => {

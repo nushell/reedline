@@ -25,6 +25,16 @@ impl LineBuffer {
         &self.buffer
     }
 
+    pub fn set_buffer(&mut self, buffer: String) {
+        self.buffer = buffer;
+    }
+
+    pub fn move_to_end(&mut self) -> usize {
+        self.insertion_point = self.buffer.len();
+
+        self.insertion_point
+    }
+
     fn get_grapheme_indices(&self) -> Vec<(usize, &str)> {
         UnicodeSegmentation::grapheme_indices(self.buffer.as_str(), true).collect()
     }
