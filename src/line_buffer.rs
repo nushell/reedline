@@ -100,36 +100,44 @@ impl LineBuffer {
     }
 
     pub fn move_word_left(&mut self) -> usize {
-        match self
-            .buffer
-            .rmatch_indices(&[' ', '\t'][..])
-            .find(|(index, _)| index < &(self.insertion_point - 1))
-        {
+        let mut words = self.buffer[..self.insertion_point]
+            .split_word_bound_indices()
+            .filter(|(_, word)| !is_word_boundary(word));
+
+        match words.next_back() {
             Some((index, _)) => {
-                self.insertion_point = index + 1;
+                self.insertion_point = index;
             }
             None => {
                 self.insertion_point = 0;
             }
         }
+
         self.insertion_point
     }
 
     pub fn move_word_right(&mut self) -> usize {
-        match self
-            .buffer
-            .match_indices(&[' ', '\t'][..])
-            .find(|(index, _)| index > &(self.insertion_point))
-        {
-            Some((index, _)) => {
-                self.insertion_point = index + 1;
+        let mut words = self.buffer[self.insertion_point..]
+            .split_word_bound_indices()
+            .filter(|(_, word)| !is_word_boundary(word));
+
+        match words.next() {
+            Some((offset, word)) => {
+                // Move the insertion point just past the end of the next word
+                self.insertion_point += offset + word.len();
             }
             None => {
-                self.insertion_point = self.get_buffer_len();
+                self.insertion_point = self.buffer.len();
             }
         }
+
         self.insertion_point
     }
+}
+
+/// Match any sequence of characters that are considered a word boundary
+fn is_word_boundary(s: &str) -> bool {
+    !s.chars().any(char::is_alphanumeric)
 }
 
 #[test]
