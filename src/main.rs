@@ -96,6 +96,10 @@ fn main() -> Result<()> {
                 },
                 Event::Key(KeyEvent { code, modifiers }) => {
                     match code {
+                        KeyCode::Char(c) if modifiers == KeyModifiers::CONTROL && c == 'd' => {
+                            stdout.queue(MoveToNextLine(1))?.queue(Print("exit"))?;
+                            break 'repl;
+                        }
                         KeyCode::Char(c) => {
                             buffer.insert_char(buffer.get_insertion_point(), c);
                             buffer.inc_insertion_point();
@@ -105,7 +109,7 @@ fn main() -> Result<()> {
                         KeyCode::Backspace => {
                             let insertion_point = buffer.get_insertion_point();
                             if insertion_point == buffer.get_buffer_len() && !buffer.is_empty() {
-                                buffer.dec_insertion_point();
+                                // buffer.dec_insertion_point();
                                 buffer.pop();
                                 buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                             } else if insertion_point < buffer.get_buffer_len()
