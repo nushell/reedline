@@ -1,7 +1,9 @@
 use std::io::{stdout, Write};
 
 use crossterm::{
-    cursor::{position, MoveLeft, MoveRight, MoveToColumn, MoveToNextLine},
+    cursor::{
+        position, MoveLeft, MoveRight, MoveToColumn, MoveToNextLine, RestorePosition, SavePosition,
+    },
     event::read,
     event::{Event, KeyCode, KeyEvent, KeyModifiers},
     style::{Color, Print, ResetColor, SetForegroundColor},
@@ -24,6 +26,23 @@ fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
         .queue(Print("\n"))?
         .queue(MoveToColumn(1))?;
     stdout.flush()?;
+
+    Ok(())
+}
+
+fn buffer_repaint(
+    stdout: &mut Stdout,
+    buffer: &LineBuffer,
+    prompt_offset: u16,
+    new_index: usize,
+) -> Result<()> {
+    let raw_buffer = buffer.get_buffer();
+
+    stdout.queue(MoveToColumn(prompt_offset))?;
+    stdout.queue(Print(&raw_buffer[0..new_index]))?;
+    stdout.queue(SavePosition)?;
+    stdout.queue(Print(&raw_buffer[new_index..]))?;
+    stdout.queue(RestorePosition)?;
 
     Ok(())
 }
@@ -108,6 +127,17 @@ fn main() -> Result<()> {
                                     .queue(MoveToColumn(insertion_point as u16 + prompt_offset))?;
                                 stdout.flush()?;
                             }
+                        }
+                        KeyCode::Home => {
+                            buffer_repaint(&mut stdout, &buffer, prompt_offset, 0)?;
+                            stdout.flush()?;
+                            buffer.set_insertion_point(0);
+                        }
+                        KeyCode::End => {
+                            let buffer_len = buffer.get_buffer_len();
+                            buffer.set_insertion_point(buffer_len);
+                            buffer_repaint(&mut stdout, &buffer, prompt_offset, buffer_len)?;
+                            stdout.flush()?;
                         }
                         KeyCode::Enter => {
                             if buffer.get_buffer() == "exit" {
@@ -215,8 +245,15 @@ fn main() -> Result<()> {
                                         new_insertion_point as u16 + prompt_offset,
                                     ))?;
                                 } else {
-                                    stdout.queue(MoveLeft(1))?;
+                                    // Start after the prompt
+                                    // Draw the string slice from 0 to the grapheme start left of insertion point
+                                    // Then, get the position on the screen
+                                    // Then draw the remainer of the buffer from above
+                                    // Finally, reset the cursor to the saved position
                                     buffer.dec_insertion_point();
+                                    // let idx = buffer.get_grapheme_index_left();
+                                    let idx = buffer.get_insertion_point();
+                                    buffer_repaint(&mut stdout, &buffer, prompt_offset, idx)?;
                                 }
                                 stdout.flush()?;
                             }
@@ -229,8 +266,9 @@ fn main() -> Result<()> {
                                         new_insertion_point as u16 + prompt_offset,
                                     ))?;
                                 } else {
-                                    stdout.queue(MoveRight(1))?;
                                     buffer.inc_insertion_point();
+                                    let idx = buffer.get_insertion_point();
+                                    buffer_repaint(&mut stdout, &buffer, prompt_offset, idx)?;
                                 }
                                 stdout.flush()?;
                             }
