@@ -16,9 +16,14 @@ X Fixed the scroll-off-the-bottom issue
   X Initial commands for the engine
   * Output commands from engine to the line editor
 * UTF-8 support
-* History
-* Up/down history
-* Home/end
+  X Line buffer
+  X Backspace/delete
+  * Navigation
+X History
+X Up/down history
+X Home/end
+* Refactor keypresses to flush at the end
+* Ctrl-A, Ctrl-K, etc
 * Under status
 * Async/parallel prompt
 * Validation

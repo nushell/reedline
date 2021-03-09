@@ -40,14 +40,6 @@ impl LineBuffer {
     }
 
     pub fn inc_insertion_point(&mut self) {
-        // let char_indices: Vec<_> = self.buffer.char_indices().collect();
-
-        // for i in 0..char_indices.len() {
-
-        // }
-        // for (idx, c) in char_indices {
-        //     if idx == self.insertion_point
-        // }
         let grapheme_indices = self.get_grapheme_indices();
         for i in 0..grapheme_indices.len() {
             if grapheme_indices[i].0 == self.insertion_point && i < (grapheme_indices.len() - 1) {
@@ -108,6 +100,34 @@ impl LineBuffer {
     pub fn clear(&mut self) {
         self.buffer.clear()
     }
+
+    // pub fn get_grapheme_index_left(&self) -> usize {
+    //     let grapheme_indices = self.get_grapheme_indices();
+
+    //     let mut prev = 0;
+    //     for (idx, _) in grapheme_indices {
+    //         if idx >= self.insertion_point {
+    //             return prev;
+    //         }
+    //         prev = idx;
+    //     }
+
+    //     prev
+    // }
+
+    // pub fn get_grapheme_index_right(&self) -> usize {
+    //     let grapheme_indices = self.get_grapheme_indices();
+
+    //     let mut next = self.buffer.len();
+    //     for (idx, _) in grapheme_indices.iter().rev() {
+    //         if *idx <= self.insertion_point {
+    //             return next;
+    //         }
+    //         next = *idx;
+    //     }
+
+    //     next
+    // }
 
     pub fn move_word_left(&mut self) -> usize {
         let mut words = self.buffer[..self.insertion_point]
