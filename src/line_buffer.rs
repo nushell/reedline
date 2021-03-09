@@ -69,16 +69,10 @@ impl LineBuffer {
             }
             self.insertion_point = 0;
         }
-
-        // self.insertion_point -= 1;
     }
 
     pub fn get_buffer_len(&self) -> usize {
         self.buffer.len()
-    }
-
-    pub fn slice_buffer(&self, pos: usize) -> &str {
-        &self.buffer[pos..]
     }
 
     pub fn insert_char(&mut self, pos: usize, c: char) {
@@ -94,11 +88,18 @@ impl LineBuffer {
     }
 
     pub fn pop(&mut self) -> Option<char> {
-        self.buffer.pop()
+        let result = self.buffer.pop();
+        self.insertion_point = self.buffer.len();
+        result
     }
 
     pub fn clear(&mut self) {
-        self.buffer.clear()
+        self.buffer.clear();
+        self.insertion_point = 0;
+    }
+
+    pub fn clear_to_end(&mut self) {
+        self.buffer.truncate(self.insertion_point);
     }
 
     // pub fn get_grapheme_index_left(&self) -> usize {

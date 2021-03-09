@@ -1,9 +1,7 @@
 use std::io::{stdout, Write};
 
 use crossterm::{
-    cursor::{
-        position, MoveLeft, MoveRight, MoveToColumn, MoveToNextLine, RestorePosition, SavePosition,
-    },
+    cursor::{position, MoveToColumn, MoveToNextLine, RestorePosition, SavePosition},
     event::read,
     event::{Event, KeyCode, KeyEvent, KeyModifiers},
     style::{Color, Print, ResetColor, SetForegroundColor},
@@ -31,13 +29,17 @@ fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
     Ok(())
 }
 
-fn buffer_repaint(
-    stdout: &mut Stdout,
-    buffer: &LineBuffer,
-    prompt_offset: u16,
-    new_index: usize,
-) -> Result<()> {
+fn buffer_repaint(stdout: &mut Stdout, buffer: &LineBuffer, prompt_offset: u16) -> Result<()> {
     let raw_buffer = buffer.get_buffer();
+    let new_index = buffer.get_insertion_point();
+
+    // Repaint logic:
+    //
+    // Start after the prompt
+    // Draw the string slice from 0 to the grapheme start left of insertion point
+    // Then, get the position on the screen
+    // Then draw the remainer of the buffer from above
+    // Finally, reset the cursor to the saved position
 
     stdout.queue(MoveToColumn(prompt_offset))?;
     stdout.queue(Print(&raw_buffer[0..new_index]))?;
@@ -45,6 +47,8 @@ fn buffer_repaint(
     stdout.queue(Print(&raw_buffer[new_index..]))?;
     stdout.queue(Clear(ClearType::UntilNewLine))?;
     stdout.queue(RestorePosition)?;
+
+    stdout.flush()?;
 
     Ok(())
 }
@@ -72,6 +76,24 @@ fn main() -> Result<()> {
 
         'input: loop {
             match read()? {
+                Event::Key(KeyEvent {
+                    code,
+                    modifiers: KeyModifiers::CONTROL,
+                }) => match code {
+                    KeyCode::Char('d') => {
+                        stdout.queue(MoveToNextLine(1))?.queue(Print("exit"))?;
+                        break 'repl;
+                    }
+                    KeyCode::Char('a') => {
+                        buffer.set_insertion_point(0);
+                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                    }
+                    KeyCode::Char('k') => {
+                        buffer.clear_to_end();
+                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                    }
+                    _ => {}
+                },
                 Event::Key(KeyEvent { code, modifiers }) => {
                     match code {
                         KeyCode::Char(c) if modifiers == KeyModifiers::CONTROL && c == 'd' => {
@@ -82,26 +104,14 @@ fn main() -> Result<()> {
                             buffer.insert_char(buffer.get_insertion_point(), c);
                             buffer.inc_insertion_point();
 
-                            buffer_repaint(
-                                &mut stdout,
-                                &buffer,
-                                prompt_offset,
-                                buffer.get_insertion_point(),
-                            )?;
-                            stdout.flush()?;
+                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                         }
                         KeyCode::Backspace => {
                             let insertion_point = buffer.get_insertion_point();
                             if insertion_point == buffer.get_buffer_len() && !buffer.is_empty() {
                                 // buffer.dec_insertion_point();
                                 buffer.pop();
-                                buffer_repaint(
-                                    &mut stdout,
-                                    &buffer,
-                                    prompt_offset,
-                                    buffer.get_insertion_point(),
-                                )?;
-                                stdout.flush()?;
+                                buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                             } else if insertion_point < buffer.get_buffer_len()
                                 && !buffer.is_empty()
                             {
@@ -109,40 +119,24 @@ fn main() -> Result<()> {
                                 let insertion_point = buffer.get_insertion_point();
                                 buffer.remove_char(insertion_point);
 
-                                buffer_repaint(
-                                    &mut stdout,
-                                    &buffer,
-                                    prompt_offset,
-                                    insertion_point,
-                                )?;
-
-                                stdout.flush()?;
+                                buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                             }
                         }
                         KeyCode::Delete => {
                             let insertion_point = buffer.get_insertion_point();
                             if insertion_point < buffer.get_buffer_len() && !buffer.is_empty() {
                                 buffer.remove_char(insertion_point);
-                                buffer_repaint(
-                                    &mut stdout,
-                                    &buffer,
-                                    prompt_offset,
-                                    insertion_point,
-                                )?;
-
-                                stdout.flush()?;
+                                buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                             }
                         }
                         KeyCode::Home => {
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset, 0)?;
-                            stdout.flush()?;
                             buffer.set_insertion_point(0);
+                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                         }
                         KeyCode::End => {
                             let buffer_len = buffer.get_buffer_len();
                             buffer.set_insertion_point(buffer_len);
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset, buffer_len)?;
-                            stdout.flush()?;
+                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                         }
                         KeyCode::Enter => {
                             if buffer.get_buffer() == "exit" {
@@ -175,13 +169,7 @@ fn main() -> Result<()> {
                                     history.get(history_cursor as usize).unwrap().clone();
                                 buffer.set_buffer(history_entry.clone());
                                 buffer.move_to_end();
-                                buffer_repaint(
-                                    &mut stdout,
-                                    &buffer,
-                                    prompt_offset,
-                                    buffer.get_insertion_point(),
-                                )?;
-                                stdout.flush()?;
+                                buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                             }
                         }
                         KeyCode::Down => {
@@ -199,16 +187,9 @@ fn main() -> Result<()> {
                                 history.get(history_cursor as usize).unwrap().clone()
                             };
 
-                            let previous_buffer_len = buffer.get_buffer_len();
                             buffer.set_buffer(new_buffer.clone());
                             buffer.move_to_end();
-                            buffer_repaint(
-                                &mut stdout,
-                                &buffer,
-                                prompt_offset,
-                                buffer.get_insertion_point(),
-                            )?;
-                            stdout.flush()?;
+                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                         }
                         KeyCode::Left => {
                             if buffer.get_insertion_point() > 0 {
@@ -216,37 +197,23 @@ fn main() -> Result<()> {
                                 // natural editing. Jumping words basically means: move to next
                                 // whitespace in the given direction.
                                 if modifiers == KeyModifiers::ALT {
-                                    let new_insertion_point = buffer.move_word_left();
-                                    stdout.queue(MoveToColumn(
-                                        new_insertion_point as u16 + prompt_offset,
-                                    ))?;
+                                    buffer.move_word_left();
+                                    buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                                 } else {
-                                    // Start after the prompt
-                                    // Draw the string slice from 0 to the grapheme start left of insertion point
-                                    // Then, get the position on the screen
-                                    // Then draw the remainer of the buffer from above
-                                    // Finally, reset the cursor to the saved position
                                     buffer.dec_insertion_point();
-                                    // let idx = buffer.get_grapheme_index_left();
-                                    let idx = buffer.get_insertion_point();
-                                    buffer_repaint(&mut stdout, &buffer, prompt_offset, idx)?;
+                                    buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                                 }
-                                stdout.flush()?;
                             }
                         }
                         KeyCode::Right => {
                             if buffer.get_insertion_point() < buffer.get_buffer_len() {
                                 if modifiers == KeyModifiers::ALT {
-                                    let new_insertion_point = buffer.move_word_right();
-                                    stdout.queue(MoveToColumn(
-                                        new_insertion_point as u16 + prompt_offset,
-                                    ))?;
+                                    buffer.move_word_right();
+                                    buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                                 } else {
                                     buffer.inc_insertion_point();
-                                    let idx = buffer.get_insertion_point();
-                                    buffer_repaint(&mut stdout, &buffer, prompt_offset, idx)?;
+                                    buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                                 }
-                                stdout.flush()?;
                             }
                         }
                         _ => {}
