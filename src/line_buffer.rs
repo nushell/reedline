@@ -69,16 +69,10 @@ impl LineBuffer {
             }
             self.insertion_point = 0;
         }
-
-        // self.insertion_point -= 1;
     }
 
     pub fn get_buffer_len(&self) -> usize {
         self.buffer.len()
-    }
-
-    pub fn slice_buffer(&self, pos: usize) -> &str {
-        &self.buffer[pos..]
     }
 
     pub fn insert_char(&mut self, pos: usize, c: char) {
@@ -94,40 +88,19 @@ impl LineBuffer {
     }
 
     pub fn pop(&mut self) -> Option<char> {
-        self.buffer.pop()
+        let result = self.buffer.pop();
+        self.insertion_point = self.buffer.len();
+        result
     }
 
     pub fn clear(&mut self) {
-        self.buffer.clear()
+        self.buffer.clear();
+        self.insertion_point = 0;
     }
 
-    // pub fn get_grapheme_index_left(&self) -> usize {
-    //     let grapheme_indices = self.get_grapheme_indices();
-
-    //     let mut prev = 0;
-    //     for (idx, _) in grapheme_indices {
-    //         if idx >= self.insertion_point {
-    //             return prev;
-    //         }
-    //         prev = idx;
-    //     }
-
-    //     prev
-    // }
-
-    // pub fn get_grapheme_index_right(&self) -> usize {
-    //     let grapheme_indices = self.get_grapheme_indices();
-
-    //     let mut next = self.buffer.len();
-    //     for (idx, _) in grapheme_indices.iter().rev() {
-    //         if *idx <= self.insertion_point {
-    //             return next;
-    //         }
-    //         next = *idx;
-    //     }
-
-    //     next
-    // }
+    pub fn clear_to_end(&mut self) {
+        self.buffer.truncate(self.insertion_point);
+    }
 
     pub fn move_word_left(&mut self) -> usize {
         let mut words = self.buffer[..self.insertion_point]
