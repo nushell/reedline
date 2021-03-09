@@ -7,7 +7,8 @@ use crossterm::{
     event::read,
     event::{Event, KeyCode, KeyEvent, KeyModifiers},
     style::{Color, Print, ResetColor, SetForegroundColor},
-    terminal, ExecutableCommand, QueueableCommand, Result,
+    terminal::{self, Clear, ClearType},
+    ExecutableCommand, QueueableCommand, Result,
 };
 
 use std::collections::VecDeque;
@@ -42,6 +43,7 @@ fn buffer_repaint(
     stdout.queue(Print(&raw_buffer[0..new_index]))?;
     stdout.queue(SavePosition)?;
     stdout.queue(Print(&raw_buffer[new_index..]))?;
+    stdout.queue(Clear(ClearType::UntilNewLine))?;
     stdout.queue(RestorePosition)?;
 
     Ok(())
@@ -72,35 +74,33 @@ fn main() -> Result<()> {
             match read()? {
                 Event::Key(KeyEvent { code, modifiers }) => {
                     match code {
+                        KeyCode::Char(c) if modifiers == KeyModifiers::CONTROL && c == 'd' => {
+                            stdout.queue(MoveToNextLine(1))?.queue(Print("exit"))?;
+                            break 'repl;
+                        }
                         KeyCode::Char(c) => {
-                            if modifiers == KeyModifiers::CONTROL && c == 'd' {
-                                stdout.queue(MoveToNextLine(1))?.queue(Print("exit"))?;
-                                break 'repl;
-                            }
-                            let insertion_point = buffer.get_insertion_point();
-                            if insertion_point == buffer.get_buffer_len() {
-                                stdout.queue(Print(c))?;
-                            } else {
-                                stdout
-                                    .queue(Print(c))?
-                                    .queue(Print(buffer.slice_buffer(insertion_point)))?
-                                    .queue(MoveToColumn(
-                                        insertion_point as u16 + prompt_offset + 1,
-                                    ))?;
-                            }
-                            stdout.flush()?;
                             buffer.insert_char(buffer.get_insertion_point(), c);
                             buffer.inc_insertion_point();
+
+                            buffer_repaint(
+                                &mut stdout,
+                                &buffer,
+                                prompt_offset,
+                                buffer.get_insertion_point(),
+                            )?;
+                            stdout.flush()?;
                         }
                         KeyCode::Backspace => {
                             let insertion_point = buffer.get_insertion_point();
                             if insertion_point == buffer.get_buffer_len() && !buffer.is_empty() {
-                                buffer.dec_insertion_point();
+                                // buffer.dec_insertion_point();
                                 buffer.pop();
-                                stdout
-                                    .queue(MoveLeft(1))?
-                                    .queue(Print(' '))?
-                                    .queue(MoveLeft(1))?;
+                                buffer_repaint(
+                                    &mut stdout,
+                                    &buffer,
+                                    prompt_offset,
+                                    buffer.get_insertion_point(),
+                                )?;
                                 stdout.flush()?;
                             } else if insertion_point < buffer.get_buffer_len()
                                 && !buffer.is_empty()
@@ -109,11 +109,13 @@ fn main() -> Result<()> {
                                 let insertion_point = buffer.get_insertion_point();
                                 buffer.remove_char(insertion_point);
 
-                                stdout
-                                    .queue(MoveLeft(1))?
-                                    .queue(Print(buffer.slice_buffer(insertion_point)))?
-                                    .queue(Print(' '))?
-                                    .queue(MoveToColumn(insertion_point as u16 + prompt_offset))?;
+                                buffer_repaint(
+                                    &mut stdout,
+                                    &buffer,
+                                    prompt_offset,
+                                    insertion_point,
+                                )?;
+
                                 stdout.flush()?;
                             }
                         }
@@ -121,10 +123,13 @@ fn main() -> Result<()> {
                             let insertion_point = buffer.get_insertion_point();
                             if insertion_point < buffer.get_buffer_len() && !buffer.is_empty() {
                                 buffer.remove_char(insertion_point);
-                                stdout
-                                    .queue(Print(buffer.slice_buffer(insertion_point)))?
-                                    .queue(Print(' '))?
-                                    .queue(MoveToColumn(insertion_point as u16 + prompt_offset))?;
+                                buffer_repaint(
+                                    &mut stdout,
+                                    &buffer,
+                                    prompt_offset,
+                                    insertion_point,
+                                )?;
+
                                 stdout.flush()?;
                             }
                         }
@@ -168,31 +173,15 @@ fn main() -> Result<()> {
                                 history_cursor += 1;
                                 let history_entry =
                                     history.get(history_cursor as usize).unwrap().clone();
-                                let previous_buffer_len = buffer.get_buffer_len();
                                 buffer.set_buffer(history_entry.clone());
-                                let new_buffer_len = buffer.get_buffer_len();
-                                let new_insertion_point = buffer.move_to_end();
-
-                                // After changing the buffer, we also need to repaint the whole
-                                // line.
-                                // TODO: Centralize painting of the line?!
-                                stdout
-                                    .queue(MoveToColumn(prompt_offset))?
-                                    .queue(Print(buffer.get_buffer()))?;
-
-                                // Print over the rest of the line with spaces if the typed stuff
-                                // was longer than the history entry length
-                                for _ in 0..std::cmp::max(
-                                    0,
-                                    previous_buffer_len as i64 - new_buffer_len as i64,
-                                ) {
-                                    stdout.queue(Print(" "))?;
-                                }
-                                stdout
-                                    .queue(MoveToColumn(
-                                        new_insertion_point as u16 + prompt_offset,
-                                    ))?
-                                    .flush()?;
+                                buffer.move_to_end();
+                                buffer_repaint(
+                                    &mut stdout,
+                                    &buffer,
+                                    prompt_offset,
+                                    buffer.get_insertion_point(),
+                                )?;
+                                stdout.flush()?;
                             }
                         }
                         KeyCode::Down => {
@@ -212,27 +201,14 @@ fn main() -> Result<()> {
 
                             let previous_buffer_len = buffer.get_buffer_len();
                             buffer.set_buffer(new_buffer.clone());
-                            let new_buffer_len = buffer.get_buffer_len();
-                            let new_insertion_point = buffer.move_to_end();
-
-                            // After changing the buffer, we also need to repaint the whole
-                            // line.
-                            // TODO: Centralize painting of the line?!
-                            stdout
-                                .queue(MoveToColumn(prompt_offset))?
-                                .queue(Print(buffer.get_buffer()))?;
-
-                            // Print over the rest of the line with spaces if the typed stuff
-                            // was longer than the history entry length
-                            for _ in 0..std::cmp::max(
-                                0,
-                                previous_buffer_len as i64 - new_buffer_len as i64,
-                            ) {
-                                stdout.queue(Print(" "))?;
-                            }
-                            stdout
-                                .queue(MoveToColumn(new_insertion_point as u16 + prompt_offset))?
-                                .flush()?;
+                            buffer.move_to_end();
+                            buffer_repaint(
+                                &mut stdout,
+                                &buffer,
+                                prompt_offset,
+                                buffer.get_insertion_point(),
+                            )?;
+                            stdout.flush()?;
                         }
                         KeyCode::Left => {
                             if buffer.get_insertion_point() > 0 {
