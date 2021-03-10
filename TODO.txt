@@ -26,10 +26,11 @@ X Home/end
 X Refactor keypresses to flush at the end
 X Ctrl-A, Ctrl-K, etc
 * More Ctrl-??? key combinations
-* Under status
-* Async/parallel prompt
 * Validation
 * Autocompletion
+* Multiline support
 * Syntax highlighting
+* Under status
 * Hinting
 * vi mode
+* Async/parallel prompt
