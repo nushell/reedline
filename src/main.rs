@@ -62,6 +62,7 @@ fn main() -> Result<()> {
     let mut history = VecDeque::with_capacity(HISTORY_SIZE);
     let mut history_cursor = -1i64;
     let mut has_history = false;
+    let mut cut_buffer = String::new();
 
     'repl: loop {
         // print our prompt
@@ -81,16 +82,118 @@ fn main() -> Result<()> {
                     modifiers: KeyModifiers::CONTROL,
                 }) => match code {
                     KeyCode::Char('d') => {
-                        stdout.queue(MoveToNextLine(1))?.queue(Print("exit"))?;
-                        break 'repl;
+                        if buffer.get_buffer().is_empty() {
+                            stdout.queue(MoveToNextLine(1))?.queue(Print("exit"))?;
+                            break 'repl;
+                        } else {
+                            let insertion_point = buffer.get_insertion_point();
+                            if insertion_point < buffer.get_buffer_len() && !buffer.is_empty() {
+                                buffer.remove_char(insertion_point);
+                                buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                            }
+                        }
                     }
                     KeyCode::Char('a') => {
                         buffer.set_insertion_point(0);
                         buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                     }
-                    KeyCode::Char('k') => {
-                        buffer.clear_to_end();
+                    KeyCode::Char('e') => {
+                        let buffer_len = buffer.get_buffer_len();
+                        buffer.set_insertion_point(buffer_len);
                         buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                    }
+                    KeyCode::Char('k') => {
+                        let cut_slice = &buffer.get_buffer()[buffer.get_insertion_point()..];
+                        if !cut_slice.is_empty() {
+                            cut_buffer.replace_range(.., cut_slice);
+                            buffer.clear_to_end();
+                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                        }
+                    }
+                    KeyCode::Char('u') => {
+                        if buffer.get_insertion_point() > 0 {
+                            cut_buffer.replace_range(
+                                ..,
+                                &buffer.get_buffer()[..buffer.get_insertion_point()],
+                            );
+                            buffer.clear_to_insertion_point();
+                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                        }
+                    }
+                    KeyCode::Char('y') => {
+                        buffer.insert_str(buffer.get_insertion_point(), &cut_buffer);
+                        buffer
+                            .set_insertion_point(buffer.get_insertion_point() + cut_buffer.len());
+                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                    }
+                    KeyCode::Char('b') => {
+                        buffer.dec_insertion_point();
+                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                    }
+                    KeyCode::Char('f') => {
+                        buffer.inc_insertion_point();
+                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                    }
+                    KeyCode::Char('c') => {
+                        buffer.clear();
+                        stdout.queue(Print('\n'))?.queue(MoveToColumn(1))?.flush()?;
+                        break 'input;
+                    }
+                    KeyCode::Char('h') => {
+                        let insertion_point = buffer.get_insertion_point();
+                        if insertion_point == buffer.get_buffer_len() && !buffer.is_empty() {
+                            buffer.pop();
+                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                        } else if insertion_point < buffer.get_buffer_len()
+                            && insertion_point > 0
+                            && !buffer.is_empty()
+                        {
+                            buffer.dec_insertion_point();
+                            let insertion_point = buffer.get_insertion_point();
+                            buffer.remove_char(insertion_point);
+                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                        }
+                    }
+                    KeyCode::Char('w') => {
+                        let old_insertion_point = buffer.get_insertion_point();
+                        buffer.move_word_left();
+                        if buffer.get_insertion_point() < old_insertion_point {
+                            cut_buffer.replace_range(
+                                ..,
+                                &buffer.get_buffer()
+                                    [buffer.get_insertion_point()..old_insertion_point],
+                            );
+                            buffer.clear_range(buffer.get_insertion_point()..old_insertion_point);
+                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                        }
+                    }
+                    _ => {}
+                },
+                Event::Key(KeyEvent {
+                    code,
+                    modifiers: KeyModifiers::ALT,
+                }) => match code {
+                    KeyCode::Char('b') => {
+                        buffer.move_word_left();
+                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                    }
+                    KeyCode::Char('f') => {
+                        buffer.move_word_right();
+                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                    }
+                    KeyCode::Char('d') => {
+                        let old_insertion_point = buffer.get_insertion_point();
+                        buffer.move_word_right();
+                        if buffer.get_insertion_point() > old_insertion_point {
+                            cut_buffer.replace_range(
+                                ..,
+                                &buffer.get_buffer()
+                                    [old_insertion_point..buffer.get_insertion_point()],
+                            );
+                            buffer.clear_range(old_insertion_point..buffer.get_insertion_point());
+                            buffer.set_insertion_point(old_insertion_point);
+                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                        }
                     }
                     _ => {}
                 },
@@ -113,6 +216,7 @@ fn main() -> Result<()> {
                                 buffer.pop();
                                 buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
                             } else if insertion_point < buffer.get_buffer_len()
+                                && insertion_point > 0
                                 && !buffer.is_empty()
                             {
                                 buffer.dec_insertion_point();

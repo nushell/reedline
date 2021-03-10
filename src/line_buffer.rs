@@ -35,40 +35,26 @@ impl LineBuffer {
         self.insertion_point
     }
 
-    fn get_grapheme_indices(&self) -> Vec<(usize, &str)> {
-        UnicodeSegmentation::grapheme_indices(self.buffer.as_str(), true).collect()
-    }
-
     pub fn inc_insertion_point(&mut self) {
-        let grapheme_indices = self.get_grapheme_indices();
-        for i in 0..grapheme_indices.len() {
-            if grapheme_indices[i].0 == self.insertion_point && i < (grapheme_indices.len() - 1) {
-                self.insertion_point = grapheme_indices[i + 1].0;
-                return;
-            }
-        }
-        self.insertion_point = self.buffer.len();
-
-        //TODO if we should have found the boundary but didn't, we should panic
+        self.insertion_point = if let Some((i, _)) = self.buffer[self.insertion_point..]
+            .grapheme_indices(true)
+            .nth(1)
+        {
+            self.insertion_point + i
+        } else {
+            self.buffer.len()
+        };
     }
 
     pub fn dec_insertion_point(&mut self) {
-        let grapheme_indices = self.get_grapheme_indices();
-        if self.insertion_point == self.buffer.len() {
-            if let Some(index_pair) = grapheme_indices.last() {
-                self.insertion_point = index_pair.0;
-            } else {
-                self.insertion_point = 0;
-            }
+        self.insertion_point = if let Some((i, _)) = self.buffer[..self.insertion_point]
+            .grapheme_indices(true)
+            .last()
+        {
+            i
         } else {
-            for i in 0..grapheme_indices.len() {
-                if grapheme_indices[i].0 == self.insertion_point && i > 1 {
-                    self.insertion_point = grapheme_indices[i - 1].0;
-                    return;
-                }
-            }
-            self.insertion_point = 0;
-        }
+            0
+        };
     }
 
     pub fn get_buffer_len(&self) -> usize {
@@ -81,6 +67,10 @@ impl LineBuffer {
 
     pub fn remove_char(&mut self, pos: usize) -> char {
         self.buffer.remove(pos)
+    }
+
+    pub fn insert_str(&mut self, idx: usize, string: &str) {
+        self.buffer.insert_str(idx, string)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -100,6 +90,18 @@ impl LineBuffer {
 
     pub fn clear_to_end(&mut self) {
         self.buffer.truncate(self.insertion_point);
+    }
+
+    pub fn clear_to_insertion_point(&mut self) {
+        self.clear_range(..self.insertion_point);
+        self.insertion_point = 0;
+    }
+
+    pub fn clear_range<R>(&mut self, range: R)
+    where
+        R: std::ops::RangeBounds<usize>,
+    {
+        self.buffer.replace_range(range, "");
     }
 
     pub fn move_word_left(&mut self) -> usize {
