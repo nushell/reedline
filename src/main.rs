@@ -211,12 +211,8 @@ fn main() -> Result<()> {
                     }
                     _ => {}
                 },
-                Event::Key(KeyEvent { code, modifiers }) => {
+                Event::Key(KeyEvent { code, modifiers: _ }) => {
                     match code {
-                        KeyCode::Char(c) if modifiers == KeyModifiers::CONTROL && c == 'd' => {
-                            stdout.queue(MoveToNextLine(1))?.queue(Print("exit"))?;
-                            break 'repl;
-                        }
                         KeyCode::Char(c) => {
                             buffer.insert_char(buffer.get_insertion_point(), c);
                             buffer.inc_insertion_point();
