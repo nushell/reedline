@@ -1,9 +1,9 @@
 use std::io::{stdout, Write};
+use std::time::Duration;
 
 use crossterm::{
     cursor::{position, MoveToColumn, MoveToNextLine, RestorePosition, SavePosition},
-    event::read,
-    event::{Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
     style::{Color, Print, ResetColor, SetForegroundColor},
     terminal::{self, Clear, ClearType},
     ExecutableCommand, QueueableCommand, Result,
@@ -53,10 +53,48 @@ fn buffer_repaint(stdout: &mut Stdout, buffer: &LineBuffer, prompt_offset: u16) 
     Ok(())
 }
 
+// this fn is totally ripped off from crossterm's examples
+// it's really a diagnostic routine to see if crossterm is
+// even seeing the events. if you press a key and no events
+// are printed, it's a good chance your terminal is eating
+// those events.
+fn print_events(stdout: &mut Stdout) -> Result<()> {
+    loop {
+        // Wait up to 5s for another event
+        if poll(Duration::from_millis(5_000))? {
+            // It's guaranteed that read() wont block if `poll` returns `Ok(true)`
+            let event = read()?;
+
+            // just reuse the print_message fn to show events
+            print_message(stdout, &format!("Event::{:?}", event))?;
+
+            // hit the esc key to git out
+            if event == Event::Key(KeyCode::Esc.into()) {
+                break;
+            }
+        } else {
+            // Timeout expired, no event for 5s
+            print_message(stdout, "Waiting for you to type...")?;
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let mut stdout = stdout();
 
     terminal::enable_raw_mode()?;
+    // quick command like parameter handling
+    let args: Vec<String> = std::env::args().collect();
+    // if -k is passed, show the events
+    if args.len() > 1 && args[1] == "-k" {
+        print_message(&mut stdout, "Ready to print events:")?;
+        print_events(&mut stdout)?;
+        terminal::disable_raw_mode()?;
+        println!();
+        return Ok(());
+    };
 
     let mut buffer = LineBuffer::new();
     let mut history = VecDeque::with_capacity(HISTORY_SIZE);
@@ -335,7 +373,6 @@ fn main() -> Result<()> {
             }
         }
     }
-
     terminal::disable_raw_mode()?;
 
     println!();
