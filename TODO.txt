@@ -25,7 +25,9 @@ X Up/down history
 X Home/end
 X Refactor keypresses to flush at the end
 X Ctrl-A, Ctrl-K, etc
-* More Ctrl-??? key combinations
+X More Ctrl-??? key combinations
+X "engine"?
+X Command pattern
 * Validation
 * Autocompletion
 * Multiline support

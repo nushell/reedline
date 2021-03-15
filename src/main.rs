@@ -9,13 +9,12 @@ use crossterm::{
     ExecutableCommand, QueueableCommand, Result,
 };
 
-use std::collections::VecDeque;
 use std::io::Stdout;
 
 mod line_buffer;
-use line_buffer::LineBuffer;
 
-const HISTORY_SIZE: usize = 100;
+mod engine;
+use engine::{EditCommand, Engine};
 
 fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
     stdout
@@ -29,9 +28,9 @@ fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
     Ok(())
 }
 
-fn buffer_repaint(stdout: &mut Stdout, buffer: &LineBuffer, prompt_offset: u16) -> Result<()> {
-    let raw_buffer = buffer.get_buffer();
-    let new_index = buffer.get_insertion_point();
+fn buffer_repaint(stdout: &mut Stdout, engine: &Engine, prompt_offset: u16) -> Result<()> {
+    let raw_buffer = engine.get_buffer();
+    let new_index = engine.get_insertion_point();
 
     // Repaint logic:
     //
@@ -96,11 +95,7 @@ fn main() -> Result<()> {
         return Ok(());
     };
 
-    let mut buffer = LineBuffer::new();
-    let mut history = VecDeque::with_capacity(HISTORY_SIZE);
-    let mut history_cursor = -1i64;
-    let mut has_history = false;
-    let mut cut_buffer = String::new();
+    let mut engine = Engine::new();
 
     'repl: loop {
         // print our prompt
@@ -120,89 +115,50 @@ fn main() -> Result<()> {
                     modifiers: KeyModifiers::CONTROL,
                 }) => match code {
                     KeyCode::Char('d') => {
-                        if buffer.get_buffer().is_empty() {
+                        if engine.get_buffer().is_empty() {
                             stdout.queue(MoveToNextLine(1))?.queue(Print("exit"))?;
                             break 'repl;
                         } else {
-                            let insertion_point = buffer.get_insertion_point();
-                            if insertion_point < buffer.get_buffer_len() && !buffer.is_empty() {
-                                buffer.remove_char(insertion_point);
-                                buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                            }
+                            engine.run_edit_commands(&[EditCommand::Delete]);
                         }
                     }
                     KeyCode::Char('a') => {
-                        buffer.set_insertion_point(0);
-                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                        engine.run_edit_commands(&[EditCommand::MoveToStart]);
                     }
                     KeyCode::Char('e') => {
-                        let buffer_len = buffer.get_buffer_len();
-                        buffer.set_insertion_point(buffer_len);
-                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                        engine.run_edit_commands(&[EditCommand::MoveToEnd]);
                     }
                     KeyCode::Char('k') => {
-                        let cut_slice = &buffer.get_buffer()[buffer.get_insertion_point()..];
-                        if !cut_slice.is_empty() {
-                            cut_buffer.replace_range(.., cut_slice);
-                            buffer.clear_to_end();
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                        }
+                        engine.run_edit_commands(&[EditCommand::CutToEnd]);
                     }
                     KeyCode::Char('u') => {
-                        if buffer.get_insertion_point() > 0 {
-                            cut_buffer.replace_range(
-                                ..,
-                                &buffer.get_buffer()[..buffer.get_insertion_point()],
-                            );
-                            buffer.clear_to_insertion_point();
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                        }
+                        engine.run_edit_commands(&[EditCommand::CutFromStart]);
                     }
                     KeyCode::Char('y') => {
-                        buffer.insert_str(buffer.get_insertion_point(), &cut_buffer);
-                        buffer.set_insertion_point(buffer.get_insertion_point() + cut_buffer.len());
-                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                        engine.run_edit_commands(&[EditCommand::InsertCutBuffer]);
                     }
                     KeyCode::Char('b') => {
-                        buffer.dec_insertion_point();
-                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                        engine.run_edit_commands(&[EditCommand::MoveLeft]);
                     }
                     KeyCode::Char('f') => {
-                        buffer.inc_insertion_point();
-                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                        engine.run_edit_commands(&[EditCommand::MoveRight]);
                     }
                     KeyCode::Char('c') => {
-                        buffer.clear();
+                        engine.run_edit_commands(&[EditCommand::Clear]);
                         stdout.queue(Print('\n'))?.queue(MoveToColumn(1))?.flush()?;
                         break 'input;
                     }
                     KeyCode::Char('h') => {
-                        let insertion_point = buffer.get_insertion_point();
-                        if insertion_point == buffer.get_buffer_len() && !buffer.is_empty() {
-                            buffer.pop();
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                        } else if insertion_point < buffer.get_buffer_len()
-                            && insertion_point > 0
-                            && !buffer.is_empty()
-                        {
-                            buffer.dec_insertion_point();
-                            let insertion_point = buffer.get_insertion_point();
-                            buffer.remove_char(insertion_point);
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                        }
+                        engine.run_edit_commands(&[EditCommand::Backspace]);
                     }
                     KeyCode::Char('w') => {
-                        let old_insertion_point = buffer.get_insertion_point();
-                        buffer.move_word_left();
-                        if buffer.get_insertion_point() < old_insertion_point {
-                            cut_buffer.replace_range(
-                                ..,
-                                &buffer.get_buffer()
-                                    [buffer.get_insertion_point()..old_insertion_point],
-                            );
-                            buffer.clear_range(buffer.get_insertion_point()..old_insertion_point);
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                        }
+                        engine.run_edit_commands(&[EditCommand::CutWordLeft]);
+                    }
+                    KeyCode::Left => {
+                        engine.run_edit_commands(&[EditCommand::MoveWordLeft]);
+                    }
+                    KeyCode::Right => {
+                        engine.run_edit_commands(&[EditCommand::MoveWordRight]);
                     }
                     _ => {}
                 },
@@ -211,152 +167,71 @@ fn main() -> Result<()> {
                     modifiers: KeyModifiers::ALT,
                 }) => match code {
                     KeyCode::Char('b') => {
-                        buffer.move_word_left();
-                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                        engine.run_edit_commands(&[EditCommand::MoveWordLeft]);
                     }
                     KeyCode::Char('f') => {
-                        buffer.move_word_right();
-                        buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                        engine.run_edit_commands(&[EditCommand::MoveWordRight]);
                     }
                     KeyCode::Char('d') => {
-                        let old_insertion_point = buffer.get_insertion_point();
-                        buffer.move_word_right();
-                        if buffer.get_insertion_point() > old_insertion_point {
-                            cut_buffer.replace_range(
-                                ..,
-                                &buffer.get_buffer()
-                                    [old_insertion_point..buffer.get_insertion_point()],
-                            );
-                            buffer.clear_range(old_insertion_point..buffer.get_insertion_point());
-                            buffer.set_insertion_point(old_insertion_point);
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                        }
+                        engine.run_edit_commands(&[EditCommand::CutWordRight]);
                     }
                     KeyCode::Left => {
-                        if buffer.get_insertion_point() > 0 {
-                            // If the ALT modifier is set, we want to jump words for more
-                            // natural editing. Jumping words basically means: move to next
-                            // whitespace in the given direction.
-                            buffer.move_word_left();
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                        }
+                        engine.run_edit_commands(&[EditCommand::MoveWordLeft]);
                     }
                     KeyCode::Right => {
-                        if buffer.get_insertion_point() < buffer.get_buffer_len() {
-                            buffer.move_word_right();
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                        }
+                        engine.run_edit_commands(&[EditCommand::MoveWordRight]);
                     }
                     _ => {}
                 },
                 Event::Key(KeyEvent { code, modifiers: _ }) => {
                     match code {
                         KeyCode::Char(c) => {
-                            buffer.insert_char(buffer.get_insertion_point(), c);
-                            buffer.inc_insertion_point();
-
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                            engine.run_edit_commands(&[
+                                EditCommand::InsertChar(c),
+                                EditCommand::MoveRight,
+                            ]);
                         }
                         KeyCode::Backspace => {
-                            let insertion_point = buffer.get_insertion_point();
-                            if insertion_point == buffer.get_buffer_len() && !buffer.is_empty() {
-                                // buffer.dec_insertion_point();
-                                buffer.pop();
-                                buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                            } else if insertion_point < buffer.get_buffer_len()
-                                && insertion_point > 0
-                                && !buffer.is_empty()
-                            {
-                                buffer.dec_insertion_point();
-                                let insertion_point = buffer.get_insertion_point();
-                                buffer.remove_char(insertion_point);
-
-                                buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                            }
+                            engine.run_edit_commands(&[EditCommand::Backspace]);
                         }
                         KeyCode::Delete => {
-                            let insertion_point = buffer.get_insertion_point();
-                            if insertion_point < buffer.get_buffer_len() && !buffer.is_empty() {
-                                buffer.remove_char(insertion_point);
-                                buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                            }
+                            engine.run_edit_commands(&[EditCommand::Delete]);
                         }
                         KeyCode::Home => {
-                            buffer.set_insertion_point(0);
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                            engine.run_edit_commands(&[EditCommand::MoveToStart]);
                         }
                         KeyCode::End => {
-                            let buffer_len = buffer.get_buffer_len();
-                            buffer.set_insertion_point(buffer_len);
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                            engine.run_edit_commands(&[EditCommand::MoveToEnd]);
                         }
                         KeyCode::Enter => {
-                            if buffer.get_buffer() == "exit" {
+                            if engine.get_buffer() == "exit" {
                                 break 'repl;
                             } else {
-                                if history.len() + 1 == HISTORY_SIZE {
-                                    // History is "full", so we delete the oldest entry first,
-                                    // before adding a new one.
-                                    history.pop_back();
-                                }
-                                history.push_front(String::from(buffer.get_buffer()));
-                                has_history = true;
-                                // reset the history cursor - we want to start at the bottom of the
-                                // history again.
-                                history_cursor = -1;
-                                print_message(
-                                    &mut stdout,
-                                    &format!("Our buffer: {}", buffer.get_buffer()),
-                                )?;
-                                buffer.clear();
-                                buffer.set_insertion_point(0);
+                                let buffer = String::from(engine.get_buffer());
+
+                                engine.run_edit_commands(&[
+                                    EditCommand::AppendToHistory,
+                                    EditCommand::Clear,
+                                ]);
+                                print_message(&mut stdout, &format!("Our buffer: {}", buffer))?;
+
                                 break 'input;
                             }
                         }
                         KeyCode::Up => {
-                            // Up means: navigate through the history.
-                            if has_history && history_cursor < (history.len() as i64 - 1) {
-                                history_cursor += 1;
-                                let history_entry =
-                                    history.get(history_cursor as usize).unwrap().clone();
-                                buffer.set_buffer(history_entry.clone());
-                                buffer.move_to_end();
-                                buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                            }
+                            engine.run_edit_commands(&[EditCommand::PreviousHistory]);
                         }
                         KeyCode::Down => {
                             // Down means: navigate forward through the history. If we reached the
                             // bottom of the history, we clear the buffer, to make it feel like
                             // zsh/bash/whatever
-                            if history_cursor >= 0 {
-                                history_cursor -= 1;
-                            }
-                            let new_buffer = if history_cursor < 0 {
-                                String::new()
-                            } else {
-                                // We can be sure that we always have an entry on hand, that's why
-                                // unwrap is fine.
-                                history.get(history_cursor as usize).unwrap().clone()
-                            };
-
-                            buffer.set_buffer(new_buffer.clone());
-                            buffer.move_to_end();
-                            buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
+                            engine.run_edit_commands(&[EditCommand::NextHistory]);
                         }
                         KeyCode::Left => {
-                            if buffer.get_insertion_point() > 0 {
-                                // If the ALT modifier is set, we want to jump words for more
-                                // natural editing. Jumping words basically means: move to next
-                                // whitespace in the given direction.
-                                buffer.dec_insertion_point();
-                                buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                            }
+                            engine.run_edit_commands(&[EditCommand::MoveLeft]);
                         }
                         KeyCode::Right => {
-                            if buffer.get_insertion_point() < buffer.get_buffer_len() {
-                                buffer.inc_insertion_point();
-                                buffer_repaint(&mut stdout, &buffer, prompt_offset)?;
-                            }
+                            engine.run_edit_commands(&[EditCommand::MoveRight]);
                         }
                         _ => {}
                     };
@@ -371,6 +246,7 @@ fn main() -> Result<()> {
                     )?;
                 }
             }
+            buffer_repaint(&mut stdout, &engine, prompt_offset)?;
         }
     }
     terminal::disable_raw_mode()?;
