@@ -65,7 +65,6 @@ pub fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
 }
 
 fn buffer_repaint(stdout: &mut Stdout, engine: &Engine, prompt_offset: u16) -> Result<()> {
-    let raw_buffer = engine.get_buffer();
     let new_index = engine.get_insertion_point();
 
     // Repaint logic:
@@ -77,9 +76,9 @@ fn buffer_repaint(stdout: &mut Stdout, engine: &Engine, prompt_offset: u16) -> R
     // Finally, reset the cursor to the saved position
 
     stdout.queue(MoveToColumn(prompt_offset))?;
-    stdout.queue(Print(&raw_buffer[0..new_index]))?;
+    stdout.queue(Print(&engine.line_buffer[0..new_index]))?;
     stdout.queue(SavePosition)?;
-    stdout.queue(Print(&raw_buffer[new_index..]))?;
+    stdout.queue(Print(&engine.line_buffer[new_index..]))?;
     stdout.queue(Clear(ClearType::UntilNewLine))?;
     stdout.queue(RestorePosition)?;
 
@@ -146,7 +145,7 @@ impl Engine {
                         // before adding a new one.
                         self.history.pop_back();
                     }
-                    self.history.push_front(String::from(self.get_buffer()));
+                    self.history.push_front(self.line_buffer.to_owned());
                     self.has_history = true;
                     // reset the history cursor - we want to start at the bottom of the
                     // history again.
@@ -184,15 +183,13 @@ impl Engine {
                 }
                 EditCommand::CutFromStart => {
                     if self.get_insertion_point() > 0 {
-                        self.cut_buffer.replace_range(
-                            ..,
-                            &self.line_buffer.get_buffer()[..self.get_insertion_point()],
-                        );
+                        self.cut_buffer
+                            .replace_range(.., &self.line_buffer[..self.get_insertion_point()]);
                         self.clear_to_insertion_point();
                     }
                 }
                 EditCommand::CutToEnd => {
-                    let cut_slice = &self.line_buffer.get_buffer()[self.get_insertion_point()..];
+                    let cut_slice = &self.line_buffer[self.get_insertion_point()..];
                     if !cut_slice.is_empty() {
                         self.cut_buffer.replace_range(.., cut_slice);
                         self.clear_to_end();
@@ -203,7 +200,7 @@ impl Engine {
                     if left_index < self.get_insertion_point() {
                         let cut_range = left_index..self.get_insertion_point();
                         self.cut_buffer
-                            .replace_range(.., &self.line_buffer.get_buffer()[cut_range.clone()]);
+                            .replace_range(.., &self.line_buffer[cut_range.clone()]);
                         self.clear_range(cut_range);
                         self.set_insertion_point(left_index);
                     }
@@ -213,7 +210,7 @@ impl Engine {
                     if right_index > self.get_insertion_point() {
                         let cut_range = self.get_insertion_point()..right_index;
                         self.cut_buffer
-                            .replace_range(.., &self.line_buffer.get_buffer()[cut_range.clone()]);
+                            .replace_range(.., &self.line_buffer[cut_range.clone()]);
                         self.clear_range(cut_range);
                     }
                 }
@@ -226,8 +223,7 @@ impl Engine {
                     let right_index = self.line_buffer.word_right_index();
                     if right_index > self.get_insertion_point() {
                         let change_range = self.get_insertion_point()..right_index;
-                        let uppercased =
-                            self.line_buffer.get_buffer()[change_range.clone()].to_uppercase();
+                        let uppercased = self.line_buffer[change_range.clone()].to_uppercase();
                         self.line_buffer.replace_range(change_range, &uppercased);
                         self.line_buffer.move_word_right();
                     }
@@ -236,8 +232,7 @@ impl Engine {
                     let right_index = self.line_buffer.word_right_index();
                     if right_index > self.get_insertion_point() {
                         let change_range = self.get_insertion_point()..right_index;
-                        let lowercased =
-                            self.line_buffer.get_buffer()[change_range.clone()].to_lowercase();
+                        let lowercased = self.line_buffer[change_range.clone()].to_lowercase();
                         self.line_buffer.replace_range(change_range, &lowercased);
                         self.line_buffer.move_word_right();
                     }
@@ -250,8 +245,7 @@ impl Engine {
                     let right_index = self.line_buffer.grapheme_right_index();
                     if right_index > self.get_insertion_point() {
                         let change_range = self.get_insertion_point()..right_index;
-                        let uppercased =
-                            self.line_buffer.get_buffer()[change_range.clone()].to_uppercase();
+                        let uppercased = self.line_buffer[change_range.clone()].to_uppercase();
                         self.line_buffer.replace_range(change_range, &uppercased);
                         self.line_buffer.move_word_right();
                     }
@@ -270,10 +264,8 @@ impl Engine {
                         && word_1_end < word_2_start
                         && word_2_start < word_2_end
                     {
-                        let word_1 =
-                            self.line_buffer.get_buffer()[word_1_start..word_1_end].to_string();
-                        let word_2 =
-                            self.line_buffer.get_buffer()[word_2_start..word_2_end].to_string();
+                        let word_1 = self.line_buffer[word_1_start..word_1_end].to_string();
+                        let word_2 = self.line_buffer[word_2_start..word_2_end].to_string();
                         self.line_buffer
                             .replace_range(word_2_start..word_2_end, &word_1);
                         self.line_buffer
@@ -286,7 +278,7 @@ impl Engine {
                 EditCommand::SwapGraphemes => {
                     if self.get_insertion_point() == 0 {
                         self.line_buffer.move_right()
-                    } else if self.get_insertion_point() == self.line_buffer.get_buffer().len() {
+                    } else if self.get_insertion_point() == self.line_buffer.len() {
                         self.line_buffer.move_left()
                     }
                     let insertion_point = self.get_insertion_point();
@@ -294,12 +286,10 @@ impl Engine {
                     let grapheme_2_end = self.line_buffer.grapheme_right_index();
 
                     if grapheme_1_start < insertion_point && grapheme_2_end > insertion_point {
-                        let grapheme_1 = self.line_buffer.get_buffer()
-                            [grapheme_1_start..insertion_point]
-                            .to_string();
-                        let grapheme_2 = self.line_buffer.get_buffer()
-                            [insertion_point..grapheme_2_end]
-                            .to_string();
+                        let grapheme_1 =
+                            self.line_buffer[grapheme_1_start..insertion_point].to_string();
+                        let grapheme_2 =
+                            self.line_buffer[insertion_point..grapheme_2_end].to_string();
                         self.line_buffer
                             .replace_range(insertion_point..grapheme_2_end, &grapheme_1);
                         self.line_buffer
@@ -319,10 +309,6 @@ impl Engine {
 
     pub fn get_insertion_point(&self) -> usize {
         self.line_buffer.get_insertion_point()
-    }
-
-    pub fn get_buffer(&self) -> &str {
-        &self.line_buffer.get_buffer()
     }
 
     pub fn set_buffer(&mut self, buffer: String) {
@@ -366,7 +352,7 @@ impl Engine {
                     modifiers: KeyModifiers::CONTROL,
                 }) => match code {
                     KeyCode::Char('d') => {
-                        if self.get_buffer().is_empty() {
+                        if self.line_buffer.is_empty() {
                             return Ok("exit".to_string());
                         } else {
                             self.run_edit_commands(&[EditCommand::Delete]);
@@ -473,7 +459,7 @@ impl Engine {
                             self.run_edit_commands(&[EditCommand::MoveToEnd]);
                         }
                         KeyCode::Enter => {
-                            let buffer = String::from(self.get_buffer());
+                            let buffer = self.line_buffer.to_owned();
 
                             self.run_edit_commands(&[
                                 EditCommand::AppendToHistory,

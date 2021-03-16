@@ -1,8 +1,17 @@
+use std::ops::Deref;
 use unicode_segmentation::UnicodeSegmentation;
 
 pub struct LineBuffer {
     buffer: String,
     insertion_point: usize,
+}
+
+impl Deref for LineBuffer {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
 }
 
 impl LineBuffer {
@@ -19,10 +28,6 @@ impl LineBuffer {
 
     pub fn get_insertion_point(&self) -> usize {
         self.insertion_point
-    }
-
-    pub fn get_buffer(&self) -> &str {
-        &self.buffer
     }
 
     pub fn set_buffer(&mut self, buffer: String) {
