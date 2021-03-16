@@ -47,6 +47,12 @@ pub struct Engine {
     has_history: bool,
 }
 
+pub enum Signal {
+    SUCCESS(String),
+    SIGINT, // Typically Ctrl-c
+    EOF, // Typically Ctrl-d
+}
+
 pub fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
     stdout
         .queue(Print("\n"))?
@@ -286,7 +292,7 @@ impl Engine {
         self.line_buffer.move_word_right()
     }
 
-    pub fn read_line(&mut self, stdout: &mut Stdout) -> Result<String> {
+    pub fn read_line(&mut self, stdout: &mut Stdout) -> Result<Signal> {
         // print our prompt
         stdout
             .execute(SetForegroundColor(Color::Blue))?
@@ -305,7 +311,7 @@ impl Engine {
                 }) => match code {
                     KeyCode::Char('d') => {
                         if self.get_buffer().is_empty() {
-                            return Ok("exit".to_string());
+                            return Ok(Signal::EOF);
                         } else {
                             self.run_edit_commands(&[EditCommand::Delete]);
                         }
@@ -332,7 +338,7 @@ impl Engine {
                         self.run_edit_commands(&[EditCommand::MoveRight]);
                     }
                     KeyCode::Char('c') => {
-                        return Ok("".to_string());
+                        return Ok(Signal::SIGINT);
                     }
                     KeyCode::Char('h') => {
                         self.run_edit_commands(&[EditCommand::Backspace]);
@@ -403,7 +409,7 @@ impl Engine {
                                 EditCommand::Clear,
                             ]);
 
-                            return Ok(buffer);
+                            return Ok(Signal::SUCCESS(buffer));
                         }
                         KeyCode::Up => {
                             self.run_edit_commands(&[EditCommand::PreviousHistory]);
