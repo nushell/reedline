@@ -11,7 +11,7 @@ use crossterm::{
 mod line_buffer;
 
 mod engine;
-use engine::{print_message, Engine, Signal};
+use engine::{Engine, Signal, print_crlf, print_message};
 
 // this fn is totally ripped off from crossterm's examples
 // it's really a diagnostic routine to see if crossterm is
@@ -65,10 +65,14 @@ fn main() -> Result<()> {
                     break;
                 }
                 Signal::SUCCESS(buffer) => {
+                    if (buffer == "exit") || (buffer == "logout") {
+                        break;
+                    }
                     print_message(&mut stdout, &format!("Our buffer: {}", buffer))?;
                 }
-                _ => {
-                    continue;
+                Signal::SIGINT => {
+                    // We need to move one line down to start with the prompt on a new line
+                    print_crlf(&mut stdout)?;
                 }
             }
         }

@@ -65,6 +65,15 @@ pub fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn print_crlf(stdout: &mut Stdout) -> Result<()> {
+    stdout
+        .queue(Print("\n"))?
+        .queue(MoveToColumn(1))?;
+    stdout.flush()?;
+
+    Ok(())
+}
+
 fn buffer_repaint(stdout: &mut Stdout, engine: &Engine, prompt_offset: u16) -> Result<()> {
     let raw_buffer = engine.get_buffer();
     let new_index = engine.get_insertion_point();
@@ -338,6 +347,7 @@ impl Engine {
                         self.run_edit_commands(&[EditCommand::MoveRight]);
                     }
                     KeyCode::Char('c') => {
+                        self.run_edit_commands(&[EditCommand::Clear]);
                         return Ok(Signal::SIGINT);
                     }
                     KeyCode::Char('h') => {
