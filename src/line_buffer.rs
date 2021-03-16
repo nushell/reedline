@@ -65,22 +65,12 @@ impl LineBuffer {
         self.buffer.insert(pos, c)
     }
 
-    pub fn remove_char(&mut self, pos: usize) -> char {
-        self.buffer.remove(pos)
-    }
-
     pub fn insert_str(&mut self, idx: usize, string: &str) {
         self.buffer.insert_str(idx, string)
     }
 
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
-    }
-
-    pub fn pop(&mut self) -> Option<char> {
-        let result = self.buffer.pop();
-        self.insertion_point = self.buffer.len();
-        result
     }
 
     pub fn clear(&mut self) {
