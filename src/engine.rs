@@ -186,16 +186,17 @@ impl Engine {
                 }
                 EditCommand::CutFromStart => {
                     if self.get_insertion_point() > 0 {
-                        let cut_slice = self.get_buffer()[..self.get_insertion_point()].to_string();
-
-                        self.cut_buffer.replace_range(.., &cut_slice);
+                        self.cut_buffer.replace_range(
+                            ..,
+                            &self.line_buffer.get_buffer()[..self.get_insertion_point()],
+                        );
                         self.clear_to_insertion_point();
                     }
                 }
                 EditCommand::CutToEnd => {
-                    let cut_slice = &self.get_buffer()[self.get_insertion_point()..].to_string();
+                    let cut_slice = &self.line_buffer.get_buffer()[self.get_insertion_point()..];
                     if !cut_slice.is_empty() {
-                        self.cut_buffer.replace_range(.., &cut_slice);
+                        self.cut_buffer.replace_range(.., cut_slice);
                         self.clear_to_end();
                     }
                 }
@@ -204,12 +205,12 @@ impl Engine {
 
                     self.move_word_left();
 
-                    let cut_slice = self.get_buffer()
-                        [self.get_insertion_point()..old_insertion_point]
-                        .to_string();
-
                     if self.get_insertion_point() < old_insertion_point {
-                        self.cut_buffer.replace_range(.., &cut_slice);
+                        self.cut_buffer.replace_range(
+                            ..,
+                            &self.line_buffer.get_buffer()
+                                [self.get_insertion_point()..old_insertion_point],
+                        );
                         self.clear_range(self.get_insertion_point()..old_insertion_point);
                     }
                 }
@@ -218,19 +219,19 @@ impl Engine {
 
                     self.move_word_right();
 
-                    let cut_slice = self.get_buffer()
-                        [old_insertion_point..self.get_insertion_point()]
-                        .to_string();
-
                     if self.get_insertion_point() > old_insertion_point {
-                        self.cut_buffer.replace_range(.., &cut_slice);
+                        self.cut_buffer.replace_range(
+                            ..,
+                            &self.line_buffer.get_buffer()
+                                [old_insertion_point..self.get_insertion_point()],
+                        );
                         self.clear_range(old_insertion_point..self.get_insertion_point());
                         self.set_insertion_point(old_insertion_point);
                     }
                 }
                 EditCommand::InsertCutBuffer => {
-                    let cut_buffer = self.cut_buffer.clone();
-                    self.insert_str(self.get_insertion_point(), &cut_buffer);
+                    self.line_buffer
+                        .insert_str(self.get_insertion_point(), &self.cut_buffer);
                     self.set_insertion_point(self.get_insertion_point() + self.cut_buffer.len());
                 }
             }
@@ -267,10 +268,6 @@ impl Engine {
 
     pub fn remove_char(&mut self, pos: usize) -> char {
         self.line_buffer.remove_char(pos)
-    }
-
-    pub fn insert_str(&mut self, idx: usize, string: &str) {
-        self.line_buffer.insert_str(idx, string)
     }
 
     pub fn is_empty(&self) -> bool {
