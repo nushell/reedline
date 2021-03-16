@@ -364,6 +364,12 @@ impl Engine {
                     KeyCode::Right => {
                         self.run_edit_commands(&[EditCommand::MoveWordRight]);
                     }
+                    KeyCode::Char('p') => {
+                        self.run_edit_commands(&[EditCommand::PreviousHistory]);
+                    }
+                    KeyCode::Char('n') => {
+                        self.run_edit_commands(&[EditCommand::NextHistory]);
+                    }
                     _ => {}
                 },
                 Event::Key(KeyEvent {
