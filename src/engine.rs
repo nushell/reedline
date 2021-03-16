@@ -33,6 +33,11 @@ pub enum EditCommand {
     CutWordLeft,
     CutWordRight,
     InsertCutBuffer,
+    UppercaseWord,
+    LowercaseWord,
+    CapitalizeChar,
+    SwapWords,
+    SwapGraphemes,
 }
 
 pub struct Engine {
@@ -106,8 +111,8 @@ impl Engine {
                 EditCommand::MoveToEnd => {
                     self.line_buffer.move_to_end();
                 }
-                EditCommand::MoveLeft => self.line_buffer.dec_insertion_point(),
-                EditCommand::MoveRight => self.line_buffer.inc_insertion_point(),
+                EditCommand::MoveLeft => self.line_buffer.move_left(),
+                EditCommand::MoveRight => self.line_buffer.move_right(),
                 EditCommand::MoveWordLeft => {
                     self.line_buffer.move_word_left();
                 }
@@ -119,20 +124,16 @@ impl Engine {
                     self.line_buffer.insert_char(insertion_point, *c)
                 }
                 EditCommand::Backspace => {
-                    let insertion_point = self.get_insertion_point();
-                    if insertion_point <= self.get_buffer_len() && insertion_point > 0 {
-                        let old_insertion_point = insertion_point;
-                        self.line_buffer.dec_insertion_point();
-                        self.clear_range(self.get_insertion_point()..old_insertion_point);
+                    let left_index = self.line_buffer.grapheme_left_index();
+                    if left_index < self.get_insertion_point() {
+                        self.clear_range(left_index..self.get_insertion_point());
+                        self.set_insertion_point(left_index);
                     }
                 }
                 EditCommand::Delete => {
-                    let insertion_point = self.get_insertion_point();
-                    if insertion_point < self.get_buffer_len() && !self.is_empty() {
-                        let old_insertion_point = insertion_point;
-                        self.line_buffer.inc_insertion_point();
-                        self.clear_range(old_insertion_point..self.get_insertion_point());
-                        self.set_insertion_point(old_insertion_point);
+                    let right_index = self.line_buffer.grapheme_right_index();
+                    if right_index > self.get_insertion_point() {
+                        self.clear_range(self.get_insertion_point()..right_index);
                     }
                 }
                 EditCommand::Clear => {
@@ -198,38 +199,115 @@ impl Engine {
                     }
                 }
                 EditCommand::CutWordLeft => {
-                    let old_insertion_point = self.get_insertion_point();
-
-                    self.move_word_left();
-
-                    if self.get_insertion_point() < old_insertion_point {
-                        self.cut_buffer.replace_range(
-                            ..,
-                            &self.line_buffer.get_buffer()
-                                [self.get_insertion_point()..old_insertion_point],
-                        );
-                        self.clear_range(self.get_insertion_point()..old_insertion_point);
+                    let left_index = self.line_buffer.word_left_index();
+                    if left_index < self.get_insertion_point() {
+                        let cut_range = left_index..self.get_insertion_point();
+                        self.cut_buffer
+                            .replace_range(.., &self.line_buffer.get_buffer()[cut_range.clone()]);
+                        self.clear_range(cut_range);
+                        self.set_insertion_point(left_index);
                     }
                 }
                 EditCommand::CutWordRight => {
-                    let old_insertion_point = self.get_insertion_point();
-
-                    self.move_word_right();
-
-                    if self.get_insertion_point() > old_insertion_point {
-                        self.cut_buffer.replace_range(
-                            ..,
-                            &self.line_buffer.get_buffer()
-                                [old_insertion_point..self.get_insertion_point()],
-                        );
-                        self.clear_range(old_insertion_point..self.get_insertion_point());
-                        self.set_insertion_point(old_insertion_point);
+                    let right_index = self.line_buffer.word_right_index();
+                    if right_index > self.get_insertion_point() {
+                        let cut_range = self.get_insertion_point()..right_index;
+                        self.cut_buffer
+                            .replace_range(.., &self.line_buffer.get_buffer()[cut_range.clone()]);
+                        self.clear_range(cut_range);
                     }
                 }
                 EditCommand::InsertCutBuffer => {
                     self.line_buffer
                         .insert_str(self.get_insertion_point(), &self.cut_buffer);
                     self.set_insertion_point(self.get_insertion_point() + self.cut_buffer.len());
+                }
+                EditCommand::UppercaseWord => {
+                    let right_index = self.line_buffer.word_right_index();
+                    if right_index > self.get_insertion_point() {
+                        let change_range = self.get_insertion_point()..right_index;
+                        let uppercased =
+                            self.line_buffer.get_buffer()[change_range.clone()].to_uppercase();
+                        self.line_buffer.replace_range(change_range, &uppercased);
+                        self.line_buffer.move_word_right();
+                    }
+                }
+                EditCommand::LowercaseWord => {
+                    let right_index = self.line_buffer.word_right_index();
+                    if right_index > self.get_insertion_point() {
+                        let change_range = self.get_insertion_point()..right_index;
+                        let lowercased =
+                            self.line_buffer.get_buffer()[change_range.clone()].to_lowercase();
+                        self.line_buffer.replace_range(change_range, &lowercased);
+                        self.line_buffer.move_word_right();
+                    }
+                }
+                EditCommand::CapitalizeChar => {
+                    if self.line_buffer.on_whitespace() {
+                        self.line_buffer.move_word_right();
+                        self.line_buffer.move_word_left();
+                    }
+                    let right_index = self.line_buffer.grapheme_right_index();
+                    if right_index > self.get_insertion_point() {
+                        let change_range = self.get_insertion_point()..right_index;
+                        let uppercased =
+                            self.line_buffer.get_buffer()[change_range.clone()].to_uppercase();
+                        self.line_buffer.replace_range(change_range, &uppercased);
+                        self.line_buffer.move_word_right();
+                    }
+                }
+                EditCommand::SwapWords => {
+                    let old_insertion_point = self.get_insertion_point();
+                    self.line_buffer.move_word_right();
+                    let word_2_end = self.get_insertion_point();
+                    self.line_buffer.move_word_left();
+                    let word_2_start = self.get_insertion_point();
+                    self.line_buffer.move_word_left();
+                    let word_1_start = self.get_insertion_point();
+                    let word_1_end = self.line_buffer.word_right_index();
+
+                    if word_1_start < word_1_end
+                        && word_1_end < word_2_start
+                        && word_2_start < word_2_end
+                    {
+                        let word_1 =
+                            self.line_buffer.get_buffer()[word_1_start..word_1_end].to_string();
+                        let word_2 =
+                            self.line_buffer.get_buffer()[word_2_start..word_2_end].to_string();
+                        self.line_buffer
+                            .replace_range(word_2_start..word_2_end, &word_1);
+                        self.line_buffer
+                            .replace_range(word_1_start..word_1_end, &word_2);
+                        self.set_insertion_point(word_2_end);
+                    } else {
+                        self.set_insertion_point(old_insertion_point);
+                    }
+                }
+                EditCommand::SwapGraphemes => {
+                    if self.get_insertion_point() == 0 {
+                        self.line_buffer.move_right()
+                    } else if self.get_insertion_point() == self.line_buffer.get_buffer().len() {
+                        self.line_buffer.move_left()
+                    }
+                    let insertion_point = self.get_insertion_point();
+                    let grapheme_1_start = self.line_buffer.grapheme_left_index();
+                    let grapheme_2_end = self.line_buffer.grapheme_right_index();
+
+                    if grapheme_1_start < insertion_point && grapheme_2_end > insertion_point {
+                        let grapheme_1 = self.line_buffer.get_buffer()
+                            [grapheme_1_start..insertion_point]
+                            .to_string();
+                        let grapheme_2 = self.line_buffer.get_buffer()
+                            [insertion_point..grapheme_2_end]
+                            .to_string();
+                        self.line_buffer
+                            .replace_range(insertion_point..grapheme_2_end, &grapheme_1);
+                        self.line_buffer
+                            .replace_range(grapheme_1_start..insertion_point, &grapheme_2);
+                        self.set_insertion_point(grapheme_2_end);
+                    } else {
+                        self.set_insertion_point(insertion_point);
+                    }
                 }
             }
         }
@@ -255,14 +333,6 @@ impl Engine {
         self.line_buffer.move_to_end()
     }
 
-    pub fn get_buffer_len(&self) -> usize {
-        self.line_buffer.get_buffer_len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.line_buffer.is_empty()
-    }
-
     pub fn clear_to_end(&mut self) {
         self.line_buffer.clear_to_end()
     }
@@ -276,14 +346,6 @@ impl Engine {
         R: std::ops::RangeBounds<usize>,
     {
         self.line_buffer.clear_range(range)
-    }
-
-    pub fn move_word_left(&mut self) -> usize {
-        self.line_buffer.move_word_left()
-    }
-
-    pub fn move_word_right(&mut self) -> usize {
-        self.line_buffer.move_word_right()
     }
 
     pub fn read_line(&mut self, stdout: &mut Stdout) -> Result<String> {
@@ -352,6 +414,9 @@ impl Engine {
                     KeyCode::Char('n') => {
                         self.run_edit_commands(&[EditCommand::NextHistory]);
                     }
+                    KeyCode::Char('t') => {
+                        self.run_edit_commands(&[EditCommand::SwapGraphemes]);
+                    }
                     _ => {}
                 },
                 Event::Key(KeyEvent {
@@ -372,6 +437,18 @@ impl Engine {
                     }
                     KeyCode::Right => {
                         self.run_edit_commands(&[EditCommand::MoveWordRight]);
+                    }
+                    KeyCode::Char('u') => {
+                        self.run_edit_commands(&[EditCommand::UppercaseWord]);
+                    }
+                    KeyCode::Char('l') => {
+                        self.run_edit_commands(&[EditCommand::LowercaseWord]);
+                    }
+                    KeyCode::Char('c') => {
+                        self.run_edit_commands(&[EditCommand::CapitalizeChar]);
+                    }
+                    KeyCode::Char('t') => {
+                        self.run_edit_commands(&[EditCommand::SwapWords]);
                     }
                     _ => {}
                 },
