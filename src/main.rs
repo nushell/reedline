@@ -65,7 +65,7 @@ fn main() -> Result<()> {
                     break;
                 }
                 Signal::SUCCESS(buffer) => {
-                    if (buffer == "exit") || (buffer == "logout") {
+                    if (buffer.trim() == "exit") || (buffer.trim() == "logout") {
                         break;
                     }
                     print_message(&mut stdout, &format!("Our buffer: {}", buffer))?;
