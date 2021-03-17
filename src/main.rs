@@ -11,7 +11,7 @@ use crossterm::{
 mod line_buffer;
 
 mod engine;
-use engine::{print_message, Engine};
+use engine::{print_crlf, print_message, Engine, Signal};
 
 // this fn is totally ripped off from crossterm's examples
 // it's really a diagnostic routine to see if crossterm is
@@ -59,13 +59,21 @@ fn main() -> Result<()> {
     let mut engine = Engine::new();
 
     loop {
-        if let Ok(buffer) = engine.read_line(&mut stdout) {
-            if buffer.trim() == "exit" {
-                break;
-            }
-
-            if !buffer.trim().is_empty() {
-                print_message(&mut stdout, &format!("Our buffer: {}", buffer))?;
+        if let Ok(sig) = engine.read_line(&mut stdout) {
+            match sig {
+                Signal::CtrlD => {
+                    break;
+                }
+                Signal::Success(buffer) => {
+                    if (buffer.trim() == "exit") || (buffer.trim() == "logout") {
+                        break;
+                    }
+                    print_message(&mut stdout, &format!("Our buffer: {}", buffer))?;
+                }
+                Signal::CtrlC => {
+                    // We need to move one line down to start with the prompt on a new line
+                    print_crlf(&mut stdout)?;
+                }
             }
         }
     }
