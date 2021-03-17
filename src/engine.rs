@@ -48,9 +48,9 @@ pub struct Engine {
 }
 
 pub enum Signal {
-    SUCCESS(String),
-    SIGINT, // Typically Ctrl-c
-    EOF, // Typically Ctrl-d
+    Success(String),
+    CtrlC, // Interrupt current editing
+    CtrlD, // End terminal session
 }
 
 pub fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
@@ -66,9 +66,7 @@ pub fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
 }
 
 pub fn print_crlf(stdout: &mut Stdout) -> Result<()> {
-    stdout
-        .queue(Print("\n"))?
-        .queue(MoveToColumn(1))?;
+    stdout.queue(Print("\n"))?.queue(MoveToColumn(1))?;
     stdout.flush()?;
 
     Ok(())
@@ -320,7 +318,7 @@ impl Engine {
                 }) => match code {
                     KeyCode::Char('d') => {
                         if self.get_buffer().is_empty() {
-                            return Ok(Signal::EOF);
+                            return Ok(Signal::CtrlD);
                         } else {
                             self.run_edit_commands(&[EditCommand::Delete]);
                         }
@@ -348,7 +346,7 @@ impl Engine {
                     }
                     KeyCode::Char('c') => {
                         self.run_edit_commands(&[EditCommand::Clear]);
-                        return Ok(Signal::SIGINT);
+                        return Ok(Signal::CtrlC);
                     }
                     KeyCode::Char('h') => {
                         self.run_edit_commands(&[EditCommand::Backspace]);
@@ -419,7 +417,7 @@ impl Engine {
                                 EditCommand::Clear,
                             ]);
 
-                            return Ok(Signal::SUCCESS(buffer));
+                            return Ok(Signal::Success(buffer));
                         }
                         KeyCode::Up => {
                             self.run_edit_commands(&[EditCommand::PreviousHistory]);
