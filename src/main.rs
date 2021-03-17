@@ -1,7 +1,4 @@
-use crossterm::{
-    terminal::{self},
-    Result,
-};
+use crossterm::{terminal, Result};
 use std::io::stdout;
 mod line_buffer;
 
@@ -10,6 +7,9 @@ use engine::{print_crlf, print_message, Engine, Signal};
 
 mod diagnostic;
 use diagnostic::print_events;
+
+mod prompt;
+use prompt::Prompt;
 
 fn main() -> Result<()> {
     let mut stdout = stdout();

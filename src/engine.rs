@@ -11,7 +11,7 @@ use crossterm::{
 use std::collections::VecDeque;
 
 use crate::line_buffer::LineBuffer;
-
+use crate::Prompt;
 const HISTORY_SIZE: usize = 100;
 
 pub enum EditCommand {
@@ -347,12 +347,15 @@ impl Engine {
         self.line_buffer.clear_range(range)
     }
 
-
     pub fn read_line(&mut self, stdout: &mut Stdout) -> Result<Signal> {
+        let mut prompt = Prompt::new();
+        prompt.set_prompt_indicator("〉".to_string());
+
         // print our prompt
         stdout
             .execute(SetForegroundColor(Color::Blue))?
-            .execute(Print("〉"))?
+            // .execute(Print("〉"))?
+            .execute(Print(prompt.print_prompt()))?
             .execute(ResetColor)?;
 
         // set where the input begins
