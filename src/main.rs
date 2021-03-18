@@ -10,6 +10,7 @@ use diagnostic::print_events;
 
 mod prompt;
 use prompt::Prompt;
+mod history_search;
 
 fn main() -> Result<()> {
     let mut stdout = stdout();

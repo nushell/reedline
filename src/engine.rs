@@ -1,15 +1,17 @@
 use std::io::{Stdout, Write};
+use std::ops::Deref;
 
 use crossterm::{
-    cursor::{position, MoveToColumn, RestorePosition, SavePosition},
+    cursor::{MoveToColumn, RestorePosition, SavePosition},
     event::{read, Event, KeyCode, KeyEvent, KeyModifiers},
     style::{Color, Print, ResetColor, SetForegroundColor},
     terminal::{Clear, ClearType},
-    ExecutableCommand, QueueableCommand, Result,
+    QueueableCommand, Result,
 };
 
 use std::collections::VecDeque;
 
+use crate::history_search::{BasicSearch, BasicSearchCommand};
 use crate::line_buffer::LineBuffer;
 use crate::Prompt;
 const HISTORY_SIZE: usize = 100;
@@ -27,6 +29,7 @@ pub enum EditCommand {
     AppendToHistory,
     PreviousHistory,
     NextHistory,
+    SearchHistory,
     Clear,
     CutFromStart,
     CutToEnd,
@@ -50,6 +53,7 @@ pub struct Engine {
     history: VecDeque<String>,
     history_cursor: i64,
     has_history: bool,
+    history_search: Option<BasicSearch>, // This could be have more features in the future (fzf, configurable?)
 }
 
 pub enum Signal {
@@ -77,8 +81,21 @@ pub fn print_crlf(stdout: &mut Stdout) -> Result<()> {
     Ok(())
 }
 
-fn buffer_repaint(stdout: &mut Stdout, engine: &Engine, prompt_offset: u16) -> Result<()> {
+fn queue_prompt(stdout: &mut Stdout) -> Result<()> {
+    // print our prompt
+    stdout
+        .queue(MoveToColumn(0))?
+        .queue(SetForegroundColor(Color::Blue))?
+        .queue(Print("〉"))?
+        .queue(ResetColor)?;
+
+    Ok(())
+}
+
+fn buffer_paint(stdout: &mut Stdout, engine: &Engine) -> Result<()> {
     let new_index = engine.get_insertion_point();
+
+    queue_prompt(stdout)?;
 
     // Repaint logic:
     //
@@ -88,12 +105,52 @@ fn buffer_repaint(stdout: &mut Stdout, engine: &Engine, prompt_offset: u16) -> R
     // Then draw the remainer of the buffer from above
     // Finally, reset the cursor to the saved position
 
-    stdout.queue(MoveToColumn(prompt_offset))?;
-    stdout.queue(Print(&engine.line_buffer[0..new_index]))?;
+    stdout.queue(Print(&engine.line_buffer[..new_index]))?;
     stdout.queue(SavePosition)?;
     stdout.queue(Print(&engine.line_buffer[new_index..]))?;
     stdout.queue(Clear(ClearType::UntilNewLine))?;
     stdout.queue(RestorePosition)?;
+
+    stdout.flush()?;
+
+    Ok(())
+}
+
+fn history_search_paint(stdout: &mut Stdout, engine: &Engine) -> Result<()> {
+    // Assuming we are currently searching
+    let search = engine.history_search.as_ref().unwrap();
+
+    let status = if search.result.is_none() && !search.search_string.is_empty() {
+        "failed "
+    } else {
+        ""
+    };
+
+    // print search prompt
+    stdout
+        .queue(MoveToColumn(0))?
+        .queue(SetForegroundColor(Color::Blue))?
+        .queue(Print(format!(
+            "({}reverse-search)`{}':",
+            status, search.search_string
+        )))?
+        .queue(ResetColor)?;
+
+    match search.result {
+        Some((history_index, offset)) => {
+            let history_result = &engine.history[history_index];
+
+            stdout.queue(Print(&history_result[..offset]))?;
+            stdout.queue(SavePosition)?;
+            stdout.queue(Print(&history_result[offset..]))?;
+            stdout.queue(Clear(ClearType::UntilNewLine))?;
+            stdout.queue(RestorePosition)?;
+        }
+
+        None => {
+            stdout.queue(Clear(ClearType::UntilNewLine))?;
+        }
+    }
 
     stdout.flush()?;
 
@@ -113,10 +170,37 @@ impl Engine {
             history,
             history_cursor,
             has_history,
+            history_search: None,
         }
     }
 
     pub fn run_edit_commands(&mut self, commands: &[EditCommand]) {
+        // Handle command for history inputs
+        if self.history_search.is_some() {
+            for command in commands {
+                match command {
+                    EditCommand::InsertChar(c) => {
+                        let search = self.history_search.as_mut().unwrap(); // We checked it is some
+                        search.step(BasicSearchCommand::InsertChar(*c), &self.history);
+                    }
+                    EditCommand::Backspace => {
+                        let search = self.history_search.as_mut().unwrap(); // We checked it is some
+                        search.step(BasicSearchCommand::Backspace, &self.history);
+                    }
+                    EditCommand::SearchHistory => {
+                        let search = self.history_search.as_mut().unwrap(); // We checked it is some
+                        search.step(BasicSearchCommand::Next, &self.history);
+                    }
+                    EditCommand::MoveRight => {
+                        // Ignore move right, it is currently emited with InsertChar
+                    }
+                    // Leave history search otherwise
+                    _ => self.history_search = None,
+                }
+            }
+            return;
+        }
+
         for command in commands {
             match command {
                 EditCommand::MoveToStart => self.line_buffer.set_insertion_point(0),
@@ -193,6 +277,10 @@ impl Engine {
 
                     self.set_buffer(new_buffer.clone());
                     self.move_to_end();
+                }
+                EditCommand::SearchHistory => {
+                    self.history_search =
+                        Some(BasicSearch::new(String::from(self.line_buffer.deref())));
                 }
                 EditCommand::CutFromStart => {
                     if self.get_insertion_point() > 0 {
@@ -361,6 +449,8 @@ impl Engine {
         // set where the input begins
         let (mut prompt_offset, _) = position()?;
         prompt_offset += 1;
+        queue_prompt(stdout)?;
+        stdout.flush()?;
 
         loop {
             match read()? {
@@ -417,6 +507,9 @@ impl Engine {
                     }
                     KeyCode::Char('n') => {
                         self.run_edit_commands(&[EditCommand::NextHistory]);
+                    }
+                    KeyCode::Char('r') => {
+                        self.run_edit_commands(&[EditCommand::SearchHistory]);
                     }
                     KeyCode::Char('t') => {
                         self.run_edit_commands(&[EditCommand::SwapGraphemes]);
@@ -476,16 +569,25 @@ impl Engine {
                         KeyCode::End => {
                             self.run_edit_commands(&[EditCommand::MoveToEnd]);
                         }
-                        KeyCode::Enter => {
-                            let buffer = self.line_buffer.to_owned();
+                        KeyCode::Enter => match &self.history_search {
+                            Some(search) => {
+                                if let Some((history_index, _)) = search.result {
+                                    self.line_buffer
+                                        .set_buffer(self.history[history_index].clone());
+                                }
+                                self.history_search = None;
+                            }
+                            None => {
+                                let buffer = self.line_buffer.to_owned();
 
-                            self.run_edit_commands(&[
-                                EditCommand::AppendToHistory,
-                                EditCommand::Clear,
-                            ]);
+                                self.run_edit_commands(&[
+                                    EditCommand::AppendToHistory,
+                                    EditCommand::Clear,
+                                ]);
 
-                            return Ok(Signal::Success(buffer));
-                        }
+                                return Ok(Signal::Success(buffer));
+                            }
+                        },
                         KeyCode::Up => {
                             self.run_edit_commands(&[EditCommand::PreviousHistory]);
                         }
@@ -511,7 +613,11 @@ impl Engine {
                     print_message(stdout, &format!("width: {} and height: {}", width, height))?;
                 }
             }
-            buffer_repaint(stdout, &self, prompt_offset)?;
+            if self.history_search.is_some() {
+                history_search_paint(stdout, &self)?;
+            } else {
+                buffer_paint(stdout, &self)?;
+            }
         }
     }
 }
