@@ -13,6 +13,8 @@ use std::io::{Stdout, Write};
 use std::ops::Deref;
 
 const HISTORY_SIZE: usize = 100;
+static PROMPT_INDICATOR: &str = "〉";
+const PROMPT_COLOR: Color = Color::Blue;
 
 pub enum EditCommand {
     MoveToStart,
@@ -81,13 +83,24 @@ pub fn print_crlf(stdout: &mut Stdout) -> Result<()> {
 
 fn queue_prompt(stdout: &mut Stdout) -> Result<()> {
     let mut prompt = Prompt::new();
-    prompt.set_prompt_indicator("〉".to_string());
+    prompt.set_prompt_indicator(PROMPT_INDICATOR.to_string());
 
     // print our prompt
     stdout
         .queue(MoveToColumn(0))?
-        .queue(SetForegroundColor(Color::Blue))?
+        .queue(SetForegroundColor(PROMPT_COLOR))?
         .queue(Print(prompt.print_prompt()))?
+        .queue(ResetColor)?;
+
+    Ok(())
+}
+
+fn queue_prompt_indicator(stdout: &mut Stdout) -> Result<()> {
+    // print our prompt
+    stdout
+        .queue(MoveToColumn(0))?
+        .queue(SetForegroundColor(PROMPT_COLOR))?
+        .queue(Print(PROMPT_INDICATOR))?
         .queue(ResetColor)?;
 
     Ok(())
@@ -577,6 +590,7 @@ impl Engine {
                         }
                         KeyCode::Enter => match &self.history_search {
                             Some(search) => {
+                                queue_prompt_indicator(stdout)?;
                                 if let Some((history_index, _)) = search.result {
                                     self.line_buffer
                                         .set_buffer(self.history[history_index].clone());
