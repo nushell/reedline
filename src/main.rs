@@ -40,6 +40,10 @@ fn main() -> Result<()> {
                     if (buffer.trim() == "exit") || (buffer.trim() == "logout") {
                         break;
                     }
+                    if buffer.trim() == "clear" {
+                        clear_screen(&mut stdout)?;
+                        continue;
+                    }
                     print_message(&mut stdout, &format!("Our buffer: {}", buffer))?;
                 }
                 Signal::CtrlC => {
