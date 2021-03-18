@@ -11,6 +11,8 @@ use engine::{print_crlf, print_message, Engine, Signal};
 mod diagnostic;
 use diagnostic::print_events;
 
+mod history_search;
+
 fn main() -> Result<()> {
     let mut stdout = stdout();
 
