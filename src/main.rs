@@ -13,6 +13,9 @@ use diagnostic::print_events;
 
 mod history_search;
 
+mod prompt;
+use prompt::Prompt;
+
 fn main() -> Result<()> {
     let mut stdout = stdout();
 
