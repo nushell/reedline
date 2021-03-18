@@ -2,10 +2,10 @@ use std::io::{Stdout, Write};
 use std::ops::Deref;
 
 use crossterm::{
-    cursor::{MoveToColumn, RestorePosition, SavePosition},
+    cursor::{MoveTo, MoveToColumn, RestorePosition, SavePosition},
     event::{read, Event, KeyCode, KeyEvent, KeyModifiers},
     style::{Color, Print, ResetColor, SetForegroundColor},
-    terminal::{Clear, ClearType},
+    terminal::{self, Clear, ClearType},
     QueueableCommand, Result,
 };
 
@@ -60,6 +60,7 @@ pub enum Signal {
     Success(String),
     CtrlC, // Interrupt current editing
     CtrlD, // End terminal session
+    CtrlL, // FormFeed/Clear current screen
 }
 
 pub fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
@@ -78,6 +79,16 @@ pub fn print_crlf(stdout: &mut Stdout) -> Result<()> {
     stdout.queue(Print("\n"))?.queue(MoveToColumn(1))?;
     stdout.flush()?;
 
+    Ok(())
+}
+
+pub fn clear_screen(stdout: &mut Stdout) -> Result<()> {
+    let (_, num_lines) = terminal::size()?;
+    for _ in 0..2 * num_lines {
+        stdout.queue(Print("\n"))?;
+    }
+    stdout.queue(MoveTo(0, 0))?;
+    stdout.flush()?;
     Ok(())
 }
 
@@ -436,7 +447,11 @@ impl Engine {
     }
 
     pub fn read_line(&mut self, stdout: &mut Stdout) -> Result<Signal> {
-        queue_prompt(stdout)?;
+        if self.history_search.is_some() {
+            history_search_paint(stdout, &self)?;
+        } else {
+            buffer_paint(stdout, &self)?;
+        }
         stdout.flush()?;
 
         loop {
@@ -476,6 +491,9 @@ impl Engine {
                     KeyCode::Char('c') => {
                         self.run_edit_commands(&[EditCommand::Clear]);
                         return Ok(Signal::CtrlC);
+                    }
+                    KeyCode::Char('l') => {
+                        return Ok(Signal::CtrlL);
                     }
                     KeyCode::Char('h') => {
                         self.run_edit_commands(&[EditCommand::Backspace]);
