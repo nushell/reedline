@@ -6,7 +6,7 @@ use std::io::stdout;
 mod line_buffer;
 
 mod engine;
-use engine::{print_crlf, print_message, Engine, Signal};
+use engine::{clear_screen, print_crlf, print_message, Engine, Signal};
 
 mod diagnostic;
 use diagnostic::print_events;
@@ -43,11 +43,18 @@ fn main() -> Result<()> {
                     if (buffer.trim() == "exit") || (buffer.trim() == "logout") {
                         break;
                     }
+                    if buffer.trim() == "clear" {
+                        clear_screen(&mut stdout)?;
+                        continue;
+                    }
                     print_message(&mut stdout, &format!("Our buffer: {}", buffer))?;
                 }
                 Signal::CtrlC => {
                     // We need to move one line down to start with the prompt on a new line
                     print_crlf(&mut stdout)?;
+                }
+                Signal::CtrlL => {
+                    clear_screen(&mut stdout)?;
                 }
             }
         }

@@ -2,10 +2,10 @@ use crate::history_search::{BasicSearch, BasicSearchCommand};
 use crate::line_buffer::LineBuffer;
 use crate::Prompt;
 use crossterm::{
-    cursor::{position, MoveToColumn, RestorePosition, SavePosition},
+    cursor::{position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
     event::{read, Event, KeyCode, KeyEvent, KeyModifiers},
     style::{Color, Print, ResetColor, SetForegroundColor},
-    terminal::{Clear, ClearType},
+    terminal::{self, Clear, ClearType},
     QueueableCommand, Result,
 };
 use std::collections::VecDeque;
@@ -13,6 +13,8 @@ use std::io::{Stdout, Write};
 use std::ops::Deref;
 
 const HISTORY_SIZE: usize = 100;
+static PROMPT_INDICATOR: &str = "〉";
+const PROMPT_COLOR: Color = Color::Blue;
 
 pub enum EditCommand {
     MoveToStart,
@@ -58,6 +60,7 @@ pub enum Signal {
     Success(String),
     CtrlC, // Interrupt current editing
     CtrlD, // End terminal session
+    CtrlL, // FormFeed/Clear current screen
 }
 
 pub fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
@@ -79,15 +82,36 @@ pub fn print_crlf(stdout: &mut Stdout) -> Result<()> {
     Ok(())
 }
 
+pub fn clear_screen(stdout: &mut Stdout) -> Result<()> {
+    let (_, num_lines) = terminal::size()?;
+    for _ in 0..2 * num_lines {
+        stdout.queue(Print("\n"))?;
+    }
+    stdout.queue(MoveTo(0, 0))?;
+    stdout.flush()?;
+    Ok(())
+}
+
 fn queue_prompt(stdout: &mut Stdout) -> Result<()> {
     let mut prompt = Prompt::new();
-    prompt.set_prompt_indicator("〉".to_string());
+    prompt.set_prompt_indicator(PROMPT_INDICATOR.to_string());
 
     // print our prompt
     stdout
         .queue(MoveToColumn(0))?
-        .queue(SetForegroundColor(Color::Blue))?
+        .queue(SetForegroundColor(PROMPT_COLOR))?
         .queue(Print(prompt.print_prompt()))?
+        .queue(ResetColor)?;
+
+    Ok(())
+}
+
+fn queue_prompt_indicator(stdout: &mut Stdout) -> Result<()> {
+    // print our prompt
+    stdout
+        .queue(MoveToColumn(0))?
+        .queue(SetForegroundColor(PROMPT_COLOR))?
+        .queue(Print(PROMPT_INDICATOR))?
         .queue(ResetColor)?;
 
     Ok(())
@@ -95,8 +119,6 @@ fn queue_prompt(stdout: &mut Stdout) -> Result<()> {
 
 fn buffer_paint(stdout: &mut Stdout, engine: &Engine, prompt_offset: u16) -> Result<()> {
     let new_index = engine.get_insertion_point();
-
-    // queue_prompt(stdout)?;
 
     // Repaint logic:
     //
@@ -452,11 +474,18 @@ impl Engine {
 
     pub fn read_line(&mut self, stdout: &mut Stdout) -> Result<Signal> {
         queue_prompt(stdout)?;
-        stdout.flush()?;
 
         // set where the input begins
         let (mut prompt_offset, _) = position()?;
         prompt_offset += 1;
+
+        // Redraw if Ctrl-L was used
+        if self.history_search.is_some() {
+            history_search_paint(stdout, &self)?;
+        } else {
+            buffer_paint(stdout, &self, prompt_offset)?;
+        }
+        stdout.flush()?;
 
         loop {
             match read()? {
@@ -495,6 +524,9 @@ impl Engine {
                     KeyCode::Char('c') => {
                         self.run_edit_commands(&[EditCommand::Clear]);
                         return Ok(Signal::CtrlC);
+                    }
+                    KeyCode::Char('l') => {
+                        return Ok(Signal::CtrlL);
                     }
                     KeyCode::Char('h') => {
                         self.run_edit_commands(&[EditCommand::Backspace]);
@@ -577,6 +609,7 @@ impl Engine {
                         }
                         KeyCode::Enter => match &self.history_search {
                             Some(search) => {
+                                queue_prompt_indicator(stdout)?;
                                 if let Some((history_index, _)) = search.result {
                                     self.line_buffer
                                         .set_buffer(self.history[history_index].clone());
