@@ -93,8 +93,7 @@ pub fn clear_screen(stdout: &mut Stdout) -> Result<()> {
 }
 
 fn queue_prompt(stdout: &mut Stdout) -> Result<()> {
-    let mut prompt = Prompt::new();
-    prompt.set_prompt_indicator(PROMPT_INDICATOR.to_string());
+    let mut prompt = Prompt::new(PROMPT_INDICATOR, 1);
 
     // print our prompt
     stdout
