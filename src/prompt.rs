@@ -5,86 +5,45 @@ use std::env;
 pub struct Prompt {
     // The prompt symbol like >
     prompt_indicator: String,
-    // The string for the left side of the prompt
-    left_prompt: String,
-    // The length of the left side of the prompt without ansi color
-    left_prompt_width: usize,
-    // The string for the right side of the prompt
-    right_prompt: String,
-    // The length of the right side of the prompt without ansi color
-    right_print_width: usize,
-    // The size of the terminal in columns, rows
-    terminal_size: (u16, u16),
-    // The number of line buffer character space between the
+    // The minimum number of line buffer character space between the
     // the left prompt and the right prompt. When this encroaches
     // into the right side prompt, we should not show the right
-    // prompt. For future use. Not used currently.
-    max_length: i32,
+    // prompt.
+    min_center_spacing: u16,
 }
 
 impl Prompt {
-    pub fn new() -> Prompt {
-        let term_size = get_terminal_size();
-        // create the initial prompt
-        let p_indicator = "〉".to_string();
-        let l_prompt = "".to_string();
-        let r_prompt = get_now();
-
+    pub fn new<P: AsRef<str>>(prompt_indicator: P, min_center_spacing: u16) -> Prompt {
         Prompt {
-            // a clone for you, and a clone for you, and a clone for you...
-            prompt_indicator: p_indicator.clone(),
-            left_prompt: l_prompt.clone(),
-            left_prompt_width: p_indicator.chars().count() + l_prompt.chars().count(),
-            right_prompt: r_prompt.clone(),
-            right_print_width: r_prompt.chars().count(),
-            max_length: -1,
-            terminal_size: term_size,
+            prompt_indicator: prompt_indicator.as_ref().into(),
+            min_center_spacing,
         }
     }
 
-    pub fn set_left_prompt(&mut self, lprompt: String) {
-        self.left_prompt = lprompt;
-    }
-
-    pub fn set_right_prompt(&mut self, rprompt: String) {
-        self.right_prompt = rprompt;
-    }
-
-    pub fn set_prompt_indicator(&mut self, indicator: String) {
-        self.prompt_indicator = indicator;
-    }
-
+    // NOTE: This method currently assumes all characters are 1 column wide. This should be
+    // ok for now since we're just displaying the current directory and date/time, which are
+    // unlikely to contain characters that use 2 columns.
     pub fn print_prompt(&mut self) -> String {
-        // This is not really a left and right prompt at all. It's faking it.
-        // It's really just a string that fits within the width of your screen.
-
         let mut prompt_str = String::new();
 
-        self.terminal_size = get_terminal_size();
-        let working_dir = match get_working_dir() {
-            Ok(cwd) => cwd,
-            _ => "no path".to_string(),
-        };
+        let cols = usize::from(get_terminal_size().0);
+        let mut left_prompt = get_working_dir().unwrap_or_else(|_| String::from("no path"));
+        left_prompt.truncate(cols);
+        let left_prompt_width = left_prompt.chars().count();
+        prompt_str.push_str(&left_prompt);
 
-        self.set_left_prompt(working_dir);
-        self.left_prompt_width = self.left_prompt.chars().count();
-        prompt_str.push_str(&self.left_prompt);
+        let right_prompt = get_now();
+        let right_prompt_width = right_prompt.chars().count();
 
-        // Figure out the right side padding width
-        let padding_width: usize = if usize::from(self.terminal_size.0) < self.left_prompt_width {
-            0
-        } else {
-            usize::from(self.terminal_size.0) - self.left_prompt_width
-        };
+        // Only print right prompt if there's enough room for it.
+        if left_prompt_width + usize::from(self.min_center_spacing) + right_prompt_width <= cols {
+            let right_prompt = format!("{:>width$}", get_now(), width = cols - left_prompt_width);
+            prompt_str.push_str(&right_prompt);
+        } else if left_prompt_width < cols {
+            let right_padding = format!("{:>width$}", "", width = cols - left_prompt_width);
+            prompt_str.push_str(&right_padding);
+        }
 
-        let right = format!("{:>width$}", get_now(), width = padding_width);
-        self.set_right_prompt(right);
-        self.right_print_width = self.right_prompt.chars().count();
-
-        // At some point check the buffer length, assuming an actual left & right propmt functionality
-        self.max_length = -1;
-
-        prompt_str.push_str(&self.right_prompt);
         prompt_str.push_str(&self.prompt_indicator);
 
         prompt_str
