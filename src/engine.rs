@@ -291,7 +291,14 @@ impl Engine {
                         // before adding a new one.
                         self.history.pop_back();
                     }
-                    self.history.push_front(self.line_buffer.to_owned());
+                    // Don't append if the preceding value is identical
+                    if self
+                        .history
+                        .front()
+                        .map_or(true, |entry| entry.as_str() != self.line_buffer.deref())
+                    {
+                        self.history.push_front(self.line_buffer.to_owned());
+                    }
                     self.has_history = true;
                     // reset the history cursor - we want to start at the bottom of the
                     // history again.
