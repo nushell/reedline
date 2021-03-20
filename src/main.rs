@@ -47,6 +47,10 @@ fn main() -> Result<()> {
                         clear_screen(&mut stdout)?;
                         continue;
                     }
+                    if buffer.trim() == "history" {
+                        engine.print_history(&mut stdout)?;
+                        continue;
+                    }
                     print_message(&mut stdout, &format!("Our buffer: {}", buffer))?;
                 }
                 Signal::CtrlC => {
