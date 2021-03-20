@@ -129,7 +129,7 @@ fn queue_prompt_indicator(stdout: &mut Stdout) -> Result<()> {
     Ok(())
 }
 
-fn buffer_paint(stdout: &mut Stdout, engine: &Engine, prompt_offset: u16) -> Result<()> {
+fn buffer_paint(stdout: &mut Stdout, engine: &Engine, prompt_offset: (u16, u16)) -> Result<()> {
     let new_index = engine.get_insertion_point();
 
     // Repaint logic:
@@ -141,11 +141,11 @@ fn buffer_paint(stdout: &mut Stdout, engine: &Engine, prompt_offset: u16) -> Res
     // Finally, reset the cursor to the saved position
 
     // stdout.queue(Print(&engine.line_buffer[..new_index]))?;
-    stdout.queue(MoveToColumn(prompt_offset))?;
+    stdout.queue(MoveTo(prompt_offset.0, prompt_offset.1))?;
     stdout.queue(Print(&engine.line_buffer[0..new_index]))?;
     stdout.queue(SavePosition)?;
     stdout.queue(Print(&engine.line_buffer[new_index..]))?;
-    stdout.queue(Clear(ClearType::UntilNewLine))?;
+    stdout.queue(Clear(ClearType::FromCursorDown))?;
     stdout.queue(RestorePosition)?;
 
     stdout.flush()?;
@@ -252,7 +252,7 @@ impl Engine {
 
         for command in commands {
             match command {
-                EditCommand::MoveToStart => self.line_buffer.set_insertion_point(0),
+                EditCommand::MoveToStart => self.line_buffer.move_to_start(),
                 EditCommand::MoveToEnd => {
                     self.line_buffer.move_to_end();
                 }
@@ -461,18 +461,21 @@ impl Engine {
     }
 
     pub fn set_insertion_point(&mut self, pos: usize) {
-        self.line_buffer.set_insertion_point(pos)
+        let mut insertion_point = self.line_buffer.get_insertion_point();
+        insertion_point.offset = pos;
+
+        self.line_buffer.set_insertion_point(insertion_point)
     }
 
     pub fn get_insertion_point(&self) -> usize {
-        self.line_buffer.get_insertion_point()
+        self.line_buffer.get_insertion_point().offset
     }
 
     pub fn set_buffer(&mut self, buffer: String) {
         self.line_buffer.set_buffer(buffer)
     }
 
-    pub fn move_to_end(&mut self) -> usize {
+    pub fn move_to_end(&mut self) {
         self.line_buffer.move_to_end()
     }
 
@@ -499,12 +502,28 @@ impl Engine {
         Ok(())
     }
 
+    pub fn maybe_wrap(&self, terminal_width: u16, prompt_col_offset: u16, c: char) -> bool {
+        use unicode_width::UnicodeWidthStr;
+
+        let mut test_buffer = (*self.line_buffer).to_string();
+        test_buffer.push(c);
+
+        let display_width =
+            UnicodeWidthStr::width(test_buffer.as_str()) + prompt_col_offset as usize;
+
+        display_width >= terminal_width as usize
+    }
+
     pub fn read_line(&mut self, stdout: &mut Stdout) -> Result<Signal> {
         queue_prompt(stdout)?;
 
+        let mut terminal_size = terminal::size()?;
+
         // set where the input begins
-        let (mut prompt_offset, _) = position()?;
-        prompt_offset += 1;
+        let mut prompt_offset = position()?;
+
+        // our line count
+        let mut line_count = 1;
 
         // Redraw if Ctrl-L was used
         if self.history_search.is_some() {
@@ -617,10 +636,31 @@ impl Engine {
                 Event::Key(KeyEvent { code, modifiers: _ }) => {
                     match code {
                         KeyCode::Char(c) => {
-                            self.run_edit_commands(&[
-                                EditCommand::InsertChar(c),
-                                EditCommand::MoveRight,
-                            ]);
+                            if self.maybe_wrap(terminal_size.0, prompt_offset.0, c) {
+                                let (original_column, original_row) = position()?;
+                                self.run_edit_commands(&[
+                                    EditCommand::InsertChar(c),
+                                    EditCommand::MoveRight,
+                                ]);
+                                buffer_paint(stdout, &self, prompt_offset)?;
+
+                                let (new_column, _) = position()?;
+
+                                if new_column < original_column
+                                    && original_row == (terminal_size.1 - 1)
+                                    && line_count == 1
+                                {
+                                    // We have wrapped off bottom of screen, and prompt is on new row
+                                    // We need to update the prompt location in this case
+                                    prompt_offset.1 -= 1;
+                                    line_count += 1;
+                                }
+                            } else {
+                                self.run_edit_commands(&[
+                                    EditCommand::InsertChar(c),
+                                    EditCommand::MoveRight,
+                                ]);
+                            }
                         }
                         KeyCode::Backspace => {
                             self.run_edit_commands(&[EditCommand::Backspace]);
@@ -676,7 +716,7 @@ impl Engine {
                     print_message(stdout, &format!("{:?}", event))?;
                 }
                 Event::Resize(width, height) => {
-                    print_message(stdout, &format!("width: {} and height: {}", width, height))?;
+                    terminal_size = (width, height);
                 }
             }
             if self.history_search.is_some() {
