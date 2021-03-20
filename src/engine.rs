@@ -63,6 +63,7 @@ pub enum Signal {
     CtrlL, // FormFeed/Clear current screen
 }
 
+/// First jumps to new line then prints message with following newline.
 pub fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
     stdout
         .queue(Print("\n"))?
@@ -75,6 +76,18 @@ pub fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
     Ok(())
 }
 
+/// Same behavior as std::println!
+pub fn print_line(stdout: &mut Stdout, msg: &str) -> Result<()> {
+    stdout
+        .queue(Print(msg))?
+        .queue(Print("\n"))?
+        .queue(MoveToColumn(1))?;
+    stdout.flush()?;
+
+    Ok(())
+}
+
+/// Goes to the beginning of the next line
 pub fn print_crlf(stdout: &mut Stdout) -> Result<()> {
     stdout.queue(Print("\n"))?.queue(MoveToColumn(1))?;
     stdout.flush()?;
@@ -469,6 +482,14 @@ impl Engine {
         R: std::ops::RangeBounds<usize>,
     {
         self.line_buffer.clear_range(range)
+    }
+
+    pub fn print_history(&self, stdout: &mut Stdout) -> Result<()> {
+        print_crlf(stdout)?;
+        for (i, entry) in self.history.iter().rev().enumerate() {
+            print_line(stdout, &format!("{}\t{}", i + 1, entry))?;
+        }
+        Ok(())
     }
 
     pub fn read_line(&mut self, stdout: &mut Stdout) -> Result<Signal> {
