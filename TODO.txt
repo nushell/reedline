@@ -19,7 +19,8 @@ X Fixed the scroll-off-the-bottom issue
   X Line buffer
   X Backspace/delete
   X Navigation
-  * Unicode w/ joiner support for removal
+  X Unicode w/ joiner support for removal
+  * Multiline editing
 X History
 X Up/down history
 X Home/end
@@ -28,6 +29,7 @@ X Ctrl-A, Ctrl-K, etc
 X More Ctrl-??? key combinations
 X "engine"?
 X Command pattern
+* Split off lib
 * Validation
 * Autocompletion
 * Multiline support
