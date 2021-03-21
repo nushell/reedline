@@ -1,6 +1,9 @@
-use crate::history_search::{BasicSearch, BasicSearchCommand};
 use crate::line_buffer::LineBuffer;
 use crate::Prompt;
+use crate::{
+    history_search::{BasicSearch, BasicSearchCommand},
+    line_buffer::InsertionPoint,
+};
 use crossterm::{
     cursor::{position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
     event::{read, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -10,7 +13,6 @@ use crossterm::{
 };
 use std::collections::VecDeque;
 use std::io::{Stdout, Write};
-use std::ops::Deref;
 
 const HISTORY_SIZE: usize = 100;
 static PROMPT_INDICATOR: &str = "〉";
@@ -130,7 +132,7 @@ fn queue_prompt_indicator(stdout: &mut Stdout) -> Result<()> {
 }
 
 fn buffer_paint(stdout: &mut Stdout, engine: &Engine, prompt_offset: (u16, u16)) -> Result<()> {
-    let new_index = engine.get_insertion_point();
+    let new_index = engine.insertion_point().offset;
 
     // Repaint logic:
     //
@@ -141,10 +143,11 @@ fn buffer_paint(stdout: &mut Stdout, engine: &Engine, prompt_offset: (u16, u16))
     // Finally, reset the cursor to the saved position
 
     // stdout.queue(Print(&engine.line_buffer[..new_index]))?;
+    let insertion_line = engine.insertion_line();
     stdout.queue(MoveTo(prompt_offset.0, prompt_offset.1))?;
-    stdout.queue(Print(&engine.line_buffer[0..new_index]))?;
+    stdout.queue(Print(&insertion_line[0..new_index]))?;
     stdout.queue(SavePosition)?;
-    stdout.queue(Print(&engine.line_buffer[new_index..]))?;
+    stdout.queue(Print(&insertion_line[new_index..]))?;
     stdout.queue(Clear(ClearType::FromCursorDown))?;
     stdout.queue(RestorePosition)?;
 
@@ -265,20 +268,22 @@ impl Engine {
                     self.line_buffer.move_word_right();
                 }
                 EditCommand::InsertChar(c) => {
-                    let insertion_point = self.line_buffer.get_insertion_point();
-                    self.line_buffer.insert_char(insertion_point, *c)
+                    let insertion_point = self.line_buffer.insertion_point();
+                    self.line_buffer.insert_char(insertion_point, *c);
                 }
                 EditCommand::Backspace => {
                     let left_index = self.line_buffer.grapheme_left_index();
-                    if left_index < self.get_insertion_point() {
-                        self.clear_range(left_index..self.get_insertion_point());
+                    let insertion_offset = self.insertion_point().offset;
+                    if left_index < insertion_offset {
+                        self.clear_range(left_index..insertion_offset);
                         self.set_insertion_point(left_index);
                     }
                 }
                 EditCommand::Delete => {
                     let right_index = self.line_buffer.grapheme_right_index();
-                    if right_index > self.get_insertion_point() {
-                        self.clear_range(self.get_insertion_point()..right_index);
+                    let insertion_offset = self.insertion_point().offset;
+                    if right_index > insertion_offset {
+                        self.clear_range(insertion_offset..right_index);
                     }
                 }
                 EditCommand::Clear => {
@@ -295,9 +300,9 @@ impl Engine {
                     if self
                         .history
                         .front()
-                        .map_or(true, |entry| entry.as_str() != self.line_buffer.deref())
+                        .map_or(true, |entry| entry.as_str() != self.insertion_line())
                     {
-                        self.history.push_front(self.line_buffer.to_owned());
+                        self.history.push_front(self.insertion_line().to_string());
                     }
                     self.has_history = true;
                     // reset the history cursor - we want to start at the bottom of the
@@ -335,61 +340,73 @@ impl Engine {
                     self.move_to_end();
                 }
                 EditCommand::SearchHistory => {
-                    self.history_search =
-                        Some(BasicSearch::new(String::from(self.line_buffer.deref())));
+                    self.history_search = Some(BasicSearch::new(self.insertion_line().to_string()));
                 }
                 EditCommand::CutFromStart => {
-                    if self.get_insertion_point() > 0 {
-                        self.cut_buffer
-                            .replace_range(.., &self.line_buffer[..self.get_insertion_point()]);
+                    let insertion_offset = self.insertion_point().offset;
+                    if insertion_offset > 0 {
+                        self.cut_buffer.replace_range(
+                            ..,
+                            &self.line_buffer.insertion_line()[..insertion_offset],
+                        );
                         self.clear_to_insertion_point();
                     }
                 }
                 EditCommand::CutToEnd => {
-                    let cut_slice = &self.line_buffer[self.get_insertion_point()..];
+                    let cut_slice =
+                        &self.line_buffer.insertion_line()[self.insertion_point().offset..];
                     if !cut_slice.is_empty() {
                         self.cut_buffer.replace_range(.., cut_slice);
                         self.clear_to_end();
                     }
                 }
                 EditCommand::CutWordLeft => {
+                    let insertion_offset = self.insertion_point().offset;
                     let left_index = self.line_buffer.word_left_index();
-                    if left_index < self.get_insertion_point() {
-                        let cut_range = left_index..self.get_insertion_point();
-                        self.cut_buffer
-                            .replace_range(.., &self.line_buffer[cut_range.clone()]);
+                    if left_index < insertion_offset {
+                        let cut_range = left_index..insertion_offset;
+                        self.cut_buffer.replace_range(
+                            ..,
+                            &self.line_buffer.insertion_line()[cut_range.clone()],
+                        );
                         self.clear_range(cut_range);
                         self.set_insertion_point(left_index);
                     }
                 }
                 EditCommand::CutWordRight => {
+                    let insertion_offset = self.insertion_point().offset;
                     let right_index = self.line_buffer.word_right_index();
-                    if right_index > self.get_insertion_point() {
-                        let cut_range = self.get_insertion_point()..right_index;
-                        self.cut_buffer
-                            .replace_range(.., &self.line_buffer[cut_range.clone()]);
+                    if right_index > insertion_offset {
+                        let cut_range = insertion_offset..right_index;
+                        self.cut_buffer.replace_range(
+                            ..,
+                            &self.line_buffer.insertion_line()[cut_range.clone()],
+                        );
                         self.clear_range(cut_range);
                     }
                 }
                 EditCommand::InsertCutBuffer => {
+                    let insertion_offset = self.insertion_point().offset;
                     self.line_buffer
-                        .insert_str(self.get_insertion_point(), &self.cut_buffer);
-                    self.set_insertion_point(self.get_insertion_point() + self.cut_buffer.len());
+                        .insert_str(insertion_offset, &self.cut_buffer);
+                    self.set_insertion_point(insertion_offset + self.cut_buffer.len());
                 }
                 EditCommand::UppercaseWord => {
+                    let insertion_offset = self.insertion_point().offset;
                     let right_index = self.line_buffer.word_right_index();
-                    if right_index > self.get_insertion_point() {
-                        let change_range = self.get_insertion_point()..right_index;
-                        let uppercased = self.line_buffer[change_range.clone()].to_uppercase();
+                    if right_index > insertion_offset {
+                        let change_range = insertion_offset..right_index;
+                        let uppercased = self.insertion_line()[change_range.clone()].to_uppercase();
                         self.line_buffer.replace_range(change_range, &uppercased);
                         self.line_buffer.move_word_right();
                     }
                 }
                 EditCommand::LowercaseWord => {
+                    let insertion_offset = self.insertion_point().offset;
                     let right_index = self.line_buffer.word_right_index();
-                    if right_index > self.get_insertion_point() {
-                        let change_range = self.get_insertion_point()..right_index;
-                        let lowercased = self.line_buffer[change_range.clone()].to_lowercase();
+                    if right_index > insertion_offset {
+                        let change_range = insertion_offset..right_index;
+                        let lowercased = self.insertion_line()[change_range.clone()].to_lowercase();
                         self.line_buffer.replace_range(change_range, &lowercased);
                         self.line_buffer.move_word_right();
                     }
@@ -399,30 +416,32 @@ impl Engine {
                         self.line_buffer.move_word_right();
                         self.line_buffer.move_word_left();
                     }
+                    let insertion_offset = self.insertion_point().offset;
                     let right_index = self.line_buffer.grapheme_right_index();
-                    if right_index > self.get_insertion_point() {
-                        let change_range = self.get_insertion_point()..right_index;
-                        let uppercased = self.line_buffer[change_range.clone()].to_uppercase();
+                    if right_index > insertion_offset {
+                        let change_range = insertion_offset..right_index;
+                        let uppercased = self.insertion_line()[change_range.clone()].to_uppercase();
                         self.line_buffer.replace_range(change_range, &uppercased);
                         self.line_buffer.move_word_right();
                     }
                 }
                 EditCommand::SwapWords => {
-                    let old_insertion_point = self.get_insertion_point();
+                    let old_insertion_point = self.insertion_point().offset;
                     self.line_buffer.move_word_right();
-                    let word_2_end = self.get_insertion_point();
+                    let word_2_end = self.insertion_point().offset;
                     self.line_buffer.move_word_left();
-                    let word_2_start = self.get_insertion_point();
+                    let word_2_start = self.insertion_point().offset;
                     self.line_buffer.move_word_left();
-                    let word_1_start = self.get_insertion_point();
+                    let word_1_start = self.insertion_point().offset;
                     let word_1_end = self.line_buffer.word_right_index();
 
                     if word_1_start < word_1_end
                         && word_1_end < word_2_start
                         && word_2_start < word_2_end
                     {
-                        let word_1 = self.line_buffer[word_1_start..word_1_end].to_string();
-                        let word_2 = self.line_buffer[word_2_start..word_2_end].to_string();
+                        let insertion_line = self.insertion_line();
+                        let word_1 = insertion_line[word_1_start..word_1_end].to_string();
+                        let word_2 = insertion_line[word_2_start..word_2_end].to_string();
                         self.line_buffer
                             .replace_range(word_2_start..word_2_end, &word_1);
                         self.line_buffer
@@ -433,42 +452,47 @@ impl Engine {
                     }
                 }
                 EditCommand::SwapGraphemes => {
-                    if self.get_insertion_point() == 0 {
+                    let insertion_offset = self.insertion_point().offset;
+
+                    if insertion_offset == 0 {
                         self.line_buffer.move_right()
-                    } else if self.get_insertion_point() == self.line_buffer.len() {
+                    } else if insertion_offset == self.line_buffer.insertion_line().len() {
                         self.line_buffer.move_left()
                     }
-                    let insertion_point = self.get_insertion_point();
                     let grapheme_1_start = self.line_buffer.grapheme_left_index();
                     let grapheme_2_end = self.line_buffer.grapheme_right_index();
 
-                    if grapheme_1_start < insertion_point && grapheme_2_end > insertion_point {
+                    if grapheme_1_start < insertion_offset && grapheme_2_end > insertion_offset {
                         let grapheme_1 =
-                            self.line_buffer[grapheme_1_start..insertion_point].to_string();
+                            self.insertion_line()[grapheme_1_start..insertion_offset].to_string();
                         let grapheme_2 =
-                            self.line_buffer[insertion_point..grapheme_2_end].to_string();
+                            self.insertion_line()[insertion_offset..grapheme_2_end].to_string();
                         self.line_buffer
-                            .replace_range(insertion_point..grapheme_2_end, &grapheme_1);
+                            .replace_range(insertion_offset..grapheme_2_end, &grapheme_1);
                         self.line_buffer
-                            .replace_range(grapheme_1_start..insertion_point, &grapheme_2);
+                            .replace_range(grapheme_1_start..insertion_offset, &grapheme_2);
                         self.set_insertion_point(grapheme_2_end);
                     } else {
-                        self.set_insertion_point(insertion_point);
+                        self.set_insertion_point(insertion_offset);
                     }
                 }
             }
         }
     }
 
+    pub fn insertion_point(&self) -> InsertionPoint {
+        self.line_buffer.insertion_point()
+    }
+
     pub fn set_insertion_point(&mut self, pos: usize) {
-        let mut insertion_point = self.line_buffer.get_insertion_point();
+        let mut insertion_point = self.line_buffer.insertion_point();
         insertion_point.offset = pos;
 
         self.line_buffer.set_insertion_point(insertion_point)
     }
 
-    pub fn get_insertion_point(&self) -> usize {
-        self.line_buffer.get_insertion_point().offset
+    pub fn insertion_line(&self) -> &str {
+        self.line_buffer.insertion_line()
     }
 
     pub fn set_buffer(&mut self, buffer: String) {
@@ -502,14 +526,13 @@ impl Engine {
         Ok(())
     }
 
-    pub fn maybe_wrap(&self, terminal_width: u16, prompt_col_offset: u16, c: char) -> bool {
+    pub fn maybe_wrap(&self, terminal_width: u16, start_offset: u16, c: char) -> bool {
         use unicode_width::UnicodeWidthStr;
 
-        let mut test_buffer = (*self.line_buffer).to_string();
+        let mut test_buffer = self.insertion_line().to_string();
         test_buffer.push(c);
 
-        let display_width =
-            UnicodeWidthStr::width(test_buffer.as_str()) + prompt_col_offset as usize;
+        let display_width = UnicodeWidthStr::width(test_buffer.as_str()) + start_offset as usize;
 
         display_width >= terminal_width as usize
     }
@@ -636,7 +659,12 @@ impl Engine {
                 Event::Key(KeyEvent { code, modifiers: _ }) => {
                     match code {
                         KeyCode::Char(c) => {
-                            if self.maybe_wrap(terminal_size.0, prompt_offset.0, c) {
+                            let line_start = if self.insertion_point().line == 0 {
+                                prompt_offset.0
+                            } else {
+                                0
+                            };
+                            if self.maybe_wrap(terminal_size.0, line_start, c) {
                                 let (original_column, original_row) = position()?;
                                 self.run_edit_commands(&[
                                     EditCommand::InsertChar(c),
@@ -684,7 +712,7 @@ impl Engine {
                                 self.history_search = None;
                             }
                             None => {
-                                let buffer = self.line_buffer.to_owned();
+                                let buffer = self.insertion_line().to_string();
 
                                 self.run_edit_commands(&[
                                     EditCommand::AppendToHistory,

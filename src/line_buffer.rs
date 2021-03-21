@@ -1,4 +1,3 @@
-use std::ops::Deref;
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy)]
@@ -14,36 +13,36 @@ impl InsertionPoint {
 }
 
 pub struct LineBuffer {
-    buffer: Vec<String>,
+    lines: Vec<String>,
     insertion_point: InsertionPoint,
-}
-
-impl Deref for LineBuffer {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        &self.buffer[self.insertion_point.line]
-    }
 }
 
 impl LineBuffer {
     pub fn new() -> LineBuffer {
         LineBuffer {
-            buffer: vec![String::new()],
+            lines: vec![String::new()],
             insertion_point: InsertionPoint::new(),
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lines.is_empty() || self.lines.len() == 1 && self.lines[0].is_empty()
+    }
+
+    pub fn insertion_point(&self) -> InsertionPoint {
+        self.insertion_point
     }
 
     pub fn set_insertion_point(&mut self, pos: InsertionPoint) {
         self.insertion_point = pos;
     }
 
-    pub fn get_insertion_point(&self) -> InsertionPoint {
-        self.insertion_point
+    pub fn insertion_line(&self) -> &str {
+        &self.lines[self.insertion_point.line]
     }
 
     pub fn set_buffer(&mut self, buffer: String) {
-        self.buffer = vec![buffer];
+        self.lines = vec![buffer];
         self.insertion_point = InsertionPoint::new();
     }
 
@@ -52,22 +51,22 @@ impl LineBuffer {
     }
 
     pub fn move_to_end(&mut self) {
-        if let Some(end) = self.buffer.last() {
+        if let Some(end) = self.lines.last() {
             let length_of_last_line = end.len();
             self.insertion_point.offset = length_of_last_line;
         }
     }
 
     pub fn grapheme_right_index(&self) -> usize {
-        self.buffer[self.insertion_point.line][self.insertion_point.offset..]
+        self.lines[self.insertion_point.line][self.insertion_point.offset..]
             .grapheme_indices(true)
             .nth(1)
             .map(|(i, _)| self.insertion_point.offset + i)
-            .unwrap_or_else(|| self.buffer[self.insertion_point.line].len())
+            .unwrap_or_else(|| self.lines[self.insertion_point.line].len())
     }
 
     pub fn grapheme_left_index(&self) -> usize {
-        self.buffer[self.insertion_point.line][..self.insertion_point.offset]
+        self.lines[self.insertion_point.line][..self.insertion_point.offset]
             .grapheme_indices(true)
             .last()
             .map(|(i, _)| i)
@@ -75,15 +74,15 @@ impl LineBuffer {
     }
 
     pub fn word_right_index(&self) -> usize {
-        self.buffer[self.insertion_point.line][self.insertion_point.offset..]
+        self.lines[self.insertion_point.line][self.insertion_point.offset..]
             .split_word_bound_indices()
             .find(|(_, word)| !is_word_boundary(word))
             .map(|(i, word)| self.insertion_point.offset + i + word.len())
-            .unwrap_or_else(|| self.buffer[self.insertion_point.line].len())
+            .unwrap_or_else(|| self.lines[self.insertion_point.line].len())
     }
 
     pub fn word_left_index(&self) -> usize {
-        self.buffer[self.insertion_point.line][..self.insertion_point.offset]
+        self.lines[self.insertion_point.line][..self.insertion_point.offset]
             .split_word_bound_indices()
             .filter(|(_, word)| !is_word_boundary(word))
             .last()
@@ -109,21 +108,21 @@ impl LineBuffer {
     }
 
     pub fn insert_char(&mut self, pos: InsertionPoint, c: char) {
-        self.buffer[pos.line].insert(pos.offset, c)
+        self.lines[pos.line].insert(pos.offset, c)
     }
 
     pub fn insert_str(&mut self, idx: usize, string: &str) {
-        self.buffer[self.insertion_point.line].insert_str(idx, string)
+        self.lines[self.insertion_point.line].insert_str(idx, string)
     }
 
     pub fn clear(&mut self) {
-        self.buffer.clear();
-        self.buffer.push(String::new());
+        self.lines.clear();
+        self.lines.push(String::new());
         self.insertion_point = InsertionPoint::new();
     }
 
     pub fn clear_to_end(&mut self) {
-        self.buffer[self.insertion_point.line].truncate(self.insertion_point.offset);
+        self.lines[self.insertion_point.line].truncate(self.insertion_point.offset);
     }
 
     pub fn clear_to_insertion_point(&mut self) {
@@ -142,11 +141,11 @@ impl LineBuffer {
     where
         R: std::ops::RangeBounds<usize>,
     {
-        self.buffer[self.insertion_point.line].replace_range(range, replace_with);
+        self.lines[self.insertion_point.line].replace_range(range, replace_with);
     }
 
     pub fn on_whitespace(&self) -> bool {
-        self.buffer[self.insertion_point.line][self.insertion_point.offset..]
+        self.lines[self.insertion_point.line][self.insertion_point.offset..]
             .chars()
             .next()
             .map(|c| c.is_whitespace())
