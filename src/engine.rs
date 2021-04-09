@@ -48,7 +48,7 @@ pub enum EditCommand {
     SwapGraphemes,
 }
 
-pub struct Engine {
+pub struct Reedline {
     line_buffer: LineBuffer,
 
     // Cut buffer
@@ -71,21 +71,21 @@ pub enum Signal {
     CtrlL, // FormFeed/Clear current screen
 }
 
-impl Default for Engine {
+impl Default for Reedline {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Engine {
-    pub fn new() -> Engine {
+impl Reedline {
+    pub fn new() -> Reedline {
         let history = VecDeque::with_capacity(HISTORY_SIZE);
         let history_cursor = -1i64;
         let has_history = false;
         let cut_buffer = String::new();
         let stdout = stdout();
 
-        Engine {
+        Reedline {
             line_buffer: LineBuffer::new(),
             cut_buffer,
             history,
@@ -96,39 +96,104 @@ impl Engine {
         }
     }
 
-    pub fn run_edit_commands(&mut self, commands: &[EditCommand]) {
+    pub fn print_history(&mut self) -> Result<()> {
+        self.print_crlf()?;
+
+        let history: Vec<_> = self.history.iter().rev().cloned().enumerate().collect();
+
+        for (i, entry) in history {
+            self.print_line(&format!("{}\t{}", i + 1, entry))?;
+        }
+        Ok(())
+    }
+
+    pub fn read_line(&mut self) -> Result<Signal> {
+        terminal::enable_raw_mode()?;
+
+        let result = self.read_line_helper();
+
+        terminal::disable_raw_mode()?;
+
+        result
+    }
+
+    /// First jumps to new line then prints message with following newline.
+    pub fn print_message(&mut self, msg: &str) -> Result<()> {
+        self.stdout
+            .queue(Print("\n"))?
+            .queue(MoveToColumn(1))?
+            .queue(Print(msg))?
+            .queue(Print("\n"))?
+            .queue(MoveToColumn(1))?;
+        self.stdout.flush()?;
+
+        Ok(())
+    }
+
+    /// Same behavior as std::println!
+    pub fn print_line(&mut self, msg: &str) -> Result<()> {
+        self.stdout
+            .queue(Print(msg))?
+            .queue(Print("\n"))?
+            .queue(MoveToColumn(1))?;
+        self.stdout.flush()?;
+
+        Ok(())
+    }
+
+    /// Goes to the beginning of the next line
+    pub fn print_crlf(&mut self) -> Result<()> {
+        self.stdout.queue(Print("\n"))?.queue(MoveToColumn(1))?;
+        self.stdout.flush()?;
+
+        Ok(())
+    }
+
+    pub fn print_events(&mut self) -> Result<()> {
+        terminal::enable_raw_mode()?;
+        let result = self.print_events_helper();
+        terminal::disable_raw_mode()?;
+
+        result
+    }
+
+    fn run_history_commands(&mut self, commands: &[EditCommand]) {
+        for command in commands {
+            match command {
+                EditCommand::InsertChar(c) => {
+                    let search = self
+                        .history_search
+                        .as_mut()
+                        .expect("couldn't get history_search as mutable"); // We checked it is some
+                    search.step(BasicSearchCommand::InsertChar(*c), &self.history);
+                }
+                EditCommand::Backspace => {
+                    let search = self
+                        .history_search
+                        .as_mut()
+                        .expect("couldn't get history_search as mutable"); // We checked it is some
+                    search.step(BasicSearchCommand::Backspace, &self.history);
+                }
+                EditCommand::SearchHistory => {
+                    let search = self
+                        .history_search
+                        .as_mut()
+                        .expect("couldn't get history_search as mutable"); // We checked it is some
+                    search.step(BasicSearchCommand::Next, &self.history);
+                }
+                EditCommand::MoveRight => {
+                    // Ignore move right, it is currently emited with InsertChar
+                }
+                // Leave history search otherwise
+                _ => self.history_search = None,
+            }
+        }
+    }
+
+    fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         // Handle command for history inputs
         if self.history_search.is_some() {
-            for command in commands {
-                match command {
-                    EditCommand::InsertChar(c) => {
-                        let search = self
-                            .history_search
-                            .as_mut()
-                            .expect("couldn't get history_search as mutable"); // We checked it is some
-                        search.step(BasicSearchCommand::InsertChar(*c), &self.history);
-                    }
-                    EditCommand::Backspace => {
-                        let search = self
-                            .history_search
-                            .as_mut()
-                            .expect("couldn't get history_search as mutable"); // We checked it is some
-                        search.step(BasicSearchCommand::Backspace, &self.history);
-                    }
-                    EditCommand::SearchHistory => {
-                        let search = self
-                            .history_search
-                            .as_mut()
-                            .expect("couldn't get history_search as mutable"); // We checked it is some
-                        search.step(BasicSearchCommand::Next, &self.history);
-                    }
-                    EditCommand::MoveRight => {
-                        // Ignore move right, it is currently emited with InsertChar
-                    }
-                    // Leave history search otherwise
-                    _ => self.history_search = None,
-                }
-            }
+            self.run_history_commands(commands);
             return;
         }
 
@@ -359,56 +424,45 @@ impl Engine {
         }
     }
 
-    pub fn insertion_point(&self) -> InsertionPoint {
+    fn insertion_point(&self) -> InsertionPoint {
         self.line_buffer.insertion_point()
     }
 
-    pub fn set_insertion_point(&mut self, pos: usize) {
+    fn set_insertion_point(&mut self, pos: usize) {
         let mut insertion_point = self.line_buffer.insertion_point();
         insertion_point.offset = pos;
 
         self.line_buffer.set_insertion_point(insertion_point)
     }
 
-    pub fn insertion_line(&self) -> &str {
+    fn insertion_line(&self) -> &str {
         self.line_buffer.insertion_line()
     }
 
-    pub fn set_buffer(&mut self, buffer: String) {
+    fn set_buffer(&mut self, buffer: String) {
         self.line_buffer.set_buffer(buffer)
     }
 
-    pub fn move_to_end(&mut self) {
+    fn move_to_end(&mut self) {
         self.line_buffer.move_to_end()
     }
 
-    pub fn clear_to_end(&mut self) {
+    fn clear_to_end(&mut self) {
         self.line_buffer.clear_to_end()
     }
 
-    pub fn clear_to_insertion_point(&mut self) {
+    fn clear_to_insertion_point(&mut self) {
         self.line_buffer.clear_to_insertion_point()
     }
 
-    pub fn clear_range<R>(&mut self, range: R)
+    fn clear_range<R>(&mut self, range: R)
     where
         R: std::ops::RangeBounds<usize>,
     {
         self.line_buffer.clear_range(range)
     }
 
-    pub fn print_history(&mut self) -> Result<()> {
-        self.print_crlf()?;
-
-        let history: Vec<_> = self.history.iter().rev().cloned().enumerate().collect();
-
-        for (i, entry) in history {
-            self.print_line(&format!("{}\t{}", i + 1, entry))?;
-        }
-        Ok(())
-    }
-
-    pub fn maybe_wrap(&self, terminal_width: u16, start_offset: u16, c: char) -> bool {
+    fn maybe_wrap(&self, terminal_width: u16, start_offset: u16, c: char) -> bool {
         use unicode_width::UnicodeWidthStr;
 
         let mut test_buffer = self.insertion_line().to_string();
@@ -419,54 +473,12 @@ impl Engine {
         display_width >= terminal_width as usize
     }
 
-    pub fn read_line(&mut self) -> Result<Signal> {
-        terminal::enable_raw_mode()?;
-
-        let result = self.read_line_helper();
-
-        terminal::disable_raw_mode()?;
-
-        result
-    }
-
-    /// First jumps to new line then prints message with following newline.
-    pub fn print_message(&mut self, msg: &str) -> Result<()> {
-        self.stdout
-            .queue(Print("\n"))?
-            .queue(MoveToColumn(1))?
-            .queue(Print(msg))?
-            .queue(Print("\n"))?
-            .queue(MoveToColumn(1))?;
-        self.stdout.flush()?;
-
-        Ok(())
-    }
-
-    /// Same behavior as std::println!
-    pub fn print_line(&mut self, msg: &str) -> Result<()> {
-        self.stdout
-            .queue(Print(msg))?
-            .queue(Print("\n"))?
-            .queue(MoveToColumn(1))?;
-        self.stdout.flush()?;
-
-        Ok(())
-    }
-
-    /// Goes to the beginning of the next line
-    pub fn print_crlf(&mut self) -> Result<()> {
-        self.stdout.queue(Print("\n"))?.queue(MoveToColumn(1))?;
-        self.stdout.flush()?;
-
-        Ok(())
-    }
-
     // this fn is totally ripped off from crossterm's examples
     // it's really a diagnostic routine to see if crossterm is
     // even seeing the events. if you press a key and no events
     // are printed, it's a good chance your terminal is eating
     // those events.
-    pub fn print_events(&mut self) -> Result<()> {
+    fn print_events_helper(&mut self) -> Result<()> {
         loop {
             // Wait up to 5s for another event
             if poll(Duration::from_millis(5_000))? {

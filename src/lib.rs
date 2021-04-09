@@ -1,5 +1,5 @@
 mod engine;
-pub use engine::{Engine, Signal};
+pub use engine::{Reedline, Signal};
 
 mod history_search;
 
