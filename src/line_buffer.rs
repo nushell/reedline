@@ -12,9 +12,21 @@ impl InsertionPoint {
     }
 }
 
+impl Default for InsertionPoint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct LineBuffer {
     lines: Vec<String>,
     insertion_point: InsertionPoint,
+}
+
+impl Default for LineBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LineBuffer {
@@ -161,6 +173,6 @@ fn is_word_boundary(s: &str) -> bool {
 #[test]
 fn emoji_test() {
     //TODO
-    "😊";
-    "🤦🏼‍♂️";
+    // "😊";
+    // "🤦🏼‍♂️";
 }
