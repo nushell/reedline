@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+#[derive(Clone)]
 pub struct BasicSearch {
     pub result: Option<(usize, usize)>,
     pub search_string: String,

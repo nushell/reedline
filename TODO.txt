@@ -32,6 +32,7 @@ X Command pattern
 * Split off lib
 * Validation
 * Autocompletion
+* Make Prompt trait and make prompt configurable
 * Multiline support
 * Syntax highlighting
 * Under status

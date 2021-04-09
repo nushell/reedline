@@ -5,6 +5,12 @@ authors = ["Jonathan Turner <jonathan.d.turner@gmail.com>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+doctest = false
+
+[[bin]]
+name = "reedline"
+path = "src/main.rs"
 
 [dependencies]
 crossterm = "0.19.0"

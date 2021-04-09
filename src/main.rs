@@ -1,40 +1,22 @@
-use crossterm::{
-    terminal::{self},
-    Result,
-};
-use std::io::stdout;
-mod line_buffer;
+use crossterm::Result;
 
-mod engine;
-use engine::{clear_screen, print_crlf, print_message, Engine, Signal};
-
-mod diagnostic;
-use diagnostic::print_events;
-
-mod history_search;
-
-mod prompt;
-use prompt::Prompt;
+use reedline::{Engine, Signal};
 
 fn main() -> Result<()> {
-    let mut stdout = stdout();
+    let mut engine = Engine::new();
 
-    terminal::enable_raw_mode()?;
     // quick command like parameter handling
     let args: Vec<String> = std::env::args().collect();
     // if -k is passed, show the events
     if args.len() > 1 && args[1] == "-k" {
-        print_message(&mut stdout, "Ready to print events:")?;
-        print_events(&mut stdout)?;
-        terminal::disable_raw_mode()?;
+        engine.print_message("Ready to print events:")?;
+        engine.print_events()?;
         println!();
         return Ok(());
     };
 
-    let mut engine = Engine::new();
-
     loop {
-        if let Ok(sig) = engine.read_line(&mut stdout) {
+        if let Ok(sig) = engine.read_line() {
             match sig {
                 Signal::CtrlD => {
                     break;
@@ -44,27 +26,25 @@ fn main() -> Result<()> {
                         break;
                     }
                     if buffer.trim() == "clear" {
-                        clear_screen(&mut stdout)?;
+                        engine.clear_screen()?;
                         continue;
                     }
                     if buffer.trim() == "history" {
-                        engine.print_history(&mut stdout)?;
+                        engine.print_history()?;
                         continue;
                     }
-                    print_message(&mut stdout, &format!("Our buffer: {}", buffer))?;
+                    engine.print_message(&format!("Our buffer: {}", buffer))?;
                 }
                 Signal::CtrlC => {
                     // We need to move one line down to start with the prompt on a new line
-                    print_crlf(&mut stdout)?;
+                    engine.print_crlf()?;
                 }
                 Signal::CtrlL => {
-                    clear_screen(&mut stdout)?;
+                    engine.clear_screen()?;
                 }
             }
         }
     }
-
-    terminal::disable_raw_mode()?;
 
     println!();
     Ok(())
