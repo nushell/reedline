@@ -1,5 +1,5 @@
-use crate::line_buffer::LineBuffer;
 use crate::Prompt;
+use crate::{history::History, line_buffer::LineBuffer};
 use crate::{
     history_search::{BasicSearch, BasicSearchCommand},
     line_buffer::InsertionPoint,
@@ -11,13 +11,11 @@ use crossterm::{
     terminal::{self, Clear, ClearType},
     QueueableCommand, Result,
 };
-use std::collections::VecDeque;
 use std::{
     io::{stdout, Stdout, Write},
     time::Duration,
 };
 
-const HISTORY_SIZE: usize = 100;
 static PROMPT_INDICATOR: &str = "〉";
 const PROMPT_COLOR: Color = Color::Blue;
 
@@ -55,9 +53,7 @@ pub struct Reedline {
     cut_buffer: String,
 
     // History
-    history: VecDeque<String>,
-    history_cursor: i64,
-    has_history: bool,
+    history: History,
     history_search: Option<BasicSearch>, // This could be have more features in the future (fzf, configurable?)
 
     // Stdout
@@ -79,9 +75,7 @@ impl Default for Reedline {
 
 impl Reedline {
     pub fn new() -> Reedline {
-        let history = VecDeque::with_capacity(HISTORY_SIZE);
-        let history_cursor = -1i64;
-        let has_history = false;
+        let history = History::default();
         let cut_buffer = String::new();
         let stdout = stdout();
 
@@ -89,8 +83,6 @@ impl Reedline {
             line_buffer: LineBuffer::new(),
             cut_buffer,
             history,
-            history_cursor,
-            has_history,
             history_search: None,
             stdout,
         }
@@ -235,52 +227,21 @@ impl Reedline {
                     self.set_insertion_point(0);
                 }
                 EditCommand::AppendToHistory => {
-                    if self.history.len() + 1 == HISTORY_SIZE {
-                        // History is "full", so we delete the oldest entry first,
-                        // before adding a new one.
-                        self.history.pop_back();
-                    }
-                    // Don't append if the preceding value is identical
-                    if self
-                        .history
-                        .front()
-                        .map_or(true, |entry| entry.as_str() != self.insertion_line())
-                    {
-                        self.history.push_front(self.insertion_line().to_string());
-                    }
-                    self.has_history = true;
+                    self.history.append(self.insertion_line().to_string());
                     // reset the history cursor - we want to start at the bottom of the
                     // history again.
-                    self.history_cursor = -1;
+                    self.history.reset_cursor();
                 }
                 EditCommand::PreviousHistory => {
-                    if self.has_history && self.history_cursor < (self.history.len() as i64 - 1) {
-                        self.history_cursor += 1;
-                        let history_entry = self
-                            .history
-                            .get(self.history_cursor as usize)
-                            .unwrap()
-                            .clone();
-                        self.set_buffer(history_entry.clone());
+                    if let Some(history_entry) = self.history.go_back() {
+                        let new_buffer = history_entry.to_string();
+                        self.set_buffer(new_buffer);
                         self.move_to_end();
                     }
                 }
                 EditCommand::NextHistory => {
-                    if self.history_cursor >= 0 {
-                        self.history_cursor -= 1;
-                    }
-                    let new_buffer = if self.history_cursor < 0 {
-                        String::new()
-                    } else {
-                        // We can be sure that we always have an entry on hand, that's why
-                        // unwrap is fine.
-                        self.history
-                            .get(self.history_cursor as usize)
-                            .unwrap()
-                            .clone()
-                    };
-
-                    self.set_buffer(new_buffer.clone());
+                    let new_buffer = self.history.go_forward().unwrap_or_default().to_string();
+                    self.set_buffer(new_buffer);
                     self.move_to_end();
                 }
                 EditCommand::SearchHistory => {
