@@ -1,6 +1,8 @@
 mod engine;
 pub use engine::{Reedline, Signal};
 
+mod history;
+
 mod history_search;
 
 mod prompt;

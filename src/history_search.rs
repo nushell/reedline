@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use crate::history::History;
 
 #[derive(Clone)]
 pub struct BasicSearch {
@@ -20,7 +20,7 @@ impl BasicSearch {
         }
     }
 
-    pub fn step(&mut self, command: BasicSearchCommand, history: &VecDeque<String>) {
+    pub fn step(&mut self, command: BasicSearchCommand, history: &History) {
         let mut start = self
             .result
             .map(|(history_index, _)| history_index)
