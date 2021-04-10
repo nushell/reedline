@@ -89,8 +89,6 @@ impl Reedline {
     }
 
     pub fn print_history(&mut self) -> Result<()> {
-        self.print_crlf()?;
-
         let history: Vec<_> = self.history.iter().rev().cloned().enumerate().collect();
 
         for (i, entry) in history {
@@ -107,19 +105,6 @@ impl Reedline {
         terminal::disable_raw_mode()?;
 
         result
-    }
-
-    /// First jumps to new line then prints message with following newline.
-    pub fn print_message(&mut self, msg: &str) -> Result<()> {
-        self.stdout
-            .queue(Print("\n"))?
-            .queue(MoveToColumn(1))?
-            .queue(Print(msg))?
-            .queue(Print("\n"))?
-            .queue(MoveToColumn(1))?;
-        self.stdout.flush()?;
-
-        Ok(())
     }
 
     /// Same behavior as std::println!
@@ -447,7 +432,7 @@ impl Reedline {
                 let event = read()?;
 
                 // just reuse the print_message fn to show events
-                self.print_message(&format!("Event::{:?}", event))?;
+                self.print_line(&format!("Event::{:?}", event))?;
 
                 // hit the esc key to git out
                 if event == Event::Key(KeyCode::Esc.into()) {
@@ -455,7 +440,7 @@ impl Reedline {
                 }
             } else {
                 // Timeout expired, no event for 5s
-                self.print_message("Waiting for you to type...")?;
+                self.print_line("Waiting for you to type...")?;
             }
         }
 
@@ -749,6 +734,7 @@ impl Reedline {
                                     EditCommand::AppendToHistory,
                                     EditCommand::Clear,
                                 ]);
+                                self.print_crlf()?;
 
                                 return Ok(Signal::Success(buffer));
                             }
@@ -772,7 +758,7 @@ impl Reedline {
                     };
                 }
                 Event::Mouse(event) => {
-                    self.print_message(&format!("{:?}", event))?;
+                    self.print_line(&format!("{:?}", event))?;
                 }
                 Event::Resize(width, height) => {
                     terminal_size = (width, height);

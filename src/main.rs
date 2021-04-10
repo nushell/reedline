@@ -9,7 +9,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     // if -k is passed, show the events
     if args.len() > 1 && args[1] == "-k" {
-        line_editor.print_message("Ready to print events:")?;
+        line_editor.print_line("Ready to print events:")?;
         line_editor.print_events()?;
         println!();
         return Ok(());
@@ -33,7 +33,7 @@ fn main() -> Result<()> {
                     line_editor.print_history()?;
                     continue;
                 }
-                line_editor.print_message(&format!("Our buffer: {}", buffer))?;
+                line_editor.print_line(&format!("Our buffer: {}", buffer))?;
             }
             Signal::CtrlC => {
                 // We need to move one line down to start with the prompt on a new line
