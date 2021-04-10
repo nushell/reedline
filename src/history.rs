@@ -93,3 +93,36 @@ impl Index<usize> for History {
         &self.entries[index]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::History;
+    #[test]
+    fn navigates_safely() {
+        let mut hist = History::default();
+        hist.append("test".to_string());
+        assert_eq!(hist.go_forward(), None); // On empty line nothing to move forward to
+        assert_eq!(hist.go_back().unwrap(), "test"); // Back to the entry
+        assert_eq!(hist.go_back(), None); // Nothing to move back to
+        assert_eq!(hist.go_forward(), None); // Forward out of history to editing line
+    }
+    #[test]
+    fn appends_only_unique() {
+        let mut hist = History::default();
+        hist.append("unique_old".to_string());
+        hist.append("test".to_string());
+        hist.append("test".to_string());
+        hist.append("unique".to_string());
+        assert_eq!(hist.entries().len(), 3);
+        assert_eq!(hist.go_back().unwrap(), "unique");
+        assert_eq!(hist.go_back().unwrap(), "test");
+        assert_eq!(hist.go_back().unwrap(), "unique_old");
+        assert_eq!(hist.go_back(), None);
+    }
+    #[test]
+    fn appends_no_empties() {
+        let mut hist = History::default();
+        hist.append("".to_string());
+        assert_eq!(hist.entries().len(), 0);
+    }
+}
