@@ -16,6 +16,8 @@ use std::{
     time::Duration,
 };
 
+use clipboard::{ClipboardContext, ClipboardProvider};
+
 static PROMPT_INDICATOR: &str = "〉";
 const PROMPT_COLOR: Color = Color::Blue;
 
@@ -239,6 +241,8 @@ impl Reedline {
                             ..,
                             &self.line_buffer.insertion_line()[..insertion_offset],
                         );
+                        let mut clip: ClipboardContext = ClipboardProvider::new().unwrap();
+                        clip.set_contents(self.cut_buffer.to_owned()).unwrap();
                         self.clear_to_insertion_point();
                     }
                 }
@@ -247,6 +251,8 @@ impl Reedline {
                         &self.line_buffer.insertion_line()[self.insertion_point().offset..];
                     if !cut_slice.is_empty() {
                         self.cut_buffer.replace_range(.., cut_slice);
+                        let mut clip: ClipboardContext = ClipboardProvider::new().unwrap();
+                        clip.set_contents(self.cut_buffer.to_owned()).unwrap();
                         self.clear_to_end();
                     }
                 }
@@ -259,6 +265,8 @@ impl Reedline {
                             ..,
                             &self.line_buffer.insertion_line()[cut_range.clone()],
                         );
+                        let mut clip: ClipboardContext = ClipboardProvider::new().unwrap();
+                        clip.set_contents(self.cut_buffer.to_owned()).unwrap();
                         self.clear_range(cut_range);
                         self.set_insertion_point(left_index);
                     }
@@ -272,6 +280,8 @@ impl Reedline {
                             ..,
                             &self.line_buffer.insertion_line()[cut_range.clone()],
                         );
+                        let mut clip: ClipboardContext = ClipboardProvider::new().unwrap();
+                        clip.set_contents(self.cut_buffer.to_owned()).unwrap();
                         self.clear_range(cut_range);
                     }
                 }
