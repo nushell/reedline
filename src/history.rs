@@ -1,7 +1,7 @@
-use std::{collections::VecDeque, ops::Index, path::PathBuf};
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufWriter, Write};
 use std::io::BufReader;
+use std::io::{BufRead, BufWriter, Write};
+use std::{collections::VecDeque, path::PathBuf};
 
 /// Default size of the `History`
 pub const HISTORY_SIZE: usize = 100;
@@ -187,23 +187,31 @@ impl History {
     }
 
     /// Yields iterator to immutable references from the underlying data structure.
-    /// Order: Oldest entries first. But implements `DoubleEndedIterator` for cheap reversal
-    pub fn iter(&self) -> std::collections::vec_deque::Iter<'_, String> {
+    /// Order: Oldest entries first.
+    pub fn iter_chronologic(&self) -> std::collections::vec_deque::Iter<'_, String> {
         self.entries.iter()
+    }
+
+    /// Yields iterator to immutable references from the underlying data structure.
+    /// Order: Most recent entries first.
+    pub fn iter_recent(&self) -> std::iter::Rev<std::collections::vec_deque::Iter<'_, String>> {
+        self.entries.iter().rev()
+    }
+
+    /// Helper to get items on zero based index starting at the most recent.
+    pub fn get_nth_newest(&self, idx: usize) -> Option<&String> {
+        self.entries.get(self.entries().len() - idx - 1)
+    }
+
+    /// Helper to get items on zero based index starting at the oldest entry.
+    pub fn get_nth_oldest(&self, idx: usize) -> Option<&String> {
+        self.entries.get(idx)
     }
 }
 
 impl Drop for History {
     fn drop(&mut self) {
         let _ = self.flush();
-    }
-}
-
-impl Index<usize> for History {
-    type Output = String;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.entries[index]
     }
 }
 
