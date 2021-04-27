@@ -188,13 +188,17 @@ impl History {
 
     /// Yields iterator to immutable references from the underlying data structure.
     /// Order: Oldest entries first.
-    pub fn iter_chronologic(&self) -> std::collections::vec_deque::Iter<'_, String> {
+    pub fn iter_chronologic(
+        &self,
+    ) -> impl Iterator<Item = &String> + DoubleEndedIterator + ExactSizeIterator + '_ {
         self.entries.iter()
     }
 
     /// Yields iterator to immutable references from the underlying data structure.
     /// Order: Most recent entries first.
-    pub fn iter_recent(&self) -> std::iter::Rev<std::collections::vec_deque::Iter<'_, String>> {
+    pub fn iter_recent(
+        &self,
+    ) -> impl Iterator<Item = &String> + DoubleEndedIterator + ExactSizeIterator + '_ {
         self.entries.iter().rev()
     }
 
