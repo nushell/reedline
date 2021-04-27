@@ -88,8 +88,14 @@ impl Reedline {
         }
     }
 
+    pub fn with_history(history: History) -> Self {
+        let mut rl = Reedline::new();
+        rl.history = history;
+        rl
+    }
+
     pub fn print_history(&mut self) -> Result<()> {
-        let history: Vec<_> = self.history.iter().rev().cloned().enumerate().collect();
+        let history: Vec<_> = self.history.iter().cloned().enumerate().collect();
 
         for (i, entry) in history {
             self.print_line(&format!("{}\t{}", i + 1, entry))?;
@@ -532,7 +538,8 @@ impl Reedline {
 
         match search.result {
             Some((history_index, offset)) => {
-                let history_result = &self.history[history_index];
+                let history_result =
+                    &self.history[self.history.entries().len() - history_index - 1];
 
                 self.stdout.queue(Print(&history_result[..offset]))?;
                 self.stdout.queue(SavePosition)?;
@@ -722,8 +729,11 @@ impl Reedline {
                             Some(search) => {
                                 self.queue_prompt_indicator()?;
                                 if let Some((history_index, _)) = search.result {
-                                    self.line_buffer
-                                        .set_buffer(self.history[history_index].clone());
+                                    self.line_buffer.set_buffer(
+                                        self.history
+                                            [self.history.entries().len() - history_index - 1]
+                                            .clone(),
+                                    );
                                 }
                                 self.history_search = None;
                             }

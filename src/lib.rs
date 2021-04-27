@@ -2,6 +2,7 @@ mod engine;
 pub use engine::{Reedline, Signal};
 
 mod history;
+pub use history::{History, HISTORY_SIZE};
 
 mod history_search;
 

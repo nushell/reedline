@@ -43,6 +43,7 @@ impl BasicSearch {
         } else {
             self.result = history
                 .iter()
+                .rev()
                 .enumerate()
                 .skip(start)
                 .filter_map(|(history_index, s)| {
