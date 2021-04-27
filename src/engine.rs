@@ -1,4 +1,7 @@
-use crate::Prompt;
+use crate::{
+    clip_buffer::{get_default_clipboard, Clipboard},
+    Prompt,
+};
 use crate::{history::History, line_buffer::LineBuffer};
 use crate::{
     history_search::{BasicSearch, BasicSearchCommand},
@@ -15,8 +18,6 @@ use std::{
     io::{stdout, Stdout, Write},
     time::Duration,
 };
-
-use clipboard::{ClipboardContext, ClipboardProvider};
 
 static PROMPT_INDICATOR: &str = "〉";
 const PROMPT_COLOR: Color = Color::Blue;
@@ -52,7 +53,7 @@ pub struct Reedline {
     line_buffer: LineBuffer,
 
     // Cut buffer
-    cut_buffer: String,
+    cut_buffer: Box<dyn Clipboard>,
 
     // History
     history: History,
@@ -78,7 +79,7 @@ impl Default for Reedline {
 impl Reedline {
     pub fn new() -> Reedline {
         let history = History::default();
-        let cut_buffer = String::new();
+        let cut_buffer = Box::new(get_default_clipboard());
         let stdout = stdout();
 
         Reedline {
@@ -237,12 +238,8 @@ impl Reedline {
                 EditCommand::CutFromStart => {
                     let insertion_offset = self.insertion_point().offset;
                     if insertion_offset > 0 {
-                        self.cut_buffer.replace_range(
-                            ..,
-                            &self.line_buffer.insertion_line()[..insertion_offset],
-                        );
-                        let mut clip: ClipboardContext = ClipboardProvider::new().unwrap();
-                        clip.set_contents(self.cut_buffer.to_owned()).unwrap();
+                        self.cut_buffer
+                            .set(&self.line_buffer.insertion_line()[..insertion_offset]);
                         self.clear_to_insertion_point();
                     }
                 }
@@ -250,9 +247,7 @@ impl Reedline {
                     let cut_slice =
                         &self.line_buffer.insertion_line()[self.insertion_point().offset..];
                     if !cut_slice.is_empty() {
-                        self.cut_buffer.replace_range(.., cut_slice);
-                        let mut clip: ClipboardContext = ClipboardProvider::new().unwrap();
-                        clip.set_contents(self.cut_buffer.to_owned()).unwrap();
+                        self.cut_buffer.set(cut_slice);
                         self.clear_to_end();
                     }
                 }
@@ -261,12 +256,8 @@ impl Reedline {
                     let left_index = self.line_buffer.word_left_index();
                     if left_index < insertion_offset {
                         let cut_range = left_index..insertion_offset;
-                        self.cut_buffer.replace_range(
-                            ..,
-                            &self.line_buffer.insertion_line()[cut_range.clone()],
-                        );
-                        let mut clip: ClipboardContext = ClipboardProvider::new().unwrap();
-                        clip.set_contents(self.cut_buffer.to_owned()).unwrap();
+                        self.cut_buffer
+                            .set(&self.line_buffer.insertion_line()[cut_range.clone()]);
                         self.clear_range(cut_range);
                         self.set_insertion_point(left_index);
                     }
@@ -276,20 +267,16 @@ impl Reedline {
                     let right_index = self.line_buffer.word_right_index();
                     if right_index > insertion_offset {
                         let cut_range = insertion_offset..right_index;
-                        self.cut_buffer.replace_range(
-                            ..,
-                            &self.line_buffer.insertion_line()[cut_range.clone()],
-                        );
-                        let mut clip: ClipboardContext = ClipboardProvider::new().unwrap();
-                        clip.set_contents(self.cut_buffer.to_owned()).unwrap();
+                        self.cut_buffer
+                            .set(&self.line_buffer.insertion_line()[cut_range.clone()]);
                         self.clear_range(cut_range);
                     }
                 }
                 EditCommand::InsertCutBuffer => {
                     let insertion_offset = self.insertion_point().offset;
-                    self.line_buffer
-                        .insert_str(insertion_offset, &self.cut_buffer);
-                    self.set_insertion_point(insertion_offset + self.cut_buffer.len());
+                    let cut_buffer = self.cut_buffer.get();
+                    self.line_buffer.insert_str(insertion_offset, &cut_buffer);
+                    self.set_insertion_point(insertion_offset + cut_buffer.len());
                 }
                 EditCommand::UppercaseWord => {
                     let insertion_offset = self.insertion_point().offset;
