@@ -1,3 +1,5 @@
+mod clip_buffer;
+
 mod engine;
 pub use engine::{Reedline, Signal};
 
