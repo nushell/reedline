@@ -42,7 +42,7 @@ impl BasicSearch {
             self.result = None;
         } else {
             self.result = history
-                .iter()
+                .iter_recent()
                 .enumerate()
                 .skip(start)
                 .filter_map(|(history_index, s)| {

@@ -1,9 +1,16 @@
 use crossterm::Result;
 
-use reedline::{Reedline, Signal};
+use reedline::{History, Reedline, Signal, HISTORY_SIZE};
 
 fn main() -> Result<()> {
-    let mut line_editor = Reedline::new();
+    let mut line_editor = match std::env::var("REEDLINE_HISTFILE") {
+        Ok(histfile) if !histfile.is_empty() => {
+            // TODO: Allow change of capacity and don't unwrap
+            let history = History::with_file(HISTORY_SIZE, histfile.into()).unwrap();
+            Reedline::with_history(history)
+        }
+        _ => Reedline::new(),
+    };
 
     // quick command like parameter handling
     let args: Vec<String> = std::env::args().collect();
