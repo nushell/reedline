@@ -1,5 +1,24 @@
 Line editor
 
+TODO:
+
+* Documention
+  * README
+  * Documenting of all public functions and structs and traits
+* Support resize
+  * We should detect the resize event, then start back at the beginning of where
+    the prompt began, redraw the prompt and then redraw the user input up to now
+* Syntax highlighting
+* Multiline support
+* Validation
+* UX improvements
+  * Autocompletion
+  * Under status
+  * Hinting
+* vi mode
+
+DONE:
+
 X Get crossterm working
 X Line input
 X Printing a prompt
@@ -11,7 +30,7 @@ X Left/right and inserting text
 X Backspace from middle of buffer
 X Deleting from middle of buffer
 X Fixed the scroll-off-the-bottom issue
-* Editing engine
+X Editing engine
   X Create the engine
   X Initial commands for the engine
   X Output commands from engine to the line editor
@@ -20,7 +39,6 @@ X Fixed the scroll-off-the-bottom issue
   X Backspace/delete
   X Navigation
   X Unicode w/ joiner support for removal
-  * Multiline editing
 X History
 X Up/down history
 X Home/end
@@ -30,15 +48,9 @@ X More Ctrl-??? key combinations
 X "engine"?
 X Command pattern
 X Split off lib
-* Split Engine into its isolated parts
-  * History
-  * Maybe cut buffer. Question: do we want to connect to the OS's clipboard?
-* Validation
-* Autocompletion
-* Make Prompt trait and make prompt configurable
-* Multiline support
-* Syntax highlighting
-* Under status
-* Hinting
-* vi mode
-* Async/parallel prompt
+X Split Engine into its isolated parts
+  X History
+  X Maybe cut buffer. Question: do we want to connect to the OS's clipboard?
+  X History is persisted to disk.
+X Make Prompt trait and make prompt configurable
+

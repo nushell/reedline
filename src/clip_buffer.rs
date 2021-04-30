@@ -77,7 +77,6 @@ mod system_clipboard {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{get_default_clipboard, Clipboard};
@@ -93,7 +92,6 @@ mod tests {
         assert_eq!(cb.get(), "test".to_owned());
         cb.clear();
         assert!(cb.is_empty());
-
 
         // Restore!
 

@@ -1,6 +1,6 @@
 use crossterm::Result;
 
-use reedline::{History, Reedline, Signal, HISTORY_SIZE};
+use reedline::{DefaultPrompt, History, Reedline, Signal, DEFAULT_PROMPT_INDICATOR, HISTORY_SIZE};
 
 fn main() -> Result<()> {
     let mut line_editor = match std::env::var("REEDLINE_HISTFILE") {
@@ -11,6 +11,8 @@ fn main() -> Result<()> {
         }
         _ => Reedline::new(),
     };
+
+    let prompt = DefaultPrompt::new(DEFAULT_PROMPT_INDICATOR, 1);
 
     // quick command like parameter handling
     let args: Vec<String> = std::env::args().collect();
@@ -23,7 +25,7 @@ fn main() -> Result<()> {
     };
 
     loop {
-        let sig = line_editor.read_line()?;
+        let sig = line_editor.read_line(&prompt)?;
         match sig {
             Signal::CtrlD => {
                 break;
