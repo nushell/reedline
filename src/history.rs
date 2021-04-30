@@ -93,6 +93,7 @@ impl History {
                 };
                 self.len_on_disk = from_file.len();
                 self.entries = from_file;
+                self.cursor = self.entries.len();
                 Ok(())
             }
         }

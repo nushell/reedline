@@ -1,8 +1,24 @@
 use chrono::Local;
-use crossterm::terminal;
 use std::env;
 
-pub struct Prompt {
+pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
+
+pub trait Prompt {
+    fn render_prompt(&self, screen_width: usize) -> String;
+    fn render_prompt_indicator(&self) -> String;
+}
+
+impl Prompt for DefaultPrompt {
+    fn render_prompt(&self, screen_width: usize) -> String {
+        DefaultPrompt::render_prompt(self, screen_width)
+    }
+
+    fn render_prompt_indicator(&self) -> String {
+        self.prompt_indicator.clone()
+    }
+}
+
+pub struct DefaultPrompt {
     // The prompt symbol like >
     prompt_indicator: String,
     // The minimum number of line buffer character space between the
@@ -12,10 +28,10 @@ pub struct Prompt {
     min_center_spacing: u16,
 }
 
-impl Prompt {
-    pub fn new<P: AsRef<str>>(prompt_indicator: P, min_center_spacing: u16) -> Prompt {
-        Prompt {
-            prompt_indicator: prompt_indicator.as_ref().into(),
+impl DefaultPrompt {
+    pub fn new(prompt_indicator: &str, min_center_spacing: u16) -> DefaultPrompt {
+        DefaultPrompt {
+            prompt_indicator: prompt_indicator.to_string(),
             min_center_spacing,
         }
     }
@@ -23,10 +39,9 @@ impl Prompt {
     // NOTE: This method currently assumes all characters are 1 column wide. This should be
     // ok for now since we're just displaying the current directory and date/time, which are
     // unlikely to contain characters that use 2 columns.
-    pub fn print_prompt(&mut self) -> String {
+    pub fn render_prompt(&self, cols: usize) -> String {
         let mut prompt_str = String::new();
 
-        let cols = usize::from(get_terminal_size().0);
         let mut left_prompt = get_working_dir().unwrap_or_else(|_| String::from("no path"));
         left_prompt.truncate(cols);
         let left_prompt_width = left_prompt.chars().count();
@@ -47,14 +62,6 @@ impl Prompt {
         prompt_str.push_str(&self.prompt_indicator);
 
         prompt_str
-    }
-}
-
-fn get_terminal_size() -> (u16, u16) {
-    let ts = terminal::size();
-    match ts {
-        Ok((columns, rows)) => (columns, rows),
-        Err(_) => (0, 0),
     }
 }
 

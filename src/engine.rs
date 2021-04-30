@@ -19,7 +19,6 @@ use std::{
     time::Duration,
 };
 
-static PROMPT_INDICATOR: &str = "〉";
 const PROMPT_COLOR: Color = Color::Blue;
 
 pub enum EditCommand {
@@ -111,10 +110,10 @@ impl Reedline {
         Ok(())
     }
 
-    pub fn read_line(&mut self) -> Result<Signal> {
+    pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
         terminal::enable_raw_mode()?;
 
-        let result = self.read_line_helper();
+        let result = self.read_line_helper(prompt);
 
         terminal::disable_raw_mode()?;
 
@@ -465,25 +464,23 @@ impl Reedline {
         Ok(())
     }
 
-    fn queue_prompt(&mut self) -> Result<()> {
-        let mut prompt = Prompt::new(PROMPT_INDICATOR, 1);
-
+    fn queue_prompt(&mut self, prompt: &dyn Prompt, screen_width: usize) -> Result<()> {
         // print our prompt
         self.stdout
             .queue(MoveToColumn(0))?
             .queue(SetForegroundColor(PROMPT_COLOR))?
-            .queue(Print(prompt.print_prompt()))?
+            .queue(Print(prompt.render_prompt(screen_width)))?
             .queue(ResetColor)?;
 
         Ok(())
     }
 
-    fn queue_prompt_indicator(&mut self) -> Result<()> {
+    fn queue_prompt_indicator(&mut self, prompt: &dyn Prompt) -> Result<()> {
         // print our prompt
         self.stdout
             .queue(MoveToColumn(0))?
             .queue(SetForegroundColor(PROMPT_COLOR))?
-            .queue(Print(PROMPT_INDICATOR))?
+            .queue(Print(prompt.render_prompt_indicator()))?
             .queue(ResetColor)?;
 
         Ok(())
@@ -559,12 +556,12 @@ impl Reedline {
         Ok(())
     }
 
-    fn read_line_helper(&mut self) -> Result<Signal> {
+    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
         terminal::enable_raw_mode()?;
 
-        self.queue_prompt()?;
-
         let mut terminal_size = terminal::size()?;
+
+        self.queue_prompt(prompt, terminal_size.0 as usize)?;
 
         // set where the input begins
         let mut prompt_offset = position()?;
@@ -728,7 +725,7 @@ impl Reedline {
                         }
                         KeyCode::Enter => match self.history_search.clone() {
                             Some(search) => {
-                                self.queue_prompt_indicator()?;
+                                self.queue_prompt_indicator(prompt)?;
                                 if let Some((history_index, _)) = search.result {
                                     self.line_buffer.set_buffer(
                                         self.history.get_nth_newest(history_index).unwrap().clone(),
