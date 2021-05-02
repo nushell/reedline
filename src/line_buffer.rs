@@ -1,5 +1,6 @@
 use unicode_segmentation::UnicodeSegmentation;
 
+/// Cursor coordinates relative to the Unicode representation of [`LineBuffer`]
 #[derive(Clone, Copy)]
 pub struct InsertionPoint {
     pub line: usize,
@@ -18,6 +19,7 @@ impl Default for InsertionPoint {
     }
 }
 
+/// In memory representation of the entered line(s) to facilitate cursor based editing.
 pub struct LineBuffer {
     lines: Vec<String>,
     insertion_point: InsertionPoint,

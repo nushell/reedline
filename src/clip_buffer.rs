@@ -1,4 +1,4 @@
-/// Defines an interface to interact with a Clipboard for cut and paste. 
+/// Defines an interface to interact with a Clipboard for cut and paste.
 ///
 /// Mutable reference requirements are stricter than always necessary, but the currently used system clipboard API demands them for exclusive access.
 pub trait Clipboard {
@@ -47,9 +47,9 @@ pub use system_clipboard::SystemClipboard;
 
 #[cfg(feature = "system_clipboard")]
 /// Helper to get a clipboard based on the `system_clipboard` feature flag:
-/// 
+///
 /// Enabled -> [`SystemClipboard`], which talks to the system
-/// 
+///
 /// Disabled -> [`LocalClipboard`], which supports cutting and pasting limited to the [`crate::Reedline`] instance
 pub fn get_default_clipboard() -> SystemClipboard {
     SystemClipboard::new()
@@ -57,9 +57,9 @@ pub fn get_default_clipboard() -> SystemClipboard {
 
 #[cfg(not(feature = "system_clipboard"))]
 /// Helper to get a clipboard based on the `system_clipboard` feature flag:
-/// 
+///
 /// Enabled -> [`SystemClipboard`], which talks to the system
-/// 
+///
 /// Disabled -> [`LocalClipboard`], which supports cutting and pasting limited to the [`crate::Reedline`] instance
 pub fn get_default_clipboard() -> LocalClipboard {
     LocalClipboard::new()

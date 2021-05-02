@@ -48,6 +48,24 @@ pub enum EditCommand {
     SwapGraphemes,
 }
 
+/// Line editor engine
+///
+/// ## Example usage
+/// ```no_run
+/// use reedline::{Reedline, Signal, DefaultPrompt};
+/// let mut line_editor = Reedline::new();
+/// let prompt = DefaultPrompt::default();
+///
+/// let out = line_editor.read_line(&prompt).unwrap();
+/// match out {
+///    Signal::Success(content) => {
+///        // process content
+///    }
+///    _ => {
+///        eprintln!("Entry aborted!");
+///    }
+/// }
+/// ```
 pub struct Reedline {
     line_buffer: LineBuffer,
 
@@ -62,10 +80,15 @@ pub struct Reedline {
     stdout: Stdout,
 }
 
+/// Valid ways how [`Reedline::read_line()`] can return
 pub enum Signal {
+    /// Entry succeeded with the provided content
     Success(String),
+    /// Entry was aborted with `Ctrl+C`
     CtrlC, // Interrupt current editing
+    /// Abort with `Ctrl+D` signalling `EOF` or abort of a whole interactive session
     CtrlD, // End terminal session
+    /// Signal to clear the current screen. Buffer content remains untouched.
     CtrlL, // FormFeed/Clear current screen
 }
 
@@ -76,6 +99,7 @@ impl Default for Reedline {
 }
 
 impl Reedline {
+    /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     pub fn new() -> Reedline {
         let history = History::default();
         let cut_buffer = Box::new(get_default_clipboard());
@@ -90,12 +114,15 @@ impl Reedline {
         }
     }
 
+    /// Create a new [`Reedline`] with a provided [`History`].
+    /// Useful to link to a history file via [`History::with_file()`].
     pub fn with_history(history: History) -> Self {
         let mut rl = Reedline::new();
         rl.history = history;
         rl
     }
 
+    /// Output the complete [`History`] chronologically with numbering to the terminal
     pub fn print_history(&mut self) -> Result<()> {
         let history: Vec<_> = self
             .history
@@ -110,6 +137,11 @@ impl Reedline {
         Ok(())
     }
 
+    /// Wait for input and provide the user with a specified [`Prompt`].
+    ///
+    /// Returns a [`crossterm::Result`] in which the `Err` type is [`crossterm::ErrorKind`]
+    /// to distinguish I/O errors and the `Ok` variant wraps a [`Signal`] which
+    /// handles user inputs.
     pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
         terminal::enable_raw_mode()?;
 
@@ -120,7 +152,7 @@ impl Reedline {
         result
     }
 
-    /// Same behavior as std::println!
+    /// Writes `msg` to the terminal with a following carriage return and newline
     pub fn print_line(&mut self, msg: &str) -> Result<()> {
         self.stdout
             .queue(Print(msg))?
@@ -132,6 +164,8 @@ impl Reedline {
     }
 
     /// Goes to the beginning of the next line
+    ///
+    /// Also works in raw mode
     pub fn print_crlf(&mut self) -> Result<()> {
         self.stdout.queue(Print("\n"))?.queue(MoveToColumn(1))?;
         self.stdout.flush()?;
@@ -139,6 +173,7 @@ impl Reedline {
         Ok(())
     }
 
+    /// **For debugging purposes only:** Track the terminal events observed by [`Reedline`] and print them.
     pub fn print_events(&mut self) -> Result<()> {
         terminal::enable_raw_mode()?;
         let result = self.print_events_helper();
@@ -147,6 +182,9 @@ impl Reedline {
         result
     }
 
+    /// Dispatches the applicable [`EditCommand`] actions for editing the history search string.
+    ///
+    /// Only modifies internal state, does not perform regular output!
     fn run_history_commands(&mut self, commands: &[EditCommand]) {
         for command in commands {
             match command {
@@ -180,6 +218,7 @@ impl Reedline {
         }
     }
 
+    /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
     fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         // Handle command for history inputs
         if self.history_search.is_some() {
@@ -377,10 +416,12 @@ impl Reedline {
         }
     }
 
+    /// Get the cursor position as understood by the underlying [`LineBuffer`]
     fn insertion_point(&self) -> InsertionPoint {
         self.line_buffer.insertion_point()
     }
 
+    /// Set the cursor position as understood by the underlying [`LineBuffer`] for the current line
     fn set_insertion_point(&mut self, pos: usize) {
         let mut insertion_point = self.line_buffer.insertion_point();
         insertion_point.offset = pos;
@@ -388,6 +429,7 @@ impl Reedline {
         self.line_buffer.set_insertion_point(insertion_point)
     }
 
+    /// Get the current line of a multi-line edit [`LineBuffer`]
     fn insertion_line(&self) -> &str {
         self.line_buffer.insertion_line()
     }
@@ -454,6 +496,8 @@ impl Reedline {
         Ok(())
     }
 
+    /// Clear the screen by printing enough whitespace to start the prompt or
+    /// other output back at the first line of the terminal.
     pub fn clear_screen(&mut self) -> Result<()> {
         let (_, num_lines) = terminal::size()?;
         for _ in 0..2 * num_lines {
@@ -464,6 +508,9 @@ impl Reedline {
         Ok(())
     }
 
+    /// Display the complete prompt including status indicators (e.g. pwd, time)
+    ///
+    /// Used at the beginning of each [`Reedline::read_line()`] call.
     fn queue_prompt(&mut self, prompt: &dyn Prompt, screen_width: usize) -> Result<()> {
         // print our prompt
         self.stdout
@@ -475,6 +522,10 @@ impl Reedline {
         Ok(())
     }
 
+    /// Display only the prompt components preceding the buffer
+    ///
+    /// Used to restore the prompt indicator after a search etc. that affected
+    /// the prompt
     fn queue_prompt_indicator(&mut self, prompt: &dyn Prompt) -> Result<()> {
         // print our prompt
         self.stdout
@@ -486,6 +537,9 @@ impl Reedline {
         Ok(())
     }
 
+    /// Repaint logic for the normal input prompt buffer
+    ///
+    /// Requires coordinates where the imput buffer begins after the prompt.
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
         let new_index = self.insertion_point().offset;
 
@@ -512,6 +566,10 @@ impl Reedline {
         Ok(())
     }
 
+    /// Repaint logic for the history reverse search
+    ///
+    /// Overwrites the prompt indicator and highlights the search string
+    /// separately from the result bufer.
     fn history_search_paint(&mut self) -> Result<()> {
         // Assuming we are currently searching
         let search = self
@@ -556,6 +614,8 @@ impl Reedline {
         Ok(())
     }
 
+    /// Helper implemting the logic for [`Reeline::read_line()`] to be wrapped
+    /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
         terminal::enable_raw_mode()?;
 
