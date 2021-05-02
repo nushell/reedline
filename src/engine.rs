@@ -21,6 +21,9 @@ use std::{
 
 const PROMPT_COLOR: Color = Color::Blue;
 
+/// Editing actions which can be mapped to key bindings.
+/// 
+/// Executed by [`Reedline::run_edit_commands()`]
 pub enum EditCommand {
     MoveToStart,
     MoveToEnd,
@@ -434,6 +437,7 @@ impl Reedline {
         self.line_buffer.insertion_line()
     }
 
+    /// Reset the [`LineBuffer`] to be a line specified by `buffer`
     fn set_buffer(&mut self, buffer: String) {
         self.line_buffer.set_buffer(buffer)
     }
@@ -457,6 +461,7 @@ impl Reedline {
         self.line_buffer.clear_range(range)
     }
 
+    /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.
     fn maybe_wrap(&self, terminal_width: u16, start_offset: u16, c: char) -> bool {
         use unicode_width::UnicodeWidthStr;
 
@@ -614,7 +619,7 @@ impl Reedline {
         Ok(())
     }
 
-    /// Helper implemting the logic for [`Reeline::read_line()`] to be wrapped
+    /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
         terminal::enable_raw_mode()?;

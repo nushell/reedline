@@ -43,6 +43,7 @@ impl LineBuffer {
         self.lines.is_empty() || self.lines.len() == 1 && self.lines[0].is_empty()
     }
 
+    /// Return 2D-cursor (line_number, col_in_line)
     pub fn insertion_point(&self) -> InsertionPoint {
         self.insertion_point
     }
@@ -51,19 +52,23 @@ impl LineBuffer {
         self.insertion_point = pos;
     }
 
+    /// Output the current line in the multiline buffer
     pub fn insertion_line(&self) -> &str {
         &self.lines[self.insertion_point.line]
     }
 
+    /// Set to a single line of `buffer` and reset the `InsertionPoint` cursor
     pub fn set_buffer(&mut self, buffer: String) {
         self.lines = vec![buffer];
         self.insertion_point = InsertionPoint::new();
     }
 
+    /// Reset the insertion point to the start of the buffer
     pub fn move_to_start(&mut self) {
         self.insertion_point = InsertionPoint::new();
     }
 
+    /// Set the insertion point *behind* the last character.
     pub fn move_to_end(&mut self) {
         if let Some(end) = self.lines.last() {
             let length_of_last_line = end.len();
@@ -71,6 +76,7 @@ impl LineBuffer {
         }
     }
 
+    /// Cursor position *behind* the next unicode grapheme to the right
     pub fn grapheme_right_index(&self) -> usize {
         self.lines[self.insertion_point.line][self.insertion_point.offset..]
             .grapheme_indices(true)
@@ -79,6 +85,7 @@ impl LineBuffer {
             .unwrap_or_else(|| self.lines[self.insertion_point.line].len())
     }
 
+    /// Cursor position *in front of* the next unicode grapheme to the left
     pub fn grapheme_left_index(&self) -> usize {
         self.lines[self.insertion_point.line][..self.insertion_point.offset]
             .grapheme_indices(true)
@@ -87,6 +94,7 @@ impl LineBuffer {
             .unwrap_or(0)
     }
 
+    /// Cursor position *behind* the next word to the right
     pub fn word_right_index(&self) -> usize {
         self.lines[self.insertion_point.line][self.insertion_point.offset..]
             .split_word_bound_indices()
@@ -95,6 +103,7 @@ impl LineBuffer {
             .unwrap_or_else(|| self.lines[self.insertion_point.line].len())
     }
 
+    /// Cursor position *in front of* the next word to the left
     pub fn word_left_index(&self) -> usize {
         self.lines[self.insertion_point.line][..self.insertion_point.offset]
             .split_word_bound_indices()
@@ -103,47 +112,64 @@ impl LineBuffer {
             .map(|(i, _)| i)
             .unwrap_or(0)
     }
+
+    /// Move cursor position *behind* the next unicode grapheme to the right
     pub fn move_right(&mut self) {
         self.insertion_point.offset = self.grapheme_right_index();
     }
 
+    /// Move cursor position *in front of* the next unicode grapheme to the left
     pub fn move_left(&mut self) {
         self.insertion_point.offset = self.grapheme_left_index();
     }
 
+    /// Move cursor position *in front of* the next word to the left
     pub fn move_word_left(&mut self) -> usize {
         self.insertion_point.offset = self.word_left_index();
         self.insertion_point.offset
     }
 
+    /// Move cursor position *behind* the next word to the right
     pub fn move_word_right(&mut self) -> usize {
         self.insertion_point.offset = self.word_right_index();
         self.insertion_point.offset
     }
 
+    /// Insert a single character at the given cursor postion
     pub fn insert_char(&mut self, pos: InsertionPoint, c: char) {
         self.lines[pos.line].insert(pos.offset, c)
     }
 
+    /// Insert `&str` at the `idx` position in the current line.
+    ///
+    /// TODO: Check unicode validation
     pub fn insert_str(&mut self, idx: usize, string: &str) {
         self.lines[self.insertion_point.line].insert_str(idx, string)
     }
 
+    /// Empty buffer and reset cursor
     pub fn clear(&mut self) {
         self.lines.clear();
         self.lines.push(String::new());
         self.insertion_point = InsertionPoint::new();
     }
 
+    /// Clear everything beginning at the cursor to the right/end.
+    /// Keeps the cursor at the end.
     pub fn clear_to_end(&mut self) {
         self.lines[self.insertion_point.line].truncate(self.insertion_point.offset);
     }
 
+    /// Clear from the start of the line to the cursor. 
+    /// Keeps the cursor at the beginning of the line.
     pub fn clear_to_insertion_point(&mut self) {
         self.clear_range(..self.insertion_point.offset);
         self.insertion_point.offset = 0;
     }
 
+    /// Clear text covered by `range` in the current line
+    ///
+    /// TODO: Check unicode validation
     pub fn clear_range<R>(&mut self, range: R)
     where
         R: std::ops::RangeBounds<usize>,
@@ -151,6 +177,9 @@ impl LineBuffer {
         self.replace_range(range, "");
     }
 
+    /// Substitute text covered by `range` in the current line
+    ///
+    /// TODO: Check unicode validation
     pub fn replace_range<R>(&mut self, range: R, replace_with: &str)
     where
         R: std::ops::RangeBounds<usize>,
