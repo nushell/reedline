@@ -1,7 +1,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Cursor coordinates relative to the Unicode representation of [`LineBuffer`]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct InsertionPoint {
     pub line: usize,
     pub offset: usize,
@@ -53,22 +53,57 @@ impl LineBuffer {
     }
 
     /// Output the current line in the multiline buffer
+    /// 
+    /// ```
+    /// use reedline::LineBuffer;
+    /// let mut lb = LineBuffer::new();
+    /// lb.set_buffer(String::from("test"));
+    /// assert_eq!(lb.insertion_line(), "test");
+    /// ```
     pub fn insertion_line(&self) -> &str {
         &self.lines[self.insertion_point.line]
     }
 
     /// Set to a single line of `buffer` and reset the `InsertionPoint` cursor
+    /// 
+    /// ```
+    /// use reedline::LineBuffer;
+    /// let mut lb = LineBuffer::new();
+    /// lb.set_buffer(String::from("test"));
+    /// assert_eq!(lb.insertion_line(), "test");
+    /// lb.move_right();
+    /// lb.set_buffer(String::from("new"));
+    /// assert_eq!(lb.insertion_line(), "new");
+    /// assert_eq!(lb.insertion_point().offset, 0);
+    /// ```
     pub fn set_buffer(&mut self, buffer: String) {
         self.lines = vec![buffer];
         self.insertion_point = InsertionPoint::new();
     }
 
     /// Reset the insertion point to the start of the buffer
+    /// 
+    /// ```
+    /// use reedline::LineBuffer;
+    /// let mut lb = LineBuffer::new();
+    /// lb.set_buffer(String::from("test"));
+    /// lb.move_right();
+    /// lb.move_to_start();
+    /// assert_eq!(lb.insertion_point().offset, 0);
+    /// ```
     pub fn move_to_start(&mut self) {
         self.insertion_point = InsertionPoint::new();
     }
 
     /// Set the insertion point *behind* the last character.
+    /// 
+    /// ```
+    /// use reedline::LineBuffer;
+    /// let mut lb = LineBuffer::new();
+    /// lb.set_buffer(String::from("test"));
+    /// lb.move_to_end();
+    /// assert_eq!(lb.insertion_point().offset, 4);
+    /// ```
     pub fn move_to_end(&mut self) {
         if let Some(end) = self.lines.last() {
             let length_of_last_line = end.len();
@@ -114,28 +149,95 @@ impl LineBuffer {
     }
 
     /// Move cursor position *behind* the next unicode grapheme to the right
+    /// 
+    /// ```
+    /// use reedline::LineBuffer;
+    /// let mut lb = LineBuffer::new();
+    /// lb.set_buffer(String::from("test"));
+    /// lb.move_right();
+    /// assert_eq!(lb.insertion_point().offset, 1);
+    /// // The smiley takes 4 bytes.
+    /// assert_eq!('😊'.len_utf8(), 4);
+    /// lb.set_buffer(String::from("😊"));
+    /// lb.move_right();
+    /// assert_eq!(lb.insertion_point().offset, 4);
+    /// 
+    /// ```
     pub fn move_right(&mut self) {
         self.insertion_point.offset = self.grapheme_right_index();
     }
 
     /// Move cursor position *in front of* the next unicode grapheme to the left
+    /// 
+    /// ```
+    /// use reedline::LineBuffer;
+    /// let mut lb = LineBuffer::new();
+    /// lb.set_buffer(String::from("test"));
+    /// lb.move_to_end();
+    /// assert_eq!(lb.insertion_point().offset, 4);
+    /// lb.move_left();
+    /// assert_eq!(lb.insertion_point().offset, 3);
+    /// // The smiley takes 4 bytes.
+    /// assert_eq!('😊'.len_utf8(), 4);
+    /// lb.set_buffer(String::from("😊"));
+    /// lb.move_to_end();
+    /// assert_eq!(lb.insertion_point().offset, 4);
+    /// lb.move_left();
+    /// assert_eq!(lb.insertion_point().offset, 0);
+    /// ```
     pub fn move_left(&mut self) {
         self.insertion_point.offset = self.grapheme_left_index();
     }
 
     /// Move cursor position *in front of* the next word to the left
+    /// 
+    /// ```
+    /// use reedline::LineBuffer;
+    /// let mut lb = LineBuffer::new();
+    /// lb.set_buffer(String::from("test words"));
+    /// lb.move_to_end();
+    /// assert_eq!(lb.insertion_point().offset, 10);
+    /// lb.move_word_left();
+    /// assert_eq!(lb.insertion_point().offset, 5);
+    /// lb.move_word_left();
+    /// assert_eq!(lb.insertion_point().offset, 0);
+    /// ```
     pub fn move_word_left(&mut self) -> usize {
         self.insertion_point.offset = self.word_left_index();
         self.insertion_point.offset
     }
 
     /// Move cursor position *behind* the next word to the right
+    /// 
+    /// ```
+    /// use reedline::LineBuffer;
+    /// let mut lb = LineBuffer::new();
+    /// lb.set_buffer(String::from("test words"));
+    /// lb.move_word_right();
+    /// assert_eq!(lb.insertion_point().offset, 4);
+    /// lb.move_word_right();
+    /// assert_eq!(lb.insertion_point().offset, 10);
+    /// ```
     pub fn move_word_right(&mut self) -> usize {
         self.insertion_point.offset = self.word_right_index();
         self.insertion_point.offset
     }
 
     /// Insert a single character at the given cursor postion
+    ///
+    /// TODO: Check unicode validation
+    ///
+    /// ```
+    /// use reedline::LineBuffer;
+    /// let mut lb = LineBuffer::new();
+    /// lb.set_buffer(String::from("word"));
+    /// lb.move_to_end();
+    /// lb.insert_char(lb.insertion_point(), 's');
+    /// assert_eq!(lb.insertion_line(), "words");
+    /// lb.move_to_start();
+    /// lb.insert_char(lb.insertion_point(), 'd');
+    /// assert_eq!(lb.insertion_line(), "dwords");
+    /// ```
     pub fn insert_char(&mut self, pos: InsertionPoint, c: char) {
         self.lines[pos.line].insert(pos.offset, c)
     }
@@ -143,6 +245,15 @@ impl LineBuffer {
     /// Insert `&str` at the `idx` position in the current line.
     ///
     /// TODO: Check unicode validation
+    ///
+    /// ```
+    /// use reedline::LineBuffer;
+    /// let mut lb = LineBuffer::new();
+    /// lb.set_buffer(String::from("word test"));
+    /// lb.move_word_right();
+    /// lb.insert_str(lb.insertion_point().offset, "salad");
+    /// assert_eq!(lb.insertion_line(), "wordsalad test");
+    /// ```
     pub fn insert_str(&mut self, idx: usize, string: &str) {
         self.lines[self.insertion_point.line].insert_str(idx, string)
     }
@@ -156,12 +267,32 @@ impl LineBuffer {
 
     /// Clear everything beginning at the cursor to the right/end.
     /// Keeps the cursor at the end.
+    ///
+    /// ```
+    /// use reedline::LineBuffer;
+    /// let mut lb = LineBuffer::new();
+    /// lb.set_buffer(String::from("word test"));
+    /// lb.move_word_right();
+    /// lb.clear_to_end();
+    /// assert_eq!(lb.insertion_line(), "word");
+    /// assert_eq!(lb.insertion_point().offset, 4);
+    /// ```
     pub fn clear_to_end(&mut self) {
         self.lines[self.insertion_point.line].truncate(self.insertion_point.offset);
     }
 
     /// Clear from the start of the line to the cursor. 
     /// Keeps the cursor at the beginning of the line.
+    ///
+    /// ```
+    /// use reedline::LineBuffer;
+    /// let mut lb = LineBuffer::new();
+    /// lb.set_buffer(String::from("word test"));
+    /// lb.move_word_right();
+    /// lb.clear_to_insertion_point();
+    /// assert_eq!(lb.insertion_line(), " test");
+    /// assert_eq!(lb.insertion_point().offset, 0);
+    /// ```
     pub fn clear_to_insertion_point(&mut self) {
         self.clear_range(..self.insertion_point.offset);
         self.insertion_point.offset = 0;
