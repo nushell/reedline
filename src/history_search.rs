@@ -1,5 +1,8 @@
 use crate::history::History;
 
+/// Implements a reverse search through the history.
+/// Stores a search string for incremental search and remembers the last result
+/// to allow browsing through ambiguous search results.
 #[derive(Clone)]
 pub struct BasicSearch {
     pub result: Option<(usize, usize)>,
@@ -13,6 +16,7 @@ pub enum BasicSearchCommand {
 }
 
 impl BasicSearch {
+    // TODO: do we want to initialize the string if we don't compute an immediate result?
     pub fn new(search_string: String) -> Self {
         Self {
             result: None,
@@ -20,6 +24,13 @@ impl BasicSearch {
         }
     }
 
+    /// Perform a step of incremental search.
+    /// Either change the search string or go one result back in history.
+    ///
+    /// Sets [`BasicSearch.result`] `Option<(idx, offset)>` with:
+    ///
+    /// `idx`: 0-based index starting at the newest history entries.
+    /// `offset`: location in the text where the match was found.
     pub fn step(&mut self, command: BasicSearchCommand, history: &History) {
         let mut start = self
             .result

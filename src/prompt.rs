@@ -3,8 +3,14 @@ use std::env;
 
 pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
 
+/// API to provide a custom prompt.
+///
+/// Implementors have to provide [`String`]-based content which will be
+/// displayed before the [`LineBuffer`](crate::LineBuffer) is drawn.
 pub trait Prompt {
+    /// Provide content off the full prompt. May use a line above the entry buffer that fits into `screen_width`.
     fn render_prompt(&self, screen_width: usize) -> String;
+    /// Provide content of only the minimal prompt indicator in front of the buffer.
     fn render_prompt_indicator(&self) -> String;
 }
 
@@ -18,6 +24,13 @@ impl Prompt for DefaultPrompt {
     }
 }
 
+impl Default for DefaultPrompt {
+    fn default() -> Self {
+        DefaultPrompt::new(DEFAULT_PROMPT_INDICATOR, 1)
+    }
+}
+
+/// Simple two-line [`Prompt`] displaying the current working directory and the time above the entry line.
 pub struct DefaultPrompt {
     // The prompt symbol like >
     prompt_indicator: String,
