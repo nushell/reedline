@@ -22,7 +22,7 @@ use std::{
 const PROMPT_COLOR: Color = Color::Blue;
 
 /// Editing actions which can be mapped to key bindings.
-/// 
+///
 /// Executed by [`Reedline::run_edit_commands()`]
 pub enum EditCommand {
     MoveToStart,

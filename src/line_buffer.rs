@@ -160,7 +160,7 @@ impl LineBuffer {
         self.lines[self.insertion_point.line].truncate(self.insertion_point.offset);
     }
 
-    /// Clear from the start of the line to the cursor. 
+    /// Clear from the start of the line to the cursor.
     /// Keeps the cursor at the beginning of the line.
     pub fn clear_to_insertion_point(&mut self) {
         self.clear_range(..self.insertion_point.offset);
