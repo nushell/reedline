@@ -1,6 +1,8 @@
 use chrono::Local;
+use crossterm::style::Color;
 use std::env;
 
+pub static DEFAULT_PROMPT_COLOR: Color = Color::Blue;
 pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
 
 /// API to provide a custom prompt.
@@ -12,6 +14,7 @@ pub trait Prompt {
     fn render_prompt(&self, screen_width: usize) -> String;
     /// Provide content of only the minimal prompt indicator in front of the buffer.
     fn render_prompt_indicator(&self) -> String;
+    fn get_prompt_color(&self) -> Color;
 }
 
 impl Prompt for DefaultPrompt {
@@ -22,16 +25,21 @@ impl Prompt for DefaultPrompt {
     fn render_prompt_indicator(&self) -> String {
         self.prompt_indicator.clone()
     }
+
+    fn get_prompt_color(&self) -> Color {
+        self.prompt_color
+    }
 }
 
 impl Default for DefaultPrompt {
     fn default() -> Self {
-        DefaultPrompt::new(DEFAULT_PROMPT_INDICATOR, 1)
+        DefaultPrompt::new(DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_INDICATOR, 1)
     }
 }
 
 /// Simple two-line [`Prompt`] displaying the current working directory and the time above the entry line.
 pub struct DefaultPrompt {
+    prompt_color: Color,
     // The prompt symbol like >
     prompt_indicator: String,
     // The minimum number of line buffer character space between the
@@ -42,8 +50,13 @@ pub struct DefaultPrompt {
 }
 
 impl DefaultPrompt {
-    pub fn new(prompt_indicator: &str, min_center_spacing: u16) -> DefaultPrompt {
+    pub fn new(
+        prompt_color: Color,
+        prompt_indicator: &str,
+        min_center_spacing: u16,
+    ) -> DefaultPrompt {
         DefaultPrompt {
+            prompt_color,
             prompt_indicator: prompt_indicator.to_string(),
             min_center_spacing,
         }
