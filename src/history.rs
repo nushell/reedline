@@ -41,6 +41,9 @@ pub struct History {
     file: Option<PathBuf>,
     len_on_disk: usize,  // Keep track what was previously written to disk
     truncate_file: bool, // as long as the file would not exceed capacity we can use appending writes
+
+    // State for the history up/down
+    pub history_prefix: Option<String>, // The prefix of history to use when using up/down to explore history
 }
 
 impl Default for History {
@@ -71,6 +74,7 @@ impl History {
             file: None,
             len_on_disk: 0,
             truncate_file: false,
+            history_prefix: None,
         }
     }
 
@@ -252,6 +256,20 @@ impl History {
         }
     }
 
+    pub fn go_back_with_prefix(&mut self) -> Option<&str> {
+        if let Some(prefix) = &self.history_prefix {
+            while self.cursor > 0 {
+                self.cursor -= 1;
+                let entry = self.entries.get(self.cursor as usize).unwrap();
+                if entry.starts_with(prefix) {
+                    return Some(entry);
+                }
+            }
+        }
+
+        None
+    }
+
     /// Try to move forward in history. Returns [`None`] if history is exhausted (moving beyond most recent element).
     ///
     /// ```
@@ -275,6 +293,24 @@ impl History {
         }
         if self.cursor < self.entries.len() {
             Some(self.entries.get(self.cursor as usize).unwrap())
+        } else {
+            None
+        }
+    }
+
+    pub fn go_forward_with_prefix(&mut self) -> Option<&str> {
+        if let Some(prefix) = &self.history_prefix {
+            while self.cursor < self.entries.len() {
+                self.cursor += 1;
+
+                if self.cursor < self.entries.len() {
+                    let entry = self.entries.get(self.cursor as usize).unwrap();
+                    if entry.starts_with(prefix) {
+                        return Some(entry);
+                    }
+                }
+            }
+            Some(prefix)
         } else {
             None
         }

@@ -30,7 +30,7 @@
 //!
 //! ## Are we prompt yet? (Development status)
 //!
-//! This crate is currently under active development in Jonathan Turner's
+//! This crate is currently under active development in JT's
 //! [live-coding streams](https://www.twitch.tv/jntrnr). If you want to see a
 //! feature, jump by the streams, file an
 //! [issue](https://github.com/jonathandturner/reedline/issues) or contribute a
