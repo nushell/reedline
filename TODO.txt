@@ -5,9 +5,7 @@ TODO:
 * Documention
   * README
   * Documenting of all public functions and structs and traits
-* Support resize
-  * We should detect the resize event, then start back at the beginning of where
-    the prompt began, redraw the prompt and then redraw the user input up to now
+    * At least some of the public functions are now documented
 * Syntax highlighting
 * Multiline support
 * Validation
@@ -41,6 +39,7 @@ X Editing engine
   X Unicode w/ joiner support for removal
 X History
 X Up/down history
+X Support for persisting history file
 X Home/end
 X Refactor keypresses to flush at the end
 X Ctrl-A, Ctrl-K, etc
@@ -53,4 +52,8 @@ X Split Engine into its isolated parts
   X Maybe cut buffer. Question: do we want to connect to the OS's clipboard?
   X History is persisted to disk.
 X Make Prompt trait and make prompt configurable
+X Support resize
+  * We should detect the resize event, then start back at the beginning of where
+    the prompt began, redraw the prompt and then redraw the user input up to now
+X prefix-based history navigation
 

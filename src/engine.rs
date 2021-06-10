@@ -140,6 +140,13 @@ impl Reedline {
         Ok(())
     }
 
+    pub fn move_to(&mut self, column: u16, row: u16) -> Result<()> {
+        self.stdout.queue(MoveTo(column, row))?;
+        self.stdout.flush()?;
+
+        Ok(())
+    }
+
     /// Wait for input and provide the user with a specified [`Prompt`].
     ///
     /// Returns a [`crossterm::Result`] in which the `Err` type is [`crossterm::ErrorKind`]
@@ -229,6 +236,7 @@ impl Reedline {
             return;
         }
 
+        // Run the commands over the edit buffer
         for command in commands {
             match command {
                 EditCommand::MoveToStart => self.line_buffer.move_to_start(),
@@ -273,16 +281,28 @@ impl Reedline {
                     self.history.reset_cursor();
                 }
                 EditCommand::PreviousHistory => {
-                    if let Some(history_entry) = self.history.go_back() {
+                    if self.history.history_prefix.is_none() {
+                        let buffer = self.line_buffer.get_buffer();
+                        self.history.history_prefix = Some(buffer.clone());
+                    }
+
+                    if let Some(history_entry) = self.history.go_back_with_prefix() {
                         let new_buffer = history_entry.to_string();
                         self.set_buffer(new_buffer);
                         self.move_to_end();
                     }
                 }
                 EditCommand::NextHistory => {
-                    let new_buffer = self.history.go_forward().unwrap_or_default().to_string();
-                    self.set_buffer(new_buffer);
-                    self.move_to_end();
+                    if self.history.history_prefix.is_none() {
+                        let buffer = self.line_buffer.get_buffer();
+                        self.history.history_prefix = Some(buffer.clone());
+                    }
+
+                    if let Some(history_entry) = self.history.go_forward_with_prefix() {
+                        let new_buffer = history_entry.to_string();
+                        self.set_buffer(new_buffer);
+                        self.move_to_end();
+                    }
                 }
                 EditCommand::SearchHistory => {
                     self.history_search = Some(BasicSearch::new(self.insertion_line().to_string()));
@@ -416,6 +436,20 @@ impl Reedline {
                     }
                 }
             }
+
+            // Clean-up after commands run
+            for command in commands {
+                match command {
+                    EditCommand::PreviousHistory => {}
+                    EditCommand::NextHistory => {}
+                    _ => {
+                        // Clean up the old prefix used for history search
+                        if self.history.history_prefix.is_some() {
+                            self.history.history_prefix = None;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -544,7 +578,7 @@ impl Reedline {
 
     /// Repaint logic for the normal input prompt buffer
     ///
-    /// Requires coordinates where the imput buffer begins after the prompt.
+    /// Requires coordinates where the input buffer begins after the prompt.
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
         let new_index = self.insertion_point().offset;
 
@@ -625,6 +659,8 @@ impl Reedline {
         terminal::enable_raw_mode()?;
 
         let mut terminal_size = terminal::size()?;
+
+        let prompt_origin = position()?;
 
         self.queue_prompt(prompt, terminal_size.0 as usize)?;
 
@@ -833,6 +869,11 @@ impl Reedline {
                 }
                 Event::Resize(width, height) => {
                     terminal_size = (width, height);
+                    self.move_to(prompt_origin.0, prompt_origin.1)?;
+                    self.queue_prompt(prompt, terminal_size.0 as usize)?;
+                    // set where the input begins
+                    prompt_offset = position()?;
+                    self.buffer_paint(prompt_offset)?;
                 }
             }
             if self.history_search.is_some() {

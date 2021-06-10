@@ -52,6 +52,10 @@ impl LineBuffer {
         self.insertion_point = pos;
     }
 
+    pub fn get_buffer(&self) -> String {
+        self.lines[self.insertion_point.line].clone()
+    }
+
     /// Output the current line in the multiline buffer
     pub fn insertion_line(&self) -> &str {
         &self.lines[self.insertion_point.line]
