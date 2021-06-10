@@ -250,7 +250,7 @@ impl History {
     pub fn go_back(&mut self) -> Option<&str> {
         if self.cursor > 0 {
             self.cursor -= 1;
-            Some(self.entries.get(self.cursor as usize).unwrap())
+            Some(self.entries.get(self.cursor).unwrap())
         } else {
             None
         }
@@ -258,10 +258,17 @@ impl History {
 
     pub fn go_back_with_prefix(&mut self) -> Option<&str> {
         if let Some(prefix) = &self.history_prefix {
+            let old_match = self
+                .entries
+                .get(self.cursor)
+                .filter(|entry| entry.starts_with(prefix));
             while self.cursor > 0 {
                 self.cursor -= 1;
-                let entry = self.entries.get(self.cursor as usize).unwrap();
+                let entry = self.entries.get(self.cursor).unwrap();
                 if entry.starts_with(prefix) {
+                    if old_match == Some(entry) {
+                        continue;
+                    }
                     return Some(entry);
                 }
             }
@@ -292,7 +299,7 @@ impl History {
             self.cursor += 1;
         }
         if self.cursor < self.entries.len() {
-            Some(self.entries.get(self.cursor as usize).unwrap())
+            Some(self.entries.get(self.cursor).unwrap())
         } else {
             None
         }
@@ -300,12 +307,19 @@ impl History {
 
     pub fn go_forward_with_prefix(&mut self) -> Option<&str> {
         if let Some(prefix) = &self.history_prefix {
+            let old_match = self
+                .entries
+                .get(self.cursor)
+                .filter(|entry| entry.starts_with(prefix));
             while self.cursor < self.entries.len() {
                 self.cursor += 1;
 
                 if self.cursor < self.entries.len() {
-                    let entry = self.entries.get(self.cursor as usize).unwrap();
+                    let entry = self.entries.get(self.cursor).unwrap();
                     if entry.starts_with(prefix) {
+                        if old_match == Some(entry) {
+                            continue;
+                        }
                         return Some(entry);
                     }
                 }
