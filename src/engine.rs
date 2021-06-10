@@ -19,8 +19,6 @@ use std::{
     time::Duration,
 };
 
-const PROMPT_COLOR: Color = Color::Blue;
-
 /// Editing actions which can be mapped to key bindings.
 ///
 /// Executed by [`Reedline::run_edit_commands()`]
@@ -554,7 +552,7 @@ impl Reedline {
         // print our prompt
         self.stdout
             .queue(MoveToColumn(0))?
-            .queue(SetForegroundColor(PROMPT_COLOR))?
+            .queue(SetForegroundColor(prompt.get_prompt_color()))?
             .queue(Print(prompt.render_prompt(screen_width)))?
             .queue(ResetColor)?;
 
@@ -569,7 +567,7 @@ impl Reedline {
         // print our prompt
         self.stdout
             .queue(MoveToColumn(0))?
-            .queue(SetForegroundColor(PROMPT_COLOR))?
+            .queue(SetForegroundColor(prompt.get_prompt_color()))?
             .queue(Print(prompt.render_prompt_indicator()))?
             .queue(ResetColor)?;
 
