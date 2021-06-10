@@ -34,6 +34,8 @@ pub enum EditCommand {
     InsertChar(char),
     Backspace,
     Delete,
+    BackspaceWord,
+    DeleteWord,
     AppendToHistory,
     PreviousHistory,
     NextHistory,
@@ -269,6 +271,15 @@ impl Reedline {
                     if right_index > insertion_offset {
                         self.clear_range(insertion_offset..right_index);
                     }
+                }
+                EditCommand::BackspaceWord => {
+                    let left_word_index = self.line_buffer.word_left_index();
+                    self.clear_range(left_word_index..self.insertion_point().offset);
+                    self.set_insertion_point(left_word_index);
+                }
+                EditCommand::DeleteWord => {
+                    let right_word_index = self.line_buffer.word_right_index();
+                    self.clear_range(self.insertion_point().offset..right_word_index);
                 }
                 EditCommand::Clear => {
                     self.line_buffer.clear();
@@ -775,6 +786,12 @@ impl Reedline {
                     }
                     KeyCode::Char('t') => {
                         self.run_edit_commands(&[EditCommand::SwapWords]);
+                    }
+                    KeyCode::Backspace => {
+                        self.run_edit_commands(&[EditCommand::BackspaceWord]);
+                    }
+                    KeyCode::Delete => {
+                        self.run_edit_commands(&[EditCommand::DeleteWord]);
                     }
                     _ => {}
                 },
