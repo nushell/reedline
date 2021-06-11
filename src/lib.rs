@@ -67,3 +67,6 @@ pub use prompt::{DefaultPrompt, Prompt, DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_IND
 
 mod line_buffer;
 pub use line_buffer::LineBuffer;
+
+mod keybindings;
+pub use keybindings::default_keybindings;

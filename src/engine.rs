@@ -14,6 +14,8 @@ use crossterm::{
     terminal::{self, Clear, ClearType},
     QueueableCommand, Result,
 };
+use serde::{Deserialize, Serialize};
+
 use std::{
     io::{stdout, Stdout, Write},
     time::Duration,
@@ -22,6 +24,7 @@ use std::{
 /// Editing actions which can be mapped to key bindings.
 ///
 /// Executed by [`Reedline::run_edit_commands()`]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum EditCommand {
     MoveToStart,
     MoveToEnd,
@@ -668,6 +671,7 @@ impl Reedline {
         terminal::enable_raw_mode()?;
 
         let mut terminal_size = terminal::size()?;
+        let keybindings = crate::default_keybindings();
 
         let prompt_origin = position()?;
 
@@ -689,113 +693,26 @@ impl Reedline {
 
         loop {
             match read()? {
-                Event::Key(KeyEvent {
-                    code,
-                    modifiers: KeyModifiers::CONTROL,
-                }) => match code {
-                    KeyCode::Char('d') => {
-                        if self.line_buffer.is_empty() {
-                            return Ok(Signal::CtrlD);
-                        } else {
-                            self.run_edit_commands(&[EditCommand::Delete]);
+                Event::Key(KeyEvent { code, modifiers }) => {
+                    match (modifiers, code) {
+                        (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
+                            if self.line_buffer.is_empty() {
+                                return Ok(Signal::CtrlD);
+                            } else if let Some(binding) = keybindings.find_binding(modifiers, code)
+                            {
+                                self.run_edit_commands(&binding);
+                            }
                         }
-                    }
-                    KeyCode::Char('a') => {
-                        self.run_edit_commands(&[EditCommand::MoveToStart]);
-                    }
-                    KeyCode::Char('e') => {
-                        self.run_edit_commands(&[EditCommand::MoveToEnd]);
-                    }
-                    KeyCode::Char('k') => {
-                        self.run_edit_commands(&[EditCommand::CutToEnd]);
-                    }
-                    KeyCode::Char('u') => {
-                        self.run_edit_commands(&[EditCommand::CutFromStart]);
-                    }
-                    KeyCode::Char('y') => {
-                        self.run_edit_commands(&[EditCommand::InsertCutBuffer]);
-                    }
-                    KeyCode::Char('b') => {
-                        self.run_edit_commands(&[EditCommand::MoveLeft]);
-                    }
-                    KeyCode::Char('f') => {
-                        self.run_edit_commands(&[EditCommand::MoveRight]);
-                    }
-                    KeyCode::Char('c') => {
-                        self.run_edit_commands(&[EditCommand::Clear]);
-                        return Ok(Signal::CtrlC);
-                    }
-                    KeyCode::Char('l') => {
-                        return Ok(Signal::CtrlL);
-                    }
-                    KeyCode::Char('h') => {
-                        self.run_edit_commands(&[EditCommand::Backspace]);
-                    }
-                    KeyCode::Char('w') => {
-                        self.run_edit_commands(&[EditCommand::CutWordLeft]);
-                    }
-                    KeyCode::Left => {
-                        self.run_edit_commands(&[EditCommand::MoveWordLeft]);
-                    }
-                    KeyCode::Right => {
-                        self.run_edit_commands(&[EditCommand::MoveWordRight]);
-                    }
-                    KeyCode::Char('p') => {
-                        self.run_edit_commands(&[EditCommand::PreviousHistory]);
-                    }
-                    KeyCode::Char('n') => {
-                        self.run_edit_commands(&[EditCommand::NextHistory]);
-                    }
-                    KeyCode::Char('r') => {
-                        self.run_edit_commands(&[EditCommand::SearchHistory]);
-                    }
-                    KeyCode::Char('t') => {
-                        self.run_edit_commands(&[EditCommand::SwapGraphemes]);
-                    }
-                    _ => {}
-                },
-                Event::Key(KeyEvent {
-                    code,
-                    modifiers: KeyModifiers::ALT,
-                }) => match code {
-                    KeyCode::Char('b') => {
-                        self.run_edit_commands(&[EditCommand::MoveWordLeft]);
-                    }
-                    KeyCode::Char('f') => {
-                        self.run_edit_commands(&[EditCommand::MoveWordRight]);
-                    }
-                    KeyCode::Char('d') => {
-                        self.run_edit_commands(&[EditCommand::CutWordRight]);
-                    }
-                    KeyCode::Left => {
-                        self.run_edit_commands(&[EditCommand::MoveWordLeft]);
-                    }
-                    KeyCode::Right => {
-                        self.run_edit_commands(&[EditCommand::MoveWordRight]);
-                    }
-                    KeyCode::Char('u') => {
-                        self.run_edit_commands(&[EditCommand::UppercaseWord]);
-                    }
-                    KeyCode::Char('l') => {
-                        self.run_edit_commands(&[EditCommand::LowercaseWord]);
-                    }
-                    KeyCode::Char('c') => {
-                        self.run_edit_commands(&[EditCommand::CapitalizeChar]);
-                    }
-                    KeyCode::Char('t') => {
-                        self.run_edit_commands(&[EditCommand::SwapWords]);
-                    }
-                    KeyCode::Backspace => {
-                        self.run_edit_commands(&[EditCommand::BackspaceWord]);
-                    }
-                    KeyCode::Delete => {
-                        self.run_edit_commands(&[EditCommand::DeleteWord]);
-                    }
-                    _ => {}
-                },
-                Event::Key(KeyEvent { code, modifiers: _ }) => {
-                    match code {
-                        KeyCode::Char(c) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+                            if let Some(binding) = keybindings.find_binding(modifiers, code) {
+                                self.run_edit_commands(&binding);
+                            }
+                            return Ok(Signal::CtrlC);
+                        }
+                        (KeyModifiers::CONTROL, KeyCode::Char('l')) => {
+                            return Ok(Signal::CtrlL);
+                        }
+                        (KeyModifiers::NONE, KeyCode::Char(c)) => {
                             let line_start = if self.insertion_point().line == 0 {
                                 prompt_offset.0
                             } else {
@@ -827,19 +744,7 @@ impl Reedline {
                                 ]);
                             }
                         }
-                        KeyCode::Backspace => {
-                            self.run_edit_commands(&[EditCommand::Backspace]);
-                        }
-                        KeyCode::Delete => {
-                            self.run_edit_commands(&[EditCommand::Delete]);
-                        }
-                        KeyCode::Home => {
-                            self.run_edit_commands(&[EditCommand::MoveToStart]);
-                        }
-                        KeyCode::End => {
-                            self.run_edit_commands(&[EditCommand::MoveToEnd]);
-                        }
-                        KeyCode::Enter => match self.history_search.clone() {
+                        (KeyModifiers::NONE, KeyCode::Enter) => match self.history_search.clone() {
                             Some(search) => {
                                 self.queue_prompt_indicator(prompt)?;
                                 if let Some((history_index, _)) = search.result {
@@ -861,23 +766,13 @@ impl Reedline {
                                 return Ok(Signal::Success(buffer));
                             }
                         },
-                        KeyCode::Up => {
-                            self.run_edit_commands(&[EditCommand::PreviousHistory]);
+
+                        _ => {
+                            if let Some(binding) = keybindings.find_binding(modifiers, code) {
+                                self.run_edit_commands(&binding);
+                            }
                         }
-                        KeyCode::Down => {
-                            // Down means: navigate forward through the history. If we reached the
-                            // bottom of the history, we clear the buffer, to make it feel like
-                            // zsh/bash/whatever
-                            self.run_edit_commands(&[EditCommand::NextHistory]);
-                        }
-                        KeyCode::Left => {
-                            self.run_edit_commands(&[EditCommand::MoveLeft]);
-                        }
-                        KeyCode::Right => {
-                            self.run_edit_commands(&[EditCommand::MoveRight]);
-                        }
-                        _ => {}
-                    };
+                    }
                 }
                 Event::Mouse(event) => {
                     self.print_line(&format!("{:?}", event))?;
