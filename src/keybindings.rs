@@ -151,6 +151,12 @@ pub fn default_keybindings() -> Keybindings {
     keybindings.add_binding(KeyModifiers::ALT, Right, vec![EditCommand::MoveWordRight]);
     keybindings.add_binding(
         KeyModifiers::ALT,
+        Backspace,
+        vec![EditCommand::BackspaceWord],
+    );
+    keybindings.add_binding(KeyModifiers::ALT, Delete, vec![EditCommand::DeleteWord]);
+    keybindings.add_binding(
+        KeyModifiers::ALT,
         Char('u'),
         vec![EditCommand::UppercaseWord],
     );
