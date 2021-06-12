@@ -712,7 +712,8 @@ impl Reedline {
                         (KeyModifiers::CONTROL, KeyCode::Char('l')) => {
                             return Ok(Signal::CtrlL);
                         }
-                        (KeyModifiers::NONE, KeyCode::Char(c)) => {
+                        (KeyModifiers::NONE, KeyCode::Char(c))
+                        | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                             let line_start = if self.insertion_point().line == 0 {
                                 prompt_offset.0
                             } else {
