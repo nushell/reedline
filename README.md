@@ -1,4 +1,5 @@
 # reedline `\|/`
+
 A readline replacement written in Rust
 
 ## Example (Simple REPL)
@@ -30,7 +31,8 @@ loop {
 
 ## Are we prompt yet? (Development status)
 
-This crate is currently under active development in Jonathan Turner's [live-coding streams](https://www.twitch.tv/jntrnr). If you want to see a feature, jump by the streams, file an [issue](https://github.com/jonathandturner/reedline/issues) or contribute a [PR](https://github.com/jonathandturner/reedline/pulls)!
+This crate is currently under active development in JT's [live-coding streams](https://www.twitch.tv/jntrnr).
+If you want to see a feature, jump by the streams, file an [issue](https://github.com/jonathandturner/reedline/issues) or contribute a [PR](https://github.com/jonathandturner/reedline/pulls)!
 
 - [x] Basic unicode grapheme aware cursor editing.
 - [x] Configurable prompt
@@ -41,10 +43,10 @@ This crate is currently under active development in Jonathan Turner's [live-codi
 - [ ] Content aware highlighting or validation.
 - [ ] Autocompletion.
 
-For a more detailed roadmap checkout [TODO.txt](https://github.com/jonathandturner/reedline/blob/main/TODO.txt).
+For a more detailed roadmap check out [TODO.txt](https://github.com/jonathandturner/reedline/blob/main/TODO.txt).
 
 ### Alternatives
 
-For currently more mature Rust line editing checkout:
+For currently more mature Rust line editing check out:
 
 - [rustyline](https://crates.io/crates/rustyline)

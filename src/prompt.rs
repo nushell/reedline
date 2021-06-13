@@ -8,7 +8,7 @@ pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
 /// API to provide a custom prompt.
 ///
 /// Implementors have to provide [`String`]-based content which will be
-/// displayed before the [`LineBuffer`](crate::LineBuffer) is drawn.
+/// displayed before the `LineBuffer` is drawn.
 pub trait Prompt {
     /// Provide content off the full prompt. May use a line above the entry buffer that fits into `screen_width`.
     fn render_prompt(&self, screen_width: usize) -> String;

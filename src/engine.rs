@@ -295,7 +295,7 @@ impl Reedline {
                 EditCommand::PreviousHistory => {
                     if self.history.history_prefix.is_none() {
                         let buffer = self.line_buffer.get_buffer();
-                        self.history.history_prefix = Some(buffer.clone());
+                        self.history.history_prefix = Some(buffer.to_owned());
                     }
 
                     if let Some(history_entry) = self.history.go_back_with_prefix() {
@@ -307,7 +307,7 @@ impl Reedline {
                 EditCommand::NextHistory => {
                     if self.history.history_prefix.is_none() {
                         let buffer = self.line_buffer.get_buffer();
-                        self.history.history_prefix = Some(buffer.clone());
+                        self.history.history_prefix = Some(buffer.to_owned());
                     }
 
                     if let Some(history_entry) = self.history.go_forward_with_prefix() {
@@ -323,13 +323,12 @@ impl Reedline {
                     let insertion_offset = self.insertion_point().offset;
                     if insertion_offset > 0 {
                         self.cut_buffer
-                            .set(&self.line_buffer.insertion_line()[..insertion_offset]);
+                            .set(&self.line_buffer.get_buffer()[..insertion_offset]);
                         self.clear_to_insertion_point();
                     }
                 }
                 EditCommand::CutToEnd => {
-                    let cut_slice =
-                        &self.line_buffer.insertion_line()[self.insertion_point().offset..];
+                    let cut_slice = &self.line_buffer.get_buffer()[self.insertion_point().offset..];
                     if !cut_slice.is_empty() {
                         self.cut_buffer.set(cut_slice);
                         self.clear_to_end();
@@ -341,7 +340,7 @@ impl Reedline {
                     if left_index < insertion_offset {
                         let cut_range = left_index..insertion_offset;
                         self.cut_buffer
-                            .set(&self.line_buffer.insertion_line()[cut_range.clone()]);
+                            .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
                         self.clear_range(cut_range);
                         self.set_insertion_point(left_index);
                     }
@@ -352,7 +351,7 @@ impl Reedline {
                     if right_index > insertion_offset {
                         let cut_range = insertion_offset..right_index;
                         self.cut_buffer
-                            .set(&self.line_buffer.insertion_line()[cut_range.clone()]);
+                            .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
                         self.clear_range(cut_range);
                     }
                 }
@@ -427,7 +426,7 @@ impl Reedline {
 
                     if insertion_offset == 0 {
                         self.line_buffer.move_right()
-                    } else if insertion_offset == self.line_buffer.insertion_line().len() {
+                    } else if insertion_offset == self.line_buffer.get_buffer().len() {
                         self.line_buffer.move_left()
                     }
                     let grapheme_1_start = self.line_buffer.grapheme_left_index();
@@ -480,7 +479,7 @@ impl Reedline {
 
     /// Get the current line of a multi-line edit [`LineBuffer`]
     fn insertion_line(&self) -> &str {
-        self.line_buffer.insertion_line()
+        self.line_buffer.get_buffer()
     }
 
     /// Reset the [`LineBuffer`] to be a line specified by `buffer`
