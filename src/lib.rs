@@ -54,8 +54,12 @@
 //! * [rustyline](https://crates.io/crates/rustyline)
 mod clip_buffer;
 
+mod enums;
+pub(crate) use enums::EditCommand;
+pub use enums::Signal;
+
 mod engine;
-pub use engine::{Reedline, Signal};
+pub use engine::Reedline;
 
 mod history;
 pub use history::{History, HISTORY_SIZE};

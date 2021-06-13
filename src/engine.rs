@@ -1,12 +1,7 @@
-use crate::{
-    clip_buffer::{get_default_clipboard, Clipboard},
-    Prompt,
-};
-use crate::{history::History, line_buffer::LineBuffer};
-use crate::{
-    history_search::{BasicSearch, BasicSearchCommand},
-    line_buffer::InsertionPoint,
-};
+use crate::clip_buffer::{get_default_clipboard, Clipboard};
+use crate::history_search::{BasicSearch, BasicSearchCommand};
+use crate::line_buffer::{InsertionPoint, LineBuffer};
+use crate::{EditCommand, History, Prompt, Signal};
 use crossterm::{
     cursor::{position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
     event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -14,45 +9,11 @@ use crossterm::{
     terminal::{self, Clear, ClearType},
     QueueableCommand, Result,
 };
-use serde::{Deserialize, Serialize};
 
 use std::{
     io::{stdout, Stdout, Write},
     time::Duration,
 };
-
-/// Editing actions which can be mapped to key bindings.
-///
-/// Executed by [`Reedline::run_edit_commands()`]
-#[derive(Clone, Serialize, Deserialize)]
-pub enum EditCommand {
-    MoveToStart,
-    MoveToEnd,
-    MoveLeft,
-    MoveRight,
-    MoveWordLeft,
-    MoveWordRight,
-    InsertChar(char),
-    Backspace,
-    Delete,
-    BackspaceWord,
-    DeleteWord,
-    AppendToHistory,
-    PreviousHistory,
-    NextHistory,
-    SearchHistory,
-    Clear,
-    CutFromStart,
-    CutToEnd,
-    CutWordLeft,
-    CutWordRight,
-    InsertCutBuffer,
-    UppercaseWord,
-    LowercaseWord,
-    CapitalizeChar,
-    SwapWords,
-    SwapGraphemes,
-}
 
 /// Line editor engine
 ///
@@ -84,18 +45,6 @@ pub struct Reedline {
 
     // Stdout
     stdout: Stdout,
-}
-
-/// Valid ways how [`Reedline::read_line()`] can return
-pub enum Signal {
-    /// Entry succeeded with the provided content
-    Success(String),
-    /// Entry was aborted with `Ctrl+C`
-    CtrlC, // Interrupt current editing
-    /// Abort with `Ctrl+D` signalling `EOF` or abort of a whole interactive session
-    CtrlD, // End terminal session
-    /// Signal to clear the current screen. Buffer content remains untouched.
-    CtrlL, // FormFeed/Clear current screen
 }
 
 impl Default for Reedline {

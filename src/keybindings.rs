@@ -1,4 +1,4 @@
-use crate::engine::EditCommand;
+use crate::EditCommand;
 use crossterm::event::{KeyCode, KeyModifiers};
 use serde::{Deserialize, Serialize};
 
