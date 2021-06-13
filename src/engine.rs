@@ -288,9 +288,6 @@ impl Reedline {
                 }
                 EditCommand::AppendToHistory => {
                     self.history.append(self.insertion_line().to_string());
-                    // reset the history cursor - we want to start at the bottom of the
-                    // history again.
-                    self.history.reset_cursor();
                 }
                 EditCommand::PreviousHistory => {
                     if self.history.history_prefix.is_none() {

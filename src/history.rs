@@ -43,7 +43,7 @@ pub struct History {
     truncate_file: bool, // as long as the file would not exceed capacity we can use appending writes
 
     /// The prefix to search the history in a stateful manner using [`History::go_forward_with_prefix`] and [`History::go_back_with_prefix`]
-    pub history_prefix: Option<String>, 
+    pub history_prefix: Option<String>,
 }
 
 impl Default for History {
@@ -185,7 +185,8 @@ impl History {
         &self.entries
     }
 
-    /// Appends an entry if non-empty and not repetition of the previous entry
+    /// Appends an entry if non-empty and not repetition of the previous entry.
+    /// Resets the browsing cursor to the default state in front of the most recent entry.
     ///
     /// ```
     /// # use reedline::History;
@@ -210,16 +211,12 @@ impl History {
                 // History is "full", so we delete the oldest entry first,
                 // before adding a new one.
                 self.entries.pop_front();
-                self.cursor = self.cursor.saturating_sub(1);
                 self.len_on_disk = self.len_on_disk.saturating_sub(1);
                 self.truncate_file = true;
             }
-            // Keep the cursor meaning consistent if no call to `reset_cursor()` is done by the consumer
-            if self.cursor == self.entries.len() {
-                self.cursor += 1;
-            }
             self.entries.push_back(entry);
         }
+        self.reset_cursor()
     }
 
     /// Reset the internal browsing cursor
