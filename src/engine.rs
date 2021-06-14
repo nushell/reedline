@@ -1,5 +1,7 @@
 use crate::{
     clip_buffer::{get_default_clipboard, Clipboard},
+    default_emacs_keybindings,
+    keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
     Prompt,
 };
 use crate::{history::History, line_buffer::LineBuffer};
@@ -17,6 +19,7 @@ use crossterm::{
 use serde::{Deserialize, Serialize};
 
 use std::{
+    collections::HashMap,
     io::{stdout, Stdout, Write},
     time::Duration,
 };
@@ -52,6 +55,15 @@ pub enum EditCommand {
     CapitalizeChar,
     SwapWords,
     SwapGraphemes,
+    EnterViNormal,
+    EnterViInsert,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+pub enum EditMode {
+    Emacs,
+    ViNormal,
+    ViInsert,
 }
 
 /// Line editor engine
@@ -84,6 +96,12 @@ pub struct Reedline {
 
     // Stdout
     stdout: Stdout,
+
+    // Keybindings
+    keybindings: HashMap<EditMode, Keybindings>,
+
+    // Edit mode
+    edit_mode: EditMode,
 }
 
 /// Valid ways how [`Reedline::read_line()`] can return
@@ -110,6 +128,10 @@ impl Reedline {
         let history = History::default();
         let cut_buffer = Box::new(get_default_clipboard());
         let stdout = stdout();
+        let mut keybindings_hashmap = HashMap::new();
+        keybindings_hashmap.insert(EditMode::Emacs, default_emacs_keybindings());
+        keybindings_hashmap.insert(EditMode::ViInsert, default_vi_insert_keybindings());
+        keybindings_hashmap.insert(EditMode::ViNormal, default_vi_normal_keybindings());
 
         Reedline {
             line_buffer: LineBuffer::new(),
@@ -117,15 +139,59 @@ impl Reedline {
             history,
             history_search: None,
             stdout,
+            keybindings: keybindings_hashmap,
+            edit_mode: EditMode::Emacs,
         }
     }
 
-    /// Create a new [`Reedline`] with a provided [`History`].
-    /// Useful to link to a history file via [`History::with_file()`].
-    pub fn with_history(history: History) -> Self {
-        let mut rl = Reedline::new();
-        rl.history = history;
-        rl
+    pub fn with_history(
+        mut self,
+        history_file: &str,
+        history_size: usize,
+    ) -> std::io::Result<Reedline> {
+        let history = History::with_file(history_size, history_file.into())?;
+
+        self.history = history;
+
+        Ok(self)
+    }
+
+    pub fn with_keybindings(mut self, keybindings: Keybindings) -> Reedline {
+        self.keybindings.insert(EditMode::Emacs, keybindings);
+
+        self
+    }
+
+    pub fn with_edit_mode(mut self, edit_mode: EditMode) -> Reedline {
+        self.edit_mode = edit_mode;
+
+        self
+    }
+
+    pub fn get_keybindings(&self) -> &Keybindings {
+        &self
+            .keybindings
+            .get(&EditMode::Emacs)
+            .expect("Internal error: emacs should always be supported")
+    }
+
+    pub fn update_keybindings(&mut self, keybindings: Keybindings) {
+        self.keybindings.insert(EditMode::Emacs, keybindings);
+    }
+
+    pub fn edit_mode(&self) -> EditMode {
+        self.edit_mode
+    }
+
+    fn find_keybinding(
+        &self,
+        modifier: KeyModifiers,
+        key_code: KeyCode,
+    ) -> Option<Vec<EditCommand>> {
+        self.keybindings
+            .get(&self.edit_mode)
+            .expect("Internal error: expected to find keybindings for edit mode")
+            .find_binding(modifier, key_code)
     }
 
     /// Output the complete [`History`] chronologically with numbering to the terminal
@@ -447,6 +513,12 @@ impl Reedline {
                         self.set_insertion_point(insertion_offset);
                     }
                 }
+                EditCommand::EnterViInsert => {
+                    self.edit_mode = EditMode::ViInsert;
+                }
+                EditCommand::EnterViNormal => {
+                    self.edit_mode = EditMode::ViNormal;
+                }
             }
 
             // Clean-up after commands run
@@ -671,7 +743,6 @@ impl Reedline {
         terminal::enable_raw_mode()?;
 
         let mut terminal_size = terminal::size()?;
-        let keybindings = crate::default_keybindings();
 
         let prompt_origin = position()?;
 
@@ -694,26 +765,27 @@ impl Reedline {
         loop {
             match read()? {
                 Event::Key(KeyEvent { code, modifiers }) => {
-                    match (modifiers, code) {
-                        (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
+                    match (modifiers, code, self.edit_mode) {
+                        (KeyModifiers::CONTROL, KeyCode::Char('d'), _) => {
                             if self.line_buffer.is_empty() {
                                 return Ok(Signal::CtrlD);
-                            } else if let Some(binding) = keybindings.find_binding(modifiers, code)
-                            {
+                            } else if let Some(binding) = self.find_keybinding(modifiers, code) {
                                 self.run_edit_commands(&binding);
                             }
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                            if let Some(binding) = keybindings.find_binding(modifiers, code) {
+                        (KeyModifiers::CONTROL, KeyCode::Char('c'), _) => {
+                            if let Some(binding) = self.find_keybinding(modifiers, code) {
                                 self.run_edit_commands(&binding);
                             }
                             return Ok(Signal::CtrlC);
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('l')) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('l'), EditMode::Emacs) => {
                             return Ok(Signal::CtrlL);
                         }
-                        (KeyModifiers::NONE, KeyCode::Char(c))
-                        | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
+                        (KeyModifiers::NONE, KeyCode::Char(c), x)
+                        | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
+                            if x != EditMode::ViNormal =>
+                        {
                             let line_start = if self.insertion_point().line == 0 {
                                 prompt_offset.0
                             } else {
@@ -745,31 +817,36 @@ impl Reedline {
                                 ]);
                             }
                         }
-                        (KeyModifiers::NONE, KeyCode::Enter) => match self.history_search.clone() {
-                            Some(search) => {
-                                self.queue_prompt_indicator(prompt)?;
-                                if let Some((history_index, _)) = search.result {
-                                    self.line_buffer.set_buffer(
-                                        self.history.get_nth_newest(history_index).unwrap().clone(),
-                                    );
+                        (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
+                            match self.history_search.clone() {
+                                Some(search) => {
+                                    self.queue_prompt_indicator(prompt)?;
+                                    if let Some((history_index, _)) = search.result {
+                                        self.line_buffer.set_buffer(
+                                            self.history
+                                                .get_nth_newest(history_index)
+                                                .unwrap()
+                                                .clone(),
+                                        );
+                                    }
+                                    self.history_search = None;
                                 }
-                                self.history_search = None;
-                            }
-                            None => {
-                                let buffer = self.insertion_line().to_string();
+                                None => {
+                                    let buffer = self.insertion_line().to_string();
 
-                                self.run_edit_commands(&[
-                                    EditCommand::AppendToHistory,
-                                    EditCommand::Clear,
-                                ]);
-                                self.print_crlf()?;
+                                    self.run_edit_commands(&[
+                                        EditCommand::AppendToHistory,
+                                        EditCommand::Clear,
+                                    ]);
+                                    self.print_crlf()?;
 
-                                return Ok(Signal::Success(buffer));
+                                    return Ok(Signal::Success(buffer));
+                                }
                             }
-                        },
+                        }
 
                         _ => {
-                            if let Some(binding) = keybindings.find_binding(modifiers, code) {
+                            if let Some(binding) = self.find_keybinding(modifiers, code) {
                                 self.run_edit_commands(&binding);
                             }
                         }

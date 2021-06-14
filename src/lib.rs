@@ -40,7 +40,7 @@
 //! * `[x]` Configurable prompt
 //! * `[x]` Basic EMACS-style editing shortcuts.
 //! * `[ ]` Advanced multiline unicode aware editing.
-//! * `[ ]` Configurable keybindings.
+//! * `[x]` Configurable keybindings.
 //! * `[x]` Basic system integration with clipboard or optional stored history file.
 //! * `[ ]` Content aware highlighting or validation.
 //! * `[ ]` Autocompletion.
@@ -55,7 +55,7 @@
 mod clip_buffer;
 
 mod engine;
-pub use engine::{Reedline, Signal};
+pub use engine::{EditCommand, EditMode, Reedline, Signal};
 
 mod history;
 pub use history::{History, HISTORY_SIZE};
@@ -69,4 +69,4 @@ mod line_buffer;
 pub use line_buffer::LineBuffer;
 
 mod keybindings;
-pub use keybindings::default_keybindings;
+pub use keybindings::default_emacs_keybindings;

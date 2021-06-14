@@ -2,14 +2,14 @@ use crate::engine::EditCommand;
 use crossterm::event::{KeyCode, KeyModifiers};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Keybinding {
     modifier: KeyModifiers,
     key_code: KeyCode,
     edit_commands: Vec<EditCommand>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Keybindings {
     pub bindings: Vec<Keybinding>,
 }
@@ -53,7 +53,51 @@ impl Keybindings {
     }
 }
 
-pub fn default_keybindings() -> Keybindings {
+pub fn default_vi_normal_keybindings() -> Keybindings {
+    use KeyCode::*;
+
+    let mut keybindings = Keybindings::new();
+
+    keybindings.add_binding(KeyModifiers::NONE, Char('h'), vec![EditCommand::MoveLeft]);
+    keybindings.add_binding(KeyModifiers::NONE, Char('l'), vec![EditCommand::MoveRight]);
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        Char('j'),
+        vec![EditCommand::PreviousHistory],
+    );
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        Char('k'),
+        vec![EditCommand::NextHistory],
+    );
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        Char('i'),
+        vec![EditCommand::EnterViInsert],
+    );
+    keybindings.add_binding(KeyModifiers::NONE, Up, vec![EditCommand::PreviousHistory]);
+    keybindings.add_binding(KeyModifiers::NONE, Down, vec![EditCommand::NextHistory]);
+    keybindings.add_binding(KeyModifiers::NONE, Left, vec![EditCommand::MoveLeft]);
+    keybindings.add_binding(KeyModifiers::NONE, Right, vec![EditCommand::MoveRight]);
+
+    keybindings
+}
+
+pub fn default_vi_insert_keybindings() -> Keybindings {
+    use KeyCode::*;
+
+    let mut keybindings = Keybindings::new();
+
+    keybindings.add_binding(KeyModifiers::NONE, Esc, vec![EditCommand::EnterViNormal]);
+    keybindings.add_binding(KeyModifiers::NONE, Up, vec![EditCommand::PreviousHistory]);
+    keybindings.add_binding(KeyModifiers::NONE, Down, vec![EditCommand::NextHistory]);
+    keybindings.add_binding(KeyModifiers::NONE, Left, vec![EditCommand::MoveLeft]);
+    keybindings.add_binding(KeyModifiers::NONE, Right, vec![EditCommand::MoveRight]);
+
+    keybindings
+}
+
+pub fn default_emacs_keybindings() -> Keybindings {
     use KeyCode::*;
 
     let mut keybindings = Keybindings::new();
