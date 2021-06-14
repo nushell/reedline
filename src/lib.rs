@@ -45,17 +45,21 @@
 //! * `[ ]` Content aware highlighting or validation.
 //! * `[ ]` Autocompletion.
 //!
-//! For a more detailed roadmap checkout [TODO.txt](https://github.com/jonathandturner/reedline/blob/main/TODO.txt).
+//! For a more detailed roadmap check out [TODO.txt](https://github.com/jonathandturner/reedline/blob/main/TODO.txt).
 //!
 //! ### Alternatives
 //!
-//! For currently more mature Rust line editing checkout:
+//! For currently more mature Rust line editing check out:
 //!
 //! * [rustyline](https://crates.io/crates/rustyline)
 mod clip_buffer;
 
+mod enums;
+pub(crate) use enums::EditCommand;
+pub use enums::Signal;
+
 mod engine;
-pub use engine::{Reedline, Signal};
+pub use engine::Reedline;
 
 mod history;
 pub use history::{History, HISTORY_SIZE};
@@ -66,7 +70,6 @@ mod prompt;
 pub use prompt::{DefaultPrompt, Prompt, DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_INDICATOR};
 
 mod line_buffer;
-pub use line_buffer::LineBuffer;
 
 mod keybindings;
 pub use keybindings::default_keybindings;

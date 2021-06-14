@@ -52,12 +52,8 @@ impl LineBuffer {
         self.insertion_point = pos;
     }
 
-    pub fn get_buffer(&self) -> String {
-        self.lines[self.insertion_point.line].clone()
-    }
-
     /// Output the current line in the multiline buffer
-    pub fn insertion_line(&self) -> &str {
+    pub fn get_buffer(&self) -> &str {
         &self.lines[self.insertion_point.line]
     }
 
@@ -195,7 +191,7 @@ impl LineBuffer {
         self.lines[self.insertion_point.line][self.insertion_point.offset..]
             .chars()
             .next()
-            .map(|c| c.is_whitespace())
+            .map(char::is_whitespace)
             .unwrap_or(false)
     }
 }

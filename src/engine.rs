@@ -1,12 +1,7 @@
-use crate::{
-    clip_buffer::{get_default_clipboard, Clipboard},
-    Prompt,
-};
-use crate::{history::History, line_buffer::LineBuffer};
-use crate::{
-    history_search::{BasicSearch, BasicSearchCommand},
-    line_buffer::InsertionPoint,
-};
+use crate::clip_buffer::{get_default_clipboard, Clipboard};
+use crate::history_search::{BasicSearch, BasicSearchCommand};
+use crate::line_buffer::{InsertionPoint, LineBuffer};
+use crate::{EditCommand, History, Prompt, Signal};
 use crossterm::{
     cursor::{position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
     event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -14,45 +9,11 @@ use crossterm::{
     terminal::{self, Clear, ClearType},
     QueueableCommand, Result,
 };
-use serde::{Deserialize, Serialize};
 
 use std::{
     io::{stdout, Stdout, Write},
     time::Duration,
 };
-
-/// Editing actions which can be mapped to key bindings.
-///
-/// Executed by [`Reedline::run_edit_commands()`]
-#[derive(Clone, Serialize, Deserialize)]
-pub enum EditCommand {
-    MoveToStart,
-    MoveToEnd,
-    MoveLeft,
-    MoveRight,
-    MoveWordLeft,
-    MoveWordRight,
-    InsertChar(char),
-    Backspace,
-    Delete,
-    BackspaceWord,
-    DeleteWord,
-    AppendToHistory,
-    PreviousHistory,
-    NextHistory,
-    SearchHistory,
-    Clear,
-    CutFromStart,
-    CutToEnd,
-    CutWordLeft,
-    CutWordRight,
-    InsertCutBuffer,
-    UppercaseWord,
-    LowercaseWord,
-    CapitalizeChar,
-    SwapWords,
-    SwapGraphemes,
-}
 
 /// Line editor engine
 ///
@@ -84,18 +45,6 @@ pub struct Reedline {
 
     // Stdout
     stdout: Stdout,
-}
-
-/// Valid ways how [`Reedline::read_line()`] can return
-pub enum Signal {
-    /// Entry succeeded with the provided content
-    Success(String),
-    /// Entry was aborted with `Ctrl+C`
-    CtrlC, // Interrupt current editing
-    /// Abort with `Ctrl+D` signalling `EOF` or abort of a whole interactive session
-    CtrlD, // End terminal session
-    /// Signal to clear the current screen. Buffer content remains untouched.
-    CtrlL, // FormFeed/Clear current screen
 }
 
 impl Default for Reedline {
@@ -288,14 +237,11 @@ impl Reedline {
                 }
                 EditCommand::AppendToHistory => {
                     self.history.append(self.insertion_line().to_string());
-                    // reset the history cursor - we want to start at the bottom of the
-                    // history again.
-                    self.history.reset_cursor();
                 }
                 EditCommand::PreviousHistory => {
                     if self.history.history_prefix.is_none() {
                         let buffer = self.line_buffer.get_buffer();
-                        self.history.history_prefix = Some(buffer.clone());
+                        self.history.history_prefix = Some(buffer.to_owned());
                     }
 
                     if let Some(history_entry) = self.history.go_back_with_prefix() {
@@ -307,7 +253,7 @@ impl Reedline {
                 EditCommand::NextHistory => {
                     if self.history.history_prefix.is_none() {
                         let buffer = self.line_buffer.get_buffer();
-                        self.history.history_prefix = Some(buffer.clone());
+                        self.history.history_prefix = Some(buffer.to_owned());
                     }
 
                     if let Some(history_entry) = self.history.go_forward_with_prefix() {
@@ -323,13 +269,12 @@ impl Reedline {
                     let insertion_offset = self.insertion_point().offset;
                     if insertion_offset > 0 {
                         self.cut_buffer
-                            .set(&self.line_buffer.insertion_line()[..insertion_offset]);
+                            .set(&self.line_buffer.get_buffer()[..insertion_offset]);
                         self.clear_to_insertion_point();
                     }
                 }
                 EditCommand::CutToEnd => {
-                    let cut_slice =
-                        &self.line_buffer.insertion_line()[self.insertion_point().offset..];
+                    let cut_slice = &self.line_buffer.get_buffer()[self.insertion_point().offset..];
                     if !cut_slice.is_empty() {
                         self.cut_buffer.set(cut_slice);
                         self.clear_to_end();
@@ -341,7 +286,7 @@ impl Reedline {
                     if left_index < insertion_offset {
                         let cut_range = left_index..insertion_offset;
                         self.cut_buffer
-                            .set(&self.line_buffer.insertion_line()[cut_range.clone()]);
+                            .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
                         self.clear_range(cut_range);
                         self.set_insertion_point(left_index);
                     }
@@ -352,7 +297,7 @@ impl Reedline {
                     if right_index > insertion_offset {
                         let cut_range = insertion_offset..right_index;
                         self.cut_buffer
-                            .set(&self.line_buffer.insertion_line()[cut_range.clone()]);
+                            .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
                         self.clear_range(cut_range);
                     }
                 }
@@ -427,7 +372,7 @@ impl Reedline {
 
                     if insertion_offset == 0 {
                         self.line_buffer.move_right()
-                    } else if insertion_offset == self.line_buffer.insertion_line().len() {
+                    } else if insertion_offset == self.line_buffer.get_buffer().len() {
                         self.line_buffer.move_left()
                     }
                     let grapheme_1_start = self.line_buffer.grapheme_left_index();
@@ -480,7 +425,7 @@ impl Reedline {
 
     /// Get the current line of a multi-line edit [`LineBuffer`]
     fn insertion_line(&self) -> &str {
-        self.line_buffer.insertion_line()
+        self.line_buffer.get_buffer()
     }
 
     /// Reset the [`LineBuffer`] to be a line specified by `buffer`
