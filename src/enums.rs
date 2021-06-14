@@ -43,4 +43,14 @@ pub enum EditCommand {
     CapitalizeChar,
     SwapWords,
     SwapGraphemes,
+    EnterViNormal,
+    EnterViInsert,
+}
+
+/// The edit mode the reedline is currently in
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+pub enum EditMode {
+    Emacs,
+    ViNormal,
+    ViInsert,
 }

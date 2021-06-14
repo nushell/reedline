@@ -1,19 +1,22 @@
-use crossterm::Result;
+use crossterm::{event::KeyCode, event::KeyModifiers, Result};
 
 use reedline::{
-    DefaultPrompt, History, Reedline, Signal, DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_INDICATOR,
-    HISTORY_SIZE,
+    default_emacs_keybindings, DefaultPrompt, EditCommand, Reedline, Signal, DEFAULT_PROMPT_COLOR,
+    DEFAULT_PROMPT_INDICATOR,
 };
 
 fn main() -> Result<()> {
-    let mut line_editor = match std::env::var("REEDLINE_HISTFILE") {
-        Ok(histfile) if !histfile.is_empty() => {
-            // TODO: Allow change of capacity and don't unwrap
-            let history = History::with_file(HISTORY_SIZE, histfile.into()).unwrap();
-            Reedline::with_history(history)
-        }
-        _ => Reedline::new(),
-    };
+    let mut keybindings = default_emacs_keybindings();
+    keybindings.add_binding(
+        KeyModifiers::ALT,
+        KeyCode::Char('m'),
+        vec![EditCommand::BackspaceWord],
+    );
+
+    let mut line_editor = Reedline::new()
+        .with_history("history.txt", 5)?
+        .with_edit_mode(reedline::EditMode::ViNormal)
+        .with_keybindings(keybindings);
 
     let prompt = DefaultPrompt::new(DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_INDICATOR, 1);
 
@@ -29,6 +32,7 @@ fn main() -> Result<()> {
 
     loop {
         let sig = line_editor.read_line(&prompt)?;
+
         match sig {
             Signal::CtrlD => {
                 break;

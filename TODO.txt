@@ -2,18 +2,18 @@ Line editor
 
 TODO:
 
-* Documention
-  * README
-  * Documenting of all public functions and structs and traits
-    * At least some of the public functions are now documented
+* Add more unit tests
+* Prompt indicator change when in vi insert
 * Syntax highlighting
 * Multiline support
+* Document recent API additions
 * Validation
 * UX improvements
   * Autocompletion
   * Under status
   * Hinting
 * vi mode
+* History handle multiple instances. Could potentially create multiple history files based on the instance of reedline
 
 DONE:
 
@@ -56,4 +56,11 @@ X Support resize
   * We should detect the resize event, then start back at the beginning of where
     the prompt began, redraw the prompt and then redraw the user input up to now
 X prefix-based history navigation
+X Custom keybindings
+X Handle fallible history setup
+X Proper history file truncation when hitting history size limits
+X Documention
+  X README
+  X Documenting of all public functions and structs and traits
+    * At least some of the public functions are now documented
 
