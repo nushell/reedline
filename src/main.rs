@@ -15,7 +15,7 @@ fn main() -> Result<()> {
 
     let mut line_editor = Reedline::new()
         .with_history("history.txt", 5)?
-        //.with_edit_mode(reedline::EditMode::ViNormal)
+        .with_edit_mode(reedline::EditMode::ViNormal)
         .with_keybindings(keybindings);
 
     let prompt = DefaultPrompt::new(DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_INDICATOR, 1);

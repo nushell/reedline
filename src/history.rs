@@ -42,8 +42,8 @@ pub struct History {
     len_on_disk: usize,  // Keep track what was previously written to disk
     truncate_file: bool, // as long as the file would not exceed capacity we can use appending writes
 
-    // State for the history up/down
-    pub history_prefix: Option<String>, // The prefix of history to use when using up/down to explore history
+    /// The prefix to search the history in a stateful manner using [`History::go_forward_with_prefix`] and [`History::go_back_with_prefix`]
+    pub history_prefix: Option<String>,
 }
 
 impl Default for History {
@@ -134,7 +134,7 @@ impl History {
             },
             Ok(file) => {
                 let reader = BufReader::new(file);
-                let mut from_file: VecDeque<String> = reader.lines().map(|s| s.unwrap()).collect();
+                let mut from_file: VecDeque<String> = reader.lines().map(Result::unwrap).collect();
                 let from_file = if from_file.len() > self.capacity {
                     from_file.split_off(from_file.len() - self.capacity)
                 } else {
@@ -181,12 +181,13 @@ impl History {
         Ok(())
     }
 
-    /// Access the underlying entries (exported for possible fancy access to underlying VecDeque)
+    /// Access the underlying entries (exported for possible fancy access to underlying `VecDeque`)
     fn entries(&self) -> &VecDeque<String> {
         &self.entries
     }
 
-    /// Appends an entry if non-empty and not repetition of the previous entry
+    /// Appends an entry if non-empty and not repetition of the previous entry.
+    /// Resets the browsing cursor to the default state in front of the most recent entry.
     ///
     /// ```
     /// # use reedline::History;
@@ -211,16 +212,12 @@ impl History {
                 // History is "full", so we delete the oldest entry first,
                 // before adding a new one.
                 self.entries.pop_front();
-                self.cursor = self.cursor.saturating_sub(1);
                 self.len_on_disk = self.len_on_disk.saturating_sub(1);
                 self.truncate_file = true;
             }
-            // Keep the cursor meaning consistent if no call to `reset_cursor()` is done by the consumer
-            if self.cursor == self.entries.len() {
-                self.cursor += 1;
-            }
             self.entries.push_back(entry);
         }
+        self.reset_cursor()
     }
 
     /// Reset the internal browsing cursor
@@ -239,7 +236,8 @@ impl History {
         self.cursor = self.entries.len()
     }
 
-    /// Try to move back in history. Returns [`None`] if history is exhausted.
+    /// Try to move back in history.
+    /// Returns [`None`] if history is exhausted.
     ///
     /// ```
     /// # use reedline::History;
@@ -251,12 +249,30 @@ impl History {
     pub fn go_back(&mut self) -> Option<&str> {
         if self.cursor > 0 {
             self.cursor -= 1;
-            Some(self.entries.get(self.cursor).unwrap())
+            Some(&self.entries[self.cursor])
         } else {
             None
         }
     }
 
+    /// Try to search back in the history with the prefix stored in [`History::history_prefix`].
+    /// Returns [`None`] if history is exhausted.
+    /// Skips identical matches.
+    ///
+    /// ```
+    /// # use reedline::History;
+    /// let mut hist = History::default();
+    /// hist.append(String::from("find me as well"));
+    /// hist.append(String::from("find me once"));
+    /// hist.append(String::from("test"));
+    /// hist.append(String::from("find me once"));
+    /// hist.history_prefix = None;
+    /// assert_eq!(hist.go_back_with_prefix(), None);
+    /// hist.history_prefix = Some("find".to_string());
+    /// assert_eq!(hist.go_back_with_prefix(), Some("find me once"));
+    /// assert_eq!(hist.go_back_with_prefix(), Some("find me as well"));
+    /// assert_eq!(hist.go_back_with_prefix(), None);
+    /// ```
     pub fn go_back_with_prefix(&mut self) -> Option<&str> {
         if let Some(prefix) = &self.history_prefix {
             let old_match = self
@@ -265,7 +281,7 @@ impl History {
                 .filter(|entry| entry.starts_with(prefix));
             while self.cursor > 0 {
                 self.cursor -= 1;
-                let entry = self.entries.get(self.cursor).unwrap();
+                let entry = &self.entries[self.cursor];
                 if entry.starts_with(prefix) {
                     if old_match == Some(entry) {
                         continue;
@@ -278,7 +294,8 @@ impl History {
         None
     }
 
-    /// Try to move forward in history. Returns [`None`] if history is exhausted (moving beyond most recent element).
+    /// Try to move forward in history.
+    /// Returns [`None`] if history is exhausted (moving beyond most recent element).
     ///
     /// ```
     /// # use reedline::History;
@@ -300,12 +317,32 @@ impl History {
             self.cursor += 1;
         }
         if self.cursor < self.entries.len() {
-            Some(self.entries.get(self.cursor).unwrap())
+            Some(&self.entries[self.cursor])
         } else {
             None
         }
     }
 
+    /// Try to search forward in the history with the prefix stored in [`History::history_prefix`].
+    /// Returns [`History::history_prefix`] if history is exhausted.
+    /// Skips identical matches.
+    ///
+    /// ```
+    /// # use reedline::History;
+    /// let mut hist = History::default();
+    /// hist.append(String::from("find me as well"));
+    /// hist.append(String::from("find me once"));
+    /// hist.append(String::from("test"));
+    /// hist.append(String::from("find me once"));
+    /// hist.append(String::from("test2"));
+    /// hist.history_prefix = Some("find".to_string());
+    /// // walk back
+    /// assert_eq!(hist.go_back_with_prefix(), Some("find me once"));
+    /// assert_eq!(hist.go_back_with_prefix(), Some("find me as well"));
+    /// // walk forward
+    /// assert_eq!(hist.go_forward_with_prefix(), Some("find me once"));
+    /// assert_eq!(hist.go_forward_with_prefix(), Some("find"));
+    /// ```
     pub fn go_forward_with_prefix(&mut self) -> Option<&str> {
         if let Some(prefix) = &self.history_prefix {
             let old_match = self
@@ -316,7 +353,7 @@ impl History {
                 self.cursor += 1;
 
                 if self.cursor < self.entries.len() {
-                    let entry = self.entries.get(self.cursor).unwrap();
+                    let entry = &self.entries[self.cursor];
                     if entry.starts_with(prefix) {
                         if old_match == Some(entry) {
                             continue;
