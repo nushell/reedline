@@ -73,3 +73,5 @@ mod line_buffer;
 
 mod keybindings;
 pub use keybindings::default_keybindings;
+
+mod syntax_highlighting_fileio;
