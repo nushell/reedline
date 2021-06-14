@@ -1,0 +1,9 @@
+{
+  // some comment
+  "internal_command": "#ff0000|#ffffff|b",
+  // some other comment
+  "external_command": "#ff0000|#ffffff|n",
+  "sub_command": "#ff0000|#ffffff|bli",
+  "keyword": "|#ffffff|u",
+  "punctuation": "#ff0000||s"
+}
