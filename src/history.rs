@@ -73,7 +73,7 @@ impl History {
             cursor: 0,
             file: None,
             len_on_disk: 0,
-            truncate_file: false,
+            truncate_file: true,
             history_prefix: None,
         }
     }
@@ -161,6 +161,7 @@ impl History {
             // TODO: make this file race safe if multiple instances are used.
             OpenOptions::new()
                 .write(true)
+                .truncate(true)
                 .open(self.file.as_ref().unwrap())?
         } else {
             // If the file is not beyond capacity just append new stuff

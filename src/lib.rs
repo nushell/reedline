@@ -40,7 +40,7 @@
 //! * `[x]` Configurable prompt
 //! * `[x]` Basic EMACS-style editing shortcuts.
 //! * `[ ]` Advanced multiline unicode aware editing.
-//! * `[ ]` Configurable keybindings.
+//! * `[x]` Configurable keybindings.
 //! * `[x]` Basic system integration with clipboard or optional stored history file.
 //! * `[ ]` Content aware highlighting or validation.
 //! * `[ ]` Autocompletion.
@@ -55,8 +55,7 @@
 mod clip_buffer;
 
 mod enums;
-pub(crate) use enums::EditCommand;
-pub use enums::Signal;
+pub use enums::{EditCommand, EditMode, Signal};
 
 mod engine;
 pub use engine::Reedline;
@@ -72,6 +71,4 @@ pub use prompt::{DefaultPrompt, Prompt, DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_IND
 mod line_buffer;
 
 mod keybindings;
-pub use keybindings::default_keybindings;
-
-mod syntax_highlighting_fileio;
+pub use keybindings::default_emacs_keybindings;
