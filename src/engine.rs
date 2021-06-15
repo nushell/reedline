@@ -689,6 +689,7 @@ impl Reedline {
         let prompt_origin = position()?;
 
         self.queue_prompt(prompt, terminal_size.0 as usize)?;
+        self.stdout.flush()?;
 
         // set where the input begins
         let mut prompt_offset = position()?;
