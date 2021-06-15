@@ -1,0 +1,27 @@
+{
+  "internal_command": {
+    "bg": "#ffcc00",
+    "fg": "#ffffcc",
+    "attr": "b"
+  },
+  "external_command": {
+    "bg": "#ccc000",
+    "fg": "#ccfccc",
+    "attr": "n"
+  },
+  "sub_command": {
+    "bg": "#ff0cc0",
+    "fg": "#fccfff",
+    "attr": "bli"
+  },
+  "keyword": {
+    "bg": "",
+    "fg": "#ffcfff",
+    "attr": "u"
+  },
+  "punctuation": {
+    "bg": "#cff0fc",
+    "fg": "",
+    "attr": "s"
+  }
+}

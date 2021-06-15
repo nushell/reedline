@@ -72,3 +72,5 @@ mod line_buffer;
 
 mod keybindings;
 pub use keybindings::default_emacs_keybindings;
+
+mod syntax_highlighting_fileio;
