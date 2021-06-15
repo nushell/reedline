@@ -1,9 +1,27 @@
 {
-  // some comment
-  "internal_command": "#ff0000|#ffffff|b",
-  // some other comment
-  "external_command": "#ff0000|#ffffff|n",
-  "sub_command": "#ff0000|#ffffff|bli",
-  "keyword": "|#ffffff|u",
-  "punctuation": "#ff0000||s"
+  "internal_command": {
+    "bg": "#ffcc00",
+    "fg": "#ffffcc",
+    "attr": "b"
+  },
+  "external_command": {
+    "bg": "#ccc000",
+    "fg": "#ccfccc",
+    "attr": "n"
+  },
+  "sub_command": {
+    "bg": "#ff0cc0",
+    "fg": "#fccfff",
+    "attr": "bli"
+  },
+  "keyword": {
+    "bg": "",
+    "fg": "#ffcfff",
+    "attr": "u"
+  },
+  "punctuation": {
+    "bg": "#cff0fc",
+    "fg": "",
+    "attr": "s"
+  }
 }

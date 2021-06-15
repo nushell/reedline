@@ -1,8 +1,17 @@
+// use deser_hjson::*;
 use nu_ansi_term::{Color, Style};
 use nu_json::Value as nujVal;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::Read;
 use std::{fs::File, num::ParseIntError};
+
+#[derive(Deserialize, PartialEq, Debug)]
+struct NuStyle {
+    fg: Option<String>,
+    bg: Option<String>,
+    attr: Option<String>,
+}
 
 // fn main() {
 //     // this needs tweaking so we don't rely on env vars
@@ -36,7 +45,18 @@ fn parse_syntax_buffer(syntax_buffer: String) -> HashMap<String, Style> {
         // iterable object so we can go through it parsing out the key values
         let obj = data.as_object().expect("error with json object");
         for (key, value) in obj.iter() {
-            syntax_hash.insert(key.to_string(), parse_color((*value).to_string()));
+            let value_string = (*value).to_string();
+            let value_deser = match deser_hjson::from_str::<NuStyle>(&value_string) {
+                Ok(val) => val,
+                _ => NuStyle {
+                    fg: None,
+                    bg: None,
+                    attr: None,
+                },
+            };
+            // eprintln!("key:{:?} value:{:?}", key, value_string);
+            // eprintln!("key:{:?} value:{:?}", key, value_deser);
+            syntax_hash.insert(key.to_string(), parse_nustyle(value_deser));
         }
 
         syntax_hash
@@ -58,35 +78,7 @@ fn syntax_file_contents(syntax_file_path: String) -> String {
 }
 
 #[allow(dead_code)]
-fn parse_color(line: String) -> Style {
-    // expecting "#ff0000|#ffffff|b" where the tokens are
-    // foreground|background|attributes
-    // valid attributes are
-    // b = bold
-    // d = dimmed
-    // i = italic
-    // u = underline
-    // l = blink
-    // r = reverse
-    // h = hidden
-    // s = strikethrough
-    // n = normal - attributes are ignored
-    // If you want to foreground only set it like "#ff0000||attribute"
-    // If you want to have background only set it like "|#ffffff|attribute"
-
-    // let line = json_line.to_string();
-    let tokens: Vec<&str> = line.trim_matches('\"').split('|').collect();
-    match tokens.len() {
-        3 => {
-            let syntax_style = parse_syntax_color(&tokens[0], &tokens[1], &tokens[2]);
-            syntax_style.expect("unable to process syntax style")
-        }
-        _ => Style::new(),
-    }
-}
-
-#[allow(dead_code)]
-fn color_from_hex(hex_color: &str) -> Result<Option<Color>, ParseIntError> {
+fn color_from_hex(hex_color: &str) -> std::result::Result<Option<Color>, ParseIntError> {
     // right now we only allow hex colors with hashtag and 6 characters
     let trimmed = hex_color.trim_matches('#');
     if trimmed.len() != 6 {
@@ -102,16 +94,21 @@ fn color_from_hex(hex_color: &str) -> Result<Option<Color>, ParseIntError> {
 }
 
 #[allow(dead_code)]
-fn parse_syntax_color(fg: &str, bg: &str, attr: &str) -> Result<Style, String> {
+fn parse_nustyle(nu_style: NuStyle) -> Style {
     // get the nu_ansi_term::Color foreground color
-    let fg_color = match color_from_hex(fg) {
-        Ok(f) => f,
-        _ => return Err("Error with foreground color".to_string()),
+    let fg_color = match nu_style.fg {
+        Some(fg) => color_from_hex(&fg).expect("error with foreground color"),
+        _ => None,
     };
     // get the nu_ansi_term::Color background color
-    let bg_color = match color_from_hex(bg) {
-        Ok(b) => b,
-        _ => return Err("Error with background color".to_string()),
+    let bg_color = match nu_style.bg {
+        Some(bg) => color_from_hex(&bg).expect("error with background color"),
+        _ => None,
+    };
+    // get the attributes
+    let color_attr = match nu_style.attr {
+        Some(attr) => attr,
+        _ => "".to_string(),
     };
 
     // setup the attributes available in nu_ansi_term::Style
@@ -126,7 +123,7 @@ fn parse_syntax_color(fg: &str, bg: &str, attr: &str) -> Result<Style, String> {
 
     // since we can combine styles like bold-italic, iterate through the chars
     // and set the bools for later use in the nu_ansi_term::Style application
-    for ch in attr.to_lowercase().chars() {
+    for ch in color_attr.to_lowercase().chars() {
         match ch {
             'l' => blink = true,
             'b' => bold = true,
@@ -137,12 +134,12 @@ fn parse_syntax_color(fg: &str, bg: &str, attr: &str) -> Result<Style, String> {
             's' => strikethrough = true,
             'u' => underline = true,
             'n' => (),
-            _ => return Err("Error with color attributes".to_string()),
+            _ => (),
         }
     }
 
     // here's where we build the nu_ansi_term::Style
-    Ok(Style {
+    Style {
         foreground: fg_color,
         background: bg_color,
         is_blink: blink,
@@ -153,18 +150,14 @@ fn parse_syntax_color(fg: &str, bg: &str, attr: &str) -> Result<Style, String> {
         is_reverse: reverse,
         is_strikethrough: strikethrough,
         is_underline: underline,
-    })
+    }
 }
 
 #[test]
 fn test_syntax_parsing() {
-    let syntax_json = "{
-        \"internal_command\": \"#ffcc00|#8cfcfc|b\",
-        \"sub_command\": \"#ff0000|#ffffff|bli\",
-    }"
-    .to_string();
-    let expected =
-        "{\"internal_command\": Style { fg(Rgb(255, 204, 0)), on(Rgb(140, 252, 252)), bold }, \"sub_command\": Style { fg(Rgb(255, 0, 0)), on(Rgb(255, 255, 255)), blink, bold, italic }}";
+    let syntax_json =
+        "{ \"keyword\": { \"bg\": \"\", \"fg\": \"#ffcfff\", \"attr\": \"u\" }}".to_string();
+    let expected = "{\"keyword\": Style { fg(Rgb(255, 207, 255)), underline }}";
     let syntax = parse_syntax_buffer(syntax_json);
     assert_eq!(expected, format!("{:?}", syntax));
 }
