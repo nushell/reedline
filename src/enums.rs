@@ -37,7 +37,7 @@ pub enum EditCommand {
     CutToEnd,
     CutWordLeft,
     CutWordRight,
-    InsertCutBuffer,
+    PasteCutBuffer,
     UppercaseWord,
     LowercaseWord,
     CapitalizeChar,
@@ -45,6 +45,7 @@ pub enum EditCommand {
     SwapGraphemes,
     EnterViNormal,
     EnterViInsert,
+    ViCommandFragment(char),
 }
 
 /// The edit mode the reedline is currently in

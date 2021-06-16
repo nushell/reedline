@@ -1,9 +1,6 @@
 use crossterm::{event::KeyCode, event::KeyModifiers, Result};
 
-use reedline::{
-    default_emacs_keybindings, DefaultPrompt, EditCommand, Reedline, Signal, DEFAULT_PROMPT_COLOR,
-    DEFAULT_PROMPT_INDICATOR,
-};
+use reedline::{default_emacs_keybindings, DefaultPrompt, EditCommand, Reedline, Signal};
 
 fn main() -> Result<()> {
     let mut keybindings = default_emacs_keybindings();
@@ -15,10 +12,10 @@ fn main() -> Result<()> {
 
     let mut line_editor = Reedline::new()
         .with_history("history.txt", 5)?
-        .with_edit_mode(reedline::EditMode::Emacs)
+        .with_edit_mode(reedline::EditMode::ViNormal)
         .with_keybindings(keybindings);
 
-    let prompt = DefaultPrompt::new(DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_INDICATOR, 1);
+    let prompt = Box::new(DefaultPrompt::new(1));
 
     // quick command like parameter handling
     let args: Vec<String> = std::env::args().collect();
@@ -31,7 +28,7 @@ fn main() -> Result<()> {
     };
 
     loop {
-        let sig = line_editor.read_line(&prompt)?;
+        let sig = line_editor.read_line(prompt.clone())?;
 
         match sig {
             Signal::CtrlD => {

@@ -58,27 +58,26 @@ pub fn default_vi_normal_keybindings() -> Keybindings {
 
     let mut keybindings = Keybindings::new();
 
-    keybindings.add_binding(KeyModifiers::NONE, Char('h'), vec![EditCommand::MoveLeft]);
-    keybindings.add_binding(KeyModifiers::NONE, Char('l'), vec![EditCommand::MoveRight]);
     keybindings.add_binding(
         KeyModifiers::NONE,
-        Char('j'),
-        vec![EditCommand::PreviousHistory],
+        Up,
+        vec![EditCommand::ViCommandFragment('k')],
     );
     keybindings.add_binding(
         KeyModifiers::NONE,
-        Char('k'),
-        vec![EditCommand::NextHistory],
+        Down,
+        vec![EditCommand::ViCommandFragment('j')],
     );
     keybindings.add_binding(
         KeyModifiers::NONE,
-        Char('i'),
-        vec![EditCommand::EnterViInsert],
+        Left,
+        vec![EditCommand::ViCommandFragment('h')],
     );
-    keybindings.add_binding(KeyModifiers::NONE, Up, vec![EditCommand::PreviousHistory]);
-    keybindings.add_binding(KeyModifiers::NONE, Down, vec![EditCommand::NextHistory]);
-    keybindings.add_binding(KeyModifiers::NONE, Left, vec![EditCommand::MoveLeft]);
-    keybindings.add_binding(KeyModifiers::NONE, Right, vec![EditCommand::MoveRight]);
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        Right,
+        vec![EditCommand::ViCommandFragment('l')],
+    );
 
     keybindings
 }
@@ -93,6 +92,8 @@ pub fn default_vi_insert_keybindings() -> Keybindings {
     keybindings.add_binding(KeyModifiers::NONE, Down, vec![EditCommand::NextHistory]);
     keybindings.add_binding(KeyModifiers::NONE, Left, vec![EditCommand::MoveLeft]);
     keybindings.add_binding(KeyModifiers::NONE, Right, vec![EditCommand::MoveRight]);
+    keybindings.add_binding(KeyModifiers::NONE, Backspace, vec![EditCommand::Backspace]);
+    keybindings.add_binding(KeyModifiers::NONE, Delete, vec![EditCommand::Delete]);
 
     keybindings
 }
@@ -127,7 +128,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
     keybindings.add_binding(
         KeyModifiers::CONTROL,
         Char('y'),
-        vec![EditCommand::InsertCutBuffer],
+        vec![EditCommand::PasteCutBuffer],
     );
     keybindings.add_binding(
         KeyModifiers::CONTROL,

@@ -7,10 +7,10 @@
 //! use reedline::{Reedline, DefaultPrompt, Signal};
 //!
 //! let mut line_editor = Reedline::new();
-//! let prompt = DefaultPrompt::default();
+//! let prompt = Box::new(DefaultPrompt::default());
 //!
 //! loop {
-//!     let sig = line_editor.read_line(&prompt).unwrap();
+//!     let sig = line_editor.read_line(prompt.clone()).unwrap();
 //!     match sig {
 //!         Signal::CtrlD | Signal::CtrlC => {
 //!             line_editor.print_crlf().unwrap();
@@ -74,3 +74,6 @@ mod keybindings;
 pub use keybindings::default_emacs_keybindings;
 
 mod syntax_highlighting_fileio;
+
+mod vi_engine;
+pub use vi_engine::ViEngine;
