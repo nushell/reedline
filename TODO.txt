@@ -3,7 +3,12 @@ Line editor
 TODO:
 
 * Add more unit tests
-* Prompt indicator change when in vi insert
+* vi mode
+* 'dw' => delete word. 'delete' first part, and 'word' second part
+* Repeats '10dw' => 10x 'dw'
+* Make idle animations configurable (and able to be disabled)
+* Make more clear that keybindings are for emacs
+* Undo (ctrl-z)
 * Syntax highlighting
 * Multiline support
 * Document recent API additions
@@ -12,7 +17,6 @@ TODO:
   * Autocompletion
   * Under status
   * Hinting
-* vi mode
 * History handle multiple instances. Could potentially create multiple history files based on the instance of reedline
 
 DONE:
@@ -63,4 +67,5 @@ X Documention
   X README
   X Documenting of all public functions and structs and traits
     * At least some of the public functions are now documented
-
+X Prompt indicator change when in vi insert
+X Prompt changes async while idle

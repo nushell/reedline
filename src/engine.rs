@@ -2,14 +2,15 @@ use crate::{
     clip_buffer::{get_default_clipboard, Clipboard},
     default_emacs_keybindings,
     keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
-    Prompt,
+    prompt::PromptMode,
+    DefaultPrompt, Prompt,
 };
 use crate::{history::History, line_buffer::LineBuffer};
 use crate::{
     history_search::{BasicSearch, BasicSearchCommand},
     line_buffer::InsertionPoint,
 };
-use crate::{EditCommand, EditMode, Signal};
+use crate::{EditCommand, EditMode, Signal, ViEngine};
 use crossterm::{
     cursor::{position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
     event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -60,6 +61,18 @@ pub struct Reedline {
 
     // Edit mode
     edit_mode: EditMode,
+
+    // Prompt
+    prompt: Box<dyn Prompt>,
+
+    // Dirty bits
+    need_full_repaint: bool,
+
+    // Partial command
+    partial_command: Option<char>,
+
+    // Vi normal mode state engine
+    vi_engine: ViEngine,
 }
 
 impl Default for Reedline {
@@ -87,6 +100,10 @@ impl Reedline {
             stdout,
             keybindings: keybindings_hashmap,
             edit_mode: EditMode::Emacs,
+            prompt: Box::new(DefaultPrompt::default()),
+            need_full_repaint: false,
+            partial_command: None,
+            vi_engine: ViEngine::new(),
         }
     }
 
@@ -129,6 +146,13 @@ impl Reedline {
         self.edit_mode
     }
 
+    pub fn prompt_mode(&self) -> PromptMode {
+        match self.edit_mode {
+            EditMode::ViInsert => PromptMode::ViInsert,
+            _ => PromptMode::Normal,
+        }
+    }
+
     fn find_keybinding(
         &self,
         modifier: KeyModifiers,
@@ -167,7 +191,7 @@ impl Reedline {
     /// Returns a [`crossterm::Result`] in which the `Err` type is [`crossterm::ErrorKind`]
     /// to distinguish I/O errors and the `Ok` variant wraps a [`Signal`] which
     /// handles user inputs.
-    pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    pub fn read_line(&mut self, prompt: Box<dyn Prompt>) -> Result<Signal> {
         terminal::enable_raw_mode()?;
 
         let result = self.read_line_helper(prompt);
@@ -243,6 +267,246 @@ impl Reedline {
         }
     }
 
+    fn move_to_start(&mut self) {
+        self.line_buffer.move_to_start()
+    }
+
+    fn move_to_end(&mut self) {
+        self.line_buffer.move_to_end()
+    }
+
+    fn move_left(&mut self) {
+        self.line_buffer.move_left()
+    }
+
+    fn move_right(&mut self) {
+        self.line_buffer.move_right()
+    }
+
+    fn move_word_left(&mut self) {
+        self.line_buffer.move_word_left();
+    }
+
+    fn move_word_right(&mut self) {
+        self.line_buffer.move_right()
+    }
+
+    fn insert_char(&mut self, c: char) {
+        let insertion_point = self.line_buffer.insertion_point();
+        self.line_buffer.insert_char(insertion_point, c);
+    }
+
+    fn backspace(&mut self) {
+        let left_index = self.line_buffer.grapheme_left_index();
+        let insertion_offset = self.insertion_point().offset;
+        if left_index < insertion_offset {
+            self.clear_range(left_index..insertion_offset);
+            self.set_insertion_point(left_index);
+        }
+    }
+
+    fn delete(&mut self) {
+        let right_index = self.line_buffer.grapheme_right_index();
+        let insertion_offset = self.insertion_point().offset;
+        if right_index > insertion_offset {
+            self.clear_range(insertion_offset..right_index);
+        }
+    }
+
+    fn backspace_word(&mut self) {
+        let left_word_index = self.line_buffer.word_left_index();
+        self.clear_range(left_word_index..self.insertion_point().offset);
+        self.set_insertion_point(left_word_index);
+    }
+
+    fn delete_word(&mut self) {
+        let right_word_index = self.line_buffer.word_right_index();
+        self.clear_range(self.insertion_point().offset..right_word_index);
+    }
+
+    fn clear(&mut self) {
+        self.line_buffer.clear();
+        self.set_insertion_point(0);
+    }
+
+    fn append_to_history(&mut self) {
+        self.history.append(self.insertion_line().to_string());
+    }
+
+    fn previous_history(&mut self) {
+        if self.history.history_prefix.is_none() {
+            let buffer = self.line_buffer.get_buffer();
+            self.history.history_prefix = Some(buffer.to_owned());
+        }
+
+        if let Some(history_entry) = self.history.go_back_with_prefix() {
+            let new_buffer = history_entry.to_string();
+            self.set_buffer(new_buffer);
+            self.move_to_end();
+        }
+    }
+
+    fn next_history(&mut self) {
+        if self.history.history_prefix.is_none() {
+            let buffer = self.line_buffer.get_buffer();
+            self.history.history_prefix = Some(buffer.to_owned());
+        }
+
+        if let Some(history_entry) = self.history.go_forward_with_prefix() {
+            let new_buffer = history_entry.to_string();
+            self.set_buffer(new_buffer);
+            self.move_to_end();
+        }
+    }
+
+    fn search_history(&mut self) {
+        self.history_search = Some(BasicSearch::new(self.insertion_line().to_string()));
+    }
+
+    fn cut_from_start(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        if insertion_offset > 0 {
+            self.cut_buffer
+                .set(&self.line_buffer.get_buffer()[..insertion_offset]);
+            self.clear_to_insertion_point();
+        }
+    }
+
+    fn cut_from_end(&mut self) {
+        let cut_slice = &self.line_buffer.get_buffer()[self.insertion_point().offset..];
+        if !cut_slice.is_empty() {
+            self.cut_buffer.set(cut_slice);
+            self.clear_to_end();
+        }
+    }
+
+    fn cut_word_left(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        let left_index = self.line_buffer.word_left_index();
+        if left_index < insertion_offset {
+            let cut_range = left_index..insertion_offset;
+            self.cut_buffer
+                .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
+            self.clear_range(cut_range);
+            self.set_insertion_point(left_index);
+        }
+    }
+
+    fn cut_word_right(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        let right_index = self.line_buffer.word_right_index();
+        if right_index > insertion_offset {
+            let cut_range = insertion_offset..right_index;
+            self.cut_buffer
+                .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
+            self.clear_range(cut_range);
+        }
+    }
+
+    fn insert_cut_buffer(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        let cut_buffer = self.cut_buffer.get();
+        self.line_buffer.insert_str(insertion_offset, &cut_buffer);
+        self.set_insertion_point(insertion_offset + cut_buffer.len());
+    }
+
+    fn uppercase_word(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        let right_index = self.line_buffer.word_right_index();
+        if right_index > insertion_offset {
+            let change_range = insertion_offset..right_index;
+            let uppercased = self.insertion_line()[change_range.clone()].to_uppercase();
+            self.line_buffer.replace_range(change_range, &uppercased);
+            self.line_buffer.move_word_right();
+        }
+    }
+
+    fn lowercase_word(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        let right_index = self.line_buffer.word_right_index();
+        if right_index > insertion_offset {
+            let change_range = insertion_offset..right_index;
+            let lowercased = self.insertion_line()[change_range.clone()].to_lowercase();
+            self.line_buffer.replace_range(change_range, &lowercased);
+            self.line_buffer.move_word_right();
+        }
+    }
+
+    fn capitalize_char(&mut self) {
+        if self.line_buffer.on_whitespace() {
+            self.line_buffer.move_word_right();
+            self.line_buffer.move_word_left();
+        }
+        let insertion_offset = self.insertion_point().offset;
+        let right_index = self.line_buffer.grapheme_right_index();
+        if right_index > insertion_offset {
+            let change_range = insertion_offset..right_index;
+            let uppercased = self.insertion_line()[change_range.clone()].to_uppercase();
+            self.line_buffer.replace_range(change_range, &uppercased);
+            self.line_buffer.move_word_right();
+        }
+    }
+
+    fn swap_words(&mut self) {
+        let old_insertion_point = self.insertion_point().offset;
+        self.line_buffer.move_word_right();
+        let word_2_end = self.insertion_point().offset;
+        self.line_buffer.move_word_left();
+        let word_2_start = self.insertion_point().offset;
+        self.line_buffer.move_word_left();
+        let word_1_start = self.insertion_point().offset;
+        let word_1_end = self.line_buffer.word_right_index();
+
+        if word_1_start < word_1_end && word_1_end < word_2_start && word_2_start < word_2_end {
+            let insertion_line = self.insertion_line();
+            let word_1 = insertion_line[word_1_start..word_1_end].to_string();
+            let word_2 = insertion_line[word_2_start..word_2_end].to_string();
+            self.line_buffer
+                .replace_range(word_2_start..word_2_end, &word_1);
+            self.line_buffer
+                .replace_range(word_1_start..word_1_end, &word_2);
+            self.set_insertion_point(word_2_end);
+        } else {
+            self.set_insertion_point(old_insertion_point);
+        }
+    }
+
+    fn swap_graphemes(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+
+        if insertion_offset == 0 {
+            self.line_buffer.move_right()
+        } else if insertion_offset == self.line_buffer.get_buffer().len() {
+            self.line_buffer.move_left()
+        }
+        let grapheme_1_start = self.line_buffer.grapheme_left_index();
+        let grapheme_2_end = self.line_buffer.grapheme_right_index();
+
+        if grapheme_1_start < insertion_offset && grapheme_2_end > insertion_offset {
+            let grapheme_1 = self.insertion_line()[grapheme_1_start..insertion_offset].to_string();
+            let grapheme_2 = self.insertion_line()[insertion_offset..grapheme_2_end].to_string();
+            self.line_buffer
+                .replace_range(insertion_offset..grapheme_2_end, &grapheme_1);
+            self.line_buffer
+                .replace_range(grapheme_1_start..insertion_offset, &grapheme_2);
+            self.set_insertion_point(grapheme_2_end);
+        } else {
+            self.set_insertion_point(insertion_offset);
+        }
+    }
+
+    fn enter_vi_insert_mode(&mut self) {
+        self.edit_mode = EditMode::ViInsert;
+        self.need_full_repaint = true;
+        self.partial_command = None;
+    }
+
+    fn enter_vi_normal_mode(&mut self) {
+        self.edit_mode = EditMode::ViNormal;
+        self.need_full_repaint = true;
+        self.partial_command = None;
+    }
+
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
     fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         // Handle command for history inputs
@@ -251,220 +515,98 @@ impl Reedline {
             return;
         }
 
+        // Vim mode transformations
+        let commands = match self.edit_mode {
+            EditMode::ViNormal => self.vi_engine.handle(commands),
+            _ => commands.into(),
+        };
+
         // Run the commands over the edit buffer
-        for command in commands {
+        for command in &commands {
             match command {
-                EditCommand::MoveToStart => self.line_buffer.move_to_start(),
+                EditCommand::MoveToStart => self.move_to_start(),
                 EditCommand::MoveToEnd => {
-                    self.line_buffer.move_to_end();
+                    self.move_to_end();
                 }
-                EditCommand::MoveLeft => self.line_buffer.move_left(),
-                EditCommand::MoveRight => self.line_buffer.move_right(),
+                EditCommand::MoveLeft => self.move_left(),
+                EditCommand::MoveRight => self.move_right(),
                 EditCommand::MoveWordLeft => {
-                    self.line_buffer.move_word_left();
+                    self.move_word_left();
                 }
                 EditCommand::MoveWordRight => {
-                    self.line_buffer.move_word_right();
+                    self.move_word_right();
                 }
                 EditCommand::InsertChar(c) => {
-                    let insertion_point = self.line_buffer.insertion_point();
-                    self.line_buffer.insert_char(insertion_point, *c);
+                    self.insert_char(*c);
                 }
                 EditCommand::Backspace => {
-                    let left_index = self.line_buffer.grapheme_left_index();
-                    let insertion_offset = self.insertion_point().offset;
-                    if left_index < insertion_offset {
-                        self.clear_range(left_index..insertion_offset);
-                        self.set_insertion_point(left_index);
-                    }
+                    self.backspace();
                 }
                 EditCommand::Delete => {
-                    let right_index = self.line_buffer.grapheme_right_index();
-                    let insertion_offset = self.insertion_point().offset;
-                    if right_index > insertion_offset {
-                        self.clear_range(insertion_offset..right_index);
-                    }
+                    self.delete();
                 }
                 EditCommand::BackspaceWord => {
-                    let left_word_index = self.line_buffer.word_left_index();
-                    self.clear_range(left_word_index..self.insertion_point().offset);
-                    self.set_insertion_point(left_word_index);
+                    self.backspace_word();
                 }
                 EditCommand::DeleteWord => {
-                    let right_word_index = self.line_buffer.word_right_index();
-                    self.clear_range(self.insertion_point().offset..right_word_index);
+                    self.delete_word();
                 }
                 EditCommand::Clear => {
-                    self.line_buffer.clear();
-                    self.set_insertion_point(0);
+                    self.clear();
                 }
                 EditCommand::AppendToHistory => {
-                    self.history.append(self.insertion_line().to_string());
+                    self.append_to_history();
                 }
                 EditCommand::PreviousHistory => {
-                    if self.history.history_prefix.is_none() {
-                        let buffer = self.line_buffer.get_buffer();
-                        self.history.history_prefix = Some(buffer.to_owned());
-                    }
-
-                    if let Some(history_entry) = self.history.go_back_with_prefix() {
-                        let new_buffer = history_entry.to_string();
-                        self.set_buffer(new_buffer);
-                        self.move_to_end();
-                    }
+                    self.previous_history();
                 }
                 EditCommand::NextHistory => {
-                    if self.history.history_prefix.is_none() {
-                        let buffer = self.line_buffer.get_buffer();
-                        self.history.history_prefix = Some(buffer.to_owned());
-                    }
-
-                    if let Some(history_entry) = self.history.go_forward_with_prefix() {
-                        let new_buffer = history_entry.to_string();
-                        self.set_buffer(new_buffer);
-                        self.move_to_end();
-                    }
+                    self.next_history();
                 }
                 EditCommand::SearchHistory => {
-                    self.history_search = Some(BasicSearch::new(self.insertion_line().to_string()));
+                    self.search_history();
                 }
                 EditCommand::CutFromStart => {
-                    let insertion_offset = self.insertion_point().offset;
-                    if insertion_offset > 0 {
-                        self.cut_buffer
-                            .set(&self.line_buffer.get_buffer()[..insertion_offset]);
-                        self.clear_to_insertion_point();
-                    }
+                    self.cut_from_start();
                 }
                 EditCommand::CutToEnd => {
-                    let cut_slice = &self.line_buffer.get_buffer()[self.insertion_point().offset..];
-                    if !cut_slice.is_empty() {
-                        self.cut_buffer.set(cut_slice);
-                        self.clear_to_end();
-                    }
+                    self.cut_from_end();
                 }
                 EditCommand::CutWordLeft => {
-                    let insertion_offset = self.insertion_point().offset;
-                    let left_index = self.line_buffer.word_left_index();
-                    if left_index < insertion_offset {
-                        let cut_range = left_index..insertion_offset;
-                        self.cut_buffer
-                            .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
-                        self.clear_range(cut_range);
-                        self.set_insertion_point(left_index);
-                    }
+                    self.cut_word_left();
                 }
                 EditCommand::CutWordRight => {
-                    let insertion_offset = self.insertion_point().offset;
-                    let right_index = self.line_buffer.word_right_index();
-                    if right_index > insertion_offset {
-                        let cut_range = insertion_offset..right_index;
-                        self.cut_buffer
-                            .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
-                        self.clear_range(cut_range);
-                    }
+                    self.cut_word_right();
                 }
-                EditCommand::InsertCutBuffer => {
-                    let insertion_offset = self.insertion_point().offset;
-                    let cut_buffer = self.cut_buffer.get();
-                    self.line_buffer.insert_str(insertion_offset, &cut_buffer);
-                    self.set_insertion_point(insertion_offset + cut_buffer.len());
+                EditCommand::PasteCutBuffer => {
+                    self.insert_cut_buffer();
                 }
                 EditCommand::UppercaseWord => {
-                    let insertion_offset = self.insertion_point().offset;
-                    let right_index = self.line_buffer.word_right_index();
-                    if right_index > insertion_offset {
-                        let change_range = insertion_offset..right_index;
-                        let uppercased = self.insertion_line()[change_range.clone()].to_uppercase();
-                        self.line_buffer.replace_range(change_range, &uppercased);
-                        self.line_buffer.move_word_right();
-                    }
+                    self.uppercase_word();
                 }
                 EditCommand::LowercaseWord => {
-                    let insertion_offset = self.insertion_point().offset;
-                    let right_index = self.line_buffer.word_right_index();
-                    if right_index > insertion_offset {
-                        let change_range = insertion_offset..right_index;
-                        let lowercased = self.insertion_line()[change_range.clone()].to_lowercase();
-                        self.line_buffer.replace_range(change_range, &lowercased);
-                        self.line_buffer.move_word_right();
-                    }
+                    self.lowercase_word();
                 }
                 EditCommand::CapitalizeChar => {
-                    if self.line_buffer.on_whitespace() {
-                        self.line_buffer.move_word_right();
-                        self.line_buffer.move_word_left();
-                    }
-                    let insertion_offset = self.insertion_point().offset;
-                    let right_index = self.line_buffer.grapheme_right_index();
-                    if right_index > insertion_offset {
-                        let change_range = insertion_offset..right_index;
-                        let uppercased = self.insertion_line()[change_range.clone()].to_uppercase();
-                        self.line_buffer.replace_range(change_range, &uppercased);
-                        self.line_buffer.move_word_right();
-                    }
+                    self.capitalize_char();
                 }
                 EditCommand::SwapWords => {
-                    let old_insertion_point = self.insertion_point().offset;
-                    self.line_buffer.move_word_right();
-                    let word_2_end = self.insertion_point().offset;
-                    self.line_buffer.move_word_left();
-                    let word_2_start = self.insertion_point().offset;
-                    self.line_buffer.move_word_left();
-                    let word_1_start = self.insertion_point().offset;
-                    let word_1_end = self.line_buffer.word_right_index();
-
-                    if word_1_start < word_1_end
-                        && word_1_end < word_2_start
-                        && word_2_start < word_2_end
-                    {
-                        let insertion_line = self.insertion_line();
-                        let word_1 = insertion_line[word_1_start..word_1_end].to_string();
-                        let word_2 = insertion_line[word_2_start..word_2_end].to_string();
-                        self.line_buffer
-                            .replace_range(word_2_start..word_2_end, &word_1);
-                        self.line_buffer
-                            .replace_range(word_1_start..word_1_end, &word_2);
-                        self.set_insertion_point(word_2_end);
-                    } else {
-                        self.set_insertion_point(old_insertion_point);
-                    }
+                    self.swap_words();
                 }
                 EditCommand::SwapGraphemes => {
-                    let insertion_offset = self.insertion_point().offset;
-
-                    if insertion_offset == 0 {
-                        self.line_buffer.move_right()
-                    } else if insertion_offset == self.line_buffer.get_buffer().len() {
-                        self.line_buffer.move_left()
-                    }
-                    let grapheme_1_start = self.line_buffer.grapheme_left_index();
-                    let grapheme_2_end = self.line_buffer.grapheme_right_index();
-
-                    if grapheme_1_start < insertion_offset && grapheme_2_end > insertion_offset {
-                        let grapheme_1 =
-                            self.insertion_line()[grapheme_1_start..insertion_offset].to_string();
-                        let grapheme_2 =
-                            self.insertion_line()[insertion_offset..grapheme_2_end].to_string();
-                        self.line_buffer
-                            .replace_range(insertion_offset..grapheme_2_end, &grapheme_1);
-                        self.line_buffer
-                            .replace_range(grapheme_1_start..insertion_offset, &grapheme_2);
-                        self.set_insertion_point(grapheme_2_end);
-                    } else {
-                        self.set_insertion_point(insertion_offset);
-                    }
+                    self.swap_graphemes();
                 }
                 EditCommand::EnterViInsert => {
-                    self.edit_mode = EditMode::ViInsert;
+                    self.enter_vi_insert_mode();
                 }
                 EditCommand::EnterViNormal => {
-                    self.edit_mode = EditMode::ViNormal;
+                    self.enter_vi_normal_mode();
                 }
+                _ => {}
             }
 
             // Clean-up after commands run
-            for command in commands {
+            for command in &commands {
                 match command {
                     EditCommand::PreviousHistory => {}
                     EditCommand::NextHistory => {}
@@ -500,10 +642,6 @@ impl Reedline {
     /// Reset the [`LineBuffer`] to be a line specified by `buffer`
     fn set_buffer(&mut self, buffer: String) {
         self.line_buffer.set_buffer(buffer)
-    }
-
-    fn move_to_end(&mut self) {
-        self.line_buffer.move_to_end()
     }
 
     fn clear_to_end(&mut self) {
@@ -576,12 +714,15 @@ impl Reedline {
     /// Display the complete prompt including status indicators (e.g. pwd, time)
     ///
     /// Used at the beginning of each [`Reedline::read_line()`] call.
-    fn queue_prompt(&mut self, prompt: &dyn Prompt, screen_width: usize) -> Result<()> {
+    fn queue_prompt(&mut self, screen_width: usize) -> Result<()> {
         // print our prompt
+        let prompt_mode = self.prompt_mode();
+
         self.stdout
             .queue(MoveToColumn(0))?
-            .queue(SetForegroundColor(prompt.get_prompt_color()))?
-            .queue(Print(prompt.render_prompt(screen_width)))?
+            .queue(SetForegroundColor(self.prompt.get_prompt_color()))?
+            .queue(Print(self.prompt.render_prompt(screen_width)))?
+            .queue(Print(self.prompt.render_prompt_indicator(prompt_mode)))?
             .queue(ResetColor)?;
 
         Ok(())
@@ -591,12 +732,13 @@ impl Reedline {
     ///
     /// Used to restore the prompt indicator after a search etc. that affected
     /// the prompt
-    fn queue_prompt_indicator(&mut self, prompt: &dyn Prompt) -> Result<()> {
+    fn queue_prompt_indicator(&mut self) -> Result<()> {
         // print our prompt
+        let prompt_mode = self.prompt_mode();
         self.stdout
             .queue(MoveToColumn(0))?
-            .queue(SetForegroundColor(prompt.get_prompt_color()))?
-            .queue(Print(prompt.render_prompt_indicator()))?
+            .queue(SetForegroundColor(self.prompt.get_prompt_color()))?
+            .queue(Print(self.prompt.render_prompt_indicator(prompt_mode)))?
             .queue(ResetColor)?;
 
         Ok(())
@@ -629,6 +771,20 @@ impl Reedline {
         self.stdout.flush()?;
 
         Ok(())
+    }
+
+    fn full_repaint(
+        &mut self,
+        prompt_origin: (u16, u16),
+        terminal_width: u16,
+    ) -> Result<(u16, u16)> {
+        self.move_to(prompt_origin.0, prompt_origin.1)?;
+        self.queue_prompt(terminal_width as usize)?;
+        // set where the input begins
+        let prompt_offset = position()?;
+        self.buffer_paint(prompt_offset)?;
+
+        Ok(prompt_offset)
     }
 
     /// Repaint logic for the history reverse search
@@ -681,14 +837,15 @@ impl Reedline {
 
     /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
-    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    fn read_line_helper(&mut self, prompt: Box<dyn Prompt>) -> Result<Signal> {
         terminal::enable_raw_mode()?;
+        self.prompt = prompt;
 
         let mut terminal_size = terminal::size()?;
 
         let prompt_origin = position()?;
 
-        self.queue_prompt(prompt, terminal_size.0 as usize)?;
+        self.queue_prompt(terminal_size.0 as usize)?;
         self.stdout.flush()?;
 
         // set where the input begins
@@ -706,111 +863,121 @@ impl Reedline {
         self.stdout.flush()?;
 
         loop {
-            match read()? {
-                Event::Key(KeyEvent { code, modifiers }) => {
-                    match (modifiers, code, self.edit_mode) {
-                        (KeyModifiers::CONTROL, KeyCode::Char('d'), _) => {
-                            if self.line_buffer.is_empty() {
-                                return Ok(Signal::CtrlD);
-                            } else if let Some(binding) = self.find_keybinding(modifiers, code) {
-                                self.run_edit_commands(&binding);
-                            }
-                        }
-                        (KeyModifiers::CONTROL, KeyCode::Char('c'), _) => {
-                            if let Some(binding) = self.find_keybinding(modifiers, code) {
-                                self.run_edit_commands(&binding);
-                            }
-                            return Ok(Signal::CtrlC);
-                        }
-                        (KeyModifiers::CONTROL, KeyCode::Char('l'), EditMode::Emacs) => {
-                            return Ok(Signal::CtrlL);
-                        }
-                        (KeyModifiers::NONE, KeyCode::Char(c), x)
-                        | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
-                            if x != EditMode::ViNormal =>
-                        {
-                            let line_start = if self.insertion_point().line == 0 {
-                                prompt_offset.0
-                            } else {
-                                0
-                            };
-                            if self.maybe_wrap(terminal_size.0, line_start, c) {
-                                let (original_column, original_row) = position()?;
-                                self.run_edit_commands(&[
-                                    EditCommand::InsertChar(c),
-                                    EditCommand::MoveRight,
-                                ]);
-                                self.buffer_paint(prompt_offset)?;
-
-                                let (new_column, _) = position()?;
-
-                                if new_column < original_column
-                                    && original_row == (terminal_size.1 - 1)
-                                    && line_count == 1
+            if poll(Duration::from_secs(1))? {
+                match read()? {
+                    Event::Key(KeyEvent { code, modifiers }) => {
+                        match (modifiers, code, self.edit_mode) {
+                            (KeyModifiers::CONTROL, KeyCode::Char('d'), _) => {
+                                if self.line_buffer.is_empty() {
+                                    return Ok(Signal::CtrlD);
+                                } else if let Some(binding) = self.find_keybinding(modifiers, code)
                                 {
-                                    // We have wrapped off bottom of screen, and prompt is on new row
-                                    // We need to update the prompt location in this case
-                                    prompt_offset.1 -= 1;
-                                    line_count += 1;
+                                    self.run_edit_commands(&binding);
                                 }
-                            } else {
-                                self.run_edit_commands(&[
-                                    EditCommand::InsertChar(c),
-                                    EditCommand::MoveRight,
-                                ]);
                             }
-                        }
-                        (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
-                            match self.history_search.clone() {
-                                Some(search) => {
-                                    self.queue_prompt_indicator(prompt)?;
-                                    if let Some((history_index, _)) = search.result {
-                                        self.line_buffer.set_buffer(
-                                            self.history
-                                                .get_nth_newest(history_index)
-                                                .unwrap()
-                                                .clone(),
-                                        );
-                                    }
-                                    self.history_search = None;
+                            (KeyModifiers::CONTROL, KeyCode::Char('c'), _) => {
+                                if let Some(binding) = self.find_keybinding(modifiers, code) {
+                                    self.run_edit_commands(&binding);
                                 }
-                                None => {
-                                    let buffer = self.insertion_line().to_string();
-
+                                return Ok(Signal::CtrlC);
+                            }
+                            (KeyModifiers::CONTROL, KeyCode::Char('l'), EditMode::Emacs) => {
+                                return Ok(Signal::CtrlL);
+                            }
+                            (KeyModifiers::NONE, KeyCode::Char(c), x)
+                            | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
+                                if x == EditMode::ViNormal =>
+                            {
+                                self.run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
+                            }
+                            (KeyModifiers::NONE, KeyCode::Char(c), x)
+                            | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
+                                if x != EditMode::ViNormal =>
+                            {
+                                let line_start = if self.insertion_point().line == 0 {
+                                    prompt_offset.0
+                                } else {
+                                    0
+                                };
+                                if self.maybe_wrap(terminal_size.0, line_start, c) {
+                                    let (original_column, original_row) = position()?;
                                     self.run_edit_commands(&[
-                                        EditCommand::AppendToHistory,
-                                        EditCommand::Clear,
+                                        EditCommand::InsertChar(c),
+                                        EditCommand::MoveRight,
                                     ]);
-                                    self.print_crlf()?;
+                                    self.buffer_paint(prompt_offset)?;
 
-                                    return Ok(Signal::Success(buffer));
+                                    let (new_column, _) = position()?;
+
+                                    if new_column < original_column
+                                        && original_row == (terminal_size.1 - 1)
+                                        && line_count == 1
+                                    {
+                                        // We have wrapped off bottom of screen, and prompt is on new row
+                                        // We need to update the prompt location in this case
+                                        prompt_offset.1 -= 1;
+                                        line_count += 1;
+                                    }
+                                } else {
+                                    self.run_edit_commands(&[
+                                        EditCommand::InsertChar(c),
+                                        EditCommand::MoveRight,
+                                    ]);
                                 }
                             }
-                        }
+                            (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
+                                match self.history_search.clone() {
+                                    Some(search) => {
+                                        self.queue_prompt_indicator()?;
+                                        if let Some((history_index, _)) = search.result {
+                                            self.line_buffer.set_buffer(
+                                                self.history
+                                                    .get_nth_newest(history_index)
+                                                    .unwrap()
+                                                    .clone(),
+                                            );
+                                        }
+                                        self.history_search = None;
+                                    }
+                                    None => {
+                                        let buffer = self.insertion_line().to_string();
 
-                        _ => {
-                            if let Some(binding) = self.find_keybinding(modifiers, code) {
-                                self.run_edit_commands(&binding);
+                                        self.run_edit_commands(&[
+                                            EditCommand::AppendToHistory,
+                                            EditCommand::Clear,
+                                        ]);
+                                        self.print_crlf()?;
+
+                                        return Ok(Signal::Success(buffer));
+                                    }
+                                }
+                            }
+
+                            _ => {
+                                if let Some(binding) = self.find_keybinding(modifiers, code) {
+                                    self.run_edit_commands(&binding);
+                                }
                             }
                         }
                     }
+                    Event::Mouse(event) => {
+                        self.print_line(&format!("{:?}", event))?;
+                    }
+                    Event::Resize(width, height) => {
+                        terminal_size = (width, height);
+                        self.full_repaint(prompt_origin, width)?;
+                    }
                 }
-                Event::Mouse(event) => {
-                    self.print_line(&format!("{:?}", event))?;
-                }
-                Event::Resize(width, height) => {
-                    terminal_size = (width, height);
-                    self.move_to(prompt_origin.0, prompt_origin.1)?;
-                    self.queue_prompt(prompt, terminal_size.0 as usize)?;
-                    // set where the input begins
-                    prompt_offset = position()?;
+                if self.history_search.is_some() {
+                    self.history_search_paint()?;
+                } else if self.need_full_repaint {
+                    self.full_repaint(prompt_origin, terminal_size.0)?;
+                    self.need_full_repaint = false;
+                } else {
                     self.buffer_paint(prompt_offset)?;
                 }
-            }
-            if self.history_search.is_some() {
-                self.history_search_paint()?;
             } else {
-                self.buffer_paint(prompt_offset)?;
+                self.full_repaint(prompt_origin, terminal_size.0)?;
             }
         }
     }

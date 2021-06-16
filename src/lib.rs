@@ -74,3 +74,6 @@ mod keybindings;
 pub use keybindings::default_emacs_keybindings;
 
 mod syntax_highlighting_fileio;
+
+mod vi_engine;
+pub use vi_engine::ViEngine;
