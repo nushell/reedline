@@ -31,9 +31,9 @@ use std::{
 /// ```no_run
 /// use reedline::{Reedline, Signal, DefaultPrompt};
 /// let mut line_editor = Reedline::new();
-/// let prompt = DefaultPrompt::default();
+/// let prompt = Box::new(DefaultPrompt::default());
 ///
-/// let out = line_editor.read_line(&prompt).unwrap();
+/// let out = line_editor.read_line(prompt).unwrap();
 /// match out {
 ///    Signal::Success(content) => {
 ///        // process content
