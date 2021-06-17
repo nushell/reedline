@@ -1,0 +1,5 @@
+hey how are you
+exit
+ls
+hey there man
+exit

@@ -25,49 +25,6 @@ use std::{
     time::Duration,
 };
 
-/// Line editor engine
-///
-/// ## Example usage
-/// ```no_run
-/// use reedline::{Reedline, Signal, DefaultPrompt};
-/// let mut line_editor = Reedline::new();
-/// let prompt = Box::new(DefaultPrompt::default());
-///
-/// let out = line_editor.read_line(prompt).unwrap();
-/// match out {
-///    Signal::Success(content) => {
-///        // process content
-///    }
-///    _ => {
-///        eprintln!("Entry aborted!");
-///    }
-/// }
-/// ```
-pub struct Reedline {
-    // Stdout
-    stdout: Stdout,
-
-    // Keybindings
-    keybindings: HashMap<EditMode, Keybindings>,
-
-    // Edit mode
-    edit_mode: EditMode,
-
-    // Prompt
-    prompt: Box<dyn Prompt>,
-
-    // Dirty bits
-    need_full_repaint: bool,
-
-    // Partial command
-    partial_command: Option<char>,
-
-    // Vi normal mode state engine
-    vi_engine: ViEngine,
-
-    edit_engine: EditEngine,
-}
-
 pub struct EditEngine {
     line_buffer: LineBuffer,
     cut_buffer: Box<dyn Clipboard>,
@@ -394,6 +351,212 @@ impl EditEngine {
     }
 }
 
+pub struct Painter {
+    // Stdout
+    stdout: Stdout,
+
+    // Prompt
+    prompt: Box<dyn Prompt>,
+}
+
+impl Painter {
+    pub fn move_to(&mut self, column: u16, row: u16) -> Result<()> {
+        self.stdout.queue(MoveTo(column, row))?;
+        self.stdout.flush()?;
+
+        Ok(())
+    }
+
+    /// Writes `msg` to the terminal with a following carriage return and newline
+    pub fn print_line(&mut self, msg: &str) -> Result<()> {
+        self.stdout
+            .queue(Print(msg))?
+            .queue(Print("\n"))?
+            .queue(MoveToColumn(1))?;
+        self.stdout.flush()?;
+
+        Ok(())
+    }
+
+    /// Goes to the beginning of the next line
+    ///
+    /// Also works in raw mode
+    pub fn print_crlf(&mut self) -> Result<()> {
+        self.stdout.queue(Print("\n"))?.queue(MoveToColumn(1))?;
+        self.stdout.flush()?;
+
+        Ok(())
+    }
+
+    /// Clear the screen by printing enough whitespace to start the prompt or
+    /// other output back at the first line of the terminal.
+    pub fn clear_screen(&mut self) -> Result<()> {
+        let (_, num_lines) = terminal::size()?;
+        for _ in 0..2 * num_lines {
+            self.stdout.queue(Print("\n"))?;
+        }
+        self.stdout.queue(MoveTo(0, 0))?;
+        self.stdout.flush()?;
+        Ok(())
+    }
+
+    pub fn clear_until_newline(&mut self) -> Result<()> {
+        self.stdout.queue(Clear(ClearType::UntilNewLine))?;
+        self.stdout.flush()?;
+
+        Ok(())
+    }
+
+    // Note: Methods above this are generic, afte this point they are quite specific to this    //
+    // readline
+
+    /// Display the complete prompt including status indicators (e.g. pwd, time)
+    ///
+    /// Used at the beginning of each [`Reedline::read_line()`] call.
+    fn print_prompt(&mut self, screen_width: usize, prompt_mode: PromptMode) -> Result<()> {
+        // print our prompt
+        // let prompt_mode = self.prompt_mode();
+
+        self.stdout
+            .queue(MoveToColumn(0))?
+            .queue(SetForegroundColor(self.prompt.get_prompt_color()))?
+            .queue(Print(self.prompt.render_prompt(screen_width)))?
+            .queue(Print(self.prompt.render_prompt_indicator(prompt_mode)))?
+            .queue(ResetColor)?;
+
+        self.stdout.flush()?;
+
+        Ok(())
+    }
+
+    /// Display only the prompt components preceding the buffer
+    ///
+    /// Used to restore the prompt indicator after a search etc. that affected
+    /// the prompt
+    fn print_prompt_indicator(&mut self, prompt_mode: PromptMode) -> Result<()> {
+        // print our prompt
+        self.stdout
+            .queue(MoveToColumn(0))?
+            .queue(SetForegroundColor(self.prompt.get_prompt_color()))?
+            .queue(Print(self.prompt.render_prompt_indicator(prompt_mode)))?
+            .queue(ResetColor)?;
+
+        Ok(())
+    }
+
+    /// Repaint logic for the normal input prompt buffer
+    ///
+    /// Requires coordinates where the input buffer begins after the prompt.
+    fn print_buffer(
+        &mut self,
+        prompt_offset: (u16, u16),
+        new_index: usize,
+        insertion_line: String,
+    ) -> Result<()> {
+        // Repaint logic:
+        //
+        // Start after the prompt
+        // Draw the string slice from 0 to the grapheme start left of insertion point
+        // Then, get the position on the screen
+        // Then draw the remainer of the buffer from above
+        // Finally, reset the cursor to the saved position
+
+        self.stdout
+            .queue(MoveTo(prompt_offset.0, prompt_offset.1))?;
+        self.stdout.queue(Print(&insertion_line[0..new_index]))?;
+        self.stdout.queue(SavePosition)?;
+        self.stdout.queue(Print(&insertion_line[new_index..]))?;
+        self.stdout.queue(Clear(ClearType::FromCursorDown))?;
+        self.stdout.queue(RestorePosition)?;
+
+        self.stdout.flush()?;
+
+        Ok(())
+    }
+
+    fn full_repaint(
+        &mut self,
+        prompt_origin: (u16, u16),
+        terminal_width: u16,
+        new_index: usize,
+        insertion_line: String,
+        prompt_mode: PromptMode,
+    ) -> Result<(u16, u16)> {
+        self.move_to(prompt_origin.0, prompt_origin.1)?;
+        self.print_prompt(terminal_width as usize, prompt_mode)?;
+        // set where the input begins
+        let prompt_offset = position()?;
+        self.print_buffer(prompt_offset, new_index, insertion_line)?;
+
+        Ok(prompt_offset)
+    }
+
+    fn print_search_indicator(&mut self, status: &str, search_string: &str) -> Result<()> {
+        // print search prompt
+        self.stdout
+            .queue(MoveToColumn(0))?
+            .queue(SetForegroundColor(Color::Blue))?
+            .queue(Print(format!(
+                "({}reverse-search)`{}':",
+                status, search_string
+            )))?
+            .queue(ResetColor)?;
+
+        Ok(())
+    }
+
+    fn print_history_result(&mut self, history_result: &String, offset: usize) -> Result<()> {
+        self.stdout.queue(Print(&history_result[..offset]))?;
+        self.stdout.queue(SavePosition)?;
+        self.stdout.queue(Print(&history_result[offset..]))?;
+        self.stdout.queue(Clear(ClearType::UntilNewLine))?;
+        self.stdout.queue(RestorePosition)?;
+        self.stdout.flush()?;
+
+        Ok(())
+    }
+}
+
+/// Line editor engine
+///
+/// ## Example usage
+/// ```no_run
+/// use reedline::{Reedline, Signal, DefaultPrompt};
+/// let mut line_editor = Reedline::new();
+/// let prompt = Box::new(DefaultPrompt::default());
+///
+/// let out = line_editor.read_line(prompt).unwrap();
+/// match out {
+///    Signal::Success(content) => {
+///        // process content
+///    }
+///    _ => {
+///        eprintln!("Entry aborted!");
+///    }
+/// }
+/// ```
+pub struct Reedline {
+    // Stdout
+    painter: Painter,
+
+    // Keybindings
+    keybindings: HashMap<EditMode, Keybindings>,
+
+    // Edit mode
+    edit_mode: EditMode,
+
+    // Dirty bits
+    need_full_repaint: bool,
+
+    // Partial command
+    partial_command: Option<char>,
+
+    // Vi normal mode state engine
+    vi_engine: ViEngine,
+
+    edit_engine: EditEngine,
+}
+
 impl Default for Reedline {
     fn default() -> Self {
         Self::new()
@@ -404,11 +567,15 @@ impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     pub fn new() -> Reedline {
         let history = History::default();
-        let stdout = stdout();
         let mut keybindings_hashmap = HashMap::new();
         keybindings_hashmap.insert(EditMode::Emacs, default_emacs_keybindings());
         keybindings_hashmap.insert(EditMode::ViInsert, default_vi_insert_keybindings());
         keybindings_hashmap.insert(EditMode::ViNormal, default_vi_normal_keybindings());
+        let prompt = Box::new(DefaultPrompt::default());
+        let painter = Painter {
+            stdout: stdout(),
+            prompt,
+        };
 
         let edit_engine = EditEngine {
             line_buffer: LineBuffer::new(),
@@ -418,10 +585,9 @@ impl Reedline {
         };
 
         Reedline {
-            stdout,
+            painter,
             keybindings: keybindings_hashmap,
             edit_mode: EditMode::Emacs,
-            prompt: Box::new(DefaultPrompt::default()),
             need_full_repaint: false,
             partial_command: None,
             vi_engine: ViEngine::new(),
@@ -487,21 +653,61 @@ impl Reedline {
             .find_binding(modifier, key_code)
     }
 
+    // painting stuff
+    /// Writes `msg` to the terminal with a following carriage return and newline
+    pub fn print_line(&mut self, msg: &str) -> Result<()> {
+        self.painter.print_line(msg)
+    }
+
+    /// Goes to the beginning of the next line
+    ///
+    /// Also works in raw mode
+    pub fn print_crlf(&mut self) -> Result<()> {
+        self.painter.print_crlf()
+    }
+
+    /// Clear the screen by printing enough whitespace to start the prompt or
+    /// other output back at the first line of the terminal.
+    pub fn clear_screen(&mut self) -> Result<()> {
+        self.painter.clear_screen()
+    }
+
     /// Output the complete [`History`] chronologically with numbering to the terminal
     pub fn print_history(&mut self) -> Result<()> {
         let history = self.edit_engine.numbered_chronological_history();
 
         for (i, entry) in history {
-            self.print_line(&format!("{}\t{}", i + 1, entry))?;
+            self.painter.print_line(&format!("{}\t{}", i + 1, entry))?;
         }
         Ok(())
     }
 
-    pub fn move_to(&mut self, column: u16, row: u16) -> Result<()> {
-        self.stdout.queue(MoveTo(column, row))?;
-        self.stdout.flush()?;
+    /// Repaint logic for the normal input prompt buffer
+    ///
+    /// Requires coordinates where the input buffer begins after the prompt.
+    fn print_buffer(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
+        let new_index = self.edit_engine.insertion_point().offset;
+        let insertion_line = self.edit_engine.insertion_line().to_string();
 
-        Ok(())
+        self.painter
+            .print_buffer(prompt_offset, new_index, insertion_line)
+    }
+
+    fn full_repaint(
+        &mut self,
+        prompt_origin: (u16, u16),
+        terminal_width: u16,
+    ) -> Result<(u16, u16)> {
+        let new_index = self.edit_engine.insertion_point().offset;
+        let insertion_line = self.edit_engine.insertion_line().to_string();
+
+        self.painter.full_repaint(
+            prompt_origin,
+            terminal_width,
+            new_index,
+            insertion_line,
+            self.prompt_mode(),
+        )
     }
 
     /// Wait for input and provide the user with a specified [`Prompt`].
@@ -517,27 +723,6 @@ impl Reedline {
         terminal::disable_raw_mode()?;
 
         result
-    }
-
-    /// Writes `msg` to the terminal with a following carriage return and newline
-    pub fn print_line(&mut self, msg: &str) -> Result<()> {
-        self.stdout
-            .queue(Print(msg))?
-            .queue(Print("\n"))?
-            .queue(MoveToColumn(1))?;
-        self.stdout.flush()?;
-
-        Ok(())
-    }
-
-    /// Goes to the beginning of the next line
-    ///
-    /// Also works in raw mode
-    pub fn print_crlf(&mut self) -> Result<()> {
-        self.stdout.queue(Print("\n"))?.queue(MoveToColumn(1))?;
-        self.stdout.flush()?;
-
-        Ok(())
     }
 
     /// **For debugging purposes only:** Track the terminal events observed by [`Reedline`] and print them.
@@ -716,94 +901,6 @@ impl Reedline {
         Ok(())
     }
 
-    /// Clear the screen by printing enough whitespace to start the prompt or
-    /// other output back at the first line of the terminal.
-    pub fn clear_screen(&mut self) -> Result<()> {
-        let (_, num_lines) = terminal::size()?;
-        for _ in 0..2 * num_lines {
-            self.stdout.queue(Print("\n"))?;
-        }
-        self.stdout.queue(MoveTo(0, 0))?;
-        self.stdout.flush()?;
-        Ok(())
-    }
-
-    /// Display the complete prompt including status indicators (e.g. pwd, time)
-    ///
-    /// Used at the beginning of each [`Reedline::read_line()`] call.
-    fn queue_prompt(&mut self, screen_width: usize) -> Result<()> {
-        // print our prompt
-        let prompt_mode = self.prompt_mode();
-
-        self.stdout
-            .queue(MoveToColumn(0))?
-            .queue(SetForegroundColor(self.prompt.get_prompt_color()))?
-            .queue(Print(self.prompt.render_prompt(screen_width)))?
-            .queue(Print(self.prompt.render_prompt_indicator(prompt_mode)))?
-            .queue(ResetColor)?;
-
-        Ok(())
-    }
-
-    /// Display only the prompt components preceding the buffer
-    ///
-    /// Used to restore the prompt indicator after a search etc. that affected
-    /// the prompt
-    fn queue_prompt_indicator(&mut self) -> Result<()> {
-        // print our prompt
-        let prompt_mode = self.prompt_mode();
-        self.stdout
-            .queue(MoveToColumn(0))?
-            .queue(SetForegroundColor(self.prompt.get_prompt_color()))?
-            .queue(Print(self.prompt.render_prompt_indicator(prompt_mode)))?
-            .queue(ResetColor)?;
-
-        Ok(())
-    }
-
-    /// Repaint logic for the normal input prompt buffer
-    ///
-    /// Requires coordinates where the input buffer begins after the prompt.
-    fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
-        let new_index = self.edit_engine.insertion_point().offset;
-
-        // Repaint logic:
-        //
-        // Start after the prompt
-        // Draw the string slice from 0 to the grapheme start left of insertion point
-        // Then, get the position on the screen
-        // Then draw the remainer of the buffer from above
-        // Finally, reset the cursor to the saved position
-
-        // stdout.queue(Print(&engine.line_buffer[..new_index]))?;
-        let insertion_line = self.edit_engine.insertion_line().to_string();
-        self.stdout
-            .queue(MoveTo(prompt_offset.0, prompt_offset.1))?;
-        self.stdout.queue(Print(&insertion_line[0..new_index]))?;
-        self.stdout.queue(SavePosition)?;
-        self.stdout.queue(Print(&insertion_line[new_index..]))?;
-        self.stdout.queue(Clear(ClearType::FromCursorDown))?;
-        self.stdout.queue(RestorePosition)?;
-
-        self.stdout.flush()?;
-
-        Ok(())
-    }
-
-    fn full_repaint(
-        &mut self,
-        prompt_origin: (u16, u16),
-        terminal_width: u16,
-    ) -> Result<(u16, u16)> {
-        self.move_to(prompt_origin.0, prompt_origin.1)?;
-        self.queue_prompt(terminal_width as usize)?;
-        // set where the input begins
-        let prompt_offset = position()?;
-        self.buffer_paint(prompt_offset)?;
-
-        Ok(prompt_offset)
-    }
-
     /// Repaint logic for the history reverse search
     ///
     /// Overwrites the prompt indicator and highlights the search string
@@ -823,15 +920,8 @@ impl Reedline {
             ""
         };
 
-        // print search prompt
-        self.stdout
-            .queue(MoveToColumn(0))?
-            .queue(SetForegroundColor(Color::Blue))?
-            .queue(Print(format!(
-                "({}reverse-search)`{}':",
-                status, search.search_string
-            )))?
-            .queue(ResetColor)?;
+        self.painter
+            .print_search_indicator(status, &search.search_string)?;
 
         match search.result {
             Some((history_index, offset)) => {
@@ -841,19 +931,13 @@ impl Reedline {
                     .get_nth_newest(history_index)
                     .unwrap();
 
-                self.stdout.queue(Print(&history_result[..offset]))?;
-                self.stdout.queue(SavePosition)?;
-                self.stdout.queue(Print(&history_result[offset..]))?;
-                self.stdout.queue(Clear(ClearType::UntilNewLine))?;
-                self.stdout.queue(RestorePosition)?;
+                self.painter.print_history_result(history_result, offset)?;
             }
 
             None => {
-                self.stdout.queue(Clear(ClearType::UntilNewLine))?;
+                self.painter.clear_until_newline()?;
             }
-        }
-
-        self.stdout.flush()?;
+        };
 
         Ok(())
     }
@@ -862,14 +946,16 @@ impl Reedline {
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: Box<dyn Prompt>) -> Result<Signal> {
         terminal::enable_raw_mode()?;
-        self.prompt = prompt;
+        self.painter.prompt = prompt;
 
         let mut terminal_size = terminal::size()?;
 
         let prompt_origin = position()?;
 
-        self.queue_prompt(terminal_size.0 as usize)?;
-        self.stdout.flush()?;
+        self.painter
+            .print_prompt(terminal_size.0 as usize, self.prompt_mode())?;
+        // self.queue_prompt(terminal_size.0 as usize)?;
+        // self.stdout.flush()?;
 
         // set where the input begins
         let mut prompt_offset = position()?;
@@ -882,9 +968,13 @@ impl Reedline {
         if self.edit_engine.history_search.is_some() {
             self.history_search_paint()?;
         } else {
-            self.buffer_paint(prompt_offset)?;
+            let new_index = self.edit_engine.insertion_point().offset;
+            let insertion_line = self.edit_engine.insertion_line().to_string();
+            self.painter
+                .print_buffer(prompt_offset, new_index, insertion_line)?;
         }
-        self.stdout.flush()?;
+        // Note: This should not be required
+        // self.stdout.flush()?;
 
         loop {
             if poll(Duration::from_secs(1))? {
@@ -930,7 +1020,7 @@ impl Reedline {
                                         EditCommand::InsertChar(c),
                                         EditCommand::MoveRight,
                                     ]);
-                                    self.buffer_paint(prompt_offset)?;
+                                    self.print_buffer(prompt_offset)?;
 
                                     let (new_column, _) = position()?;
 
@@ -953,7 +1043,7 @@ impl Reedline {
                             (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
                                 match self.edit_engine.history_search.clone() {
                                     Some(search) => {
-                                        self.queue_prompt_indicator()?;
+                                        self.painter.print_prompt_indicator(self.prompt_mode())?;
                                         if let Some((history_index, _)) = search.result {
                                             // TODO: Unknown
                                             self.edit_engine.line_buffer.set_buffer(
@@ -995,13 +1085,14 @@ impl Reedline {
                         self.full_repaint(prompt_origin, width)?;
                     }
                 }
+
                 if self.edit_engine.history_search.is_some() {
                     self.history_search_paint()?;
                 } else if self.need_full_repaint {
                     self.full_repaint(prompt_origin, terminal_size.0)?;
                     self.need_full_repaint = false;
                 } else {
-                    self.buffer_paint(prompt_offset)?;
+                    self.print_buffer(prompt_offset)?;
                 }
             } else {
                 self.full_repaint(prompt_origin, terminal_size.0)?;
