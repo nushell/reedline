@@ -46,9 +46,6 @@ use std::{
 pub struct Reedline {
     line_buffer: LineBuffer,
 
-    // Cut buffer
-    cut_buffer: Box<dyn Clipboard>,
-
     // History
     history: History,
     history_search: Option<BasicSearch>, // This could be have more features in the future (fzf, configurable?)
@@ -73,6 +70,241 @@ pub struct Reedline {
 
     // Vi normal mode state engine
     vi_engine: ViEngine,
+
+    edit_engine: EditEngine,
+}
+
+pub struct EditEngine {
+    line_buffer: LineBuffer,
+    cut_buffer: Box<dyn Clipboard>,
+}
+
+impl EditEngine {
+    fn move_to_start(&mut self) {
+        self.line_buffer.move_to_start()
+    }
+
+    fn move_to_end(&mut self) {
+        self.line_buffer.move_to_end()
+    }
+
+    fn move_left(&mut self) {
+        self.line_buffer.move_left()
+    }
+
+    fn move_right(&mut self) {
+        self.line_buffer.move_right()
+    }
+
+    fn move_word_left(&mut self) {
+        self.line_buffer.move_word_left();
+    }
+
+    fn move_word_right(&mut self) {
+        self.line_buffer.move_right()
+    }
+
+    /// Get the current line of a multi-line edit [`LineBuffer`]
+    fn insertion_line(&self) -> &str {
+        self.line_buffer.get_buffer()
+    }
+
+    fn clear_to_end(&mut self) {
+        self.line_buffer.clear_to_end()
+    }
+
+    fn clear_to_insertion_point(&mut self) {
+        self.line_buffer.clear_to_insertion_point()
+    }
+
+    /// Set the cursor position as understood by the underlying [`LineBuffer`] for the current line
+    fn set_insertion_point(&mut self, pos: usize) {
+        let mut insertion_point = self.line_buffer.insertion_point();
+        insertion_point.offset = pos;
+
+        self.line_buffer.set_insertion_point(insertion_point)
+    }
+
+    /// Get the cursor position as understood by the underlying [`LineBuffer`]
+    fn insertion_point(&self) -> InsertionPoint {
+        self.line_buffer.insertion_point()
+    }
+
+    fn clear_range<R>(&mut self, range: R)
+    where
+        R: std::ops::RangeBounds<usize>,
+    {
+        self.line_buffer.clear_range(range)
+    }
+
+    fn insert_char(&mut self, c: char) {
+        let insertion_point = self.line_buffer.insertion_point();
+        self.line_buffer.insert_char(insertion_point, c);
+    }
+
+    fn backspace(&mut self) {
+        let left_index = self.line_buffer.grapheme_left_index();
+        let insertion_offset = self.insertion_point().offset;
+        if left_index < insertion_offset {
+            self.clear_range(left_index..insertion_offset);
+            self.set_insertion_point(left_index);
+        }
+    }
+
+    fn delete(&mut self) {
+        let right_index = self.line_buffer.grapheme_right_index();
+        let insertion_offset = self.insertion_point().offset;
+        if right_index > insertion_offset {
+            self.clear_range(insertion_offset..right_index);
+        }
+    }
+
+    fn backspace_word(&mut self) {
+        let left_word_index = self.line_buffer.word_left_index();
+        self.clear_range(left_word_index..self.insertion_point().offset);
+        self.set_insertion_point(left_word_index);
+    }
+
+    fn delete_word(&mut self) {
+        let right_word_index = self.line_buffer.word_right_index();
+        self.clear_range(self.insertion_point().offset..right_word_index);
+    }
+
+    fn clear(&mut self) {
+        self.line_buffer.clear();
+        self.set_insertion_point(0);
+    }
+    fn cut_from_start(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        if insertion_offset > 0 {
+            self.cut_buffer
+                .set(&self.line_buffer.get_buffer()[..insertion_offset]);
+            self.clear_to_insertion_point();
+        }
+    }
+
+    fn cut_from_end(&mut self) {
+        let cut_slice = &self.line_buffer.get_buffer()[self.insertion_point().offset..];
+        if !cut_slice.is_empty() {
+            self.cut_buffer.set(cut_slice);
+            self.clear_to_end();
+        }
+    }
+
+    fn cut_word_left(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        let left_index = self.line_buffer.word_left_index();
+        if left_index < insertion_offset {
+            let cut_range = left_index..insertion_offset;
+            self.cut_buffer
+                .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
+            self.clear_range(cut_range);
+            self.set_insertion_point(left_index);
+        }
+    }
+
+    fn cut_word_right(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        let right_index = self.line_buffer.word_right_index();
+        if right_index > insertion_offset {
+            let cut_range = insertion_offset..right_index;
+            self.cut_buffer
+                .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
+            self.clear_range(cut_range);
+        }
+    }
+
+    fn insert_cut_buffer(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        let cut_buffer = self.cut_buffer.get();
+        self.line_buffer.insert_str(insertion_offset, &cut_buffer);
+        self.set_insertion_point(insertion_offset + cut_buffer.len());
+    }
+
+    fn uppercase_word(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        let right_index = self.line_buffer.word_right_index();
+        if right_index > insertion_offset {
+            let change_range = insertion_offset..right_index;
+            let uppercased = self.insertion_line()[change_range.clone()].to_uppercase();
+            self.line_buffer.replace_range(change_range, &uppercased);
+            self.line_buffer.move_word_right();
+        }
+    }
+
+    fn lowercase_word(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        let right_index = self.line_buffer.word_right_index();
+        if right_index > insertion_offset {
+            let change_range = insertion_offset..right_index;
+            let lowercased = self.insertion_line()[change_range.clone()].to_lowercase();
+            self.line_buffer.replace_range(change_range, &lowercased);
+            self.line_buffer.move_word_right();
+        }
+    }
+
+    fn capitalize_char(&mut self) {
+        if self.line_buffer.on_whitespace() {
+            self.line_buffer.move_word_right();
+            self.line_buffer.move_word_left();
+        }
+        let insertion_offset = self.insertion_point().offset;
+        let right_index = self.line_buffer.grapheme_right_index();
+        if right_index > insertion_offset {
+            let change_range = insertion_offset..right_index;
+            let uppercased = self.insertion_line()[change_range.clone()].to_uppercase();
+            self.line_buffer.replace_range(change_range, &uppercased);
+            self.line_buffer.move_word_right();
+        }
+    }
+
+    fn swap_words(&mut self) {
+        let old_insertion_point = self.insertion_point().offset;
+        self.line_buffer.move_word_right();
+        let word_2_end = self.insertion_point().offset;
+        self.line_buffer.move_word_left();
+        let word_2_start = self.insertion_point().offset;
+        self.line_buffer.move_word_left();
+        let word_1_start = self.insertion_point().offset;
+        let word_1_end = self.line_buffer.word_right_index();
+
+        if word_1_start < word_1_end && word_1_end < word_2_start && word_2_start < word_2_end {
+            let insertion_line = self.insertion_line();
+            let word_1 = insertion_line[word_1_start..word_1_end].to_string();
+            let word_2 = insertion_line[word_2_start..word_2_end].to_string();
+            self.line_buffer
+                .replace_range(word_2_start..word_2_end, &word_1);
+            self.line_buffer
+                .replace_range(word_1_start..word_1_end, &word_2);
+            self.set_insertion_point(word_2_end);
+        } else {
+            self.set_insertion_point(old_insertion_point);
+        }
+    }
+
+    fn swap_graphemes(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+
+        if insertion_offset == 0 {
+            self.line_buffer.move_right()
+        } else if insertion_offset == self.line_buffer.get_buffer().len() {
+            self.line_buffer.move_left()
+        }
+        let grapheme_1_start = self.line_buffer.grapheme_left_index();
+        let grapheme_2_end = self.line_buffer.grapheme_right_index();
+
+        if grapheme_1_start < insertion_offset && grapheme_2_end > insertion_offset {
+            let grapheme_1 = self.insertion_line()[grapheme_1_start..insertion_offset].to_string();
+            let grapheme_2 = self.insertion_line()[insertion_offset..grapheme_2_end].to_string();
+            self.line_buffer
+                .replace_range(insertion_offset..grapheme_2_end, &grapheme_1);
+            self.line_buffer
+                .replace_range(grapheme_1_start..insertion_offset, &grapheme_2);
+            self.set_insertion_point(grapheme_2_end);
+        } else {
+            self.set_insertion_point(insertion_offset);
+        }
+    }
 }
 
 impl Default for Reedline {
@@ -85,16 +317,19 @@ impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     pub fn new() -> Reedline {
         let history = History::default();
-        let cut_buffer = Box::new(get_default_clipboard());
         let stdout = stdout();
         let mut keybindings_hashmap = HashMap::new();
         keybindings_hashmap.insert(EditMode::Emacs, default_emacs_keybindings());
         keybindings_hashmap.insert(EditMode::ViInsert, default_vi_insert_keybindings());
         keybindings_hashmap.insert(EditMode::ViNormal, default_vi_normal_keybindings());
 
+        let edit_engine = EditEngine {
+            line_buffer: LineBuffer::new(),
+            cut_buffer: Box::new(get_default_clipboard()),
+        };
+
         Reedline {
             line_buffer: LineBuffer::new(),
-            cut_buffer,
             history,
             history_search: None,
             stdout,
@@ -104,6 +339,7 @@ impl Reedline {
             need_full_repaint: false,
             partial_command: None,
             vi_engine: ViEngine::new(),
+            edit_engine,
         }
     }
 
@@ -267,70 +503,9 @@ impl Reedline {
         }
     }
 
-    fn move_to_start(&mut self) {
-        self.line_buffer.move_to_start()
-    }
-
-    fn move_to_end(&mut self) {
-        self.line_buffer.move_to_end()
-    }
-
-    fn move_left(&mut self) {
-        self.line_buffer.move_left()
-    }
-
-    fn move_right(&mut self) {
-        self.line_buffer.move_right()
-    }
-
-    fn move_word_left(&mut self) {
-        self.line_buffer.move_word_left();
-    }
-
-    fn move_word_right(&mut self) {
-        self.line_buffer.move_right()
-    }
-
-    fn insert_char(&mut self, c: char) {
-        let insertion_point = self.line_buffer.insertion_point();
-        self.line_buffer.insert_char(insertion_point, c);
-    }
-
-    fn backspace(&mut self) {
-        let left_index = self.line_buffer.grapheme_left_index();
-        let insertion_offset = self.insertion_point().offset;
-        if left_index < insertion_offset {
-            self.clear_range(left_index..insertion_offset);
-            self.set_insertion_point(left_index);
-        }
-    }
-
-    fn delete(&mut self) {
-        let right_index = self.line_buffer.grapheme_right_index();
-        let insertion_offset = self.insertion_point().offset;
-        if right_index > insertion_offset {
-            self.clear_range(insertion_offset..right_index);
-        }
-    }
-
-    fn backspace_word(&mut self) {
-        let left_word_index = self.line_buffer.word_left_index();
-        self.clear_range(left_word_index..self.insertion_point().offset);
-        self.set_insertion_point(left_word_index);
-    }
-
-    fn delete_word(&mut self) {
-        let right_word_index = self.line_buffer.word_right_index();
-        self.clear_range(self.insertion_point().offset..right_word_index);
-    }
-
-    fn clear(&mut self) {
-        self.line_buffer.clear();
-        self.set_insertion_point(0);
-    }
-
     fn append_to_history(&mut self) {
-        self.history.append(self.insertion_line().to_string());
+        self.history
+            .append(self.edit_engine.insertion_line().to_string());
     }
 
     fn previous_history(&mut self) {
@@ -342,7 +517,7 @@ impl Reedline {
         if let Some(history_entry) = self.history.go_back_with_prefix() {
             let new_buffer = history_entry.to_string();
             self.set_buffer(new_buffer);
-            self.move_to_end();
+            self.edit_engine.move_to_end();
         }
     }
 
@@ -355,144 +530,14 @@ impl Reedline {
         if let Some(history_entry) = self.history.go_forward_with_prefix() {
             let new_buffer = history_entry.to_string();
             self.set_buffer(new_buffer);
-            self.move_to_end();
+            self.edit_engine.move_to_end();
         }
     }
 
     fn search_history(&mut self) {
-        self.history_search = Some(BasicSearch::new(self.insertion_line().to_string()));
-    }
-
-    fn cut_from_start(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
-        if insertion_offset > 0 {
-            self.cut_buffer
-                .set(&self.line_buffer.get_buffer()[..insertion_offset]);
-            self.clear_to_insertion_point();
-        }
-    }
-
-    fn cut_from_end(&mut self) {
-        let cut_slice = &self.line_buffer.get_buffer()[self.insertion_point().offset..];
-        if !cut_slice.is_empty() {
-            self.cut_buffer.set(cut_slice);
-            self.clear_to_end();
-        }
-    }
-
-    fn cut_word_left(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
-        let left_index = self.line_buffer.word_left_index();
-        if left_index < insertion_offset {
-            let cut_range = left_index..insertion_offset;
-            self.cut_buffer
-                .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
-            self.clear_range(cut_range);
-            self.set_insertion_point(left_index);
-        }
-    }
-
-    fn cut_word_right(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
-        let right_index = self.line_buffer.word_right_index();
-        if right_index > insertion_offset {
-            let cut_range = insertion_offset..right_index;
-            self.cut_buffer
-                .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
-            self.clear_range(cut_range);
-        }
-    }
-
-    fn insert_cut_buffer(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
-        let cut_buffer = self.cut_buffer.get();
-        self.line_buffer.insert_str(insertion_offset, &cut_buffer);
-        self.set_insertion_point(insertion_offset + cut_buffer.len());
-    }
-
-    fn uppercase_word(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
-        let right_index = self.line_buffer.word_right_index();
-        if right_index > insertion_offset {
-            let change_range = insertion_offset..right_index;
-            let uppercased = self.insertion_line()[change_range.clone()].to_uppercase();
-            self.line_buffer.replace_range(change_range, &uppercased);
-            self.line_buffer.move_word_right();
-        }
-    }
-
-    fn lowercase_word(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
-        let right_index = self.line_buffer.word_right_index();
-        if right_index > insertion_offset {
-            let change_range = insertion_offset..right_index;
-            let lowercased = self.insertion_line()[change_range.clone()].to_lowercase();
-            self.line_buffer.replace_range(change_range, &lowercased);
-            self.line_buffer.move_word_right();
-        }
-    }
-
-    fn capitalize_char(&mut self) {
-        if self.line_buffer.on_whitespace() {
-            self.line_buffer.move_word_right();
-            self.line_buffer.move_word_left();
-        }
-        let insertion_offset = self.insertion_point().offset;
-        let right_index = self.line_buffer.grapheme_right_index();
-        if right_index > insertion_offset {
-            let change_range = insertion_offset..right_index;
-            let uppercased = self.insertion_line()[change_range.clone()].to_uppercase();
-            self.line_buffer.replace_range(change_range, &uppercased);
-            self.line_buffer.move_word_right();
-        }
-    }
-
-    fn swap_words(&mut self) {
-        let old_insertion_point = self.insertion_point().offset;
-        self.line_buffer.move_word_right();
-        let word_2_end = self.insertion_point().offset;
-        self.line_buffer.move_word_left();
-        let word_2_start = self.insertion_point().offset;
-        self.line_buffer.move_word_left();
-        let word_1_start = self.insertion_point().offset;
-        let word_1_end = self.line_buffer.word_right_index();
-
-        if word_1_start < word_1_end && word_1_end < word_2_start && word_2_start < word_2_end {
-            let insertion_line = self.insertion_line();
-            let word_1 = insertion_line[word_1_start..word_1_end].to_string();
-            let word_2 = insertion_line[word_2_start..word_2_end].to_string();
-            self.line_buffer
-                .replace_range(word_2_start..word_2_end, &word_1);
-            self.line_buffer
-                .replace_range(word_1_start..word_1_end, &word_2);
-            self.set_insertion_point(word_2_end);
-        } else {
-            self.set_insertion_point(old_insertion_point);
-        }
-    }
-
-    fn swap_graphemes(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
-
-        if insertion_offset == 0 {
-            self.line_buffer.move_right()
-        } else if insertion_offset == self.line_buffer.get_buffer().len() {
-            self.line_buffer.move_left()
-        }
-        let grapheme_1_start = self.line_buffer.grapheme_left_index();
-        let grapheme_2_end = self.line_buffer.grapheme_right_index();
-
-        if grapheme_1_start < insertion_offset && grapheme_2_end > insertion_offset {
-            let grapheme_1 = self.insertion_line()[grapheme_1_start..insertion_offset].to_string();
-            let grapheme_2 = self.insertion_line()[insertion_offset..grapheme_2_end].to_string();
-            self.line_buffer
-                .replace_range(insertion_offset..grapheme_2_end, &grapheme_1);
-            self.line_buffer
-                .replace_range(grapheme_1_start..insertion_offset, &grapheme_2);
-            self.set_insertion_point(grapheme_2_end);
-        } else {
-            self.set_insertion_point(insertion_offset);
-        }
+        self.history_search = Some(BasicSearch::new(
+            self.edit_engine.insertion_line().to_string(),
+        ));
     }
 
     fn enter_vi_insert_mode(&mut self) {
@@ -524,35 +569,35 @@ impl Reedline {
         // Run the commands over the edit buffer
         for command in &commands {
             match command {
-                EditCommand::MoveToStart => self.move_to_start(),
+                EditCommand::MoveToStart => self.edit_engine.move_to_start(),
                 EditCommand::MoveToEnd => {
-                    self.move_to_end();
+                    self.edit_engine.move_to_end();
                 }
-                EditCommand::MoveLeft => self.move_left(),
-                EditCommand::MoveRight => self.move_right(),
+                EditCommand::MoveLeft => self.edit_engine.move_left(),
+                EditCommand::MoveRight => self.edit_engine.move_right(),
                 EditCommand::MoveWordLeft => {
-                    self.move_word_left();
+                    self.edit_engine.move_word_left();
                 }
                 EditCommand::MoveWordRight => {
-                    self.move_word_right();
+                    self.edit_engine.move_word_right();
                 }
                 EditCommand::InsertChar(c) => {
-                    self.insert_char(*c);
+                    self.edit_engine.insert_char(*c);
                 }
                 EditCommand::Backspace => {
-                    self.backspace();
+                    self.edit_engine.backspace();
                 }
                 EditCommand::Delete => {
-                    self.delete();
+                    self.edit_engine.delete();
                 }
                 EditCommand::BackspaceWord => {
-                    self.backspace_word();
+                    self.edit_engine.backspace_word();
                 }
                 EditCommand::DeleteWord => {
-                    self.delete_word();
+                    self.edit_engine.delete_word();
                 }
                 EditCommand::Clear => {
-                    self.clear();
+                    self.edit_engine.clear();
                 }
                 EditCommand::AppendToHistory => {
                     self.append_to_history();
@@ -567,34 +612,34 @@ impl Reedline {
                     self.search_history();
                 }
                 EditCommand::CutFromStart => {
-                    self.cut_from_start();
+                    self.edit_engine.cut_from_start();
                 }
                 EditCommand::CutToEnd => {
-                    self.cut_from_end();
+                    self.edit_engine.cut_from_end();
                 }
                 EditCommand::CutWordLeft => {
-                    self.cut_word_left();
+                    self.edit_engine.cut_word_left();
                 }
                 EditCommand::CutWordRight => {
-                    self.cut_word_right();
+                    self.edit_engine.cut_word_right();
                 }
                 EditCommand::PasteCutBuffer => {
-                    self.insert_cut_buffer();
+                    self.edit_engine.insert_cut_buffer();
                 }
                 EditCommand::UppercaseWord => {
-                    self.uppercase_word();
+                    self.edit_engine.uppercase_word();
                 }
                 EditCommand::LowercaseWord => {
-                    self.lowercase_word();
+                    self.edit_engine.lowercase_word();
                 }
                 EditCommand::CapitalizeChar => {
-                    self.capitalize_char();
+                    self.edit_engine.capitalize_char();
                 }
                 EditCommand::SwapWords => {
-                    self.swap_words();
+                    self.edit_engine.swap_words();
                 }
                 EditCommand::SwapGraphemes => {
-                    self.swap_graphemes();
+                    self.edit_engine.swap_graphemes();
                 }
                 EditCommand::EnterViInsert => {
                     self.enter_vi_insert_mode();
@@ -621,49 +666,16 @@ impl Reedline {
         }
     }
 
-    /// Get the cursor position as understood by the underlying [`LineBuffer`]
-    fn insertion_point(&self) -> InsertionPoint {
-        self.line_buffer.insertion_point()
-    }
-
-    /// Set the cursor position as understood by the underlying [`LineBuffer`] for the current line
-    fn set_insertion_point(&mut self, pos: usize) {
-        let mut insertion_point = self.line_buffer.insertion_point();
-        insertion_point.offset = pos;
-
-        self.line_buffer.set_insertion_point(insertion_point)
-    }
-
-    /// Get the current line of a multi-line edit [`LineBuffer`]
-    fn insertion_line(&self) -> &str {
-        self.line_buffer.get_buffer()
-    }
-
     /// Reset the [`LineBuffer`] to be a line specified by `buffer`
     fn set_buffer(&mut self, buffer: String) {
         self.line_buffer.set_buffer(buffer)
-    }
-
-    fn clear_to_end(&mut self) {
-        self.line_buffer.clear_to_end()
-    }
-
-    fn clear_to_insertion_point(&mut self) {
-        self.line_buffer.clear_to_insertion_point()
-    }
-
-    fn clear_range<R>(&mut self, range: R)
-    where
-        R: std::ops::RangeBounds<usize>,
-    {
-        self.line_buffer.clear_range(range)
     }
 
     /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.
     fn maybe_wrap(&self, terminal_width: u16, start_offset: u16, c: char) -> bool {
         use unicode_width::UnicodeWidthStr;
 
-        let mut test_buffer = self.insertion_line().to_string();
+        let mut test_buffer = self.edit_engine.insertion_line().to_string();
         test_buffer.push(c);
 
         let display_width = UnicodeWidthStr::width(test_buffer.as_str()) + start_offset as usize;
@@ -748,7 +760,7 @@ impl Reedline {
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
-        let new_index = self.insertion_point().offset;
+        let new_index = self.edit_engine.insertion_point().offset;
 
         // Repaint logic:
         //
@@ -759,7 +771,7 @@ impl Reedline {
         // Finally, reset the cursor to the saved position
 
         // stdout.queue(Print(&engine.line_buffer[..new_index]))?;
-        let insertion_line = self.insertion_line().to_string();
+        let insertion_line = self.edit_engine.insertion_line().to_string();
         self.stdout
             .queue(MoveTo(prompt_offset.0, prompt_offset.1))?;
         self.stdout.queue(Print(&insertion_line[0..new_index]))?;
@@ -894,7 +906,7 @@ impl Reedline {
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
                                 if x != EditMode::ViNormal =>
                             {
-                                let line_start = if self.insertion_point().line == 0 {
+                                let line_start = if self.edit_engine.insertion_point().line == 0 {
                                     prompt_offset.0
                                 } else {
                                     0
@@ -940,7 +952,7 @@ impl Reedline {
                                         self.history_search = None;
                                     }
                                     None => {
-                                        let buffer = self.insertion_line().to_string();
+                                        let buffer = self.edit_engine.insertion_line().to_string();
 
                                         self.run_edit_commands(&[
                                             EditCommand::AppendToHistory,
