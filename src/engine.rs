@@ -349,6 +349,120 @@ impl EditEngine {
     fn has_history(&self) -> bool {
         self.history_search.is_some()
     }
+
+    fn run_edit_commands(&mut self, commands: &[EditCommand]) {
+        // Handle command for history inputs
+        if self.has_history() {
+            self.run_history_commands(commands);
+            return;
+        }
+
+        // // Vim mode transformations
+        // let commands = match self.edit_mode {
+        //     EditMode::ViNormal => self.vi_engine.handle(commands),
+        //     _ => commands.into(),
+        // };
+
+        // Run the commands over the edit buffer
+        for command in commands {
+            match command {
+                EditCommand::MoveToStart => self.move_to_start(),
+                EditCommand::MoveToEnd => {
+                    self.move_to_end();
+                }
+                EditCommand::MoveLeft => self.move_left(),
+                EditCommand::MoveRight => self.move_right(),
+                EditCommand::MoveWordLeft => {
+                    self.move_word_left();
+                }
+                EditCommand::MoveWordRight => {
+                    self.move_word_right();
+                }
+                EditCommand::InsertChar(c) => {
+                    self.insert_char(*c);
+                }
+                EditCommand::Backspace => {
+                    self.backspace();
+                }
+                EditCommand::Delete => {
+                    self.delete();
+                }
+                EditCommand::BackspaceWord => {
+                    self.backspace_word();
+                }
+                EditCommand::DeleteWord => {
+                    self.delete_word();
+                }
+                EditCommand::Clear => {
+                    self.clear();
+                }
+                EditCommand::AppendToHistory => {
+                    self.append_to_history();
+                }
+                EditCommand::PreviousHistory => {
+                    self.previous_history();
+                }
+                EditCommand::NextHistory => {
+                    self.next_history();
+                }
+                EditCommand::SearchHistory => {
+                    self.search_history();
+                }
+                EditCommand::CutFromStart => {
+                    self.cut_from_start();
+                }
+                EditCommand::CutToEnd => {
+                    self.cut_from_end();
+                }
+                EditCommand::CutWordLeft => {
+                    self.cut_word_left();
+                }
+                EditCommand::CutWordRight => {
+                    self.cut_word_right();
+                }
+                EditCommand::PasteCutBuffer => {
+                    self.insert_cut_buffer();
+                }
+                EditCommand::UppercaseWord => {
+                    self.uppercase_word();
+                }
+                EditCommand::LowercaseWord => {
+                    self.lowercase_word();
+                }
+                EditCommand::CapitalizeChar => {
+                    self.capitalize_char();
+                }
+                EditCommand::SwapWords => {
+                    self.swap_words();
+                }
+                EditCommand::SwapGraphemes => {
+                    self.swap_graphemes();
+                }
+                EditCommand::EnterViInsert => {
+                    panic!("Should not have happened");
+                }
+                EditCommand::EnterViNormal => {
+                    panic!("Should not have happened");
+                }
+                _ => {}
+            }
+
+            // TODO: This seems a bit hacky, probabaly think of another approach
+            // Clean-up after commands run
+            for command in commands {
+                match command {
+                    EditCommand::PreviousHistory => {}
+                    EditCommand::NextHistory => {}
+                    _ => {
+                        // Clean up the old prefix used for history search
+                        if self.history.history_prefix.is_some() {
+                            self.history.history_prefix = None;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub struct Painter {
@@ -517,6 +631,384 @@ impl Painter {
     }
 }
 
+trait LineEditor {
+    fn print_line(&self);
+    fn print_events(&self);
+    fn print_crlf(&self);
+    fn print_history(&self);
+    fn clear_screen(&self);
+    fn read_line(&self, prompt: Box<dyn Prompt>) -> Signal;
+}
+
+#[derive(Eq, PartialEq, Clone, Copy)]
+enum Mode {
+    Normal,
+    Insert,
+}
+
+pub struct ViLineEditor {
+    painter: Painter,
+    // keybindings: Keybindings,
+    mode: Mode,
+    partial_command: Option<char>,
+    edit_engine: EditEngine,
+    need_full_repaint: bool,
+}
+
+impl ViLineEditor {
+    /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
+    pub fn new() -> Self {
+        let history = History::default();
+
+        let prompt = Box::new(DefaultPrompt::default());
+        let painter = Painter {
+            stdout: stdout(),
+            prompt,
+        };
+
+        let edit_engine = EditEngine {
+            line_buffer: LineBuffer::new(),
+            cut_buffer: Box::new(get_default_clipboard()),
+            history,
+            history_search: None,
+        };
+
+        ViLineEditor {
+            mode: Mode::Normal,
+            painter,
+            // keybindings: keybindings_hashmap,
+            need_full_repaint: false,
+            partial_command: None,
+            // vi_engine: ViEngine::new(),
+            edit_engine,
+        }
+    }
+
+    pub fn with_history(
+        mut self,
+        history_file: &str,
+        history_size: usize,
+    ) -> std::io::Result<Self> {
+        let history = History::with_file(history_size, history_file.into())?;
+
+        // HACK: Fix this hack
+        self.edit_engine.history = history;
+
+        Ok(self)
+    }
+
+    pub fn prompt_mode(&self) -> PromptMode {
+        match self.mode {
+            Mode::Insert => PromptMode::ViInsert,
+            _ => PromptMode::Normal,
+        }
+    }
+
+    // painting stuff
+    /// Writes `msg` to the terminal with a following carriage return and newline
+    pub fn print_line(&mut self, msg: &str) -> Result<()> {
+        self.painter.print_line(msg)
+    }
+
+    /// Goes to the beginning of the next line
+    ///
+    /// Also works in raw mode
+    pub fn print_crlf(&mut self) -> Result<()> {
+        self.painter.print_crlf()
+    }
+
+    /// Clear the screen by printing enough whitespace to start the prompt or
+    /// other output back at the first line of the terminal.
+    pub fn clear_screen(&mut self) -> Result<()> {
+        self.painter.clear_screen()
+    }
+
+    /// Output the complete [`History`] chronologically with numbering to the terminal
+    pub fn print_history(&mut self) -> Result<()> {
+        let history = self.edit_engine.numbered_chronological_history();
+
+        for (i, entry) in history {
+            self.painter.print_line(&format!("{}\t{}", i + 1, entry))?;
+        }
+        Ok(())
+    }
+
+    /// Repaint logic for the normal input prompt buffer
+    ///
+    /// Requires coordinates where the input buffer begins after the prompt.
+    fn print_buffer(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
+        let new_index = self.edit_engine.insertion_point().offset;
+        let insertion_line = self.edit_engine.insertion_line().to_string();
+
+        self.painter
+            .print_buffer(prompt_offset, new_index, insertion_line)
+    }
+
+    fn full_repaint(
+        &mut self,
+        prompt_origin: (u16, u16),
+        terminal_width: u16,
+    ) -> Result<(u16, u16)> {
+        let new_index = self.edit_engine.insertion_point().offset;
+        let insertion_line = self.edit_engine.insertion_line().to_string();
+
+        self.painter.full_repaint(
+            prompt_origin,
+            terminal_width,
+            new_index,
+            insertion_line,
+            self.prompt_mode(),
+        )
+    }
+
+    /// Wait for input and provide the user with a specified [`Prompt`].
+    ///
+    /// Returns a [`crossterm::Result`] in which the `Err` type is [`crossterm::ErrorKind`]
+    /// to distinguish I/O errors and the `Ok` variant wraps a [`Signal`] which
+    /// handles user inputs.
+    pub fn read_line(&mut self, prompt: Box<dyn Prompt>) -> Result<Signal> {
+        terminal::enable_raw_mode()?;
+
+        let result = self.read_line_helper(prompt);
+
+        terminal::disable_raw_mode()?;
+
+        result
+    }
+
+    /// **For debugging purposes only:** Track the terminal events observed by [`Reedline`] and print them.
+    pub fn print_events(&mut self) -> Result<()> {
+        terminal::enable_raw_mode()?;
+        let result = self.print_events_helper();
+        terminal::disable_raw_mode()?;
+
+        result
+    }
+
+    // this fn is totally ripped off from crossterm's examples
+    // it's really a diagnostic routine to see if crossterm is
+    // even seeing the events. if you press a key and no events
+    // are printed, it's a good chance your terminal is eating
+    // those events.
+    fn print_events_helper(&mut self) -> Result<()> {
+        loop {
+            // Wait up to 5s for another event
+            if poll(Duration::from_millis(5_000))? {
+                // It's guaranteed that read() wont block if `poll` returns `Ok(true)`
+                let event = read()?;
+
+                // just reuse the print_message fn to show events
+                self.print_line(&format!("Event::{:?}", event))?;
+
+                // hit the esc key to git out
+                if event == Event::Key(KeyCode::Esc.into()) {
+                    break;
+                }
+            } else {
+                // Timeout expired, no event for 5s
+                self.print_line("Waiting for you to type...")?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn enter_vi_insert_mode(&mut self) {
+        self.mode = Mode::Insert;
+        self.need_full_repaint = true;
+        self.partial_command = None;
+    }
+
+    fn enter_vi_normal_mode(&mut self) {
+        self.mode = Mode::Normal;
+        self.need_full_repaint = true;
+        self.partial_command = None;
+    }
+
+    /// Repaint logic for the history reverse search
+    ///
+    /// Overwrites the prompt indicator and highlights the search string
+    /// separately from the result bufer.
+    fn history_search_paint(&mut self) -> Result<()> {
+        // Assuming we are currently searching
+        // Hack: fixme: <Unknown>
+        let search = self
+            .edit_engine
+            .history_search
+            .as_ref()
+            .expect("couldn't get history_search reference");
+
+        let status = if search.result.is_none() && !search.search_string.is_empty() {
+            "failed "
+        } else {
+            ""
+        };
+
+        self.painter
+            .print_search_indicator(status, &search.search_string)?;
+
+        match search.result {
+            Some((history_index, offset)) => {
+                let history_result = self
+                    .edit_engine
+                    .history
+                    .get_nth_newest(history_index)
+                    .unwrap();
+
+                self.painter.print_history_result(history_result, offset)?;
+            }
+
+            None => {
+                self.painter.clear_until_newline()?;
+            }
+        };
+
+        Ok(())
+    }
+
+    fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.
+    fn maybe_wrap(&self, terminal_width: u16, start_offset: u16, c: char) -> bool {
+        use unicode_width::UnicodeWidthStr;
+
+        let mut test_buffer = self.edit_engine.insertion_line().to_string();
+        test_buffer.push(c);
+
+        let display_width = UnicodeWidthStr::width(test_buffer.as_str()) + start_offset as usize;
+
+        display_width >= terminal_width as usize
+    }
+
+    fn read_line_helper(&mut self, prompt: Box<dyn Prompt>) -> Result<Signal> {
+        terminal::enable_raw_mode()?;
+        self.painter.prompt = prompt;
+
+        let mut terminal_size = terminal::size()?;
+
+        let prompt_origin = position()?;
+
+        self.painter
+            .print_prompt(terminal_size.0 as usize, self.prompt_mode())?;
+
+        // set where the input begins
+        let mut prompt_offset = position()?;
+
+        // our line count
+        let mut line_count = 1;
+
+        // Redraw if Ctrl-L was used
+        // HACK
+        if self.edit_engine.history_search.is_some() {
+            self.history_search_paint()?;
+        } else {
+            let new_index = self.edit_engine.insertion_point().offset;
+            let insertion_line = self.edit_engine.insertion_line().to_string();
+            self.painter
+                .print_buffer(prompt_offset, new_index, insertion_line)?;
+        }
+
+        loop {
+            match read()? {
+                Event::Key(k) => match self.mode() {
+                    Mode::Insert => {
+                        let (code, modifier) = (k.code, k.modifiers);
+                        match (modifier, code) {
+                            (KeyModifiers::NONE, KeyCode::Esc) => self.enter_vi_normal_mode(),
+                            (KeyModifiers::NONE, KeyCode::Char(c)) => {
+                                let line_start = if self.edit_engine.insertion_point().line == 0 {
+                                    prompt_offset.0
+                                } else {
+                                    0
+                                };
+
+                                if self.maybe_wrap(terminal_size.0, line_start, c) {
+                                    let (original_column, original_row) = position()?;
+                                    self.edit_engine.run_edit_commands(&[
+                                        EditCommand::InsertChar(c),
+                                        EditCommand::MoveRight,
+                                    ]);
+                                    self.print_buffer(prompt_offset)?;
+
+                                    let (new_column, _) = position()?;
+
+                                    if new_column < original_column
+                                        && original_row == (terminal_size.1 - 1)
+                                        && line_count == 1
+                                    {
+                                        // We have wrapped off bottom of screen, and prompt is on new row
+                                        // We need to update the prompt location in this case
+                                        prompt_offset.1 -= 1;
+                                        line_count += 1;
+                                    }
+                                } else {
+                                    self.edit_engine.run_edit_commands(&[
+                                        EditCommand::InsertChar(c),
+                                        EditCommand::MoveRight,
+                                    ]);
+                                }
+                            }
+                            (KeyModifiers::NONE, KeyCode::Enter) => {
+                                match self.edit_engine.history_search.clone() {
+                                    Some(search) => {
+                                        self.painter.print_prompt_indicator(self.prompt_mode())?;
+                                        if let Some((history_index, _)) = search.result {
+                                            // TODO: Unknown
+                                            self.edit_engine.line_buffer.set_buffer(
+                                                self.edit_engine
+                                                    .history
+                                                    .get_nth_newest(history_index)
+                                                    .unwrap()
+                                                    .clone(),
+                                            );
+                                        }
+                                        self.edit_engine.history_search = None;
+                                    }
+                                    None => {
+                                        let buffer = self.edit_engine.insertion_line().to_string();
+
+                                        self.edit_engine.run_edit_commands(&[
+                                            EditCommand::AppendToHistory,
+                                            EditCommand::Clear,
+                                        ]);
+                                        self.print_crlf()?;
+
+                                        return Ok(Signal::Success(buffer));
+                                    }
+                                }
+                            }
+                            _ => {
+                                panic!("not handled");
+                            }
+                        }
+                    }
+                    Mode::Normal => {
+                        let (code, modifier) = (k.code, k.modifiers);
+                        match (modifier, code) {
+                            (KeyModifiers::NONE, KeyCode::Char('i')) => self.enter_vi_insert_mode(),
+                            _ => {
+                                panic!("not handled");
+                            }
+                        }
+                    }
+                },
+                Event::Mouse(m) => {}
+                Event::Resize(width, height) => {}
+            }
+            if self.edit_engine.history_search.is_some() {
+                self.history_search_paint()?;
+            } else if self.need_full_repaint {
+                self.full_repaint(prompt_origin, terminal_size.0)?;
+                self.need_full_repaint = false;
+            } else {
+                self.print_buffer(prompt_offset)?;
+            }
+        }
+    }
+}
+
 /// Line editor engine
 ///
 /// ## Example usage
@@ -569,8 +1061,10 @@ impl Reedline {
         let history = History::default();
         let mut keybindings_hashmap = HashMap::new();
         keybindings_hashmap.insert(EditMode::Emacs, default_emacs_keybindings());
-        keybindings_hashmap.insert(EditMode::ViInsert, default_vi_insert_keybindings());
-        keybindings_hashmap.insert(EditMode::ViNormal, default_vi_normal_keybindings());
+
+        // keybindings_hashmap.insert(EditMode::ViInsert, default_vi_insert_keybindings());
+        // keybindings_hashmap.insert(EditMode::ViNormal, default_vi_normal_keybindings());
+
         let prompt = Box::new(DefaultPrompt::default());
         let painter = Painter {
             stdout: stdout(),
@@ -954,8 +1448,6 @@ impl Reedline {
 
         self.painter
             .print_prompt(terminal_size.0 as usize, self.prompt_mode())?;
-        // self.queue_prompt(terminal_size.0 as usize)?;
-        // self.stdout.flush()?;
 
         // set where the input begins
         let mut prompt_offset = position()?;
@@ -973,8 +1465,6 @@ impl Reedline {
             self.painter
                 .print_buffer(prompt_offset, new_index, insertion_line)?;
         }
-        // Note: This should not be required
-        // self.stdout.flush()?;
 
         loop {
             if poll(Duration::from_secs(1))? {

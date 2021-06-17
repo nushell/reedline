@@ -58,7 +58,7 @@ mod enums;
 pub use enums::{EditCommand, EditMode, Signal};
 
 mod engine;
-pub use engine::Reedline;
+pub use engine::{Reedline, ViLineEditor};
 
 mod history;
 pub use history::{History, HISTORY_SIZE};

@@ -1,6 +1,8 @@
 use crossterm::{event::KeyCode, event::KeyModifiers, Result};
 
-use reedline::{default_emacs_keybindings, DefaultPrompt, EditCommand, Reedline, Signal};
+use reedline::{
+    default_emacs_keybindings, DefaultPrompt, EditCommand, Reedline, Signal, ViLineEditor,
+};
 
 fn main() -> Result<()> {
     let mut keybindings = default_emacs_keybindings();
@@ -10,10 +12,9 @@ fn main() -> Result<()> {
         vec![EditCommand::BackspaceWord],
     );
 
-    let mut line_editor = Reedline::new()
-        .with_history("history.txt", 5)?
-        .with_edit_mode(reedline::EditMode::ViNormal)
-        .with_keybindings(keybindings);
+    let mut line_editor = ViLineEditor::new().with_history("history.txt", 5)?;
+    // .with_edit_mode(reedline::EditMode::ViNormal)
+    // .with_keybindings(keybindings);
 
     let prompt = Box::new(DefaultPrompt::new(1));
 
