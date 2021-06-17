@@ -44,10 +44,6 @@ use std::{
 /// }
 /// ```
 pub struct Reedline {
-    // History
-    history: History,
-    history_search: Option<BasicSearch>, // This could be have more features in the future (fzf, configurable?)
-
     // Stdout
     stdout: Stdout,
 
@@ -75,6 +71,10 @@ pub struct Reedline {
 pub struct EditEngine {
     line_buffer: LineBuffer,
     cut_buffer: Box<dyn Clipboard>,
+
+    // History
+    history: History,
+    history_search: Option<BasicSearch>, // This could be have more features in the future (fzf, configurable?)
 }
 
 impl EditEngine {
@@ -308,6 +308,90 @@ impl EditEngine {
             self.set_insertion_point(insertion_offset);
         }
     }
+
+    // History interface
+    // Note: Can this be a interface rather than a concrete struct
+    fn numbered_chronological_history(&self) -> Vec<(usize, String)> {
+        self.history
+            .iter_chronologic()
+            .cloned()
+            .enumerate()
+            .collect()
+    }
+
+    /// Dispatches the applicable [`EditCommand`] actions for editing the history search string.
+    ///
+    /// Only modifies internal state, does not perform regular output!
+    fn run_history_commands(&mut self, commands: &[EditCommand]) {
+        for command in commands {
+            match command {
+                EditCommand::InsertChar(c) => {
+                    let search = self
+                        .history_search
+                        .as_mut()
+                        .expect("couldn't get history_search as mutable"); // We checked it is some
+                    search.step(BasicSearchCommand::InsertChar(*c), &self.history);
+                }
+                EditCommand::Backspace => {
+                    let search = self
+                        .history_search
+                        .as_mut()
+                        .expect("couldn't get history_search as mutable"); // We checked it is some
+                    search.step(BasicSearchCommand::Backspace, &self.history);
+                }
+                EditCommand::SearchHistory => {
+                    let search = self
+                        .history_search
+                        .as_mut()
+                        .expect("couldn't get history_search as mutable"); // We checked it is some
+                    search.step(BasicSearchCommand::Next, &self.history);
+                }
+                EditCommand::MoveRight => {
+                    // Ignore move right, it is currently emited with InsertChar
+                }
+                // Leave history search otherwise
+                _ => self.history_search = None,
+            }
+        }
+    }
+
+    fn append_to_history(&mut self) {
+        self.history.append(self.insertion_line().to_string());
+    }
+
+    fn previous_history(&mut self) {
+        if self.history.history_prefix.is_none() {
+            let buffer = self.line_buffer.get_buffer();
+            self.history.history_prefix = Some(buffer.to_owned());
+        }
+
+        if let Some(history_entry) = self.history.go_back_with_prefix() {
+            let new_buffer = history_entry.to_string();
+            self.set_buffer(new_buffer);
+            self.move_to_end();
+        }
+    }
+
+    fn next_history(&mut self) {
+        if self.history.history_prefix.is_none() {
+            let buffer = self.line_buffer.get_buffer();
+            self.history.history_prefix = Some(buffer.to_owned());
+        }
+
+        if let Some(history_entry) = self.history.go_forward_with_prefix() {
+            let new_buffer = history_entry.to_string();
+            self.set_buffer(new_buffer);
+            self.move_to_end();
+        }
+    }
+
+    fn search_history(&mut self) {
+        self.history_search = Some(BasicSearch::new(self.insertion_line().to_string()));
+    }
+
+    fn has_history(&self) -> bool {
+        self.history_search.is_some()
+    }
 }
 
 impl Default for Reedline {
@@ -329,11 +413,11 @@ impl Reedline {
         let edit_engine = EditEngine {
             line_buffer: LineBuffer::new(),
             cut_buffer: Box::new(get_default_clipboard()),
+            history,
+            history_search: None,
         };
 
         Reedline {
-            history,
-            history_search: None,
             stdout,
             keybindings: keybindings_hashmap,
             edit_mode: EditMode::Emacs,
@@ -352,7 +436,8 @@ impl Reedline {
     ) -> std::io::Result<Reedline> {
         let history = History::with_file(history_size, history_file.into())?;
 
-        self.history = history;
+        // HACK: Fix this hack
+        self.edit_engine.history = history;
 
         Ok(self)
     }
@@ -404,12 +489,7 @@ impl Reedline {
 
     /// Output the complete [`History`] chronologically with numbering to the terminal
     pub fn print_history(&mut self) -> Result<()> {
-        let history: Vec<_> = self
-            .history
-            .iter_chronologic()
-            .cloned()
-            .enumerate()
-            .collect();
+        let history = self.edit_engine.numbered_chronological_history();
 
         for (i, entry) in history {
             self.print_line(&format!("{}\t{}", i + 1, entry))?;
@@ -469,83 +549,6 @@ impl Reedline {
         result
     }
 
-    /// Dispatches the applicable [`EditCommand`] actions for editing the history search string.
-    ///
-    /// Only modifies internal state, does not perform regular output!
-    fn run_history_commands(&mut self, commands: &[EditCommand]) {
-        for command in commands {
-            match command {
-                EditCommand::InsertChar(c) => {
-                    let search = self
-                        .history_search
-                        .as_mut()
-                        .expect("couldn't get history_search as mutable"); // We checked it is some
-                    search.step(BasicSearchCommand::InsertChar(*c), &self.history);
-                }
-                EditCommand::Backspace => {
-                    let search = self
-                        .history_search
-                        .as_mut()
-                        .expect("couldn't get history_search as mutable"); // We checked it is some
-                    search.step(BasicSearchCommand::Backspace, &self.history);
-                }
-                EditCommand::SearchHistory => {
-                    let search = self
-                        .history_search
-                        .as_mut()
-                        .expect("couldn't get history_search as mutable"); // We checked it is some
-                    search.step(BasicSearchCommand::Next, &self.history);
-                }
-                EditCommand::MoveRight => {
-                    // Ignore move right, it is currently emited with InsertChar
-                }
-                // Leave history search otherwise
-                _ => self.history_search = None,
-            }
-        }
-    }
-
-    fn append_to_history(&mut self) {
-        self.history
-            .append(self.edit_engine.insertion_line().to_string());
-    }
-
-    fn previous_history(&mut self) {
-        // TODO: Will change when we move history to EditEngine
-        if self.history.history_prefix.is_none() {
-            let buffer = self.edit_engine.line_buffer.get_buffer();
-            self.history.history_prefix = Some(buffer.to_owned());
-        }
-
-        if let Some(history_entry) = self.history.go_back_with_prefix() {
-            let new_buffer = history_entry.to_string();
-            // TODO: Will change when we move history to EditEngine
-            self.edit_engine.set_buffer(new_buffer);
-            self.edit_engine.move_to_end();
-        }
-    }
-
-    fn next_history(&mut self) {
-        // TODO: Will change when we move history to EditEngine
-        if self.history.history_prefix.is_none() {
-            let buffer = self.edit_engine.line_buffer.get_buffer();
-            self.history.history_prefix = Some(buffer.to_owned());
-        }
-
-        if let Some(history_entry) = self.history.go_forward_with_prefix() {
-            let new_buffer = history_entry.to_string();
-            // TODO: Will change when we move history to EditEngine
-            self.edit_engine.set_buffer(new_buffer);
-            self.edit_engine.move_to_end();
-        }
-    }
-
-    fn search_history(&mut self) {
-        self.history_search = Some(BasicSearch::new(
-            self.edit_engine.insertion_line().to_string(),
-        ));
-    }
-
     fn enter_vi_insert_mode(&mut self) {
         self.edit_mode = EditMode::ViInsert;
         self.need_full_repaint = true;
@@ -561,8 +564,8 @@ impl Reedline {
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
     fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         // Handle command for history inputs
-        if self.history_search.is_some() {
-            self.run_history_commands(commands);
+        if self.edit_engine.has_history() {
+            self.edit_engine.run_history_commands(commands);
             return;
         }
 
@@ -606,16 +609,16 @@ impl Reedline {
                     self.edit_engine.clear();
                 }
                 EditCommand::AppendToHistory => {
-                    self.append_to_history();
+                    self.edit_engine.append_to_history();
                 }
                 EditCommand::PreviousHistory => {
-                    self.previous_history();
+                    self.edit_engine.previous_history();
                 }
                 EditCommand::NextHistory => {
-                    self.next_history();
+                    self.edit_engine.next_history();
                 }
                 EditCommand::SearchHistory => {
-                    self.search_history();
+                    self.edit_engine.search_history();
                 }
                 EditCommand::CutFromStart => {
                     self.edit_engine.cut_from_start();
@@ -656,6 +659,7 @@ impl Reedline {
                 _ => {}
             }
 
+            // TODO: This seems a bit hacky, probabaly think of another approach
             // Clean-up after commands run
             for command in &commands {
                 match command {
@@ -663,8 +667,8 @@ impl Reedline {
                     EditCommand::NextHistory => {}
                     _ => {
                         // Clean up the old prefix used for history search
-                        if self.history.history_prefix.is_some() {
-                            self.history.history_prefix = None;
+                        if self.edit_engine.history.history_prefix.is_some() {
+                            self.edit_engine.history.history_prefix = None;
                         }
                     }
                 }
@@ -806,7 +810,9 @@ impl Reedline {
     /// separately from the result bufer.
     fn history_search_paint(&mut self) -> Result<()> {
         // Assuming we are currently searching
+        // Hack: fixme: <Unknown>
         let search = self
+            .edit_engine
             .history_search
             .as_ref()
             .expect("couldn't get history_search reference");
@@ -829,7 +835,11 @@ impl Reedline {
 
         match search.result {
             Some((history_index, offset)) => {
-                let history_result = self.history.get_nth_newest(history_index).unwrap();
+                let history_result = self
+                    .edit_engine
+                    .history
+                    .get_nth_newest(history_index)
+                    .unwrap();
 
                 self.stdout.queue(Print(&history_result[..offset]))?;
                 self.stdout.queue(SavePosition)?;
@@ -868,7 +878,8 @@ impl Reedline {
         let mut line_count = 1;
 
         // Redraw if Ctrl-L was used
-        if self.history_search.is_some() {
+        // HACK
+        if self.edit_engine.history_search.is_some() {
             self.history_search_paint()?;
         } else {
             self.buffer_paint(prompt_offset)?;
@@ -940,19 +951,20 @@ impl Reedline {
                                 }
                             }
                             (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
-                                match self.history_search.clone() {
+                                match self.edit_engine.history_search.clone() {
                                     Some(search) => {
                                         self.queue_prompt_indicator()?;
                                         if let Some((history_index, _)) = search.result {
                                             // TODO: Unknown
                                             self.edit_engine.line_buffer.set_buffer(
-                                                self.history
+                                                self.edit_engine
+                                                    .history
                                                     .get_nth_newest(history_index)
                                                     .unwrap()
                                                     .clone(),
                                             );
                                         }
-                                        self.history_search = None;
+                                        self.edit_engine.history_search = None;
                                     }
                                     None => {
                                         let buffer = self.edit_engine.insertion_line().to_string();
@@ -983,7 +995,7 @@ impl Reedline {
                         self.full_repaint(prompt_origin, width)?;
                     }
                 }
-                if self.history_search.is_some() {
+                if self.edit_engine.history_search.is_some() {
                     self.history_search_paint()?;
                 } else if self.need_full_repaint {
                     self.full_repaint(prompt_origin, terminal_size.0)?;
