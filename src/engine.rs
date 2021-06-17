@@ -44,8 +44,6 @@ use std::{
 /// }
 /// ```
 pub struct Reedline {
-    line_buffer: LineBuffer,
-
     // History
     history: History,
     history_search: Option<BasicSearch>, // This could be have more features in the future (fzf, configurable?)
@@ -140,6 +138,11 @@ impl EditEngine {
     fn insert_char(&mut self, c: char) {
         let insertion_point = self.line_buffer.insertion_point();
         self.line_buffer.insert_char(insertion_point, c);
+    }
+
+    /// Reset the [`LineBuffer`] to be a line specified by `buffer`
+    fn set_buffer(&mut self, buffer: String) {
+        self.line_buffer.set_buffer(buffer)
     }
 
     fn backspace(&mut self) {
@@ -329,7 +332,6 @@ impl Reedline {
         };
 
         Reedline {
-            line_buffer: LineBuffer::new(),
             history,
             history_search: None,
             stdout,
@@ -509,27 +511,31 @@ impl Reedline {
     }
 
     fn previous_history(&mut self) {
+        // TODO: Will change when we move history to EditEngine
         if self.history.history_prefix.is_none() {
-            let buffer = self.line_buffer.get_buffer();
+            let buffer = self.edit_engine.line_buffer.get_buffer();
             self.history.history_prefix = Some(buffer.to_owned());
         }
 
         if let Some(history_entry) = self.history.go_back_with_prefix() {
             let new_buffer = history_entry.to_string();
-            self.set_buffer(new_buffer);
+            // TODO: Will change when we move history to EditEngine
+            self.edit_engine.set_buffer(new_buffer);
             self.edit_engine.move_to_end();
         }
     }
 
     fn next_history(&mut self) {
+        // TODO: Will change when we move history to EditEngine
         if self.history.history_prefix.is_none() {
-            let buffer = self.line_buffer.get_buffer();
+            let buffer = self.edit_engine.line_buffer.get_buffer();
             self.history.history_prefix = Some(buffer.to_owned());
         }
 
         if let Some(history_entry) = self.history.go_forward_with_prefix() {
             let new_buffer = history_entry.to_string();
-            self.set_buffer(new_buffer);
+            // TODO: Will change when we move history to EditEngine
+            self.edit_engine.set_buffer(new_buffer);
             self.edit_engine.move_to_end();
         }
     }
@@ -664,11 +670,6 @@ impl Reedline {
                 }
             }
         }
-    }
-
-    /// Reset the [`LineBuffer`] to be a line specified by `buffer`
-    fn set_buffer(&mut self, buffer: String) {
-        self.line_buffer.set_buffer(buffer)
     }
 
     /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.
@@ -880,7 +881,8 @@ impl Reedline {
                     Event::Key(KeyEvent { code, modifiers }) => {
                         match (modifiers, code, self.edit_mode) {
                             (KeyModifiers::CONTROL, KeyCode::Char('d'), _) => {
-                                if self.line_buffer.is_empty() {
+                                // TODO: <Unknown>
+                                if self.edit_engine.line_buffer.is_empty() {
                                     return Ok(Signal::CtrlD);
                                 } else if let Some(binding) = self.find_keybinding(modifiers, code)
                                 {
@@ -942,7 +944,8 @@ impl Reedline {
                                     Some(search) => {
                                         self.queue_prompt_indicator()?;
                                         if let Some((history_index, _)) = search.result {
-                                            self.line_buffer.set_buffer(
+                                            // TODO: Unknown
+                                            self.edit_engine.line_buffer.set_buffer(
                                                 self.history
                                                     .get_nth_newest(history_index)
                                                     .unwrap()
