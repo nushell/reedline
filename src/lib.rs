@@ -60,7 +60,7 @@ pub use enums::{EditCommand, EditMode, Signal};
 mod engine;
 
 mod line_editor;
-pub use line_editor::{EmacsLineEditor, ViLineEditor};
+pub use line_editor::{EmacsLineEditor, LineEditor, ViLineEditor};
 
 mod history;
 pub use history::{History, HISTORY_SIZE};

@@ -52,6 +52,5 @@ pub enum EditCommand {
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 pub enum EditMode {
     Emacs,
-    ViNormal,
-    ViInsert,
+    Vi,
 }

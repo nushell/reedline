@@ -12,94 +12,38 @@ use crossterm::{
 
 use std::{io::stdout, time::Duration};
 
-trait LineEditor {
-    fn print_line(&self);
-    fn print_events(&self);
-    fn print_crlf(&self);
-    fn print_history(&self);
-    fn clear_screen(&self);
-    fn read_line(&self, prompt: Box<dyn Prompt>) -> Signal;
-}
-
-#[derive(Eq, PartialEq, Clone, Copy)]
-enum Mode {
-    Normal,
-    Insert,
-}
-
-pub struct ViLineEditor {
-    painter: Painter,
-    // keybindings: Keybindings,
-    mode: Mode,
-    partial_command: Option<char>,
-    edit_engine: EditEngine,
-    need_full_repaint: bool,
-}
-
-impl ViLineEditor {
-    /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
-    pub fn new() -> Self {
-        let prompt = Box::new(DefaultPrompt::default());
-        let painter = Painter::new(stdout(), prompt);
-
-        let edit_engine = EditEngine::default();
-
-        ViLineEditor {
-            mode: Mode::Normal,
-            painter,
-            // keybindings: keybindings_hashmap,
-            need_full_repaint: false,
-            partial_command: None,
-            // vi_engine: ViEngine::new(),
-            edit_engine,
-        }
-    }
-
-    pub fn with_history(
-        mut self,
-        history_file: &str,
-        history_size: usize,
-    ) -> std::io::Result<Self> {
-        let history = History::with_file(history_size, history_file.into())?;
-
-        // HACK: Fix this hack
-        self.edit_engine.set_history(history);
-
-        Ok(self)
-    }
-
-    pub fn prompt_mode(&self) -> PromptMode {
-        match self.mode {
-            Mode::Insert => PromptMode::ViInsert,
-            _ => PromptMode::Normal,
-        }
-    }
+pub trait LineEditor {
+    fn painter(&mut self) -> &mut Painter;
+    fn edit_engine(&self) -> &EditEngine;
+    fn prompt_mode(&self) -> PromptMode;
+    fn read_line(&mut self, prompt: Box<dyn Prompt>) -> Result<Signal>;
 
     // painting stuff
     /// Writes `msg` to the terminal with a following carriage return and newline
-    pub fn print_line(&mut self, msg: &str) -> Result<()> {
-        self.painter.print_line(msg)
+    fn print_line(&mut self, msg: &str) -> Result<()> {
+        self.painter().print_line(msg)
     }
 
     /// Goes to the beginning of the next line
     ///
     /// Also works in raw mode
-    pub fn print_crlf(&mut self) -> Result<()> {
-        self.painter.print_crlf()
+    fn print_crlf(&mut self) -> Result<()> {
+        self.painter().print_crlf()
     }
 
     /// Clear the screen by printing enough whitespace to start the prompt or
     /// other output back at the first line of the terminal.
-    pub fn clear_screen(&mut self) -> Result<()> {
-        self.painter.clear_screen()
+    fn clear_screen(&mut self) -> Result<()> {
+        self.painter().clear_screen()
     }
 
     /// Output the complete [`History`] chronologically with numbering to the terminal
-    pub fn print_history(&mut self) -> Result<()> {
-        let history = self.edit_engine.numbered_chronological_history();
+    fn print_history(&mut self) -> Result<()> {
+        let history = self.edit_engine().numbered_chronological_history();
 
         for (i, entry) in history {
-            self.painter.print_line(&format!("{}\t{}", i + 1, entry))?;
+            self.painter()
+                .print_line(&format!("{}\t{}", i + 1, entry))?;
         }
         Ok(())
     }
@@ -108,10 +52,10 @@ impl ViLineEditor {
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     fn print_buffer(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
-        let new_index = self.edit_engine.insertion_point().offset;
-        let insertion_line = self.edit_engine.insertion_line().to_string();
+        let new_index = self.edit_engine().insertion_point().offset;
+        let insertion_line = self.edit_engine().insertion_line().to_string();
 
-        self.painter
+        self.painter()
             .print_buffer(prompt_offset, new_index, insertion_line)
     }
 
@@ -120,35 +64,21 @@ impl ViLineEditor {
         prompt_origin: (u16, u16),
         terminal_width: u16,
     ) -> Result<(u16, u16)> {
-        let new_index = self.edit_engine.insertion_point().offset;
-        let insertion_line = self.edit_engine.insertion_line().to_string();
+        let new_index = self.edit_engine().insertion_point().offset;
+        let insertion_line = self.edit_engine().insertion_line().to_string();
+        let prompt_mode = self.prompt_mode();
 
-        self.painter.full_repaint(
+        self.painter().full_repaint(
             prompt_origin,
             terminal_width,
             new_index,
             insertion_line,
-            self.prompt_mode(),
+            prompt_mode,
         )
     }
 
-    /// Wait for input and provide the user with a specified [`Prompt`].
-    ///
-    /// Returns a [`crossterm::Result`] in which the `Err` type is [`crossterm::ErrorKind`]
-    /// to distinguish I/O errors and the `Ok` variant wraps a [`Signal`] which
-    /// handles user inputs.
-    pub fn read_line(&mut self, prompt: Box<dyn Prompt>) -> Result<Signal> {
-        terminal::enable_raw_mode()?;
-
-        let result = self.read_line_helper(prompt);
-
-        terminal::disable_raw_mode()?;
-
-        result
-    }
-
     /// **For debugging purposes only:** Track the terminal events observed by [`Reedline`] and print them.
-    pub fn print_events(&mut self) -> Result<()> {
+    fn print_events(&mut self) -> Result<()> {
         terminal::enable_raw_mode()?;
         let result = self.print_events_helper();
         terminal::disable_raw_mode()?;
@@ -182,6 +112,88 @@ impl ViLineEditor {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Eq, PartialEq, Clone, Copy)]
+enum Mode {
+    Normal,
+    Insert,
+}
+
+pub struct ViLineEditor {
+    painter: Painter,
+    // keybindings: Keybindings,
+    mode: Mode,
+    partial_command: Option<char>,
+    edit_engine: EditEngine,
+    need_full_repaint: bool,
+}
+
+impl LineEditor for ViLineEditor {
+    fn painter(&mut self) -> &mut Painter {
+        &mut self.painter
+    }
+
+    fn edit_engine(&self) -> &EditEngine {
+        &self.edit_engine
+    }
+
+    fn prompt_mode(&self) -> PromptMode {
+        match self.mode {
+            Mode::Insert => PromptMode::ViInsert,
+            _ => PromptMode::Normal,
+        }
+    }
+
+    /// Wait for input and provide the user with a specified [`Prompt`].
+    ///
+    /// Returns a [`crossterm::Result`] in which the `Err` type is [`crossterm::ErrorKind`]
+    /// to distinguish I/O errors and the `Ok` variant wraps a [`Signal`] which
+    /// handles user inputs.
+    fn read_line(&mut self, prompt: Box<dyn Prompt>) -> Result<Signal> {
+        terminal::enable_raw_mode()?;
+
+        let result = self.read_line_helper(prompt);
+
+        terminal::disable_raw_mode()?;
+
+        result
+    }
+}
+
+impl ViLineEditor {
+    /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
+    pub fn new() -> Box<dyn LineEditor> {
+        let prompt = Box::new(DefaultPrompt::default());
+        let painter = Painter::new(stdout(), prompt);
+
+        let edit_engine = EditEngine::default();
+
+        let line_editor = ViLineEditor {
+            mode: Mode::Normal,
+            painter,
+            // keybindings: keybindings_hashmap,
+            need_full_repaint: false,
+            partial_command: None,
+            // vi_engine: ViEngine::new(),
+            edit_engine,
+        };
+
+        Box::new(line_editor)
+    }
+
+    pub fn with_history(
+        mut self,
+        history_file: &str,
+        history_size: usize,
+    ) -> std::io::Result<Self> {
+        let history = History::with_file(history_size, history_file.into())?;
+
+        // HACK: Fix this hack
+        self.edit_engine.set_history(history);
+
+        Ok(self)
     }
 
     fn enter_vi_insert_mode(&mut self) {
@@ -286,6 +298,7 @@ impl ViLineEditor {
                     Mode::Insert => {
                         let (code, modifier) = (k.code, k.modifiers);
                         match (modifier, code) {
+                            // Note: Should send signal to repaint
                             (KeyModifiers::NONE, KeyCode::Esc) => self.enter_vi_normal_mode(),
                             (KeyModifiers::NONE, KeyCode::Char(c)) => {
                                 let line_start = if self.edit_engine.insertion_point().line == 0 {
@@ -398,24 +411,49 @@ pub struct EmacsLineEditor {
     edit_engine: EditEngine,
 }
 
-impl Default for EmacsLineEditor {
-    fn default() -> Self {
-        Self::new()
+impl LineEditor for EmacsLineEditor {
+    fn painter(&mut self) -> &mut Painter {
+        &mut self.painter
+    }
+
+    fn edit_engine(&self) -> &EditEngine {
+        &self.edit_engine
+    }
+
+    fn prompt_mode(&self) -> PromptMode {
+        PromptMode::Normal
+    }
+
+    /// Wait for input and provide the user with a specified [`Prompt`].
+    ///
+    /// Returns a [`crossterm::Result`] in which the `Err` type is [`crossterm::ErrorKind`]
+    /// to distinguish I/O errors and the `Ok` variant wraps a [`Signal`] which
+    /// handles user inputs.
+    fn read_line(&mut self, prompt: Box<dyn Prompt>) -> Result<Signal> {
+        terminal::enable_raw_mode()?;
+
+        let result = self.read_line_helper(prompt);
+
+        terminal::disable_raw_mode()?;
+
+        result
     }
 }
 
 impl EmacsLineEditor {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
-    pub fn new() -> EmacsLineEditor {
+    pub fn new() -> Box<dyn LineEditor> {
         let prompt = Box::new(DefaultPrompt::default());
         let painter = Painter::new(stdout(), prompt);
         let edit_engine = EditEngine::default();
 
-        EmacsLineEditor {
+        let emacs_line_editor = EmacsLineEditor {
             painter,
             keybindings: default_emacs_keybindings(),
             edit_engine,
-        }
+        };
+
+        Box::new(emacs_line_editor)
     }
 
     pub fn with_history(
@@ -457,87 +495,6 @@ impl EmacsLineEditor {
         self.keybindings.find_binding(modifier, key_code)
     }
 
-    // painting stuff
-    /// Writes `msg` to the terminal with a following carriage return and newline
-    pub fn print_line(&mut self, msg: &str) -> Result<()> {
-        self.painter.print_line(msg)
-    }
-
-    /// Goes to the beginning of the next line
-    ///
-    /// Also works in raw mode
-    pub fn print_crlf(&mut self) -> Result<()> {
-        self.painter.print_crlf()
-    }
-
-    /// Clear the screen by printing enough whitespace to start the prompt or
-    /// other output back at the first line of the terminal.
-    pub fn clear_screen(&mut self) -> Result<()> {
-        self.painter.clear_screen()
-    }
-
-    /// Output the complete [`History`] chronologically with numbering to the terminal
-    pub fn print_history(&mut self) -> Result<()> {
-        let history = self.edit_engine.numbered_chronological_history();
-
-        for (i, entry) in history {
-            self.painter.print_line(&format!("{}\t{}", i + 1, entry))?;
-        }
-        Ok(())
-    }
-
-    /// Repaint logic for the normal input prompt buffer
-    ///
-    /// Requires coordinates where the input buffer begins after the prompt.
-    fn print_buffer(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
-        let new_index = self.edit_engine.insertion_point().offset;
-        let insertion_line = self.edit_engine.insertion_line().to_string();
-
-        self.painter
-            .print_buffer(prompt_offset, new_index, insertion_line)
-    }
-
-    fn full_repaint(
-        &mut self,
-        prompt_origin: (u16, u16),
-        terminal_width: u16,
-    ) -> Result<(u16, u16)> {
-        let new_index = self.edit_engine.insertion_point().offset;
-        let insertion_line = self.edit_engine.insertion_line().to_string();
-
-        self.painter.full_repaint(
-            prompt_origin,
-            terminal_width,
-            new_index,
-            insertion_line,
-            self.prompt_mode(),
-        )
-    }
-
-    /// Wait for input and provide the user with a specified [`Prompt`].
-    ///
-    /// Returns a [`crossterm::Result`] in which the `Err` type is [`crossterm::ErrorKind`]
-    /// to distinguish I/O errors and the `Ok` variant wraps a [`Signal`] which
-    /// handles user inputs.
-    pub fn read_line(&mut self, prompt: Box<dyn Prompt>) -> Result<Signal> {
-        terminal::enable_raw_mode()?;
-
-        let result = self.read_line_helper(prompt);
-
-        terminal::disable_raw_mode()?;
-
-        result
-    }
-
-    /// **For debugging purposes only:** Track the terminal events observed by [`Reedline`] and print them.
-    pub fn print_events(&mut self) -> Result<()> {
-        terminal::enable_raw_mode()?;
-        let result = self.print_events_helper();
-        terminal::disable_raw_mode()?;
-
-        result
-    }
-
     /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.
     fn maybe_wrap(&self, terminal_width: u16, start_offset: u16, c: char) -> bool {
         use unicode_width::UnicodeWidthStr;
@@ -548,34 +505,6 @@ impl EmacsLineEditor {
         let display_width = UnicodeWidthStr::width(test_buffer.as_str()) + start_offset as usize;
 
         display_width >= terminal_width as usize
-    }
-
-    // this fn is totally ripped off from crossterm's examples
-    // it's really a diagnostic routine to see if crossterm is
-    // even seeing the events. if you press a key and no events
-    // are printed, it's a good chance your terminal is eating
-    // those events.
-    fn print_events_helper(&mut self) -> Result<()> {
-        loop {
-            // Wait up to 5s for another event
-            if poll(Duration::from_millis(5_000))? {
-                // It's guaranteed that read() wont block if `poll` returns `Ok(true)`
-                let event = read()?;
-
-                // just reuse the print_message fn to show events
-                self.print_line(&format!("Event::{:?}", event))?;
-
-                // hit the esc key to git out
-                if event == Event::Key(KeyCode::Esc.into()) {
-                    break;
-                }
-            } else {
-                // Timeout expired, no event for 5s
-                self.print_line("Waiting for you to type...")?;
-            }
-        }
-
-        Ok(())
     }
 
     /// Repaint logic for the history reverse search
