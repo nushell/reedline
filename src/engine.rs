@@ -5,14 +5,14 @@ use crate::{
     prompt::PromptMode,
     DefaultPrompt, Prompt,
 };
-use crate::{history::History, line_buffer::LineBuffer};
 use crate::{
-    history_search::{BasicSearch, BasicSearchCommand},
-    line_buffer::InsertionPoint,
+    history::History,
+    line_buffer::{InsertionPoint, LineBuffer},
 };
 use crate::{EditCommand, EditMode, Signal, ViEngine};
 use crossterm::{
-    cursor::{position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
+    cursor,
+    cursor::{position, MoveTo, MoveToColumn, MoveUp, RestorePosition, SavePosition},
     event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
     style::{Color, Print, ResetColor, SetForegroundColor},
     terminal::{self, Clear, ClearType},
@@ -51,7 +51,6 @@ pub struct Reedline {
 
     // History
     history: History,
-    history_search: Option<BasicSearch>, // This could be have more features in the future (fzf, configurable?)
 
     // Stdout
     stdout: Stdout,
@@ -96,7 +95,6 @@ impl Reedline {
             line_buffer: LineBuffer::new(),
             cut_buffer,
             history,
-            history_search: None,
             stdout,
             keybindings: keybindings_hashmap,
             edit_mode: EditMode::Emacs,
@@ -231,42 +229,6 @@ impl Reedline {
         result
     }
 
-    /// Dispatches the applicable [`EditCommand`] actions for editing the history search string.
-    ///
-    /// Only modifies internal state, does not perform regular output!
-    fn run_history_commands(&mut self, commands: &[EditCommand]) {
-        for command in commands {
-            match command {
-                EditCommand::InsertChar(c) => {
-                    let search = self
-                        .history_search
-                        .as_mut()
-                        .expect("couldn't get history_search as mutable"); // We checked it is some
-                    search.step(BasicSearchCommand::InsertChar(*c), &self.history);
-                }
-                EditCommand::Backspace => {
-                    let search = self
-                        .history_search
-                        .as_mut()
-                        .expect("couldn't get history_search as mutable"); // We checked it is some
-                    search.step(BasicSearchCommand::Backspace, &self.history);
-                }
-                EditCommand::SearchHistory => {
-                    let search = self
-                        .history_search
-                        .as_mut()
-                        .expect("couldn't get history_search as mutable"); // We checked it is some
-                    search.step(BasicSearchCommand::Next, &self.history);
-                }
-                EditCommand::MoveRight => {
-                    // Ignore move right, it is currently emited with InsertChar
-                }
-                // Leave history search otherwise
-                _ => self.history_search = None,
-            }
-        }
-    }
-
     fn move_to_start(&mut self) {
         self.line_buffer.move_to_start()
     }
@@ -357,10 +319,6 @@ impl Reedline {
             self.set_buffer(new_buffer);
             self.move_to_end();
         }
-    }
-
-    fn search_history(&mut self) {
-        self.history_search = Some(BasicSearch::new(self.insertion_line().to_string()));
     }
 
     fn cut_from_start(&mut self) {
@@ -508,13 +466,13 @@ impl Reedline {
     }
 
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
-    fn run_edit_commands(&mut self, commands: &[EditCommand]) {
-        // Handle command for history inputs
-        if self.history_search.is_some() {
-            self.run_history_commands(commands);
-            return;
-        }
 
+    fn run_edit_commands(
+        &mut self,
+        commands: &[EditCommand],
+        prompt_origin: &mut (u16, u16),
+        prompt_offset: (u16, u16),
+    ) -> Result<()> {
         // Vim mode transformations
         let commands = match self.edit_mode {
             EditMode::ViNormal => self.vi_engine.handle(commands),
@@ -564,7 +522,8 @@ impl Reedline {
                     self.next_history();
                 }
                 EditCommand::SearchHistory => {
-                    self.search_history();
+                    self.interactive_history_search(&mut prompt_origin.1, prompt_offset.1)?;
+                    self.need_full_repaint = true;
                 }
                 EditCommand::CutFromStart => {
                     self.cut_from_start();
@@ -619,6 +578,7 @@ impl Reedline {
                 }
             }
         }
+        Ok(())
     }
 
     /// Get the cursor position as understood by the underlying [`LineBuffer`]
@@ -697,6 +657,139 @@ impl Reedline {
         }
 
         Ok(())
+    }
+
+    /// Search the history interactively.
+    /// A list with a number of most recent history entries will be displayed,
+    /// from which the user can select entries through (`CTRL-n`|`CTRL-r`)/`CTRL-p` or search
+    fn interactive_history_search(
+        &mut self,
+        prompt_origin_row: &mut u16,
+        prompt_offset_row: u16,
+    ) -> Result<()> {
+        // set the cursor into the row that contains the beginning of user input
+        // this is necessary to correctly handle multiline inputs
+        self.stdout.queue(MoveTo(0, prompt_offset_row))?.flush()?;
+
+        let mut search_string = String::from(self.line_buffer.get_buffer());
+        let mut search_index = 0usize;
+        let mut prompt_offset_rows = 0;
+        let mut history_index = None;
+
+        #[rustfmt::skip]
+        self.paint_interactive_search( &search_string, search_index, &mut history_index, &mut prompt_offset_rows, )?;
+
+        loop {
+            match read()? {
+                Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
+                    (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
+                        search_string.push(c);
+                        #[rustfmt::skip]
+                        let rows = self.paint_interactive_search( &search_string, search_index, &mut history_index, &mut prompt_offset_rows, )?;
+                        (rows < 8 && search_index >= rows)
+                            .then(|| search_index = rows.saturating_sub(1));
+                    }
+                    (KeyModifiers::NONE, KeyCode::Backspace) => {
+                        search_string.pop();
+                        #[rustfmt::skip]
+                        let rows = self.paint_interactive_search( &search_string, search_index, &mut history_index, &mut prompt_offset_rows, )?;
+                        (rows < 8 && search_index >= rows)
+                            .then(|| search_index = rows.saturating_sub(1));
+                    }
+                    (KeyModifiers::CONTROL, KeyCode::Char('n') | KeyCode::Char('r')) => {
+                        search_index += 1;
+                        #[rustfmt::skip]
+                        let rows = self.paint_interactive_search( &search_string, search_index, &mut history_index, &mut prompt_offset_rows, )?;
+                        (rows < 8 && search_index >= rows).then(|| search_index -= 1);
+                    }
+                    (KeyModifiers::CONTROL, KeyCode::Char('p')) => {
+                        search_index = search_index.saturating_sub(1);
+                        #[rustfmt::skip]
+                        self.paint_interactive_search( &search_string, search_index, &mut history_index, &mut prompt_offset_rows, )?;
+                    }
+                    (_, KeyCode::Enter) => {
+                        if let Some(idx) = history_index {
+                            self.line_buffer
+                                .set_buffer(self.history.get_nth_newest(idx).unwrap().clone());
+                            self.line_buffer.move_to_end();
+                        }
+                        // adjust the prompt_offset.1 from the main loop if needed
+                        *prompt_origin_row = prompt_origin_row.saturating_sub(prompt_offset_rows);
+                        return Ok(());
+                    }
+                    (_, KeyCode::Esc) => {
+                        // adjust the prompt_offset.1 from the main loop if needed
+                        *prompt_origin_row = prompt_origin_row.saturating_sub(prompt_offset_rows);
+                        return Ok(());
+                    }
+                    _ => {}
+                },
+                Event::Mouse(_event) => {}
+                Event::Resize(_width, _height) => {
+                    #[rustfmt::skip]
+                    self.paint_interactive_search( &search_string, search_index, &mut history_index, &mut prompt_offset_rows, )?;
+                    *prompt_origin_row = cursor::position()?.1;
+                    prompt_offset_rows = 0;
+                }
+            }
+        }
+    }
+
+    fn paint_interactive_search(
+        &mut self,
+        search_string: &str,
+        search_index: usize,
+        history_index: &mut Option<usize>,
+        prompt_offset_rows: &mut u16,
+    ) -> Result<usize> {
+        let (list, rows, index) =
+            build_list(self.history.iter_recent(), &search_string, search_index)?;
+        *history_index = index;
+
+        let status = if rows == 0 { "failed " } else { "" };
+        let (columns, _) = terminal::size()?;
+        let search_str_trimmed = &search_string[..str_index_at_width(
+            search_string,
+            (columns as usize).saturating_sub("(reverse-search)`':".len() + status.len() + 4),
+        )];
+
+        let message = if search_str_trimmed.len() != search_string.len() {
+            format!("({}reverse-search)`{}..':", status, &search_str_trimmed)
+        } else {
+            format!("({}reverse-search)`{}':", status, &search_string)
+        };
+
+        self.stdout
+            .queue(cursor::Hide)?
+            .queue(MoveToColumn(0))?
+            .queue(SetForegroundColor(Color::Blue))?
+            .queue(Print(&message))?
+            .queue(ResetColor)?;
+
+        // paint the selected element after the search message
+        use unicode_width::UnicodeWidthStr;
+        let cols_after_message = (columns as usize).saturating_sub(message.width() + 2);
+        if let Some(entry) = index {
+            let new_str = String::new();
+            let entry = self.history.get_nth_newest(entry).unwrap_or(&new_str);
+            let entry_trimmed = &entry[..str_index_at_width(&entry, cols_after_message)];
+            self.stdout.queue(Print(entry_trimmed))?;
+            if entry_trimmed.len() < entry.len() {
+                self.stdout.queue(Print(".."))?;
+            }
+        };
+
+        let (prev_col, prev_row) = cursor::position()?;
+
+        self.stdout
+            .queue(Clear(ClearType::FromCursorDown))?
+            .queue(Print(list))?
+            .queue(MoveUp(rows as u16))?
+            .queue(MoveToColumn(prev_col))?
+            .queue(cursor::Show)?
+            .flush()?;
+        *prompt_offset_rows += prev_row.saturating_sub(cursor::position()?.1);
+        Ok(rows)
     }
 
     /// Clear the screen by printing enough whitespace to start the prompt or
@@ -778,61 +871,15 @@ impl Reedline {
         prompt_origin: (u16, u16),
         terminal_width: u16,
     ) -> Result<(u16, u16)> {
+        self.stdout.queue(cursor::Hide)?;
         self.move_to(prompt_origin.0, prompt_origin.1)?;
         self.queue_prompt(terminal_width as usize)?;
         // set where the input begins
         let prompt_offset = position()?;
         self.buffer_paint(prompt_offset)?;
+        self.stdout.queue(cursor::Show)?.flush()?;
 
         Ok(prompt_offset)
-    }
-
-    /// Repaint logic for the history reverse search
-    ///
-    /// Overwrites the prompt indicator and highlights the search string
-    /// separately from the result bufer.
-    fn history_search_paint(&mut self) -> Result<()> {
-        // Assuming we are currently searching
-        let search = self
-            .history_search
-            .as_ref()
-            .expect("couldn't get history_search reference");
-
-        let status = if search.result.is_none() && !search.search_string.is_empty() {
-            "failed "
-        } else {
-            ""
-        };
-
-        // print search prompt
-        self.stdout
-            .queue(MoveToColumn(0))?
-            .queue(SetForegroundColor(Color::Blue))?
-            .queue(Print(format!(
-                "({}reverse-search)`{}':",
-                status, search.search_string
-            )))?
-            .queue(ResetColor)?;
-
-        match search.result {
-            Some((history_index, offset)) => {
-                let history_result = self.history.get_nth_newest(history_index).unwrap();
-
-                self.stdout.queue(Print(&history_result[..offset]))?;
-                self.stdout.queue(SavePosition)?;
-                self.stdout.queue(Print(&history_result[offset..]))?;
-                self.stdout.queue(Clear(ClearType::UntilNewLine))?;
-                self.stdout.queue(RestorePosition)?;
-            }
-
-            None => {
-                self.stdout.queue(Clear(ClearType::UntilNewLine))?;
-            }
-        }
-
-        self.stdout.flush()?;
-
-        Ok(())
     }
 
     /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
@@ -841,9 +888,16 @@ impl Reedline {
         terminal::enable_raw_mode()?;
         self.prompt = prompt;
 
-        let mut terminal_size = terminal::size()?;
+        let terminal_size = terminal::size()?;
 
-        let prompt_origin = position()?;
+        let mut prompt_origin = {
+            let (column, row) = position()?;
+            if row + 1 == terminal::size()?.1 {
+                (column, row.saturating_sub(1))
+            } else {
+                (column, row)
+            }
+        };
 
         self.queue_prompt(terminal_size.0 as usize)?;
         self.stdout.flush()?;
@@ -851,15 +905,9 @@ impl Reedline {
         // set where the input begins
         let mut prompt_offset = position()?;
 
-        // our line count
-        let mut line_count = 1;
-
         // Redraw if Ctrl-L was used
-        if self.history_search.is_some() {
-            self.history_search_paint()?;
-        } else {
-            self.buffer_paint(prompt_offset)?;
-        }
+        self.buffer_paint(prompt_offset)?;
+
         self.stdout.flush()?;
 
         loop {
@@ -872,12 +920,20 @@ impl Reedline {
                                     return Ok(Signal::CtrlD);
                                 } else if let Some(binding) = self.find_keybinding(modifiers, code)
                                 {
-                                    self.run_edit_commands(&binding);
+                                    self.run_edit_commands(
+                                        &binding,
+                                        &mut prompt_origin,
+                                        prompt_offset,
+                                    )?;
                                 }
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('c'), _) => {
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
-                                    self.run_edit_commands(&binding);
+                                    self.run_edit_commands(
+                                        &binding,
+                                        &mut prompt_origin,
+                                        prompt_offset,
+                                    )?;
                                 }
                                 return Ok(Signal::CtrlC);
                             }
@@ -888,7 +944,11 @@ impl Reedline {
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
                                 if x == EditMode::ViNormal =>
                             {
-                                self.run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
+                                self.run_edit_commands(
+                                    &[EditCommand::ViCommandFragment(c)],
+                                    &mut prompt_origin,
+                                    prompt_offset,
+                                )?;
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
@@ -901,61 +961,51 @@ impl Reedline {
                                 };
                                 if self.maybe_wrap(terminal_size.0, line_start, c) {
                                     let (original_column, original_row) = position()?;
-                                    self.run_edit_commands(&[
-                                        EditCommand::InsertChar(c),
-                                        EditCommand::MoveRight,
-                                    ]);
+                                    self.run_edit_commands(
+                                        &[EditCommand::InsertChar(c), EditCommand::MoveRight],
+                                        &mut prompt_origin,
+                                        prompt_offset,
+                                    )?;
                                     self.buffer_paint(prompt_offset)?;
 
                                     let (new_column, _) = position()?;
 
                                     if new_column < original_column
-                                        && original_row == (terminal_size.1 - 1)
-                                        && line_count == 1
+                                        && original_row + 1 == terminal_size.1
                                     {
                                         // We have wrapped off bottom of screen, and prompt is on new row
                                         // We need to update the prompt location in this case
+                                        prompt_origin.1 -= 1;
                                         prompt_offset.1 -= 1;
-                                        line_count += 1;
                                     }
                                 } else {
-                                    self.run_edit_commands(&[
-                                        EditCommand::InsertChar(c),
-                                        EditCommand::MoveRight,
-                                    ]);
+                                    self.run_edit_commands(
+                                        &[EditCommand::InsertChar(c), EditCommand::MoveRight],
+                                        &mut prompt_origin,
+                                        prompt_offset,
+                                    )?;
                                 }
                             }
                             (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
-                                match self.history_search.clone() {
-                                    Some(search) => {
-                                        self.queue_prompt_indicator()?;
-                                        if let Some((history_index, _)) = search.result {
-                                            self.line_buffer.set_buffer(
-                                                self.history
-                                                    .get_nth_newest(history_index)
-                                                    .unwrap()
-                                                    .clone(),
-                                            );
-                                        }
-                                        self.history_search = None;
-                                    }
-                                    None => {
-                                        let buffer = self.insertion_line().to_string();
+                                let buffer = self.insertion_line().to_string();
 
-                                        self.run_edit_commands(&[
-                                            EditCommand::AppendToHistory,
-                                            EditCommand::Clear,
-                                        ]);
-                                        self.print_crlf()?;
+                                self.run_edit_commands(
+                                    &[EditCommand::AppendToHistory, EditCommand::Clear],
+                                    &mut prompt_origin,
+                                    prompt_offset,
+                                )?;
+                                self.print_crlf()?;
 
-                                        return Ok(Signal::Success(buffer));
-                                    }
-                                }
+                                return Ok(Signal::Success(buffer));
                             }
 
                             _ => {
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
-                                    self.run_edit_commands(&binding);
+                                    self.run_edit_commands(
+                                        &binding,
+                                        &mut prompt_origin,
+                                        prompt_offset,
+                                    )?;
                                 }
                             }
                         }
@@ -963,22 +1013,111 @@ impl Reedline {
                     Event::Mouse(event) => {
                         self.print_line(&format!("{:?}", event))?;
                     }
-                    Event::Resize(width, height) => {
-                        terminal_size = (width, height);
-                        self.full_repaint(prompt_origin, width)?;
+                    Event::Resize(width, _height) => {
+                        prompt_origin.1 = position()?.1.saturating_sub(1);
+                        prompt_offset = self.full_repaint(prompt_origin, width)?;
+                        continue;
                     }
                 }
-                if self.history_search.is_some() {
-                    self.history_search_paint()?;
-                } else if self.need_full_repaint {
-                    self.full_repaint(prompt_origin, terminal_size.0)?;
+                if self.need_full_repaint {
+                    prompt_offset = self.full_repaint(prompt_origin, terminal::size()?.0)?;
                     self.need_full_repaint = false;
                 } else {
                     self.buffer_paint(prompt_offset)?;
                 }
             } else {
-                self.full_repaint(prompt_origin, terminal_size.0)?;
+                prompt_offset = self.full_repaint(prompt_origin, terminal::size()?.0)?;
             }
         }
     }
+}
+
+/// Return the index up until which the String is displayable in the given width
+/// If the string is displayable in its entirety -> return `str::len()`
+/// ` rust
+/// let str_full = "display me";
+/// let str_short = &str_full[..str_index_at_width(&str_full, 8)];
+/// `
+fn str_index_at_width(strr: &str, width: usize) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    if strr.len() < width {
+        return strr.len();
+    }
+
+    let char_indices = strr.char_indices();
+    let mut state = 0;
+    for (idx, chr) in char_indices {
+        state += chr.width().unwrap_or(0);
+        if state > width {
+            return idx;
+        } else {
+            continue;
+        }
+    }
+    strr.len()
+}
+
+// Repaint logic for the interactive history search
+// Overwrites the prompt indicator and highlights the search string
+// separately from the result buffer.
+fn build_list<T: AsRef<str>>(
+    items: impl Iterator<Item = T>,
+    search_string: &str,
+    list_index: usize,
+) -> Result<(String, usize, Option<usize>)> {
+    fn push_entry(list: &mut String, entry: &str, remaining_cols: usize) {
+        if entry.len() < remaining_cols as usize {
+            //ascii fast-path
+            list.push_str(entry);
+        } else {
+            let entry_trimmed = &entry[..str_index_at_width(&entry, remaining_cols)];
+            list.push_str(entry_trimmed);
+            if entry_trimmed.len() < entry.len() {
+                list.push('.');
+                list.push('.');
+            }
+        }
+    }
+    let mut list = String::with_capacity(8 * 32);
+
+    let mut search_results = items
+        .enumerate()
+        .skip(list_index.saturating_sub(7))
+        .filter(|(_, entry)| entry.as_ref().starts_with(&*search_string))
+        .enumerate()
+        .take(8)
+        .peekable();
+
+    if search_results.peek().is_none() {
+        return Ok((list, 0, None));
+    }
+
+    let (columns, _) = terminal::size()?;
+    let remaining_cols = columns.saturating_sub(3) as usize;
+    let mut rows = 0;
+    let mut abs_index = None;
+
+    while let Some((list_idx, (abs_idx, entry))) = search_results.next() {
+        rows += 1;
+        list.push('\r');
+        list.push('\n');
+        if list_idx == list_index {
+            abs_index = Some(abs_idx);
+            list.push('>');
+            push_entry(&mut list, entry.as_ref(), remaining_cols);
+        } else if search_results.peek().is_none() && list_index > list_idx {
+            // if list_index outside of the displayable range
+            // -> display the last element as selected
+            abs_index = Some(abs_idx);
+            list.push('>');
+            push_entry(&mut list, entry.as_ref(), remaining_cols);
+            break;
+        } else {
+            push_entry(&mut list, entry.as_ref(), remaining_cols);
+        }
+    }
+
+    // report the number of rows the painted list contains and a possible
+    // upwards offset of the prompt
+    Ok((list, rows, abs_index))
 }
