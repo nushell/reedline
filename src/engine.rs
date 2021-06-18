@@ -472,6 +472,7 @@ impl Reedline {
         commands: &[EditCommand],
         prompt_origin: &mut (u16, u16),
         prompt_offset: (u16, u16),
+        terminal_size: &mut (u16, u16),
     ) -> Result<()> {
         // Vim mode transformations
         let commands = match self.edit_mode {
@@ -523,6 +524,7 @@ impl Reedline {
                 }
                 EditCommand::SearchHistory => {
                     self.interactive_history_search(&mut prompt_origin.1, prompt_offset.1)?;
+                    *terminal_size = terminal::size()?;
                     self.need_full_repaint = true;
                 }
                 EditCommand::CutFromStart => {
@@ -917,6 +919,7 @@ impl Reedline {
                                         &binding,
                                         &mut prompt_origin,
                                         prompt_offset,
+                                        &mut terminal_size,
                                     )?;
                                 }
                             }
@@ -926,6 +929,7 @@ impl Reedline {
                                         &binding,
                                         &mut prompt_origin,
                                         prompt_offset,
+                                        &mut terminal_size,
                                     )?;
                                 }
                                 return Ok(Signal::CtrlC);
@@ -941,6 +945,7 @@ impl Reedline {
                                     &[EditCommand::ViCommandFragment(c)],
                                     &mut prompt_origin,
                                     prompt_offset,
+                                    &mut terminal_size,
                                 )?;
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
@@ -958,6 +963,7 @@ impl Reedline {
                                         &[EditCommand::InsertChar(c), EditCommand::MoveRight],
                                         &mut prompt_origin,
                                         prompt_offset,
+                                        &mut terminal_size,
                                     )?;
                                     self.buffer_paint(prompt_offset)?;
 
@@ -976,6 +982,7 @@ impl Reedline {
                                         &[EditCommand::InsertChar(c), EditCommand::MoveRight],
                                         &mut prompt_origin,
                                         prompt_offset,
+                                        &mut terminal_size,
                                     )?;
                                 }
                             }
@@ -986,6 +993,7 @@ impl Reedline {
                                     &[EditCommand::AppendToHistory, EditCommand::Clear],
                                     &mut prompt_origin,
                                     prompt_offset,
+                                    &mut terminal_size,
                                 )?;
                                 self.print_crlf()?;
 
@@ -998,6 +1006,7 @@ impl Reedline {
                                         &binding,
                                         &mut prompt_origin,
                                         prompt_offset,
+                                        &mut terminal_size,
                                     )?;
                                 }
                             }
