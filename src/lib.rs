@@ -57,6 +57,8 @@ mod clip_buffer;
 mod enums;
 pub use enums::{EditCommand, EditMode, Signal};
 
+mod engine;
+
 mod line_editor;
 pub use line_editor::{EmacsLineEditor, ViLineEditor};
 
