@@ -863,9 +863,6 @@ pub struct EmacsLineEditor {
     // Edit mode
     edit_mode: EditMode,
 
-    // Dirty bits
-    need_full_repaint: bool,
-
     edit_engine: EditEngine,
 }
 
@@ -897,7 +894,6 @@ impl EmacsLineEditor {
             painter,
             keybindings: default_emacs_keybindings(),
             edit_mode: EditMode::Emacs,
-            need_full_repaint: false,
             edit_engine,
         }
     }
@@ -1259,9 +1255,6 @@ impl EmacsLineEditor {
 
                 if self.edit_engine.history_search.is_some() {
                     self.history_search_paint()?;
-                } else if self.need_full_repaint {
-                    self.full_repaint(prompt_origin, terminal_size.0)?;
-                    self.need_full_repaint = false;
                 } else {
                     self.print_buffer(prompt_offset)?;
                 }
