@@ -1008,6 +1008,8 @@ impl Reedline {
                     }
                     Event::Resize(width, height) => {
                         terminal_size = (width, height);
+                        // TODO properly adjusting prompt_origin on resizing
+                        // take into account multiline
                         prompt_origin.1 = position()?.1.saturating_sub(1);
                         prompt_offset = self.full_repaint(prompt_origin, width)?;
                         continue;
