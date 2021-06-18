@@ -888,7 +888,7 @@ impl Reedline {
         terminal::enable_raw_mode()?;
         self.prompt = prompt;
 
-        let terminal_size = terminal::size()?;
+        let mut terminal_size = terminal::size()?;
 
         let mut prompt_origin = {
             let (column, row) = position()?;
@@ -1006,7 +1006,8 @@ impl Reedline {
                     Event::Mouse(event) => {
                         self.print_line(&format!("{:?}", event))?;
                     }
-                    Event::Resize(width, _height) => {
+                    Event::Resize(width, height) => {
+                        terminal_size = (width, height);
                         prompt_origin.1 = position()?.1.saturating_sub(1);
                         prompt_offset = self.full_repaint(prompt_origin, width)?;
                         continue;
