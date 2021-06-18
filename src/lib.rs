@@ -70,6 +70,8 @@ pub use prompt::{DefaultPrompt, Prompt, DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_IND
 
 mod line_buffer;
 
+mod painter;
+
 mod keybindings;
 pub use keybindings::default_emacs_keybindings;
 
