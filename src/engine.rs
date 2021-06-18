@@ -892,7 +892,7 @@ impl Reedline {
 
         let mut prompt_origin = {
             let (column, row) = position()?;
-            if row + 1 == terminal::size()?.1 {
+            if row + 1 == terminal_size.1 {
                 (column, row.saturating_sub(1))
             } else {
                 (column, row)
@@ -1014,13 +1014,13 @@ impl Reedline {
                     }
                 }
                 if self.need_full_repaint {
-                    prompt_offset = self.full_repaint(prompt_origin, terminal::size()?.0)?;
+                    prompt_offset = self.full_repaint(prompt_origin, terminal_size.0)?;
                     self.need_full_repaint = false;
                 } else {
                     self.buffer_paint(prompt_offset)?;
                 }
             } else {
-                prompt_offset = self.full_repaint(prompt_origin, terminal::size()?.0)?;
+                prompt_offset = self.full_repaint(prompt_origin, terminal_size.0)?;
             }
         }
     }
