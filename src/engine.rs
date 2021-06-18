@@ -11,7 +11,7 @@ use crate::{
     history_search::{BasicSearch, BasicSearchCommand},
     line_buffer::InsertionPoint,
 };
-use crate::{EditCommand, EditMode, Signal};
+use crate::{EditCommand, Signal};
 use crossterm::{
     cursor::position,
     event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -860,9 +860,6 @@ pub struct EmacsLineEditor {
     // Keybindings
     keybindings: Keybindings,
 
-    // Edit mode
-    edit_mode: EditMode,
-
     edit_engine: EditEngine,
 }
 
@@ -893,7 +890,6 @@ impl EmacsLineEditor {
         EmacsLineEditor {
             painter,
             keybindings: default_emacs_keybindings(),
-            edit_mode: EditMode::Emacs,
             edit_engine,
         }
     }
@@ -917,12 +913,6 @@ impl EmacsLineEditor {
         self
     }
 
-    pub fn with_edit_mode(mut self, edit_mode: EditMode) -> EmacsLineEditor {
-        self.edit_mode = edit_mode;
-
-        self
-    }
-
     pub fn get_keybindings(&self) -> &Keybindings {
         &self.keybindings
     }
@@ -931,15 +921,8 @@ impl EmacsLineEditor {
         self.keybindings = keybindings;
     }
 
-    pub fn edit_mode(&self) -> EditMode {
-        self.edit_mode
-    }
-
     pub fn prompt_mode(&self) -> PromptMode {
-        match self.edit_mode {
-            EditMode::ViInsert => PromptMode::ViInsert,
-            _ => PromptMode::Normal,
-        }
+        PromptMode::Normal
     }
 
     fn find_keybinding(
@@ -1146,8 +1129,8 @@ impl EmacsLineEditor {
             if poll(Duration::from_secs(1))? {
                 match read()? {
                     Event::Key(KeyEvent { code, modifiers }) => {
-                        match (modifiers, code, self.edit_mode) {
-                            (KeyModifiers::CONTROL, KeyCode::Char('d'), _) => {
+                        match (modifiers, code) {
+                            (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
                                 // TODO: <Unknown>
                                 if self.edit_engine.line_buffer.is_empty() {
                                     return Ok(Signal::CtrlD);
@@ -1156,26 +1139,17 @@ impl EmacsLineEditor {
                                     self.edit_engine.run_edit_commands(&binding);
                                 }
                             }
-                            (KeyModifiers::CONTROL, KeyCode::Char('c'), _) => {
+                            (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
                                     self.edit_engine.run_edit_commands(&binding);
                                 }
                                 return Ok(Signal::CtrlC);
                             }
-                            (KeyModifiers::CONTROL, KeyCode::Char('l'), EditMode::Emacs) => {
+                            (KeyModifiers::CONTROL, KeyCode::Char('l')) => {
                                 return Ok(Signal::CtrlL);
                             }
-                            (KeyModifiers::NONE, KeyCode::Char(c), x)
-                            | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
-                                if x == EditMode::ViNormal =>
-                            {
-                                self.edit_engine
-                                    .run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
-                            }
-                            (KeyModifiers::NONE, KeyCode::Char(c), x)
-                            | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
-                                if x != EditMode::ViNormal =>
-                            {
+                            (KeyModifiers::NONE, KeyCode::Char(c))
+                            | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                                 let line_start = if self.edit_engine.insertion_point().line == 0 {
                                     prompt_offset.0
                                 } else {
@@ -1207,7 +1181,7 @@ impl EmacsLineEditor {
                                     ]);
                                 }
                             }
-                            (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
+                            (KeyModifiers::NONE, KeyCode::Enter) => {
                                 match self.edit_engine.history_search.clone() {
                                     Some(search) => {
                                         self.painter.print_prompt_indicator(self.prompt_mode())?;
