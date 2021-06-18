@@ -899,16 +899,9 @@ impl Reedline {
             }
         };
 
-        self.queue_prompt(terminal_size.0 as usize)?;
-        self.stdout.flush()?;
-
-        // set where the input begins
-        let mut prompt_offset = position()?;
-
         // Redraw if Ctrl-L was used
-        self.buffer_paint(prompt_offset)?;
-
-        self.stdout.flush()?;
+        // set where the input begins
+        let mut prompt_offset = self.full_repaint(prompt_origin, terminal_size.0)?;
 
         loop {
             if poll(Duration::from_secs(1))? {
