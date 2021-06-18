@@ -11,14 +11,14 @@ use crate::{
     history_search::{BasicSearch, BasicSearchCommand},
     line_buffer::InsertionPoint,
 };
-use crate::{EditCommand, EditMode, Signal, ViEngine};
+use crate::{EditCommand, EditMode, Signal};
 use crossterm::{
     cursor::position,
     event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
     terminal, Result,
 };
 
-use std::{collections::HashMap, io::stdout, time::Duration};
+use std::{io::stdout, time::Duration};
 
 pub struct EditEngine {
     line_buffer: LineBuffer,
@@ -858,19 +858,13 @@ pub struct EmacsLineEditor {
     painter: Painter,
 
     // Keybindings
-    keybindings: HashMap<EditMode, Keybindings>,
+    keybindings: Keybindings,
 
     // Edit mode
     edit_mode: EditMode,
 
     // Dirty bits
     need_full_repaint: bool,
-
-    // Partial command
-    partial_command: Option<char>,
-
-    // Vi normal mode state engine
-    vi_engine: ViEngine,
 
     edit_engine: EditEngine,
 }
@@ -885,8 +879,6 @@ impl EmacsLineEditor {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     pub fn new() -> EmacsLineEditor {
         let history = History::default();
-        let mut keybindings_hashmap = HashMap::new();
-        keybindings_hashmap.insert(EditMode::Emacs, default_emacs_keybindings());
 
         // keybindings_hashmap.insert(EditMode::ViInsert, default_vi_insert_keybindings());
         // keybindings_hashmap.insert(EditMode::ViNormal, default_vi_normal_keybindings());
@@ -903,11 +895,9 @@ impl EmacsLineEditor {
 
         EmacsLineEditor {
             painter,
-            keybindings: keybindings_hashmap,
+            keybindings: default_emacs_keybindings(),
             edit_mode: EditMode::Emacs,
             need_full_repaint: false,
-            partial_command: None,
-            vi_engine: ViEngine::new(),
             edit_engine,
         }
     }
@@ -926,7 +916,7 @@ impl EmacsLineEditor {
     }
 
     pub fn with_keybindings(mut self, keybindings: Keybindings) -> EmacsLineEditor {
-        self.keybindings.insert(EditMode::Emacs, keybindings);
+        self.keybindings = keybindings;
 
         self
     }
@@ -938,14 +928,11 @@ impl EmacsLineEditor {
     }
 
     pub fn get_keybindings(&self) -> &Keybindings {
-        &self
-            .keybindings
-            .get(&EditMode::Emacs)
-            .expect("Internal error: emacs should always be supported")
+        &self.keybindings
     }
 
     pub fn update_keybindings(&mut self, keybindings: Keybindings) {
-        self.keybindings.insert(EditMode::Emacs, keybindings);
+        self.keybindings = keybindings;
     }
 
     pub fn edit_mode(&self) -> EditMode {
@@ -964,10 +951,7 @@ impl EmacsLineEditor {
         modifier: KeyModifiers,
         key_code: KeyCode,
     ) -> Option<Vec<EditCommand>> {
-        self.keybindings
-            .get(&self.edit_mode)
-            .expect("Internal error: expected to find keybindings for edit mode")
-            .find_binding(modifier, key_code)
+        self.keybindings.find_binding(modifier, key_code)
     }
 
     // painting stuff
