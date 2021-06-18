@@ -853,7 +853,7 @@ impl ViLineEditor {
 ///    }
 /// }
 /// ```
-pub struct Reedline {
+pub struct EmacsLineEditor {
     // Stdout
     painter: Painter,
 
@@ -875,15 +875,15 @@ pub struct Reedline {
     edit_engine: EditEngine,
 }
 
-impl Default for Reedline {
+impl Default for EmacsLineEditor {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Reedline {
+impl EmacsLineEditor {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
-    pub fn new() -> Reedline {
+    pub fn new() -> EmacsLineEditor {
         let history = History::default();
         let mut keybindings_hashmap = HashMap::new();
         keybindings_hashmap.insert(EditMode::Emacs, default_emacs_keybindings());
@@ -901,7 +901,7 @@ impl Reedline {
             history_search: None,
         };
 
-        Reedline {
+        EmacsLineEditor {
             painter,
             keybindings: keybindings_hashmap,
             edit_mode: EditMode::Emacs,
@@ -916,7 +916,7 @@ impl Reedline {
         mut self,
         history_file: &str,
         history_size: usize,
-    ) -> std::io::Result<Reedline> {
+    ) -> std::io::Result<EmacsLineEditor> {
         let history = History::with_file(history_size, history_file.into())?;
 
         // HACK: Fix this hack
@@ -925,13 +925,13 @@ impl Reedline {
         Ok(self)
     }
 
-    pub fn with_keybindings(mut self, keybindings: Keybindings) -> Reedline {
+    pub fn with_keybindings(mut self, keybindings: Keybindings) -> EmacsLineEditor {
         self.keybindings.insert(EditMode::Emacs, keybindings);
 
         self
     }
 
-    pub fn with_edit_mode(mut self, edit_mode: EditMode) -> Reedline {
+    pub fn with_edit_mode(mut self, edit_mode: EditMode) -> EmacsLineEditor {
         self.edit_mode = edit_mode;
 
         self

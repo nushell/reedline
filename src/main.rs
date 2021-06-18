@@ -1,7 +1,7 @@
 use crossterm::{event::KeyCode, event::KeyModifiers, Result};
 
 use reedline::{
-    default_emacs_keybindings, DefaultPrompt, EditCommand, Reedline, Signal, ViLineEditor,
+    default_emacs_keybindings, DefaultPrompt, EditCommand, EmacsLineEditor, Signal, ViLineEditor,
 };
 
 fn main() -> Result<()> {
