@@ -1051,133 +1051,6 @@ impl EmacsLineEditor {
         result
     }
 
-    fn enter_vi_insert_mode(&mut self) {
-        self.edit_mode = EditMode::ViInsert;
-        self.need_full_repaint = true;
-        self.partial_command = None;
-    }
-
-    fn enter_vi_normal_mode(&mut self) {
-        self.edit_mode = EditMode::ViNormal;
-        self.need_full_repaint = true;
-        self.partial_command = None;
-    }
-
-    /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
-    fn run_edit_commands(&mut self, commands: &[EditCommand]) {
-        // Handle command for history inputs
-        if self.edit_engine.has_history() {
-            self.edit_engine.run_history_commands(commands);
-            return;
-        }
-
-        // Vim mode transformations
-        let commands = match self.edit_mode {
-            EditMode::ViNormal => self.vi_engine.handle(commands),
-            _ => commands.into(),
-        };
-
-        // Run the commands over the edit buffer
-        for command in &commands {
-            match command {
-                EditCommand::MoveToStart => self.edit_engine.move_to_start(),
-                EditCommand::MoveToEnd => {
-                    self.edit_engine.move_to_end();
-                }
-                EditCommand::MoveLeft => self.edit_engine.move_left(),
-                EditCommand::MoveRight => self.edit_engine.move_right(),
-                EditCommand::MoveWordLeft => {
-                    self.edit_engine.move_word_left();
-                }
-                EditCommand::MoveWordRight => {
-                    self.edit_engine.move_word_right();
-                }
-                EditCommand::InsertChar(c) => {
-                    self.edit_engine.insert_char(*c);
-                }
-                EditCommand::Backspace => {
-                    self.edit_engine.backspace();
-                }
-                EditCommand::Delete => {
-                    self.edit_engine.delete();
-                }
-                EditCommand::BackspaceWord => {
-                    self.edit_engine.backspace_word();
-                }
-                EditCommand::DeleteWord => {
-                    self.edit_engine.delete_word();
-                }
-                EditCommand::Clear => {
-                    self.edit_engine.clear();
-                }
-                EditCommand::AppendToHistory => {
-                    self.edit_engine.append_to_history();
-                }
-                EditCommand::PreviousHistory => {
-                    self.edit_engine.previous_history();
-                }
-                EditCommand::NextHistory => {
-                    self.edit_engine.next_history();
-                }
-                EditCommand::SearchHistory => {
-                    self.edit_engine.search_history();
-                }
-                EditCommand::CutFromStart => {
-                    self.edit_engine.cut_from_start();
-                }
-                EditCommand::CutToEnd => {
-                    self.edit_engine.cut_from_end();
-                }
-                EditCommand::CutWordLeft => {
-                    self.edit_engine.cut_word_left();
-                }
-                EditCommand::CutWordRight => {
-                    self.edit_engine.cut_word_right();
-                }
-                EditCommand::PasteCutBuffer => {
-                    self.edit_engine.insert_cut_buffer();
-                }
-                EditCommand::UppercaseWord => {
-                    self.edit_engine.uppercase_word();
-                }
-                EditCommand::LowercaseWord => {
-                    self.edit_engine.lowercase_word();
-                }
-                EditCommand::CapitalizeChar => {
-                    self.edit_engine.capitalize_char();
-                }
-                EditCommand::SwapWords => {
-                    self.edit_engine.swap_words();
-                }
-                EditCommand::SwapGraphemes => {
-                    self.edit_engine.swap_graphemes();
-                }
-                EditCommand::EnterViInsert => {
-                    self.enter_vi_insert_mode();
-                }
-                EditCommand::EnterViNormal => {
-                    self.enter_vi_normal_mode();
-                }
-                _ => {}
-            }
-
-            // TODO: This seems a bit hacky, probabaly think of another approach
-            // Clean-up after commands run
-            for command in &commands {
-                match command {
-                    EditCommand::PreviousHistory => {}
-                    EditCommand::NextHistory => {}
-                    _ => {
-                        // Clean up the old prefix used for history search
-                        if self.edit_engine.history.history_prefix.is_some() {
-                            self.edit_engine.history.history_prefix = None;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.
     fn maybe_wrap(&self, terminal_width: u16, start_offset: u16, c: char) -> bool {
         use unicode_width::UnicodeWidthStr;
@@ -1300,12 +1173,12 @@ impl EmacsLineEditor {
                                     return Ok(Signal::CtrlD);
                                 } else if let Some(binding) = self.find_keybinding(modifiers, code)
                                 {
-                                    self.run_edit_commands(&binding);
+                                    self.edit_engine.run_edit_commands(&binding);
                                 }
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('c'), _) => {
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
-                                    self.run_edit_commands(&binding);
+                                    self.edit_engine.run_edit_commands(&binding);
                                 }
                                 return Ok(Signal::CtrlC);
                             }
@@ -1316,7 +1189,8 @@ impl EmacsLineEditor {
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
                                 if x == EditMode::ViNormal =>
                             {
-                                self.run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
+                                self.edit_engine
+                                    .run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
@@ -1329,7 +1203,7 @@ impl EmacsLineEditor {
                                 };
                                 if self.maybe_wrap(terminal_size.0, line_start, c) {
                                     let (original_column, original_row) = position()?;
-                                    self.run_edit_commands(&[
+                                    self.edit_engine.run_edit_commands(&[
                                         EditCommand::InsertChar(c),
                                         EditCommand::MoveRight,
                                     ]);
@@ -1347,7 +1221,7 @@ impl EmacsLineEditor {
                                         line_count += 1;
                                     }
                                 } else {
-                                    self.run_edit_commands(&[
+                                    self.edit_engine.run_edit_commands(&[
                                         EditCommand::InsertChar(c),
                                         EditCommand::MoveRight,
                                     ]);
@@ -1372,7 +1246,7 @@ impl EmacsLineEditor {
                                     None => {
                                         let buffer = self.edit_engine.insertion_line().to_string();
 
-                                        self.run_edit_commands(&[
+                                        self.edit_engine.run_edit_commands(&[
                                             EditCommand::AppendToHistory,
                                             EditCommand::Clear,
                                         ]);
@@ -1385,7 +1259,7 @@ impl EmacsLineEditor {
 
                             _ => {
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
-                                    self.run_edit_commands(&binding);
+                                    self.edit_engine.run_edit_commands(&binding);
                                 }
                             }
                         }
