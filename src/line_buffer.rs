@@ -224,6 +224,17 @@ impl LineBuffer {
             self.clear_range(insertion_offset..right_index);
         }
     }
+
+    pub fn delete_word_left(&mut self) {
+        let left_word_index = self.word_left_index();
+        self.clear_range(left_word_index..self.insertion_point().offset);
+        self.insertion_point.offset = left_word_index;
+    }
+
+    pub fn delete_word_right(&mut self) {
+        let right_word_index = self.word_right_index();
+        self.clear_range(self.insertion_point().offset..right_word_index);
+    }
 }
 
 /// Match any sequence of characters that are considered a word boundary
@@ -335,6 +346,27 @@ mod test {
         line_buffer.delete_right_grapheme();
 
         let expected_line_buffer = buffer_with("");
+
+        assert_eq!(expected_line_buffer, line_buffer);
+    }
+
+    #[test]
+    fn delete_word_left_works() {
+        let mut line_buffer = buffer_with("This is a test");
+        line_buffer.delete_word_left();
+
+        let expected_line_buffer = buffer_with("This is a ");
+
+        assert_eq!(expected_line_buffer, line_buffer);
+    }
+
+    #[test]
+    fn delete_word_right_works() {
+        let mut line_buffer = buffer_with("This is a test");
+        line_buffer.move_word_left();
+        line_buffer.delete_word_right();
+
+        let expected_line_buffer = buffer_with("This is a ");
 
         assert_eq!(expected_line_buffer, line_buffer);
     }

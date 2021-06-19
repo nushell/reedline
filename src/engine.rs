@@ -305,14 +305,11 @@ impl Reedline {
     }
 
     fn backspace_word(&mut self) {
-        let left_word_index = self.line_buffer.word_left_index();
-        self.clear_range(left_word_index..self.insertion_point().offset);
-        self.set_insertion_point(left_word_index);
+        self.line_buffer.delete_word_left();
     }
 
     fn delete_word(&mut self) {
-        let right_word_index = self.line_buffer.word_right_index();
-        self.clear_range(self.insertion_point().offset..right_word_index);
+        self.line_buffer.delete_word_right();
     }
 
     fn clear(&mut self) {
