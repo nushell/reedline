@@ -1,7 +1,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Cursor coordinates relative to the Unicode representation of [`LineBuffer`]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct InsertionPoint {
     pub line: usize,
     pub offset: usize,
@@ -135,16 +135,28 @@ impl LineBuffer {
         self.insertion_point.offset
     }
 
+    pub fn insert_char(&mut self, c: char) {
+        let pos = self.insertion_point();
+        self.lines[pos.line].insert(pos.offset, c);
+        self.move_right();
+    }
+
     /// Insert a single character at the given cursor postion
-    pub fn insert_char(&mut self, pos: InsertionPoint, c: char) {
+    pub fn insert_char_at(&mut self, pos: InsertionPoint, c: char) {
         self.lines[pos.line].insert(pos.offset, c)
+    }
+
+    pub fn insert_str(&mut self, string: &str) {
+        let pos = self.insertion_point();
+        self.lines[pos.line].insert_str(pos.offset, string);
+        self.insertion_point.offset = pos.offset + string.len();
     }
 
     /// Insert `&str` at the `idx` position in the current line.
     ///
     /// TODO: Check unicode validation
-    pub fn insert_str(&mut self, idx: usize, string: &str) {
-        self.lines[self.insertion_point.line].insert_str(idx, string)
+    pub fn insert_str_at(&mut self, pos: InsertionPoint, string: &str) {
+        self.lines[pos.line].insert_str(pos.offset, string)
     }
 
     /// Empty buffer and reset cursor
@@ -209,6 +221,35 @@ mod test {
     fn test_new_buffer_is_empty() {
         let line_buffer = LineBuffer::new();
         assert!(line_buffer.is_empty())
+    }
+
+    #[test]
+    fn insert_str_updates_insertion_point_point_correctly() {
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.insert_str("this is a command");
+
+        let expected_updated_insertion_point = InsertionPoint {
+            line: 0,
+            offset: 17,
+        };
+
+        assert_eq!(
+            expected_updated_insertion_point,
+            line_buffer.insertion_point()
+        );
+    }
+
+    #[test]
+    fn insert_char_updates_insertion_point_point_correctly() {
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.insert_char('c');
+
+        let expected_updated_insertion_point = InsertionPoint { line: 0, offset: 1 };
+
+        assert_eq!(
+            expected_updated_insertion_point,
+            line_buffer.insertion_point()
+        );
     }
 }
 

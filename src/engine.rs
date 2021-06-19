@@ -293,7 +293,7 @@ impl Reedline {
 
     fn insert_char(&mut self, c: char) {
         let insertion_point = self.line_buffer.insertion_point();
-        self.line_buffer.insert_char(insertion_point, c);
+        self.line_buffer.insert_char_at(insertion_point, c);
     }
 
     fn backspace(&mut self) {
@@ -406,7 +406,8 @@ impl Reedline {
     fn insert_cut_buffer(&mut self) {
         let insertion_offset = self.insertion_point().offset;
         let cut_buffer = self.cut_buffer.get();
-        self.line_buffer.insert_str(insertion_offset, &cut_buffer);
+        self.line_buffer
+            .insert_str_at(self.insertion_point(), &cut_buffer);
         self.set_insertion_point(insertion_offset + cut_buffer.len());
     }
 
