@@ -314,6 +314,7 @@ impl Reedline {
 
     fn clear(&mut self) {
         self.line_buffer.clear();
+        // Note: This should be redundant
         self.set_insertion_point(0);
     }
 
@@ -412,51 +413,11 @@ impl Reedline {
     }
 
     fn swap_words(&mut self) {
-        let old_insertion_point = self.insertion_point().offset;
-        self.line_buffer.move_word_right();
-        let word_2_end = self.insertion_point().offset;
-        self.line_buffer.move_word_left();
-        let word_2_start = self.insertion_point().offset;
-        self.line_buffer.move_word_left();
-        let word_1_start = self.insertion_point().offset;
-        let word_1_end = self.line_buffer.word_right_index();
-
-        if word_1_start < word_1_end && word_1_end < word_2_start && word_2_start < word_2_end {
-            let insertion_line = self.insertion_line();
-            let word_1 = insertion_line[word_1_start..word_1_end].to_string();
-            let word_2 = insertion_line[word_2_start..word_2_end].to_string();
-            self.line_buffer
-                .replace_range(word_2_start..word_2_end, &word_1);
-            self.line_buffer
-                .replace_range(word_1_start..word_1_end, &word_2);
-            self.set_insertion_point(word_2_end);
-        } else {
-            self.set_insertion_point(old_insertion_point);
-        }
+        self.line_buffer.swap_words();
     }
 
     fn swap_graphemes(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
-
-        if insertion_offset == 0 {
-            self.line_buffer.move_right()
-        } else if insertion_offset == self.line_buffer.get_buffer().len() {
-            self.line_buffer.move_left()
-        }
-        let grapheme_1_start = self.line_buffer.grapheme_left_index();
-        let grapheme_2_end = self.line_buffer.grapheme_right_index();
-
-        if grapheme_1_start < insertion_offset && grapheme_2_end > insertion_offset {
-            let grapheme_1 = self.insertion_line()[grapheme_1_start..insertion_offset].to_string();
-            let grapheme_2 = self.insertion_line()[insertion_offset..grapheme_2_end].to_string();
-            self.line_buffer
-                .replace_range(insertion_offset..grapheme_2_end, &grapheme_1);
-            self.line_buffer
-                .replace_range(grapheme_1_start..insertion_offset, &grapheme_2);
-            self.set_insertion_point(grapheme_2_end);
-        } else {
-            self.set_insertion_point(insertion_offset);
-        }
+        self.line_buffer.swap_graphemes();
     }
 
     fn enter_vi_insert_mode(&mut self) {
