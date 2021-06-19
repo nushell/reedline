@@ -201,6 +201,17 @@ fn is_word_boundary(s: &str) -> bool {
     !s.chars().any(char::is_alphanumeric)
 }
 
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_new_buffer_is_empty() {
+        let line_buffer = LineBuffer::new();
+        assert!(line_buffer.is_empty())
+    }
+}
+
 #[test]
 fn emoji_test() {
     //TODO
