@@ -400,40 +400,15 @@ impl Reedline {
     }
 
     fn uppercase_word(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
-        let right_index = self.line_buffer.word_right_index();
-        if right_index > insertion_offset {
-            let change_range = insertion_offset..right_index;
-            let uppercased = self.insertion_line()[change_range.clone()].to_uppercase();
-            self.line_buffer.replace_range(change_range, &uppercased);
-            self.line_buffer.move_word_right();
-        }
+        self.line_buffer.uppercase_word();
     }
 
     fn lowercase_word(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
-        let right_index = self.line_buffer.word_right_index();
-        if right_index > insertion_offset {
-            let change_range = insertion_offset..right_index;
-            let lowercased = self.insertion_line()[change_range.clone()].to_lowercase();
-            self.line_buffer.replace_range(change_range, &lowercased);
-            self.line_buffer.move_word_right();
-        }
+        self.line_buffer.lowercase_word();
     }
 
     fn capitalize_char(&mut self) {
-        if self.line_buffer.on_whitespace() {
-            self.line_buffer.move_word_right();
-            self.line_buffer.move_word_left();
-        }
-        let insertion_offset = self.insertion_point().offset;
-        let right_index = self.line_buffer.grapheme_right_index();
-        if right_index > insertion_offset {
-            let change_range = insertion_offset..right_index;
-            let uppercased = self.insertion_line()[change_range.clone()].to_uppercase();
-            self.line_buffer.replace_range(change_range, &uppercased);
-            self.line_buffer.move_word_right();
-        }
+        self.line_buffer.capitalize_char();
     }
 
     fn swap_words(&mut self) {

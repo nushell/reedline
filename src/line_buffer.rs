@@ -208,6 +208,44 @@ impl LineBuffer {
             .unwrap_or(false)
     }
 
+    pub fn uppercase_word(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        let right_index = self.word_right_index();
+
+        if right_index > insertion_offset {
+            let change_range = insertion_offset..right_index;
+            let uppercased = self.current_line()[change_range.clone()].to_uppercase();
+            self.replace_range(change_range, &uppercased);
+            self.move_word_right();
+        }
+    }
+
+    pub fn lowercase_word(&mut self) {
+        let insertion_offset = self.insertion_point().offset;
+        let right_index = self.word_right_index();
+        if right_index > insertion_offset {
+            let change_range = insertion_offset..right_index;
+            let lowercased = self.current_line()[change_range.clone()].to_lowercase();
+            self.replace_range(change_range, &lowercased);
+            self.move_word_right();
+        }
+    }
+
+    pub fn capitalize_char(&mut self) {
+        if self.on_whitespace() {
+            self.move_word_right();
+            self.move_word_left();
+        }
+        let insertion_offset = self.insertion_point().offset;
+        let right_index = self.grapheme_right_index();
+        if right_index > insertion_offset {
+            let change_range = insertion_offset..right_index;
+            let uppercased = self.current_line()[change_range.clone()].to_uppercase();
+            self.replace_range(change_range, &uppercased);
+            self.move_word_right();
+        }
+    }
+
     pub fn delete_left_grapheme(&mut self) {
         let left_index = self.grapheme_left_index();
         let insertion_offset = self.insertion_point().offset;
@@ -367,6 +405,28 @@ mod test {
         line_buffer.delete_word_right();
 
         let expected_line_buffer = buffer_with("This is a ");
+
+        assert_eq!(expected_line_buffer, line_buffer);
+    }
+
+    #[test]
+    #[ignore] // Note: Not sure if this is the intended behaviour
+    fn uppercase_word_works_when_one_last_index() {
+        let mut line_buffer = buffer_with("This is a test");
+        line_buffer.uppercase_word();
+
+        let expected_line_buffer = buffer_with("This is a TEST");
+
+        assert_eq!(expected_line_buffer, line_buffer);
+    }
+
+    #[test]
+    fn uppercase_word_works() {
+        let mut line_buffer = buffer_with("This is a test");
+        line_buffer.move_word_left();
+        line_buffer.uppercase_word();
+
+        let expected_line_buffer = buffer_with("This is a TEST");
 
         assert_eq!(expected_line_buffer, line_buffer);
     }
