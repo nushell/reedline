@@ -20,6 +20,7 @@ impl Default for InsertionPoint {
 }
 
 /// In memory representation of the entered line(s) to facilitate cursor based editing.
+#[derive(Debug, PartialEq, Eq)]
 pub struct LineBuffer {
     lines: Vec<String>,
     insertion_point: InsertionPoint,
@@ -206,6 +207,23 @@ impl LineBuffer {
             .map(char::is_whitespace)
             .unwrap_or(false)
     }
+
+    pub fn delete_left_grapheme(&mut self) {
+        let left_index = self.grapheme_left_index();
+        let insertion_offset = self.insertion_point().offset;
+        if left_index < insertion_offset {
+            self.clear_range(left_index..insertion_offset);
+            self.insertion_point.offset = left_index
+        }
+    }
+
+    pub fn delete_right_grapheme(&mut self) {
+        let right_index = self.grapheme_right_index();
+        let insertion_offset = self.insertion_point().offset;
+        if right_index > insertion_offset {
+            self.clear_range(insertion_offset..right_index);
+        }
+    }
 }
 
 /// Match any sequence of characters that are considered a word boundary
@@ -216,6 +234,13 @@ fn is_word_boundary(s: &str) -> bool {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    fn buffer_with(content: &str) -> LineBuffer {
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.insert_str(content);
+
+        line_buffer
+    }
 
     #[test]
     fn test_new_buffer_is_empty() {
@@ -250,6 +275,68 @@ mod test {
             expected_updated_insertion_point,
             line_buffer.insertion_point()
         );
+    }
+
+    #[test]
+    fn delete_left_grapheme_works() {
+        let mut line_buffer = buffer_with("This is a test");
+        line_buffer.delete_left_grapheme();
+
+        let expected_line_buffer = buffer_with("This is a tes");
+
+        assert_eq!(expected_line_buffer, line_buffer);
+    }
+
+    #[test]
+    fn delete_left_grapheme_works_with_emojis() {
+        let mut line_buffer = buffer_with("This is a test 😊");
+        line_buffer.delete_left_grapheme();
+
+        let expected_line_buffer = buffer_with("This is a test ");
+
+        assert_eq!(expected_line_buffer, line_buffer);
+    }
+
+    #[test]
+    fn delete_left_grapheme_on_an_empty_buffer_is_a_no_op() {
+        let mut line_buffer = buffer_with("");
+        line_buffer.delete_left_grapheme();
+
+        let expected_line_buffer = buffer_with("");
+
+        assert_eq!(expected_line_buffer, line_buffer);
+    }
+
+    #[test]
+    fn delete_right_grapheme_works() {
+        let mut line_buffer = buffer_with("This is a test");
+        line_buffer.move_left();
+        line_buffer.delete_right_grapheme();
+
+        let expected_line_buffer = buffer_with("This is a tes");
+
+        assert_eq!(expected_line_buffer, line_buffer);
+    }
+
+    #[test]
+    fn delete_right_grapheme_works_with_emojis() {
+        let mut line_buffer = buffer_with("This is a test 😊");
+        line_buffer.move_left();
+        line_buffer.delete_right_grapheme();
+
+        let expected_line_buffer = buffer_with("This is a test ");
+
+        assert_eq!(expected_line_buffer, line_buffer);
+    }
+
+    #[test]
+    fn delete_right_grapheme_on_an_empty_buffer_is_a_no_op() {
+        let mut line_buffer = buffer_with("");
+        line_buffer.delete_right_grapheme();
+
+        let expected_line_buffer = buffer_with("");
+
+        assert_eq!(expected_line_buffer, line_buffer);
     }
 }
 

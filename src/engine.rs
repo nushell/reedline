@@ -297,20 +297,11 @@ impl Reedline {
     }
 
     fn backspace(&mut self) {
-        let left_index = self.line_buffer.grapheme_left_index();
-        let insertion_offset = self.insertion_point().offset;
-        if left_index < insertion_offset {
-            self.clear_range(left_index..insertion_offset);
-            self.set_insertion_point(left_index);
-        }
+        self.line_buffer.delete_left_grapheme();
     }
 
     fn delete(&mut self) {
-        let right_index = self.line_buffer.grapheme_right_index();
-        let insertion_offset = self.insertion_point().offset;
-        if right_index > insertion_offset {
-            self.clear_range(insertion_offset..right_index);
-        }
+        self.line_buffer.delete_right_grapheme();
     }
 
     fn backspace_word(&mut self) {
