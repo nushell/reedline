@@ -136,15 +136,11 @@ impl LineBuffer {
         self.insertion_point.offset
     }
 
+    ///Insert a single character at the insertion point and move right
     pub fn insert_char(&mut self, c: char) {
         let pos = self.insertion_point();
         self.lines[pos.line].insert(pos.offset, c);
         self.move_right();
-    }
-
-    /// Insert a single character at the given cursor postion
-    pub fn insert_char_at(&mut self, pos: InsertionPoint, c: char) {
-        self.lines[pos.line].insert(pos.offset, c)
     }
 
     pub fn insert_str(&mut self, string: &str) {

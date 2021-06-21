@@ -292,8 +292,7 @@ impl Reedline {
     }
 
     fn insert_char(&mut self, c: char) {
-        let insertion_point = self.line_buffer.insertion_point();
-        self.line_buffer.insert_char_at(insertion_point, c);
+        self.line_buffer.insert_char(c)
     }
 
     fn backspace(&mut self) {
@@ -826,10 +825,7 @@ impl Reedline {
                                 };
                                 if self.maybe_wrap(terminal_size.0, line_start, c) {
                                     let (original_column, original_row) = position()?;
-                                    self.run_edit_commands(&[
-                                        EditCommand::InsertChar(c),
-                                        EditCommand::MoveRight,
-                                    ]);
+                                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
                                     self.buffer_paint(prompt_offset)?;
 
                                     let (new_column, _) = position()?;
@@ -844,10 +840,7 @@ impl Reedline {
                                         line_count += 1;
                                     }
                                 } else {
-                                    self.run_edit_commands(&[
-                                        EditCommand::InsertChar(c),
-                                        EditCommand::MoveRight,
-                                    ]);
+                                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
                                 }
                             }
                             (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
