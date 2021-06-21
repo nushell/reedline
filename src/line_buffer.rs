@@ -143,17 +143,13 @@ impl LineBuffer {
         self.move_right();
     }
 
+    /// Insert `&str` at the `idx` position in the current line.
+    ///
+    /// TODO: Check unicode validation
     pub fn insert_str(&mut self, string: &str) {
         let pos = self.insertion_point();
         self.lines[pos.line].insert_str(pos.offset, string);
         self.insertion_point.offset = pos.offset + string.len();
-    }
-
-    /// Insert `&str` at the `idx` position in the current line.
-    ///
-    /// TODO: Check unicode validation
-    pub fn insert_str_at(&mut self, pos: InsertionPoint, string: &str) {
-        self.lines[pos.line].insert_str(pos.offset, string)
     }
 
     /// Empty buffer and reset cursor

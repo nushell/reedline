@@ -392,11 +392,8 @@ impl Reedline {
     }
 
     fn insert_cut_buffer(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
         let cut_buffer = self.cut_buffer.get();
-        self.line_buffer
-            .insert_str_at(self.insertion_point(), &cut_buffer);
-        self.set_insertion_point(insertion_offset + cut_buffer.len());
+        self.line_buffer.insert_str(&cut_buffer);
     }
 
     fn uppercase_word(&mut self) {
