@@ -58,11 +58,6 @@ impl LineBuffer {
         &self.lines[self.insertion_point.line]
     }
 
-    /// Output the current line in the multiline buffer
-    pub fn current_line(&self) -> &str {
-        &self.lines[self.insertion_point.line]
-    }
-
     /// Set to a single line of `buffer` and reset the `InsertionPoint` cursor
     pub fn set_buffer(&mut self, buffer: String) {
         self.lines = vec![buffer];
@@ -219,7 +214,7 @@ impl LineBuffer {
 
         if right_index > insertion_offset {
             let change_range = insertion_offset..right_index;
-            let uppercased = self.current_line()[change_range.clone()].to_uppercase();
+            let uppercased = self.get_buffer()[change_range.clone()].to_uppercase();
             self.replace_range(change_range, &uppercased);
             self.move_word_right();
         }
@@ -230,7 +225,7 @@ impl LineBuffer {
         let right_index = self.word_right_index();
         if right_index > insertion_offset {
             let change_range = insertion_offset..right_index;
-            let lowercased = self.current_line()[change_range.clone()].to_lowercase();
+            let lowercased = self.get_buffer()[change_range.clone()].to_lowercase();
             self.replace_range(change_range, &lowercased);
             self.move_word_right();
         }
@@ -245,7 +240,7 @@ impl LineBuffer {
         let right_index = self.grapheme_right_index();
         if right_index > insertion_offset {
             let change_range = insertion_offset..right_index;
-            let uppercased = self.current_line()[change_range.clone()].to_uppercase();
+            let uppercased = self.get_buffer()[change_range.clone()].to_uppercase();
             self.replace_range(change_range, &uppercased);
             self.move_word_right();
         }
@@ -290,7 +285,7 @@ impl LineBuffer {
         let word_1_end = self.word_right_index();
 
         if word_1_start < word_1_end && word_1_end < word_2_start && word_2_start < word_2_end {
-            let insertion_line = self.current_line();
+            let insertion_line = self.get_buffer();
             let word_1 = insertion_line[word_1_start..word_1_end].to_string();
             let word_2 = insertion_line[word_2_start..word_2_end].to_string();
             self.replace_range(word_2_start..word_2_end, &word_1);
@@ -313,8 +308,8 @@ impl LineBuffer {
         let grapheme_2_end = self.grapheme_right_index();
 
         if grapheme_1_start < insertion_offset && grapheme_2_end > insertion_offset {
-            let grapheme_1 = self.current_line()[grapheme_1_start..insertion_offset].to_string();
-            let grapheme_2 = self.current_line()[insertion_offset..grapheme_2_end].to_string();
+            let grapheme_1 = self.get_buffer()[grapheme_1_start..insertion_offset].to_string();
+            let grapheme_2 = self.get_buffer()[insertion_offset..grapheme_2_end].to_string();
             self.replace_range(insertion_offset..grapheme_2_end, &grapheme_1);
             self.replace_range(grapheme_1_start..insertion_offset, &grapheme_2);
             self.insertion_point.offset = grapheme_2_end;
