@@ -12,6 +12,7 @@ use crate::{
 };
 use crate::{EditCommand, EditMode, Signal, ViEngine};
 use crossterm::{
+    cursor,
     cursor::{position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
     event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
     style::{Color, Print, ResetColor, SetForegroundColor},
@@ -697,11 +698,14 @@ impl Reedline {
         prompt_origin: (u16, u16),
         terminal_width: u16,
     ) -> Result<(u16, u16)> {
-        self.move_to(prompt_origin.0, prompt_origin.1)?;
+        self.stdout
+            .queue(cursor::Hide)?
+            .queue(MoveTo(prompt_origin.0, prompt_origin.1))?;
         self.queue_prompt(terminal_width as usize)?;
         // set where the input begins
         let prompt_offset = position()?;
         self.buffer_paint(prompt_offset)?;
+        self.stdout.queue(cursor::Show)?.flush()?;
 
         Ok(prompt_offset)
     }
@@ -762,24 +766,22 @@ impl Reedline {
 
         let mut terminal_size = terminal::size()?;
 
-        let prompt_origin = position()?;
-
-        self.queue_prompt(terminal_size.0 as usize)?;
-        self.stdout.flush()?;
+        let mut prompt_origin = {
+            let (column, row) = position()?;
+            if row + 1 == terminal_size.1 {
+                (column, row.saturating_sub(1))
+            } else {
+                (column, row)
+            }
+        };
 
         // set where the input begins
-        let mut prompt_offset = position()?;
-
-        // our line count
-        let mut line_count = 1;
+        let mut prompt_offset = self.full_repaint(prompt_origin, terminal_size.0)?;
 
         // Redraw if Ctrl-L was used
         if self.history_search.is_some() {
             self.history_search_paint()?;
-        } else {
-            self.buffer_paint(prompt_offset)?;
         }
-        self.stdout.flush()?;
 
         loop {
             if poll(Duration::from_secs(1))? {
@@ -826,13 +828,12 @@ impl Reedline {
                                     let (new_column, _) = position()?;
 
                                     if new_column < original_column
-                                        && original_row == (terminal_size.1 - 1)
-                                        && line_count == 1
+                                        && original_row + 1 == (terminal_size.1)
                                     {
                                         // We have wrapped off bottom of screen, and prompt is on new row
                                         // We need to update the prompt location in this case
+                                        prompt_origin.1 -= 1;
                                         prompt_offset.1 -= 1;
-                                        line_count += 1;
                                     }
                                 } else {
                                     self.run_edit_commands(&[EditCommand::InsertChar(c)]);
@@ -878,19 +879,22 @@ impl Reedline {
                     }
                     Event::Resize(width, height) => {
                         terminal_size = (width, height);
-                        self.full_repaint(prompt_origin, width)?;
+                        // TODO properly adjusting prompt_origin on resizing while lines > 1
+                        prompt_origin.1 = position()?.1.saturating_sub(1);
+                        prompt_offset = self.full_repaint(prompt_origin, width)?;
+                        continue;
                     }
                 }
                 if self.history_search.is_some() {
                     self.history_search_paint()?;
                 } else if self.need_full_repaint {
-                    self.full_repaint(prompt_origin, terminal_size.0)?;
+                    prompt_offset = self.full_repaint(prompt_origin, terminal_size.0)?;
                     self.need_full_repaint = false;
                 } else {
                     self.buffer_paint(prompt_offset)?;
                 }
             } else {
-                self.full_repaint(prompt_origin, terminal_size.0)?;
+                prompt_offset = self.full_repaint(prompt_origin, terminal_size.0)?;
             }
         }
     }
