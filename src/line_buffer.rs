@@ -334,6 +334,15 @@ mod test {
     }
 
     #[test]
+    fn test_clearing_line_buffer_resets_buffer_and_insertion_point() {
+        let mut buffer = buffer_with("this is a command");
+        buffer.clear();
+        let empty_buffer = LineBuffer::new();
+
+        assert_eq!(buffer, empty_buffer)
+    }
+
+    #[test]
     fn insert_str_updates_insertion_point_point_correctly() {
         let mut line_buffer = LineBuffer::new();
         line_buffer.insert_str("this is a command");

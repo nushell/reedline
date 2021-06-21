@@ -313,8 +313,6 @@ impl Reedline {
 
     fn clear(&mut self) {
         self.line_buffer.clear();
-        // Note: This should be redundant
-        self.set_insertion_point(0);
     }
 
     fn append_to_history(&mut self) {
