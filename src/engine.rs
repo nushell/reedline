@@ -768,6 +768,8 @@ impl Reedline {
 
         let mut terminal_size = terminal::size()?;
 
+        self.stdout.queue(Print("\r\n"))?.flush()?;
+
         let mut prompt_origin = {
             let (column, row) = position()?;
             if row + 1 == terminal_size.1 {
