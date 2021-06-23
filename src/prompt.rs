@@ -5,13 +5,30 @@ use std::env;
 pub static DEFAULT_PROMPT_COLOR: Color = Color::Blue;
 pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
 pub static DEFAULT_VI_INSERT_PROMPT_INDICATOR: &str = ": ";
+pub static DEFAULT_VI_VISUAL_PROMPT_INDICATOR: &str = "v ";
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 
-/// The type of prompt indicator to display
-pub enum PromptMode {
+pub enum PromptHistorySearchStatus {
+    Passing,
+    Failing,
+}
+
+pub struct PromptHistorySearch {
+    status: PromptHistorySearchStatus,
+    term: String,
+}
+
+pub enum PromptEditMode {
+    Default,
+    Emacs,
+    Vi(PromptViMode),
+    Custom(String),
+}
+
+pub enum PromptViMode {
     Normal,
-    ViInsert,
-    Multiline,
+    Insert,
+    Visual,
 }
 
 /// API to provide a custom prompt.
@@ -22,7 +39,12 @@ pub trait Prompt {
     /// Provide content off the full prompt. May use a line above the entry buffer that fits into `screen_width`.
     fn render_prompt(&self, screen_width: usize) -> String;
     /// Render the default prompt indicator
-    fn render_prompt_indicator(&self, prompt_mode: PromptMode) -> String;
+    fn render_prompt_indicator(&self, prompt_mode: PromptEditMode) -> String;
+    /// Render the default prompt indicator
+    fn render_prompt_multiline_indicator(&self) -> String;
+    /// Render the default prompt indicator
+    fn render_prompt_history_search_indicator(&self, history_search: PromptHistorySearch)
+        -> String;
     /// Render the vi insert mode prompt indicator
     /// Get back the prompt color
     fn get_prompt_color(&self) -> Color {
@@ -35,12 +57,34 @@ impl Prompt for DefaultPrompt {
         DefaultPrompt::render_prompt(self, screen_width)
     }
 
-    fn render_prompt_indicator(&self, prompt_mode: PromptMode) -> String {
-        match prompt_mode {
-            PromptMode::Normal => DEFAULT_PROMPT_INDICATOR.into(),
-            PromptMode::ViInsert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
-            PromptMode::Multiline => DEFAULT_MULTILINE_INDICATOR.into(),
+    fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> String {
+        match edit_mode {
+            PromptEditMode::Default => DEFAULT_PROMPT_INDICATOR.into(),
+            PromptEditMode::Emacs => DEFAULT_PROMPT_INDICATOR.into(),
+            PromptEditMode::Vi(vi_mode) => match vi_mode {
+                PromptViMode::Normal => DEFAULT_PROMPT_INDICATOR.into(),
+                PromptViMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
+                PromptViMode::Visual => DEFAULT_VI_VISUAL_PROMPT_INDICATOR.into(),
+            },
+            PromptEditMode::Custom(str) => self.default_wrapped_custom_string(str),
         }
+    }
+
+    fn render_prompt_multiline_indicator(&self) -> String {
+        DEFAULT_MULTILINE_INDICATOR.into()
+    }
+
+    fn render_prompt_history_search_indicator(
+        &self,
+        history_search: PromptHistorySearch,
+    ) -> String {
+        let prefix = match history_search.status {
+            PromptHistorySearchStatus::Passing => "",
+            PromptHistorySearchStatus::Failing => "failing ",
+        };
+        // NOTE: magic strings, givent there is logic on how these compose I am not sure if it
+        // is worth extracting in to static constant
+        format!("({}reverse-search: {})", prefix, history_search.term)
     }
 }
 
@@ -89,6 +133,10 @@ impl DefaultPrompt {
         }
 
         prompt_str
+    }
+
+    fn default_wrapped_custom_string(&self, str: String) -> String {
+        format!("({})", str)
     }
 }
 

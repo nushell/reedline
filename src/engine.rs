@@ -2,7 +2,7 @@ use crate::{
     clip_buffer::{get_default_clipboard, Clipboard},
     default_emacs_keybindings,
     keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
-    prompt::PromptMode,
+    prompt::{PromptEditMode, PromptViMode},
     DefaultPrompt, Prompt,
 };
 use crate::{history::History, line_buffer::LineBuffer};
@@ -147,10 +147,11 @@ impl Reedline {
         self.edit_mode
     }
 
-    pub fn prompt_mode(&self) -> PromptMode {
+    pub fn prompt_edit_mode(&self) -> PromptEditMode {
         match self.edit_mode {
-            EditMode::ViInsert => PromptMode::ViInsert,
-            _ => PromptMode::Normal,
+            EditMode::ViInsert => PromptEditMode::Vi(PromptViMode::Insert),
+            EditMode::ViNormal => PromptEditMode::Vi(PromptViMode::Normal),
+            EditMode::Emacs => PromptEditMode::Emacs,
         }
     }
 
@@ -636,7 +637,7 @@ impl Reedline {
     /// Used at the beginning of each [`Reedline::read_line()`] call.
     fn queue_prompt(&mut self, screen_width: usize) -> Result<()> {
         // print our prompt
-        let prompt_mode = self.prompt_mode();
+        let prompt_mode = self.prompt_edit_mode();
 
         self.stdout
             .queue(MoveToColumn(0))?
@@ -654,7 +655,7 @@ impl Reedline {
     /// the prompt
     fn queue_prompt_indicator(&mut self) -> Result<()> {
         // print our prompt
-        let prompt_mode = self.prompt_mode();
+        let prompt_mode = self.prompt_edit_mode();
         self.stdout
             .queue(MoveToColumn(0))?
             .queue(SetForegroundColor(self.prompt.get_prompt_color()))?
