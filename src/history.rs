@@ -428,6 +428,7 @@ impl Drop for History {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
     use std::io::BufRead;
 
     use super::History;

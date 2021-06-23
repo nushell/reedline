@@ -27,6 +27,7 @@ unicode-width = "0.1.8"
 
 [dev-dependencies]
 tempfile = "3.2.0"
+pretty_assertions = "0.7.2"
 
 [features]
 system_clipboard = ["clipboard"]
