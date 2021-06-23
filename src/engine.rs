@@ -2,7 +2,7 @@ use crate::{
     clip_buffer::{get_default_clipboard, Clipboard},
     default_emacs_keybindings,
     keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
-    prompt::{PromptEditMode, PromptViMode},
+    prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode},
     DefaultPrompt, Prompt,
 };
 use crate::{history::History, line_buffer::LineBuffer};
@@ -723,19 +723,21 @@ impl Reedline {
             .expect("couldn't get history_search reference");
 
         let status = if search.result.is_none() && !search.search_string.is_empty() {
-            "failed "
+            PromptHistorySearchStatus::Failing
         } else {
-            ""
+            PromptHistorySearchStatus::Passing
         };
+
+        let prompt_history_search = PromptHistorySearch::new(status, search.search_string.clone());
+        let history_indicator = self
+            .prompt
+            .render_prompt_history_search_indicator(prompt_history_search);
 
         // print search prompt
         self.stdout
             .queue(MoveToColumn(0))?
             .queue(SetForegroundColor(Color::Blue))?
-            .queue(Print(format!(
-                "({}reverse-search)`{}':",
-                status, search.search_string
-            )))?
+            .queue(Print(history_indicator))?
             .queue(ResetColor)?;
 
         match search.result {

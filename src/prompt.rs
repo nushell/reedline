@@ -18,6 +18,15 @@ pub struct PromptHistorySearch {
     term: String,
 }
 
+impl PromptHistorySearch {
+    pub fn new(status: PromptHistorySearchStatus, search_term: String) -> Self {
+        PromptHistorySearch {
+            status,
+            term: search_term,
+        }
+    }
+}
+
 pub enum PromptEditMode {
     Default,
     Emacs,
