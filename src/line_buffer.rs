@@ -319,6 +319,7 @@ fn is_word_boundary(s: &str) -> bool {
 #[cfg(test)]
 mod test {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     fn buffer_with(content: &str) -> LineBuffer {
         let mut line_buffer = LineBuffer::new();
