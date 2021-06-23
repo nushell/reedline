@@ -703,6 +703,8 @@ impl Reedline {
             .queue(MoveTo(prompt_origin.0, prompt_origin.1))?;
         self.queue_prompt(terminal_width as usize)?;
         // set where the input begins
+        self.stdout.queue(cursor::Show)?.flush()?;
+
         let prompt_offset = position()?;
         self.buffer_paint(prompt_offset)?;
         self.stdout.queue(cursor::Show)?.flush()?;
