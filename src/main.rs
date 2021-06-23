@@ -3,6 +3,8 @@ use crossterm::{event::KeyCode, event::KeyModifiers, Result};
 use reedline::{default_emacs_keybindings, DefaultPrompt, EditCommand, Reedline, Signal};
 
 fn main() -> Result<()> {
+    let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
+
     let mut keybindings = default_emacs_keybindings();
     keybindings.add_binding(
         KeyModifiers::ALT,
@@ -12,7 +14,11 @@ fn main() -> Result<()> {
 
     let mut line_editor = Reedline::new()
         .with_history("history.txt", 5)?
-        .with_edit_mode(reedline::EditMode::Emacs)
+        .with_edit_mode(if vi_mode {
+            reedline::EditMode::ViNormal
+        } else {
+            reedline::EditMode::Emacs
+        })
         .with_keybindings(keybindings);
 
     let prompt = Box::new(DefaultPrompt::new(1));
