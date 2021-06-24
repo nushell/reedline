@@ -1,5 +1,6 @@
 use chrono::Local;
 use crossterm::style::Color;
+use std::borrow::Cow;
 use std::env;
 
 pub static DEFAULT_PROMPT_COLOR: Color = Color::Blue;
@@ -42,18 +43,20 @@ pub enum PromptViMode {
 
 /// API to provide a custom prompt.
 ///
-/// Implementors have to provide [`String`]-based content which will be
+/// Implementors have to provide [`str`]-based content which will be
 /// displayed before the `LineBuffer` is drawn.
 pub trait Prompt {
     /// Provide content off the full prompt. May use a line above the entry buffer that fits into `screen_width`.
-    fn render_prompt(&self, screen_width: usize) -> String;
+    fn render_prompt(&self, screen_width: usize) -> Cow<str>;
     /// Render the default prompt indicator
-    fn render_prompt_indicator(&self, prompt_mode: PromptEditMode) -> String;
+    fn render_prompt_indicator(&self, prompt_mode: PromptEditMode) -> Cow<str>;
     /// Render the default prompt indicator
-    fn render_prompt_multiline_indicator(&self) -> String;
+    fn render_prompt_multiline_indicator(&self) -> Cow<str>;
     /// Render the default prompt indicator
-    fn render_prompt_history_search_indicator(&self, history_search: PromptHistorySearch)
-        -> String;
+    fn render_prompt_history_search_indicator(
+        &self,
+        history_search: PromptHistorySearch,
+    ) -> Cow<str>;
     /// Render the vi insert mode prompt indicator
     /// Get back the prompt color
     fn get_prompt_color(&self) -> Color {
@@ -62,11 +65,11 @@ pub trait Prompt {
 }
 
 impl Prompt for DefaultPrompt {
-    fn render_prompt(&self, screen_width: usize) -> String {
+    fn render_prompt(&self, screen_width: usize) -> Cow<str> {
         DefaultPrompt::render_prompt(self, screen_width)
     }
 
-    fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> String {
+    fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<str> {
         match edit_mode {
             PromptEditMode::Default => DEFAULT_PROMPT_INDICATOR.into(),
             PromptEditMode::Emacs => DEFAULT_PROMPT_INDICATOR.into(),
@@ -75,25 +78,28 @@ impl Prompt for DefaultPrompt {
                 PromptViMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
                 PromptViMode::Visual => DEFAULT_VI_VISUAL_PROMPT_INDICATOR.into(),
             },
-            PromptEditMode::Custom(str) => self.default_wrapped_custom_string(str),
+            PromptEditMode::Custom(str) => self.default_wrapped_custom_string(str).into(),
         }
     }
 
-    fn render_prompt_multiline_indicator(&self) -> String {
-        DEFAULT_MULTILINE_INDICATOR.into()
+    fn render_prompt_multiline_indicator(&self) -> Cow<str> {
+        Cow::Borrowed(DEFAULT_MULTILINE_INDICATOR)
     }
 
     fn render_prompt_history_search_indicator(
         &self,
         history_search: PromptHistorySearch,
-    ) -> String {
+    ) -> Cow<str> {
         let prefix = match history_search.status {
             PromptHistorySearchStatus::Passing => "",
             PromptHistorySearchStatus::Failing => "failing ",
         };
         // NOTE: magic strings, givent there is logic on how these compose I am not sure if it
         // is worth extracting in to static constant
-        format!("({}reverse-search: {})", prefix, history_search.term)
+        Cow::Owned(format!(
+            "({}reverse-search: {})",
+            prefix, history_search.term
+        ))
     }
 }
 
@@ -121,7 +127,7 @@ impl DefaultPrompt {
     // NOTE: This method currently assumes all characters are 1 column wide. This should be
     // ok for now since we're just displaying the current directory and date/time, which are
     // unlikely to contain characters that use 2 columns.
-    pub fn render_prompt(&self, cols: usize) -> String {
+    fn render_prompt(&self, cols: usize) -> Cow<str> {
         let mut prompt_str = String::new();
 
         let mut left_prompt = get_working_dir().unwrap_or_else(|_| String::from("no path"));
@@ -141,7 +147,7 @@ impl DefaultPrompt {
             prompt_str.push_str(&right_padding);
         }
 
-        prompt_str
+        Cow::Owned(prompt_str)
     }
 
     fn default_wrapped_custom_string(&self, str: String) -> String {

@@ -7,10 +7,10 @@
 //! use reedline::{Reedline, DefaultPrompt, Signal};
 //!
 //! let mut line_editor = Reedline::new();
-//! let prompt = Box::new(DefaultPrompt::default());
+//! let prompt = DefaultPrompt::default();
 //!
 //! loop {
-//!     let sig = line_editor.read_line(prompt.clone()).unwrap();
+//!     let sig = line_editor.read_line(&prompt).unwrap();
 //!     match sig {
 //!         Signal::CtrlD | Signal::CtrlC => {
 //!             line_editor.print_crlf().unwrap();

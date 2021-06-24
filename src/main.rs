@@ -21,7 +21,7 @@ fn main() -> Result<()> {
         })
         .with_keybindings(keybindings);
 
-    let prompt = Box::new(DefaultPrompt::new(1));
+    let prompt = DefaultPrompt::new(1);
 
     // quick command like parameter handling
     let args: Vec<String> = std::env::args().collect();
@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     };
 
     loop {
-        let sig = line_editor.read_line(prompt.clone())?;
+        let sig = line_editor.read_line(&prompt)?;
 
         match sig {
             Signal::CtrlD => {
