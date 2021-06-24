@@ -2,7 +2,6 @@ Line editor
 
 TODO:
 
-* Add more unit tests
 * vi mode
 * 'dw' => delete word. 'delete' first part, and 'word' second part
 * Repeats '10dw' => 10x 'dw'
@@ -69,3 +68,4 @@ X Documention
     * At least some of the public functions are now documented
 X Prompt indicator change when in vi insert
 X Prompt changes async while idle
+X Add more unit tests
