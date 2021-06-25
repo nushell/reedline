@@ -773,10 +773,16 @@ impl Reedline {
 
         let mut prompt_origin = {
             let (column, row) = position()?;
-            if row + 1 == terminal_size.1 {
-                (column, row.saturating_sub(1))
+            if (column, row) == (0, 0) {
+                (0, 0)
+            } else if row + 1 == terminal_size.1 {
+                self.stdout.queue(Print("\r\n\r\n"))?.flush()?;
+                (0, row.saturating_sub(1))
+            } else if row + 2 == terminal_size.1 {
+                self.stdout.queue(Print("\r\n\r\n"))?.flush()?;
+                (0, row)
             } else {
-                (column, row)
+                (0, row + 1)
             }
         };
 
