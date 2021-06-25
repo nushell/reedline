@@ -3,7 +3,7 @@ use crate::{
     default_emacs_keybindings,
     keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
     prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode},
-    DefaultPrompt, Prompt,
+    Prompt,
 };
 use crate::{history::History, line_buffer::LineBuffer};
 use crate::{
@@ -32,9 +32,9 @@ use std::{
 /// ```no_run
 /// use reedline::{Reedline, Signal, DefaultPrompt};
 /// let mut line_editor = Reedline::new();
-/// let prompt = Box::new(DefaultPrompt::default());
+/// let prompt = DefaultPrompt::default();
 ///
-/// let out = line_editor.read_line(prompt).unwrap();
+/// let out = line_editor.read_line(&prompt).unwrap();
 /// match out {
 ///    Signal::Success(content) => {
 ///        // process content
@@ -62,9 +62,6 @@ pub struct Reedline {
 
     // Edit mode
     edit_mode: EditMode,
-
-    // Prompt
-    prompt: Box<dyn Prompt>,
 
     // Dirty bits
     need_full_repaint: bool,
@@ -101,7 +98,6 @@ impl Reedline {
             stdout,
             keybindings: keybindings_hashmap,
             edit_mode: EditMode::Emacs,
-            prompt: Box::new(DefaultPrompt::default()),
             need_full_repaint: false,
             partial_command: None,
             vi_engine: ViEngine::new(),
@@ -193,7 +189,7 @@ impl Reedline {
     /// Returns a [`crossterm::Result`] in which the `Err` type is [`crossterm::ErrorKind`]
     /// to distinguish I/O errors and the `Ok` variant wraps a [`Signal`] which
     /// handles user inputs.
-    pub fn read_line(&mut self, prompt: Box<dyn Prompt>) -> Result<Signal> {
+    pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
         terminal::enable_raw_mode()?;
 
         let result = self.read_line_helper(prompt);
@@ -635,15 +631,15 @@ impl Reedline {
     /// Display the complete prompt including status indicators (e.g. pwd, time)
     ///
     /// Used at the beginning of each [`Reedline::read_line()`] call.
-    fn queue_prompt(&mut self, screen_width: usize) -> Result<()> {
+    fn queue_prompt(&mut self, prompt: &dyn Prompt, screen_width: usize) -> Result<()> {
         // print our prompt
         let prompt_mode = self.prompt_edit_mode();
 
         self.stdout
             .queue(MoveToColumn(0))?
-            .queue(SetForegroundColor(self.prompt.get_prompt_color()))?
-            .queue(Print(self.prompt.render_prompt(screen_width)))?
-            .queue(Print(self.prompt.render_prompt_indicator(prompt_mode)))?
+            .queue(SetForegroundColor(prompt.get_prompt_color()))?
+            .queue(Print(prompt.render_prompt(screen_width)))?
+            .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?
             .queue(ResetColor)?;
 
         Ok(())
@@ -653,13 +649,13 @@ impl Reedline {
     ///
     /// Used to restore the prompt indicator after a search etc. that affected
     /// the prompt
-    fn queue_prompt_indicator(&mut self) -> Result<()> {
+    fn queue_prompt_indicator(&mut self, prompt: &dyn Prompt) -> Result<()> {
         // print our prompt
         let prompt_mode = self.prompt_edit_mode();
         self.stdout
             .queue(MoveToColumn(0))?
-            .queue(SetForegroundColor(self.prompt.get_prompt_color()))?
-            .queue(Print(self.prompt.render_prompt_indicator(prompt_mode)))?
+            .queue(SetForegroundColor(prompt.get_prompt_color()))?
+            .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?
             .queue(ResetColor)?;
 
         Ok(())
@@ -696,13 +692,14 @@ impl Reedline {
 
     fn full_repaint(
         &mut self,
+        prompt: &dyn Prompt,
         prompt_origin: (u16, u16),
         terminal_width: u16,
     ) -> Result<(u16, u16)> {
         self.stdout
             .queue(cursor::Hide)?
             .queue(MoveTo(prompt_origin.0, prompt_origin.1))?;
-        self.queue_prompt(terminal_width as usize)?;
+        self.queue_prompt(prompt, terminal_width as usize)?;
         // set where the input begins
         self.stdout.queue(cursor::Show)?.flush()?;
 
@@ -717,7 +714,7 @@ impl Reedline {
     ///
     /// Overwrites the prompt indicator and highlights the search string
     /// separately from the result bufer.
-    fn history_search_paint(&mut self) -> Result<()> {
+    fn history_search_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
         // Assuming we are currently searching
         let search = self
             .history_search
@@ -731,9 +728,8 @@ impl Reedline {
         };
 
         let prompt_history_search = PromptHistorySearch::new(status, search.search_string.clone());
-        let history_indicator = self
-            .prompt
-            .render_prompt_history_search_indicator(prompt_history_search);
+        let history_indicator =
+            prompt.render_prompt_history_search_indicator(prompt_history_search);
 
         // print search prompt
         self.stdout
@@ -765,9 +761,8 @@ impl Reedline {
 
     /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
-    fn read_line_helper(&mut self, prompt: Box<dyn Prompt>) -> Result<Signal> {
+    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
         terminal::enable_raw_mode()?;
-        self.prompt = prompt;
 
         let mut terminal_size = terminal::size()?;
 
@@ -787,11 +782,11 @@ impl Reedline {
         };
 
         // set where the input begins
-        let mut prompt_offset = self.full_repaint(prompt_origin, terminal_size.0)?;
+        let mut prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size.0)?;
 
         // Redraw if Ctrl-L was used
         if self.history_search.is_some() {
-            self.history_search_paint()?;
+            self.history_search_paint(prompt)?;
         }
 
         loop {
@@ -853,7 +848,7 @@ impl Reedline {
                             (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
                                 match self.history_search.clone() {
                                     Some(search) => {
-                                        self.queue_prompt_indicator()?;
+                                        self.queue_prompt_indicator(prompt)?;
                                         if let Some((history_index, _)) = search.result {
                                             self.line_buffer.set_buffer(
                                                 self.history
@@ -892,20 +887,20 @@ impl Reedline {
                         terminal_size = (width, height);
                         // TODO properly adjusting prompt_origin on resizing while lines > 1
                         prompt_origin.1 = position()?.1.saturating_sub(1);
-                        prompt_offset = self.full_repaint(prompt_origin, width)?;
+                        prompt_offset = self.full_repaint(prompt, prompt_origin, width)?;
                         continue;
                     }
                 }
                 if self.history_search.is_some() {
-                    self.history_search_paint()?;
+                    self.history_search_paint(prompt)?;
                 } else if self.need_full_repaint {
-                    prompt_offset = self.full_repaint(prompt_origin, terminal_size.0)?;
+                    prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size.0)?;
                     self.need_full_repaint = false;
                 } else {
                     self.buffer_paint(prompt_offset)?;
                 }
             } else {
-                prompt_offset = self.full_repaint(prompt_origin, terminal_size.0)?;
+                prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size.0)?;
             }
         }
     }
