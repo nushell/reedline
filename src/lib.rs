@@ -57,6 +57,8 @@ mod clip_buffer;
 mod enums;
 pub use enums::{EditCommand, EditMode, Signal};
 
+mod painter;
+
 mod engine;
 pub use engine::Reedline;
 
