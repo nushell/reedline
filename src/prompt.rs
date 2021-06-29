@@ -15,8 +15,8 @@ pub enum PromptHistorySearchStatus {
 }
 
 pub struct PromptHistorySearch {
-    status: PromptHistorySearchStatus,
-    term: String,
+    pub status: PromptHistorySearchStatus,
+    pub term: String,
 }
 
 impl PromptHistorySearch {
