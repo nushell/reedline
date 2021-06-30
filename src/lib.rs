@@ -66,7 +66,10 @@ pub use history::{History, HISTORY_SIZE};
 mod history_search;
 
 mod prompt;
-pub use prompt::{DefaultPrompt, Prompt, DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_INDICATOR};
+pub use prompt::{
+    DefaultPrompt, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
+    PromptViMode, DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_INDICATOR,
+};
 
 mod line_buffer;
 
