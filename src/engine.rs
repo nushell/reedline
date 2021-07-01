@@ -625,23 +625,17 @@ impl Reedline {
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
-        let new_index = self.insertion_point().offset;
+        let cursor_index_in_buffer = self.insertion_point().offset;
         let insertion_line = self.insertion_line();
-        // Repaint logic:
-        //
-        // Start after the prompt
-        // Draw the string slice from 0 to the grapheme start left of insertion point
-        // Then, get the position on the screen
-        // Then draw the remainer of the buffer from above
-        // Finally, reset the cursor to the saved position
-
-        // stdout.queue(Print(&engine.line_buffer[..new_index]))?;
         let highlighted_line = self.highlighter.highlight(insertion_line).to_string();
-
         let insertion_line = insertion_line.to_string();
 
-        self.painter
-            .queue_buffer(insertion_line, highlighted_line, prompt_offset, new_index)?;
+        self.painter.queue_buffer(
+            insertion_line,
+            highlighted_line,
+            prompt_offset,
+            cursor_index_in_buffer,
+        )?;
         self.painter.flush()?;
 
         Ok(())
