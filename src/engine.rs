@@ -629,8 +629,8 @@ impl Reedline {
     /// Requires coordinates where the input buffer begins after the prompt.
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
         let new_index = self.insertion_point().offset;
-        let insertion_line = self.insertion_line().to_string();
-        let offset = insertion_line.len() - new_index;
+        let insertion_line = self.insertion_line();
+        //let offset = insertion_line.len() - new_index;
         // Repaint logic:
         //
         // Start after the prompt
@@ -640,10 +640,10 @@ impl Reedline {
         // Finally, reset the cursor to the saved position
 
         // stdout.queue(Print(&engine.line_buffer[..new_index]))?;
-        //let highlighted_line = self.highlighter.highlight(insertion_line).to_string();
+        let highlighted_line = self.highlighter.highlight(insertion_line).to_string();
 
         self.painter
-            .queue_buffer(insertion_line, prompt_offset, offset)?;
+            .queue_buffer(highlighted_line, prompt_offset, new_index)?;
         self.painter.flush()?;
 
         Ok(())
