@@ -1,25 +1,22 @@
-use crate::{
-    clip_buffer::{get_default_clipboard, Clipboard},
-    default_emacs_keybindings,
-    keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
-    painter::Painter,
-    prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode},
-    DefaultHighlighter, Highlighter, Prompt,
+use {
+    crate::{
+        clip_buffer::{get_default_clipboard, Clipboard},
+        default_emacs_keybindings,
+        history::History,
+        history_search::{BasicSearch, BasicSearchCommand},
+        keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
+        line_buffer::{InsertionPoint, LineBuffer},
+        painter::Painter,
+        prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode},
+        DefaultHighlighter, EditCommand, EditMode, Highlighter, Prompt, Signal, ViEngine,
+    },
+    crossterm::{
+        cursor::position,
+        event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
+        terminal, Result,
+    },
+    std::{collections::HashMap, io::stdout, time::Duration},
 };
-use crate::{history::History, line_buffer::LineBuffer};
-use crate::{
-    history_search::{BasicSearch, BasicSearchCommand},
-    line_buffer::InsertionPoint,
-};
-use crate::{EditCommand, EditMode, Signal, ViEngine};
-use crossterm::{
-    cursor,
-    cursor::{position, MoveLeft, MoveTo, MoveToColumn, RestorePosition, SavePosition},
-    event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
-    terminal, Result,
-};
-
-use std::{collections::HashMap, io::stdout, time::Duration};
 
 /// Line editor engine
 ///

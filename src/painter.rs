@@ -1,15 +1,16 @@
-use crate::{
-    prompt::{PromptEditMode, PromptHistorySearch},
-    Prompt,
+use {
+    crate::{
+        prompt::{PromptEditMode, PromptHistorySearch},
+        Prompt,
+    },
+    crossterm::{
+        cursor::{self, position, MoveLeft, MoveTo, MoveToColumn, RestorePosition, SavePosition},
+        style::{Color, Print, ResetColor, SetForegroundColor},
+        terminal::{self, Clear, ClearType},
+        QueueableCommand, Result,
+    },
+    std::io::{Stdout, Write},
 };
-use crossterm::{
-    cursor::{self, position, MoveLeft, MoveTo, MoveToColumn, RestorePosition, SavePosition},
-    style::{Color, Print, ResetColor, SetForegroundColor},
-    terminal::{self, Clear, ClearType},
-    QueueableCommand, Result,
-};
-
-use std::io::{Stdout, Write};
 
 pub struct Painter {
     // Stdout

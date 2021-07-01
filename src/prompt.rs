@@ -1,7 +1,8 @@
-use chrono::Local;
-use crossterm::style::Color;
-use std::borrow::Cow;
-use std::env;
+use {
+    chrono::Local,
+    crossterm::style::Color,
+    std::{borrow::Cow, env},
+};
 
 pub static DEFAULT_PROMPT_COLOR: Color = Color::Blue;
 pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";

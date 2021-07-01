@@ -1,10 +1,10 @@
 // use deser_hjson::*;
-use nu_ansi_term::{Color, Style};
-use nu_json::Value as nujVal;
-use serde::Deserialize;
-use std::collections::HashMap;
-use std::io::Read;
-use std::{fs::File, num::ParseIntError};
+use {
+    nu_ansi_term::{Color, Style},
+    nu_json::Value as nujVal,
+    serde::Deserialize,
+    std::{collections::HashMap, fs::File, io::Read, num::ParseIntError},
+};
 
 #[derive(Deserialize, PartialEq, Debug)]
 struct NuStyle {
