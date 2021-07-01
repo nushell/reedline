@@ -630,7 +630,6 @@ impl Reedline {
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
         let new_index = self.insertion_point().offset;
         let insertion_line = self.insertion_line();
-        //let offset = insertion_line.len() - new_index;
         // Repaint logic:
         //
         // Start after the prompt
