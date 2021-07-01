@@ -1,6 +1,8 @@
 use crossterm::{event::KeyCode, event::KeyModifiers, Result};
 
-use reedline::{default_emacs_keybindings, DefaultPrompt, EditCommand, Reedline, Signal};
+use reedline::{
+    default_emacs_keybindings, DefaultHighlighter, DefaultPrompt, EditCommand, Reedline, Signal,
+};
 
 fn main() -> Result<()> {
     let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
@@ -19,7 +21,8 @@ fn main() -> Result<()> {
         } else {
             reedline::EditMode::Emacs
         })
-        .with_keybindings(keybindings);
+        .with_keybindings(keybindings)
+        .with_highlighter(Box::new(DefaultHighlighter::new(vec!["test".into()])));
 
     let prompt = DefaultPrompt::new(1);
 

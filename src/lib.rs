@@ -82,3 +82,6 @@ mod syntax_highlighting_fileio;
 
 mod vi_engine;
 pub use vi_engine::ViEngine;
+
+mod highlighter;
+pub use highlighter::{DefaultHighlighter, Highlighter};
