@@ -3,7 +3,7 @@ use crate::{
     Prompt,
 };
 use crossterm::{
-    cursor::{self, position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
+    cursor::{self, position, MoveLeft, MoveTo, MoveToColumn, RestorePosition, SavePosition},
     style::{Color, Print, ResetColor, SetForegroundColor},
     terminal::{self, Clear, ClearType},
     QueueableCommand, Result,
@@ -85,6 +85,8 @@ impl Painter {
         // Then draw the remainer of the buffer from above
         // Finally, reset the cursor to the saved position
 
+        //let right_offset = buffer.len() - cursor_index_in_buffer;
+
         self.stdout
             .queue(MoveTo(offset.0, offset.1))?
             .queue(Print(&buffer[0..cursor_index_in_buffer]))?
@@ -93,6 +95,7 @@ impl Painter {
             .queue(Clear(ClearType::FromCursorDown))?
             .queue(RestorePosition)?;
 
+        self.stdout.flush()?;
         Ok(())
     }
 

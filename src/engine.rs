@@ -640,14 +640,11 @@ impl Reedline {
         // Finally, reset the cursor to the saved position
 
         // stdout.queue(Print(&engine.line_buffer[..new_index]))?;
-        self.stdout
-            .queue(MoveTo(prompt_offset.0, prompt_offset.1))?;
-        self.stdout.queue(Print(
-            self.highlighter.highlight(&insertion_line).to_string(),
-        ))?;
-        self.stdout.queue(Clear(ClearType::FromCursorDown))?;
-        self.stdout.queue(MoveLeft(offset as u16))?;
-        self.stdout.flush()?;
+        //let highlighted_line = self.highlighter.highlight(insertion_line).to_string();
+
+        self.painter
+            .queue_buffer(insertion_line, prompt_offset, offset)?;
+        self.painter.flush()?;
 
         Ok(())
     }
@@ -660,6 +657,7 @@ impl Reedline {
     ) -> Result<(u16, u16)> {
         let prompt_mode = self.prompt_edit_mode();
         let insertion_line = self.insertion_line().to_string();
+        //let highlighted_line = self.highlighter.highlight(insertion_line).to_string();
         let new_index = self.insertion_point().offset;
         self.painter.repaint_everything(
             prompt,
