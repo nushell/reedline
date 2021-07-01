@@ -274,7 +274,7 @@ impl Reedline {
     }
 
     fn move_word_right(&mut self) {
-        self.line_buffer.move_right()
+        self.line_buffer.move_word_right();
     }
 
     fn insert_char(&mut self, c: char) {
@@ -642,8 +642,10 @@ impl Reedline {
         // stdout.queue(Print(&engine.line_buffer[..new_index]))?;
         let highlighted_line = self.highlighter.highlight(insertion_line).to_string();
 
+        let insertion_line = insertion_line.to_string();
+
         self.painter
-            .queue_buffer(highlighted_line, prompt_offset, new_index)?;
+            .queue_buffer(insertion_line, highlighted_line, prompt_offset, new_index)?;
         self.painter.flush()?;
 
         Ok(())
@@ -656,8 +658,10 @@ impl Reedline {
         terminal_size: (u16, u16),
     ) -> Result<(u16, u16)> {
         let prompt_mode = self.prompt_edit_mode();
-        let insertion_line = self.insertion_line().to_string();
-        //let highlighted_line = self.highlighter.highlight(insertion_line).to_string();
+        let insertion_line = self.insertion_line();
+        let highlighted_line = self.highlighter.highlight(insertion_line).to_string();
+        let insertion_line = insertion_line.to_string();
+
         let new_index = self.insertion_point().offset;
         self.painter.repaint_everything(
             prompt,
@@ -665,6 +669,7 @@ impl Reedline {
             prompt_origin,
             new_index,
             insertion_line,
+            highlighted_line,
             terminal_size,
         )
 
