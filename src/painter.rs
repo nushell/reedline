@@ -3,7 +3,7 @@ use crate::{
     Prompt,
 };
 use crossterm::{
-    cursor::{self, position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
+    cursor::{self, position, MoveLeft, MoveTo, MoveToColumn, RestorePosition, SavePosition},
     style::{Color, Print, ResetColor, SetForegroundColor},
     terminal::{self, Clear, ClearType},
     QueueableCommand, Result,
@@ -73,25 +73,27 @@ impl Painter {
     /// Requires coordinates where the input buffer begins after the prompt.
     pub fn queue_buffer(
         &mut self,
-        buffer: String,
-        offset: (u16, u16),
+        original_line: String,
+        highlighted_line: String,
+        prompt_offset: (u16, u16),
         cursor_index_in_buffer: usize,
     ) -> Result<()> {
+        let new_index = cursor_index_in_buffer;
+        let offset = original_line.len() - new_index;
         // Repaint logic:
         //
         // Start after the prompt
-        // Draw the string slice from 0 to the grapheme start left of insertion point
-        // Then, get the position on the screen
-        // Then draw the remainer of the buffer from above
+        // Paint the buffer
+        // Move back to the column based on the offset
         // Finally, reset the cursor to the saved position
 
+        // stdout.queue(Print(&engine.line_buffer[..new_index]))?;
         self.stdout
-            .queue(MoveTo(offset.0, offset.1))?
-            .queue(Print(&buffer[0..cursor_index_in_buffer]))?
-            .queue(SavePosition)?
-            .queue(Print(&buffer[cursor_index_in_buffer..]))?
-            .queue(Clear(ClearType::FromCursorDown))?
-            .queue(RestorePosition)?;
+            .queue(MoveTo(prompt_offset.0, prompt_offset.1))?;
+        self.stdout.queue(Print(highlighted_line))?;
+        self.stdout.queue(Clear(ClearType::FromCursorDown))?;
+        self.stdout.queue(MoveLeft(offset as u16))?;
+        self.stdout.flush()?;
 
         Ok(())
     }
@@ -103,6 +105,7 @@ impl Painter {
         prompt_origin: (u16, u16),
         cursor_position_in_buffer: usize,
         buffer: String,
+        highlighted_buffer: String,
         terminal_size: (u16, u16),
     ) -> Result<(u16, u16)> {
         self.stdout.queue(cursor::Hide)?;
@@ -112,7 +115,12 @@ impl Painter {
         self.flush()?;
         // set where the input begins
         let prompt_offset = position()?;
-        self.queue_buffer(buffer, prompt_offset, cursor_position_in_buffer)?;
+        self.queue_buffer(
+            buffer,
+            highlighted_buffer,
+            prompt_offset,
+            cursor_position_in_buffer,
+        )?;
         self.stdout.queue(cursor::Show)?;
         self.flush()?;
 
