@@ -43,8 +43,8 @@ impl ViEngine {
                         _ => {}
                     },
                     (Some(partial), c) => {
-                        match partial {
-                            'd' => match c {
+                        if partial == 'd' {
+                            match c {
                                 'd' => {
                                     output.push(EditCommand::MoveToStart);
                                     output.push(EditCommand::CutToEnd);
@@ -53,8 +53,7 @@ impl ViEngine {
                                     output.push(EditCommand::CutWordRight);
                                 }
                                 _ => {}
-                            },
-                            _ => {}
+                            }
                         }
                         self.partial = None;
                     }
