@@ -63,9 +63,6 @@ pub struct Reedline {
 
     // Vi normal mode state engine
     vi_engine: ViEngine,
-
-    // Manage buffer highlights
-    highlighter: Box<dyn Highlighter>,
 }
 
 impl Default for Reedline {
@@ -79,7 +76,8 @@ impl Reedline {
     pub fn new() -> Reedline {
         let history = History::default();
         let cut_buffer = Box::new(get_default_clipboard());
-        let painter = Painter::new(stdout());
+        let buffer_highlighter = Box::new(DefaultHighlighter::default());
+        let painter = Painter::new(stdout(), buffer_highlighter);
         let mut keybindings_hashmap = HashMap::new();
         keybindings_hashmap.insert(EditMode::Emacs, default_emacs_keybindings());
         keybindings_hashmap.insert(EditMode::ViInsert, default_vi_insert_keybindings());
@@ -96,12 +94,11 @@ impl Reedline {
             need_full_repaint: false,
             partial_command: None,
             vi_engine: ViEngine::new(),
-            highlighter: Box::new(DefaultHighlighter::default()),
         }
     }
 
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Reedline {
-        self.highlighter = highlighter;
+        self.painter.set_highlighter(highlighter);
         self
     }
 
@@ -625,15 +622,11 @@ impl Reedline {
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
-        let cursor_index_in_buffer = self.insertion_point().offset;
-        let insertion_line = self.insertion_line();
+        let new_index = self.insertion_point().offset;
+        let insertion_line = self.insertion_line().to_string();
 
-        let highlighted_line = self
-            .highlighter
-            .highlight(insertion_line)
-            .render_around_insertion_point(cursor_index_in_buffer);
-
-        self.painter.queue_buffer(highlighted_line, prompt_offset)?;
+        self.painter
+            .queue_buffer(insertion_line, prompt_offset, new_index)?;
         self.painter.flush()?;
 
         Ok(())
@@ -646,17 +639,16 @@ impl Reedline {
         terminal_size: (u16, u16),
     ) -> Result<(u16, u16)> {
         let prompt_mode = self.prompt_edit_mode();
-        let insertion_line = self.insertion_line();
-        let highlighted_line = self
-            .highlighter
-            .highlight(insertion_line)
-            .render_around_insertion_point(self.insertion_point().offset);
+        let insertion_line = self.insertion_line().to_string();
+
+        let new_index = self.insertion_point().offset;
 
         self.painter.repaint_everything(
             prompt,
             prompt_mode,
             prompt_origin,
-            highlighted_line,
+            new_index,
+            insertion_line,
             terminal_size,
         )
 
