@@ -78,23 +78,13 @@ impl Painter {
         prompt_offset: (u16, u16),
         cursor_index_in_buffer: usize,
     ) -> Result<()> {
-        // Repaint logic:
-        //
-        // Start after the prompt
-        // Draw the string slice from 0 to the grapheme start left of insertion point
-        // Then, get the position on the screen
-        // Then draw the remainer of the buffer from above
-        // Finally, reset the cursor to the saved position
-
-        //let right_offset = buffer.len() - cursor_index_in_buffer;
         let new_index = cursor_index_in_buffer;
         let offset = original_line.len() - new_index;
         // Repaint logic:
         //
         // Start after the prompt
-        // Draw the string slice from 0 to the grapheme start left of insertion point
-        // Then, get the position on the screen
-        // Then draw the remainer of the buffer from above
+        // Paint the buffer
+        // Move back to the column based on the offset
         // Finally, reset the cursor to the saved position
 
         // stdout.queue(Print(&engine.line_buffer[..new_index]))?;
@@ -105,15 +95,6 @@ impl Painter {
         self.stdout.queue(MoveLeft(offset as u16))?;
         self.stdout.flush()?;
 
-        // self.stdout
-        //     .queue(MoveTo(offset.0, offset.1))?
-        //     .queue(Print(&buffer[0..cursor_index_in_buffer]))?
-        //     .queue(SavePosition)?
-        //     .queue(Print(&buffer[cursor_index_in_buffer..]))?
-        //     .queue(Clear(ClearType::FromCursorDown))?
-        //     .queue(RestorePosition)?;
-
-        // self.stdout.flush()?;
         Ok(())
     }
 
