@@ -1,15 +1,16 @@
-use crate::{
-    prompt::{PromptEditMode, PromptHistorySearch},
-    Prompt,
+use {
+    crate::{
+        prompt::{PromptEditMode, PromptHistorySearch},
+        Prompt,
+    },
+    crossterm::{
+        cursor::{self, position, MoveLeft, MoveTo, MoveToColumn, RestorePosition, SavePosition},
+        style::{Color, Print, ResetColor, SetForegroundColor},
+        terminal::{self, Clear, ClearType},
+        QueueableCommand, Result,
+    },
+    std::io::{Stdout, Write},
 };
-use crossterm::{
-    cursor::{self, position, MoveLeft, MoveTo, MoveToColumn, RestorePosition, SavePosition},
-    style::{Color, Print, ResetColor, SetForegroundColor},
-    terminal::{self, Clear, ClearType},
-    QueueableCommand, Result,
-};
-
-use std::io::{Stdout, Write};
 
 pub struct Painter {
     // Stdout
@@ -78,22 +79,13 @@ impl Painter {
         prompt_offset: (u16, u16),
         cursor_index_in_buffer: usize,
     ) -> Result<()> {
-        let new_index = cursor_index_in_buffer;
-        let offset = original_line.len() - new_index;
-        // Repaint logic:
-        //
-        // Start after the prompt
-        // Paint the buffer
-        // Move back to the column based on the offset
-        // Finally, reset the cursor to the saved position
-
-        // stdout.queue(Print(&engine.line_buffer[..new_index]))?;
+        let offset = original_line.len() - cursor_index_in_buffer;
         self.stdout
-            .queue(MoveTo(prompt_offset.0, prompt_offset.1))?;
-        self.stdout.queue(Print(highlighted_line))?;
-        self.stdout.queue(Clear(ClearType::FromCursorDown))?;
-        self.stdout.queue(MoveLeft(offset as u16))?;
-        self.stdout.flush()?;
+            .queue(MoveTo(prompt_offset.0, prompt_offset.1))?
+            .queue(Print(highlighted_line))?
+            .queue(Clear(ClearType::FromCursorDown))?
+            .queue(MoveLeft(offset as u16))?
+            .flush()?;
 
         Ok(())
     }
@@ -144,7 +136,7 @@ impl Painter {
         Ok(())
     }
 
-    pub fn queue_history_results(&mut self, history_result: &String, offset: usize) -> Result<()> {
+    pub fn queue_history_results(&mut self, history_result: &str, offset: usize) -> Result<()> {
         self.stdout
             .queue(Print(&history_result[..offset]))?
             .queue(SavePosition)?

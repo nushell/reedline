@@ -1,7 +1,8 @@
-use crossterm::{event::KeyCode, event::KeyModifiers, Result};
-
-use reedline::{
-    default_emacs_keybindings, DefaultHighlighter, DefaultPrompt, EditCommand, Reedline, Signal,
+use {
+    crossterm::{event::KeyCode, event::KeyModifiers, Result},
+    reedline::{
+        default_emacs_keybindings, DefaultHighlighter, DefaultPrompt, EditCommand, Reedline, Signal,
+    },
 };
 
 fn main() -> Result<()> {

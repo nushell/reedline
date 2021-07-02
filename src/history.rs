@@ -1,7 +1,9 @@
-use std::fs::{File, OpenOptions};
-use std::io::BufReader;
-use std::io::{BufRead, BufWriter, Write};
-use std::{collections::VecDeque, path::PathBuf};
+use std::{
+    collections::VecDeque,
+    fs::{File, OpenOptions},
+    io::{BufRead, BufReader, BufWriter, Write},
+    path::PathBuf,
+};
 
 /// Default size of the [`History`] used when calling [`History::default()`]
 pub const HISTORY_SIZE: usize = 1000;

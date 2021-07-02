@@ -1,6 +1,8 @@
-use crate::EditCommand;
-use crossterm::event::{KeyCode, KeyModifiers};
-use serde::{Deserialize, Serialize};
+use {
+    crate::EditCommand,
+    crossterm::event::{KeyCode, KeyModifiers},
+    serde::{Deserialize, Serialize},
+};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Keybinding {
