@@ -4,7 +4,7 @@ use {
         Prompt,
     },
     crossterm::{
-        cursor::{self, position, MoveLeft, MoveTo, MoveToColumn, RestorePosition, SavePosition},
+        cursor::{self, position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
         style::{Color, Print, ResetColor, SetForegroundColor},
         terminal::{self, Clear, ClearType},
         QueueableCommand, Result,
@@ -74,17 +74,16 @@ impl Painter {
     /// Requires coordinates where the input buffer begins after the prompt.
     pub fn queue_buffer(
         &mut self,
-        original_line: String,
-        highlighted_line: String,
+        highlighted_line: (String, String),
         prompt_offset: (u16, u16),
-        cursor_index_in_buffer: usize,
     ) -> Result<()> {
-        let offset = original_line.len() - cursor_index_in_buffer;
         self.stdout
             .queue(MoveTo(prompt_offset.0, prompt_offset.1))?
-            .queue(Print(highlighted_line))?
+            .queue(Print(highlighted_line.0))?
+            .queue(SavePosition)?
+            .queue(Print(highlighted_line.1))?
             .queue(Clear(ClearType::FromCursorDown))?
-            .queue(MoveLeft(offset as u16))?
+            .queue(RestorePosition)?
             .flush()?;
 
         Ok(())
@@ -95,9 +94,7 @@ impl Painter {
         prompt: &dyn Prompt,
         prompt_mode: PromptEditMode,
         prompt_origin: (u16, u16),
-        cursor_position_in_buffer: usize,
-        buffer: String,
-        highlighted_buffer: String,
+        highlighted_buffer: (String, String),
         terminal_size: (u16, u16),
     ) -> Result<(u16, u16)> {
         self.stdout.queue(cursor::Hide)?;
@@ -107,12 +104,7 @@ impl Painter {
         self.flush()?;
         // set where the input begins
         let prompt_offset = position()?;
-        self.queue_buffer(
-            buffer,
-            highlighted_buffer,
-            prompt_offset,
-            cursor_position_in_buffer,
-        )?;
+        self.queue_buffer(highlighted_buffer, prompt_offset)?;
         self.stdout.queue(cursor::Show)?;
         self.flush()?;
 

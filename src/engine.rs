@@ -627,15 +627,13 @@ impl Reedline {
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
         let cursor_index_in_buffer = self.insertion_point().offset;
         let insertion_line = self.insertion_line();
-        let highlighted_line = self.highlighter.highlight(insertion_line).to_string();
-        let insertion_line = insertion_line.to_string();
 
-        self.painter.queue_buffer(
-            insertion_line,
-            highlighted_line,
-            prompt_offset,
-            cursor_index_in_buffer,
-        )?;
+        let highlighted_line = self
+            .highlighter
+            .highlight(insertion_line)
+            .render_around_insertion_point(cursor_index_in_buffer);
+
+        self.painter.queue_buffer(highlighted_line, prompt_offset)?;
         self.painter.flush()?;
 
         Ok(())
@@ -649,16 +647,15 @@ impl Reedline {
     ) -> Result<(u16, u16)> {
         let prompt_mode = self.prompt_edit_mode();
         let insertion_line = self.insertion_line();
-        let highlighted_line = self.highlighter.highlight(insertion_line).to_string();
-        let insertion_line = insertion_line.to_string();
+        let highlighted_line = self
+            .highlighter
+            .highlight(insertion_line)
+            .render_around_insertion_point(self.insertion_point().offset);
 
-        let new_index = self.insertion_point().offset;
         self.painter.repaint_everything(
             prompt,
             prompt_mode,
             prompt_origin,
-            new_index,
-            insertion_line,
             highlighted_line,
             terminal_size,
         )
@@ -775,6 +772,7 @@ impl Reedline {
                                 if self.maybe_wrap(terminal_size.0, line_start, c) {
                                     let (original_column, original_row) = position()?;
                                     self.run_edit_commands(&[EditCommand::InsertChar(c)]);
+
                                     self.buffer_paint(prompt_offset)?;
 
                                     let (new_column, _) = position()?;

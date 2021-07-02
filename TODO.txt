@@ -5,10 +5,10 @@ TODO:
 * vi mode
 * 'dw' => delete word. 'delete' first part, and 'word' second part
 * Repeats '10dw' => 10x 'dw'
+* history hinting
 * Make idle animations configurable (and able to be disabled)
 * Make more clear that keybindings are for emacs
 * Undo (ctrl-z)
-* Syntax highlighting
 * Multiline support
 * Document recent API additions
 * Validation
@@ -69,3 +69,6 @@ X Documention
 X Prompt indicator change when in vi insert
 X Prompt changes async while idle
 X Add more unit tests
+X Syntax highlighting
+  * Move syntax highlighting from ansi strings to styled buffer
+  * color -> style (color, bold/italic/underline)

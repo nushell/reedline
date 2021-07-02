@@ -1,14 +1,13 @@
-use {
-    nu_ansi_term::{Color, Style},
-    std::borrow::Cow,
-};
+use nu_ansi_term::Style;
+
+use {crate::styled_text::StyledText, nu_ansi_term::Color};
 
 pub static DEFAULT_BUFFER_MATCH_COLOR: Color = Color::Green;
 pub static DEFAULT_BUFFER_NEUTRAL_COLOR: Color = Color::White;
 pub static DEFAULT_BUFFER_NOTMATCH_COLOR: Color = Color::Red;
 
 pub trait Highlighter {
-    fn highlight<'l>(&self, line: &'l str) -> Cow<'l, str>;
+    fn highlight(&self, line: &str) -> StyledText;
 }
 
 pub struct DefaultHighlighter {
@@ -19,7 +18,9 @@ pub struct DefaultHighlighter {
 }
 
 impl Highlighter for DefaultHighlighter {
-    fn highlight<'l>(&self, line: &'l str) -> Cow<'l, str> {
+    fn highlight(&self, line: &str) -> StyledText {
+        let mut styled_text = StyledText::new();
+
         if self
             .external_commands
             .clone()
@@ -40,17 +41,23 @@ impl Highlighter for DefaultHighlighter {
                 }
             });
             let buffer_split: Vec<&str> = line.splitn(2, &longest_match).collect();
-            Cow::Owned(format!(
-                "{}{}{}",
-                Style::from(self.neutral_color).paint(buffer_split[0]),
-                Style::from(self.match_color).paint(&longest_match),
-                Style::from(self.neutral_color).paint(buffer_split[1])
-            ))
+
+            styled_text.push((
+                Style::new().fg(self.neutral_color),
+                buffer_split[0].to_string(),
+            ));
+            styled_text.push((Style::new().fg(self.match_color), longest_match));
+            styled_text.push((
+                Style::new().bold().fg(self.neutral_color),
+                buffer_split[1].to_string(),
+            ));
         } else if !self.external_commands.is_empty() {
-            Cow::Owned(Style::from(self.notmatch_color).paint(line).to_string())
+            styled_text.push((Style::new().fg(self.notmatch_color), line.to_string()));
         } else {
-            Cow::Owned(Style::from(self.neutral_color).paint(line).to_string())
+            styled_text.push((Style::new().fg(self.neutral_color), line.to_string()));
         }
+
+        styled_text
     }
 }
 impl DefaultHighlighter {
