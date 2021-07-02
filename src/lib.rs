@@ -85,3 +85,5 @@ pub use vi_engine::ViEngine;
 
 mod highlighter;
 pub use highlighter::{DefaultHighlighter, Highlighter};
+
+mod styled_text;
