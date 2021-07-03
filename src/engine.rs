@@ -714,10 +714,10 @@ impl Reedline {
             if (column, row) == (0, 0) {
                 (0, 0)
             } else if row + 1 == terminal_size.1 {
-                self.painter.paint_carrige_return()?;
+                self.painter.paint_carriage_return()?;
                 (0, row.saturating_sub(1))
             } else if row + 2 == terminal_size.1 {
-                self.painter.paint_carrige_return()?;
+                self.painter.paint_carriage_return()?;
                 (0, row)
             } else {
                 (0, row + 1)
