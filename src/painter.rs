@@ -160,8 +160,8 @@ impl Painter {
         Ok(())
     }
 
-    // Printing carrige return
-    pub fn paint_carrige_return(&mut self) -> Result<()> {
+    // Printing carriage return
+    pub fn paint_carriage_return(&mut self) -> Result<()> {
         self.stdout.queue(Print("\r\n\r\n"))?.flush()
     }
 
