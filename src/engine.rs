@@ -622,11 +622,11 @@ impl Reedline {
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
-        let new_index = self.insertion_point().offset;
-        let insertion_line = self.insertion_line().to_string();
+        let cursor_position_in_buffer = self.insertion_point().offset;
+        let buffer_to_paint = self.insertion_line().to_string();
 
         self.painter
-            .queue_buffer(insertion_line, prompt_offset, new_index)?;
+            .queue_buffer(buffer_to_paint, prompt_offset, cursor_position_in_buffer)?;
         self.painter.flush()?;
 
         Ok(())
@@ -639,16 +639,16 @@ impl Reedline {
         terminal_size: (u16, u16),
     ) -> Result<(u16, u16)> {
         let prompt_mode = self.prompt_edit_mode();
-        let insertion_line = self.insertion_line().to_string();
+        let buffer_to_paint = self.insertion_line().to_string();
 
-        let new_index = self.insertion_point().offset;
+        let cursor_position_in_buffer = self.insertion_point().offset;
 
         self.painter.repaint_everything(
             prompt,
             prompt_mode,
             prompt_origin,
-            new_index,
-            insertion_line,
+            cursor_position_in_buffer,
+            buffer_to_paint,
             terminal_size,
         )
 
