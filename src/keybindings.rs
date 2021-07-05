@@ -203,6 +203,12 @@ pub fn default_emacs_keybindings() -> Keybindings {
     );
     keybindings.add_binding(KeyModifiers::ALT, Delete, vec![EditCommand::DeleteWord]);
     keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        Backspace,
+        vec![EditCommand::BackspaceWord],
+    );
+    keybindings.add_binding(KeyModifiers::CONTROL, Delete, vec![EditCommand::DeleteWord]);
+    keybindings.add_binding(
         KeyModifiers::ALT,
         Char('u'),
         vec![EditCommand::UppercaseWord],
