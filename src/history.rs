@@ -36,7 +36,7 @@ pub const HISTORY_SIZE: usize = 1000;
 /// (See <https://www.gnu.org/software/bash/manual/html_node/Bash-History-Facilities.html>)
 /// If the history is associated to a file all new changes within a given history capacity will be written to disk when History is dropped.
 #[derive(Debug)]
-pub struct History {
+pub struct FileBackedHistory {
     capacity: usize,
     entries: VecDeque<String>,
     cursor: usize, // If cursor == entries.len() outside history browsing
@@ -48,7 +48,7 @@ pub struct History {
     pub history_prefix: Option<String>,
 }
 
-impl Default for History {
+impl Default for FileBackedHistory {
     /// Creates an in-memory [`History`] with a maximal capacity of [`HISTORY_SIZE`].
     ///
     /// To create a [`History`] that is synchronized with a file use [`History::with_file()`]
@@ -57,7 +57,7 @@ impl Default for History {
     }
 }
 
-impl History {
+impl FileBackedHistory {
     /// Creates a new in-memory history that remembers `n <= capacity` elements
     ///
     /// ```
@@ -69,7 +69,7 @@ impl History {
         if capacity == usize::MAX {
             panic!("History capacity too large to be addressed safely");
         }
-        History {
+        FileBackedHistory {
             capacity,
             entries: VecDeque::with_capacity(capacity),
             cursor: 0,
@@ -421,7 +421,7 @@ impl History {
     }
 }
 
-impl Drop for History {
+impl Drop for FileBackedHistory {
     /// On drop the content of the [`History`] will be written to the file if specified via [`History::with_file()`].
     fn drop(&mut self) {
         let _ = self.flush();
@@ -433,10 +433,10 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::io::BufRead;
 
-    use super::History;
+    use super::FileBackedHistory;
     #[test]
     fn navigates_safely() {
-        let mut hist = History::default();
+        let mut hist = FileBackedHistory::default();
         hist.append("test".to_string());
         assert_eq!(hist.go_forward(), None); // On empty line nothing to move forward to
         assert_eq!(hist.go_back().unwrap(), "test"); // Back to the entry
@@ -445,7 +445,7 @@ mod tests {
     }
     #[test]
     fn appends_only_unique() {
-        let mut hist = History::default();
+        let mut hist = FileBackedHistory::default();
         hist.append("unique_old".to_string());
         hist.append("test".to_string());
         hist.append("test".to_string());
@@ -458,7 +458,7 @@ mod tests {
     }
     #[test]
     fn appends_no_empties() {
-        let mut hist = History::default();
+        let mut hist = FileBackedHistory::default();
         hist.append("".to_string());
         assert_eq!(hist.entries().len(), 0);
     }
@@ -475,7 +475,7 @@ mod tests {
         let entries = vec!["test", "text", "more test text"];
 
         {
-            let mut hist = History::with_file(1000, histfile.clone()).unwrap();
+            let mut hist = FileBackedHistory::with_file(1000, histfile.clone()).unwrap();
 
             entries.iter().for_each(|e| hist.append(e.to_string()));
 

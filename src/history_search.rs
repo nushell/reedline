@@ -1,4 +1,4 @@
-use crate::history::History;
+use crate::history::FileBackedHistory;
 
 /// Implements a reverse search through the history.
 /// Stores a search string for incremental search and remembers the last result
@@ -31,7 +31,7 @@ impl BasicSearch {
     ///
     /// `idx`: 0-based index starting at the newest history entries.
     /// `offset`: location in the text where the match was found.
-    pub fn step(&mut self, command: BasicSearchCommand, history: &History) {
+    pub fn step(&mut self, command: BasicSearchCommand, history: &FileBackedHistory) {
         let mut start = self
             .result
             .map(|(history_index, _)| history_index)

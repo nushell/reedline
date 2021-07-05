@@ -2,7 +2,7 @@ use {
     crate::{
         clip_buffer::{get_default_clipboard, Clipboard},
         default_emacs_keybindings,
-        history::History,
+        history::FileBackedHistory,
         history_search::{BasicSearch, BasicSearchCommand},
         keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
         line_buffer::{InsertionPoint, LineBuffer},
@@ -43,7 +43,7 @@ pub struct Reedline {
     cut_buffer: Box<dyn Clipboard>,
 
     // History
-    history: History,
+    history: FileBackedHistory,
     history_search: Option<BasicSearch>, // This could be have more features in the future (fzf, configurable?)
 
     // Stdout
@@ -74,7 +74,7 @@ impl Default for Reedline {
 impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     pub fn new() -> Reedline {
-        let history = History::default();
+        let history = FileBackedHistory::default();
         let cut_buffer = Box::new(get_default_clipboard());
         let buffer_highlighter = Box::new(DefaultHighlighter::default());
         let painter = Painter::new(stdout(), buffer_highlighter);
@@ -107,7 +107,7 @@ impl Reedline {
         history_file: &str,
         history_size: usize,
     ) -> std::io::Result<Reedline> {
-        let history = History::with_file(history_size, history_file.into())?;
+        let history = FileBackedHistory::with_file(history_size, history_file.into())?;
 
         self.history = history;
 
