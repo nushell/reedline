@@ -63,9 +63,7 @@ mod engine;
 pub use engine::Reedline;
 
 mod history;
-pub use history::{FileBackedHistory, HISTORY_SIZE};
-
-mod history_search;
+pub use history::{FileBackedHistory, History, HISTORY_SIZE};
 
 mod prompt;
 pub use prompt::{
