@@ -79,49 +79,10 @@ impl HistoryView for FileBackedHistory {
                 }
             }
             HistoryNavigationQuery::PrefixSearch(prefix) => {
-                let mut cursor = self.cursor;
-
-                let previous_match = self.string_at_cursor();
-
-                while cursor > 0 {
-                    cursor -= 1;
-                    let entry = &self.entries[cursor];
-                    if entry.starts_with(&prefix) {
-                        if previous_match
-                            // TODO Get rid of this clone
-                            .clone()
-                            .map_or(false, |value| &value == entry)
-                        {
-                            continue;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-
-                self.cursor = cursor;
+                self.back_with_criteria(&|entry| entry.starts_with(&prefix))
             }
             HistoryNavigationQuery::SubstringSearch(substring) => {
-                let mut cursor = self.cursor;
-                let previous_match = self.string_at_cursor();
-
-                while cursor > 0 {
-                    cursor -= 1;
-                    let entry = &self.entries[cursor];
-                    if entry.contains(&substring) {
-                        if previous_match
-                            // TODO Get rid of this clone
-                            .clone()
-                            .map_or(false, |value| &value == entry)
-                        {
-                            continue;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-
-                self.cursor = cursor;
+                self.back_with_criteria(&|entry| entry.contains(&substring))
             }
         }
     }
@@ -134,48 +95,10 @@ impl HistoryView for FileBackedHistory {
                 }
             }
             HistoryNavigationQuery::PrefixSearch(prefix) => {
-                let mut cursor = self.cursor;
-                let previous_match = self.string_at_cursor();
-
-                while cursor < self.entries.len() - 1 {
-                    cursor += 1;
-                    let entry = &self.entries[cursor];
-                    if entry.starts_with(&prefix) {
-                        if previous_match
-                            // TODO Get rid of this clone
-                            .clone()
-                            .map_or(false, |value| &value == entry)
-                        {
-                            continue;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-
-                self.cursor = cursor;
+                self.forward_with_criteria(&|entry| entry.starts_with(&prefix))
             }
             HistoryNavigationQuery::SubstringSearch(substring) => {
-                let mut cursor = self.cursor;
-                let previous_match = self.string_at_cursor();
-
-                while cursor < self.entries.len() - 1 {
-                    cursor += 1;
-                    let entry = &self.entries[cursor];
-                    if entry.contains(&substring) {
-                        if previous_match
-                            // TODO Get rid of this clone
-                            .clone()
-                            .map_or(false, |value| &value == entry)
-                        {
-                            continue;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-
-                self.cursor = cursor;
+                self.forward_with_criteria(&|entry| entry.contains(&substring))
             }
         }
     }
@@ -292,6 +215,53 @@ impl FileBackedHistory {
                 Ok(())
             }
         }
+    }
+
+    fn back_with_criteria(&mut self, criteria: &dyn Fn(&str) -> bool) {
+        let mut cursor = self.cursor;
+        let previous_match = self.string_at_cursor();
+
+        while cursor > 0 {
+            cursor -= 1;
+            let entry = &self.entries[cursor];
+            if criteria(entry) {
+                if previous_match
+                    // TODO Get rid of this clone
+                    .clone()
+                    .map_or(false, |value| &value == entry)
+                {
+                    continue;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        self.cursor = cursor;
+    }
+
+    fn forward_with_criteria(&mut self, criteria: &dyn Fn(&str) -> bool) {
+        let mut cursor = self.cursor;
+        let previous_match = self.string_at_cursor();
+
+        while cursor < self.entries.len() - 1 {
+            cursor += 1;
+            let entry = &self.entries[cursor];
+            if criteria(entry) {
+                // if entry.contains(&substring) {
+                if previous_match
+                    // TODO Get rid of this clone
+                    .clone()
+                    .map_or(false, |value| &value == entry)
+                {
+                    continue;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        self.cursor = cursor;
     }
 
     /// Writes unwritten history contents to disk.
