@@ -312,18 +312,7 @@ impl Reedline {
             self.input_mode = InputMode::HistoryTraversal;
         }
 
-        match (self.line_buffer.is_empty(), self.history.get_navigation()) {
-            (true, HistoryNavigationQuery::Normal) => {}
-            (true, _) => {
-                self.history.set_navigation(HistoryNavigationQuery::Normal);
-            }
-            (false, HistoryNavigationQuery::PrefixSearch(_)) => {}
-            (false, _) => {
-                let buffer = self.insertion_line().to_string();
-                self.history
-                    .set_navigation(HistoryNavigationQuery::PrefixSearch(buffer));
-            }
-        }
+        self.set_history_navigation_based_on_line_buffer();
 
         self.history.back();
     }
@@ -333,6 +322,12 @@ impl Reedline {
             self.input_mode = InputMode::HistoryTraversal;
         }
 
+        self.set_history_navigation_based_on_line_buffer();
+
+        self.history.forward();
+    }
+
+    fn set_history_navigation_based_on_line_buffer(&mut self) {
         match (self.line_buffer.is_empty(), self.history.get_navigation()) {
             (true, HistoryNavigationQuery::Normal) => {}
             (true, _) => {
@@ -345,8 +340,6 @@ impl Reedline {
                     .set_navigation(HistoryNavigationQuery::PrefixSearch(buffer));
             }
         }
-
-        self.history.forward();
     }
 
     fn search_history(&mut self) {
