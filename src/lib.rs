@@ -54,6 +54,8 @@
 //! * [rustyline](https://crates.io/crates/rustyline)
 mod clip_buffer;
 
+mod text_manipulation;
+
 mod enums;
 pub use enums::{EditCommand, EditMode, Signal};
 

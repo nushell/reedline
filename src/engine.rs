@@ -1,3 +1,5 @@
+use crate::text_manipulation;
+
 use {
     crate::{
         clip_buffer::{get_default_clipboard, Clipboard},
@@ -15,7 +17,6 @@ use {
         terminal, Result,
     },
     std::{collections::HashMap, io::stdout, time::Duration},
-    unicode_segmentation::UnicodeSegmentation,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -235,17 +236,13 @@ impl Reedline {
                 EditCommand::Backspace => {
                     let navigation = self.history.get_navigation();
 
-                    if let HistoryNavigationQuery::SubstringSearch(mut substring) = navigation {
-                        let grapheme_left_index = substring[..substring.len()]
-                            .grapheme_indices(true)
-                            .last()
-                            .map(|(i, _)| i)
-                            .unwrap_or(0);
-
-                        substring.replace_range(grapheme_left_index..substring.len(), "");
+                    if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
+                        let new_substring = text_manipulation::remove_last_grapheme(&substring);
 
                         self.history
-                            .set_navigation(HistoryNavigationQuery::SubstringSearch(substring));
+                            .set_navigation(HistoryNavigationQuery::SubstringSearch(
+                                new_substring.to_string(),
+                            ));
                     }
                 }
                 _ => {
