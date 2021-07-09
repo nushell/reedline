@@ -1,9 +1,10 @@
+use crate::text_manipulation;
+
 use {
     crate::{
         clip_buffer::{get_default_clipboard, Clipboard},
         default_emacs_keybindings,
-        history::History,
-        history_search::{BasicSearch, BasicSearchCommand},
+        history::{FileBackedHistory, History, HistoryNavigationQuery},
         keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
         line_buffer::{InsertionPoint, LineBuffer},
         painter::Painter,
@@ -17,6 +18,13 @@ use {
     },
     std::{collections::HashMap, io::stdout, time::Duration},
 };
+
+#[derive(Debug, PartialEq, Eq)]
+enum InputMode {
+    Regular,
+    HistorySearch,
+    HistoryTraversal,
+}
 
 /// Line editor engine
 ///
@@ -43,8 +51,8 @@ pub struct Reedline {
     cut_buffer: Box<dyn Clipboard>,
 
     // History
-    history: History,
-    history_search: Option<BasicSearch>, // This could be have more features in the future (fzf, configurable?)
+    history: Box<dyn History>,
+    input_mode: InputMode,
 
     // Stdout
     painter: Painter,
@@ -74,7 +82,7 @@ impl Default for Reedline {
 impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     pub fn new() -> Reedline {
-        let history = History::default();
+        let history = Box::new(FileBackedHistory::default());
         let cut_buffer = Box::new(get_default_clipboard());
         let buffer_highlighter = Box::new(DefaultHighlighter::default());
         let painter = Painter::new(stdout(), buffer_highlighter);
@@ -87,7 +95,7 @@ impl Reedline {
             line_buffer: LineBuffer::new(),
             cut_buffer,
             history,
-            history_search: None,
+            input_mode: InputMode::Regular,
             painter,
             keybindings: keybindings_hashmap,
             edit_mode: EditMode::Emacs,
@@ -102,13 +110,7 @@ impl Reedline {
         self
     }
 
-    pub fn with_history(
-        mut self,
-        history_file: &str,
-        history_size: usize,
-    ) -> std::io::Result<Reedline> {
-        let history = History::with_file(history_size, history_file.into())?;
-
+    pub fn with_history(mut self, history: Box<dyn History>) -> std::io::Result<Reedline> {
         self.history = history;
 
         Ok(self)
@@ -218,31 +220,34 @@ impl Reedline {
         for command in commands {
             match command {
                 EditCommand::InsertChar(c) => {
-                    let search = self
-                        .history_search
-                        .as_mut()
-                        .expect("couldn't get history_search as mutable"); // We checked it is some
-                    search.step(BasicSearchCommand::InsertChar(*c), &self.history);
+                    let navigation = self.history.get_navigation();
+                    if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
+                        let new_string = format!("{}{}", substring, c);
+                        self.history
+                            .set_navigation(HistoryNavigationQuery::SubstringSearch(new_string));
+                    } else {
+                        self.history
+                            .set_navigation(HistoryNavigationQuery::SubstringSearch(format!(
+                                "{}",
+                                c
+                            )))
+                    }
                 }
                 EditCommand::Backspace => {
-                    let search = self
-                        .history_search
-                        .as_mut()
-                        .expect("couldn't get history_search as mutable"); // We checked it is some
-                    search.step(BasicSearchCommand::Backspace, &self.history);
+                    let navigation = self.history.get_navigation();
+
+                    if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
+                        let new_substring = text_manipulation::remove_last_grapheme(&substring);
+
+                        self.history
+                            .set_navigation(HistoryNavigationQuery::SubstringSearch(
+                                new_substring.to_string(),
+                            ));
+                    }
                 }
-                EditCommand::SearchHistory => {
-                    let search = self
-                        .history_search
-                        .as_mut()
-                        .expect("couldn't get history_search as mutable"); // We checked it is some
-                    search.step(BasicSearchCommand::Next, &self.history);
+                _ => {
+                    self.input_mode = InputMode::Regular;
                 }
-                EditCommand::MoveRight => {
-                    // Ignore move right, it is currently emited with InsertChar
-                }
-                // Leave history search otherwise
-                _ => self.history_search = None,
             }
         }
     }
@@ -300,33 +305,44 @@ impl Reedline {
     }
 
     fn previous_history(&mut self) {
-        if self.history.history_prefix.is_none() {
-            let buffer = self.line_buffer.get_buffer();
-            self.history.history_prefix = Some(buffer.to_owned());
+        if self.input_mode != InputMode::HistoryTraversal {
+            self.input_mode = InputMode::HistoryTraversal;
         }
 
-        if let Some(history_entry) = self.history.go_back_with_prefix() {
-            let new_buffer = history_entry.to_string();
-            self.set_buffer(new_buffer);
-            self.move_to_end();
-        }
+        self.set_history_navigation_based_on_line_buffer();
+
+        self.history.back();
     }
 
     fn next_history(&mut self) {
-        if self.history.history_prefix.is_none() {
-            let buffer = self.line_buffer.get_buffer();
-            self.history.history_prefix = Some(buffer.to_owned());
+        if self.input_mode != InputMode::HistoryTraversal {
+            self.input_mode = InputMode::HistoryTraversal;
         }
 
-        if let Some(history_entry) = self.history.go_forward_with_prefix() {
-            let new_buffer = history_entry.to_string();
-            self.set_buffer(new_buffer);
-            self.move_to_end();
+        self.set_history_navigation_based_on_line_buffer();
+
+        self.history.forward();
+    }
+
+    fn set_history_navigation_based_on_line_buffer(&mut self) {
+        match (self.line_buffer.is_empty(), self.history.get_navigation()) {
+            (true, HistoryNavigationQuery::Normal) => {}
+            (true, _) => {
+                self.history.set_navigation(HistoryNavigationQuery::Normal);
+            }
+            (false, HistoryNavigationQuery::PrefixSearch(_)) => {}
+            (false, _) => {
+                let buffer = self.insertion_line().to_string();
+                self.history
+                    .set_navigation(HistoryNavigationQuery::PrefixSearch(buffer));
+            }
         }
     }
 
     fn search_history(&mut self) {
-        self.history_search = Some(BasicSearch::new(self.insertion_line().to_string()));
+        self.input_mode = InputMode::HistorySearch;
+        self.history
+            .set_navigation(HistoryNavigationQuery::SubstringSearch("".to_string()));
     }
 
     fn cut_from_start(&mut self) {
@@ -409,7 +425,7 @@ impl Reedline {
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
     fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         // Handle command for history inputs
-        if self.history_search.is_some() {
+        if self.input_mode == InputMode::HistorySearch {
             self.run_history_commands(commands);
             return;
         }
@@ -502,20 +518,6 @@ impl Reedline {
                     self.enter_vi_normal_mode();
                 }
                 _ => {}
-            }
-
-            // Clean-up after commands run
-            for command in &commands {
-                match command {
-                    EditCommand::PreviousHistory => {}
-                    EditCommand::NextHistory => {}
-                    _ => {
-                        // Clean up the old prefix used for history search
-                        if self.history.history_prefix.is_some() {
-                            self.history.history_prefix = None;
-                        }
-                    }
-                }
             }
         }
     }
@@ -660,35 +662,42 @@ impl Reedline {
     /// Overwrites the prompt indicator and highlights the search string
     /// separately from the result bufer.
     fn history_search_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
-        // Assuming we are currently searching
-        let search = self
-            .history_search
-            .as_ref()
-            .expect("couldn't get history_search reference");
+        let navigation = self.history.get_navigation();
 
-        let status = if search.result.is_none() && !search.search_string.is_empty() {
-            PromptHistorySearchStatus::Failing
-        } else {
-            PromptHistorySearchStatus::Passing
-        };
+        if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
+            let status = if !substring.is_empty() && self.history.string_at_cursor().is_none() {
+                PromptHistorySearchStatus::Failing
+            } else {
+                PromptHistorySearchStatus::Passing
+            };
 
-        let prompt_history_search = PromptHistorySearch::new(status, search.search_string.clone());
+            let prompt_history_search = PromptHistorySearch::new(status, substring.clone());
 
-        // print search prompt
-        self.painter
-            .queue_history_search_indicator(prompt, prompt_history_search)?;
+            self.painter
+                .queue_history_search_indicator(prompt, prompt_history_search)?;
 
-        match search.result {
-            Some((history_index, offset)) => {
-                let history_result = self.history.get_nth_newest(history_index).unwrap();
+            match self.history.string_at_cursor() {
+                Some(string) => {
+                    self.painter.queue_history_results(&string, string.len())?;
+                    self.painter.flush()?;
+                }
 
-                self.painter.queue_history_results(history_result, offset)?;
-                self.painter.flush()?;
+                None => {
+                    self.painter.clear_until_newline()?;
+                }
             }
+        }
 
-            None => {
-                self.painter.clear_until_newline()?;
-            }
+        Ok(())
+    }
+
+    fn history_traversal_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
+        let cursor_position_in_buffer = self.insertion_point().offset;
+
+        if let Some(buffer_to_paint) = self.history.string_at_cursor() {
+            self.painter
+                .queue_buffer(buffer_to_paint, prompt_offset, cursor_position_in_buffer)?;
+            self.painter.flush()?;
         }
 
         Ok(())
@@ -720,7 +729,7 @@ impl Reedline {
         let mut prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
 
         // Redraw if Ctrl-L was used
-        if self.history_search.is_some() {
+        if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)?;
         }
 
@@ -782,20 +791,8 @@ impl Reedline {
                                 }
                             }
                             (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
-                                match self.history_search.clone() {
-                                    Some(search) => {
-                                        self.queue_prompt_indicator(prompt)?;
-                                        if let Some((history_index, _)) = search.result {
-                                            self.line_buffer.set_buffer(
-                                                self.history
-                                                    .get_nth_newest(history_index)
-                                                    .unwrap()
-                                                    .clone(),
-                                            );
-                                        }
-                                        self.history_search = None;
-                                    }
-                                    None => {
+                                match self.input_mode {
+                                    InputMode::Regular => {
                                         let buffer = self.insertion_line().to_string();
 
                                         self.run_edit_commands(&[
@@ -805,6 +802,15 @@ impl Reedline {
                                         self.print_crlf()?;
 
                                         return Ok(Signal::Success(buffer));
+                                    }
+                                    InputMode::HistorySearch | InputMode::HistoryTraversal => {
+                                        self.queue_prompt_indicator(prompt)?;
+
+                                        if let Some(string) = self.history.string_at_cursor() {
+                                            self.set_buffer(string)
+                                        }
+
+                                        self.input_mode = InputMode::Regular;
                                     }
                                 }
                             }
@@ -827,8 +833,10 @@ impl Reedline {
                         continue;
                     }
                 }
-                if self.history_search.is_some() {
+                if self.input_mode == InputMode::HistorySearch {
                     self.history_search_paint(prompt)?;
+                } else if self.input_mode == InputMode::HistoryTraversal {
+                    self.history_traversal_paint(prompt_offset)?;
                 } else if self.need_full_repaint {
                     prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
                     self.need_full_repaint = false;

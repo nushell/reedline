@@ -1,3 +1,5 @@
+use reedline::FileBackedHistory;
+
 use {
     crossterm::{event::KeyCode, event::KeyModifiers, Result},
     reedline::{
@@ -15,8 +17,10 @@ fn main() -> Result<()> {
         vec![EditCommand::BackspaceWord],
     );
 
+    let history = FileBackedHistory::with_file(5, "history.txt".into())?;
+
     let mut line_editor = Reedline::new()
-        .with_history("history.txt", 5)?
+        .with_history(Box::new(history))?
         .with_edit_mode(if vi_mode {
             reedline::EditMode::ViNormal
         } else {
