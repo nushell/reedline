@@ -212,15 +212,6 @@ impl Reedline {
         self.painter.paint_crlf()
     }
 
-    /// **For debugging purposes only:** Track the terminal events observed by [`Reedline`] and print them.
-    pub fn print_events(&mut self) -> Result<()> {
-        terminal::enable_raw_mode()?;
-        let result = self.print_events_helper();
-        terminal::disable_raw_mode()?;
-
-        result
-    }
-
     /// Dispatches the applicable [`EditCommand`] actions for editing the history search string.
     ///
     /// Only modifies internal state, does not perform regular output!
@@ -580,34 +571,6 @@ impl Reedline {
         display_width >= terminal_width as usize
     }
 
-    // this fn is totally ripped off from crossterm's examples
-    // it's really a diagnostic routine to see if crossterm is
-    // even seeing the events. if you press a key and no events
-    // are printed, it's a good chance your terminal is eating
-    // those events.
-    fn print_events_helper(&mut self) -> Result<()> {
-        loop {
-            // Wait up to 5s for another event
-            if poll(Duration::from_millis(5_000))? {
-                // It's guaranteed that read() wont block if `poll` returns `Ok(true)`
-                let event = read()?;
-
-                // just reuse the print_message fn to show events
-                self.print_line(&format!("Event::{:?}", event))?;
-
-                // hit the esc key to git out
-                if event == Event::Key(KeyCode::Esc.into()) {
-                    break;
-                }
-            } else {
-                // Timeout expired, no event for 5s
-                self.print_line("Waiting for you to type...")?;
-            }
-        }
-
-        Ok(())
-    }
-
     /// Clear the screen by printing enough whitespace to start the prompt or
     /// other output back at the first line of the terminal.
     pub fn clear_screen(&mut self) -> Result<()> {
@@ -679,7 +642,7 @@ impl Reedline {
                 PromptHistorySearchStatus::Passing
             };
 
-            let prompt_history_search = PromptHistorySearch::new(status, substring.clone());
+            let prompt_history_search = PromptHistorySearch::new(status, substring);
 
             self.painter
                 .queue_history_search_indicator(prompt, prompt_history_search)?;
@@ -714,8 +677,6 @@ impl Reedline {
     /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        terminal::enable_raw_mode()?;
-
         let mut terminal_size = terminal::size()?;
 
         let mut prompt_origin = {
@@ -839,9 +800,7 @@ impl Reedline {
                             }
                         }
                     }
-                    Event::Mouse(event) => {
-                        self.print_line(&format!("{:?}", event))?;
-                    }
+                    Event::Mouse(_) => {}
                     Event::Resize(width, height) => {
                         terminal_size = (width, height);
                         // TODO properly adjusting prompt_origin on resizing while lines > 1
