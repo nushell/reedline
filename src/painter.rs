@@ -34,7 +34,7 @@ impl Painter {
         Ok(())
     }
 
-    pub fn set_highlighter(&mut self, buffer_highlighter: Box<dyn Highlighter>) -> () {
+    pub fn set_highlighter(&mut self, buffer_highlighter: Box<dyn Highlighter>) {
         self.buffer_highlighter = buffer_highlighter;
     }
 
