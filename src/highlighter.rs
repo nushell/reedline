@@ -20,17 +20,18 @@ pub struct DefaultHighlighter {
 impl Highlighter for DefaultHighlighter {
     fn highlight(&self, line: &str) -> StyledText {
         let mut styled_text = StyledText::new();
+        let lowercase_line = line.to_lowercase();
 
         if self
             .external_commands
             .clone()
             .iter()
-            .any(|x| line.contains(x))
+            .any(|x| lowercase_line.contains(x))
         {
             let matches: Vec<String> = self
                 .external_commands
                 .iter()
-                .filter(|c| line.contains(*c))
+                .filter(|c| lowercase_line.contains(*c))
                 .map(|c| c.to_string())
                 .collect();
             let longest_match = matches.iter().fold("".to_string(), |acc, item| {
@@ -40,16 +41,22 @@ impl Highlighter for DefaultHighlighter {
                     acc
                 }
             });
-            let buffer_split: Vec<&str> = line.splitn(2, &longest_match).collect();
+            let lowercase_buffer_split: Vec<&str> =
+                lowercase_line.splitn(2, &longest_match).collect();
+            let before_longest_match = line[..lowercase_buffer_split[0].len()].to_string();
+            let after_longest_match =
+                line[(lowercase_buffer_split[0].len() + longest_match.len())..].to_string();
 
+            styled_text.push((Style::new().fg(self.neutral_color), before_longest_match));
             styled_text.push((
-                Style::new().fg(self.neutral_color),
-                buffer_split[0].to_string(),
+                Style::new().fg(self.match_color),
+                line[lowercase_buffer_split[0].len()
+                    ..(lowercase_buffer_split[0].len() + longest_match.len())]
+                    .to_string(),
             ));
-            styled_text.push((Style::new().fg(self.match_color), longest_match));
             styled_text.push((
                 Style::new().bold().fg(self.neutral_color),
-                buffer_split[1].to_string(),
+                after_longest_match,
             ));
         } else if !self.external_commands.is_empty() {
             styled_text.push((Style::new().fg(self.notmatch_color), line.to_string()));
