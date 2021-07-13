@@ -693,7 +693,11 @@ impl Reedline {
 
     fn history_traversal_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
         if let Some(buffer_to_paint) = self.history.string_at_cursor() {
-            let cursor_position_in_buffer = buffer_to_paint.len();
+            let cursor_position_in_buffer = match self.history.get_navigation() {
+                HistoryNavigationQuery::Normal => buffer_to_paint.len(),
+                HistoryNavigationQuery::PrefixSearch(_) => self.insertion_point().offset,
+                HistoryNavigationQuery::SubstringSearch(_) => panic!("Invalid state"),
+            };
 
             self.painter
                 .queue_buffer(buffer_to_paint, prompt_offset, cursor_position_in_buffer)?;
