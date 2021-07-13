@@ -3,6 +3,7 @@ use crate::text_manipulation;
 use {
     crate::{
         clip_buffer::{get_default_clipboard, Clipboard},
+        completer::{DefaultTabHandler, TabHandler},
         default_emacs_keybindings,
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
@@ -71,6 +72,8 @@ pub struct Reedline {
 
     // Vi normal mode state engine
     vi_engine: ViEngine,
+
+    tab_handler: Box<dyn TabHandler>,
 }
 
 impl Default for Reedline {
@@ -102,7 +105,12 @@ impl Reedline {
             need_full_repaint: false,
             partial_command: None,
             vi_engine: ViEngine::new(),
+            tab_handler: Box::new(DefaultTabHandler::default()),
         }
+    }
+    pub fn with_tab_handler(mut self, tab_handler: Box<dyn TabHandler>) -> Reedline {
+        self.tab_handler = tab_handler;
+        self
     }
 
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Reedline {
@@ -738,7 +746,11 @@ impl Reedline {
                 match read()? {
                     Event::Key(KeyEvent { code, modifiers }) => {
                         match (modifiers, code, self.edit_mode) {
+                            (KeyModifiers::NONE, KeyCode::Tab, _) => {
+                                self.tab_handler.handle(&mut self.line_buffer);
+                            }
                             (KeyModifiers::CONTROL, KeyCode::Char('d'), _) => {
+                                self.tab_handler.reset_index();
                                 if self.line_buffer.is_empty() {
                                     return Ok(Signal::CtrlD);
                                 } else if let Some(binding) = self.find_keybinding(modifiers, code)
@@ -747,24 +759,28 @@ impl Reedline {
                                 }
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('c'), _) => {
+                                self.tab_handler.reset_index();
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
                                     self.run_edit_commands(&binding);
                                 }
                                 return Ok(Signal::CtrlC);
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('l'), EditMode::Emacs) => {
+                                self.tab_handler.reset_index();
                                 return Ok(Signal::CtrlL);
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
                                 if x == EditMode::ViNormal =>
                             {
+                                self.tab_handler.reset_index();
                                 self.run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
                                 if x != EditMode::ViNormal =>
                             {
+                                self.tab_handler.reset_index();
                                 let line_start = if self.insertion_point().line == 0 {
                                     prompt_offset.0
                                 } else {
@@ -800,6 +816,7 @@ impl Reedline {
                                             EditCommand::Clear,
                                         ]);
                                         self.print_crlf()?;
+                                        self.tab_handler.reset_index();
 
                                         return Ok(Signal::Success(buffer));
                                     }
@@ -814,8 +831,8 @@ impl Reedline {
                                     }
                                 }
                             }
-
                             _ => {
+                                self.tab_handler.reset_index();
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
                                     self.run_edit_commands(&binding);
                                 }
@@ -832,6 +849,9 @@ impl Reedline {
                         prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
                         continue;
                     }
+                }
+                if self.insertion_line().to_string().is_empty() {
+                    self.tab_handler.reset_index();
                 }
                 if self.input_mode == InputMode::HistorySearch {
                     self.history_search_paint(prompt)?;
