@@ -330,7 +330,13 @@ impl Reedline {
             (true, _) => {
                 self.history.set_navigation(HistoryNavigationQuery::Normal);
             }
-            (false, HistoryNavigationQuery::PrefixSearch(_)) => {}
+            (false, HistoryNavigationQuery::PrefixSearch(prefix)) => {
+                let buffer = self.insertion_line().to_string();
+                if prefix != buffer {
+                    self.history
+                        .set_navigation(HistoryNavigationQuery::PrefixSearch(buffer));
+                }
+            }
             (false, _) => {
                 let buffer = self.insertion_line().to_string();
                 self.history
