@@ -436,6 +436,23 @@ impl Reedline {
             return;
         }
 
+        if self.input_mode == InputMode::HistoryTraversal {
+            for command in commands {
+                match command {
+                    EditCommand::PreviousHistory => {}
+                    EditCommand::NextHistory => {}
+                    _ => {
+                        if self.history.get_navigation() == HistoryNavigationQuery::Normal {
+                            if let Some(string) = self.history.string_at_cursor() {
+                                self.set_buffer(string)
+                            }
+                        }
+                        self.input_mode = InputMode::Regular;
+                    }
+                }
+            }
+        }
+
         // Vim mode transformations
         let commands = match self.edit_mode {
             EditMode::ViNormal => self.vi_engine.handle(commands),
