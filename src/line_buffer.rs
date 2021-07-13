@@ -1,4 +1,4 @@
-use unicode_segmentation::UnicodeSegmentation;
+use {std::ops::Range, unicode_segmentation::UnicodeSegmentation};
 
 /// Cursor coordinates relative to the Unicode representation of [`LineBuffer`]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -38,6 +38,11 @@ impl LineBuffer {
             lines: vec![String::new()],
             insertion_point: InsertionPoint::new(),
         }
+    }
+
+    /// Replaces the content between [`start`..`end`] with `text`
+    pub fn replace(&mut self, range: Range<usize>, line_num: usize, text: &str) {
+        self.lines[line_num].replace_range(range, text);
     }
 
     pub fn is_empty(&self) -> bool {

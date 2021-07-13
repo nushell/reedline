@@ -3,7 +3,8 @@ use reedline::FileBackedHistory;
 use {
     crossterm::{event::KeyCode, event::KeyModifiers, Result},
     reedline::{
-        default_emacs_keybindings, DefaultHighlighter, DefaultPrompt, EditCommand, Reedline, Signal,
+        default_emacs_keybindings, DefaultCompleter, DefaultHighlighter, DefaultPrompt,
+        DefaultTabHandler, EditCommand, Reedline, Signal,
     },
 };
 
@@ -18,6 +19,12 @@ fn main() -> Result<()> {
     );
 
     let history = FileBackedHistory::with_file(5, "history.txt".into())?;
+    let commands = vec![
+        "test".into(),
+        "hello world".into(),
+        "hello world reedline".into(),
+        "this is reedline crate".into(),
+    ];
 
     let mut line_editor = Reedline::new()
         .with_history(Box::new(history))?
@@ -27,7 +34,10 @@ fn main() -> Result<()> {
             reedline::EditMode::Emacs
         })
         .with_keybindings(keybindings)
-        .with_highlighter(Box::new(DefaultHighlighter::new(vec!["test".into()])));
+        .with_highlighter(Box::new(DefaultHighlighter::new(commands.clone())))
+        .with_tab_handler(Box::new(DefaultTabHandler::default().with_completer(
+            Box::new(DefaultCompleter::new_with_wordlen(commands, 2)),
+        )));
 
     let prompt = DefaultPrompt::new(1);
 
