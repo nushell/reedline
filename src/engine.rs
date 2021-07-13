@@ -692,9 +692,9 @@ impl Reedline {
     }
 
     fn history_traversal_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
-        let cursor_position_in_buffer = self.insertion_point().offset;
-
         if let Some(buffer_to_paint) = self.history.string_at_cursor() {
+            let cursor_position_in_buffer = buffer_to_paint.len();
+
             self.painter
                 .queue_buffer(buffer_to_paint, prompt_offset, cursor_position_in_buffer)?;
             self.painter.flush()?;
