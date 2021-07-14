@@ -31,6 +31,7 @@ impl Span {
 pub trait TabHandler {
     fn handle(&mut self, line: &mut LineBuffer);
     fn reset_index(&mut self);
+    fn get_completer(&self) -> &Box<dyn Completer>;
 }
 
 pub struct DefaultTabHandler {
@@ -55,6 +56,9 @@ impl Default for DefaultTabHandler {
     }
 }
 impl TabHandler for DefaultTabHandler {
+    fn get_completer(&self) -> &Box<dyn Completer> {
+        &self.completer
+    }
     // With this function we handle the tab events.
     //
     // If completions vector is not empty we proceed to replace

@@ -598,8 +598,12 @@ impl Reedline {
         let cursor_position_in_buffer = self.insertion_point().offset;
         let buffer_to_paint = self.insertion_line().to_string();
 
-        self.painter
-            .queue_buffer(buffer_to_paint, prompt_offset, cursor_position_in_buffer)?;
+        self.painter.queue_buffer(
+            buffer_to_paint,
+            prompt_offset,
+            cursor_position_in_buffer,
+            self.tab_handler.get_completer(),
+        )?;
         self.painter.flush()?;
 
         Ok(())
@@ -623,9 +627,8 @@ impl Reedline {
             cursor_position_in_buffer,
             buffer_to_paint,
             terminal_size,
+            self.tab_handler.get_completer(),
         )
-
-        // Ok(prompt_offset)
     }
 
     /// Repaint logic for the history reverse search
@@ -666,8 +669,12 @@ impl Reedline {
         let cursor_position_in_buffer = self.insertion_point().offset;
 
         if let Some(buffer_to_paint) = self.history.string_at_cursor() {
-            self.painter
-                .queue_buffer(buffer_to_paint, prompt_offset, cursor_position_in_buffer)?;
+            self.painter.queue_buffer(
+                buffer_to_paint,
+                prompt_offset,
+                cursor_position_in_buffer,
+                self.tab_handler.get_completer(),
+            )?;
             self.painter.flush()?;
         }
 
@@ -768,6 +775,9 @@ impl Reedline {
                                 }
                             }
                             (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
+                                if self.painter.disable_events {
+                                    continue;
+                                }
                                 match self.input_mode {
                                     InputMode::Regular => {
                                         let buffer = self.insertion_line().to_string();
@@ -824,6 +834,10 @@ impl Reedline {
                 }
             } else {
                 prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
+                if self.painter.need_full_repaint {
+                    prompt_offset = self.full_repaint(prompt, position()?, terminal_size)?;
+                    prompt_origin = prompt_offset;
+                }
             }
         }
     }

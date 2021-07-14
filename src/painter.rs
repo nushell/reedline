@@ -1,12 +1,12 @@
 use {
     crate::{
         prompt::{PromptEditMode, PromptHistorySearch},
-        Highlighter, Prompt,
+        Completer, Highlighter, Prompt,
     },
     crossterm::{
-        cursor::{self, position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
+        cursor::{self, position, MoveTo, MoveToColumn, MoveToRow, RestorePosition, SavePosition},
         style::{Color, Print, ResetColor, SetForegroundColor},
-        terminal::{self, Clear, ClearType},
+        terminal::{self, size, Clear, ClearType},
         QueueableCommand, Result,
     },
     std::io::{Stdout, Write},
@@ -16,6 +16,11 @@ pub struct Painter {
     // Stdout
     stdout: Stdout,
 
+    // To avoid use not wanted events
+    pub disable_events: bool,
+
+    pub need_full_repaint: bool,
+
     // Buffer Highlighter
     buffer_highlighter: Box<dyn Highlighter>,
 }
@@ -24,6 +29,8 @@ impl Painter {
     pub fn new(stdout: Stdout, buffer_highlighter: Box<dyn Highlighter>) -> Self {
         Painter {
             stdout,
+            disable_events: false,
+            need_full_repaint: false,
             buffer_highlighter,
         }
     }
@@ -79,6 +86,39 @@ impl Painter {
         Ok(())
     }
 
+    pub fn create_space(&mut self, rows: u16, lines: Vec<String>) -> Result<()> {
+        let space_from_bottom = 1;
+        // let new_position = rows - lines.len() as u16 - space_from_bottom;
+
+        // self.disable_events = true;
+        // for _ in 0..(position()?.1 - new_position) {
+        //     self.stdout.queue(Print("\n"))?;
+        // }
+        self.stdout
+            .queue(MoveToRow(rows - lines.len() as u16 - space_from_bottom))?
+            .queue(MoveToColumn(0))?
+            .queue(Clear(ClearType::FromCursorDown))?
+            .flush()?;
+        // self.disable_events = false;
+
+        Ok(())
+    }
+
+    pub fn queue_under_buffer(&mut self, lines: Vec<String>) -> Result<()> {
+        self.disable_events = true;
+        self.stdout.queue(SavePosition)?;
+        for l in &lines {
+            self.stdout
+                .queue(Print("\n"))?
+                .queue(MoveToColumn(0))?
+                .queue(Print(l))?;
+        }
+        self.stdout.queue(RestorePosition)?.flush()?;
+        self.disable_events = false;
+
+        Ok(())
+    }
+
     /// Repaint logic for the normal input prompt buffer
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
@@ -87,7 +127,14 @@ impl Painter {
         original_line: String,
         prompt_offset: (u16, u16),
         cursor_position_in_buffer: usize,
+        completer: &Box<dyn Completer>,
     ) -> Result<()> {
+        let lines: Vec<String> = completer
+            .complete(&original_line, cursor_position_in_buffer)
+            .into_iter()
+            .map(|c| c.1)
+            .collect();
+        let (_, rows) = size()?;
         let highlighted_line = self
             .buffer_highlighter
             .highlight(&original_line)
@@ -102,6 +149,13 @@ impl Painter {
             .queue(RestorePosition)?
             .flush()?;
 
+        if rows - position()?.1 >= lines.len() as u16 {
+            self.queue_under_buffer(lines)?;
+        } else {
+            self.create_space(rows, lines)?;
+            self.need_full_repaint = true;
+        }
+
         Ok(())
     }
 
@@ -113,7 +167,19 @@ impl Painter {
         cursor_position_in_buffer: usize,
         buffer: String,
         terminal_size: (u16, u16),
+        completer: &Box<dyn Completer>,
     ) -> Result<(u16, u16)> {
+        let lines: Vec<String> = completer
+            .complete(&buffer, cursor_position_in_buffer)
+            .into_iter()
+            .map(|c| c.1)
+            .collect();
+        let (_, rows) = size()?;
+
+        if rows - position()?.1 < lines.len() as u16 {
+            self.create_space(rows, lines)?;
+        }
+
         self.stdout.queue(cursor::Hide)?;
         self.queue_move_to(prompt_origin.0, prompt_origin.1)?;
         self.queue_prompt(prompt, prompt_mode, terminal_size)?;
@@ -121,7 +187,8 @@ impl Painter {
         self.flush()?;
         // set where the input begins
         let prompt_offset = position()?;
-        self.queue_buffer(buffer, prompt_offset, cursor_position_in_buffer)?;
+        self.queue_buffer(buffer, prompt_offset, cursor_position_in_buffer, completer)?;
+
         self.stdout.queue(cursor::Show)?;
         self.flush()?;
 
@@ -159,6 +226,7 @@ impl Painter {
     /// Writes `line` to the terminal with a following carriage return and newline
     pub fn paint_line(&mut self, line: &str) -> Result<()> {
         self.stdout
+            .queue(Clear(ClearType::FromCursorDown))?
             .queue(Print(line))?
             .queue(Print("\n"))?
             .queue(MoveToColumn(1))?;
