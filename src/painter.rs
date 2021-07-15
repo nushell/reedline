@@ -1,5 +1,6 @@
 use {
     crate::{
+        hinter::Hinter,
         prompt::{PromptEditMode, PromptHistorySearch},
         Highlighter, Prompt,
     },
@@ -18,13 +19,20 @@ pub struct Painter {
 
     // Buffer Highlighter
     buffer_highlighter: Box<dyn Highlighter>,
+
+    hinter: Box<dyn Hinter>,
 }
 
 impl Painter {
-    pub fn new(stdout: Stdout, buffer_highlighter: Box<dyn Highlighter>) -> Self {
+    pub fn new(
+        stdout: Stdout,
+        buffer_highlighter: Box<dyn Highlighter>,
+        hinter: Box<dyn Hinter>,
+    ) -> Self {
         Painter {
             stdout,
             buffer_highlighter,
+            hinter,
         }
     }
 
@@ -36,6 +44,10 @@ impl Painter {
 
     pub fn set_highlighter(&mut self, buffer_highlighter: Box<dyn Highlighter>) {
         self.buffer_highlighter = buffer_highlighter;
+    }
+
+    pub fn set_hinter(&mut self, hinter: Box<dyn Hinter>) {
+        self.hinter = hinter;
     }
 
     /// Queue the complete prompt to display including status indicators (e.g. pwd, time)
@@ -97,6 +109,10 @@ impl Painter {
             .queue(MoveTo(prompt_offset.0, prompt_offset.1))?
             .queue(Print(highlighted_line.0))?
             .queue(SavePosition)?
+            .queue(Print(
+                self.hinter
+                    .handle(&original_line, cursor_position_in_buffer),
+            ))?
             .queue(Print(highlighted_line.1))?
             .queue(Clear(ClearType::FromCursorDown))?
             .queue(RestorePosition)?
