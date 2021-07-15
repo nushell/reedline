@@ -1,5 +1,5 @@
 use {
-    crate::{Completer, History},
+    crate::{Completer, DefaultCompleter, History},
     nu_ansi_term::{Color, Style},
 };
 
@@ -15,24 +15,24 @@ pub struct DefaultHinter {
 
 impl Hinter for DefaultHinter {
     fn handle(&mut self, line: &str, pos: usize) -> String {
+        let mut completions = vec![];
+        let mut output = String::new();
+
         if let Some(c) = &self.completer {
-            let completions = c.complete(line, pos);
-
-            if !completions.is_empty() {
-                let mut hint = completions[0].1.clone();
-                let span = completions[0].0;
-                hint.replace_range(0..(span.end - span.start), "");
-
-                self.style.paint(hint).to_string()
-            } else {
-                String::new()
-            }
-        } else if let Some(_) = &self.history {
-            // TODO implement this case
-            String::new()
-        } else {
-            String::new()
+            completions = c.complete(line, pos);
+        } else if let Some(h) = &self.history {
+            let history: Vec<String> = h.iter_chronologic().cloned().collect();
+            completions = DefaultCompleter::new(history).complete(line, pos);
         }
+
+        if !completions.is_empty() {
+            let mut hint = completions[0].1.clone();
+            let span = completions[0].0;
+            hint.replace_range(0..(span.end - span.start), "");
+
+            output = self.style.paint(hint).to_string();
+        }
+        output
     }
 }
 

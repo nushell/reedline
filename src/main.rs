@@ -33,7 +33,7 @@ fn main() -> Result<()> {
         vec![EditCommand::BackspaceWord],
     );
 
-    let history = FileBackedHistory::with_file(5, "history.txt".into())?;
+    let history = Box::new(FileBackedHistory::with_file(5, "history.txt".into())?);
     let commands = vec![
         "test".into(),
         "hello world".into(),
@@ -44,7 +44,7 @@ fn main() -> Result<()> {
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
     let mut line_editor = Reedline::new()
-        .with_history(Box::new(history))?
+        .with_history(history.clone())?
         .with_edit_mode(if vi_mode {
             reedline::EditMode::ViNormal
         } else {
@@ -58,6 +58,7 @@ fn main() -> Result<()> {
         .with_hinter(Box::new(
             DefaultHinter::default()
                 .with_completer(completer)
+                // .with_history(history)
                 .with_style(Style::new().italic().fg(Color::LightGray)),
         ));
 
