@@ -57,9 +57,8 @@ fn main() -> Result<()> {
         ))
         .with_hinter(Box::new(
             DefaultHinter::default()
-                .with_completer(completer)
+                .with_completer(completer) // or .with_history(history)
                 // .with_inside_line()
-                // .with_history(history)
                 .with_style(Style::new().italic().fg(Color::LightGray)),
         ));
 
