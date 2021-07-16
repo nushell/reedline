@@ -34,9 +34,9 @@ enum InputMode {
 /// ```no_run
 /// use reedline::{Reedline, Signal, DefaultPrompt};
 /// let mut line_editor = Reedline::new();
-/// let prompt = DefaultPrompt::default();
+/// let prompt = Box::new(DefaultPrompt::default());
 ///
-/// let out = line_editor.read_line(&prompt).unwrap();
+/// let out = line_editor.read_line(prompt).unwrap();
 /// match out {
 ///    Signal::Success(content) => {
 ///        // process content
@@ -198,10 +198,10 @@ impl Reedline {
     /// Returns a [`crossterm::Result`] in which the `Err` type is [`crossterm::ErrorKind`]
     /// to distinguish I/O errors and the `Ok` variant wraps a [`Signal`] which
     /// handles user inputs.
-    pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    pub fn read_line(&mut self, prompt: Box<dyn Prompt>) -> Result<Signal> {
         terminal::enable_raw_mode()?;
 
-        let result = self.read_line_helper(prompt);
+        let result = self.read_line_helper(prompt.as_ref());
 
         terminal::disable_raw_mode()?;
 

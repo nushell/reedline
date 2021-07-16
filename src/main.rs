@@ -62,10 +62,8 @@ fn main() -> Result<()> {
                 .with_style(Style::new().italic().fg(Color::LightGray)),
         ));
 
-    let prompt = DefaultPrompt::new(1);
-
     loop {
-        let sig = line_editor.read_line(&prompt)?;
+        let sig = line_editor.read_line(Box::new(DefaultPrompt::new(1)))?;
 
         match sig {
             Signal::CtrlD => {
