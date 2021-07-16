@@ -2,7 +2,7 @@ use {
     crate::{
         hinter::Hinter,
         prompt::{PromptEditMode, PromptHistorySearch},
-        Highlighter, Prompt,
+        Highlighter, History, Prompt,
     },
     crossterm::{
         cursor::{self, position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
@@ -99,6 +99,7 @@ impl Painter {
         original_line: String,
         prompt_offset: (u16, u16),
         cursor_position_in_buffer: usize,
+        history: &Box<dyn History>,
     ) -> Result<()> {
         let highlighted_line = self
             .buffer_highlighter
@@ -109,10 +110,11 @@ impl Painter {
             .queue(MoveTo(prompt_offset.0, prompt_offset.1))?
             .queue(Print(highlighted_line.0))?
             .queue(SavePosition)?
-            .queue(Print(
-                self.hinter
-                    .handle(&original_line, cursor_position_in_buffer),
-            ))?
+            .queue(Print(self.hinter.handle(
+                &original_line,
+                cursor_position_in_buffer,
+                history,
+            )))?
             .queue(Print(highlighted_line.1))?
             .queue(Clear(ClearType::FromCursorDown))?
             .queue(RestorePosition)?
@@ -129,6 +131,7 @@ impl Painter {
         cursor_position_in_buffer: usize,
         buffer: String,
         terminal_size: (u16, u16),
+        history: &Box<dyn History>,
     ) -> Result<(u16, u16)> {
         self.stdout.queue(cursor::Hide)?;
         self.queue_move_to(prompt_origin.0, prompt_origin.1)?;
@@ -137,7 +140,7 @@ impl Painter {
         self.flush()?;
         // set where the input begins
         let prompt_offset = position()?;
-        self.queue_buffer(buffer, prompt_offset, cursor_position_in_buffer)?;
+        self.queue_buffer(buffer, prompt_offset, cursor_position_in_buffer, history)?;
         self.stdout.queue(cursor::Show)?;
         self.flush()?;
 

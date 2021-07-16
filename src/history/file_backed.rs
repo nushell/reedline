@@ -19,7 +19,7 @@ pub const HISTORY_SIZE: usize = 1000;
 /// Similar to bash's behavior without HISTTIMEFORMAT.
 /// (See <https://www.gnu.org/software/bash/manual/html_node/Bash-History-Facilities.html>)
 /// If the history is associated to a file all new changes within a given history capacity will be written to disk when History is dropped.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FileBackedHistory {
     capacity: usize,
     entries: VecDeque<String>,

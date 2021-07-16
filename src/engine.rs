@@ -606,8 +606,12 @@ impl Reedline {
         let cursor_position_in_buffer = self.insertion_point().offset;
         let buffer_to_paint = self.insertion_line().to_string();
 
-        self.painter
-            .queue_buffer(buffer_to_paint, prompt_offset, cursor_position_in_buffer)?;
+        self.painter.queue_buffer(
+            buffer_to_paint,
+            prompt_offset,
+            cursor_position_in_buffer,
+            &self.history,
+        )?;
         self.painter.flush()?;
 
         Ok(())
@@ -631,6 +635,7 @@ impl Reedline {
             cursor_position_in_buffer,
             buffer_to_paint,
             terminal_size,
+            &self.history,
         )
 
         // Ok(prompt_offset)
@@ -674,8 +679,12 @@ impl Reedline {
         let cursor_position_in_buffer = self.insertion_point().offset;
 
         if let Some(buffer_to_paint) = self.history.string_at_cursor() {
-            self.painter
-                .queue_buffer(buffer_to_paint, prompt_offset, cursor_position_in_buffer)?;
+            self.painter.queue_buffer(
+                buffer_to_paint,
+                prompt_offset,
+                cursor_position_in_buffer,
+                &self.history,
+            )?;
             self.painter.flush()?;
         }
 
