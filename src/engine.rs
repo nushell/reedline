@@ -610,7 +610,7 @@ impl Reedline {
             buffer_to_paint,
             prompt_offset,
             cursor_position_in_buffer,
-            &self.history,
+            self.history.as_ref(),
         )?;
         self.painter.flush()?;
 
@@ -635,7 +635,7 @@ impl Reedline {
             cursor_position_in_buffer,
             buffer_to_paint,
             terminal_size,
-            &self.history,
+            self.history.as_ref(),
         )
 
         // Ok(prompt_offset)
@@ -683,7 +683,7 @@ impl Reedline {
                 buffer_to_paint,
                 prompt_offset,
                 cursor_position_in_buffer,
-                &self.history,
+                self.history.as_ref(),
             )?;
             self.painter.flush()?;
         }

@@ -99,7 +99,7 @@ impl Painter {
         original_line: String,
         prompt_offset: (u16, u16),
         cursor_position_in_buffer: usize,
-        history: &Box<dyn History>,
+        history: &dyn History,
     ) -> Result<()> {
         let highlighted_line = self
             .buffer_highlighter
@@ -123,6 +123,7 @@ impl Painter {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn repaint_everything(
         &mut self,
         prompt: &dyn Prompt,
@@ -131,7 +132,7 @@ impl Painter {
         cursor_position_in_buffer: usize,
         buffer: String,
         terminal_size: (u16, u16),
-        history: &Box<dyn History>,
+        history: &dyn History,
     ) -> Result<(u16, u16)> {
         self.stdout.queue(cursor::Hide)?;
         self.queue_move_to(prompt_origin.0, prompt_origin.1)?;
