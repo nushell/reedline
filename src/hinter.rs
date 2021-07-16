@@ -4,7 +4,7 @@ use {
 };
 
 pub trait Hinter {
-    fn handle(&mut self, line: &str, pos: usize, history: &Box<dyn History>) -> String;
+    fn handle(&mut self, line: &str, pos: usize, history: &dyn History) -> String;
 }
 
 pub struct DefaultHinter {
@@ -15,11 +15,11 @@ pub struct DefaultHinter {
 }
 
 impl Hinter for DefaultHinter {
-    fn handle(&mut self, line: &str, pos: usize, history: &Box<dyn History>) -> String {
+    fn handle(&mut self, line: &str, pos: usize, history: &dyn History) -> String {
         let mut completions = vec![];
         let mut output = String::new();
 
-        if (pos == line.len() && !self.inside_line) || self.inside_line {
+        if pos == line.len() || self.inside_line {
             if let Some(c) = &self.completer {
                 completions = c.complete(line, pos);
             } else if self.history {
