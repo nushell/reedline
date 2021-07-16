@@ -5,6 +5,7 @@ use {
         clip_buffer::{get_default_clipboard, Clipboard},
         completer::{DefaultTabHandler, TabHandler},
         default_emacs_keybindings,
+        hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
         line_buffer::{InsertionPoint, LineBuffer},
@@ -88,7 +89,8 @@ impl Reedline {
         let history = Box::new(FileBackedHistory::default());
         let cut_buffer = Box::new(get_default_clipboard());
         let buffer_highlighter = Box::new(DefaultHighlighter::default());
-        let painter = Painter::new(stdout(), buffer_highlighter);
+        let hinter = Box::new(DefaultHinter::default());
+        let painter = Painter::new(stdout(), buffer_highlighter, hinter);
         let mut keybindings_hashmap = HashMap::new();
         keybindings_hashmap.insert(EditMode::Emacs, default_emacs_keybindings());
         keybindings_hashmap.insert(EditMode::ViInsert, default_vi_insert_keybindings());
@@ -108,6 +110,12 @@ impl Reedline {
             tab_handler: Box::new(DefaultTabHandler::default()),
         }
     }
+
+    pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Reedline {
+        self.painter.set_hinter(hinter);
+        self
+    }
+
     pub fn with_tab_handler(mut self, tab_handler: Box<dyn TabHandler>) -> Reedline {
         self.tab_handler = tab_handler;
         self
@@ -598,8 +606,12 @@ impl Reedline {
         let cursor_position_in_buffer = self.insertion_point().offset;
         let buffer_to_paint = self.insertion_line().to_string();
 
-        self.painter
-            .queue_buffer(buffer_to_paint, prompt_offset, cursor_position_in_buffer)?;
+        self.painter.queue_buffer(
+            buffer_to_paint,
+            prompt_offset,
+            cursor_position_in_buffer,
+            &self.history,
+        )?;
         self.painter.flush()?;
 
         Ok(())
@@ -623,6 +635,7 @@ impl Reedline {
             cursor_position_in_buffer,
             buffer_to_paint,
             terminal_size,
+            &self.history,
         )
 
         // Ok(prompt_offset)
@@ -666,8 +679,12 @@ impl Reedline {
         let cursor_position_in_buffer = self.insertion_point().offset;
 
         if let Some(buffer_to_paint) = self.history.string_at_cursor() {
-            self.painter
-                .queue_buffer(buffer_to_paint, prompt_offset, cursor_position_in_buffer)?;
+            self.painter.queue_buffer(
+                buffer_to_paint,
+                prompt_offset,
+                cursor_position_in_buffer,
+                &self.history,
+            )?;
             self.painter.flush()?;
         }
 

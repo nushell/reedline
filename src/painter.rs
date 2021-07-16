@@ -1,7 +1,8 @@
 use {
     crate::{
+        hinter::Hinter,
         prompt::{PromptEditMode, PromptHistorySearch},
-        Highlighter, Prompt,
+        Highlighter, History, Prompt,
     },
     crossterm::{
         cursor::{self, position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
@@ -18,13 +19,20 @@ pub struct Painter {
 
     // Buffer Highlighter
     buffer_highlighter: Box<dyn Highlighter>,
+
+    hinter: Box<dyn Hinter>,
 }
 
 impl Painter {
-    pub fn new(stdout: Stdout, buffer_highlighter: Box<dyn Highlighter>) -> Self {
+    pub fn new(
+        stdout: Stdout,
+        buffer_highlighter: Box<dyn Highlighter>,
+        hinter: Box<dyn Hinter>,
+    ) -> Self {
         Painter {
             stdout,
             buffer_highlighter,
+            hinter,
         }
     }
 
@@ -36,6 +44,10 @@ impl Painter {
 
     pub fn set_highlighter(&mut self, buffer_highlighter: Box<dyn Highlighter>) {
         self.buffer_highlighter = buffer_highlighter;
+    }
+
+    pub fn set_hinter(&mut self, hinter: Box<dyn Hinter>) {
+        self.hinter = hinter;
     }
 
     /// Queue the complete prompt to display including status indicators (e.g. pwd, time)
@@ -87,6 +99,7 @@ impl Painter {
         original_line: String,
         prompt_offset: (u16, u16),
         cursor_position_in_buffer: usize,
+        history: &Box<dyn History>,
     ) -> Result<()> {
         let highlighted_line = self
             .buffer_highlighter
@@ -97,6 +110,11 @@ impl Painter {
             .queue(MoveTo(prompt_offset.0, prompt_offset.1))?
             .queue(Print(highlighted_line.0))?
             .queue(SavePosition)?
+            .queue(Print(self.hinter.handle(
+                &original_line,
+                cursor_position_in_buffer,
+                history,
+            )))?
             .queue(Print(highlighted_line.1))?
             .queue(Clear(ClearType::FromCursorDown))?
             .queue(RestorePosition)?
@@ -113,6 +131,7 @@ impl Painter {
         cursor_position_in_buffer: usize,
         buffer: String,
         terminal_size: (u16, u16),
+        history: &Box<dyn History>,
     ) -> Result<(u16, u16)> {
         self.stdout.queue(cursor::Hide)?;
         self.queue_move_to(prompt_origin.0, prompt_origin.1)?;
@@ -121,7 +140,7 @@ impl Painter {
         self.flush()?;
         // set where the input begins
         let prompt_offset = position()?;
-        self.queue_buffer(buffer, prompt_offset, cursor_position_in_buffer)?;
+        self.queue_buffer(buffer, prompt_offset, cursor_position_in_buffer, history)?;
         self.stdout.queue(cursor::Show)?;
         self.flush()?;
 
