@@ -1,59 +1,152 @@
+# A readline replacement written in Rust
 
-A readline replacement written in Rust
+![](https://img.shields.io/github/license/jntrnr/reedline) ![](https://img.shields.io/crates/v/reedline.svg) ![](https://docs.rs/reedline/badge.svg?version=0.1.0) ![](https://img.shields.io/github/repo-size/jntrnr/reedline) ![](https://img.shields.io/tokei/lines/github/jntrnr/reedline) ![](https://img.shields.io/github/commit-activity/m/jntrnr/reedline) ![](https://img.shields.io/github/issues-pr-closed-raw/jntrnr/reedline) ![](https://img.shields.io/discord/601130461678272522) ![](https://img.shields.io/twitch/status/jntrnr?style=social)
 
-## Example (Simple REPL)
+## Basic example
 
-```rust
-// Create a default reedline to handle user input
+```rust,no_run
+// Create a default reedline object to handle user input
 
-use reedline::{Reedline, DefaultPrompt, Signal};
+use reedline::{DefaultPrompt, Reedline, Signal};
 
-let mut line_editor = Reedline::new();
-let prompt = Box::new(DefaultPrompt::default());
+fn main() {
+    let mut line_editor = Reedline::new();
+    let prompt = DefaultPrompt::default();
 
-loop {
-    let sig = line_editor.read_line(prompt.clone()).unwrap();
-    match sig {
-        Signal::CtrlD | Signal::CtrlC => {
-            line_editor.print_crlf().unwrap();
-            break;
-        }
-        Signal::Success(buffer) => {
-            // process `buffer`
-            println!("We processed: {}", buffer);
-        }
-        Signal::CtrlL => {
-            line_editor.clear_screen().unwrap();
+    loop {
+        let sig = line_editor.read_line(&prompt).unwrap();
+        match sig {
+            Signal::Success(buffer) => {
+                println!("We processed: {}", buffer);
+            }
+            Signal::CtrlD | Signal::CtrlC => {
+                line_editor.print_crlf().unwrap();
+                break;
+            }
+            Signal::CtrlL => {
+                line_editor.clear_screen().unwrap();
+            }
         }
     }
 }
-
 ```
-## Keybindings
+## Integrate with custom Keybindings
 
-```rust
+```rust,no_run
 // Configure reedline with custom keybindings
 
-let mut keybindings = default_keybindings();
+//Cargo.toml
+//	[dependencies]
+//	crossterm = "*"
+
+use {
+  crossterm::event::{KeyCode, KeyModifiers},
+  reedline::{default_emacs_keybindings, EditCommand, Reedline},
+};
+
+let mut keybindings = default_emacs_keybindings();
 keybindings.add_binding(
-    KeyModifiers::ALT,
-    KeyCode::Char('m'),
-    vec![EditCommand::BackspaceWord],
+	KeyModifiers::ALT,
+  KeyCode::Char('m'),
+  vec![EditCommand::BackspaceWord],
 );
 
-let mut line_editor = Reedline::new()
-    .with_keybindings(keybindings);
-
+let mut line_editor = Reedline::new().with_keybindings(keybindings);
 ```
 
-## History
+## Integrate with custom History
 
-```rust
-// Create a reedline with history support, including history size limits
+```rust,no_run
+// Create a reedline object with history support, including history size limits
 
+use reedline::{FileBackedHistory, Reedline};
+
+let history = Box::new(
+  FileBackedHistory::with_file(5, "history.txt".into())
+  	.expect("Error configuring history with file"),
+);
 let mut line_editor = Reedline::new()
-    .with_history("history.txt", 5)?
+	.with_history(history)
+	.expect("Error configuring reedline with history");
+```
 
+## Integrate with custom Highlighter
+
+```rust,no_run
+// Create a reedline object with highlighter support
+
+use reedline::{DefaultHighlighter, Reedline};
+
+let commands = vec![
+  "test".into(),
+  "hello world".into(),
+  "hello world reedline".into(),
+  "this is reedline crate".into(),
+];
+let mut line_editor =
+Reedline::new().with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+```
+
+## Integrate with custom Tab-Handler
+
+```rust,no_run
+// Create a reedline object with tab completions support
+
+use reedline::{DefaultCompleter, DefaultTabHandler, Reedline};
+
+let commands = vec![
+  "test".into(),
+  "hello world".into(),
+  "hello world reedline".into(),
+  "this is reedline crate".into(),
+];
+let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
+
+let mut line_editor = Reedline::new().with_tab_handler(Box::new(
+  DefaultTabHandler::default().with_completer(completer),
+));
+```
+
+## Integrate with custom Hinter
+
+```rust,no_run
+// Create a reedline object with tab completions support
+
+//Cargo.toml
+//	[dependencies]
+//	nu-ansi-term = "*"
+
+use {
+  nu_ansi_term::{Color, Style},
+  reedline::{DefaultCompleter, DefaultHinter, Reedline},
+};
+
+let commands = vec![
+  "test".into(),
+  "hello world".into(),
+  "hello world reedline".into(),
+  "this is reedline crate".into(),
+];
+let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
+
+let mut line_editor = Reedline::new().with_hinter(Box::new(
+  DefaultHinter::default()
+  .with_completer(completer) // or .with_history()
+  // .with_inside_line()
+  .with_style(Style::new().italic().fg(Color::LightGray)),
+));
+```
+
+## Integrate with custom Edit Mode
+
+```rust,no_run
+// Create a reedline object with custom edit mode
+
+use reedline::{EditMode, Reedline};
+
+let mut line_editor = Reedline::new().with_edit_mode(
+  EditMode::ViNormal, // or EditMode::Emacs or EditMode::ViInsert
+);
 ```
 
 ## Are we prompt yet? (Development status)
@@ -64,11 +157,11 @@ If you want to see a feature, jump by the streams, file an [issue](https://githu
 - [x] Basic unicode grapheme aware cursor editing.
 - [x] Configurable prompt
 - [x] Basic EMACS-style editing shortcuts.
-- [ ] Advanced multiline unicode aware editing.
 - [x] Configurable keybindings.
 - [x] Basic system integration with clipboard or optional stored history file.
-- [ ] Content aware highlighting or validation.
-- [ ] Autocompletion.
+- [x] Content aware highlighting or validation.
+- [x] Autocompletion.
+- [ ] Advanced multiline unicode aware editing.
 
 For a more detailed roadmap check out [TODO.txt](https://github.com/jonathandturner/reedline/blob/main/TODO.txt).
 
