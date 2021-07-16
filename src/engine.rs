@@ -3,7 +3,9 @@ use crate::text_manipulation;
 use {
     crate::{
         clip_buffer::{get_default_clipboard, Clipboard},
+        completer::{DefaultTabHandler, TabHandler},
         default_emacs_keybindings,
+        hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
         line_buffer::{InsertionPoint, LineBuffer},
@@ -71,6 +73,8 @@ pub struct Reedline {
 
     // Vi normal mode state engine
     vi_engine: ViEngine,
+
+    tab_handler: Box<dyn TabHandler>,
 }
 
 impl Default for Reedline {
@@ -85,7 +89,8 @@ impl Reedline {
         let history = Box::new(FileBackedHistory::default());
         let cut_buffer = Box::new(get_default_clipboard());
         let buffer_highlighter = Box::new(DefaultHighlighter::default());
-        let painter = Painter::new(stdout(), buffer_highlighter);
+        let hinter = Box::new(DefaultHinter::default());
+        let painter = Painter::new(stdout(), buffer_highlighter, hinter);
         let mut keybindings_hashmap = HashMap::new();
         keybindings_hashmap.insert(EditMode::Emacs, default_emacs_keybindings());
         keybindings_hashmap.insert(EditMode::ViInsert, default_vi_insert_keybindings());
@@ -102,7 +107,18 @@ impl Reedline {
             need_full_repaint: false,
             partial_command: None,
             vi_engine: ViEngine::new(),
+            tab_handler: Box::new(DefaultTabHandler::default()),
         }
+    }
+
+    pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Reedline {
+        self.painter.set_hinter(hinter);
+        self
+    }
+
+    pub fn with_tab_handler(mut self, tab_handler: Box<dyn TabHandler>) -> Reedline {
+        self.tab_handler = tab_handler;
+        self
     }
 
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Reedline {
@@ -202,15 +218,6 @@ impl Reedline {
     /// Also works in raw mode
     pub fn print_crlf(&mut self) -> Result<()> {
         self.painter.paint_crlf()
-    }
-
-    /// **For debugging purposes only:** Track the terminal events observed by [`Reedline`] and print them.
-    pub fn print_events(&mut self) -> Result<()> {
-        terminal::enable_raw_mode()?;
-        let result = self.print_events_helper();
-        terminal::disable_raw_mode()?;
-
-        result
     }
 
     /// Dispatches the applicable [`EditCommand`] actions for editing the history search string.
@@ -595,34 +602,6 @@ impl Reedline {
         display_width >= terminal_width as usize
     }
 
-    // this fn is totally ripped off from crossterm's examples
-    // it's really a diagnostic routine to see if crossterm is
-    // even seeing the events. if you press a key and no events
-    // are printed, it's a good chance your terminal is eating
-    // those events.
-    fn print_events_helper(&mut self) -> Result<()> {
-        loop {
-            // Wait up to 5s for another event
-            if poll(Duration::from_millis(5_000))? {
-                // It's guaranteed that read() wont block if `poll` returns `Ok(true)`
-                let event = read()?;
-
-                // just reuse the print_message fn to show events
-                self.print_line(&format!("Event::{:?}", event))?;
-
-                // hit the esc key to git out
-                if event == Event::Key(KeyCode::Esc.into()) {
-                    break;
-                }
-            } else {
-                // Timeout expired, no event for 5s
-                self.print_line("Waiting for you to type...")?;
-            }
-        }
-
-        Ok(())
-    }
-
     /// Clear the screen by printing enough whitespace to start the prompt or
     /// other output back at the first line of the terminal.
     pub fn clear_screen(&mut self) -> Result<()> {
@@ -650,8 +629,12 @@ impl Reedline {
         let cursor_position_in_buffer = self.insertion_point().offset;
         let buffer_to_paint = self.insertion_line().to_string();
 
-        self.painter
-            .queue_buffer(buffer_to_paint, prompt_offset, cursor_position_in_buffer)?;
+        self.painter.queue_buffer(
+            buffer_to_paint,
+            prompt_offset,
+            cursor_position_in_buffer,
+            &self.history,
+        )?;
         self.painter.flush()?;
 
         Ok(())
@@ -675,6 +658,7 @@ impl Reedline {
             cursor_position_in_buffer,
             buffer_to_paint,
             terminal_size,
+            &self.history,
         )
 
         // Ok(prompt_offset)
@@ -694,7 +678,7 @@ impl Reedline {
                 PromptHistorySearchStatus::Passing
             };
 
-            let prompt_history_search = PromptHistorySearch::new(status, substring.clone());
+            let prompt_history_search = PromptHistorySearch::new(status, substring);
 
             self.painter
                 .queue_history_search_indicator(prompt, prompt_history_search)?;
@@ -722,8 +706,13 @@ impl Reedline {
                 HistoryNavigationQuery::SubstringSearch(_) => panic!("Invalid state"),
             };
 
-            self.painter
-                .queue_buffer(buffer_to_paint, prompt_offset, cursor_position_in_buffer)?;
+            self.painter.queue_buffer(
+                buffer_to_paint,
+                prompt_offset,
+                cursor_position_in_buffer,
+                &self.history,
+            )?;
+
             self.painter.flush()?;
         }
 
@@ -733,8 +722,6 @@ impl Reedline {
     /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        terminal::enable_raw_mode()?;
-
         let mut terminal_size = terminal::size()?;
 
         let mut prompt_origin = {
@@ -765,7 +752,11 @@ impl Reedline {
                 match read()? {
                     Event::Key(KeyEvent { code, modifiers }) => {
                         match (modifiers, code, self.edit_mode) {
+                            (KeyModifiers::NONE, KeyCode::Tab, _) => {
+                                self.tab_handler.handle(&mut self.line_buffer);
+                            }
                             (KeyModifiers::CONTROL, KeyCode::Char('d'), _) => {
+                                self.tab_handler.reset_index();
                                 if self.line_buffer.is_empty() {
                                     return Ok(Signal::CtrlD);
                                 } else if let Some(binding) = self.find_keybinding(modifiers, code)
@@ -774,24 +765,28 @@ impl Reedline {
                                 }
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('c'), _) => {
+                                self.tab_handler.reset_index();
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
                                     self.run_edit_commands(&binding);
                                 }
                                 return Ok(Signal::CtrlC);
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('l'), EditMode::Emacs) => {
+                                self.tab_handler.reset_index();
                                 return Ok(Signal::CtrlL);
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
                                 if x == EditMode::ViNormal =>
                             {
+                                self.tab_handler.reset_index();
                                 self.run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
                                 if x != EditMode::ViNormal =>
                             {
+                                self.tab_handler.reset_index();
                                 let line_start = if self.insertion_point().line == 0 {
                                     prompt_offset.0
                                 } else {
@@ -827,6 +822,7 @@ impl Reedline {
                                             EditCommand::Clear,
                                         ]);
                                         self.print_crlf()?;
+                                        self.tab_handler.reset_index();
 
                                         return Ok(Signal::Success(buffer));
                                     }
@@ -841,17 +837,15 @@ impl Reedline {
                                     }
                                 }
                             }
-
                             _ => {
+                                self.tab_handler.reset_index();
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
                                     self.run_edit_commands(&binding);
                                 }
                             }
                         }
                     }
-                    Event::Mouse(event) => {
-                        self.print_line(&format!("{:?}", event))?;
-                    }
+                    Event::Mouse(_) => {}
                     Event::Resize(width, height) => {
                         terminal_size = (width, height);
                         // TODO properly adjusting prompt_origin on resizing while lines > 1
@@ -859,6 +853,9 @@ impl Reedline {
                         prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
                         continue;
                     }
+                }
+                if self.insertion_line().to_string().is_empty() {
+                    self.tab_handler.reset_index();
                 }
                 if self.input_mode == InputMode::HistorySearch {
                     self.history_search_paint(prompt)?;

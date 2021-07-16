@@ -87,3 +87,9 @@ mod highlighter;
 pub use highlighter::{DefaultHighlighter, Highlighter};
 
 mod styled_text;
+
+mod completer;
+pub use completer::{Completer, DefaultCompleter, DefaultTabHandler, Span, TabHandler};
+
+mod hinter;
+pub use hinter::{DefaultHinter, Hinter};
