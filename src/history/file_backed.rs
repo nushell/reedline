@@ -10,12 +10,12 @@ use super::{
     History,
 };
 
-/// Default size of the [`History`] used when calling [`History::default()`]
+/// Default size of the [`FileBackedHistory`] used when calling [`FileBackedHistory::default()`]
 pub const HISTORY_SIZE: usize = 1000;
 
 /// Stateful history that allows up/down-arrow browsing with an internal cursor.
 ///
-/// Can optionally be associated with a newline separated history file using the [`History::with_file()`] constructor.
+/// Can optionally be associated with a newline separated history file using the [`FileBackedHistory::with_file()`] constructor.
 /// Similar to bash's behavior without HISTTIMEFORMAT.
 /// (See <https://www.gnu.org/software/bash/manual/html_node/Bash-History-Facilities.html>)
 /// If the history is associated to a file all new changes within a given history capacity will be written to disk when History is dropped.
@@ -33,7 +33,7 @@ pub struct FileBackedHistory {
 impl Default for FileBackedHistory {
     /// Creates an in-memory [`History`] with a maximal capacity of [`HISTORY_SIZE`].
     ///
-    /// To create a [`History`] that is synchronized with a file use [`History::with_file()`]
+    /// To create a [`History`] that is synchronized with a file use [`FileBackedHistory::with_file()`]
     fn default() -> Self {
         Self::new(HISTORY_SIZE)
     }
@@ -308,7 +308,7 @@ impl FileBackedHistory {
 }
 
 impl Drop for FileBackedHistory {
-    /// On drop the content of the [`History`] will be written to the file if specified via [`History::with_file()`].
+    /// On drop the content of the [`History`] will be written to the file if specified via [`FileBackedHistory::with_file()`].
     fn drop(&mut self) {
         let _ = self.flush();
     }

@@ -31,7 +31,7 @@
 //! ```
 //! ## Integrate with custom Keybindings
 //!
-//! ```rust,no_run
+//! ```rust
 //! // Configure reedline with custom keybindings
 //!
 //! //Cargo.toml
@@ -53,18 +53,6 @@
 //! let mut line_editor = Reedline::new().with_keybindings(keybindings);
 //! ```
 //!
-//! ## Integrate with custom Edit Mode
-//!
-//! ```rust,no_run
-//! // Create a reedline object with custom edit mode
-//!
-//! use reedline::{EditMode, Reedline};
-//!
-//! let mut line_editor = Reedline::new().with_edit_mode(
-//!   EditMode::ViNormal, // or EditMode::Emacs
-//! );
-//! ```
-//!
 //! ## Integrate with custom History
 //!
 //! ```rust,no_run
@@ -83,7 +71,7 @@
 //!
 //! ## Integrate with custom Highlighter
 //!
-//! ```rust,no_run
+//! ```rust
 //! // Create a reedline object with highlighter support
 //!
 //! use reedline::{DefaultHighlighter, Reedline};
@@ -92,7 +80,7 @@
 //!   "test".into(),
 //!   "hello world".into(),
 //!   "hello world reedline".into(),
-//!   "this is reedline crate".into(),
+//!   "this is the reedline crate".into(),
 //! ];
 //! let mut line_editor =
 //! Reedline::new().with_highlighter(Box::new(DefaultHighlighter::new(commands)));
@@ -100,7 +88,7 @@
 //!
 //! ## Integrate with custom Tab-Handler
 //!
-//! ```rust,no_run
+//! ```rust
 //! // Create a reedline object with tab completions support
 //!
 //! use reedline::{DefaultCompleter, DefaultTabHandler, Reedline};
@@ -109,7 +97,7 @@
 //!   "test".into(),
 //!   "hello world".into(),
 //!   "hello world reedline".into(),
-//!   "this is reedline crate".into(),
+//!   "this is the reedline crate".into(),
 //! ];
 //! let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 //!
@@ -120,8 +108,8 @@
 //!
 //! ## Integrate with custom Hinter
 //!
-//! ```rust,no_run
-//! // Create a reedline object with tab completions support
+//! ```rust
+//! // Create a reedline object with in-line hint support
 //!
 //! //Cargo.toml
 //! //	[dependencies]
@@ -136,7 +124,7 @@
 //!   "test".into(),
 //!   "hello world".into(),
 //!   "hello world reedline".into(),
-//!   "this is reedline crate".into(),
+//!   "this is the reedline crate".into(),
 //! ];
 //! let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 //!
@@ -148,13 +136,25 @@
 //! ));
 //! ```
 //!
+//! ## Integrate with custom Edit Mode
+//!
+//! ```rust
+//! // Create a reedline object with custom edit mode
+//!
+//! use reedline::{EditMode, Reedline};
+//!
+//! let mut line_editor = Reedline::new().with_edit_mode(
+//!   EditMode::ViNormal, // or EditMode::Emacs or EditMode::ViInsert
+//! );
+//! ```
+//!
 //! ## Are we prompt yet? (Development status)
 //!
 //! This crate is currently under active development
 //! in JT's [live-coding streams](https://www.twitch.tv/jntrnr).
 //! If you want to see a feature, jump by the streams,
-//! file an [issue](https://github.com/jonathandturner/reedline/issues)
-//! or contribute a [PR](https://github.com/jonathandturner/reedline/pulls)!
+//! file an [issue](https://github.com/jntrnr/reedline/issues)
+//! or contribute a [PR](https://github.com/jntrnr/reedline/pulls)!
 //!
 //! - [x] Basic unicode grapheme aware cursor editing.
 //! - [x] Configurable prompt
@@ -165,7 +165,9 @@
 //! - [x] Autocompletion.
 //! - [ ] Advanced multiline unicode aware editing.
 //!
-//! For a more detailed roadmap check out [TODO.txt](https://github.com/jonathandturner/reedline/blob/main/TODO.txt).
+//! For a more detailed roadmap check out [TODO.txt](https://github.com/jntrnr/reedline/blob/main/TODO.txt).
+//!
+//! Join the vision discussion in the [vision milestone list](https://github.com/jntrnr/reedline/milestone/1) by contributing suggestions or voting.
 //!
 //! ### Alternatives
 //!
