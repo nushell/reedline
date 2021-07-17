@@ -106,6 +106,8 @@ pub fn default_emacs_keybindings() -> Keybindings {
     let mut keybindings = Keybindings::new();
 
     // CTRL
+    keybindings.add_binding(KeyModifiers::CONTROL, Char('y'), vec![EditCommand::Redo]);
+    keybindings.add_binding(KeyModifiers::CONTROL, Char('z'), vec![EditCommand::Undo]);
     keybindings.add_binding(KeyModifiers::CONTROL, Char('d'), vec![EditCommand::Delete]);
     keybindings.add_binding(
         KeyModifiers::CONTROL,

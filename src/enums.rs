@@ -48,6 +48,8 @@ pub enum EditCommand {
     EnterViNormal,
     EnterViInsert,
     ViCommandFragment(char),
+    Undo,
+    Redo,
 }
 
 /// The edit mode [`crate::Reedline`] is currently in. Influences keybindings and prompt.

@@ -566,32 +566,48 @@ impl Reedline {
         // Run the commands over the edit buffer
         for command in &commands {
             match command {
-                EditCommand::MoveToStart => self.move_to_start(),
+                EditCommand::MoveToStart => {
+                    self.move_to_start();
+                    self.line_buffer.set_previous_lines();
+                }
                 EditCommand::MoveToEnd => {
                     self.move_to_end();
+                    self.line_buffer.set_previous_lines();
                 }
-                EditCommand::MoveLeft => self.move_left(),
-                EditCommand::MoveRight => self.move_right(),
+                EditCommand::MoveLeft => {
+                    self.move_left();
+                    self.line_buffer.set_previous_lines();
+                }
+                EditCommand::MoveRight => {
+                    self.move_right();
+                    self.line_buffer.set_previous_lines();
+                }
                 EditCommand::MoveWordLeft => {
                     self.move_word_left();
+                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::MoveWordRight => {
                     self.move_word_right();
+                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::InsertChar(c) => {
                     self.insert_char(*c);
                 }
                 EditCommand::Backspace => {
                     self.backspace();
+                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::Delete => {
                     self.delete();
+                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::BackspaceWord => {
                     self.backspace_word();
+                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::DeleteWord => {
                     self.delete_word();
+                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::Clear => {
                     self.clear();
@@ -616,15 +632,19 @@ impl Reedline {
                 }
                 EditCommand::CutFromStart => {
                     self.cut_from_start();
+                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::CutToEnd => {
                     self.cut_from_end();
+                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::CutWordLeft => {
                     self.cut_word_left();
+                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::CutWordRight => {
                     self.cut_word_right();
+                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::PasteCutBuffer => {
                     self.insert_cut_buffer();
@@ -649,6 +669,12 @@ impl Reedline {
                 }
                 EditCommand::EnterViNormal => {
                     self.enter_vi_normal_mode();
+                }
+                EditCommand::Undo => {
+                    self.line_buffer.undo();
+                }
+                EditCommand::Redo => {
+                    self.line_buffer.redo();
                 }
                 _ => {}
             }
@@ -896,6 +922,7 @@ impl Reedline {
                             {
                                 self.tab_handler.reset_index();
                                 self.run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
+                                self.line_buffer.set_previous_lines();
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
@@ -926,6 +953,7 @@ impl Reedline {
                                 } else {
                                     self.run_edit_commands(&[EditCommand::InsertChar(c)]);
                                 }
+                                self.line_buffer.set_previous_lines();
                             }
                             (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
                                 match self.input_mode {

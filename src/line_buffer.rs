@@ -22,6 +22,9 @@ impl Default for InsertionPoint {
 /// In memory representation of the entered line(s) to facilitate cursor based editing.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct LineBuffer {
+    old_lines: Vec<Vec<String>>,
+    old_insertion_point: Vec<InsertionPoint>,
+    index_undo: usize,
     lines: Vec<String>,
     insertion_point: InsertionPoint,
 }
@@ -35,9 +38,48 @@ impl Default for LineBuffer {
 impl LineBuffer {
     pub fn new() -> LineBuffer {
         LineBuffer {
+            old_lines: vec![vec![String::new()]],
+            old_insertion_point: vec![InsertionPoint::new()],
+            index_undo: 2,
             lines: vec![String::new()],
             insertion_point: InsertionPoint::new(),
         }
+    }
+
+    fn get_index_undo(&self) -> usize {
+        if let Some(c) = self.old_lines.len().checked_sub(self.index_undo) {
+            c
+        } else {
+            0
+        }
+    }
+
+    pub fn redo(&mut self) -> Option<()> {
+        if self.index_undo > 2 {
+            self.index_undo = self.index_undo.checked_sub(2)?;
+            self.undo()
+        } else {
+            None
+        }
+    }
+
+    pub fn undo(&mut self) -> Option<()> {
+        self.lines = self.old_lines.get(self.get_index_undo())?.clone();
+        self.set_insertion_point(*self.old_insertion_point.get(self.get_index_undo())?);
+        if self.index_undo <= self.old_lines.len() {
+            self.index_undo = self.index_undo.checked_add(1)?;
+        }
+        Some(())
+    }
+
+    pub fn set_previous_lines(&mut self) {
+        self.reset_index_undo();
+        self.old_lines.push(self.lines.clone());
+        self.old_insertion_point.push(self.insertion_point());
+    }
+
+    pub fn reset_index_undo(&mut self) {
+        self.index_undo = 2;
     }
 
     /// Replaces the content between [`start`..`end`] with `text`
