@@ -32,11 +32,13 @@ Relevant features tested (leave open if you did not consider those areas touched
 
 ### Info
 
+Build: [ ] debug / [ ] release
+
 Platform:
 
-terminal emulator:
+Terminal emulator:
 
-Inside a [ ] ssh,[ ] or [ ] screen session?
+Inside a [ ] ssh,[ ] tmux or [ ] screen session?
 
 ### Basics
 
@@ -61,11 +63,11 @@ Inside a [ ] ssh,[ ] or [ ] screen session?
 
 - [ ] Enter a unique entry you can remember.
 - [ ] On the empty line press the `up-arrow` key to see if you can recall the previous entry
-- [ ] Press `Enter` to execute this line (it should not be duplicated in the history, after checking leave history recall by `down-arrow`)
+- [ ] Press `Enter` to execute this line (it should *not* be duplicated in the history, after checking leave history recall by `down-arrow`)
 - [ ] Leave the application with `Ctrl-d` on an empty line
 - [ ] After rerun you can get the last line back with `up-arrow`.
 - [ ] On an empty line start typing the beginning of a line in the history. Hit the `up-arrow` to find the matching entry.
-- [ ] After that run `Ctrl-r` to start traditional reverse search. Type your initial search. Can you find more hits by pressing `Ctrl-r` or `up-arrow`
+- [ ] After that run `Ctrl-r` to start traditional reverse search. Type your initial search. Can you find more hits by pressing `Ctrl-r` or `up-arrow`?
 - [ ] Abort this search by pressing `Ctrl-c`
 
 ## Syntax highlighting
