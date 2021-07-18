@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// Valid ways how [`Reedline::read_line()`] can return
+/// Valid ways how [`crate::Reedline::read_line()`] can return
 pub enum Signal {
     /// Entry succeeded with the provided content
     Success(String),
@@ -14,7 +14,7 @@ pub enum Signal {
 
 /// Editing actions which can be mapped to key bindings.
 ///
-/// Executed by [`Reedline::run_edit_commands()`]
+/// Executed by `Reedline::run_edit_commands()`
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum EditCommand {
     MoveToStart,
@@ -48,7 +48,7 @@ pub enum EditCommand {
     ViCommandFragment(char),
 }
 
-/// The edit mode the reedline is currently in
+/// The edit mode [`crate::Reedline`] is currently in. Influences keybindings and prompt.
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 pub enum EditMode {
     Emacs,

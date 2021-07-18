@@ -1,6 +1,10 @@
 # A readline replacement written in Rust
 
-![](https://img.shields.io/github/license/jntrnr/reedline) ![](https://img.shields.io/crates/v/reedline.svg) ![](https://docs.rs/reedline/badge.svg?version=0.1.0) ![](https://img.shields.io/github/repo-size/jntrnr/reedline) ![](https://img.shields.io/tokei/lines/github/jntrnr/reedline) ![](https://img.shields.io/github/commit-activity/m/jntrnr/reedline) ![](https://img.shields.io/github/issues-pr-closed-raw/jntrnr/reedline) ![](https://img.shields.io/discord/601130461678272522) ![](https://img.shields.io/twitch/status/jntrnr?style=social)
+![GitHub](https://img.shields.io/github/license/jntrnr/reedline) 
+[![Crates.io](https://img.shields.io/crates/v/reedline)](https://crates.io/crates/reedline)
+[![docs.rs](https://img.shields.io/docsrs/reedline)](https://docs.rs/reedline/)
+[![Discord](https://img.shields.io/discord/601130461678272522.svg?logo=discord)](https://discord.gg/NtAbbGn)
+[![Twitch Status](https://img.shields.io/twitch/status/jntrnr?style=social)](https://twitch.tv/jntrnr)
 
 ## Basic example
 
@@ -30,6 +34,7 @@ fn main() {
     }
 }
 ```
+
 ## Integrate with custom Keybindings
 
 ```rust,no_run
@@ -81,7 +86,7 @@ let commands = vec![
   "test".into(),
   "hello world".into(),
   "hello world reedline".into(),
-  "this is reedline crate".into(),
+  "this is the reedline crate".into(),
 ];
 let mut line_editor =
 Reedline::new().with_highlighter(Box::new(DefaultHighlighter::new(commands)));
@@ -98,7 +103,7 @@ let commands = vec![
   "test".into(),
   "hello world".into(),
   "hello world reedline".into(),
-  "this is reedline crate".into(),
+  "this is the reedline crate".into(),
 ];
 let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
@@ -110,7 +115,7 @@ let mut line_editor = Reedline::new().with_tab_handler(Box::new(
 ## Integrate with custom Hinter
 
 ```rust,no_run
-// Create a reedline object with tab completions support
+// Create a reedline object with in-line hint support
 
 //Cargo.toml
 //	[dependencies]
@@ -125,7 +130,7 @@ let commands = vec![
   "test".into(),
   "hello world".into(),
   "hello world reedline".into(),
-  "this is reedline crate".into(),
+  "this is the reedline crate".into(),
 ];
 let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
@@ -152,7 +157,7 @@ let mut line_editor = Reedline::new().with_edit_mode(
 ## Are we prompt yet? (Development status)
 
 This crate is currently under active development in JT's [live-coding streams](https://www.twitch.tv/jntrnr).
-If you want to see a feature, jump by the streams, file an [issue](https://github.com/jonathandturner/reedline/issues) or contribute a [PR](https://github.com/jonathandturner/reedline/pulls)!
+If you want to see a feature, jump by the streams, file an [issue](https://github.com/jntrnr/reedline/issues) or contribute a [PR](https://github.com/jntrnr/reedline/pulls)!
 
 - [x] Basic unicode grapheme aware cursor editing.
 - [x] Configurable prompt
@@ -163,7 +168,9 @@ If you want to see a feature, jump by the streams, file an [issue](https://githu
 - [x] Autocompletion.
 - [ ] Advanced multiline unicode aware editing.
 
-For a more detailed roadmap check out [TODO.txt](https://github.com/jonathandturner/reedline/blob/main/TODO.txt).
+For a more detailed roadmap check out [TODO.txt](https://github.com/jntrnr/reedline/blob/main/TODO.txt).
+
+Join the vision discussion in the [vision milestone list](https://github.com/jntrnr/reedline/milestone/1) by contributing suggestions or voting.
 
 ### Alternatives
 
