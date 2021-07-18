@@ -23,6 +23,8 @@ pub enum EditCommand {
     MoveRight,
     MoveWordLeft,
     MoveWordRight,
+    Up,
+    Down,
     InsertChar(char),
     Backspace,
     Delete,

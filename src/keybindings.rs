@@ -181,6 +181,11 @@ pub fn default_emacs_keybindings() -> Keybindings {
     );
     keybindings.add_binding(
         KeyModifiers::ALT,
+        Enter,
+        vec![EditCommand::InsertChar('\n')],
+    );
+    keybindings.add_binding(
+        KeyModifiers::ALT,
         Char('b'),
         vec![EditCommand::MoveWordLeft],
     );
@@ -227,8 +232,8 @@ pub fn default_emacs_keybindings() -> Keybindings {
     keybindings.add_binding(KeyModifiers::NONE, Delete, vec![EditCommand::Delete]);
     keybindings.add_binding(KeyModifiers::NONE, Home, vec![EditCommand::MoveToStart]);
     keybindings.add_binding(KeyModifiers::NONE, End, vec![EditCommand::MoveToEnd]);
-    keybindings.add_binding(KeyModifiers::NONE, Up, vec![EditCommand::PreviousHistory]);
-    keybindings.add_binding(KeyModifiers::NONE, Down, vec![EditCommand::NextHistory]);
+    keybindings.add_binding(KeyModifiers::NONE, Up, vec![EditCommand::Up]);
+    keybindings.add_binding(KeyModifiers::NONE, Down, vec![EditCommand::Down]);
     keybindings.add_binding(KeyModifiers::NONE, Left, vec![EditCommand::MoveLeft]);
     keybindings.add_binding(KeyModifiers::NONE, Right, vec![EditCommand::MoveRight]);
 

@@ -307,6 +307,95 @@ impl Reedline {
         self.line_buffer.clear();
     }
 
+    fn up_command(&mut self) {
+        // If we're at the top, then:
+        if !self.line_buffer.get_buffer()[0..self.line_buffer.insertion_point().offset]
+            .contains('\n')
+        {
+            // If we're at the top, move to previous history
+            self.previous_history();
+        } else {
+            // If we're not at the top, move up a line in the multiline buffer
+            let mut position = self.line_buffer.insertion_point().offset;
+            let mut num_of_move_lefts = 0;
+            let buffer = self.line_buffer.get_buffer().to_string();
+
+            // Move left until we're looking at the newline
+            // Observe what column we were on
+            while position > 0 && &buffer[(position - 1)..position] != "\n" {
+                self.line_buffer.move_left();
+                num_of_move_lefts += 1;
+                position = self.line_buffer.insertion_point().offset;
+            }
+
+            // Find start of previous line
+            let mut matches = buffer[0..(position - 1)].rmatch_indices('\n');
+
+            if let Some((pos, _)) = matches.next() {
+                position = pos + 1;
+            } else {
+                position = 0;
+            }
+            self.line_buffer.set_insertion_point(InsertionPoint {
+                line: 0,
+                offset: position,
+            });
+
+            // Move right from this position to the column we were at
+            while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
+                self.line_buffer.move_right();
+                position = self.line_buffer.insertion_point().offset;
+                num_of_move_lefts -= 1;
+            }
+        }
+    }
+
+    fn down_command(&mut self) {
+        // If we're at the top, then:
+        if !self.line_buffer.get_buffer()[self.line_buffer.insertion_point().offset..]
+            .contains('\n')
+        {
+            // If we're at the top, move to previous history
+            self.next_history();
+        } else {
+            // If we're not at the top, move up a line in the multiline buffer
+            let mut position = self.line_buffer.insertion_point().offset;
+            let mut num_of_move_lefts = 0;
+            let buffer = self.line_buffer.get_buffer().to_string();
+
+            // Move left until we're looking at the newline
+            // Observe what column we were on
+            while position > 0 && &buffer[(position - 1)..position] != "\n" {
+                self.line_buffer.move_left();
+                num_of_move_lefts += 1;
+                position = self.line_buffer.insertion_point().offset;
+            }
+
+            // Find start of next line
+            let mut matches = buffer[position..].match_indices('\n');
+
+            // Assume this always succeeds
+
+            let (pos, _) = matches
+                .next()
+                .expect("internal error: should have found newline");
+
+            position += pos + 1;
+
+            self.line_buffer.set_insertion_point(InsertionPoint {
+                line: 0,
+                offset: position,
+            });
+
+            // Move right from this position to the column we were at
+            while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
+                self.line_buffer.move_right();
+                position = self.line_buffer.insertion_point().offset;
+                num_of_move_lefts -= 1;
+            }
+        }
+    }
+
     fn append_to_history(&mut self) {
         self.history.append(self.insertion_line().to_string());
     }
@@ -484,6 +573,12 @@ impl Reedline {
                 }
                 EditCommand::NextHistory => {
                     self.next_history();
+                }
+                EditCommand::Up => {
+                    self.up_command();
+                }
+                EditCommand::Down => {
+                    self.down_command();
                 }
                 EditCommand::SearchHistory => {
                     self.search_history();
