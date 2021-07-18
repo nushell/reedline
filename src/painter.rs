@@ -106,16 +106,38 @@ impl Painter {
             .highlight(&original_line)
             .render_around_insertion_point(cursor_position_in_buffer);
 
-        self.stdout
-            .queue(MoveTo(prompt_offset.0, prompt_offset.1))?
-            .queue(Print(highlighted_line.0))?
+        let (before_cursor, after_cursor) = highlighted_line;
+
+        let before_cursor_lines = before_cursor.lines();
+        let after_cursor_lines = after_cursor.lines();
+
+        let mut commands = self
+            .stdout
+            .queue(MoveTo(prompt_offset.0, prompt_offset.1))?;
+
+        for (idx, before_cursor_line) in before_cursor_lines.enumerate() {
+            if idx != 0 {
+                commands = commands.queue(Print("\r\n"))?;
+            }
+            commands = commands.queue(Print(before_cursor_line))?;
+        }
+
+        commands = commands
             .queue(SavePosition)?
             .queue(Print(self.hinter.handle(
                 &original_line,
                 cursor_position_in_buffer,
                 history,
-            )))?
-            .queue(Print(highlighted_line.1))?
+            )))?;
+
+        for (idx, after_cursor_line) in after_cursor_lines.enumerate() {
+            if idx != 0 {
+                commands = commands.queue(Print("\r\n"))?;
+            }
+            commands = commands.queue(Print(after_cursor_line))?;
+        }
+
+        commands
             .queue(Clear(ClearType::FromCursorDown))?
             .queue(RestorePosition)?
             .flush()?;
