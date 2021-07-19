@@ -46,6 +46,12 @@ impl LineBuffer {
         }
     }
 
+    pub fn reset_olds(&mut self) {
+        self.old_lines = vec![vec![String::new()]];
+        self.old_insertion_point = vec![InsertionPoint::new()];
+        self.index_undo = 2;
+    }
+
     fn get_index_undo(&self) -> usize {
         if let Some(c) = self.old_lines.len().checked_sub(self.index_undo) {
             c

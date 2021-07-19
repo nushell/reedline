@@ -899,6 +899,7 @@ impl Reedline {
                             (KeyModifiers::CONTROL, KeyCode::Char('d'), _) => {
                                 self.tab_handler.reset_index();
                                 if self.line_buffer.is_empty() {
+                                    self.line_buffer.reset_olds();
                                     return Ok(Signal::CtrlD);
                                 } else if let Some(binding) = self.find_keybinding(modifiers, code)
                                 {
@@ -910,10 +911,12 @@ impl Reedline {
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
                                     self.run_edit_commands(&binding);
                                 }
+                                self.line_buffer.reset_olds();
                                 return Ok(Signal::CtrlC);
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('l'), EditMode::Emacs) => {
                                 self.tab_handler.reset_index();
+                                self.line_buffer.reset_olds();
                                 return Ok(Signal::CtrlL);
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
@@ -966,6 +969,7 @@ impl Reedline {
                                         ]);
                                         self.print_crlf()?;
                                         self.tab_handler.reset_index();
+                                        self.line_buffer.reset_olds();
 
                                         return Ok(Signal::Success(buffer));
                                     }
