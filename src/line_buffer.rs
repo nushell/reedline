@@ -20,7 +20,7 @@ impl Default for InsertionPoint {
 }
 
 /// In memory representation of the entered line(s) to facilitate cursor based editing.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct LineBuffer {
     lines: Vec<String>,
     insertion_point: InsertionPoint,

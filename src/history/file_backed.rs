@@ -5,6 +5,8 @@ use std::{
     path::PathBuf,
 };
 
+use crate::line_buffer::LineBuffer;
+
 use super::{
     base::{HistoryAppender, HistoryNavigationQuery, HistoryView},
     History,
@@ -73,7 +75,7 @@ impl HistoryAppender for FileBackedHistory {
 impl HistoryView for FileBackedHistory {
     fn back(&mut self) {
         match self.query.clone() {
-            HistoryNavigationQuery::Normal => {
+            HistoryNavigationQuery::Normal(_) => {
                 if self.cursor > 0 {
                     self.cursor -= 1;
                 }
@@ -89,7 +91,7 @@ impl HistoryView for FileBackedHistory {
 
     fn forward(&mut self) {
         match self.query.clone() {
-            HistoryNavigationQuery::Normal => {
+            HistoryNavigationQuery::Normal(_) => {
                 if self.cursor < self.entries.len() {
                     self.cursor += 1;
                 }
@@ -104,31 +106,33 @@ impl HistoryView for FileBackedHistory {
     }
 
     fn string_at_cursor(&self) -> Option<String> {
-        let entry = match self.entries.get(self.cursor) {
-            Some(entry) => entry.to_owned(),
-            None => return None,
-        };
+        self.entries.get(self.cursor).cloned()
 
-        match self.query.clone() {
-            HistoryNavigationQuery::Normal => Some(entry),
-            HistoryNavigationQuery::PrefixSearch(prefix) => {
-                if entry.starts_with(&prefix) {
-                    Some(entry)
-                } else {
-                    None
-                }
-            }
-            HistoryNavigationQuery::SubstringSearch(substring) => {
-                if substring.is_empty() {
-                    return None;
-                }
-                if entry.contains(&substring) {
-                    Some(entry)
-                } else {
-                    None
-                }
-            }
-        }
+        // let entry = match self.entries.get(self.cursor) {
+        //     Some(entry) => entry.to_owned(),
+        //     None => return None,
+        // };
+
+        // match self.query.clone() {
+        //     HistoryNavigationQuery::Normal => Some(entry),
+        //     HistoryNavigationQuery::PrefixSearch(prefix) => {
+        //         if entry.starts_with(&prefix) {
+        //             Some(entry)
+        //         } else {
+        //             unreachable!()
+        //         }
+        //     }
+        //     HistoryNavigationQuery::SubstringSearch(substring) => {
+        //         if substring.is_empty() {
+        //             unreachable!()
+        //         }
+        //         if entry.contains(&substring) {
+        //             Some(entry)
+        //         } else {
+        //             unreachable!()
+        //         }
+        //     }
+        // }
     }
 
     fn set_navigation(&mut self, navigation: HistoryNavigationQuery) {
@@ -154,7 +158,7 @@ impl FileBackedHistory {
             file: None,
             len_on_disk: 0,
             truncate_file: true,
-            query: HistoryNavigationQuery::Normal,
+            query: HistoryNavigationQuery::Normal(LineBuffer::default()),
         }
     }
 
@@ -217,50 +221,34 @@ impl FileBackedHistory {
     }
 
     fn back_with_criteria(&mut self, criteria: &dyn Fn(&str) -> bool) {
-        let mut cursor = self.cursor;
-        let previous_match = self.string_at_cursor();
-
-        while cursor > 0 {
-            cursor -= 1;
-            let entry = &self.entries[cursor];
-            if criteria(entry) {
-                if previous_match
-                    // TODO Get rid of this clone
-                    .clone()
-                    .map_or(false, |value| &value == entry)
-                {
-                    continue;
-                } else {
-                    break;
-                }
+        if !self.entries.is_empty() {
+            if let Some((next_cursor, _)) = self
+                .entries
+                .iter()
+                .take(self.cursor)
+                .enumerate()
+                .rev()
+                .find(|x| criteria(x.1))
+            {
+                // set to entry
+                self.cursor = next_cursor
             }
         }
-
-        self.cursor = cursor;
     }
 
     fn forward_with_criteria(&mut self, criteria: &dyn Fn(&str) -> bool) {
-        let mut cursor = self.cursor;
-        let previous_match = self.string_at_cursor();
-
-        while cursor < self.entries.len() - 1 {
-            cursor += 1;
-            let entry = &self.entries[cursor];
-            if criteria(entry) {
-                // if entry.contains(&substring) {
-                if previous_match
-                    // TODO Get rid of this clone
-                    .clone()
-                    .map_or(false, |value| &value == entry)
-                {
-                    continue;
-                } else {
-                    break;
-                }
-            }
+        if let Some((next_cursor, _)) = self
+            .entries
+            .iter()
+            .enumerate()
+            .skip(self.cursor + 1)
+            .find(|x| criteria(x.1))
+        {
+            // set to entry
+            self.cursor = next_cursor 
+        } else {
+            self.reset_cursor()
         }
-
-        self.cursor = cursor;
     }
 
     /// Writes unwritten history contents to disk.
@@ -359,7 +347,7 @@ mod tests {
         hist.forward();
         hist.forward();
         hist.forward();
-        assert_eq!(hist.string_at_cursor(), Some("command2".to_string()));
+        assert_eq!(hist.string_at_cursor(), None);
     }
 
     #[test]
@@ -387,6 +375,7 @@ mod tests {
 
         hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
 
+        hist.back();
         assert_eq!(hist.string_at_cursor(), Some("find me".to_string()));
         hist.back();
         assert_eq!(hist.string_at_cursor(), Some("find me as well".to_string()));
@@ -400,7 +389,7 @@ mod tests {
         hist.append(String::from("find me"));
 
         hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
-
+        hist.back();
         assert_eq!(hist.string_at_cursor(), Some("find me".to_string()));
         hist.back();
         assert_eq!(hist.string_at_cursor(), Some("find me as well".to_string()));
@@ -420,7 +409,7 @@ mod tests {
         hist.append(String::from("find me once"));
 
         hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
-
+        hist.back();
         assert_eq!(hist.string_at_cursor(), Some("find me once".to_string()));
         hist.back();
         assert_eq!(hist.string_at_cursor(), Some("find me as well".to_string()));
@@ -454,7 +443,7 @@ mod tests {
         hist.set_navigation(HistoryNavigationQuery::SubstringSearch(
             "substring".to_string(),
         ));
-
+        hist.back();
         assert_eq!(
             hist.string_at_cursor(),
             Some("prefix substring suffix".to_string())
