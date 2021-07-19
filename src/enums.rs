@@ -15,7 +15,7 @@ pub enum Signal {
 /// Editing actions which can be mapped to key bindings.
 ///
 /// Executed by `Reedline::run_edit_commands()`
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum EditCommand {
     MoveToStart,
     MoveToEnd,

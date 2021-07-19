@@ -11,7 +11,9 @@ use {
         line_buffer::{InsertionPoint, LineBuffer},
         painter::Painter,
         prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode},
-        DefaultHighlighter, EditCommand, EditMode, Highlighter, Prompt, Signal, ViEngine,
+        DefaultHighlighter,
+        EditCommand::{self, *},
+        EditMode, Highlighter, Prompt, Signal, ViEngine,
     },
     crossterm::{
         cursor::position,
@@ -568,46 +570,36 @@ impl Reedline {
             match command {
                 EditCommand::MoveToStart => {
                     self.move_to_start();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::MoveToEnd => {
                     self.move_to_end();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::MoveLeft => {
                     self.move_left();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::MoveRight => {
                     self.move_right();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::MoveWordLeft => {
                     self.move_word_left();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::MoveWordRight => {
                     self.move_word_right();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::InsertChar(c) => {
                     self.insert_char(*c);
                 }
                 EditCommand::Backspace => {
                     self.backspace();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::Delete => {
                     self.delete();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::BackspaceWord => {
                     self.backspace_word();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::DeleteWord => {
                     self.delete_word();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::Clear => {
                     self.clear();
@@ -632,19 +624,15 @@ impl Reedline {
                 }
                 EditCommand::CutFromStart => {
                     self.cut_from_start();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::CutToEnd => {
                     self.cut_from_end();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::CutWordLeft => {
                     self.cut_word_left();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::CutWordRight => {
                     self.cut_word_right();
-                    self.line_buffer.set_previous_lines();
                 }
                 EditCommand::PasteCutBuffer => {
                     self.insert_cut_buffer();
@@ -677,6 +665,27 @@ impl Reedline {
                     self.line_buffer.redo();
                 }
                 _ => {}
+            }
+
+            if [
+                MoveToEnd,
+                MoveToStart,
+                MoveLeft,
+                MoveRight,
+                MoveWordLeft,
+                MoveWordRight,
+                Backspace,
+                Delete,
+                BackspaceWord,
+                DeleteWord,
+                CutFromStart,
+                CutToEnd,
+                CutWordLeft,
+                CutWordRight,
+            ]
+            .contains(command)
+            {
+                self.line_buffer.set_previous_lines();
             }
         }
     }
