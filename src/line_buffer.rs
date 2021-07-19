@@ -78,11 +78,12 @@ impl LineBuffer {
         Some(())
     }
 
-    pub fn set_previous_lines(&mut self) -> Option<()> {
+    pub fn set_previous_lines(&mut self, is_after_action: bool) -> Option<()> {
         self.reset_index_undo();
         if self.old_lines.len() > 1
             && self.old_lines.last()?.concat().trim().split(' ').count()
                 == self.lines.concat().trim().split(' ').count()
+            && !is_after_action
         {
             self.old_lines.pop();
             self.old_insertion_point.pop();

@@ -685,7 +685,7 @@ impl Reedline {
             ]
             .contains(command)
             {
-                self.line_buffer.set_previous_lines();
+                self.line_buffer.set_previous_lines(true);
             }
         }
     }
@@ -934,7 +934,7 @@ impl Reedline {
                             {
                                 self.tab_handler.reset_index();
                                 self.run_edit_commands(&[ViCommandFragment(c)]);
-                                self.line_buffer.set_previous_lines();
+                                self.line_buffer.set_previous_lines(false);
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
@@ -965,7 +965,7 @@ impl Reedline {
                                 } else {
                                     self.run_edit_commands(&[InsertChar(c)]);
                                 }
-                                self.line_buffer.set_previous_lines();
+                                self.line_buffer.set_previous_lines(false);
                             }
                             (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
                                 match self.input_mode {
