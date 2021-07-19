@@ -65,8 +65,17 @@ impl LineBuffer {
 
     /// Set to a single line of `buffer` and reset the `InsertionPoint` cursor
     pub fn set_buffer(&mut self, buffer: String) {
-        self.lines = vec![buffer];
-        self.insertion_point = InsertionPoint::new();
+        let buffer = buffer.lines().map(|s| s.into()).collect::<Vec<String>>();
+
+        // Note: `buffer` will have at least one element so the following operations are safe
+        let last_line_index = buffer.len() - 1;
+        let last_line_length = buffer.last().unwrap().len();
+
+        self.lines = buffer;
+        self.insertion_point = InsertionPoint {
+            line: last_line_index,
+            offset: last_line_length,
+        };
     }
 
     /// Reset the insertion point to the start of the buffer
@@ -375,6 +384,42 @@ mod test {
             expected_updated_insertion_point,
             line_buffer.insertion_point()
         );
+    }
+
+    #[test]
+    fn set_buffer_updates_insertion_point_to_new_buffer_length() {
+        let mut line_buffer = buffer_with("test string");
+        let before_operation_location = InsertionPoint {
+            line: 0,
+            offset: 11,
+        };
+        assert_eq!(before_operation_location, line_buffer.insertion_point());
+
+        line_buffer.set_buffer("new string".to_string());
+
+        let after_operation_location = InsertionPoint {
+            line: 0,
+            offset: 10,
+        };
+        assert_eq!(after_operation_location, line_buffer.insertion_point());
+    }
+
+    #[test]
+    fn set_buffer_works_with_multi_line_string() {
+        let mut line_buffer = buffer_with("test string");
+        let before_operation_location = InsertionPoint {
+            line: 0,
+            offset: 11,
+        };
+        assert_eq!(before_operation_location, line_buffer.insertion_point());
+
+        line_buffer.set_buffer("new line 1\nnew_line 2".to_string());
+
+        let after_operation_location = InsertionPoint {
+            line: 1,
+            offset: 10,
+        };
+        assert_eq!(after_operation_location, line_buffer.insertion_point());
     }
 
     #[test]

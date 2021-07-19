@@ -426,7 +426,13 @@ impl Reedline {
             (true, _) => {
                 self.history.set_navigation(HistoryNavigationQuery::Normal);
             }
-            (false, HistoryNavigationQuery::PrefixSearch(_)) => {}
+            (false, HistoryNavigationQuery::PrefixSearch(prefix)) => {
+                let buffer = self.insertion_line().to_string();
+                if prefix != buffer {
+                    self.history
+                        .set_navigation(HistoryNavigationQuery::PrefixSearch(buffer));
+                }
+            }
             (false, _) => {
                 let buffer = self.insertion_line().to_string();
                 self.history
@@ -524,6 +530,23 @@ impl Reedline {
         if self.input_mode == InputMode::HistorySearch {
             self.run_history_commands(commands);
             return;
+        }
+
+        if self.input_mode == InputMode::HistoryTraversal {
+            for command in commands {
+                match command {
+                    EditCommand::PreviousHistory => {}
+                    EditCommand::NextHistory => {}
+                    _ => {
+                        if self.history.get_navigation() == HistoryNavigationQuery::Normal {
+                            if let Some(string) = self.history.string_at_cursor() {
+                                self.set_buffer(string)
+                            }
+                        }
+                        self.input_mode = InputMode::Regular;
+                    }
+                }
+            }
         }
 
         // Vim mode transformations
@@ -771,15 +794,20 @@ impl Reedline {
     }
 
     fn history_traversal_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
-        let cursor_position_in_buffer = self.insertion_point().offset;
-
         if let Some(buffer_to_paint) = self.history.string_at_cursor() {
+            let cursor_position_in_buffer = match self.history.get_navigation() {
+                HistoryNavigationQuery::Normal => buffer_to_paint.len(),
+                HistoryNavigationQuery::PrefixSearch(_) => self.insertion_point().offset,
+                HistoryNavigationQuery::SubstringSearch(_) => panic!("Invalid state"),
+            };
+
             self.painter.queue_buffer(
                 buffer_to_paint,
                 prompt_offset,
                 cursor_position_in_buffer,
                 self.history.as_ref(),
             )?;
+
             self.painter.flush()?;
         }
 
