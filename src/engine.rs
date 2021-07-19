@@ -780,7 +780,8 @@ impl Reedline {
 
             match self.history.string_at_cursor() {
                 Some(string) => {
-                    self.painter.queue_history_results(&string, string.len())?;
+                    self.painter
+                        .queue_history_search_result(&string, string.len())?;
                     self.painter.flush()?;
                 }
 
@@ -952,18 +953,22 @@ impl Reedline {
                 if self.insertion_line().to_string().is_empty() {
                     self.tab_handler.reset_index();
                 }
-                if self.input_mode == InputMode::HistorySearch {
-                    self.history_search_paint(prompt)?;
-                } else if self.input_mode == InputMode::HistoryTraversal {
-                    self.history_traversal_paint(prompt_offset)?;
-                } else if self.need_full_repaint {
-                    prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
-                    self.need_full_repaint = false;
-                } else {
-                    self.buffer_paint(prompt_offset)?;
-                }
             } else {
+                // No key event: 
+                // Repaint the prompt for the clock
+                self.need_full_repaint = true;
+            }
+
+            // Repainting
+            if self.input_mode == InputMode::HistorySearch {
+                self.history_search_paint(prompt)?;
+            } else if self.input_mode == InputMode::HistoryTraversal {
+                self.history_traversal_paint(prompt_offset)?;
+            } else if self.need_full_repaint {
                 prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
+                self.need_full_repaint = false;
+            } else {
+                self.buffer_paint(prompt_offset)?;
             }
         }
     }

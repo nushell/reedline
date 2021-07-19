@@ -90,7 +90,7 @@ impl HistoryView for FileBackedHistory {
     fn forward(&mut self) {
         match self.query.clone() {
             HistoryNavigationQuery::Normal => {
-                if (self.cursor as isize) < self.entries.len() as isize - 1 {
+                if self.cursor < self.entries.len() {
                     self.cursor += 1;
                 }
             }
@@ -104,11 +104,10 @@ impl HistoryView for FileBackedHistory {
     }
 
     fn string_at_cursor(&self) -> Option<String> {
-        if self.entries.is_empty() {
-            return None;
-        }
-
-        let entry = self.entries[self.cursor].to_string();
+        let entry = match self.entries.get(self.cursor) {
+            Some(entry) => entry.to_owned(),
+            None => return None,
+        };
 
         match self.query.clone() {
             HistoryNavigationQuery::Normal => Some(entry),
@@ -299,11 +298,7 @@ impl FileBackedHistory {
 
     /// Reset the internal browsing cursor
     fn reset_cursor(&mut self) {
-        if self.entries.is_empty() {
-            self.cursor = 0
-        } else {
-            self.cursor = self.entries.len() - 1;
-        }
+        self.cursor = self.entries.len();
     }
 }
 

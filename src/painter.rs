@@ -187,7 +187,11 @@ impl Painter {
         Ok(())
     }
 
-    pub fn queue_history_results(&mut self, history_result: &str, offset: usize) -> Result<()> {
+    pub fn queue_history_search_result(
+        &mut self,
+        history_result: &str,
+        offset: usize,
+    ) -> Result<()> {
         self.stdout
             .queue(Print(&history_result[..offset]))?
             .queue(SavePosition)?
