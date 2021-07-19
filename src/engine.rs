@@ -228,7 +228,7 @@ impl Reedline {
     fn run_history_commands(&mut self, commands: &[EditCommand]) {
         for command in commands {
             match command {
-                EditCommand::InsertChar(c) => {
+                InsertChar(c) => {
                     let navigation = self.history.get_navigation();
                     if let HistoryNavigationQuery::SubstringSearch(mut substring) = navigation {
                         substring.push(*c);
@@ -242,7 +242,7 @@ impl Reedline {
                     }
                     self.history.back();
                 }
-                EditCommand::Backspace => {
+                Backspace => {
                     let navigation = self.history.get_navigation();
 
                     if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
@@ -568,100 +568,100 @@ impl Reedline {
         // Run the commands over the edit buffer
         for command in &commands {
             match command {
-                EditCommand::MoveToStart => {
+                MoveToStart => {
                     self.move_to_start();
                 }
-                EditCommand::MoveToEnd => {
+                MoveToEnd => {
                     self.move_to_end();
                 }
-                EditCommand::MoveLeft => {
+                MoveLeft => {
                     self.move_left();
                 }
-                EditCommand::MoveRight => {
+                MoveRight => {
                     self.move_right();
                 }
-                EditCommand::MoveWordLeft => {
+                MoveWordLeft => {
                     self.move_word_left();
                 }
-                EditCommand::MoveWordRight => {
+                MoveWordRight => {
                     self.move_word_right();
                 }
-                EditCommand::InsertChar(c) => {
+                InsertChar(c) => {
                     self.insert_char(*c);
                 }
-                EditCommand::Backspace => {
+                Backspace => {
                     self.backspace();
                 }
-                EditCommand::Delete => {
+                Delete => {
                     self.delete();
                 }
-                EditCommand::BackspaceWord => {
+                BackspaceWord => {
                     self.backspace_word();
                 }
-                EditCommand::DeleteWord => {
+                DeleteWord => {
                     self.delete_word();
                 }
-                EditCommand::Clear => {
+                Clear => {
                     self.clear();
                 }
-                EditCommand::AppendToHistory => {
+                AppendToHistory => {
                     self.append_to_history();
                 }
-                EditCommand::PreviousHistory => {
+                PreviousHistory => {
                     self.previous_history();
                 }
-                EditCommand::NextHistory => {
+                NextHistory => {
                     self.next_history();
                 }
-                EditCommand::Up => {
+                Up => {
                     self.up_command();
                 }
-                EditCommand::Down => {
+                Down => {
                     self.down_command();
                 }
-                EditCommand::SearchHistory => {
+                SearchHistory => {
                     self.search_history();
                 }
-                EditCommand::CutFromStart => {
+                CutFromStart => {
                     self.cut_from_start();
                 }
-                EditCommand::CutToEnd => {
+                CutToEnd => {
                     self.cut_from_end();
                 }
-                EditCommand::CutWordLeft => {
+                CutWordLeft => {
                     self.cut_word_left();
                 }
-                EditCommand::CutWordRight => {
+                CutWordRight => {
                     self.cut_word_right();
                 }
-                EditCommand::PasteCutBuffer => {
+                PasteCutBuffer => {
                     self.insert_cut_buffer();
                 }
-                EditCommand::UppercaseWord => {
+                UppercaseWord => {
                     self.uppercase_word();
                 }
-                EditCommand::LowercaseWord => {
+                LowercaseWord => {
                     self.lowercase_word();
                 }
-                EditCommand::CapitalizeChar => {
+                CapitalizeChar => {
                     self.capitalize_char();
                 }
-                EditCommand::SwapWords => {
+                SwapWords => {
                     self.swap_words();
                 }
-                EditCommand::SwapGraphemes => {
+                SwapGraphemes => {
                     self.swap_graphemes();
                 }
-                EditCommand::EnterViInsert => {
+                EnterViInsert => {
                     self.enter_vi_insert_mode();
                 }
-                EditCommand::EnterViNormal => {
+                EnterViNormal => {
                     self.enter_vi_normal_mode();
                 }
-                EditCommand::Undo => {
+                Undo => {
                     self.line_buffer.undo();
                 }
-                EditCommand::Redo => {
+                Redo => {
                     self.line_buffer.redo();
                 }
                 _ => {}
@@ -933,7 +933,7 @@ impl Reedline {
                                 if x == EditMode::ViNormal =>
                             {
                                 self.tab_handler.reset_index();
-                                self.run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
+                                self.run_edit_commands(&[ViCommandFragment(c)]);
                                 self.line_buffer.set_previous_lines();
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
@@ -948,7 +948,7 @@ impl Reedline {
                                 };
                                 if self.maybe_wrap(terminal_size.0, line_start, c) {
                                     let (original_column, original_row) = position()?;
-                                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
+                                    self.run_edit_commands(&[InsertChar(c)]);
 
                                     self.buffer_paint(prompt_offset)?;
 
@@ -963,7 +963,7 @@ impl Reedline {
                                         prompt_offset.1 -= 1;
                                     }
                                 } else {
-                                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
+                                    self.run_edit_commands(&[InsertChar(c)]);
                                 }
                                 self.line_buffer.set_previous_lines();
                             }
@@ -972,10 +972,7 @@ impl Reedline {
                                     InputMode::Regular => {
                                         let buffer = self.insertion_line().to_string();
 
-                                        self.run_edit_commands(&[
-                                            EditCommand::AppendToHistory,
-                                            EditCommand::Clear,
-                                        ]);
+                                        self.run_edit_commands(&[AppendToHistory, Clear]);
                                         self.print_crlf()?;
                                         self.tab_handler.reset_index();
                                         self.line_buffer.reset_olds();
