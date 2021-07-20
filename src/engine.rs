@@ -228,17 +228,15 @@ impl Reedline {
             match command {
                 EditCommand::InsertChar(c) => {
                     let navigation = self.history.get_navigation();
-                    if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
-                        let new_string = format!("{}{}", substring, c);
+                    if let HistoryNavigationQuery::SubstringSearch(mut substring) = navigation {
+                        substring.push(*c);
                         self.history
-                            .set_navigation(HistoryNavigationQuery::SubstringSearch(new_string));
+                            .set_navigation(HistoryNavigationQuery::SubstringSearch(substring));
                     } else {
                         self.history
-                            .set_navigation(HistoryNavigationQuery::SubstringSearch(format!(
-                                "{}",
-                                c
-                            )))
+                            .set_navigation(HistoryNavigationQuery::SubstringSearch(String::from(*c)))
                     }
+                    self.history.back();
                 }
                 EditCommand::Backspace => {
                     let navigation = self.history.get_navigation();
@@ -250,6 +248,17 @@ impl Reedline {
                             .set_navigation(HistoryNavigationQuery::SubstringSearch(
                                 new_substring.to_string(),
                             ));
+                        self.history.back()
+                    }
+                }
+                EditCommand::SearchHistory | EditCommand::Up | EditCommand::PreviousHistory => {
+                    self.history.back();
+                }
+                EditCommand::Down | EditCommand::NextHistory => {
+                    self.history.forward();
+                    // Hacky way to ensure that we don't fall of into failed search going forward
+                    if self.history.string_at_cursor().is_none() {
+                        self.history.back();
                     }
                 }
                 _ => {
@@ -403,41 +412,33 @@ impl Reedline {
     fn previous_history(&mut self) {
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
+            self.set_history_navigation_based_on_line_buffer();
         }
 
-        self.set_history_navigation_based_on_line_buffer();
-
         self.history.back();
+        self.update_buffer_from_history();
     }
 
     fn next_history(&mut self) {
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
+            self.set_history_navigation_based_on_line_buffer();
         }
 
-        self.set_history_navigation_based_on_line_buffer();
-
         self.history.forward();
+        self.update_buffer_from_history();
     }
 
     fn set_history_navigation_based_on_line_buffer(&mut self) {
-        match (self.line_buffer.is_empty(), self.history.get_navigation()) {
-            (true, HistoryNavigationQuery::Normal) => {}
-            (true, _) => {
-                self.history.set_navigation(HistoryNavigationQuery::Normal);
-            }
-            (false, HistoryNavigationQuery::PrefixSearch(prefix)) => {
-                let buffer = self.insertion_line().to_string();
-                if prefix != buffer {
-                    self.history
-                        .set_navigation(HistoryNavigationQuery::PrefixSearch(buffer));
-                }
-            }
-            (false, _) => {
-                let buffer = self.insertion_line().to_string();
-                self.history
-                    .set_navigation(HistoryNavigationQuery::PrefixSearch(buffer));
-            }
+        if self.line_buffer.is_empty()
+            || self.line_buffer.insertion_point().offset != self.line_buffer.get_buffer().len()
+        {
+            self.history
+                .set_navigation(HistoryNavigationQuery::Normal(self.line_buffer.clone()));
+        } else {
+            let buffer = self.insertion_line().to_string();
+            self.history
+                .set_navigation(HistoryNavigationQuery::PrefixSearch(buffer));
         }
     }
 
@@ -535,10 +536,15 @@ impl Reedline {
         if self.input_mode == InputMode::HistoryTraversal {
             for command in commands {
                 match command {
-                    EditCommand::PreviousHistory => {}
-                    EditCommand::NextHistory => {}
+                    EditCommand::Up
+                    | EditCommand::Down
+                    | EditCommand::NextHistory
+                    | EditCommand::PreviousHistory => {}
                     _ => {
-                        if self.history.get_navigation() == HistoryNavigationQuery::Normal {
+                        if matches!(
+                            self.history.get_navigation(),
+                            HistoryNavigationQuery::Normal(_)
+                        ) {
                             if let Some(string) = self.history.string_at_cursor() {
                                 self.set_buffer(string)
                             }
@@ -780,7 +786,8 @@ impl Reedline {
 
             match self.history.string_at_cursor() {
                 Some(string) => {
-                    self.painter.queue_history_results(&string, string.len())?;
+                    self.painter
+                        .queue_history_search_result(&string, string.len())?;
                     self.painter.flush()?;
                 }
 
@@ -793,25 +800,32 @@ impl Reedline {
         Ok(())
     }
 
-    fn history_traversal_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
-        if let Some(buffer_to_paint) = self.history.string_at_cursor() {
-            let cursor_position_in_buffer = match self.history.get_navigation() {
-                HistoryNavigationQuery::Normal => buffer_to_paint.len(),
-                HistoryNavigationQuery::PrefixSearch(_) => self.insertion_point().offset,
-                HistoryNavigationQuery::SubstringSearch(_) => panic!("Invalid state"),
-            };
-
-            self.painter.queue_buffer(
-                buffer_to_paint,
-                prompt_offset,
-                cursor_position_in_buffer,
-                self.history.as_ref(),
-            )?;
-
-            self.painter.flush()?;
+    fn update_buffer_from_history(&mut self) {
+        match self.history.get_navigation() {
+            HistoryNavigationQuery::Normal(original) => {
+                if let Some(buffer_to_paint) = self.history.string_at_cursor() {
+                    self.line_buffer.set_buffer(buffer_to_paint.clone());
+                    self.line_buffer.set_insertion_point(InsertionPoint {
+                        line: 0,
+                        offset: buffer_to_paint.len(),
+                    })
+                } else {
+                    self.line_buffer = original
+                }
+            }
+            HistoryNavigationQuery::PrefixSearch(prefix) => {
+                if let Some(prefix_result) = self.history.string_at_cursor() {
+                    self.line_buffer.set_buffer(prefix_result);
+                } else {
+                    self.line_buffer.set_buffer(prefix.clone());
+                }
+                self.line_buffer.set_insertion_point(InsertionPoint {
+                    line: 0,
+                    offset: prefix.len(),
+                });
+            }
+            HistoryNavigationQuery::SubstringSearch(_) => todo!(),
         }
-
-        Ok(())
     }
 
     /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
@@ -952,18 +966,20 @@ impl Reedline {
                 if self.insertion_line().to_string().is_empty() {
                     self.tab_handler.reset_index();
                 }
-                if self.input_mode == InputMode::HistorySearch {
-                    self.history_search_paint(prompt)?;
-                } else if self.input_mode == InputMode::HistoryTraversal {
-                    self.history_traversal_paint(prompt_offset)?;
-                } else if self.need_full_repaint {
-                    prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
-                    self.need_full_repaint = false;
-                } else {
-                    self.buffer_paint(prompt_offset)?;
-                }
             } else {
+                // No key event:
+                // Repaint the prompt for the clock
+                self.need_full_repaint = true;
+            }
+
+            // Repainting
+            if self.input_mode == InputMode::HistorySearch {
+                self.history_search_paint(prompt)?;
+            } else if self.need_full_repaint {
                 prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
+                self.need_full_repaint = false;
+            } else {
+                self.buffer_paint(prompt_offset)?;
             }
         }
     }

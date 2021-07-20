@@ -33,12 +33,16 @@ fn main() -> Result<()> {
         vec![EditCommand::BackspaceWord],
     );
 
-    let history = Box::new(FileBackedHistory::with_file(5, "history.txt".into())?);
+    let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
     let commands = vec![
         "test".into(),
+        "clear".into(),
+        "exit".into(),
+        "history".into(),
+        "logout".into(),
         "hello world".into(),
         "hello world reedline".into(),
-        "this is reedline crate".into(),
+        "this is the reedline crate".into(),
     ];
 
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
