@@ -66,26 +66,25 @@ impl TabHandler for DefaultTabHandler {
             self.initial_line = LineBuffer::new();
             self.initial_line.set_buffer(line.get_buffer().into());
             self.initial_line
-                .set_insertion_point(line.insertion_point());
+                .set_insertion_point(line.line(), line.offset());
         } else {
             line.set_buffer(self.initial_line.get_buffer().into());
-            line.set_insertion_point(self.initial_line.insertion_point())
+            line.set_insertion_point(self.initial_line.line(), self.initial_line.offset())
         }
-        let completions = self.completer.complete(
-            self.initial_line.get_buffer(),
-            self.initial_line.insertion_point().offset,
-        );
+        let completions = self
+            .completer
+            .complete(self.initial_line.get_buffer(), self.initial_line.offset());
         if !completions.is_empty() {
             match self.index {
                 index if index < completions.len() => {
                     self.index += 1;
                     let span = completions[index].0;
-                    let mut insertion_point = line.insertion_point();
-                    insertion_point.offset += completions[index].1.len() - (span.end - span.start);
+                    let mut offset = line.offset();
+                    offset += completions[index].1.len() - (span.end - span.start);
 
                     // TODO improve the support for multiline replace
                     line.replace(span.start..span.end, 0, &completions[index].1);
-                    line.set_insertion_point(insertion_point);
+                    line.set_insertion_point(line.line(), offset);
                 }
                 _ => {
                     self.reset_index();
