@@ -228,17 +228,15 @@ impl Reedline {
             match command {
                 EditCommand::InsertChar(c) => {
                     let navigation = self.history.get_navigation();
-                    if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
-                        let new_string = format!("{}{}", substring, c);
+                    if let HistoryNavigationQuery::SubstringSearch(mut substring) = navigation {
+                        substring.push(*c);
                         self.history
-                            .set_navigation(HistoryNavigationQuery::SubstringSearch(new_string));
+                            .set_navigation(HistoryNavigationQuery::SubstringSearch(substring));
                     } else {
                         self.history
-                            .set_navigation(HistoryNavigationQuery::SubstringSearch(format!(
-                                "{}",
-                                c
-                            )))
+                            .set_navigation(HistoryNavigationQuery::SubstringSearch(String::from(*c)))
                     }
+                    self.history.back();
                 }
                 EditCommand::Backspace => {
                     let navigation = self.history.get_navigation();
@@ -250,6 +248,17 @@ impl Reedline {
                             .set_navigation(HistoryNavigationQuery::SubstringSearch(
                                 new_substring.to_string(),
                             ));
+                        self.history.back()
+                    }
+                }
+                EditCommand::SearchHistory | EditCommand::Up | EditCommand::PreviousHistory => {
+                    self.history.back();
+                }
+                EditCommand::Down | EditCommand::NextHistory => {
+                    self.history.forward();
+                    // Hacky way to ensure that we don't fall of into failed search going forward
+                    if self.history.string_at_cursor().is_none() {
+                        self.history.back();
                     }
                 }
                 _ => {
