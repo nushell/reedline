@@ -107,32 +107,6 @@ impl HistoryView for FileBackedHistory {
 
     fn string_at_cursor(&self) -> Option<String> {
         self.entries.get(self.cursor).cloned()
-
-        // let entry = match self.entries.get(self.cursor) {
-        //     Some(entry) => entry.to_owned(),
-        //     None => return None,
-        // };
-
-        // match self.query.clone() {
-        //     HistoryNavigationQuery::Normal => Some(entry),
-        //     HistoryNavigationQuery::PrefixSearch(prefix) => {
-        //         if entry.starts_with(&prefix) {
-        //             Some(entry)
-        //         } else {
-        //             unreachable!()
-        //         }
-        //     }
-        //     HistoryNavigationQuery::SubstringSearch(substring) => {
-        //         if substring.is_empty() {
-        //             unreachable!()
-        //         }
-        //         if entry.contains(&substring) {
-        //             Some(entry)
-        //         } else {
-        //             unreachable!()
-        //         }
-        //     }
-        // }
     }
 
     fn set_navigation(&mut self, navigation: HistoryNavigationQuery) {
