@@ -222,13 +222,14 @@ impl FileBackedHistory {
 
     fn back_with_criteria(&mut self, criteria: &dyn Fn(&str) -> bool) {
         if !self.entries.is_empty() {
+            let previous_match = self.entries.get(self.cursor);
             if let Some((next_cursor, _)) = self
                 .entries
                 .iter()
                 .take(self.cursor)
                 .enumerate()
                 .rev()
-                .find(|x| criteria(x.1))
+                .find(|(_, entry)| criteria(entry) && previous_match != Some(entry))
             {
                 // set to entry
                 self.cursor = next_cursor
@@ -237,15 +238,16 @@ impl FileBackedHistory {
     }
 
     fn forward_with_criteria(&mut self, criteria: &dyn Fn(&str) -> bool) {
+        let previous_match = self.entries.get(self.cursor);
         if let Some((next_cursor, _)) = self
             .entries
             .iter()
             .enumerate()
             .skip(self.cursor + 1)
-            .find(|x| criteria(x.1))
+            .find(|(_, entry)| criteria(entry) && previous_match != Some(entry))
         {
             // set to entry
-            self.cursor = next_cursor 
+            self.cursor = next_cursor
         } else {
             self.reset_cursor()
         }
@@ -399,9 +401,28 @@ mod tests {
         hist.back();
         assert_eq!(hist.string_at_cursor(), Some("find me as well".to_string()));
     }
+    #[test]
+    fn prefix_search_returns_to_none() {
+        let mut hist = FileBackedHistory::default();
+        hist.append(String::from("find me as well"));
+        hist.append(String::from("test"));
+        hist.append(String::from("find me"));
+
+        hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
+        hist.back();
+        assert_eq!(hist.string_at_cursor(), Some("find me".to_string()));
+        hist.back();
+        assert_eq!(hist.string_at_cursor(), Some("find me as well".to_string()));
+        hist.forward();
+        assert_eq!(hist.string_at_cursor(), Some("find me".to_string()));
+        hist.forward();
+        assert_eq!(hist.string_at_cursor(), None);
+        hist.forward();
+        assert_eq!(hist.string_at_cursor(), None);
+    }
 
     #[test]
-    fn prefix_search_ignores_consecitive_equivalent_entries_going_backwards() {
+    fn prefix_search_ignores_consecutive_equivalent_entries_going_backwards() {
         let mut hist = FileBackedHistory::default();
         hist.append(String::from("find me as well"));
         hist.append(String::from("find me once"));
@@ -416,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn prefix_search_ignores_consecitive_equivalent_entries_going_forwards() {
+    fn prefix_search_ignores_consecutive_equivalent_entries_going_forwards() {
         let mut hist = FileBackedHistory::default();
         hist.append(String::from("find me once"));
         hist.append(String::from("test"));
@@ -424,11 +445,13 @@ mod tests {
         hist.append(String::from("find me as well"));
 
         hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
-        hist.cursor = 0;
-
+        hist.back();
+        hist.back();
         assert_eq!(hist.string_at_cursor(), Some("find me once".to_string()));
         hist.forward();
         assert_eq!(hist.string_at_cursor(), Some("find me as well".to_string()));
+        hist.forward();
+        assert_eq!(hist.string_at_cursor(), None);
     }
 
     #[test]
