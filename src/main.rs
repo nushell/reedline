@@ -55,7 +55,9 @@ fn main() -> Result<()> {
             reedline::EditMode::Emacs
         })
         .with_keybindings(keybindings)
-        .with_highlighter(Box::new(DefaultHighlighter::new(commands)))
+        .with_highlighter(Box::new(
+            DefaultHighlighter::new(commands), //.set_case_insensitive(),
+        ))
         .with_tab_handler(Box::new(
             DefaultTabHandler::default().with_completer(completer.clone()),
         ))

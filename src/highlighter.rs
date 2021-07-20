@@ -15,23 +15,27 @@ pub struct DefaultHighlighter {
     match_color: Color,
     notmatch_color: Color,
     neutral_color: Color,
+    case_sensitive: bool,
 }
 
 impl Highlighter for DefaultHighlighter {
     fn highlight(&self, line: &str) -> StyledText {
         let mut styled_text = StyledText::new();
-        let lowercase_line = line.to_lowercase();
+        let updated_line = match self.case_sensitive {
+            true => line.to_string(),
+            false => line.to_lowercase(),
+        };
 
         if self
             .external_commands
             .clone()
             .iter()
-            .any(|x| lowercase_line.contains(x))
+            .any(|x| updated_line.contains(x))
         {
             let matches: Vec<String> = self
                 .external_commands
                 .iter()
-                .filter(|c| lowercase_line.contains(*c))
+                .filter(|c| updated_line.contains(*c))
                 .map(|c| c.to_string())
                 .collect();
             let longest_match = matches.iter().fold("".to_string(), |acc, item| {
@@ -41,23 +45,41 @@ impl Highlighter for DefaultHighlighter {
                     acc
                 }
             });
-            let lowercase_buffer_split: Vec<&str> =
-                lowercase_line.splitn(2, &longest_match).collect();
-            let before_longest_match = line[..lowercase_buffer_split[0].len()].to_string();
-            let after_longest_match =
-                line[(lowercase_buffer_split[0].len() + longest_match.len())..].to_string();
 
-            styled_text.push((Style::new().fg(self.neutral_color), before_longest_match));
-            styled_text.push((
-                Style::new().fg(self.match_color),
-                line[lowercase_buffer_split[0].len()
-                    ..(lowercase_buffer_split[0].len() + longest_match.len())]
-                    .to_string(),
-            ));
-            styled_text.push((
-                Style::new().bold().fg(self.neutral_color),
-                after_longest_match,
-            ));
+            match self.case_sensitive {
+                true => {
+                    let buffer_split: Vec<&str> = line.splitn(2, &longest_match).collect();
+
+                    styled_text.push((
+                        Style::new().fg(self.neutral_color),
+                        buffer_split[0].to_string(),
+                    ));
+                    styled_text.push((Style::new().fg(self.match_color), longest_match));
+                    styled_text.push((
+                        Style::new().bold().fg(self.neutral_color),
+                        buffer_split[1].to_string(),
+                    ));
+                }
+                false => {
+                    let lowercase_buffer_split: Vec<&str> =
+                        updated_line.splitn(2, &longest_match).collect();
+                    let before_longest_match = line[..lowercase_buffer_split[0].len()].to_string();
+                    let after_longest_match =
+                        line[(lowercase_buffer_split[0].len() + longest_match.len())..].to_string();
+
+                    styled_text.push((Style::new().fg(self.neutral_color), before_longest_match));
+                    styled_text.push((
+                        Style::new().fg(self.match_color),
+                        line[lowercase_buffer_split[0].len()
+                            ..(lowercase_buffer_split[0].len() + longest_match.len())]
+                            .to_string(),
+                    ));
+                    styled_text.push((
+                        Style::new().bold().fg(self.neutral_color),
+                        after_longest_match,
+                    ));
+                }
+            };
         } else if !self.external_commands.is_empty() {
             styled_text.push((Style::new().fg(self.notmatch_color), line.to_string()));
         } else {
@@ -74,6 +96,7 @@ impl DefaultHighlighter {
             match_color: DEFAULT_BUFFER_MATCH_COLOR,
             notmatch_color: DEFAULT_BUFFER_NOTMATCH_COLOR,
             neutral_color: DEFAULT_BUFFER_NEUTRAL_COLOR,
+            case_sensitive: true,
         }
     }
     pub fn change_colors(
@@ -85,6 +108,10 @@ impl DefaultHighlighter {
         self.match_color = match_color;
         self.notmatch_color = notmatch_color;
         self.neutral_color = neutral_color;
+    }
+    pub fn set_case_insensitive(mut self) -> DefaultHighlighter {
+        self.case_sensitive = false;
+        self
     }
 }
 impl Default for DefaultHighlighter {
