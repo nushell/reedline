@@ -234,7 +234,9 @@ impl Reedline {
                             .set_navigation(HistoryNavigationQuery::SubstringSearch(substring));
                     } else {
                         self.history
-                            .set_navigation(HistoryNavigationQuery::SubstringSearch(String::from(*c)))
+                            .set_navigation(HistoryNavigationQuery::SubstringSearch(String::from(
+                                *c,
+                            )))
                     }
                     self.history.back();
                 }
@@ -815,14 +817,18 @@ impl Reedline {
             }
             HistoryNavigationQuery::PrefixSearch(prefix) => {
                 if let Some(prefix_result) = self.history.string_at_cursor() {
-                    self.line_buffer.set_buffer(prefix_result);
+                    self.line_buffer.set_buffer(prefix_result.clone());
+                    self.line_buffer.set_insertion_point(InsertionPoint {
+                        line: 0,
+                        offset: prefix_result.len(),
+                    });
                 } else {
                     self.line_buffer.set_buffer(prefix.clone());
+                    self.line_buffer.set_insertion_point(InsertionPoint {
+                        line: 0,
+                        offset: prefix.len(),
+                    });
                 }
-                self.line_buffer.set_insertion_point(InsertionPoint {
-                    line: 0,
-                    offset: prefix.len(),
-                });
             }
             HistoryNavigationQuery::SubstringSearch(_) => todo!(),
         }

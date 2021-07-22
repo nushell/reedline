@@ -476,7 +476,7 @@ mod tests {
         let entries = vec!["test", "text", "more test text"];
 
         {
-            let mut hist = FileBackedHistory::with_file(1000, histfile.clone()).unwrap();
+            let mut hist = FileBackedHistory::with_file(5, histfile.clone()).unwrap();
 
             entries.iter().for_each(|e| hist.append(e.to_string()));
 
