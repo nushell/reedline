@@ -3,9 +3,9 @@
 ![GitHub](https://img.shields.io/github/license/jntrnr/reedline) 
 [![Crates.io](https://img.shields.io/crates/v/reedline)](https://crates.io/crates/reedline)
 [![docs.rs](https://img.shields.io/docsrs/reedline)](https://docs.rs/reedline/)
+[![CI status](https://github.com/jntrnr/reedline/actions/workflows/ci.yml/badge.svg)](https://github.com/jntrnr/reedline/actions)
 [![Discord](https://img.shields.io/discord/601130461678272522.svg?logo=discord)](https://discord.gg/NtAbbGn)
 [![Twitch Status](https://img.shields.io/twitch/status/jntrnr?style=social)](https://twitch.tv/jntrnr)
-[![CI status](https://github.com/jntrnr/reedline/actions/workflows/ci.yml/badge.svg)](https://github.com/jntrnr/reedline/actions)
 
 ## Basic example
 
