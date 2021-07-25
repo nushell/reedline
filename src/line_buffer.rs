@@ -71,7 +71,8 @@ impl LineBuffer {
 
     pub fn undo(&mut self) -> Option<()> {
         self.lines = self.old_lines.get(self.get_index_undo())?.clone();
-        self.set_insertion_point(*self.old_insertion_point.get(self.get_index_undo())?);
+        let insertion_point = *self.old_insertion_point.get(self.get_index_undo())?;
+        self.set_insertion_point(insertion_point.line, insertion_point.offset);
         if self.index_undo <= self.old_lines.len() {
             self.index_undo = self.index_undo.checked_add(1)?;
         }

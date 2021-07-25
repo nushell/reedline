@@ -345,7 +345,7 @@ impl Reedline {
             } else {
                 position = 0;
             }
-            self.line_buffer.set_insertion_point(0, position);
+            self.set_offset(position);
 
             // Move right from this position to the column we were at
             while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
@@ -386,7 +386,7 @@ impl Reedline {
 
             position += pos + 1;
 
-            self.line_buffer.set_insertion_point(0, position);
+            self.set_offset(position);
 
             // Move right from this position to the column we were at
             while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
@@ -823,8 +823,7 @@ impl Reedline {
             HistoryNavigationQuery::Normal(original) => {
                 if let Some(buffer_to_paint) = self.history.string_at_cursor() {
                     self.line_buffer.set_buffer(buffer_to_paint.clone());
-                    self.line_buffer
-                        .set_insertion_point(0, buffer_to_paint.len())
+                    self.set_offset(buffer_to_paint.len())
                 } else {
                     self.line_buffer = original
                 }
@@ -832,10 +831,10 @@ impl Reedline {
             HistoryNavigationQuery::PrefixSearch(prefix) => {
                 if let Some(prefix_result) = self.history.string_at_cursor() {
                     self.line_buffer.set_buffer(prefix_result.clone());
-                    self.line_buffer.set_insertion_point(0, prefix_result.len());
+                    self.set_offset(prefix_result.len());
                 } else {
                     self.line_buffer.set_buffer(prefix.clone());
-                    self.line_buffer.set_insertion_point(0, prefix.len());
+                    self.set_offset(prefix.len());
                 }
             }
             HistoryNavigationQuery::SubstringSearch(_) => todo!(),
