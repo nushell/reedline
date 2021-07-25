@@ -2,9 +2,9 @@ use {std::ops::Range, unicode_segmentation::UnicodeSegmentation};
 
 /// Cursor coordinates relative to the Unicode representation of [`LineBuffer`]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct InsertionPoint {
-    pub line: usize,
-    pub offset: usize,
+struct InsertionPoint {
+    line: usize,
+    offset: usize,
 }
 
 impl InsertionPoint {
@@ -106,13 +106,16 @@ impl LineBuffer {
         self.lines.is_empty() || self.lines.len() == 1 && self.lines[0].is_empty()
     }
 
-    /// Return 2D-cursor (line_number, col_in_line)
-    pub fn insertion_point(&self) -> InsertionPoint {
-        self.insertion_point
+    pub fn offset(&self) -> usize {
+        self.insertion_point.offset
     }
 
-    pub fn set_insertion_point(&mut self, pos: InsertionPoint) {
-        self.insertion_point = pos;
+    pub fn line(&self) -> usize {
+        self.insertion_point.line
+    }
+
+    pub fn set_insertion_point(&mut self, line: usize, offset: usize) {
+        self.insertion_point = InsertionPoint { line, offset };
     }
 
     /// Output the current line in the multiline buffer
@@ -379,6 +382,11 @@ impl LineBuffer {
         } else {
             self.insertion_point.offset = insertion_offset;
         }
+    }
+
+    /// Return 2D-cursor (line_number, col_in_line)
+    fn insertion_point(&self) -> InsertionPoint {
+        self.insertion_point
     }
 }
 

@@ -8,7 +8,7 @@ use {
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
-        line_buffer::{InsertionPoint, LineBuffer},
+        line_buffer::LineBuffer,
         painter::Painter,
         prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode},
         DefaultHighlighter, EditCommand, EditMode, Highlighter, Prompt, Signal, ViEngine,
@@ -320,14 +320,12 @@ impl Reedline {
 
     fn up_command(&mut self) {
         // If we're at the top, then:
-        if !self.line_buffer.get_buffer()[0..self.line_buffer.insertion_point().offset]
-            .contains('\n')
-        {
+        if !self.line_buffer.get_buffer()[0..self.line_buffer.offset()].contains('\n') {
             // If we're at the top, move to previous history
             self.previous_history();
         } else {
             // If we're not at the top, move up a line in the multiline buffer
-            let mut position = self.line_buffer.insertion_point().offset;
+            let mut position = self.line_buffer.offset();
             let mut num_of_move_lefts = 0;
             let buffer = self.line_buffer.get_buffer().to_string();
 
@@ -336,7 +334,7 @@ impl Reedline {
             while position > 0 && &buffer[(position - 1)..position] != "\n" {
                 self.line_buffer.move_left();
                 num_of_move_lefts += 1;
-                position = self.line_buffer.insertion_point().offset;
+                position = self.line_buffer.offset();
             }
 
             // Find start of previous line
@@ -347,15 +345,12 @@ impl Reedline {
             } else {
                 position = 0;
             }
-            self.line_buffer.set_insertion_point(InsertionPoint {
-                line: 0,
-                offset: position,
-            });
+            self.line_buffer.set_insertion_point(0, position);
 
             // Move right from this position to the column we were at
             while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
                 self.line_buffer.move_right();
-                position = self.line_buffer.insertion_point().offset;
+                position = self.line_buffer.offset();
                 num_of_move_lefts -= 1;
             }
         }
@@ -363,14 +358,12 @@ impl Reedline {
 
     fn down_command(&mut self) {
         // If we're at the top, then:
-        if !self.line_buffer.get_buffer()[self.line_buffer.insertion_point().offset..]
-            .contains('\n')
-        {
+        if !self.line_buffer.get_buffer()[self.line_buffer.offset()..].contains('\n') {
             // If we're at the top, move to previous history
             self.next_history();
         } else {
             // If we're not at the top, move up a line in the multiline buffer
-            let mut position = self.line_buffer.insertion_point().offset;
+            let mut position = self.line_buffer.offset();
             let mut num_of_move_lefts = 0;
             let buffer = self.line_buffer.get_buffer().to_string();
 
@@ -379,7 +372,7 @@ impl Reedline {
             while position > 0 && &buffer[(position - 1)..position] != "\n" {
                 self.line_buffer.move_left();
                 num_of_move_lefts += 1;
-                position = self.line_buffer.insertion_point().offset;
+                position = self.line_buffer.offset();
             }
 
             // Find start of next line
@@ -393,15 +386,12 @@ impl Reedline {
 
             position += pos + 1;
 
-            self.line_buffer.set_insertion_point(InsertionPoint {
-                line: 0,
-                offset: position,
-            });
+            self.line_buffer.set_insertion_point(0, position);
 
             // Move right from this position to the column we were at
             while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
                 self.line_buffer.move_right();
-                position = self.line_buffer.insertion_point().offset;
+                position = self.line_buffer.offset();
                 num_of_move_lefts -= 1;
             }
         }
@@ -433,7 +423,7 @@ impl Reedline {
 
     fn set_history_navigation_based_on_line_buffer(&mut self) {
         if self.line_buffer.is_empty()
-            || self.line_buffer.insertion_point().offset != self.line_buffer.get_buffer().len()
+            || self.line_buffer.offset() != self.line_buffer.get_buffer().len()
         {
             self.history
                 .set_navigation(HistoryNavigationQuery::Normal(self.line_buffer.clone()));
@@ -451,7 +441,7 @@ impl Reedline {
     }
 
     fn cut_from_start(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
+        let insertion_offset = self.line_buffer.offset();
         if insertion_offset > 0 {
             self.cut_buffer
                 .set(&self.line_buffer.get_buffer()[..insertion_offset]);
@@ -460,7 +450,7 @@ impl Reedline {
     }
 
     fn cut_from_end(&mut self) {
-        let cut_slice = &self.line_buffer.get_buffer()[self.insertion_point().offset..];
+        let cut_slice = &self.line_buffer.get_buffer()[self.line_buffer.offset()..];
         if !cut_slice.is_empty() {
             self.cut_buffer.set(cut_slice);
             self.clear_to_end();
@@ -468,19 +458,19 @@ impl Reedline {
     }
 
     fn cut_word_left(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
+        let insertion_offset = self.line_buffer.offset();
         let left_index = self.line_buffer.word_left_index();
         if left_index < insertion_offset {
             let cut_range = left_index..insertion_offset;
             self.cut_buffer
                 .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
             self.clear_range(cut_range);
-            self.set_insertion_point(left_index);
+            self.set_offset(left_index);
         }
     }
 
     fn cut_word_right(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
+        let insertion_offset = self.line_buffer.offset();
         let right_index = self.line_buffer.word_right_index();
         if right_index > insertion_offset {
             let cut_range = insertion_offset..right_index;
@@ -688,17 +678,10 @@ impl Reedline {
         }
     }
 
-    /// Get the cursor position as understood by the underlying [`LineBuffer`]
-    fn insertion_point(&self) -> InsertionPoint {
-        self.line_buffer.insertion_point()
-    }
-
     /// Set the cursor position as understood by the underlying [`LineBuffer`] for the current line
-    fn set_insertion_point(&mut self, pos: usize) {
-        let mut insertion_point = self.line_buffer.insertion_point();
-        insertion_point.offset = pos;
-
-        self.line_buffer.set_insertion_point(insertion_point)
+    fn set_offset(&mut self, pos: usize) {
+        self.line_buffer
+            .set_insertion_point(self.line_buffer.line(), pos)
     }
 
     /// Get the current line of a multi-line edit [`LineBuffer`]
@@ -762,7 +745,7 @@ impl Reedline {
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
-        let cursor_position_in_buffer = self.insertion_point().offset;
+        let cursor_position_in_buffer = self.line_buffer.offset();
         let buffer_to_paint = self.insertion_line().to_string();
 
         self.painter.queue_buffer(
@@ -785,7 +768,7 @@ impl Reedline {
         let prompt_mode = self.prompt_edit_mode();
         let buffer_to_paint = self.insertion_line().to_string();
 
-        let cursor_position_in_buffer = self.insertion_point().offset;
+        let cursor_position_in_buffer = self.line_buffer.offset();
 
         self.painter.repaint_everything(
             prompt,
@@ -840,10 +823,8 @@ impl Reedline {
             HistoryNavigationQuery::Normal(original) => {
                 if let Some(buffer_to_paint) = self.history.string_at_cursor() {
                     self.line_buffer.set_buffer(buffer_to_paint.clone());
-                    self.line_buffer.set_insertion_point(InsertionPoint {
-                        line: 0,
-                        offset: buffer_to_paint.len(),
-                    })
+                    self.line_buffer
+                        .set_insertion_point(0, buffer_to_paint.len())
                 } else {
                     self.line_buffer = original
                 }
@@ -851,16 +832,10 @@ impl Reedline {
             HistoryNavigationQuery::PrefixSearch(prefix) => {
                 if let Some(prefix_result) = self.history.string_at_cursor() {
                     self.line_buffer.set_buffer(prefix_result.clone());
-                    self.line_buffer.set_insertion_point(InsertionPoint {
-                        line: 0,
-                        offset: prefix_result.len(),
-                    });
+                    self.line_buffer.set_insertion_point(0, prefix_result.len());
                 } else {
                     self.line_buffer.set_buffer(prefix.clone());
-                    self.line_buffer.set_insertion_point(InsertionPoint {
-                        line: 0,
-                        offset: prefix.len(),
-                    });
+                    self.line_buffer.set_insertion_point(0, prefix.len());
                 }
             }
             HistoryNavigationQuery::SubstringSearch(_) => todo!(),
@@ -939,7 +914,7 @@ impl Reedline {
                                 if x != EditMode::ViNormal =>
                             {
                                 self.tab_handler.reset_index();
-                                let line_start = if self.insertion_point().line == 0 {
+                                let line_start = if self.line_buffer.line() == 0 {
                                     prompt_offset.0
                                 } else {
                                     0
