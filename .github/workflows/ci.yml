@@ -28,3 +28,7 @@ jobs:
         with:
           command: test
 
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
