@@ -556,96 +556,36 @@ impl Reedline {
         // Run the commands over the edit buffer
         for command in &commands {
             match command {
-                EditCommand::MoveToStart => {
-                    self.move_to_start();
-                }
-                EditCommand::MoveToEnd => {
-                    self.move_to_end();
-                }
-                EditCommand::MoveLeft => {
-                    self.move_left();
-                }
-                EditCommand::MoveRight => {
-                    self.move_right();
-                }
-                EditCommand::MoveWordLeft => {
-                    self.move_word_left();
-                }
-                EditCommand::MoveWordRight => {
-                    self.move_word_right();
-                }
-                EditCommand::InsertChar(c) => {
-                    self.insert_char(*c);
-                }
-                EditCommand::Backspace => {
-                    self.backspace();
-                }
-                EditCommand::Delete => {
-                    self.delete();
-                }
-                EditCommand::BackspaceWord => {
-                    self.backspace_word();
-                }
-                EditCommand::DeleteWord => {
-                    self.delete_word();
-                }
-                EditCommand::Clear => {
-                    self.clear();
-                }
-                EditCommand::AppendToHistory => {
-                    self.append_to_history();
-                }
-                EditCommand::PreviousHistory => {
-                    self.previous_history();
-                }
-                EditCommand::NextHistory => {
-                    self.next_history();
-                }
-                EditCommand::Up => {
-                    self.up_command();
-                }
-                EditCommand::Down => {
-                    self.down_command();
-                }
-                EditCommand::SearchHistory => {
-                    self.search_history();
-                }
-                EditCommand::CutFromStart => {
-                    self.cut_from_start();
-                }
-                EditCommand::CutToEnd => {
-                    self.cut_from_end();
-                }
-                EditCommand::CutWordLeft => {
-                    self.cut_word_left();
-                }
-                EditCommand::CutWordRight => {
-                    self.cut_word_right();
-                }
-                EditCommand::PasteCutBuffer => {
-                    self.insert_cut_buffer();
-                }
-                EditCommand::UppercaseWord => {
-                    self.uppercase_word();
-                }
-                EditCommand::LowercaseWord => {
-                    self.lowercase_word();
-                }
-                EditCommand::CapitalizeChar => {
-                    self.capitalize_char();
-                }
-                EditCommand::SwapWords => {
-                    self.swap_words();
-                }
-                EditCommand::SwapGraphemes => {
-                    self.swap_graphemes();
-                }
-                EditCommand::EnterViInsert => {
-                    self.enter_vi_insert_mode();
-                }
-                EditCommand::EnterViNormal => {
-                    self.enter_vi_normal_mode();
-                }
+                EditCommand::MoveToStart => self.move_to_start(),
+                EditCommand::MoveToEnd => self.move_to_end(),
+                EditCommand::MoveLeft => self.move_left(),
+                EditCommand::MoveRight => self.move_right(),
+                EditCommand::MoveWordLeft => self.move_word_left(),
+                EditCommand::MoveWordRight => self.move_word_right(),
+                EditCommand::InsertChar(c) => self.insert_char(*c),
+                EditCommand::Backspace => self.backspace(),
+                EditCommand::Delete => self.delete(),
+                EditCommand::BackspaceWord => self.backspace_word(),
+                EditCommand::DeleteWord => self.delete_word(),
+                EditCommand::Clear => self.clear(),
+                EditCommand::AppendToHistory => self.append_to_history(),
+                EditCommand::PreviousHistory => self.previous_history(),
+                EditCommand::NextHistory => self.next_history(),
+                EditCommand::Up => self.up_command(),
+                EditCommand::Down => self.down_command(),
+                EditCommand::SearchHistory => self.search_history(),
+                EditCommand::CutFromStart => self.cut_from_start(),
+                EditCommand::CutToEnd => self.cut_from_end(),
+                EditCommand::CutWordLeft => self.cut_word_left(),
+                EditCommand::CutWordRight => self.cut_word_right(),
+                EditCommand::PasteCutBuffer => self.insert_cut_buffer(),
+                EditCommand::UppercaseWord => self.uppercase_word(),
+                EditCommand::LowercaseWord => self.lowercase_word(),
+                EditCommand::CapitalizeChar => self.capitalize_char(),
+                EditCommand::SwapWords => self.swap_words(),
+                EditCommand::SwapGraphemes => self.swap_graphemes(),
+                EditCommand::EnterViInsert => self.enter_vi_insert_mode(),
+                EditCommand::EnterViNormal => self.enter_vi_normal_mode(),
                 EditCommand::Undo => {
                     self.line_buffer.undo();
                 }
