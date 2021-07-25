@@ -69,7 +69,7 @@ pub struct Reedline {
     need_full_repaint: bool,
 
     // Partial command
-    partial_command: Option<char>,
+    //partial_command: Option<char>,
 
     // Vi normal mode state engine
     vi_engine: ViEngine,
@@ -105,7 +105,7 @@ impl Reedline {
             keybindings: keybindings_hashmap,
             edit_mode: EditMode::Emacs,
             need_full_repaint: false,
-            partial_command: None,
+            //partial_command: None,
             vi_engine: ViEngine::new(),
             tab_handler: Box::new(DefaultTabHandler::default()),
         }
@@ -145,8 +145,7 @@ impl Reedline {
     }
 
     pub fn get_keybindings(&self) -> &Keybindings {
-        &self
-            .keybindings
+        self.keybindings
             .get(&EditMode::Emacs)
             .expect("Internal error: emacs should always be supported")
     }
@@ -508,13 +507,13 @@ impl Reedline {
     fn enter_vi_insert_mode(&mut self) {
         self.edit_mode = EditMode::ViInsert;
         self.need_full_repaint = true;
-        self.partial_command = None;
+        //self.partial_command = None;
     }
 
     fn enter_vi_normal_mode(&mut self) {
         self.edit_mode = EditMode::ViNormal;
         self.need_full_repaint = true;
-        self.partial_command = None;
+        //self.partial_command = None;
     }
 
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
