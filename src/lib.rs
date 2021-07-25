@@ -8,26 +8,24 @@
 //!
 //! use reedline::{DefaultPrompt, Reedline, Signal};
 //!
-//! fn main() {
-//!     let mut line_editor = Reedline::new();
-//!     let prompt = DefaultPrompt::default();
+//!  let mut line_editor = Reedline::new();
+//!  let prompt = DefaultPrompt::default();
 //!
-//!     loop {
-//!         let sig = line_editor.read_line(&prompt).unwrap();
-//!         match sig {
-//!             Signal::Success(buffer) => {
-//!                 println!("We processed: {}", buffer);
-//!             }
-//!             Signal::CtrlD | Signal::CtrlC => {
-//!                 line_editor.print_crlf().unwrap();
-//!                 break;
-//!             }
-//!             Signal::CtrlL => {
-//!                 line_editor.clear_screen().unwrap();
-//!             }
-//!         }
-//!     }
-//! }
+//!  loop {
+//!      let sig = line_editor.read_line(&prompt).unwrap();
+//!      match sig {
+//!          Signal::Success(buffer) => {
+//!              println!("We processed: {}", buffer);
+//!          }
+//!          Signal::CtrlD | Signal::CtrlC => {
+//!              line_editor.print_crlf().unwrap();
+//!              break;
+//!          }
+//!          Signal::CtrlL => {
+//!              line_editor.clear_screen().unwrap();
+//!          }
+//!      }
+//!  }
 //! ```
 //! ## Integrate with custom Keybindings
 //!
@@ -35,8 +33,8 @@
 //! // Configure reedline with custom keybindings
 //!
 //! //Cargo.toml
-//! //	[dependencies]
-//! //	crossterm = "*"
+//! //    [dependencies]
+//! //    crossterm = "*"
 //!
 //! use {
 //!   crossterm::event::{KeyCode, KeyModifiers},
@@ -45,9 +43,9 @@
 //!
 //! let mut keybindings = default_emacs_keybindings();
 //! keybindings.add_binding(
-//! 	KeyModifiers::ALT,
-//!   KeyCode::Char('m'),
-//!   vec![EditCommand::BackspaceWord],
+//!     KeyModifiers::ALT,
+//!     KeyCode::Char('m'),
+//!     vec![EditCommand::BackspaceWord],
 //! );
 //!
 //! let mut line_editor = Reedline::new().with_keybindings(keybindings);
@@ -61,12 +59,12 @@
 //! use reedline::{FileBackedHistory, Reedline};
 //!
 //! let history = Box::new(
-//!   FileBackedHistory::with_file(5, "history.txt".into())
-//!   	.expect("Error configuring history with file"),
+//!     FileBackedHistory::with_file(5, "history.txt".into())
+//!         .expect("Error configuring history with file"),
 //! );
 //! let mut line_editor = Reedline::new()
-//! 	.with_history(history)
-//! 	.expect("Error configuring reedline with history");
+//!     .with_history(history)
+//!     .expect("Error configuring reedline with history");
 //! ```
 //!
 //! ## Integrate with custom Highlighter
@@ -112,8 +110,8 @@
 //! // Create a reedline object with in-line hint support
 //!
 //! //Cargo.toml
-//! //	[dependencies]
-//! //	nu-ansi-term = "*"
+//! //    [dependencies]
+//! //    nu-ansi-term = "*"
 //!
 //! use {
 //!   nu_ansi_term::{Color, Style},

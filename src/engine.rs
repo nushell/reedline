@@ -566,12 +566,18 @@ impl Reedline {
         // Run the commands over the edit buffer
         for command in &commands {
             match command {
-                EditCommand::MoveToStart => self.move_to_start(),
+                EditCommand::MoveToStart => {
+                    self.move_to_start();
+                }
                 EditCommand::MoveToEnd => {
                     self.move_to_end();
                 }
-                EditCommand::MoveLeft => self.move_left(),
-                EditCommand::MoveRight => self.move_right(),
+                EditCommand::MoveLeft => {
+                    self.move_left();
+                }
+                EditCommand::MoveRight => {
+                    self.move_right();
+                }
                 EditCommand::MoveWordLeft => {
                     self.move_word_left();
                 }
@@ -650,7 +656,34 @@ impl Reedline {
                 EditCommand::EnterViNormal => {
                     self.enter_vi_normal_mode();
                 }
+                EditCommand::Undo => {
+                    self.line_buffer.undo();
+                }
+                EditCommand::Redo => {
+                    self.line_buffer.redo();
+                }
                 _ => {}
+            }
+
+            if [
+                EditCommand::MoveToEnd,
+                EditCommand::MoveToStart,
+                EditCommand::MoveLeft,
+                EditCommand::MoveRight,
+                EditCommand::MoveWordLeft,
+                EditCommand::MoveWordRight,
+                EditCommand::Backspace,
+                EditCommand::Delete,
+                EditCommand::BackspaceWord,
+                EditCommand::DeleteWord,
+                EditCommand::CutFromStart,
+                EditCommand::CutToEnd,
+                EditCommand::CutWordLeft,
+                EditCommand::CutWordRight,
+            ]
+            .contains(command)
+            {
+                self.line_buffer.set_previous_lines(true);
             }
         }
     }
@@ -873,6 +906,7 @@ impl Reedline {
                             (KeyModifiers::CONTROL, KeyCode::Char('d'), _) => {
                                 self.tab_handler.reset_index();
                                 if self.line_buffer.is_empty() {
+                                    self.line_buffer.reset_olds();
                                     return Ok(Signal::CtrlD);
                                 } else if let Some(binding) = self.find_keybinding(modifiers, code)
                                 {
@@ -884,10 +918,12 @@ impl Reedline {
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
                                     self.run_edit_commands(&binding);
                                 }
+                                self.line_buffer.reset_olds();
                                 return Ok(Signal::CtrlC);
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('l'), EditMode::Emacs) => {
                                 self.tab_handler.reset_index();
+                                self.line_buffer.reset_olds();
                                 return Ok(Signal::CtrlL);
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
@@ -896,6 +932,7 @@ impl Reedline {
                             {
                                 self.tab_handler.reset_index();
                                 self.run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
+                                self.line_buffer.set_previous_lines(false);
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
@@ -926,6 +963,7 @@ impl Reedline {
                                 } else {
                                     self.run_edit_commands(&[EditCommand::InsertChar(c)]);
                                 }
+                                self.line_buffer.set_previous_lines(false);
                             }
                             (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
                                 match self.input_mode {
@@ -938,6 +976,7 @@ impl Reedline {
                                         ]);
                                         self.print_crlf()?;
                                         self.tab_handler.reset_index();
+                                        self.line_buffer.reset_olds();
 
                                         return Ok(Signal::Success(buffer));
                                     }
