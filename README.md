@@ -98,7 +98,7 @@ Reedline::new().with_highlighter(Box::new(DefaultHighlighter::new(commands)));
 ```rust,no_run
 // Create a reedline object with tab completions support
 
-use reedline::{DefaultCompleter, DefaultTabHandler, Reedline};
+use reedline::{DefaultCompleter, DefaultCompletionActionHandler, Reedline};
 
 let commands = vec![
   "test".into(),
@@ -108,8 +108,8 @@ let commands = vec![
 ];
 let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
-let mut line_editor = Reedline::new().with_tab_handler(Box::new(
-  DefaultTabHandler::default().with_completer(completer),
+let mut line_editor = Reedline::new().with_completion_action_handler(Box::new(
+  DefaultCompletionActionHandler::default().with_completer(completer),
 ));
 ```
 

@@ -5,8 +5,9 @@ use {
     },
     nu_ansi_term::{Color, Style},
     reedline::{
-        default_emacs_keybindings, DefaultCompleter, DefaultHighlighter, DefaultHinter,
-        DefaultPrompt, DefaultTabHandler, EditCommand, FileBackedHistory, Reedline, Signal,
+        default_emacs_keybindings, DefaultCompleter, DefaultCompletionActionHandler,
+        DefaultHighlighter, DefaultHinter, DefaultPrompt, EditCommand, FileBackedHistory, Reedline,
+        Signal,
     },
     std::{
         io::{stdout, Write},
@@ -56,8 +57,8 @@ fn main() -> Result<()> {
         })
         .with_keybindings(keybindings)
         .with_highlighter(Box::new(DefaultHighlighter::new(commands)))
-        .with_tab_handler(Box::new(
-            DefaultTabHandler::default().with_completer(completer.clone()),
+        .with_completion_action_handler(Box::new(
+            DefaultCompletionActionHandler::default().with_completer(completer.clone()),
         ))
         .with_hinter(Box::new(
             DefaultHinter::default()

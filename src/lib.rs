@@ -89,7 +89,7 @@
 //! ```rust
 //! // Create a reedline object with tab completions support
 //!
-//! use reedline::{DefaultCompleter, DefaultTabHandler, Reedline};
+//! use reedline::{DefaultCompleter, DefaultCompletionActionHandler, Reedline};
 //!
 //! let commands = vec![
 //!   "test".into(),
@@ -99,8 +99,8 @@
 //! ];
 //! let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 //!
-//! let mut line_editor = Reedline::new().with_tab_handler(Box::new(
-//!   DefaultTabHandler::default().with_completer(completer),
+//! let mut line_editor = Reedline::new().with_completion_action_handler(Box::new(
+//!   DefaultCompletionActionHandler::default().with_completer(completer),
 //! ));
 //! ```
 //!
@@ -172,6 +172,10 @@
 //! For currently more mature Rust line editing check out:
 //!
 //! - [rustyline](https://crates.io/crates/rustyline)
+#![warn(rustdoc::missing_crate_level_docs)]
+#![warn(rustdoc::missing_doc_code_examples)]
+#![warn(missing_docs)]
+#![deny(warnings)]
 mod clip_buffer;
 
 mod text_manipulation;
@@ -209,7 +213,9 @@ pub use highlighter::{DefaultHighlighter, Highlighter};
 mod styled_text;
 
 mod completer;
-pub use completer::{Completer, DefaultCompleter, DefaultTabHandler, Span, TabHandler};
+pub use completer::{
+    ComplationActionHandler, Completer, DefaultCompleter, DefaultCompletionActionHandler, Span,
+};
 
 mod hinter;
 pub use hinter::{DefaultHinter, Hinter};

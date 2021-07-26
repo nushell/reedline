@@ -36,4 +36,5 @@ pub trait HistoryView {
     fn get_navigation(&self) -> HistoryNavigationQuery;
 }
 
+/// The trait that handles history activity, which includes the history buffer and navigating the history
 pub trait History: HistoryAppender + HistoryView {}

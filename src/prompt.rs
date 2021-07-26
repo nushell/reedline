@@ -4,23 +4,35 @@ use {
     std::{borrow::Cow, env},
 };
 
+/// The default color for the prompt
 pub static DEFAULT_PROMPT_COLOR: Color = Color::Blue;
+
+/// The default prompt indicator
 pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
 pub static DEFAULT_VI_INSERT_PROMPT_INDICATOR: &str = ": ";
 pub static DEFAULT_VI_VISUAL_PROMPT_INDICATOR: &str = "v ";
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 
+/// The current success/failure of the history search
 pub enum PromptHistorySearchStatus {
+    /// Success for the search
     Passing,
+
+    /// Failure to find the search
     Failing,
 }
 
+/// A representation of the history search
 pub struct PromptHistorySearch {
+    /// The status of the search
     pub status: PromptHistorySearchStatus,
+
+    /// The search term used during the search
     pub term: String,
 }
 
 impl PromptHistorySearch {
+    /// A constructor to create a history search
     pub fn new(status: PromptHistorySearchStatus, search_term: String) -> Self {
         PromptHistorySearch {
             status,
@@ -29,16 +41,30 @@ impl PromptHistorySearch {
     }
 }
 
+/// Modes that the prompt can be in
 pub enum PromptEditMode {
+    /// The default mode
     Default,
+
+    /// Emacs normal mode
     Emacs,
+
+    /// A vi-specific mode
     Vi(PromptViMode),
+
+    /// A custom mode
     Custom(String),
 }
 
+/// The vi-specific modes that the prompt can be in
 pub enum PromptViMode {
+    /// The default mode
     Normal,
+
+    /// Insertion mode
     Insert,
+
+    /// Visual mode
     Visual,
 }
 
@@ -121,6 +147,7 @@ pub struct DefaultPrompt {
 }
 
 impl DefaultPrompt {
+    /// Constructor for the default prompt, which takes the amount of spaces required between the left and right-hand sides of the prompt
     pub fn new(min_center_spacing: u16) -> DefaultPrompt {
         DefaultPrompt { min_center_spacing }
     }
