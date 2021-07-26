@@ -64,7 +64,7 @@ fn main() -> Result<()> {
             DefaultHinter::default()
                 .with_completer(completer) // or .with_history()
                 // .with_inside_line()
-                .with_style(Style::new().italic().fg(Color::LightGray)),
+                .with_style(Style::new().italic().fg(Color::Fixed(249))),
         ));
 
     let prompt = DefaultPrompt::new(1);
