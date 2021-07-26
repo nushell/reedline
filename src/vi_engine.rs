@@ -1,5 +1,6 @@
 use crate::enums::EditCommand;
 
+/// A representation of the vi-specific parts of the engine
 pub struct ViEngine {
     partial: Option<char>,
 }
@@ -11,10 +12,12 @@ impl Default for ViEngine {
 }
 
 impl ViEngine {
+    /// Constructor for the vi-specific engine component
     pub fn new() -> Self {
         Self { partial: None }
     }
 
+    /// A handler that takes in edit commands and converts them from vi-specific to general edit commands
     pub fn handle(&mut self, commands: &[EditCommand]) -> Vec<EditCommand> {
         let mut output = vec![];
         for command in commands {

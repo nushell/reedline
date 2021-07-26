@@ -3,7 +3,7 @@ use crate::text_manipulation;
 use {
     crate::{
         clip_buffer::{get_default_clipboard, Clipboard},
-        completer::{DefaultTabHandler, TabHandler},
+        completer::{ComplationActionHandler, DefaultCompletionActionHandler},
         default_emacs_keybindings,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
@@ -74,7 +74,7 @@ pub struct Reedline {
     // Vi normal mode state engine
     vi_engine: ViEngine,
 
-    tab_handler: Box<dyn TabHandler>,
+    tab_handler: Box<dyn ComplationActionHandler>,
 }
 
 impl Default for Reedline {
@@ -107,57 +107,143 @@ impl Reedline {
             need_full_repaint: false,
             //partial_command: None,
             vi_engine: ViEngine::new(),
-            tab_handler: Box::new(DefaultTabHandler::default()),
+            tab_handler: Box::new(DefaultCompletionActionHandler::default()),
         }
     }
 
+    /// A builder to include the hinter in your instance of the Reedline engine
+    /// # Example
+    /// ```rust,no_run
+    /// //Cargo.toml
+    /// //[dependencies]
+    /// //nu-ansi-term = "*"
+    /// use {
+    ///     nu_ansi_term::{Color, Style},
+    ///     reedline::{DefaultCompleter, DefaultHinter, Reedline},
+    /// };
+    ///
+    /// let commands = vec![
+    ///     "test".into(),
+    ///     "hello world".into(),
+    ///     "hello world reedline".into(),
+    ///     "this is the reedline crate".into(),
+    /// ];
+    /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
+    ///
+    /// let mut line_editor = Reedline::new().with_hinter(Box::new(
+    ///     DefaultHinter::default()
+    ///     .with_completer(completer) // or .with_history()
+    ///     // .with_inside_line()
+    ///     .with_style(Style::new().italic().fg(Color::LightGray)),
+    /// ));
+    /// ```
     pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Reedline {
         self.painter.set_hinter(hinter);
         self
     }
 
-    pub fn with_tab_handler(mut self, tab_handler: Box<dyn TabHandler>) -> Reedline {
+    /// A builder to configure the completion action handler to use in your instance of the reedline engine
+    /// # Example
+    /// ```rust,no_run
+    /// // Create a reedline object with tab completions support
+    ///
+    /// use reedline::{DefaultCompleter, DefaultCompletionActionHandler, Reedline};
+    ///
+    /// let commands = vec![
+    ///   "test".into(),
+    ///   "hello world".into(),
+    ///   "hello world reedline".into(),
+    ///   "this is the reedline crate".into(),
+    /// ];
+    /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
+    ///
+    /// let mut line_editor = Reedline::new().with_completion_action_handler(Box::new(
+    ///   DefaultCompletionActionHandler::default().with_completer(completer),
+    /// ));
+    /// ```
+    pub fn with_completion_action_handler(
+        mut self,
+        tab_handler: Box<dyn ComplationActionHandler>,
+    ) -> Reedline {
         self.tab_handler = tab_handler;
         self
     }
 
+    /// A builder that configures the highlighter for your instance of the Reedline engine
+    /// # Example
+    /// ```rust,no_run
+    /// // Create a reedline object with highlighter support
+    ///
+    /// use reedline::{DefaultHighlighter, Reedline};
+    ///
+    /// let commands = vec![
+    ///   "test".into(),
+    ///   "hello world".into(),
+    ///   "hello world reedline".into(),
+    ///   "this is the reedline crate".into(),
+    /// ];
+    /// let mut line_editor =
+    /// Reedline::new().with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+    /// ```
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Reedline {
         self.painter.set_highlighter(highlighter);
         self
     }
 
+    /// A builder which configures the history for your instance of the Reedline engine
+    /// # Example
+    /// ```rust,no_run
+    /// // Create a reedline object with history support, including history size limits
+    ///
+    /// use reedline::{FileBackedHistory, Reedline};
+    ///
+    /// let history = Box::new(
+    /// FileBackedHistory::with_file(5, "history.txt".into())
+    ///     .expect("Error configuring history with file"),
+    /// );
+    /// let mut line_editor = Reedline::new()
+    ///     .with_history(history)
+    ///     .expect("Error configuring reedline with history");
+    /// ```
     pub fn with_history(mut self, history: Box<dyn History>) -> std::io::Result<Reedline> {
         self.history = history;
 
         Ok(self)
     }
 
+    /// A builder which configures the keybindings for your instance of the Reedline engine
     pub fn with_keybindings(mut self, keybindings: Keybindings) -> Reedline {
         self.keybindings.insert(EditMode::Emacs, keybindings);
 
         self
     }
 
+    /// A builder which configures the edit mode for your instance of the Reedline engine
     pub fn with_edit_mode(mut self, edit_mode: EditMode) -> Reedline {
         self.edit_mode = edit_mode;
 
         self
     }
 
+    /// Gets the current keybindings for Emacs mode
     pub fn get_keybindings(&self) -> &Keybindings {
         self.keybindings
             .get(&EditMode::Emacs)
             .expect("Internal error: emacs should always be supported")
     }
 
+    /// Sets the keybindings to the given keybindings
+    /// Note: keybindings are set on the emacs mode. The vi mode is not configurable
     pub fn update_keybindings(&mut self, keybindings: Keybindings) {
         self.keybindings.insert(EditMode::Emacs, keybindings);
     }
 
+    /// Get the current edit mode
     pub fn edit_mode(&self) -> EditMode {
         self.edit_mode
     }
 
+    /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
         match self.edit_mode {
             EditMode::ViInsert => PromptEditMode::Vi(PromptViMode::Insert),

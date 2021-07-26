@@ -100,6 +100,7 @@ pub fn default_vi_insert_keybindings() -> Keybindings {
     keybindings
 }
 
+/// Returns the current default emacs keybindings
 pub fn default_emacs_keybindings() -> Keybindings {
     use KeyCode::*;
 

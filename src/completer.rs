@@ -7,15 +7,19 @@ use {
     },
 };
 
+/// A span of source code, with positions in bytes
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub struct Span {
+    /// The starting position of the span, in bytes
     pub start: usize,
+
+    /// The ending position of the span, in bytes
     pub end: usize,
 }
 
 impl Span {
-    // Creates a new `Span` from start and end inputs.
-    // The end parameter must be greater than or equal to the start parameter.
+    /// Creates a new `Span` from start and end inputs.
+    /// The end parameter must be greater than or equal to the start parameter.
     pub fn new(start: usize, end: usize) -> Span {
         assert!(
             end >= start,
@@ -28,33 +32,61 @@ impl Span {
     }
 }
 
-pub trait TabHandler {
+/// The handler for when the user begins a completion action, often using the tab key
+/// This handler will then present the options to the user, allowing them to navigate the options
+/// and pick the completion they want
+pub trait ComplationActionHandler {
+    /// Handle the completion action from the given line buffer
     fn handle(&mut self, line: &mut LineBuffer);
+
+    /// Reset the index, often as a result of the user moving away from the completion
     fn reset_index(&mut self);
 }
 
-pub struct DefaultTabHandler {
+/// A simple handler that will do a cycle-based rotation through the options given by the Completer
+pub struct DefaultCompletionActionHandler {
     completer: Box<dyn Completer>,
     initial_line: LineBuffer,
     index: usize,
 }
 
-impl DefaultTabHandler {
-    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> DefaultTabHandler {
+impl DefaultCompletionActionHandler {
+    /// Build a DefaultCompletionActionHander configured to use a specific completer
+    ///
+    /// # Arguments
+    ///
+    /// * `completer`    The completion logic to use
+    ///
+    /// # Example
+    /// ```
+    /// use reedline::{DefaultCompleter,Completer,Span};
+    ///
+    /// let mut completions = DefaultCompleter::default();
+    /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
+    /// assert_eq!(
+    ///     completions.complete("te",2),
+    ///     vec![(Span { start: 0, end: 2 }, "test".into())]);
+    ///
+    /// let mut completions = DefaultCompletionHandler::new()::with_completions(Box::new(completions));
+    /// ```
+    pub fn with_completer(
+        mut self,
+        completer: Box<dyn Completer>,
+    ) -> DefaultCompletionActionHandler {
         self.completer = completer;
         self
     }
 }
-impl Default for DefaultTabHandler {
+impl Default for DefaultCompletionActionHandler {
     fn default() -> Self {
-        DefaultTabHandler {
+        DefaultCompletionActionHandler {
             completer: Box::new(DefaultCompleter::default()),
             initial_line: LineBuffer::new(),
             index: 0,
         }
     }
 }
-impl TabHandler for DefaultTabHandler {
+impl ComplationActionHandler for DefaultCompletionActionHandler {
     // With this function we handle the tab events.
     //
     // If completions vector is not empty we proceed to replace
@@ -101,10 +133,29 @@ impl TabHandler for DefaultTabHandler {
     }
 }
 
+/// A trait that defines how to convert a line and position to a list of potential completions in that position.
 pub trait Completer {
+    /// the action that will take the line and position and convert it to a vector of completions, which include the
+    /// span to replace and the contents of that replacement
     fn complete(&self, line: &str, pos: usize) -> Vec<(Span, String)>;
 }
 
+/// A default completer that can detect keywords
+/// # Example
+/// # Example
+/// use reedline::{DefaultCompleter, DefaultCompletionActionHandler, Reedline};
+///
+/// let commands = vec![
+///  "test".into(),
+///  "hello world".into(),
+///  "hello world reedline".into(),
+///  "this is the reedline crate".into(),
+/// ];
+/// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
+///
+/// let mut line_editor = Reedline::new().with_completion_action_handler(Box::new(
+///   DefaultCompletionActionHandler::default().with_completer(completer),
+/// ));
 #[derive(Debug, Clone)]
 pub struct DefaultCompleter {
     root: CompletionNode,
@@ -196,12 +247,14 @@ impl Completer for DefaultCompleter {
     }
 }
 impl DefaultCompleter {
+    /// Construct the default completer with a list of commands/keywords to highlight
     pub fn new(external_commands: Vec<String>) -> Self {
         let mut dc = DefaultCompleter::default();
         dc.insert(external_commands);
         dc
     }
 
+    /// Construct the default completer with a list of commands/keywords to highlight, given a minimum word length
     pub fn new_with_wordlen(external_commands: Vec<String>, min_word_len: usize) -> Self {
         let mut dc = DefaultCompleter::default().set_min_word_len(min_word_len);
         dc.insert(external_commands);
