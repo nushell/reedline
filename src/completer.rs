@@ -59,15 +59,15 @@ impl DefaultCompletionActionHandler {
     ///
     /// # Example
     /// ```
-    /// use reedline::{DefaultCompleter,Completer,Span};
+    /// use reedline::{DefaultCompletionActionHandler, DefaultCompleter, Completer, Span};
     ///
-    /// let mut completions = DefaultCompleter::default();
-    /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
+    /// let mut completer = DefaultCompleter::default();
+    /// completer.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
-    ///     completions.complete("te",2),
+    ///     completer.complete("te",2),
     ///     vec![(Span { start: 0, end: 2 }, "test".into())]);
     ///
-    /// let mut completions = DefaultCompletionHandler::new()::with_completions(Box::new(completions));
+    /// let mut completions = DefaultCompletionActionHandler::default().with_completer(Box::new(completer));
     /// ```
     pub fn with_completer(
         mut self,
