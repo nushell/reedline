@@ -1,5 +1,6 @@
 use nu_ansi_term::Style;
 
+/// A representation of a buffer with styling, used for doing syntax highlighting
 pub struct StyledText {
     buffer: Vec<(Style, String)>,
 }
@@ -11,14 +12,21 @@ impl Default for StyledText {
 }
 
 impl StyledText {
+    /// Construct a new StyledText
     pub fn new() -> Self {
         Self { buffer: vec![] }
     }
 
+    /// Add a new styled string to the buffer
     pub fn push(&mut self, styled_string: (Style, String)) {
         self.buffer.push(styled_string);
     }
 
+    /// Render the styled string. We use the insertion point to render around so that
+    /// we can properly write out the styled string to the screen and find the correct
+    /// place to put the cursor. This assumes a logic that prints the first part of the
+    /// string, saves the cursor position, prints the second half, and then restores
+    /// the cursor position
     pub fn render_around_insertion_point(&self, insertion_point: usize) -> (String, String) {
         let mut current_idx = 0;
         let mut left_string = String::new();
