@@ -966,7 +966,7 @@ impl Reedline {
                             }
                             (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
                                 match self.input_mode {
-                                    InputMode::Regular => {
+                                    InputMode::Regular | InputMode::HistoryTraversal => {
                                         let buffer = self.insertion_line().to_string();
 
                                         self.run_edit_commands(&[
@@ -979,7 +979,7 @@ impl Reedline {
 
                                         return Ok(Signal::Success(buffer));
                                     }
-                                    InputMode::HistorySearch | InputMode::HistoryTraversal => {
+                                    InputMode::HistorySearch => {
                                         self.queue_prompt_indicator(prompt)?;
 
                                         if let Some(string) = self.history.string_at_cursor() {
