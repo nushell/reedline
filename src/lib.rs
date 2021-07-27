@@ -211,6 +211,7 @@ mod highlighter;
 pub use highlighter::{DefaultHighlighter, Highlighter};
 
 mod styled_text;
+pub use styled_text::StyledText;
 
 mod completer;
 pub use completer::{
