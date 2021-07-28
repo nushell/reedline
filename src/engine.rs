@@ -2,13 +2,12 @@ use crate::text_manipulation;
 
 use {
     crate::{
-        clip_buffer::{get_default_clipboard, Clipboard},
         completer::{ComplationActionHandler, DefaultCompletionActionHandler},
+        core_editor::{get_default_clipboard, Clipboard, LineBuffer},
         default_emacs_keybindings,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
-        line_buffer::LineBuffer,
         painter::Painter,
         prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode},
         DefaultHighlighter, EditCommand, EditMode, Highlighter, Prompt, Signal, ViEngine,
