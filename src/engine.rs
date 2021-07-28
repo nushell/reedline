@@ -1,16 +1,15 @@
-use crate::{core_editor::LineBuffer, text_manipulation};
-
 use {
     crate::{
         completer::{ComplationActionHandler, DefaultCompletionActionHandler},
-        core_editor::{get_default_clipboard, Editor},
+        core_editor::Editor,
         default_emacs_keybindings,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
         painter::Painter,
         prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode},
-        DefaultHighlighter, EditCommand, EditMode, Highlighter, Prompt, Signal, ViEngine,
+        text_manipulation, DefaultHighlighter, EditCommand, EditMode, Highlighter, Prompt, Signal,
+        ViEngine,
     },
     crossterm::{
         cursor::position,
@@ -92,7 +91,7 @@ impl Reedline {
         keybindings_hashmap.insert(EditMode::ViNormal, default_vi_normal_keybindings());
 
         Reedline {
-            editor: Editor::new(LineBuffer::new(), Box::new(get_default_clipboard())),
+            editor: Editor::default(),
             history,
             input_mode: InputMode::Regular,
             painter,

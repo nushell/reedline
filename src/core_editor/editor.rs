@@ -1,18 +1,29 @@
+use crate::core_editor::get_default_clipboard;
+
 use super::{Clipboard, LineBuffer};
 
 pub struct Editor {
     line_buffer: LineBuffer,
     cut_buffer: Box<dyn Clipboard>,
+
+    edits: Vec<LineBuffer>,
+    index_undo: usize,
+}
+
+impl Default for Editor {
+    fn default() -> Self {
+        Editor {
+            line_buffer: LineBuffer::new(),
+            cut_buffer: Box::new(get_default_clipboard()),
+
+            // Note: Using list-zipper we can reduce these to one fild
+            edits: vec![],
+            index_undo: 2,
+        }
+    }
 }
 
 impl Editor {
-    pub fn new(line_buffer: LineBuffer, clip_buffer: Box<dyn Clipboard>) -> Editor {
-        Editor {
-            line_buffer,
-            cut_buffer: clip_buffer,
-        }
-    }
-
     pub fn line_buffer(&mut self) -> &mut LineBuffer {
         &mut self.line_buffer
     }
@@ -128,20 +139,53 @@ impl Editor {
         self.line_buffer.is_empty()
     }
 
-    pub fn undo(&mut self) -> Option<()> {
-        self.line_buffer.undo()
+    pub fn reset_olds(&mut self) {
+        self.edits = vec![LineBuffer::new()];
+        self.index_undo = 2;
+    }
+
+    fn get_index_undo(&self) -> usize {
+        if let Some(c) = self.edits.len().checked_sub(self.index_undo) {
+            c
+        } else {
+            0
+        }
     }
 
     pub fn redo(&mut self) -> Option<()> {
-        self.line_buffer.redo()
+        if self.index_undo > 2 {
+            self.index_undo = self.index_undo.checked_sub(2)?;
+            self.undo()
+        } else {
+            None
+        }
     }
 
-    pub fn reset_olds(&mut self) {
-        self.line_buffer.reset_olds()
+    pub fn undo(&mut self) -> Option<()> {
+        self.line_buffer = self.edits.get(self.get_index_undo())?.clone();
+
+        if self.index_undo <= self.edits.len() {
+            self.index_undo = self.index_undo.checked_add(1)?;
+        }
+        Some(())
     }
 
     pub fn set_previous_lines(&mut self, is_after_action: bool) -> Option<()> {
-        self.line_buffer.set_previous_lines(is_after_action)
+        self.reset_index_undo();
+
+        if self.edits.len() > 1
+            && self.edits.last()?.word_count() == self.line_buffer.word_count()
+            && !is_after_action
+        {
+            self.edits.pop();
+        }
+        self.edits.push(self.line_buffer.clone());
+
+        Some(())
+    }
+
+    pub fn reset_index_undo(&mut self) {
+        self.index_undo = 2;
     }
 
     pub fn cut_from_start(&mut self) {
