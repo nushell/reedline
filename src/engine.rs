@@ -1,9 +1,9 @@
-use crate::text_manipulation;
+use crate::{core_editor::LineBuffer, text_manipulation};
 
 use {
     crate::{
         completer::{ComplationActionHandler, DefaultCompletionActionHandler},
-        core_editor::{get_default_clipboard, Clipboard, LineBuffer},
+        core_editor::{get_default_clipboard, Clipboard, Editor},
         default_emacs_keybindings,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
@@ -46,7 +46,7 @@ enum InputMode {
 /// }
 /// ```
 pub struct Reedline {
-    line_buffer: LineBuffer,
+    editor: Editor,
 
     // Cut buffer
     cut_buffer: Box<dyn Clipboard>,
@@ -96,7 +96,7 @@ impl Reedline {
         keybindings_hashmap.insert(EditMode::ViNormal, default_vi_normal_keybindings());
 
         Reedline {
-            line_buffer: LineBuffer::new(),
+            editor: Editor::new(LineBuffer::new(), Box::new(get_default_clipboard())),
             cut_buffer,
             history,
             input_mode: InputMode::Regular,
@@ -355,70 +355,70 @@ impl Reedline {
     }
 
     fn move_to_start(&mut self) {
-        self.line_buffer.move_to_start()
+        self.editor.move_to_start()
     }
 
     fn move_to_end(&mut self) {
-        self.line_buffer.move_to_end()
+        self.editor.move_to_end()
     }
 
     fn move_left(&mut self) {
-        self.line_buffer.move_left()
+        self.editor.move_left()
     }
 
     fn move_right(&mut self) {
-        self.line_buffer.move_right()
+        self.editor.move_right()
     }
 
     fn move_word_left(&mut self) {
-        self.line_buffer.move_word_left();
+        self.editor.move_word_left();
     }
 
     fn move_word_right(&mut self) {
-        self.line_buffer.move_word_right();
+        self.editor.move_word_right();
     }
 
     fn insert_char(&mut self, c: char) {
-        self.line_buffer.insert_char(c)
+        self.editor.insert_char(c)
     }
 
     fn backspace(&mut self) {
-        self.line_buffer.delete_left_grapheme();
+        self.editor.backspace();
     }
 
     fn delete(&mut self) {
-        self.line_buffer.delete_right_grapheme();
+        self.editor.delete();
     }
 
     fn backspace_word(&mut self) {
-        self.line_buffer.delete_word_left();
+        self.editor.backspace_word();
     }
 
     fn delete_word(&mut self) {
-        self.line_buffer.delete_word_right();
+        self.editor.delete_word();
     }
 
     fn clear(&mut self) {
-        self.line_buffer.clear();
+        self.editor.clear();
     }
 
     fn up_command(&mut self) {
         // If we're at the top, then:
-        if !self.line_buffer.get_buffer()[0..self.line_buffer.offset()].contains('\n') {
+        if !self.editor.get_buffer()[0..self.editor.offset()].contains('\n') {
             // If we're at the top, move to previous history
             self.previous_history();
         } else {
             // If we're not at the top, move up a line in the multiline buffer
-            let mut position = self.line_buffer.offset();
+            let mut position = self.editor.offset();
             let mut num_of_move_lefts = 0;
-            let buffer = self.line_buffer.get_buffer().to_string();
+            let buffer = self.editor.get_buffer().to_string();
 
             // Move left until we're looking at the newline
             // Observe what column we were on
             while position > 0 && &buffer[(position - 1)..position] != "\n" {
-                self.line_buffer.move_left();
+                self.editor.move_left();
                 num_of_move_lefts += 1;
-                position = self.line_buffer.offset();
+                position = self.editor.offset();
             }
 
             // Find start of previous line
@@ -433,8 +433,8 @@ impl Reedline {
 
             // Move right from this position to the column we were at
             while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
-                self.line_buffer.move_right();
-                position = self.line_buffer.offset();
+                self.editor.move_right();
+                position = self.editor.offset();
                 num_of_move_lefts -= 1;
             }
         }
@@ -442,21 +442,21 @@ impl Reedline {
 
     fn down_command(&mut self) {
         // If we're at the top, then:
-        if !self.line_buffer.get_buffer()[self.line_buffer.offset()..].contains('\n') {
+        if !self.editor.get_buffer()[self.editor.offset()..].contains('\n') {
             // If we're at the top, move to previous history
             self.next_history();
         } else {
             // If we're not at the top, move up a line in the multiline buffer
-            let mut position = self.line_buffer.offset();
+            let mut position = self.editor.offset();
             let mut num_of_move_lefts = 0;
-            let buffer = self.line_buffer.get_buffer().to_string();
+            let buffer = self.editor.get_buffer().to_string();
 
             // Move left until we're looking at the newline
             // Observe what column we were on
             while position > 0 && &buffer[(position - 1)..position] != "\n" {
-                self.line_buffer.move_left();
+                self.editor.move_left();
                 num_of_move_lefts += 1;
-                position = self.line_buffer.offset();
+                position = self.editor.offset();
             }
 
             // Find start of next line
@@ -474,8 +474,8 @@ impl Reedline {
 
             // Move right from this position to the column we were at
             while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
-                self.line_buffer.move_right();
-                position = self.line_buffer.offset();
+                self.editor.move_right();
+                position = self.editor.offset();
                 num_of_move_lefts -= 1;
             }
         }
@@ -506,11 +506,11 @@ impl Reedline {
     }
 
     fn set_history_navigation_based_on_line_buffer(&mut self) {
-        if self.line_buffer.is_empty()
-            || self.line_buffer.offset() != self.line_buffer.get_buffer().len()
-        {
-            self.history
-                .set_navigation(HistoryNavigationQuery::Normal(self.line_buffer.clone()));
+        if self.editor.is_empty() || self.editor.offset() != self.editor.get_buffer().len() {
+            self.history.set_navigation(HistoryNavigationQuery::Normal(
+                // Hack: Hight coupling point
+                self.editor.line_buffer().clone(),
+            ));
         } else {
             let buffer = self.insertion_line().to_string();
             self.history
@@ -525,16 +525,16 @@ impl Reedline {
     }
 
     fn cut_from_start(&mut self) {
-        let insertion_offset = self.line_buffer.offset();
+        let insertion_offset = self.editor.offset();
         if insertion_offset > 0 {
             self.cut_buffer
-                .set(&self.line_buffer.get_buffer()[..insertion_offset]);
+                .set(&self.editor.get_buffer()[..insertion_offset]);
             self.clear_to_insertion_point();
         }
     }
 
     fn cut_from_end(&mut self) {
-        let cut_slice = &self.line_buffer.get_buffer()[self.line_buffer.offset()..];
+        let cut_slice = &self.editor.get_buffer()[self.editor.offset()..];
         if !cut_slice.is_empty() {
             self.cut_buffer.set(cut_slice);
             self.clear_to_end();
@@ -542,51 +542,51 @@ impl Reedline {
     }
 
     fn cut_word_left(&mut self) {
-        let insertion_offset = self.line_buffer.offset();
-        let left_index = self.line_buffer.word_left_index();
+        let insertion_offset = self.editor.offset();
+        let left_index = self.editor.word_left_index();
         if left_index < insertion_offset {
             let cut_range = left_index..insertion_offset;
             self.cut_buffer
-                .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
+                .set(&self.editor.get_buffer()[cut_range.clone()]);
             self.clear_range(cut_range);
             self.set_offset(left_index);
         }
     }
 
     fn cut_word_right(&mut self) {
-        let insertion_offset = self.line_buffer.offset();
-        let right_index = self.line_buffer.word_right_index();
+        let insertion_offset = self.editor.offset();
+        let right_index = self.editor.word_right_index();
         if right_index > insertion_offset {
             let cut_range = insertion_offset..right_index;
             self.cut_buffer
-                .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
+                .set(&self.editor.get_buffer()[cut_range.clone()]);
             self.clear_range(cut_range);
         }
     }
 
     fn insert_cut_buffer(&mut self) {
         let cut_buffer = self.cut_buffer.get();
-        self.line_buffer.insert_str(&cut_buffer);
+        self.editor.insert_str(&cut_buffer);
     }
 
     fn uppercase_word(&mut self) {
-        self.line_buffer.uppercase_word();
+        self.editor.uppercase_word();
     }
 
     fn lowercase_word(&mut self) {
-        self.line_buffer.lowercase_word();
+        self.editor.lowercase_word();
     }
 
     fn capitalize_char(&mut self) {
-        self.line_buffer.capitalize_char();
+        self.editor.capitalize_char();
     }
 
     fn swap_words(&mut self) {
-        self.line_buffer.swap_words();
+        self.editor.swap_words();
     }
 
     fn swap_graphemes(&mut self) {
-        self.line_buffer.swap_graphemes();
+        self.editor.swap_graphemes();
     }
 
     fn enter_vi_insert_mode(&mut self) {
@@ -671,10 +671,10 @@ impl Reedline {
                 EditCommand::EnterViInsert => self.enter_vi_insert_mode(),
                 EditCommand::EnterViNormal => self.enter_vi_normal_mode(),
                 EditCommand::Undo => {
-                    self.line_buffer.undo();
+                    self.editor.undo();
                 }
                 EditCommand::Redo => {
-                    self.line_buffer.redo();
+                    self.editor.redo();
                 }
                 _ => {}
             }
@@ -697,40 +697,39 @@ impl Reedline {
             ]
             .contains(command)
             {
-                self.line_buffer.set_previous_lines(true);
+                self.editor.set_previous_lines(true);
             }
         }
     }
 
     /// Set the cursor position as understood by the underlying [`LineBuffer`] for the current line
     fn set_offset(&mut self, pos: usize) {
-        self.line_buffer
-            .set_insertion_point(self.line_buffer.line(), pos)
+        self.editor.set_insertion_point(self.editor.line(), pos)
     }
 
     /// Get the current line of a multi-line edit [`LineBuffer`]
     fn insertion_line(&self) -> &str {
-        self.line_buffer.get_buffer()
+        self.editor.get_buffer()
     }
 
     /// Reset the [`LineBuffer`] to be a line specified by `buffer`
     fn set_buffer(&mut self, buffer: String) {
-        self.line_buffer.set_buffer(buffer)
+        self.editor.set_buffer(buffer)
     }
 
     fn clear_to_end(&mut self) {
-        self.line_buffer.clear_to_end()
+        self.editor.clear_to_end()
     }
 
     fn clear_to_insertion_point(&mut self) {
-        self.line_buffer.clear_to_insertion_point()
+        self.editor.clear_to_insertion_point()
     }
 
     fn clear_range<R>(&mut self, range: R)
     where
         R: std::ops::RangeBounds<usize>,
     {
-        self.line_buffer.clear_range(range)
+        self.editor.clear_range(range)
     }
 
     /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.
@@ -769,7 +768,7 @@ impl Reedline {
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
-        let cursor_position_in_buffer = self.line_buffer.offset();
+        let cursor_position_in_buffer = self.editor.offset();
         let buffer_to_paint = self.insertion_line().to_string();
 
         self.painter.queue_buffer(
@@ -792,7 +791,7 @@ impl Reedline {
         let prompt_mode = self.prompt_edit_mode();
         let buffer_to_paint = self.insertion_line().to_string();
 
-        let cursor_position_in_buffer = self.line_buffer.offset();
+        let cursor_position_in_buffer = self.editor.offset();
 
         self.painter.repaint_everything(
             prompt,
@@ -846,18 +845,19 @@ impl Reedline {
         match self.history.get_navigation() {
             HistoryNavigationQuery::Normal(original) => {
                 if let Some(buffer_to_paint) = self.history.string_at_cursor() {
-                    self.line_buffer.set_buffer(buffer_to_paint.clone());
+                    self.editor.set_buffer(buffer_to_paint.clone());
                     self.set_offset(buffer_to_paint.len())
                 } else {
-                    self.line_buffer = original
+                    // Hack
+                    self.editor.set_line_buffer(original)
                 }
             }
             HistoryNavigationQuery::PrefixSearch(prefix) => {
                 if let Some(prefix_result) = self.history.string_at_cursor() {
-                    self.line_buffer.set_buffer(prefix_result.clone());
+                    self.editor.set_buffer(prefix_result.clone());
                     self.set_offset(prefix_result.len());
                 } else {
-                    self.line_buffer.set_buffer(prefix.clone());
+                    self.editor.set_buffer(prefix.clone());
                     self.set_offset(prefix.len());
                 }
             }
@@ -899,12 +899,13 @@ impl Reedline {
                     Event::Key(KeyEvent { code, modifiers }) => {
                         match (modifiers, code, self.edit_mode) {
                             (KeyModifiers::NONE, KeyCode::Tab, _) => {
-                                self.tab_handler.handle(&mut self.line_buffer);
+                                let mut line_buffer = self.editor.line_buffer();
+                                self.tab_handler.handle(&mut line_buffer);
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('d'), _) => {
                                 self.tab_handler.reset_index();
-                                if self.line_buffer.is_empty() {
-                                    self.line_buffer.reset_olds();
+                                if self.editor.is_empty() {
+                                    self.editor.reset_olds();
                                     return Ok(Signal::CtrlD);
                                 } else if let Some(binding) = self.find_keybinding(modifiers, code)
                                 {
@@ -916,12 +917,12 @@ impl Reedline {
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
                                     self.run_edit_commands(&binding);
                                 }
-                                self.line_buffer.reset_olds();
+                                self.editor.reset_olds();
                                 return Ok(Signal::CtrlC);
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('l'), EditMode::Emacs) => {
                                 self.tab_handler.reset_index();
-                                self.line_buffer.reset_olds();
+                                self.editor.reset_olds();
                                 return Ok(Signal::CtrlL);
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
@@ -930,14 +931,14 @@ impl Reedline {
                             {
                                 self.tab_handler.reset_index();
                                 self.run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
-                                self.line_buffer.set_previous_lines(false);
+                                self.editor.set_previous_lines(false);
                             }
                             (KeyModifiers::NONE, KeyCode::Char(c), x)
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
                                 if x != EditMode::ViNormal =>
                             {
                                 self.tab_handler.reset_index();
-                                let line_start = if self.line_buffer.line() == 0 {
+                                let line_start = if self.editor.line() == 0 {
                                     prompt_offset.0
                                 } else {
                                     0
@@ -961,7 +962,7 @@ impl Reedline {
                                 } else {
                                     self.run_edit_commands(&[EditCommand::InsertChar(c)]);
                                 }
-                                self.line_buffer.set_previous_lines(false);
+                                self.editor.set_previous_lines(false);
                             }
                             (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
                                 match self.input_mode {
@@ -974,7 +975,7 @@ impl Reedline {
                                         ]);
                                         self.print_crlf()?;
                                         self.tab_handler.reset_index();
-                                        self.line_buffer.reset_olds();
+                                        self.editor.reset_olds();
 
                                         return Ok(Signal::Success(buffer));
                                     }
