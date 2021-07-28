@@ -3,7 +3,7 @@ use crate::{core_editor::LineBuffer, text_manipulation};
 use {
     crate::{
         completer::{ComplationActionHandler, DefaultCompletionActionHandler},
-        core_editor::{get_default_clipboard, Clipboard, Editor},
+        core_editor::{get_default_clipboard, Editor},
         default_emacs_keybindings,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
@@ -48,9 +48,6 @@ enum InputMode {
 pub struct Reedline {
     editor: Editor,
 
-    // Cut buffer
-    cut_buffer: Box<dyn Clipboard>,
-
     // History
     history: Box<dyn History>,
     input_mode: InputMode,
@@ -86,7 +83,6 @@ impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     pub fn new() -> Reedline {
         let history = Box::new(FileBackedHistory::default());
-        let cut_buffer = Box::new(get_default_clipboard());
         let buffer_highlighter = Box::new(DefaultHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
         let painter = Painter::new(stdout(), buffer_highlighter, hinter);
@@ -97,7 +93,6 @@ impl Reedline {
 
         Reedline {
             editor: Editor::new(LineBuffer::new(), Box::new(get_default_clipboard())),
-            cut_buffer,
             history,
             input_mode: InputMode::Regular,
             painter,
@@ -524,51 +519,6 @@ impl Reedline {
             .set_navigation(HistoryNavigationQuery::SubstringSearch("".to_string()));
     }
 
-    fn cut_from_start(&mut self) {
-        let insertion_offset = self.editor.offset();
-        if insertion_offset > 0 {
-            self.cut_buffer
-                .set(&self.editor.get_buffer()[..insertion_offset]);
-            self.clear_to_insertion_point();
-        }
-    }
-
-    fn cut_from_end(&mut self) {
-        let cut_slice = &self.editor.get_buffer()[self.editor.offset()..];
-        if !cut_slice.is_empty() {
-            self.cut_buffer.set(cut_slice);
-            self.clear_to_end();
-        }
-    }
-
-    fn cut_word_left(&mut self) {
-        let insertion_offset = self.editor.offset();
-        let left_index = self.editor.word_left_index();
-        if left_index < insertion_offset {
-            let cut_range = left_index..insertion_offset;
-            self.cut_buffer
-                .set(&self.editor.get_buffer()[cut_range.clone()]);
-            self.clear_range(cut_range);
-            self.set_offset(left_index);
-        }
-    }
-
-    fn cut_word_right(&mut self) {
-        let insertion_offset = self.editor.offset();
-        let right_index = self.editor.word_right_index();
-        if right_index > insertion_offset {
-            let cut_range = insertion_offset..right_index;
-            self.cut_buffer
-                .set(&self.editor.get_buffer()[cut_range.clone()]);
-            self.clear_range(cut_range);
-        }
-    }
-
-    fn insert_cut_buffer(&mut self) {
-        let cut_buffer = self.cut_buffer.get();
-        self.editor.insert_str(&cut_buffer);
-    }
-
     fn uppercase_word(&mut self) {
         self.editor.uppercase_word();
     }
@@ -587,6 +537,26 @@ impl Reedline {
 
     fn swap_graphemes(&mut self) {
         self.editor.swap_graphemes();
+    }
+
+    fn cut_from_start(&mut self) {
+        self.editor.cut_from_start()
+    }
+
+    fn cut_from_end(&mut self) {
+        self.editor.cut_from_end()
+    }
+
+    fn cut_word_left(&mut self) {
+        self.editor.cut_word_left()
+    }
+
+    fn cut_word_right(&mut self) {
+        self.editor.cut_word_right()
+    }
+
+    fn insert_cut_buffer(&mut self) {
+        self.editor.insert_cut_buffer()
     }
 
     fn enter_vi_insert_mode(&mut self) {
@@ -715,21 +685,6 @@ impl Reedline {
     /// Reset the [`LineBuffer`] to be a line specified by `buffer`
     fn set_buffer(&mut self, buffer: String) {
         self.editor.set_buffer(buffer)
-    }
-
-    fn clear_to_end(&mut self) {
-        self.editor.clear_to_end()
-    }
-
-    fn clear_to_insertion_point(&mut self) {
-        self.editor.clear_to_insertion_point()
-    }
-
-    fn clear_range<R>(&mut self, range: R)
-    where
-        R: std::ops::RangeBounds<usize>,
-    {
-        self.editor.clear_range(range)
     }
 
     /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.

@@ -2,14 +2,14 @@ use super::{Clipboard, LineBuffer};
 
 pub struct Editor {
     line_buffer: LineBuffer,
-    clip_buffer: Box<dyn Clipboard>,
+    cut_buffer: Box<dyn Clipboard>,
 }
 
 impl Editor {
     pub fn new(line_buffer: LineBuffer, clip_buffer: Box<dyn Clipboard>) -> Editor {
         Editor {
             line_buffer,
-            clip_buffer,
+            cut_buffer: clip_buffer,
         }
     }
 
@@ -144,15 +144,49 @@ impl Editor {
         self.line_buffer.set_previous_lines(is_after_action)
     }
 
-    pub fn word_right_index(&self) -> usize {
-        self.line_buffer.word_right_index()
+    pub fn cut_from_start(&mut self) {
+        let insertion_offset = self.line_buffer.offset();
+        if insertion_offset > 0 {
+            self.cut_buffer
+                .set(&self.line_buffer.get_buffer()[..insertion_offset]);
+            self.clear_to_insertion_point();
+        }
     }
 
-    pub fn word_left_index(&self) -> usize {
-        self.line_buffer.word_left_index()
+    pub fn cut_from_end(&mut self) {
+        let cut_slice = &self.line_buffer.get_buffer()[self.line_buffer.offset()..];
+        if !cut_slice.is_empty() {
+            self.cut_buffer.set(cut_slice);
+            self.clear_to_end();
+        }
     }
 
-    pub fn insert_str(&mut self, string: &str) {
-        self.line_buffer.insert_str(string);
+    pub fn cut_word_left(&mut self) {
+        let insertion_offset = self.line_buffer.offset();
+        let left_index = self.line_buffer.word_left_index();
+        if left_index < insertion_offset {
+            let cut_range = left_index..insertion_offset;
+            self.cut_buffer
+                .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
+            self.clear_range(cut_range);
+            self.line_buffer
+                .set_insertion_point(self.line_buffer.line(), left_index);
+        }
+    }
+
+    pub fn cut_word_right(&mut self) {
+        let insertion_offset = self.line_buffer.offset();
+        let right_index = self.line_buffer.word_right_index();
+        if right_index > insertion_offset {
+            let cut_range = insertion_offset..right_index;
+            self.cut_buffer
+                .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
+            self.clear_range(cut_range);
+        }
+    }
+
+    pub fn insert_cut_buffer(&mut self) {
+        let cut_buffer = self.cut_buffer.get();
+        self.line_buffer.insert_str(&cut_buffer);
     }
 }
