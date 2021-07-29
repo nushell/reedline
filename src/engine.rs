@@ -549,12 +549,8 @@ impl Reedline {
                 EditCommand::SwapGraphemes => self.editor.swap_graphemes(),
                 EditCommand::EnterViInsert => self.enter_vi_insert_mode(),
                 EditCommand::EnterViNormal => self.enter_vi_normal_mode(),
-                EditCommand::Undo => {
-                    self.editor.undo();
-                }
-                EditCommand::Redo => {
-                    self.editor.redo();
-                }
+                EditCommand::Undo => self.editor.undo(),
+                EditCommand::Redo => self.editor.redo(),
                 _ => {}
             }
 
