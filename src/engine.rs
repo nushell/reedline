@@ -350,80 +350,21 @@ impl Reedline {
 
     fn up_command(&mut self) {
         // If we're at the top, then:
-        if !self.editor.get_buffer()[0..self.editor.offset()].contains('\n') {
+        if !self.editor.is_cursor_at_first_line() {
             // If we're at the top, move to previous history
             self.previous_history();
         } else {
-            // If we're not at the top, move up a line in the multiline buffer
-            let mut position = self.editor.offset();
-            let mut num_of_move_lefts = 0;
-            let buffer = self.editor.get_buffer().to_string();
-
-            // Move left until we're looking at the newline
-            // Observe what column we were on
-            while position > 0 && &buffer[(position - 1)..position] != "\n" {
-                self.editor.move_left();
-                num_of_move_lefts += 1;
-                position = self.editor.offset();
-            }
-
-            // Find start of previous line
-            let mut matches = buffer[0..(position - 1)].rmatch_indices('\n');
-
-            if let Some((pos, _)) = matches.next() {
-                position = pos + 1;
-            } else {
-                position = 0;
-            }
-            self.set_offset(position);
-
-            // Move right from this position to the column we were at
-            while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
-                self.editor.move_right();
-                position = self.editor.offset();
-                num_of_move_lefts -= 1;
-            }
+            self.editor.move_line_up();
         }
     }
 
     fn down_command(&mut self) {
         // If we're at the top, then:
-        if !self.editor.get_buffer()[self.editor.offset()..].contains('\n') {
+        if !self.editor.is_cursor_at_last_line() {
             // If we're at the top, move to previous history
             self.next_history();
         } else {
-            // If we're not at the top, move up a line in the multiline buffer
-            let mut position = self.editor.offset();
-            let mut num_of_move_lefts = 0;
-            let buffer = self.editor.get_buffer().to_string();
-
-            // Move left until we're looking at the newline
-            // Observe what column we were on
-            while position > 0 && &buffer[(position - 1)..position] != "\n" {
-                self.editor.move_left();
-                num_of_move_lefts += 1;
-                position = self.editor.offset();
-            }
-
-            // Find start of next line
-            let mut matches = buffer[position..].match_indices('\n');
-
-            // Assume this always succeeds
-
-            let (pos, _) = matches
-                .next()
-                .expect("internal error: should have found newline");
-
-            position += pos + 1;
-
-            self.set_offset(position);
-
-            // Move right from this position to the column we were at
-            while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
-                self.editor.move_right();
-                position = self.editor.offset();
-                num_of_move_lefts -= 1;
-            }
+            self.editor.move_line_down()
         }
     }
 

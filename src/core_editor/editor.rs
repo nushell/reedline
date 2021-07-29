@@ -56,6 +56,14 @@ impl Editor {
         self.line_buffer.move_word_right();
     }
 
+    pub fn move_line_up(&mut self) {
+        self.line_buffer.move_line_up();
+    }
+
+    pub fn move_line_down(&mut self) {
+        self.line_buffer.move_line_down();
+    }
+
     pub fn insert_char(&mut self, c: char) {
         self.line_buffer.insert_char(c)
     }
@@ -137,6 +145,14 @@ impl Editor {
 
     pub fn is_empty(&self) -> bool {
         self.line_buffer.is_empty()
+    }
+
+    pub fn is_cursor_at_first_line(&self) -> bool {
+        self.line_buffer.is_cursor_at_first_line()
+    }
+
+    pub fn is_cursor_at_last_line(&self) -> bool {
+        self.line_buffer.is_cursor_at_last_line()
     }
 
     pub fn reset_olds(&mut self) {
