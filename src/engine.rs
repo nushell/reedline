@@ -348,50 +348,6 @@ impl Reedline {
         }
     }
 
-    fn move_to_start(&mut self) {
-        self.editor.move_to_start()
-    }
-
-    fn move_to_end(&mut self) {
-        self.editor.move_to_end()
-    }
-
-    fn move_left(&mut self) {
-        self.editor.move_left()
-    }
-
-    fn move_right(&mut self) {
-        self.editor.move_right()
-    }
-
-    fn move_word_left(&mut self) {
-        self.editor.move_word_left();
-    }
-
-    fn move_word_right(&mut self) {
-        self.editor.move_word_right();
-    }
-
-    fn insert_char(&mut self, c: char) {
-        self.editor.insert_char(c)
-    }
-
-    fn backspace(&mut self) {
-        self.editor.backspace();
-    }
-
-    fn delete(&mut self) {
-        self.editor.delete();
-    }
-
-    fn backspace_word(&mut self) {
-        self.editor.backspace_word();
-    }
-
-    fn delete_word(&mut self) {
-        self.editor.delete_word();
-    }
-
     fn clear(&mut self) {
         self.editor.clear();
     }
@@ -518,46 +474,6 @@ impl Reedline {
             .set_navigation(HistoryNavigationQuery::SubstringSearch("".to_string()));
     }
 
-    fn uppercase_word(&mut self) {
-        self.editor.uppercase_word();
-    }
-
-    fn lowercase_word(&mut self) {
-        self.editor.lowercase_word();
-    }
-
-    fn capitalize_char(&mut self) {
-        self.editor.capitalize_char();
-    }
-
-    fn swap_words(&mut self) {
-        self.editor.swap_words();
-    }
-
-    fn swap_graphemes(&mut self) {
-        self.editor.swap_graphemes();
-    }
-
-    fn cut_from_start(&mut self) {
-        self.editor.cut_from_start()
-    }
-
-    fn cut_from_end(&mut self) {
-        self.editor.cut_from_end()
-    }
-
-    fn cut_word_left(&mut self) {
-        self.editor.cut_word_left()
-    }
-
-    fn cut_word_right(&mut self) {
-        self.editor.cut_word_right()
-    }
-
-    fn insert_cut_buffer(&mut self) {
-        self.editor.insert_cut_buffer()
-    }
-
     fn enter_vi_insert_mode(&mut self) {
         self.edit_mode = EditMode::ViInsert;
         self.need_full_repaint = true;
@@ -609,17 +525,17 @@ impl Reedline {
         // Run the commands over the edit buffer
         for command in &commands {
             match command {
-                EditCommand::MoveToStart => self.move_to_start(),
-                EditCommand::MoveToEnd => self.move_to_end(),
-                EditCommand::MoveLeft => self.move_left(),
-                EditCommand::MoveRight => self.move_right(),
-                EditCommand::MoveWordLeft => self.move_word_left(),
-                EditCommand::MoveWordRight => self.move_word_right(),
-                EditCommand::InsertChar(c) => self.insert_char(*c),
-                EditCommand::Backspace => self.backspace(),
-                EditCommand::Delete => self.delete(),
-                EditCommand::BackspaceWord => self.backspace_word(),
-                EditCommand::DeleteWord => self.delete_word(),
+                EditCommand::MoveToStart => self.editor.move_to_start(),
+                EditCommand::MoveToEnd => self.editor.move_to_end(),
+                EditCommand::MoveLeft => self.editor.move_left(),
+                EditCommand::MoveRight => self.editor.move_right(),
+                EditCommand::MoveWordLeft => self.editor.move_word_left(),
+                EditCommand::MoveWordRight => self.editor.move_word_right(),
+                EditCommand::InsertChar(c) => self.editor.insert_char(*c),
+                EditCommand::Backspace => self.editor.backspace(),
+                EditCommand::Delete => self.editor.delete(),
+                EditCommand::BackspaceWord => self.editor.backspace_word(),
+                EditCommand::DeleteWord => self.editor.delete_word(),
                 EditCommand::Clear => self.clear(),
                 EditCommand::AppendToHistory => self.append_to_history(),
                 EditCommand::PreviousHistory => self.previous_history(),
@@ -627,16 +543,16 @@ impl Reedline {
                 EditCommand::Up => self.up_command(),
                 EditCommand::Down => self.down_command(),
                 EditCommand::SearchHistory => self.search_history(),
-                EditCommand::CutFromStart => self.cut_from_start(),
-                EditCommand::CutToEnd => self.cut_from_end(),
-                EditCommand::CutWordLeft => self.cut_word_left(),
-                EditCommand::CutWordRight => self.cut_word_right(),
-                EditCommand::PasteCutBuffer => self.insert_cut_buffer(),
-                EditCommand::UppercaseWord => self.uppercase_word(),
-                EditCommand::LowercaseWord => self.lowercase_word(),
-                EditCommand::CapitalizeChar => self.capitalize_char(),
-                EditCommand::SwapWords => self.swap_words(),
-                EditCommand::SwapGraphemes => self.swap_graphemes(),
+                EditCommand::CutFromStart => self.editor.cut_from_start(),
+                EditCommand::CutToEnd => self.editor.cut_from_end(),
+                EditCommand::CutWordLeft => self.editor.cut_word_left(),
+                EditCommand::CutWordRight => self.editor.cut_word_right(),
+                EditCommand::PasteCutBuffer => self.editor.insert_cut_buffer(),
+                EditCommand::UppercaseWord => self.editor.uppercase_word(),
+                EditCommand::LowercaseWord => self.editor.lowercase_word(),
+                EditCommand::CapitalizeChar => self.editor.capitalize_char(),
+                EditCommand::SwapWords => self.editor.swap_words(),
+                EditCommand::SwapGraphemes => self.editor.swap_graphemes(),
                 EditCommand::EnterViInsert => self.enter_vi_insert_mode(),
                 EditCommand::EnterViNormal => self.enter_vi_normal_mode(),
                 EditCommand::Undo => {
