@@ -63,9 +63,6 @@ pub struct Reedline {
     // Dirty bits
     need_full_repaint: bool,
 
-    // Partial command
-    //partial_command: Option<char>,
-
     // Vi normal mode state engine
     vi_engine: ViEngine,
 
@@ -98,7 +95,6 @@ impl Reedline {
             keybindings: keybindings_hashmap,
             edit_mode: EditMode::Emacs,
             need_full_repaint: false,
-            //partial_command: None,
             vi_engine: ViEngine::new(),
             tab_handler: Box::new(DefaultCompletionActionHandler::default()),
         }
@@ -477,13 +473,11 @@ impl Reedline {
     fn enter_vi_insert_mode(&mut self) {
         self.edit_mode = EditMode::ViInsert;
         self.need_full_repaint = true;
-        //self.partial_command = None;
     }
 
     fn enter_vi_normal_mode(&mut self) {
         self.edit_mode = EditMode::ViNormal;
         self.need_full_repaint = true;
-        //self.partial_command = None;
     }
 
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
