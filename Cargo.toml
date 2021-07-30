@@ -25,6 +25,12 @@ serde = { version = "1.0", features = ["derive"] }
 unicode-segmentation = "1.7.1"
 unicode-width = "0.1.8"
 
+sqlx = { version = "0.5.5", features = ["sqlite", "chrono", "runtime-async-std-rustls"] }
+async-std = { version = "1.8.0", features = [ "attributes" ] }
+async-trait = "0.1.50"
+log = "0.4.14"
+itertools = "0.10.1"
+
 [dev-dependencies]
 tempfile = "3.2.0"
 pretty_assertions = "0.7.2"
