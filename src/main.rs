@@ -70,13 +70,13 @@ fn main() -> Result<()> {
     let prompt = DefaultPrompt::new(1);
 
     loop {
-        let sig = line_editor.read_line(&prompt)?;
+        let sig = line_editor.read_line(&prompt);
 
         match sig {
-            Signal::CtrlD => {
+            Ok(Signal::CtrlD) => {
                 break;
             }
-            Signal::Success(buffer) => {
+            Ok(Signal::Success(buffer)) => {
                 if (buffer.trim() == "exit") || (buffer.trim() == "logout") {
                     break;
                 }
@@ -90,12 +90,15 @@ fn main() -> Result<()> {
                 }
                 line_editor.print_line(&format!("Our buffer: {}", buffer))?;
             }
-            Signal::CtrlC => {
+            Ok(Signal::CtrlC) => {
                 // We need to move one line down to start with the prompt on a new line
                 line_editor.print_crlf()?;
             }
-            Signal::CtrlL => {
+            Ok(Signal::CtrlL) => {
                 line_editor.clear_screen()?;
+            }
+            Err(err) => {
+                println!("Error: {:?}", err);
             }
         }
     }
