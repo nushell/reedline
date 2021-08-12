@@ -55,51 +55,6 @@ impl Keybindings {
     }
 }
 
-pub fn default_vi_normal_keybindings() -> Keybindings {
-    use KeyCode::*;
-
-    let mut keybindings = Keybindings::new();
-
-    keybindings.add_binding(
-        KeyModifiers::NONE,
-        Up,
-        vec![EditCommand::ViCommandFragment('k')],
-    );
-    keybindings.add_binding(
-        KeyModifiers::NONE,
-        Down,
-        vec![EditCommand::ViCommandFragment('j')],
-    );
-    keybindings.add_binding(
-        KeyModifiers::NONE,
-        Left,
-        vec![EditCommand::ViCommandFragment('h')],
-    );
-    keybindings.add_binding(
-        KeyModifiers::NONE,
-        Right,
-        vec![EditCommand::ViCommandFragment('l')],
-    );
-
-    keybindings
-}
-
-pub fn default_vi_insert_keybindings() -> Keybindings {
-    use KeyCode::*;
-
-    let mut keybindings = Keybindings::new();
-
-    keybindings.add_binding(KeyModifiers::NONE, Esc, vec![EditCommand::EnterViNormal]);
-    keybindings.add_binding(KeyModifiers::NONE, Up, vec![EditCommand::PreviousHistory]);
-    keybindings.add_binding(KeyModifiers::NONE, Down, vec![EditCommand::NextHistory]);
-    keybindings.add_binding(KeyModifiers::NONE, Left, vec![EditCommand::MoveLeft]);
-    keybindings.add_binding(KeyModifiers::NONE, Right, vec![EditCommand::MoveRight]);
-    keybindings.add_binding(KeyModifiers::NONE, Backspace, vec![EditCommand::Backspace]);
-    keybindings.add_binding(KeyModifiers::NONE, Delete, vec![EditCommand::Delete]);
-
-    keybindings
-}
-
 /// Returns the current default emacs keybindings
 pub fn default_emacs_keybindings() -> Keybindings {
     use KeyCode::*;

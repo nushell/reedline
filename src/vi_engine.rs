@@ -41,7 +41,7 @@ impl ViEngine {
                             output.push(EditCommand::NextHistory);
                         }
                         'i' => {
-                            output.push(EditCommand::EnterViInsert);
+                            // output.push(EditCommand::EnterViInsert);
                         }
                         _ => {}
                     },

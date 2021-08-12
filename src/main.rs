@@ -16,7 +16,6 @@ use {
 };
 
 fn main() -> Result<()> {
-    let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
     // quick command like parameter handling
     let args: Vec<String> = std::env::args().collect();
     // if -k is passed, show the events
@@ -50,11 +49,7 @@ fn main() -> Result<()> {
 
     let mut line_editor = Reedline::new()?
         .with_history(history)?
-        .with_edit_mode(if vi_mode {
-            reedline::EditMode::ViNormal
-        } else {
-            reedline::EditMode::Emacs
-        })
+        .with_edit_mode(reedline::EditMode::Emacs)
         .with_keybindings(keybindings)
         .with_highlighter(Box::new(DefaultHighlighter::new(commands)))
         .with_completion_action_handler(Box::new(

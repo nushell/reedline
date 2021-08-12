@@ -101,12 +101,6 @@ pub enum EditCommand {
     /// Swap the current grapheme/character with the one to the right
     SwapGraphemes,
 
-    /// Enter the normal vi mode
-    EnterViNormal,
-
-    /// Enter the insertion vi mode
-    EnterViInsert,
-
     /// Send a code fragment to the vi handler
     ViCommandFragment(char),
 
@@ -122,10 +116,4 @@ pub enum EditCommand {
 pub enum EditMode {
     /// Emacs mode, the default
     Emacs,
-
-    /// Vi view/normal mode
-    ViNormal,
-
-    /// Vi insertion mode
-    ViInsert,
 }

@@ -175,7 +175,7 @@
 #![warn(rustdoc::missing_crate_level_docs)]
 #![warn(rustdoc::missing_doc_code_examples)]
 #![warn(missing_docs)]
-#![deny(warnings)]
+// #![deny(warnings)]
 mod core_editor;
 
 mod text_manipulation;
