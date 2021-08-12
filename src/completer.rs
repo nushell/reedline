@@ -1,5 +1,5 @@
 use {
-    crate::line_buffer::LineBuffer,
+    crate::core_editor::LineBuffer,
     std::{
         collections::{BTreeMap, BTreeSet},
         rc::Rc,

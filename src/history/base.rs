@@ -1,6 +1,6 @@
 use std::collections::vec_deque::Iter;
 
-use crate::line_buffer::LineBuffer;
+use crate::core_editor::LineBuffer;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryNavigationQuery {

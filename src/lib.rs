@@ -176,7 +176,7 @@
 #![warn(rustdoc::missing_doc_code_examples)]
 #![warn(missing_docs)]
 #![deny(warnings)]
-mod clip_buffer;
+mod core_editor;
 
 mod text_manipulation;
 
@@ -196,8 +196,6 @@ pub use prompt::{
     DefaultPrompt, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
     PromptViMode, DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_INDICATOR,
 };
-
-mod line_buffer;
 
 mod keybindings;
 pub use keybindings::default_emacs_keybindings;

@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::line_buffer::LineBuffer;
+use crate::core_editor::LineBuffer;
 
 use super::{
     base::{HistoryAppender, HistoryNavigationQuery, HistoryView},
