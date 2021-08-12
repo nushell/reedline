@@ -1,3 +1,5 @@
+use std::io;
+
 use {
     crate::{
         completion::{ComplationActionHandler, DefaultCompletionActionHandler},
@@ -67,17 +69,13 @@ pub struct Reedline {
     vi_engine: ViEngine,
 
     tab_handler: Box<dyn ComplationActionHandler>,
-}
 
-impl Default for Reedline {
-    fn default() -> Self {
-        Self::new()
-    }
+    terminal_size: (u16, u16),
 }
 
 impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
-    pub fn new() -> Reedline {
+    pub fn new() -> io::Result<Reedline> {
         let history = Box::new(FileBackedHistory::default());
         let buffer_highlighter = Box::new(DefaultHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
@@ -87,7 +85,9 @@ impl Reedline {
         keybindings_hashmap.insert(EditMode::ViInsert, default_vi_insert_keybindings());
         keybindings_hashmap.insert(EditMode::ViNormal, default_vi_normal_keybindings());
 
-        Reedline {
+        let terminal_size = terminal::size()?;
+
+        let reedline = Reedline {
             editor: Editor::default(),
             history,
             input_mode: InputMode::Regular,
@@ -97,7 +97,10 @@ impl Reedline {
             need_full_repaint: false,
             vi_engine: ViEngine::new(),
             tab_handler: Box::new(DefaultCompletionActionHandler::default()),
-        }
+            terminal_size,
+        };
+
+        Ok(reedline)
     }
 
     /// A builder to include the hinter in your instance of the Reedline engine
@@ -230,6 +233,14 @@ impl Reedline {
     /// Get the current edit mode
     pub fn edit_mode(&self) -> EditMode {
         self.edit_mode
+    }
+
+    fn terminal_columns(&self) -> u16 {
+        self.terminal_size.0
+    }
+
+    fn terminal_rows(&self) -> u16 {
+        self.terminal_size.1
     }
 
     /// Returns the corresponding expected prompt style for the given edit mode
@@ -534,8 +545,10 @@ impl Reedline {
     }
 
     /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.
-    fn maybe_wrap(&self, terminal_width: u16, start_offset: u16, c: char) -> bool {
+    fn maybe_wrap(&self, start_offset: u16, c: char) -> bool {
         use unicode_width::UnicodeWidthStr;
+
+        let terminal_width = self.terminal_columns();
 
         let mut test_buffer = self.insertion_line().to_string();
         test_buffer.push(c);
@@ -587,7 +600,6 @@ impl Reedline {
         &mut self,
         prompt: &dyn Prompt,
         prompt_origin: (u16, u16),
-        terminal_size: (u16, u16),
     ) -> Result<(u16, u16)> {
         let prompt_mode = self.prompt_edit_mode();
         let buffer_to_paint = self.insertion_line().to_string();
@@ -600,7 +612,7 @@ impl Reedline {
             prompt_origin,
             cursor_position_in_buffer,
             buffer_to_paint,
-            terminal_size,
+            self.terminal_size,
             self.history.as_ref(),
         )
 
@@ -669,16 +681,17 @@ impl Reedline {
     /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        let mut terminal_size = terminal::size()?;
+        // TODO: Should prompt be a property on the LineEditor
+        self.terminal_size = terminal::size()?;
 
         let mut prompt_origin = {
             let (column, row) = cursor::position()?;
             if (column, row) == (0, 0) {
                 (0, 0)
-            } else if row + 1 == terminal_size.1 {
+            } else if row + 1 == self.terminal_rows() {
                 self.painter.paint_carriage_return()?;
                 (0, row.saturating_sub(1))
-            } else if row + 2 == terminal_size.1 {
+            } else if row + 2 == self.terminal_rows() {
                 self.painter.paint_carriage_return()?;
                 (0, row)
             } else {
@@ -687,7 +700,7 @@ impl Reedline {
         };
 
         // set where the input begins
-        let mut prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
+        let mut prompt_offset = self.full_repaint(prompt, prompt_origin)?;
 
         // Redraw if Ctrl-L was used
         if self.input_mode == InputMode::HistorySearch {
@@ -739,7 +752,7 @@ impl Reedline {
                                 } else {
                                     0
                                 };
-                                if self.maybe_wrap(terminal_size.0, line_start, c) {
+                                if self.maybe_wrap(line_start, c) {
                                     let (original_column, original_row) = cursor::position()?;
                                     self.run_edit_commands(&[EditCommand::InsertChar(c)]);
 
@@ -748,7 +761,7 @@ impl Reedline {
                                     let (new_column, _) = cursor::position()?;
 
                                     if new_column < original_column
-                                        && original_row + 1 == (terminal_size.1)
+                                        && original_row + 1 == self.terminal_rows()
                                     {
                                         // We have wrapped off bottom of screen, and prompt is on new row
                                         // We need to update the prompt location in this case
@@ -794,10 +807,10 @@ impl Reedline {
                     }
                     Event::Mouse(_) => {}
                     Event::Resize(width, height) => {
-                        terminal_size = (width, height);
+                        self.terminal_size = (width, height);
                         // TODO properly adjusting prompt_origin on resizing while lines > 1
                         prompt_origin.1 = cursor::position()?.1.saturating_sub(1);
-                        prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
+                        prompt_offset = self.full_repaint(prompt, prompt_origin)?;
                         continue;
                     }
                 }
@@ -811,7 +824,7 @@ impl Reedline {
             if self.input_mode == InputMode::HistorySearch {
                 self.history_search_paint(prompt)?;
             } else if self.need_full_repaint {
-                prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
+                prompt_offset = self.full_repaint(prompt, prompt_origin)?;
                 self.need_full_repaint = false;
             } else {
                 self.buffer_paint(prompt_offset)?;

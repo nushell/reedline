@@ -48,7 +48,7 @@ fn main() -> Result<()> {
 
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
-    let mut line_editor = Reedline::new()
+    let mut line_editor = Reedline::new()?
         .with_history(history)?
         .with_edit_mode(if vi_mode {
             reedline::EditMode::ViNormal
