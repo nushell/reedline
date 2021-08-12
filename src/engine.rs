@@ -12,7 +12,7 @@ use {
         ViEngine,
     },
     crossterm::{
-        cursor::position,
+        cursor,
         event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, Result,
     },
@@ -672,7 +672,7 @@ impl Reedline {
         let mut terminal_size = terminal::size()?;
 
         let mut prompt_origin = {
-            let (column, row) = position()?;
+            let (column, row) = cursor::position()?;
             if (column, row) == (0, 0) {
                 (0, 0)
             } else if row + 1 == terminal_size.1 {
@@ -740,12 +740,12 @@ impl Reedline {
                                     0
                                 };
                                 if self.maybe_wrap(terminal_size.0, line_start, c) {
-                                    let (original_column, original_row) = position()?;
+                                    let (original_column, original_row) = cursor::position()?;
                                     self.run_edit_commands(&[EditCommand::InsertChar(c)]);
 
                                     self.buffer_paint(prompt_offset)?;
 
-                                    let (new_column, _) = position()?;
+                                    let (new_column, _) = cursor::position()?;
 
                                     if new_column < original_column
                                         && original_row + 1 == (terminal_size.1)
@@ -796,7 +796,7 @@ impl Reedline {
                     Event::Resize(width, height) => {
                         terminal_size = (width, height);
                         // TODO properly adjusting prompt_origin on resizing while lines > 1
-                        prompt_origin.1 = position()?.1.saturating_sub(1);
+                        prompt_origin.1 = cursor::position()?.1.saturating_sub(1);
                         prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
                         continue;
                     }
