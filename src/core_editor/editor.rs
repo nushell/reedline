@@ -16,7 +16,7 @@ impl Default for Editor {
             line_buffer: LineBuffer::new(),
             cut_buffer: Box::new(get_default_clipboard()),
 
-            // Note: Using list-zipper we can reduce these to one fild
+            // Note: Using list-zipper we can reduce these to one field
             edits: vec![],
             index_undo: 2,
         }
