@@ -1,5 +1,7 @@
 use std::io;
 
+use crate::DefaultPrompt;
+
 use {
     crate::{
         completion::{ComplationActionHandler, DefaultCompletionActionHandler},
@@ -26,6 +28,37 @@ enum InputMode {
     Regular,
     HistorySearch,
     HistoryTraversal,
+}
+
+struct PromptWidget {
+    prompt: Box<dyn Prompt>,
+    offset: (u16, u16),
+    origin: (u16, u16),
+}
+
+impl Default for PromptWidget {
+    fn default() -> Self {
+        PromptWidget {
+            prompt: Box::new(DefaultPrompt::default()),
+            offset: Default::default(),
+            origin: Default::default(),
+        }
+    }
+}
+
+impl PromptWidget {
+    fn offset_columns(&self) -> u16 {
+        self.offset.0
+    }
+    fn origin_columns(&self) -> u16 {
+        self.origin.0
+    }
+    fn offset_rows(&self) -> u16 {
+        self.offset.1
+    }
+    fn origin_rows(&self) -> u16 {
+        self.origin.1
+    }
 }
 
 /// Line editor engine
@@ -71,6 +104,7 @@ pub struct Reedline {
     tab_handler: Box<dyn ComplationActionHandler>,
 
     terminal_size: (u16, u16),
+    prompt_widget: PromptWidget,
 }
 
 impl Reedline {
@@ -86,6 +120,8 @@ impl Reedline {
         keybindings_hashmap.insert(EditMode::ViNormal, default_vi_normal_keybindings());
 
         let terminal_size = terminal::size()?;
+        // Note: this is started with a garbage value
+        let prompt_widget = Default::default();
 
         let reedline = Reedline {
             editor: Editor::default(),
@@ -98,6 +134,7 @@ impl Reedline {
             vi_engine: ViEngine::new(),
             tab_handler: Box::new(DefaultCompletionActionHandler::default()),
             terminal_size,
+            prompt_widget,
         };
 
         Ok(reedline)
@@ -678,13 +715,8 @@ impl Reedline {
         }
     }
 
-    /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
-    /// in a `raw_mode` context.
-    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        // TODO: Should prompt be a property on the LineEditor
-        self.terminal_size = terminal::size()?;
-
-        let mut prompt_origin = {
+    fn initialize_prompt(&mut self) -> io::Result<()> {
+        let origin = {
             let (column, row) = cursor::position()?;
             if (column, row) == (0, 0) {
                 (0, 0)
@@ -699,8 +731,24 @@ impl Reedline {
             }
         };
 
-        // set where the input begins
-        let mut prompt_offset = self.full_repaint(prompt, prompt_origin)?;
+        self.set_prompt_origin(origin);
+        let prompt_offset = self.full_repaint(&self.prompt() as &dyn Prompt, origin)?;
+        self.set_prompt_offset(prompt_offset);
+
+        Ok(())
+    }
+
+    fn set_prompt_offset(&mut self, offset: (u16, u16)) {}
+    fn set_prompt_origin(&mut self, offset: (u16, u16)) {}
+    fn prompt(&self) -> Box<dyn Prompt> {
+        self.prompt_widget.prompt
+    }
+
+    /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
+    /// in a `raw_mode` context.
+    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+        // TODO: Should prompt be a property on the LineEditor
+        self.terminal_size = terminal::size()?;
 
         // Redraw if Ctrl-L was used
         if self.input_mode == InputMode::HistorySearch {
@@ -748,7 +796,7 @@ impl Reedline {
                                 if x != EditMode::ViNormal =>
                             {
                                 let line_start = if self.editor.line() == 0 {
-                                    prompt_offset.0
+                                    self.prompt_widget.offset_columns()
                                 } else {
                                     0
                                 };
@@ -756,7 +804,7 @@ impl Reedline {
                                     let (original_column, original_row) = cursor::position()?;
                                     self.run_edit_commands(&[EditCommand::InsertChar(c)]);
 
-                                    self.buffer_paint(prompt_offset)?;
+                                    self.buffer_paint(self.prompt_widget.offset)?;
 
                                     let (new_column, _) = cursor::position()?;
 
@@ -765,8 +813,18 @@ impl Reedline {
                                     {
                                         // We have wrapped off bottom of screen, and prompt is on new row
                                         // We need to update the prompt location in this case
-                                        prompt_origin.1 -= 1;
-                                        prompt_offset.1 -= 1;
+                                        let (prompt_offset_columns, prompt_offset_rows) =
+                                            self.prompt_widget.offset;
+                                        let (prompt_origin_columns, prompt_origin_rows) =
+                                            self.prompt_widget.origin;
+                                        self.set_prompt_offset((
+                                            prompt_offset_columns,
+                                            prompt_offset_rows - 1,
+                                        ));
+                                        self.set_prompt_origin((
+                                            prompt_origin_columns,
+                                            prompt_origin_rows - 1,
+                                        ));
                                     }
                                 } else {
                                     self.run_edit_commands(&[EditCommand::InsertChar(c)]);
@@ -809,8 +867,15 @@ impl Reedline {
                     Event::Resize(width, height) => {
                         self.terminal_size = (width, height);
                         // TODO properly adjusting prompt_origin on resizing while lines > 1
-                        prompt_origin.1 = cursor::position()?.1.saturating_sub(1);
-                        prompt_offset = self.full_repaint(prompt, prompt_origin)?;
+
+                        let new_prompt_origin_row = cursor::position()?.1.saturating_sub(1);
+                        self.set_prompt_offset((
+                            self.prompt_widget.origin_columns(),
+                            new_prompt_origin_row,
+                        ));
+                        let new_prompt_offset =
+                            self.full_repaint(prompt, self.prompt_widget.offset)?;
+                        self.set_prompt_offset(new_prompt_offset);
                         continue;
                     }
                 }
@@ -824,10 +889,11 @@ impl Reedline {
             if self.input_mode == InputMode::HistorySearch {
                 self.history_search_paint(prompt)?;
             } else if self.need_full_repaint {
-                prompt_offset = self.full_repaint(prompt, prompt_origin)?;
+                let new_prompt_offset = self.full_repaint(prompt, self.prompt_widget.origin)?;
+                self.set_prompt_offset(new_prompt_offset);
                 self.need_full_repaint = false;
             } else {
-                self.buffer_paint(prompt_offset)?;
+                self.buffer_paint(self.prompt_widget.offset)?;
             }
         }
     }
