@@ -331,9 +331,84 @@ impl LineBuffer {
         }
     }
 
+    pub fn move_line_up(&mut self) {
+        // If we're not at the top, move up a line in the multiline buffer
+        let mut position = self.offset();
+        let mut num_of_move_lefts = 0;
+        let buffer = self.get_buffer().to_string();
+
+        // Move left until we're looking at the newline
+        // Observe what column we were on
+        while position > 0 && &buffer[(position - 1)..position] != "\n" {
+            self.move_left();
+            num_of_move_lefts += 1;
+            position = self.offset();
+        }
+
+        // Find start of previous line
+        let mut matches = buffer[0..(position - 1)].rmatch_indices('\n');
+
+        if let Some((pos, _)) = matches.next() {
+            position = pos + 1;
+        } else {
+            position = 0;
+        }
+        self.set_insertion_point(self.line(), position);
+
+        // Move right from this position to the column we were at
+        while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
+            self.move_right();
+            position = self.offset();
+            num_of_move_lefts -= 1;
+        }
+    }
+
+    pub fn move_line_down(&mut self) {
+        // If we're not at the top, move up a line in the multiline buffer
+        let mut position = self.offset();
+        let mut num_of_move_lefts = 0;
+        let buffer = self.get_buffer().to_string();
+
+        // Move left until we're looking at the newline
+        // Observe what column we were on
+        while position > 0 && &buffer[(position - 1)..position] != "\n" {
+            self.move_left();
+            num_of_move_lefts += 1;
+            position = self.offset();
+        }
+
+        // Find start of next line
+        let mut matches = buffer[position..].match_indices('\n');
+
+        // Assume this always succeeds
+
+        let (pos, _) = matches
+            .next()
+            .expect("internal error: should have found newline");
+
+        position += pos + 1;
+
+        self.set_insertion_point(self.line(), position);
+
+        // Move right from this position to the column we were at
+        while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
+            self.move_right();
+            position = self.offset();
+            num_of_move_lefts -= 1;
+        }
+    }
+
     /// Return 2D-cursor (line_number, col_in_line)
     fn insertion_point(&self) -> InsertionPoint {
         self.insertion_point
+    }
+
+    pub fn is_cursor_at_first_line(&self) -> bool {
+        self.get_buffer()[0..self.offset()].contains('\n')
+    }
+
+    pub fn is_cursor_at_last_line(&self) -> bool {
+        self.get_buffer()[self.offset()..].contains('\n')
     }
 }
 

@@ -56,6 +56,14 @@ impl Editor {
         self.line_buffer.move_word_right();
     }
 
+    pub fn move_line_up(&mut self) {
+        self.line_buffer.move_line_up();
+    }
+
+    pub fn move_line_down(&mut self) {
+        self.line_buffer.move_line_down();
+    }
+
     pub fn insert_char(&mut self, c: char) {
         self.line_buffer.insert_char(c)
     }
@@ -139,6 +147,14 @@ impl Editor {
         self.line_buffer.is_empty()
     }
 
+    pub fn is_cursor_at_first_line(&self) -> bool {
+        self.line_buffer.is_cursor_at_first_line()
+    }
+
+    pub fn is_cursor_at_last_line(&self) -> bool {
+        self.line_buffer.is_cursor_at_last_line()
+    }
+
     pub fn reset_olds(&mut self) {
         self.edits = vec![LineBuffer::new()];
         self.index_undo = 2;
@@ -152,16 +168,26 @@ impl Editor {
         }
     }
 
-    pub fn redo(&mut self) -> Option<()> {
+    pub fn undo(&mut self) {
+        // NOTE: Try-blocks should help us get rid of this indirection too
+        self.undo_internal();
+    }
+
+    pub fn redo(&mut self) {
+        // NOTE: Try-blocks should help us get rid of this indirection too
+        self.redo_internal();
+    }
+
+    fn redo_internal(&mut self) -> Option<()> {
         if self.index_undo > 2 {
             self.index_undo = self.index_undo.checked_sub(2)?;
-            self.undo()
+            self.undo_internal()
         } else {
             None
         }
     }
 
-    pub fn undo(&mut self) -> Option<()> {
+    fn undo_internal(&mut self) -> Option<()> {
         self.line_buffer = self.edits.get(self.get_index_undo())?.clone();
 
         if self.index_undo <= self.edits.len() {

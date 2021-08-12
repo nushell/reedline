@@ -63,9 +63,6 @@ pub struct Reedline {
     // Dirty bits
     need_full_repaint: bool,
 
-    // Partial command
-    //partial_command: Option<char>,
-
     // Vi normal mode state engine
     vi_engine: ViEngine,
 
@@ -98,7 +95,6 @@ impl Reedline {
             keybindings: keybindings_hashmap,
             edit_mode: EditMode::Emacs,
             need_full_repaint: false,
-            //partial_command: None,
             vi_engine: ViEngine::new(),
             tab_handler: Box::new(DefaultCompletionActionHandler::default()),
         }
@@ -348,130 +344,27 @@ impl Reedline {
         }
     }
 
-    fn move_to_start(&mut self) {
-        self.editor.move_to_start()
-    }
-
-    fn move_to_end(&mut self) {
-        self.editor.move_to_end()
-    }
-
-    fn move_left(&mut self) {
-        self.editor.move_left()
-    }
-
-    fn move_right(&mut self) {
-        self.editor.move_right()
-    }
-
-    fn move_word_left(&mut self) {
-        self.editor.move_word_left();
-    }
-
-    fn move_word_right(&mut self) {
-        self.editor.move_word_right();
-    }
-
-    fn insert_char(&mut self, c: char) {
-        self.editor.insert_char(c)
-    }
-
-    fn backspace(&mut self) {
-        self.editor.backspace();
-    }
-
-    fn delete(&mut self) {
-        self.editor.delete();
-    }
-
-    fn backspace_word(&mut self) {
-        self.editor.backspace_word();
-    }
-
-    fn delete_word(&mut self) {
-        self.editor.delete_word();
-    }
-
     fn clear(&mut self) {
         self.editor.clear();
     }
 
     fn up_command(&mut self) {
         // If we're at the top, then:
-        if !self.editor.get_buffer()[0..self.editor.offset()].contains('\n') {
+        if !self.editor.is_cursor_at_first_line() {
             // If we're at the top, move to previous history
             self.previous_history();
         } else {
-            // If we're not at the top, move up a line in the multiline buffer
-            let mut position = self.editor.offset();
-            let mut num_of_move_lefts = 0;
-            let buffer = self.editor.get_buffer().to_string();
-
-            // Move left until we're looking at the newline
-            // Observe what column we were on
-            while position > 0 && &buffer[(position - 1)..position] != "\n" {
-                self.editor.move_left();
-                num_of_move_lefts += 1;
-                position = self.editor.offset();
-            }
-
-            // Find start of previous line
-            let mut matches = buffer[0..(position - 1)].rmatch_indices('\n');
-
-            if let Some((pos, _)) = matches.next() {
-                position = pos + 1;
-            } else {
-                position = 0;
-            }
-            self.set_offset(position);
-
-            // Move right from this position to the column we were at
-            while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
-                self.editor.move_right();
-                position = self.editor.offset();
-                num_of_move_lefts -= 1;
-            }
+            self.editor.move_line_up();
         }
     }
 
     fn down_command(&mut self) {
         // If we're at the top, then:
-        if !self.editor.get_buffer()[self.editor.offset()..].contains('\n') {
+        if !self.editor.is_cursor_at_last_line() {
             // If we're at the top, move to previous history
             self.next_history();
         } else {
-            // If we're not at the top, move up a line in the multiline buffer
-            let mut position = self.editor.offset();
-            let mut num_of_move_lefts = 0;
-            let buffer = self.editor.get_buffer().to_string();
-
-            // Move left until we're looking at the newline
-            // Observe what column we were on
-            while position > 0 && &buffer[(position - 1)..position] != "\n" {
-                self.editor.move_left();
-                num_of_move_lefts += 1;
-                position = self.editor.offset();
-            }
-
-            // Find start of next line
-            let mut matches = buffer[position..].match_indices('\n');
-
-            // Assume this always succeeds
-
-            let (pos, _) = matches
-                .next()
-                .expect("internal error: should have found newline");
-
-            position += pos + 1;
-
-            self.set_offset(position);
-
-            // Move right from this position to the column we were at
-            while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
-                self.editor.move_right();
-                position = self.editor.offset();
-                num_of_move_lefts -= 1;
-            }
+            self.editor.move_line_down()
         }
     }
 
@@ -518,56 +411,14 @@ impl Reedline {
             .set_navigation(HistoryNavigationQuery::SubstringSearch("".to_string()));
     }
 
-    fn uppercase_word(&mut self) {
-        self.editor.uppercase_word();
-    }
-
-    fn lowercase_word(&mut self) {
-        self.editor.lowercase_word();
-    }
-
-    fn capitalize_char(&mut self) {
-        self.editor.capitalize_char();
-    }
-
-    fn swap_words(&mut self) {
-        self.editor.swap_words();
-    }
-
-    fn swap_graphemes(&mut self) {
-        self.editor.swap_graphemes();
-    }
-
-    fn cut_from_start(&mut self) {
-        self.editor.cut_from_start()
-    }
-
-    fn cut_from_end(&mut self) {
-        self.editor.cut_from_end()
-    }
-
-    fn cut_word_left(&mut self) {
-        self.editor.cut_word_left()
-    }
-
-    fn cut_word_right(&mut self) {
-        self.editor.cut_word_right()
-    }
-
-    fn insert_cut_buffer(&mut self) {
-        self.editor.insert_cut_buffer()
-    }
-
     fn enter_vi_insert_mode(&mut self) {
         self.edit_mode = EditMode::ViInsert;
         self.need_full_repaint = true;
-        //self.partial_command = None;
     }
 
     fn enter_vi_normal_mode(&mut self) {
         self.edit_mode = EditMode::ViNormal;
         self.need_full_repaint = true;
-        //self.partial_command = None;
     }
 
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
@@ -609,17 +460,17 @@ impl Reedline {
         // Run the commands over the edit buffer
         for command in &commands {
             match command {
-                EditCommand::MoveToStart => self.move_to_start(),
-                EditCommand::MoveToEnd => self.move_to_end(),
-                EditCommand::MoveLeft => self.move_left(),
-                EditCommand::MoveRight => self.move_right(),
-                EditCommand::MoveWordLeft => self.move_word_left(),
-                EditCommand::MoveWordRight => self.move_word_right(),
-                EditCommand::InsertChar(c) => self.insert_char(*c),
-                EditCommand::Backspace => self.backspace(),
-                EditCommand::Delete => self.delete(),
-                EditCommand::BackspaceWord => self.backspace_word(),
-                EditCommand::DeleteWord => self.delete_word(),
+                EditCommand::MoveToStart => self.editor.move_to_start(),
+                EditCommand::MoveToEnd => self.editor.move_to_end(),
+                EditCommand::MoveLeft => self.editor.move_left(),
+                EditCommand::MoveRight => self.editor.move_right(),
+                EditCommand::MoveWordLeft => self.editor.move_word_left(),
+                EditCommand::MoveWordRight => self.editor.move_word_right(),
+                EditCommand::InsertChar(c) => self.editor.insert_char(*c),
+                EditCommand::Backspace => self.editor.backspace(),
+                EditCommand::Delete => self.editor.delete(),
+                EditCommand::BackspaceWord => self.editor.backspace_word(),
+                EditCommand::DeleteWord => self.editor.delete_word(),
                 EditCommand::Clear => self.clear(),
                 EditCommand::AppendToHistory => self.append_to_history(),
                 EditCommand::PreviousHistory => self.previous_history(),
@@ -627,24 +478,20 @@ impl Reedline {
                 EditCommand::Up => self.up_command(),
                 EditCommand::Down => self.down_command(),
                 EditCommand::SearchHistory => self.search_history(),
-                EditCommand::CutFromStart => self.cut_from_start(),
-                EditCommand::CutToEnd => self.cut_from_end(),
-                EditCommand::CutWordLeft => self.cut_word_left(),
-                EditCommand::CutWordRight => self.cut_word_right(),
-                EditCommand::PasteCutBuffer => self.insert_cut_buffer(),
-                EditCommand::UppercaseWord => self.uppercase_word(),
-                EditCommand::LowercaseWord => self.lowercase_word(),
-                EditCommand::CapitalizeChar => self.capitalize_char(),
-                EditCommand::SwapWords => self.swap_words(),
-                EditCommand::SwapGraphemes => self.swap_graphemes(),
+                EditCommand::CutFromStart => self.editor.cut_from_start(),
+                EditCommand::CutToEnd => self.editor.cut_from_end(),
+                EditCommand::CutWordLeft => self.editor.cut_word_left(),
+                EditCommand::CutWordRight => self.editor.cut_word_right(),
+                EditCommand::PasteCutBuffer => self.editor.insert_cut_buffer(),
+                EditCommand::UppercaseWord => self.editor.uppercase_word(),
+                EditCommand::LowercaseWord => self.editor.lowercase_word(),
+                EditCommand::CapitalizeChar => self.editor.capitalize_char(),
+                EditCommand::SwapWords => self.editor.swap_words(),
+                EditCommand::SwapGraphemes => self.editor.swap_graphemes(),
                 EditCommand::EnterViInsert => self.enter_vi_insert_mode(),
                 EditCommand::EnterViNormal => self.enter_vi_normal_mode(),
-                EditCommand::Undo => {
-                    self.editor.undo();
-                }
-                EditCommand::Redo => {
-                    self.editor.redo();
-                }
+                EditCommand::Undo => self.editor.undo(),
+                EditCommand::Redo => self.editor.redo(),
                 _ => {}
             }
 
