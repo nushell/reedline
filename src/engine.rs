@@ -729,12 +729,13 @@ impl Reedline {
             // let event = rx.recv().unwrap();
             match event {
                 Event::Key(KeyEvent { code, modifiers }) => {
-                    match (modifiers, code, self.edit_mode) {
-                        (KeyModifiers::NONE, KeyCode::Tab, _) => {
+                    match (modifiers, code) {
+                        (KeyModifiers::NONE, KeyCode::Tab) => {
                             let mut line_buffer = self.editor.line_buffer();
+                            self.tab_handler.handle(&mut line_buffer);
                             // Ok(None)
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('d'), _) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
                             if self.editor.is_empty() {
                                 self.editor.reset_olds();
                                 return Ok(Signal::CtrlD);
@@ -745,19 +746,19 @@ impl Reedline {
                             }
                             // Ok(None)
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('c'), _) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                             if let Some(binding) = self.find_keybinding(modifiers, code) {
                                 self.run_edit_commands(&binding);
                             }
                             self.editor.reset_olds();
                             return Ok(Signal::CtrlC);
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('l'), EditMode::Emacs) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('l')) => {
                             self.editor.reset_olds();
                             return Ok(Signal::CtrlL);
                         }
-                        (KeyModifiers::NONE, KeyCode::Char(c), x)
-                        | (KeyModifiers::SHIFT, KeyCode::Char(c), x) => {
+                        (KeyModifiers::NONE, KeyCode::Char(c))
+                        | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                             let line_start = if self.editor.line() == 0 {
                                 self.prompt_widget.offset_columns()
                             } else {
@@ -792,15 +793,17 @@ impl Reedline {
                             } else {
                                 self.run_edit_commands(&[EditCommand::InsertChar(c)]);
                             }
-<<<<<<< HEAD
-                            (KeyModifiers::CONTROL, KeyCode::Char('c'), _) => {
-                                if let Some(binding) = self.find_keybinding(modifiers, code) {
-                                    self.run_edit_commands(&binding);
-                                }
-                                self.editor.reset_olds();
-                                return Ok(Signal::CtrlC);
-                            }
-                            (KeyModifiers::CONTROL, KeyCode::Char('l'), EditMode::Emacs) => {
+                            self.editor.set_previous_lines(false);
+                        }
+                        (KeyModifiers::NONE, KeyCode::Enter) => match self.input_mode {
+                            InputMode::Regular | InputMode::HistoryTraversal => {
+                                let buffer = self.insertion_line().to_string();
+
+                                self.run_edit_commands(&[
+                                    EditCommand::AppendToHistory,
+                                    EditCommand::Clear,
+                                ]);
+                                self.print_crlf()?;
                                 self.editor.reset_olds();
                                 return Ok(Signal::CtrlL);
                             }
@@ -887,7 +890,6 @@ impl Reedline {
             self.repaint(prompt)?;
         }
     }
-
 
     fn repaint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
         // Repainting
