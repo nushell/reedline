@@ -705,6 +705,125 @@ impl Reedline {
         self.prompt_widget.origin = origin;
     }
 
+    fn handle_event(&mut self, prompt: &dyn Prompt, event: Event) -> io::Result<Option<Signal>> {
+        match event {
+            Event::Key(KeyEvent { code, modifiers }) => {
+                match (modifiers, code) {
+                    (KeyModifiers::NONE, KeyCode::Tab) => {
+                        let mut line_buffer = self.editor.line_buffer();
+                        self.tab_handler.handle(&mut line_buffer);
+                        Ok(None)
+                    }
+                    (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
+                        if self.editor.is_empty() {
+                            self.editor.reset_olds();
+                            Ok(Some(Signal::CtrlD))
+                        } else if let Some(binding) = self.find_keybinding(modifiers, code) {
+                            self.run_edit_commands(&binding);
+                            Ok(None)
+                        } else {
+                            Ok(None)
+                        }
+                    }
+                    (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+                        if let Some(binding) = self.find_keybinding(modifiers, code) {
+                            self.run_edit_commands(&binding);
+                        }
+                        self.editor.reset_olds();
+                        Ok(Some(Signal::CtrlC))
+                    }
+                    (KeyModifiers::CONTROL, KeyCode::Char('l')) => {
+                        self.editor.reset_olds();
+                        Ok(Some(Signal::CtrlL))
+                    }
+                    (KeyModifiers::NONE, KeyCode::Char(c))
+                    | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
+                        let line_start = if self.editor.line() == 0 {
+                            self.prompt_widget.offset_columns()
+                        } else {
+                            0
+                        };
+                        if self.maybe_wrap(line_start, c) {
+                            let (original_column, original_row) = cursor::position()?;
+                            self.run_edit_commands(&[EditCommand::InsertChar(c)]);
+
+                            self.buffer_paint(self.prompt_widget.offset)?;
+
+                            let (new_column, _) = cursor::position()?;
+
+                            if new_column < original_column
+                                && original_row + 1 == self.terminal_rows()
+                            {
+                                // We have wrapped off bottom of screen, and prompt is on new row
+                                // We need to update the prompt location in this case
+                                let (prompt_offset_columns, prompt_offset_rows) =
+                                    self.prompt_widget.offset;
+                                let (prompt_origin_columns, prompt_origin_rows) =
+                                    self.prompt_widget.origin;
+                                self.set_prompt_offset((
+                                    prompt_offset_columns,
+                                    prompt_offset_rows - 1,
+                                ));
+                                self.set_prompt_origin((
+                                    prompt_origin_columns,
+                                    prompt_origin_rows - 1,
+                                ));
+                            }
+                        } else {
+                            self.run_edit_commands(&[EditCommand::InsertChar(c)]);
+                        }
+                        self.editor.set_previous_lines(false);
+                        Ok(None)
+                    }
+                    (KeyModifiers::NONE, KeyCode::Enter) => match self.input_mode {
+                        InputMode::Regular | InputMode::HistoryTraversal => {
+                            let buffer = self.insertion_line().to_string();
+
+                            self.run_edit_commands(&[
+                                EditCommand::AppendToHistory,
+                                EditCommand::Clear,
+                            ]);
+                            self.print_crlf()?;
+                            self.editor.reset_olds();
+
+                            return Ok(Some(Signal::Success(buffer)));
+                        }
+                        InputMode::HistorySearch => {
+                            self.queue_prompt_indicator(prompt)?;
+
+                            if let Some(string) = self.history.string_at_cursor() {
+                                self.set_buffer(string)
+                            }
+
+                            self.input_mode = InputMode::Regular;
+                            Ok(None)
+                        }
+                    },
+                    _ => {
+                        if let Some(binding) = self.find_keybinding(modifiers, code) {
+                            self.run_edit_commands(&binding);
+                        }
+                        Ok(None)
+                    }
+                }
+            }
+            Event::Mouse(_) => Ok(None),
+            Event::Resize(width, height) => {
+                self.terminal_size = (width, height);
+                // TODO properly adjusting prompt_origin on resizing while lines > 1
+
+                let new_prompt_origin_row = cursor::position()?.1.saturating_sub(1);
+                self.set_prompt_offset((
+                    self.prompt_widget.origin_columns(),
+                    new_prompt_origin_row,
+                ));
+                let new_prompt_offset = self.full_repaint(prompt, self.prompt_widget.offset)?;
+                self.set_prompt_offset(new_prompt_offset);
+                Ok(None)
+            }
+        }
+    }
+
     /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
@@ -715,176 +834,13 @@ impl Reedline {
             self.history_search_paint(prompt)?;
         }
 
-        // let (tx, rx) = mpsc::sync_channel(1000);
-        // thread::spawn(move || loop {
-        //     let event = read().unwrap();
-        //     tx.send(event).unwrap();
-        // });
-
         self.terminal_size = terminal::size()?;
         self.initialize_prompt(prompt)?;
 
         loop {
             let event = read()?;
-            // let event = rx.recv().unwrap();
-            match event {
-                Event::Key(KeyEvent { code, modifiers }) => {
-                    match (modifiers, code) {
-                        (KeyModifiers::NONE, KeyCode::Tab) => {
-                            let mut line_buffer = self.editor.line_buffer();
-                            self.tab_handler.handle(&mut line_buffer);
-                            // Ok(None)
-                        }
-                        (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
-                            if self.editor.is_empty() {
-                                self.editor.reset_olds();
-                                return Ok(Signal::CtrlD);
-                                // Ok(Some(Signal::CtrlD))
-                            } else if let Some(binding) = self.find_keybinding(modifiers, code) {
-                                self.run_edit_commands(&binding);
-                                // Ok(None)
-                            }
-                            // Ok(None)
-                        }
-                        (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                            if let Some(binding) = self.find_keybinding(modifiers, code) {
-                                self.run_edit_commands(&binding);
-                            }
-                            self.editor.reset_olds();
-                            return Ok(Signal::CtrlC);
-                        }
-                        (KeyModifiers::CONTROL, KeyCode::Char('l')) => {
-                            self.editor.reset_olds();
-                            return Ok(Signal::CtrlL);
-                        }
-                        (KeyModifiers::NONE, KeyCode::Char(c))
-                        | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
-                            let line_start = if self.editor.line() == 0 {
-                                self.prompt_widget.offset_columns()
-                            } else {
-                                0
-                            };
-                            if self.maybe_wrap(line_start, c) {
-                                let (original_column, original_row) = cursor::position()?;
-                                self.run_edit_commands(&[EditCommand::InsertChar(c)]);
-
-                                self.buffer_paint(self.prompt_widget.offset)?;
-
-                                let (new_column, _) = cursor::position()?;
-
-                                if new_column < original_column
-                                    && original_row + 1 == self.terminal_rows()
-                                {
-                                    // We have wrapped off bottom of screen, and prompt is on new row
-                                    // We need to update the prompt location in this case
-                                    let (prompt_offset_columns, prompt_offset_rows) =
-                                        self.prompt_widget.offset;
-                                    let (prompt_origin_columns, prompt_origin_rows) =
-                                        self.prompt_widget.origin;
-                                    self.set_prompt_offset((
-                                        prompt_offset_columns,
-                                        prompt_offset_rows - 1,
-                                    ));
-                                    self.set_prompt_origin((
-                                        prompt_origin_columns,
-                                        prompt_origin_rows - 1,
-                                    ));
-                                }
-                            } else {
-                                self.run_edit_commands(&[EditCommand::InsertChar(c)]);
-                            }
-                            self.editor.set_previous_lines(false);
-                        }
-                        (KeyModifiers::NONE, KeyCode::Enter) => match self.input_mode {
-                            InputMode::Regular | InputMode::HistoryTraversal => {
-                                let buffer = self.insertion_line().to_string();
-
-                                self.run_edit_commands(&[
-                                    EditCommand::AppendToHistory,
-                                    EditCommand::Clear,
-                                ]);
-                                self.print_crlf()?;
-                                self.editor.reset_olds();
-                                return Ok(Signal::CtrlL);
-                            }
-                            (KeyModifiers::NONE, KeyCode::Char(c), x)
-                            | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
-                                if x == EditMode::ViNormal =>
-                            {
-                                self.run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
-                                self.editor.set_previous_lines(false);
-                            }
-                            (KeyModifiers::NONE, KeyCode::Char(c), x)
-                            | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
-                                if x != EditMode::ViNormal =>
-                            {
-                                let line_start = if self.editor.line() == 0 {
-                                    self.prompt_widget.offset_columns()
-                                } else {
-                                    0
-                                };
-                                if self.maybe_wrap(line_start, c) {
-                                    let (original_column, original_row) = cursor::position()?;
-                                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
-
-                                    self.buffer_paint(self.prompt_widget.offset)?;
-
-                                    let (new_column, _) = cursor::position()?;
-
-                                    if new_column < original_column
-                                        && original_row + 1 == self.terminal_rows()
-                                    {
-                                        // We have wrapped off bottom of screen, and prompt is on new row
-                                        // We need to update the prompt location in this case
-                                        let (prompt_offset_columns, prompt_offset_rows) =
-                                            self.prompt_widget.offset;
-                                        let (prompt_origin_columns, prompt_origin_rows) =
-                                            self.prompt_widget.origin;
-                                        self.set_prompt_offset((
-                                            prompt_offset_columns,
-                                            prompt_offset_rows - 1,
-                                        ));
-                                        self.set_prompt_origin((
-                                            prompt_origin_columns,
-                                            prompt_origin_rows - 1,
-                                        ));
-                                    }
-                                } else {
-                                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
-                                }
-                                self.editor.set_previous_lines(false);
-                            }
-                            InputMode::HistorySearch => {
-                                self.queue_prompt_indicator(prompt)?;
-
-                                if let Some(string) = self.history.string_at_cursor() {
-                                    self.set_buffer(string)
-                                }
-
-                                self.input_mode = InputMode::Regular;
-                            }
-                        },
-                        _ => {
-                            if let Some(binding) = self.find_keybinding(modifiers, code) {
-                                self.run_edit_commands(&binding);
-                            }
-                        }
-                    }
-                }
-                Event::Mouse(_) => {}
-                Event::Resize(width, height) => {
-                    self.terminal_size = (width, height);
-                    // TODO properly adjusting prompt_origin on resizing while lines > 1
-
-                    let new_prompt_origin_row = cursor::position()?.1.saturating_sub(1);
-                    self.set_prompt_offset((
-                        self.prompt_widget.origin_columns(),
-                        new_prompt_origin_row,
-                    ));
-                    let new_prompt_offset = self.full_repaint(prompt, self.prompt_widget.offset)?;
-                    self.set_prompt_offset(new_prompt_offset);
-                    continue;
-                }
+            if let Some(signal) = self.handle_event(prompt, event)? {
+                return Ok(signal);
             }
 
             self.repaint(prompt)?;
