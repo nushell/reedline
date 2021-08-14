@@ -1,6 +1,6 @@
 use {
     crate::{
-        completer::{ComplationActionHandler, DefaultCompletionActionHandler},
+        completion::{ComplationActionHandler, DefaultCompletionActionHandler},
         core_editor::Editor,
         default_emacs_keybindings,
         hinter::{DefaultHinter, Hinter},
