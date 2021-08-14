@@ -5,6 +5,8 @@ pub struct DefaultCompletionActionHandler {
     completer: Box<dyn Completer>,
     initial_line: LineBuffer,
     index: usize,
+
+    last_buffer: Option<LineBuffer>,
 }
 
 impl DefaultCompletionActionHandler {
@@ -40,9 +42,11 @@ impl Default for DefaultCompletionActionHandler {
             completer: Box::new(DefaultCompleter::default()),
             initial_line: LineBuffer::new(),
             index: 0,
+            last_buffer: None,
         }
     }
 }
+
 impl ComplationActionHandler for DefaultCompletionActionHandler {
     // With this function we handle the tab events.
     //
@@ -51,6 +55,12 @@ impl ComplationActionHandler for DefaultCompletionActionHandler {
     // If internal index is 0 it means that is the first tab event pressed.
     // If internal index is greater than completions vector, we bring it back to 0.
     fn handle(&mut self, present_buffer: &mut LineBuffer) {
+        if let Some(last_buffer) = &self.last_buffer {
+            if last_buffer != present_buffer {
+                self.reset_index();
+            }
+        }
+
         // I am not sure what this block of code is trying to do
         // We set a to b on first call then on all subsequent calls we set this value back (as on
         // all calls this is the same value. No?)
@@ -62,7 +72,7 @@ impl ComplationActionHandler for DefaultCompletionActionHandler {
 
         let completions = self
             .completer
-            .complete(self.initial_line.get_buffer(), self.initial_line.offset());
+            .complete(present_buffer.get_buffer(), present_buffer.offset());
 
         if !completions.is_empty() {
             match self.index {
@@ -82,11 +92,9 @@ impl ComplationActionHandler for DefaultCompletionActionHandler {
                 }
             }
         }
+        self.last_buffer = Some(present_buffer.clone());
     }
 
-    // This function is required to reset the index
-    // when following the completion we perform another action
-    // that is not going to continue with the list of completions.
     fn reset_index(&mut self) {
         self.index = 0;
     }
@@ -145,5 +153,23 @@ mod test {
         let mut new_buf = buffer_with("ex");
         tab.handle(&mut new_buf);
         assert_eq!(new_buf, buffer_with("exit"));
+    }
+
+    #[test]
+    fn same_string_different_places() {
+        let mut tab = get_tab_handler_with(vec!["that", "this"]);
+        let mut buf = buffer_with("th is my test th");
+
+        // Hitting tab after `th` fills the first completion `that`
+        buf.set_insertion_point(0, 2);
+        tab.handle(&mut buf);
+        let mut expected_buffer = buffer_with("that is my test th");
+        expected_buffer.set_insertion_point(0, 4);
+        assert_eq!(buf, expected_buffer);
+
+        // updating the cursor to end should reset the completions
+        buf.set_insertion_point(0, 18);
+        tab.handle(&mut buf);
+        assert_eq!(buf, buffer_with("that is my test that"));
     }
 }
