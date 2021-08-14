@@ -50,15 +50,14 @@ impl ComplationActionHandler for DefaultCompletionActionHandler {
     //  in the line_buffer only the specified range of characters.
     // If internal index is 0 it means that is the first tab event pressed.
     // If internal index is greater than completions vector, we bring it back to 0.
-    fn handle(&mut self, line: &mut LineBuffer) {
+    fn handle(&mut self, present_buffer: &mut LineBuffer) {
+        // I am not sure what this block of code is trying to do
+        // We set a to b on first call then on all subsequent calls we set this value back (as on
+        // all calls this is the same value. No?)
         if self.index == 0 {
-            self.initial_line = LineBuffer::new();
-            self.initial_line.set_buffer(line.get_buffer().into());
-            self.initial_line
-                .set_insertion_point(line.line(), line.offset());
+            self.initial_line = present_buffer.clone();
         } else {
-            line.set_buffer(self.initial_line.get_buffer().into());
-            line.set_insertion_point(self.initial_line.line(), self.initial_line.offset())
+            *present_buffer = self.initial_line.clone();
         }
 
         let completions = self
@@ -70,12 +69,13 @@ impl ComplationActionHandler for DefaultCompletionActionHandler {
                 index if index < completions.len() => {
                     self.index += 1;
                     let span = completions[index].0;
-                    let mut offset = line.offset();
+
+                    let mut offset = present_buffer.offset();
                     offset += completions[index].1.len() - (span.end - span.start);
 
                     // TODO improve the support for multiline replace
-                    line.replace(span.start..span.end, 0, &completions[index].1);
-                    line.set_insertion_point(line.line(), offset);
+                    present_buffer.replace(span.start..span.end, 0, &completions[index].1);
+                    present_buffer.set_insertion_point(present_buffer.line(), offset);
                 }
                 _ => {
                     self.reset_index();
@@ -133,5 +133,17 @@ mod test {
         assert_eq!(buf, buffer_with("test"));
         tab.handle(&mut buf);
         assert_eq!(buf, buffer_with("te"));
+    }
+
+    #[test]
+    fn auto_resets_on_new_query() {
+        let mut tab = get_tab_handler_with(vec!["login", "logout", "exit"]);
+        let mut buf = buffer_with("log");
+        tab.handle(&mut buf);
+
+        assert_eq!(buf, buffer_with("login"));
+        let mut new_buf = buffer_with("ex");
+        tab.handle(&mut new_buf);
+        assert_eq!(new_buf, buffer_with("exit"));
     }
 }
