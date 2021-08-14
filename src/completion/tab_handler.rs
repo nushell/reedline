@@ -67,9 +67,8 @@ impl ComplationActionHandler for DefaultCompletionActionHandler {
             }
         }
 
-        // I am not sure what this block of code is trying to do
-        // We set a to b on first call then on all subsequent calls we set this value back (as on
-        // all calls this is the same value. No?)
+        // NOTE: This is required to cycle through the tabs for what is presently present in the
+        // buffer. Without this `repetitive_calls_to_handle_works` will not work
         if self.index == 0 {
             self.initial_line = present_buffer.clone();
         } else {
