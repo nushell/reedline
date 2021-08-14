@@ -60,9 +60,11 @@ impl ComplationActionHandler for DefaultCompletionActionHandler {
             line.set_buffer(self.initial_line.get_buffer().into());
             line.set_insertion_point(self.initial_line.line(), self.initial_line.offset())
         }
+
         let completions = self
             .completer
             .complete(self.initial_line.get_buffer(), self.initial_line.offset());
+
         if !completions.is_empty() {
             match self.index {
                 index if index < completions.len() => {
@@ -87,5 +89,49 @@ impl ComplationActionHandler for DefaultCompletionActionHandler {
     // that is not going to continue with the list of completions.
     fn reset_index(&mut self) {
         self.index = 0;
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn get_tab_handler_with(values: Vec<&'_ str>) -> DefaultCompletionActionHandler {
+        let mut completer = DefaultCompleter::default();
+        completer.insert(values.iter().map(|s| s.to_string()).collect());
+
+        DefaultCompletionActionHandler::default().with_completer(Box::new(completer))
+    }
+
+    fn buffer_with(content: &str) -> LineBuffer {
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.insert_str(content);
+
+        line_buffer
+    }
+
+    #[test]
+    fn repetitive_calls_to_handle_works() {
+        let mut tab = get_tab_handler_with(vec!["login", "logout"]);
+        let mut buf = buffer_with("lo");
+        tab.handle(&mut buf);
+
+        assert_eq!(buf, buffer_with("login"));
+        tab.handle(&mut buf);
+        assert_eq!(buf, buffer_with("logout"));
+        tab.handle(&mut buf);
+        assert_eq!(buf, buffer_with("lo"));
+    }
+
+    #[test]
+    fn behaviour_with_hyphens_and_underscores() {
+        let mut tab = get_tab_handler_with(vec!["test-hyphen", "test_underscore"]);
+        let mut buf = buffer_with("te");
+        tab.handle(&mut buf);
+
+        assert_eq!(buf, buffer_with("test"));
+        tab.handle(&mut buf);
+        assert_eq!(buf, buffer_with("te"));
     }
 }
