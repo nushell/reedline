@@ -47,6 +47,12 @@ impl Default for DefaultCompletionActionHandler {
     }
 }
 
+impl DefaultCompletionActionHandler {
+    fn reset_index(&mut self) {
+        self.index = 0;
+    }
+}
+
 impl ComplationActionHandler for DefaultCompletionActionHandler {
     // With this function we handle the tab events.
     //
@@ -93,10 +99,6 @@ impl ComplationActionHandler for DefaultCompletionActionHandler {
             }
         }
         self.last_buffer = Some(present_buffer.clone());
-    }
-
-    fn reset_index(&mut self) {
-        self.index = 0;
     }
 }
 

@@ -31,10 +31,8 @@ impl Span {
 pub trait ComplationActionHandler {
     /// Handle the completion action from the given line buffer
     fn handle(&mut self, line: &mut LineBuffer);
-
-    /// Reset the index, often as a result of the user moving away from the completion
-    fn reset_index(&mut self);
 }
+
 /// A trait that defines how to convert a line and position to a list of potential completions in that position.
 pub trait Completer {
     /// the action that will take the line and position and convert it to a vector of completions, which include the

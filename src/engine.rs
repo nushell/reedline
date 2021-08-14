@@ -704,7 +704,6 @@ impl Reedline {
                                 self.tab_handler.handle(&mut line_buffer);
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('d'), _) => {
-                                self.tab_handler.reset_index();
                                 if self.editor.is_empty() {
                                     self.editor.reset_olds();
                                     return Ok(Signal::CtrlD);
@@ -714,7 +713,6 @@ impl Reedline {
                                 }
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('c'), _) => {
-                                self.tab_handler.reset_index();
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
                                     self.run_edit_commands(&binding);
                                 }
@@ -722,7 +720,6 @@ impl Reedline {
                                 return Ok(Signal::CtrlC);
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('l'), EditMode::Emacs) => {
-                                self.tab_handler.reset_index();
                                 self.editor.reset_olds();
                                 return Ok(Signal::CtrlL);
                             }
@@ -730,7 +727,6 @@ impl Reedline {
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
                                 if x == EditMode::ViNormal =>
                             {
-                                self.tab_handler.reset_index();
                                 self.run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
                                 self.editor.set_previous_lines(false);
                             }
@@ -738,7 +734,6 @@ impl Reedline {
                             | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
                                 if x != EditMode::ViNormal =>
                             {
-                                self.tab_handler.reset_index();
                                 let line_start = if self.editor.line() == 0 {
                                     prompt_offset.0
                                 } else {
@@ -775,7 +770,6 @@ impl Reedline {
                                             EditCommand::Clear,
                                         ]);
                                         self.print_crlf()?;
-                                        self.tab_handler.reset_index();
                                         self.editor.reset_olds();
 
                                         return Ok(Signal::Success(buffer));
@@ -792,7 +786,6 @@ impl Reedline {
                                 }
                             }
                             _ => {
-                                self.tab_handler.reset_index();
                                 if let Some(binding) = self.find_keybinding(modifiers, code) {
                                     self.run_edit_commands(&binding);
                                 }
@@ -807,9 +800,6 @@ impl Reedline {
                         prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
                         continue;
                     }
-                }
-                if self.insertion_line().to_string().is_empty() {
-                    self.tab_handler.reset_index();
                 }
             } else {
                 // No key event:
