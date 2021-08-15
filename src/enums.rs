@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// Valid ways how [`crate::Reedline::read_line()`] can return
+/// Valid ways how [`Reedline::read_line()`] can return
 pub enum Signal {
     /// Entry succeeded with the provided content
     Success(String),
@@ -116,4 +116,17 @@ pub enum EditCommand {
 pub enum EditMode {
     /// Emacs mode, the default
     Emacs,
+}
+
+pub enum ReedlineEvent {
+    HandleTab,
+    CtrlD, // Don't know a better name for this
+    CtrlC, // Don't know a better name for this
+    ClearScreen,
+    Enter,
+    Mouse, // Fill in details later
+    Resize(u16, u16),
+    EditInsert(EditCommand), // HACK: Special handling for insert
+    Edit(Vec<EditCommand>),
+    Repaint,
 }

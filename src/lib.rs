@@ -197,8 +197,8 @@ pub use prompt::{
     PromptViMode, DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_INDICATOR,
 };
 
-mod keybindings;
-pub use keybindings::default_emacs_keybindings;
+mod input_parsing;
+pub use input_parsing::default_emacs_keybindings;
 
 mod syntax_highlighting_fileio;
 

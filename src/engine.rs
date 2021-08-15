@@ -1,24 +1,23 @@
-use std::{io, sync::mpsc, thread, time::Duration};
+use std::{io, time::Duration};
 
 use crossterm::event;
+
+use crate::{
+    enums::ReedlineEvent,
+    input_parsing::{default_emacs_keybindings, EmacsInputParser, InputParser, Keybindings},
+};
 
 use {
     crate::{
         completion::{ComplationActionHandler, DefaultCompletionActionHandler},
         core_editor::Editor,
-        default_emacs_keybindings,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
-        keybindings::Keybindings,
         painter::Painter,
         prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus},
         text_manipulation, DefaultHighlighter, EditCommand, EditMode, Highlighter, Prompt, Signal,
     },
-    crossterm::{
-        cursor,
-        event::{read, Event, KeyCode, KeyEvent, KeyModifiers},
-        terminal, Result,
-    },
+    crossterm::{cursor, event::read, terminal, Result},
     std::{collections::HashMap, io::stdout},
 };
 
@@ -32,19 +31,6 @@ enum InputMode {
 struct PromptWidget {
     offset: (u16, u16),
     origin: (u16, u16),
-}
-
-enum ReedlineEvent {
-    HandleTab,
-    CtrlD, // Don't know a better name for this
-    CtrlC, // Don't know a better name for this
-    ClearScreen,
-    Enter,
-    Mouse, // Fill in details later
-    Resize(u16, u16),
-    EditInsert(EditCommand), // HACK: Special handling for insert
-    Edit(Vec<EditCommand>),
-    Repaint,
 }
 
 impl Default for PromptWidget {
@@ -62,61 +48,6 @@ impl PromptWidget {
     }
     fn origin_columns(&self) -> u16 {
         self.origin.0
-    }
-}
-
-trait InputParser {
-    fn parse_event(&self, event: Event) -> ReedlineEvent;
-    fn update_keybindings(&mut self, keybindings: Keybindings);
-    fn edit_mode(&self) -> EditMode;
-}
-
-struct EmacsInputParser {
-    keybindings: Keybindings,
-}
-
-impl Default for EmacsInputParser {
-    fn default() -> Self {
-        EmacsInputParser {
-            keybindings: default_emacs_keybindings(),
-        }
-    }
-}
-
-impl InputParser for EmacsInputParser {
-    fn parse_event(&self, event: Event) -> ReedlineEvent {
-        match event {
-            Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
-                (KeyModifiers::NONE, KeyCode::Tab) => ReedlineEvent::HandleTab,
-                (KeyModifiers::CONTROL, KeyCode::Char('d')) => ReedlineEvent::CtrlD,
-                (KeyModifiers::CONTROL, KeyCode::Char('c')) => ReedlineEvent::CtrlC,
-                (KeyModifiers::CONTROL, KeyCode::Char('l')) => ReedlineEvent::ClearScreen,
-                (KeyModifiers::NONE, KeyCode::Char(c))
-                | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
-                    ReedlineEvent::EditInsert(EditCommand::InsertChar(c))
-                }
-                (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
-                _ => {
-                    if let Some(binding) = self.keybindings.find_binding(modifiers, code) {
-                        ReedlineEvent::Edit(binding)
-                    } else {
-                        ReedlineEvent::Edit(vec![])
-                    }
-                }
-            },
-
-            Event::Mouse(_) => ReedlineEvent::Mouse,
-            Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
-        }
-    }
-
-    // HACK: This about this interface more
-    fn update_keybindings(&mut self, keybindings: Keybindings) {
-        self.keybindings = keybindings;
-    }
-
-    fn edit_mode(&self) -> EditMode {
-        EditMode::Emacs
     }
 }
 
