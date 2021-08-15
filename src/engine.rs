@@ -1,4 +1,6 @@
-use std::{io, sync::mpsc, thread};
+use std::{io, sync::mpsc, thread, time::Duration};
+
+use crossterm::event;
 
 use {
     crate::{
@@ -42,6 +44,7 @@ enum ReedlineEvent {
     Resize(u16, u16),
     EditInsert(EditCommand), // HACK: Special handling for insert
     Edit(Vec<EditCommand>),
+    Repaint,
 }
 
 impl Default for PromptWidget {
@@ -826,7 +829,40 @@ impl Reedline {
                 self.set_prompt_offset(new_prompt_offset);
                 Ok(None)
             }
+            ReedlineEvent::Repaint => {
+                self.full_repaint(prompt, self.prompt_widget.origin)?;
+                Ok(None)
+            }
         }
+    }
+
+    fn event_gen(&self) -> io::Result<ReedlineEvent> {
+        let event = read()?;
+        let editor_event = match event {
+            Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
+                (KeyModifiers::NONE, KeyCode::Tab) => ReedlineEvent::HandleTab,
+                (KeyModifiers::CONTROL, KeyCode::Char('d')) => ReedlineEvent::CtrlD,
+                (KeyModifiers::CONTROL, KeyCode::Char('c')) => ReedlineEvent::CtrlC,
+                (KeyModifiers::CONTROL, KeyCode::Char('l')) => ReedlineEvent::ClearScreen,
+                (KeyModifiers::NONE, KeyCode::Char(c))
+                | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
+                    ReedlineEvent::EditInsert(EditCommand::InsertChar(c))
+                }
+                (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
+                _ => {
+                    if let Some(binding) = self.find_keybinding(modifiers, code) {
+                        ReedlineEvent::Edit(binding)
+                    } else {
+                        ReedlineEvent::Edit(vec![])
+                    }
+                }
+            },
+
+            Event::Mouse(_) => ReedlineEvent::Mouse,
+            Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
+        };
+
+        Ok(editor_event)
     }
 
     /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
@@ -843,32 +879,13 @@ impl Reedline {
         self.initialize_prompt(prompt)?;
 
         loop {
-            let event = read()?;
-            let editor_event = match event {
-                Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
-                    (KeyModifiers::NONE, KeyCode::Tab) => ReedlineEvent::HandleTab,
-                    (KeyModifiers::CONTROL, KeyCode::Char('d')) => ReedlineEvent::CtrlD,
-                    (KeyModifiers::CONTROL, KeyCode::Char('c')) => ReedlineEvent::CtrlC,
-                    (KeyModifiers::CONTROL, KeyCode::Char('l')) => ReedlineEvent::ClearScreen,
-                    (KeyModifiers::NONE, KeyCode::Char(c))
-                    | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
-                        ReedlineEvent::EditInsert(EditCommand::InsertChar(c))
-                    }
-                    (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
-                    _ => {
-                        if let Some(binding) = self.find_keybinding(modifiers, code) {
-                            ReedlineEvent::Edit(binding)
-                        } else {
-                            ReedlineEvent::Edit(vec![])
-                        }
-                    }
-                },
-
-                Event::Mouse(_) => ReedlineEvent::Mouse,
-                Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
+            let event = if event::poll(Duration::from_secs(1))? {
+                self.event_gen()?
+            } else {
+                ReedlineEvent::Repaint
             };
 
-            if let Some(signal) = self.handle_event(prompt, editor_event)? {
+            if let Some(signal) = self.handle_event(prompt, event)? {
                 return Ok(signal);
             }
 
