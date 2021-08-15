@@ -763,19 +763,6 @@ impl Reedline {
                         self.set_buffer(string)
                     }
 
-                    self.run_edit_commands(&[EditCommand::AppendToHistory, EditCommand::Clear]);
-                    self.print_crlf()?;
-                    self.editor.reset_olds();
-
-                    Ok(Some(Signal::Success(buffer)))
-                }
-                InputMode::HistorySearch => {
-                    self.queue_prompt_indicator(prompt)?;
-
-                    if let Some(string) = self.history.string_at_cursor() {
-                        self.set_buffer(string)
-                    }
-
                     self.input_mode = InputMode::Regular;
                     Ok(None)
                 }
