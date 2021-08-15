@@ -202,9 +202,6 @@ pub use input_parsing::default_emacs_keybindings;
 
 mod syntax_highlighting_fileio;
 
-mod vi_engine;
-pub use vi_engine::ViEngine;
-
 mod highlighter;
 pub use highlighter::{DefaultHighlighter, Highlighter};
 

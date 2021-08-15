@@ -1,6 +1,7 @@
 mod base;
 mod emacs;
 mod keybindings;
+mod vi;
 
 pub use base::InputParser;
 pub use emacs::EmacsInputParser;
