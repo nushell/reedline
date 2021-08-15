@@ -65,23 +65,25 @@ impl PromptWidget {
     }
 }
 
-trait EventParser {
+trait InputParser {
     fn parse_event(&self, event: Event) -> ReedlineEvent;
+    fn update_keybindings(&mut self, keybindings: Keybindings);
+    fn edit_mode(&self) -> EditMode;
 }
 
-struct EmacsEventParser {
+struct EmacsInputParser {
     keybindings: Keybindings,
 }
 
-impl Default for EmacsEventParser {
+impl Default for EmacsInputParser {
     fn default() -> Self {
-        EmacsEventParser {
+        EmacsInputParser {
             keybindings: default_emacs_keybindings(),
         }
     }
 }
 
-impl EventParser for EmacsEventParser {
+impl InputParser for EmacsInputParser {
     fn parse_event(&self, event: Event) -> ReedlineEvent {
         match event {
             Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
@@ -106,6 +108,15 @@ impl EventParser for EmacsEventParser {
             Event::Mouse(_) => ReedlineEvent::Mouse,
             Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
         }
+    }
+
+    // HACK: This about this interface more
+    fn update_keybindings(&mut self, keybindings: Keybindings) {
+        self.keybindings = keybindings;
+    }
+
+    fn edit_mode(&self) -> EditMode {
+        EditMode::Emacs
     }
 }
 
@@ -139,11 +150,7 @@ pub struct Reedline {
     // Stdout
     painter: Painter,
 
-    // Keybindings
-    keybindings: HashMap<EditMode, Keybindings>,
-
-    // Edit mode
-    edit_mode: EditMode,
+    input_parser: Box<dyn InputParser>,
 
     tab_handler: Box<dyn ComplationActionHandler>,
 
@@ -165,13 +172,14 @@ impl Reedline {
         // Note: this is started with a garbage value
         let prompt_widget = Default::default();
 
+        let input_parser = Box::new(EmacsInputParser::default());
+
         let reedline = Reedline {
             editor: Editor::default(),
             history,
             input_mode: InputMode::Regular,
             painter,
-            keybindings: keybindings_hashmap,
-            edit_mode: EditMode::Emacs,
+            input_parser,
             tab_handler: Box::new(DefaultCompletionActionHandler::default()),
             terminal_size,
             prompt_widget,
@@ -290,34 +298,20 @@ impl Reedline {
 
     /// A builder which configures the keybindings for your instance of the Reedline engine
     pub fn with_keybindings(mut self, keybindings: Keybindings) -> Reedline {
-        self.keybindings.insert(EditMode::Emacs, keybindings);
+        self.input_parser.update_keybindings(keybindings);
 
         self
     }
 
     /// A builder which configures the edit mode for your instance of the Reedline engine
     pub fn with_edit_mode(mut self, edit_mode: EditMode) -> Reedline {
-        self.edit_mode = edit_mode;
+        match edit_mode {
+            EditMode::Emacs => {
+                self.input_parser = Box::new(EmacsInputParser::default());
+            }
+        };
 
         self
-    }
-
-    /// Gets the current keybindings for Emacs mode
-    pub fn get_keybindings(&self) -> &Keybindings {
-        self.keybindings
-            .get(&EditMode::Emacs)
-            .expect("Internal error: emacs should always be supported")
-    }
-
-    /// Sets the keybindings to the given keybindings
-    /// Note: keybindings are set on the emacs mode. The vi mode is not configurable
-    pub fn update_keybindings(&mut self, keybindings: Keybindings) {
-        self.keybindings.insert(EditMode::Emacs, keybindings);
-    }
-
-    /// Get the current edit mode
-    pub fn edit_mode(&self) -> EditMode {
-        self.edit_mode
     }
 
     fn terminal_columns(&self) -> u16 {
@@ -330,20 +324,9 @@ impl Reedline {
 
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
-        match self.edit_mode {
+        match self.input_parser.edit_mode() {
             EditMode::Emacs => PromptEditMode::Emacs,
         }
-    }
-
-    fn find_keybinding(
-        &self,
-        modifier: KeyModifiers,
-        key_code: KeyCode,
-    ) -> Option<Vec<EditCommand>> {
-        self.keybindings
-            .get(&self.edit_mode)
-            .expect("Internal error: expected to find keybindings for edit mode")
-            .find_binding(modifier, key_code)
     }
 
     /// Output the complete [`History`] chronologically with numbering to the terminal
@@ -883,31 +866,7 @@ impl Reedline {
 
     fn event_gen(&self) -> io::Result<ReedlineEvent> {
         let event = read()?;
-        let editor_event = match event {
-            Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
-                (KeyModifiers::NONE, KeyCode::Tab) => ReedlineEvent::HandleTab,
-                (KeyModifiers::CONTROL, KeyCode::Char('d')) => ReedlineEvent::CtrlD,
-                (KeyModifiers::CONTROL, KeyCode::Char('c')) => ReedlineEvent::CtrlC,
-                (KeyModifiers::CONTROL, KeyCode::Char('l')) => ReedlineEvent::ClearScreen,
-                (KeyModifiers::NONE, KeyCode::Char(c))
-                | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
-                    ReedlineEvent::EditInsert(EditCommand::InsertChar(c))
-                }
-                (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
-                _ => {
-                    if let Some(binding) = self.find_keybinding(modifiers, code) {
-                        ReedlineEvent::Edit(binding)
-                    } else {
-                        ReedlineEvent::Edit(vec![])
-                    }
-                }
-            },
-
-            Event::Mouse(_) => ReedlineEvent::Mouse,
-            Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
-        };
-
-        Ok(editor_event)
+        Ok(self.input_parser.parse_event(event))
     }
 
     /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
