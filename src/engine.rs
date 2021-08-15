@@ -65,6 +65,50 @@ impl PromptWidget {
     }
 }
 
+trait EventParser {
+    fn parse_event(&self, event: Event) -> ReedlineEvent;
+}
+
+struct EmacsEventParser {
+    keybindings: Keybindings,
+}
+
+impl Default for EmacsEventParser {
+    fn default() -> Self {
+        EmacsEventParser {
+            keybindings: default_emacs_keybindings(),
+        }
+    }
+}
+
+impl EventParser for EmacsEventParser {
+    fn parse_event(&self, event: Event) -> ReedlineEvent {
+        match event {
+            Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
+                (KeyModifiers::NONE, KeyCode::Tab) => ReedlineEvent::HandleTab,
+                (KeyModifiers::CONTROL, KeyCode::Char('d')) => ReedlineEvent::CtrlD,
+                (KeyModifiers::CONTROL, KeyCode::Char('c')) => ReedlineEvent::CtrlC,
+                (KeyModifiers::CONTROL, KeyCode::Char('l')) => ReedlineEvent::ClearScreen,
+                (KeyModifiers::NONE, KeyCode::Char(c))
+                | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
+                    ReedlineEvent::EditInsert(EditCommand::InsertChar(c))
+                }
+                (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
+                _ => {
+                    if let Some(binding) = self.keybindings.find_binding(modifiers, code) {
+                        ReedlineEvent::Edit(binding)
+                    } else {
+                        ReedlineEvent::Edit(vec![])
+                    }
+                }
+            },
+
+            Event::Mouse(_) => ReedlineEvent::Mouse,
+            Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
+        }
+    }
+}
+
 /// Line editor engine
 ///
 /// ## Example usage
@@ -735,23 +779,18 @@ impl Reedline {
             ReedlineEvent::HandleTab => {
                 let mut line_buffer = self.editor.line_buffer();
                 self.tab_handler.handle(&mut line_buffer);
+                self.repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::CtrlD => {
                 if self.editor.is_empty() {
                     self.editor.reset_olds();
                     Ok(Some(Signal::CtrlD))
-                // } else if let Some(binding) = self.find_keybinding(modifiers, code) {
-                //     self.run_edit_commands(&binding);
-                //     Ok(None)
                 } else {
                     Ok(None)
                 }
             }
             ReedlineEvent::CtrlC => {
-                // if let Some(binding) = self.find_keybinding(modifiers, code) {
-                //     self.run_edit_commands(&binding);
-                // }
                 self.editor.reset_olds();
                 Ok(Some(Signal::CtrlC))
             }
@@ -777,6 +816,7 @@ impl Reedline {
                     }
 
                     self.input_mode = InputMode::Regular;
+                    self.repaint(prompt)?;
                     Ok(None)
                 }
             },
@@ -807,12 +847,14 @@ impl Reedline {
                     self.run_edit_commands(&[EditCommand::InsertChar(c)]);
                 }
                 self.editor.set_previous_lines(false);
+                self.repaint(prompt)?;
                 Ok(None)
             }
             // HACK: To have special case for insert
             ReedlineEvent::EditInsert(_) => Ok(None),
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands);
+                self.repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Mouse => Ok(None),
@@ -827,10 +869,13 @@ impl Reedline {
                 ));
                 let new_prompt_offset = self.full_repaint(prompt, self.prompt_widget.offset)?;
                 self.set_prompt_offset(new_prompt_offset);
+                self.repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Repaint => {
-                self.full_repaint(prompt, self.prompt_widget.origin)?;
+                if self.input_mode != InputMode::HistorySearch {
+                    self.full_repaint(prompt, self.prompt_widget.origin)?;
+                }
                 Ok(None)
             }
         }
@@ -888,8 +933,6 @@ impl Reedline {
             if let Some(signal) = self.handle_event(prompt, event)? {
                 return Ok(signal);
             }
-
-            self.repaint(prompt)?;
         }
     }
 
