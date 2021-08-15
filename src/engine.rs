@@ -66,8 +66,9 @@ impl PromptWidget {
 ///
 /// ## Example usage
 /// ```no_run
+/// use std::io;
 /// use reedline::{Reedline, Signal, DefaultPrompt};
-/// let mut line_editor = Reedline::new();
+/// let mut line_editor = Reedline::new()?;
 /// let prompt = DefaultPrompt::default();
 ///
 /// let out = line_editor.read_line(&prompt).unwrap();
@@ -79,6 +80,7 @@ impl PromptWidget {
 ///        eprintln!("Entry aborted!");
 ///    }
 /// }
+/// # Ok::<(), io::Error>(())
 /// ```
 pub struct Reedline {
     editor: Editor,
@@ -137,6 +139,7 @@ impl Reedline {
     /// //Cargo.toml
     /// //[dependencies]
     /// //nu-ansi-term = "*"
+    /// use std::io;
     /// use {
     ///     nu_ansi_term::{Color, Style},
     ///     reedline::{DefaultCompleter, DefaultHinter, Reedline},
@@ -150,12 +153,13 @@ impl Reedline {
     /// ];
     /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
     ///
-    /// let mut line_editor = Reedline::new().with_hinter(Box::new(
+    /// let mut line_editor = Reedline::new()?.with_hinter(Box::new(
     ///     DefaultHinter::default()
     ///     .with_completer(completer) // or .with_history()
     ///     // .with_inside_line()
     ///     .with_style(Style::new().italic().fg(Color::LightGray)),
     /// ));
+    /// # Ok::<(), io::Error>(())
     /// ```
     pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Reedline {
         self.painter.set_hinter(hinter);
@@ -167,6 +171,7 @@ impl Reedline {
     /// ```rust,no_run
     /// // Create a reedline object with tab completions support
     ///
+    /// use std::io;
     /// use reedline::{DefaultCompleter, DefaultCompletionActionHandler, Reedline};
     ///
     /// let commands = vec![
@@ -177,9 +182,10 @@ impl Reedline {
     /// ];
     /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
     ///
-    /// let mut line_editor = Reedline::new().with_completion_action_handler(Box::new(
+    /// let mut line_editor = Reedline::new()?.with_completion_action_handler(Box::new(
     ///   DefaultCompletionActionHandler::default().with_completer(completer),
     /// ));
+    /// # Ok::<(), io::Error>(())
     /// ```
     pub fn with_completion_action_handler(
         mut self,
@@ -194,6 +200,7 @@ impl Reedline {
     /// ```rust,no_run
     /// // Create a reedline object with highlighter support
     ///
+    /// use std::io;
     /// use reedline::{DefaultHighlighter, Reedline};
     ///
     /// let commands = vec![
@@ -203,7 +210,8 @@ impl Reedline {
     ///   "this is the reedline crate".into(),
     /// ];
     /// let mut line_editor =
-    /// Reedline::new().with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+    /// Reedline::new()?.with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+    /// # Ok::<(), io::Error>(())
     /// ```
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Reedline {
         self.painter.set_highlighter(highlighter);
@@ -215,15 +223,17 @@ impl Reedline {
     /// ```rust,no_run
     /// // Create a reedline object with history support, including history size limits
     ///
+    /// use std::io;
     /// use reedline::{FileBackedHistory, Reedline};
     ///
     /// let history = Box::new(
     /// FileBackedHistory::with_file(5, "history.txt".into())
     ///     .expect("Error configuring history with file"),
     /// );
-    /// let mut line_editor = Reedline::new()
+    /// let mut line_editor = Reedline::new()?
     ///     .with_history(history)
     ///     .expect("Error configuring reedline with history");
+    /// # Ok::<(), io::Error>(())
     /// ```
     pub fn with_history(mut self, history: Box<dyn History>) -> std::io::Result<Reedline> {
         self.history = history;

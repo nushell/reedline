@@ -7,8 +7,9 @@
 //! // Create a default reedline object to handle user input
 //!
 //! use reedline::{DefaultPrompt, Reedline, Signal};
+//! use std::io;
 //!
-//!  let mut line_editor = Reedline::new();
+//!  let mut line_editor = Reedline::new()?;
 //!  let prompt = DefaultPrompt::default();
 //!
 //!  loop {
@@ -26,6 +27,7 @@
 //!          }
 //!      }
 //!  }
+//! # Ok::<(), io::Error>(())
 //! ```
 //! ## Integrate with custom Keybindings
 //!
@@ -36,6 +38,7 @@
 //! //    [dependencies]
 //! //    crossterm = "*"
 //!
+//! use std::io;
 //! use {
 //!   crossterm::event::{KeyCode, KeyModifiers},
 //!   reedline::{default_emacs_keybindings, EditCommand, Reedline},
@@ -48,7 +51,8 @@
 //!     vec![EditCommand::BackspaceWord],
 //! );
 //!
-//! let mut line_editor = Reedline::new().with_keybindings(keybindings);
+//! let mut line_editor = Reedline::new()?.with_keybindings(keybindings);
+//! # Ok::<(), io::Error>(())
 //! ```
 //!
 //! ## Integrate with custom History
@@ -56,15 +60,17 @@
 //! ```rust,no_run
 //! // Create a reedline object with history support, including history size limits
 //!
+//! use std::io;
 //! use reedline::{FileBackedHistory, Reedline};
 //!
 //! let history = Box::new(
 //!     FileBackedHistory::with_file(5, "history.txt".into())
 //!         .expect("Error configuring history with file"),
 //! );
-//! let mut line_editor = Reedline::new()
+//! let mut line_editor = Reedline::new()?
 //!     .with_history(history)
 //!     .expect("Error configuring reedline with history");
+//! # Ok::<(), io::Error>(())
 //! ```
 //!
 //! ## Integrate with custom Highlighter
@@ -72,6 +78,7 @@
 //! ```rust
 //! // Create a reedline object with highlighter support
 //!
+//! use std::io;
 //! use reedline::{DefaultHighlighter, Reedline};
 //!
 //! let commands = vec![
@@ -81,7 +88,8 @@
 //!   "this is the reedline crate".into(),
 //! ];
 //! let mut line_editor =
-//! Reedline::new().with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+//! Reedline::new()?.with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+//! # Ok::<(), io::Error>(())
 //! ```
 //!
 //! ## Integrate with custom Tab-Handler
@@ -89,6 +97,7 @@
 //! ```rust
 //! // Create a reedline object with tab completions support
 //!
+//! use std::io;
 //! use reedline::{DefaultCompleter, DefaultCompletionActionHandler, Reedline};
 //!
 //! let commands = vec![
@@ -99,9 +108,10 @@
 //! ];
 //! let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 //!
-//! let mut line_editor = Reedline::new().with_completion_action_handler(Box::new(
+//! let mut line_editor = Reedline::new()?.with_completion_action_handler(Box::new(
 //!   DefaultCompletionActionHandler::default().with_completer(completer),
 //! ));
+//! # Ok::<(), io::Error>(())
 //! ```
 //!
 //! ## Integrate with custom Hinter
@@ -113,6 +123,7 @@
 //! //    [dependencies]
 //! //    nu-ansi-term = "*"
 //!
+//! use std::io;
 //! use {
 //!   nu_ansi_term::{Color, Style},
 //!   reedline::{DefaultCompleter, DefaultHinter, Reedline},
@@ -126,24 +137,13 @@
 //! ];
 //! let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 //!
-//! let mut line_editor = Reedline::new().with_hinter(Box::new(
+//! let mut line_editor = Reedline::new()?.with_hinter(Box::new(
 //!   DefaultHinter::default()
 //!   .with_completer(completer) // or .with_history()
 //!   // .with_inside_line()
 //!   .with_style(Style::new().italic().fg(Color::LightGray)),
 //! ));
-//! ```
-//!
-//! ## Integrate with custom Edit Mode
-//!
-//! ```rust
-//! // Create a reedline object with custom edit mode
-//!
-//! use reedline::{EditMode, Reedline};
-//!
-//! let mut line_editor = Reedline::new().with_edit_mode(
-//!   EditMode::ViNormal, // or EditMode::Emacs or EditMode::ViInsert
-//! );
+//! # Ok::<(), io::Error>(())
 //! ```
 //!
 //! ## Are we prompt yet? (Development status)
