@@ -4,7 +4,10 @@ use crossterm::event;
 
 use crate::{
     enums::ReedlineEvent,
-    input_parsing::{default_emacs_keybindings, EmacsInputParser, InputParser, Keybindings},
+    input_parsing::{
+        default_emacs_keybindings, EmacsInputParser, InputParser, Keybindings, ViInputParser,
+    },
+    PromptViMode,
 };
 
 use {
@@ -240,6 +243,9 @@ impl Reedline {
             EditMode::Emacs => {
                 self.input_parser = Box::new(EmacsInputParser::default());
             }
+            EditMode::Vi => {
+                self.input_parser = Box::new(ViInputParser::default());
+            }
         };
 
         self
@@ -257,6 +263,8 @@ impl Reedline {
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
         match self.input_parser.edit_mode() {
             EditMode::Emacs => PromptEditMode::Emacs,
+            // FIXME: Way to figure out how to handle various vi modes
+            EditMode::Vi => PromptEditMode::Vi(PromptViMode::Normal),
         }
     }
 
@@ -795,7 +803,7 @@ impl Reedline {
         }
     }
 
-    fn event_gen(&self) -> io::Result<ReedlineEvent> {
+    fn event_gen(&mut self) -> io::Result<ReedlineEvent> {
         let event = read()?;
         Ok(self.input_parser.parse_event(event))
     }

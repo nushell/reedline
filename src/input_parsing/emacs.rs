@@ -20,7 +20,7 @@ impl Default for EmacsInputParser {
 }
 
 impl InputParser for EmacsInputParser {
-    fn parse_event(&self, event: Event) -> ReedlineEvent {
+    fn parse_event(&mut self, event: Event) -> ReedlineEvent {
         match event {
             Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
                 (KeyModifiers::NONE, KeyCode::Tab) => ReedlineEvent::HandleTab,

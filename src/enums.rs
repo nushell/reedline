@@ -116,6 +116,7 @@ pub enum EditCommand {
 pub enum EditMode {
     /// Emacs mode, the default
     Emacs,
+    Vi,
 }
 
 pub enum ReedlineEvent {

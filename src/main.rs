@@ -1,3 +1,5 @@
+use reedline::EditMode;
+
 use {
     crossterm::{
         event::{poll, Event, KeyCode, KeyModifiers},
@@ -17,6 +19,7 @@ use {
 
 fn main() -> Result<()> {
     // quick command like parameter handling
+    let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
     let args: Vec<String> = std::env::args().collect();
     // if -k is passed, show the events
     if args.len() > 1 && args[1] == "-k" {
@@ -47,10 +50,15 @@ fn main() -> Result<()> {
 
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
+    let mode = if vi_mode {
+        EditMode::Vi
+    } else {
+        EditMode::Emacs
+    };
+
     let mut line_editor = Reedline::new()?
         .with_history(history)?
-        .with_edit_mode(reedline::EditMode::Emacs)
-        .with_keybindings(keybindings)
+        .with_edit_mode(mode)
         .with_highlighter(Box::new(DefaultHighlighter::new(commands)))
         .with_completion_action_handler(Box::new(
             DefaultCompletionActionHandler::default().with_completer(completer.clone()),
