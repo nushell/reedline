@@ -48,11 +48,6 @@ impl EditMode for Emacs {
         }
     }
 
-    // HACK: This about this interface more
-    fn update_keybindings(&mut self, keybindings: Keybindings) {
-        self.keybindings = keybindings;
-    }
-
     fn edit_mode(&self) -> PromptEditMode {
         PromptEditMode::Emacs
     }

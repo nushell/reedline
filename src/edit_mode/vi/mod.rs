@@ -65,11 +65,6 @@ impl EditMode for Vi {
         }
     }
 
-    // HACK: This about this interface more
-    fn update_keybindings(&mut self, keybindings: Keybindings) {
-        self.keybindings = keybindings;
-    }
-
     fn edit_mode(&self) -> PromptEditMode {
         match self.mode {
             Mode::Normal => PromptEditMode::Vi(PromptViMode::Normal),

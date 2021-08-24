@@ -3,7 +3,7 @@ use std::{io, time::Duration};
 use crossterm::event;
 
 use crate::{
-    edit_mode::{EditMode, Emacs, Keybindings},
+    edit_mode::{EditMode, Emacs},
     enums::ReedlineEvent,
 };
 
@@ -223,13 +223,6 @@ impl Reedline {
         self.history = history;
 
         Ok(self)
-    }
-
-    /// A builder which configures the keybindings for your instance of the Reedline engine
-    pub fn with_keybindings(mut self, keybindings: Keybindings) -> Reedline {
-        self.edit_mode.update_keybindings(keybindings);
-
-        self
     }
 
     /// A builder which configures the edit mode for your instance of the Reedline engine
