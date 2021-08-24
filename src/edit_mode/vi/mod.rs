@@ -40,7 +40,7 @@ impl EditMode for Vi {
                 (KeyModifiers::CONTROL, KeyCode::Char('c')) => ReedlineEvent::CtrlC,
                 (KeyModifiers::NONE, KeyCode::Esc) => {
                     self.mode = Mode::Normal;
-                    ReedlineEvent::Edit(vec![])
+                    ReedlineEvent::Repaint
                 }
                 (KeyModifiers::NONE, KeyCode::Char(c))
                 | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
@@ -98,7 +98,10 @@ impl Vi {
                     output.push(EditCommand::NextHistory);
                 }
                 'i' => {
+                    // NOTE: Ability to handle this with multiple events
+                    // Best to target this once the ViParser is in fully working state
                     self.mode = Mode::Insert;
+                    return ReedlineEvent::Repaint;
                 }
                 _ => {}
             },
