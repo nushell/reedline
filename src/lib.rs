@@ -181,7 +181,7 @@ mod core_editor;
 mod text_manipulation;
 
 mod enums;
-pub use enums::{EditCommand, EditMode, Signal};
+pub use enums::{EditCommand, Signal};
 
 mod painter;
 
@@ -198,7 +198,7 @@ pub use prompt::{
 };
 
 mod input_parsing;
-pub use input_parsing::default_emacs_keybindings;
+pub use input_parsing::{default_emacs_keybindings, EmacsInputParser, InputParser, ViInputParser};
 
 mod syntax_highlighting_fileio;
 

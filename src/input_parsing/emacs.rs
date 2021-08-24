@@ -2,7 +2,8 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
     default_emacs_keybindings,
-    enums::{EditCommand, EditMode, ReedlineEvent},
+    enums::{EditCommand, ReedlineEvent},
+    PromptEditMode,
 };
 
 use super::{keybindings::Keybindings, InputParser};
@@ -51,7 +52,7 @@ impl InputParser for EmacsInputParser {
         self.keybindings = keybindings;
     }
 
-    fn edit_mode(&self) -> EditMode {
-        EditMode::Emacs
+    fn edit_mode(&self) -> PromptEditMode {
+        PromptEditMode::Emacs
     }
 }

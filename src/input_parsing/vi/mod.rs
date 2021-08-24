@@ -2,7 +2,8 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
     default_emacs_keybindings,
-    enums::{EditCommand, EditMode, ReedlineEvent},
+    enums::{EditCommand, ReedlineEvent},
+    PromptEditMode, PromptViMode,
 };
 
 use super::{keybindings::Keybindings, InputParser};
@@ -68,8 +69,11 @@ impl InputParser for ViInputParser {
         self.keybindings = keybindings;
     }
 
-    fn edit_mode(&self) -> EditMode {
-        EditMode::Vi
+    fn edit_mode(&self) -> PromptEditMode {
+        match self.mode {
+            Mode::Normal => PromptEditMode::Vi(PromptViMode::Normal),
+            Mode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
+        }
     }
 }
 

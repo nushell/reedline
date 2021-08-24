@@ -111,14 +111,6 @@ pub enum EditCommand {
     Redo,
 }
 
-/// The edit mode [`crate::Reedline`] is currently in. Influences keybindings and prompt.
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
-pub enum EditMode {
-    /// Emacs mode, the default
-    Emacs,
-    Vi,
-}
-
 pub enum ReedlineEvent {
     HandleTab,
     CtrlD, // Don't know a better name for this

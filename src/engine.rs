@@ -4,10 +4,7 @@ use crossterm::event;
 
 use crate::{
     enums::ReedlineEvent,
-    input_parsing::{
-        default_emacs_keybindings, EmacsInputParser, InputParser, Keybindings, ViInputParser,
-    },
-    PromptViMode,
+    input_parsing::{EmacsInputParser, InputParser, Keybindings},
 };
 
 use {
@@ -18,10 +15,10 @@ use {
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         painter::Painter,
         prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus},
-        text_manipulation, DefaultHighlighter, EditCommand, EditMode, Highlighter, Prompt, Signal,
+        text_manipulation, DefaultHighlighter, EditCommand, Highlighter, Prompt, Signal,
     },
     crossterm::{cursor, event::read, terminal, Result},
-    std::{collections::HashMap, io::stdout},
+    std::io::stdout,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -99,8 +96,6 @@ impl Reedline {
         let buffer_highlighter = Box::new(DefaultHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
         let painter = Painter::new(stdout(), buffer_highlighter, hinter);
-        let mut keybindings_hashmap = HashMap::new();
-        keybindings_hashmap.insert(EditMode::Emacs, default_emacs_keybindings());
 
         let terminal_size = terminal::size()?;
         // Note: this is started with a garbage value
@@ -238,15 +233,8 @@ impl Reedline {
     }
 
     /// A builder which configures the edit mode for your instance of the Reedline engine
-    pub fn with_edit_mode(mut self, edit_mode: EditMode) -> Reedline {
-        match edit_mode {
-            EditMode::Emacs => {
-                self.input_parser = Box::new(EmacsInputParser::default());
-            }
-            EditMode::Vi => {
-                self.input_parser = Box::new(ViInputParser::default());
-            }
-        };
+    pub fn with_edit_mode(mut self, input_parser: Box<dyn InputParser>) -> Reedline {
+        self.input_parser = input_parser;
 
         self
     }
@@ -261,11 +249,7 @@ impl Reedline {
 
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
-        match self.input_parser.edit_mode() {
-            EditMode::Emacs => PromptEditMode::Emacs,
-            // FIXME: Way to figure out how to handle various vi modes
-            EditMode::Vi => PromptEditMode::Vi(PromptViMode::Normal),
-        }
+        self.input_parser.edit_mode()
     }
 
     /// Output the complete [`History`] chronologically with numbering to the terminal

@@ -1,4 +1,4 @@
-use reedline::EditMode;
+use reedline::{EmacsInputParser, InputParser, ViInputParser};
 
 use {
     crossterm::{
@@ -50,15 +50,15 @@ fn main() -> Result<()> {
 
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
-    let mode = if vi_mode {
-        EditMode::Vi
+    let input_parser: Box<dyn InputParser> = if vi_mode {
+        Box::new(ViInputParser::default())
     } else {
-        EditMode::Emacs
+        Box::new(EmacsInputParser::default())
     };
 
     let mut line_editor = Reedline::new()?
         .with_history(history)?
-        .with_edit_mode(mode)
+        .with_edit_mode(input_parser)
         .with_highlighter(Box::new(DefaultHighlighter::new(commands)))
         .with_completion_action_handler(Box::new(
             DefaultCompletionActionHandler::default().with_completer(completer.clone()),
