@@ -6,21 +6,22 @@ use crate::{
     PromptEditMode,
 };
 
-use super::{keybindings::Keybindings, InputParser};
+use super::{keybindings::Keybindings, EditMode};
 
-pub struct EmacsInputParser {
+/// This parses the incoming Events like a emacs style-editor
+pub struct Emacs {
     keybindings: Keybindings,
 }
 
-impl Default for EmacsInputParser {
+impl Default for Emacs {
     fn default() -> Self {
-        EmacsInputParser {
+        Emacs {
             keybindings: default_emacs_keybindings(),
         }
     }
 }
 
-impl InputParser for EmacsInputParser {
+impl EditMode for Emacs {
     fn parse_event(&mut self, event: Event) -> ReedlineEvent {
         match event {
             Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
@@ -57,8 +58,9 @@ impl InputParser for EmacsInputParser {
     }
 }
 
-impl EmacsInputParser {
+impl Emacs {
+    /// Emacs style input parsing constructer if you want to use custom keybindings
     pub fn new(keybindings: Keybindings) -> Self {
-        EmacsInputParser { keybindings }
+        Emacs { keybindings }
     }
 }

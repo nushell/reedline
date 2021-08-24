@@ -3,8 +3,8 @@ use std::{io, time::Duration};
 use crossterm::event;
 
 use crate::{
+    edit_mode::{EditMode, Emacs, Keybindings},
     enums::ReedlineEvent,
-    input_parsing::{EmacsInputParser, InputParser, Keybindings},
 };
 
 use {
@@ -81,7 +81,7 @@ pub struct Reedline {
     // Stdout
     painter: Painter,
 
-    input_parser: Box<dyn InputParser>,
+    edit_mode: Box<dyn EditMode>,
 
     tab_handler: Box<dyn ComplationActionHandler>,
 
@@ -101,14 +101,14 @@ impl Reedline {
         // Note: this is started with a garbage value
         let prompt_widget = Default::default();
 
-        let input_parser = Box::new(EmacsInputParser::default());
+        let edit_mode = Box::new(Emacs::default());
 
         let reedline = Reedline {
             editor: Editor::default(),
             history,
             input_mode: InputMode::Regular,
             painter,
-            input_parser,
+            edit_mode,
             tab_handler: Box::new(DefaultCompletionActionHandler::default()),
             terminal_size,
             prompt_widget,
@@ -227,14 +227,14 @@ impl Reedline {
 
     /// A builder which configures the keybindings for your instance of the Reedline engine
     pub fn with_keybindings(mut self, keybindings: Keybindings) -> Reedline {
-        self.input_parser.update_keybindings(keybindings);
+        self.edit_mode.update_keybindings(keybindings);
 
         self
     }
 
     /// A builder which configures the edit mode for your instance of the Reedline engine
-    pub fn with_edit_mode(mut self, input_parser: Box<dyn InputParser>) -> Reedline {
-        self.input_parser = input_parser;
+    pub fn with_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Reedline {
+        self.edit_mode = edit_mode;
 
         self
     }
@@ -249,7 +249,7 @@ impl Reedline {
 
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
-        self.input_parser.edit_mode()
+        self.edit_mode.edit_mode()
     }
 
     /// Output the complete [`History`] chronologically with numbering to the terminal
@@ -789,7 +789,7 @@ impl Reedline {
 
     fn event_gen(&mut self) -> io::Result<ReedlineEvent> {
         let event = read()?;
-        Ok(self.input_parser.parse_event(event))
+        Ok(self.edit_mode.parse_event(event))
     }
 
     /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped

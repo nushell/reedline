@@ -1,4 +1,4 @@
-use reedline::{EmacsInputParser, InputParser, ViInputParser};
+use reedline::{EditMode, Emacs, Vi};
 
 use {
     crossterm::{
@@ -43,8 +43,8 @@ fn main() -> Result<()> {
 
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
-    let input_parser: Box<dyn InputParser> = if vi_mode {
-        Box::new(ViInputParser::default())
+    let edit_mode: Box<dyn EditMode> = if vi_mode {
+        Box::new(Vi::default())
     } else {
         let mut keybindings = default_emacs_keybindings();
         keybindings.add_binding(
@@ -52,12 +52,12 @@ fn main() -> Result<()> {
             KeyCode::Char('m'),
             vec![EditCommand::BackspaceWord],
         );
-        Box::new(EmacsInputParser::new(keybindings))
+        Box::new(Emacs::new(keybindings))
     };
 
     let mut line_editor = Reedline::new()?
         .with_history(history)?
-        .with_edit_mode(input_parser)
+        .with_edit_mode(edit_mode)
         .with_highlighter(Box::new(DefaultHighlighter::new(commands)))
         .with_completion_action_handler(Box::new(
             DefaultCompletionActionHandler::default().with_completer(completer.clone()),

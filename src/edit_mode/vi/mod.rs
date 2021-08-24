@@ -6,7 +6,7 @@ use crate::{
     PromptEditMode, PromptViMode,
 };
 
-use super::{keybindings::Keybindings, InputParser};
+use super::{keybindings::Keybindings, EditMode};
 
 #[derive(Debug, PartialEq, Eq)]
 enum Mode {
@@ -14,15 +14,16 @@ enum Mode {
     Insert,
 }
 
-pub struct ViInputParser {
+/// This parses incomming input `Event`s like a Vi-Style editor
+pub struct Vi {
     partial: Option<String>,
     keybindings: Keybindings,
     mode: Mode,
 }
 
-impl Default for ViInputParser {
+impl Default for Vi {
     fn default() -> Self {
-        ViInputParser {
+        Vi {
             // FIXME: Setup proper keybinds
             keybindings: default_emacs_keybindings(),
             partial: None,
@@ -31,7 +32,7 @@ impl Default for ViInputParser {
     }
 }
 
-impl InputParser for ViInputParser {
+impl EditMode for Vi {
     fn parse_event(&mut self, event: Event) -> ReedlineEvent {
         match event {
             Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
@@ -77,7 +78,7 @@ impl InputParser for ViInputParser {
     }
 }
 
-impl ViInputParser {
+impl Vi {
     fn parse_vi_fragment(&mut self, fragment: char) -> ReedlineEvent {
         let mut output = vec![];
 
