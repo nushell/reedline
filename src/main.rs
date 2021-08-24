@@ -29,13 +29,6 @@ fn main() -> Result<()> {
         return Ok(());
     };
 
-    let mut keybindings = default_emacs_keybindings();
-    keybindings.add_binding(
-        KeyModifiers::ALT,
-        KeyCode::Char('m'),
-        vec![EditCommand::BackspaceWord],
-    );
-
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
     let commands = vec![
         "test".into(),
@@ -53,7 +46,13 @@ fn main() -> Result<()> {
     let input_parser: Box<dyn InputParser> = if vi_mode {
         Box::new(ViInputParser::default())
     } else {
-        Box::new(EmacsInputParser::default())
+        let mut keybindings = default_emacs_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::ALT,
+            KeyCode::Char('m'),
+            vec![EditCommand::BackspaceWord],
+        );
+        Box::new(EmacsInputParser::new(keybindings))
     };
 
     let mut line_editor = Reedline::new()?

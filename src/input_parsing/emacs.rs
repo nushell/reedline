@@ -56,3 +56,9 @@ impl InputParser for EmacsInputParser {
         PromptEditMode::Emacs
     }
 }
+
+impl EmacsInputParser {
+    pub fn new(keybindings: Keybindings) -> Self {
+        EmacsInputParser { keybindings }
+    }
+}
