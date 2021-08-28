@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// Valid ways how [`crate::Reedline::read_line()`] can return
+/// Valid ways how [`Reedline::read_line()`] can return
 pub enum Signal {
     /// Entry succeeded with the provided content
     Success(String),
@@ -101,12 +101,6 @@ pub enum EditCommand {
     /// Swap the current grapheme/character with the one to the right
     SwapGraphemes,
 
-    /// Enter the normal vi mode
-    EnterViNormal,
-
-    /// Enter the insertion vi mode
-    EnterViInsert,
-
     /// Send a code fragment to the vi handler
     ViCommandFragment(char),
 
@@ -117,15 +111,15 @@ pub enum EditCommand {
     Redo,
 }
 
-/// The edit mode [`crate::Reedline`] is currently in. Influences keybindings and prompt.
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
-pub enum EditMode {
-    /// Emacs mode, the default
-    Emacs,
-
-    /// Vi view/normal mode
-    ViNormal,
-
-    /// Vi insertion mode
-    ViInsert,
+pub enum ReedlineEvent {
+    HandleTab,
+    CtrlD, // Don't know a better name for this
+    CtrlC, // Don't know a better name for this
+    ClearScreen,
+    Enter,
+    Mouse, // Fill in details later
+    Resize(u16, u16),
+    EditInsert(EditCommand), // HACK: Special handling for insert
+    Edit(Vec<EditCommand>),
+    Repaint,
 }

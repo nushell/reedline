@@ -1,3 +1,5 @@
+use reedline::{EditMode, Emacs, Vi};
+
 use {
     crossterm::{
         event::{poll, Event, KeyCode, KeyModifiers},
@@ -16,8 +18,8 @@ use {
 };
 
 fn main() -> Result<()> {
-    let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
     // quick command like parameter handling
+    let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
     let args: Vec<String> = std::env::args().collect();
     // if -k is passed, show the events
     if args.len() > 1 && args[1] == "-k" {
@@ -26,13 +28,6 @@ fn main() -> Result<()> {
         println!();
         return Ok(());
     };
-
-    let mut keybindings = default_emacs_keybindings();
-    keybindings.add_binding(
-        KeyModifiers::ALT,
-        KeyCode::Char('m'),
-        vec![EditCommand::BackspaceWord],
-    );
 
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
     let commands = vec![
@@ -48,14 +43,21 @@ fn main() -> Result<()> {
 
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
-    let mut line_editor = Reedline::new()
+    let edit_mode: Box<dyn EditMode> = if vi_mode {
+        Box::new(Vi::default())
+    } else {
+        let mut keybindings = default_emacs_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::ALT,
+            KeyCode::Char('m'),
+            vec![EditCommand::BackspaceWord],
+        );
+        Box::new(Emacs::new(keybindings))
+    };
+
+    let mut line_editor = Reedline::create()?
         .with_history(history)?
-        .with_edit_mode(if vi_mode {
-            reedline::EditMode::ViNormal
-        } else {
-            reedline::EditMode::Emacs
-        })
-        .with_keybindings(keybindings)
+        .with_edit_mode(edit_mode)
         .with_highlighter(Box::new(DefaultHighlighter::new(commands)))
         .with_completion_action_handler(Box::new(
             DefaultCompletionActionHandler::default().with_completer(completer.clone()),

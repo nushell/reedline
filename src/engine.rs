@@ -1,22 +1,24 @@
+use std::{io, time::Duration};
+
+use crossterm::event;
+
+use crate::{
+    edit_mode::{EditMode, Emacs},
+    enums::ReedlineEvent,
+};
+
 use {
     crate::{
         completion::{ComplationActionHandler, DefaultCompletionActionHandler},
         core_editor::Editor,
-        default_emacs_keybindings,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
-        keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
         painter::Painter,
-        prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode},
-        text_manipulation, DefaultHighlighter, EditCommand, EditMode, Highlighter, Prompt, Signal,
-        ViEngine,
+        prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus},
+        text_manipulation, DefaultHighlighter, EditCommand, Highlighter, Prompt, Signal,
     },
-    crossterm::{
-        cursor::position,
-        event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
-        terminal, Result,
-    },
-    std::{collections::HashMap, io::stdout, time::Duration},
+    crossterm::{cursor, event::read, terminal, Result},
+    std::io::stdout,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -26,12 +28,36 @@ enum InputMode {
     HistoryTraversal,
 }
 
+struct PromptWidget {
+    offset: (u16, u16),
+    origin: (u16, u16),
+}
+
+impl Default for PromptWidget {
+    fn default() -> Self {
+        PromptWidget {
+            offset: Default::default(),
+            origin: Default::default(),
+        }
+    }
+}
+
+impl PromptWidget {
+    fn offset_columns(&self) -> u16 {
+        self.offset.0
+    }
+    fn origin_columns(&self) -> u16 {
+        self.origin.0
+    }
+}
+
 /// Line editor engine
 ///
 /// ## Example usage
 /// ```no_run
+/// use std::io;
 /// use reedline::{Reedline, Signal, DefaultPrompt};
-/// let mut line_editor = Reedline::new();
+/// let mut line_editor = Reedline::create()?;
 /// let prompt = DefaultPrompt::default();
 ///
 /// let out = line_editor.read_line(&prompt).unwrap();
@@ -43,6 +69,7 @@ enum InputMode {
 ///        eprintln!("Entry aborted!");
 ///    }
 /// }
+/// # Ok::<(), io::Error>(())
 /// ```
 pub struct Reedline {
     editor: Editor,
@@ -54,50 +81,40 @@ pub struct Reedline {
     // Stdout
     painter: Painter,
 
-    // Keybindings
-    keybindings: HashMap<EditMode, Keybindings>,
-
-    // Edit mode
-    edit_mode: EditMode,
-
-    // Dirty bits
-    need_full_repaint: bool,
-
-    // Vi normal mode state engine
-    vi_engine: ViEngine,
+    edit_mode: Box<dyn EditMode>,
 
     tab_handler: Box<dyn ComplationActionHandler>,
-}
 
-impl Default for Reedline {
-    fn default() -> Self {
-        Self::new()
-    }
+    terminal_size: (u16, u16),
+    prompt_widget: PromptWidget,
 }
 
 impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
-    pub fn new() -> Reedline {
+    pub fn create() -> io::Result<Reedline> {
         let history = Box::new(FileBackedHistory::default());
         let buffer_highlighter = Box::new(DefaultHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
         let painter = Painter::new(stdout(), buffer_highlighter, hinter);
-        let mut keybindings_hashmap = HashMap::new();
-        keybindings_hashmap.insert(EditMode::Emacs, default_emacs_keybindings());
-        keybindings_hashmap.insert(EditMode::ViInsert, default_vi_insert_keybindings());
-        keybindings_hashmap.insert(EditMode::ViNormal, default_vi_normal_keybindings());
 
-        Reedline {
+        let terminal_size = terminal::size()?;
+        // Note: this is started with a garbage value
+        let prompt_widget = Default::default();
+
+        let edit_mode = Box::new(Emacs::default());
+
+        let reedline = Reedline {
             editor: Editor::default(),
             history,
             input_mode: InputMode::Regular,
             painter,
-            keybindings: keybindings_hashmap,
-            edit_mode: EditMode::Emacs,
-            need_full_repaint: false,
-            vi_engine: ViEngine::new(),
+            edit_mode,
             tab_handler: Box::new(DefaultCompletionActionHandler::default()),
-        }
+            terminal_size,
+            prompt_widget,
+        };
+
+        Ok(reedline)
     }
 
     /// A builder to include the hinter in your instance of the Reedline engine
@@ -106,6 +123,7 @@ impl Reedline {
     /// //Cargo.toml
     /// //[dependencies]
     /// //nu-ansi-term = "*"
+    /// use std::io;
     /// use {
     ///     nu_ansi_term::{Color, Style},
     ///     reedline::{DefaultCompleter, DefaultHinter, Reedline},
@@ -119,12 +137,13 @@ impl Reedline {
     /// ];
     /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
     ///
-    /// let mut line_editor = Reedline::new().with_hinter(Box::new(
+    /// let mut line_editor = Reedline::create()?.with_hinter(Box::new(
     ///     DefaultHinter::default()
     ///     .with_completer(completer) // or .with_history()
     ///     // .with_inside_line()
     ///     .with_style(Style::new().italic().fg(Color::LightGray)),
     /// ));
+    /// # Ok::<(), io::Error>(())
     /// ```
     pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Reedline {
         self.painter.set_hinter(hinter);
@@ -136,6 +155,7 @@ impl Reedline {
     /// ```rust,no_run
     /// // Create a reedline object with tab completions support
     ///
+    /// use std::io;
     /// use reedline::{DefaultCompleter, DefaultCompletionActionHandler, Reedline};
     ///
     /// let commands = vec![
@@ -146,9 +166,10 @@ impl Reedline {
     /// ];
     /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
     ///
-    /// let mut line_editor = Reedline::new().with_completion_action_handler(Box::new(
+    /// let mut line_editor = Reedline::create()?.with_completion_action_handler(Box::new(
     ///   DefaultCompletionActionHandler::default().with_completer(completer),
     /// ));
+    /// # Ok::<(), io::Error>(())
     /// ```
     pub fn with_completion_action_handler(
         mut self,
@@ -163,6 +184,7 @@ impl Reedline {
     /// ```rust,no_run
     /// // Create a reedline object with highlighter support
     ///
+    /// use std::io;
     /// use reedline::{DefaultHighlighter, Reedline};
     ///
     /// let commands = vec![
@@ -172,7 +194,8 @@ impl Reedline {
     ///   "this is the reedline crate".into(),
     /// ];
     /// let mut line_editor =
-    /// Reedline::new().with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+    /// Reedline::create()?.with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+    /// # Ok::<(), io::Error>(())
     /// ```
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Reedline {
         self.painter.set_highlighter(highlighter);
@@ -184,15 +207,17 @@ impl Reedline {
     /// ```rust,no_run
     /// // Create a reedline object with history support, including history size limits
     ///
+    /// use std::io;
     /// use reedline::{FileBackedHistory, Reedline};
     ///
     /// let history = Box::new(
     /// FileBackedHistory::with_file(5, "history.txt".into())
     ///     .expect("Error configuring history with file"),
     /// );
-    /// let mut line_editor = Reedline::new()
+    /// let mut line_editor = Reedline::create()?
     ///     .with_history(history)
     ///     .expect("Error configuring reedline with history");
+    /// # Ok::<(), io::Error>(())
     /// ```
     pub fn with_history(mut self, history: Box<dyn History>) -> std::io::Result<Reedline> {
         self.history = history;
@@ -200,56 +225,24 @@ impl Reedline {
         Ok(self)
     }
 
-    /// A builder which configures the keybindings for your instance of the Reedline engine
-    pub fn with_keybindings(mut self, keybindings: Keybindings) -> Reedline {
-        self.keybindings.insert(EditMode::Emacs, keybindings);
-
-        self
-    }
-
     /// A builder which configures the edit mode for your instance of the Reedline engine
-    pub fn with_edit_mode(mut self, edit_mode: EditMode) -> Reedline {
+    pub fn with_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Reedline {
         self.edit_mode = edit_mode;
 
         self
     }
 
-    /// Gets the current keybindings for Emacs mode
-    pub fn get_keybindings(&self) -> &Keybindings {
-        self.keybindings
-            .get(&EditMode::Emacs)
-            .expect("Internal error: emacs should always be supported")
+    fn terminal_columns(&self) -> u16 {
+        self.terminal_size.0
     }
 
-    /// Sets the keybindings to the given keybindings
-    /// Note: keybindings are set on the emacs mode. The vi mode is not configurable
-    pub fn update_keybindings(&mut self, keybindings: Keybindings) {
-        self.keybindings.insert(EditMode::Emacs, keybindings);
-    }
-
-    /// Get the current edit mode
-    pub fn edit_mode(&self) -> EditMode {
-        self.edit_mode
+    fn terminal_rows(&self) -> u16 {
+        self.terminal_size.1
     }
 
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
-        match self.edit_mode {
-            EditMode::ViInsert => PromptEditMode::Vi(PromptViMode::Insert),
-            EditMode::ViNormal => PromptEditMode::Vi(PromptViMode::Normal),
-            EditMode::Emacs => PromptEditMode::Emacs,
-        }
-    }
-
-    fn find_keybinding(
-        &self,
-        modifier: KeyModifiers,
-        key_code: KeyCode,
-    ) -> Option<Vec<EditCommand>> {
-        self.keybindings
-            .get(&self.edit_mode)
-            .expect("Internal error: expected to find keybindings for edit mode")
-            .find_binding(modifier, key_code)
+        self.edit_mode.edit_mode()
     }
 
     /// Output the complete [`History`] chronologically with numbering to the terminal
@@ -344,10 +337,6 @@ impl Reedline {
         }
     }
 
-    fn clear(&mut self) {
-        self.editor.clear();
-    }
-
     fn up_command(&mut self) {
         // If we're at the top, then:
         if !self.editor.is_cursor_at_first_line() {
@@ -411,16 +400,6 @@ impl Reedline {
             .set_navigation(HistoryNavigationQuery::SubstringSearch("".to_string()));
     }
 
-    fn enter_vi_insert_mode(&mut self) {
-        self.edit_mode = EditMode::ViInsert;
-        self.need_full_repaint = true;
-    }
-
-    fn enter_vi_normal_mode(&mut self) {
-        self.edit_mode = EditMode::ViNormal;
-        self.need_full_repaint = true;
-    }
-
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
     fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         // Handle command for history inputs
@@ -451,14 +430,8 @@ impl Reedline {
             }
         }
 
-        // Vim mode transformations
-        let commands = match self.edit_mode {
-            EditMode::ViNormal => self.vi_engine.handle(commands),
-            _ => commands.into(),
-        };
-
         // Run the commands over the edit buffer
-        for command in &commands {
+        for command in commands {
             match command {
                 EditCommand::MoveToStart => self.editor.move_to_start(),
                 EditCommand::MoveToEnd => self.editor.move_to_end(),
@@ -471,7 +444,7 @@ impl Reedline {
                 EditCommand::Delete => self.editor.delete(),
                 EditCommand::BackspaceWord => self.editor.backspace_word(),
                 EditCommand::DeleteWord => self.editor.delete_word(),
-                EditCommand::Clear => self.clear(),
+                EditCommand::Clear => self.editor.clear(),
                 EditCommand::AppendToHistory => self.append_to_history(),
                 EditCommand::PreviousHistory => self.previous_history(),
                 EditCommand::NextHistory => self.next_history(),
@@ -488,8 +461,6 @@ impl Reedline {
                 EditCommand::CapitalizeChar => self.editor.capitalize_char(),
                 EditCommand::SwapWords => self.editor.swap_words(),
                 EditCommand::SwapGraphemes => self.editor.swap_graphemes(),
-                EditCommand::EnterViInsert => self.enter_vi_insert_mode(),
-                EditCommand::EnterViNormal => self.enter_vi_normal_mode(),
                 EditCommand::Undo => self.editor.undo(),
                 EditCommand::Redo => self.editor.redo(),
                 _ => {}
@@ -511,7 +482,7 @@ impl Reedline {
                 EditCommand::CutWordLeft,
                 EditCommand::CutWordRight,
             ]
-            .contains(command)
+            .contains(&command)
             {
                 self.editor.set_previous_lines(true);
             }
@@ -534,8 +505,10 @@ impl Reedline {
     }
 
     /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.
-    fn maybe_wrap(&self, terminal_width: u16, start_offset: u16, c: char) -> bool {
+    fn maybe_wrap(&self, start_offset: u16, c: char) -> bool {
         use unicode_width::UnicodeWidthStr;
+
+        let terminal_width = self.terminal_columns();
 
         let mut test_buffer = self.insertion_line().to_string();
         test_buffer.push(c);
@@ -587,7 +560,6 @@ impl Reedline {
         &mut self,
         prompt: &dyn Prompt,
         prompt_origin: (u16, u16),
-        terminal_size: (u16, u16),
     ) -> Result<(u16, u16)> {
         let prompt_mode = self.prompt_edit_mode();
         let buffer_to_paint = self.insertion_line().to_string();
@@ -600,7 +572,7 @@ impl Reedline {
             prompt_origin,
             cursor_position_in_buffer,
             buffer_to_paint,
-            terminal_size,
+            self.terminal_size,
             self.history.as_ref(),
         )
 
@@ -666,19 +638,15 @@ impl Reedline {
         }
     }
 
-    /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
-    /// in a `raw_mode` context.
-    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        let mut terminal_size = terminal::size()?;
-
-        let mut prompt_origin = {
-            let (column, row) = position()?;
+    fn initialize_prompt(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
+        let origin = {
+            let (column, row) = cursor::position()?;
             if (column, row) == (0, 0) {
                 (0, 0)
-            } else if row + 1 == terminal_size.1 {
+            } else if row + 1 == self.terminal_rows() {
                 self.painter.paint_carriage_return()?;
                 (0, row.saturating_sub(1))
-            } else if row + 2 == terminal_size.1 {
+            } else if row + 2 == self.terminal_rows() {
                 self.painter.paint_carriage_return()?;
                 (0, row)
             } else {
@@ -686,136 +654,171 @@ impl Reedline {
             }
         };
 
-        // set where the input begins
-        let mut prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
+        self.set_prompt_origin(origin);
+        let prompt_offset = self.full_repaint(prompt, origin)?;
+        self.set_prompt_offset(prompt_offset);
+
+        Ok(())
+    }
+
+    fn set_prompt_offset(&mut self, offset: (u16, u16)) {
+        self.prompt_widget.offset = offset;
+    }
+
+    fn set_prompt_origin(&mut self, origin: (u16, u16)) {
+        self.prompt_widget.origin = origin;
+    }
+
+    fn handle_event(
+        &mut self,
+        prompt: &dyn Prompt,
+        event: ReedlineEvent,
+    ) -> io::Result<Option<Signal>> {
+        match event {
+            ReedlineEvent::HandleTab => {
+                let mut line_buffer = self.editor.line_buffer();
+                self.tab_handler.handle(&mut line_buffer);
+                self.repaint(prompt)?;
+                Ok(None)
+            }
+            ReedlineEvent::CtrlD => {
+                if self.editor.is_empty() {
+                    self.editor.reset_olds();
+                    Ok(Some(Signal::CtrlD))
+                } else {
+                    Ok(None)
+                }
+            }
+            ReedlineEvent::CtrlC => {
+                self.editor.reset_olds();
+                Ok(Some(Signal::CtrlC))
+            }
+            ReedlineEvent::ClearScreen => {
+                self.editor.reset_olds();
+                Ok(Some(Signal::CtrlL))
+            }
+            ReedlineEvent::Enter => match self.input_mode {
+                InputMode::Regular | InputMode::HistoryTraversal => {
+                    let buffer = self.insertion_line().to_string();
+
+                    self.run_edit_commands(&[EditCommand::AppendToHistory, EditCommand::Clear]);
+                    self.print_crlf()?;
+                    self.editor.reset_olds();
+
+                    Ok(Some(Signal::Success(buffer)))
+                }
+                InputMode::HistorySearch => {
+                    self.queue_prompt_indicator(prompt)?;
+
+                    if let Some(string) = self.history.string_at_cursor() {
+                        self.set_buffer(string)
+                    }
+
+                    self.input_mode = InputMode::Regular;
+                    self.repaint(prompt)?;
+                    Ok(None)
+                }
+            },
+            ReedlineEvent::EditInsert(EditCommand::InsertChar(c)) => {
+                let line_start = if self.editor.line() == 0 {
+                    self.prompt_widget.offset_columns()
+                } else {
+                    0
+                };
+
+                if self.maybe_wrap(line_start, c) {
+                    let (original_column, original_row) = cursor::position()?;
+                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
+
+                    self.buffer_paint(self.prompt_widget.offset)?;
+
+                    let (new_column, _) = cursor::position()?;
+
+                    if new_column < original_column && original_row + 1 == self.terminal_rows() {
+                        // We have wrapped off bottom of screen, and prompt is on new row
+                        // We need to update the prompt location in this case
+                        let (prompt_offset_columns, prompt_offset_rows) = self.prompt_widget.offset;
+                        let (prompt_origin_columns, prompt_origin_rows) = self.prompt_widget.origin;
+                        self.set_prompt_offset((prompt_offset_columns, prompt_offset_rows - 1));
+                        self.set_prompt_origin((prompt_origin_columns, prompt_origin_rows - 1));
+                    }
+                } else {
+                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
+                }
+                self.editor.set_previous_lines(false);
+                self.repaint(prompt)?;
+                Ok(None)
+            }
+            // HACK: To have special case for insert
+            ReedlineEvent::EditInsert(_) => Ok(None),
+            ReedlineEvent::Edit(commands) => {
+                self.run_edit_commands(&commands);
+                self.repaint(prompt)?;
+                Ok(None)
+            }
+            ReedlineEvent::Mouse => Ok(None),
+            ReedlineEvent::Resize(width, height) => {
+                self.terminal_size = (width, height);
+                // TODO properly adjusting prompt_origin on resizing while lines > 1
+
+                let new_prompt_origin_row = cursor::position()?.1.saturating_sub(1);
+                self.set_prompt_offset((
+                    self.prompt_widget.origin_columns(),
+                    new_prompt_origin_row,
+                ));
+                let new_prompt_offset = self.full_repaint(prompt, self.prompt_widget.offset)?;
+                self.set_prompt_offset(new_prompt_offset);
+                self.repaint(prompt)?;
+                Ok(None)
+            }
+            ReedlineEvent::Repaint => {
+                if self.input_mode != InputMode::HistorySearch {
+                    self.full_repaint(prompt, self.prompt_widget.origin)?;
+                }
+                Ok(None)
+            }
+        }
+    }
+
+    fn event_gen(&mut self) -> io::Result<ReedlineEvent> {
+        let event = read()?;
+        Ok(self.edit_mode.parse_event(event))
+    }
+
+    /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
+    /// in a `raw_mode` context.
+    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+        // TODO: Should prompt be a property on the LineEditor
 
         // Redraw if Ctrl-L was used
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)?;
         }
 
+        self.terminal_size = terminal::size()?;
+        self.initialize_prompt(prompt)?;
+
         loop {
-            if poll(Duration::from_secs(1))? {
-                match read()? {
-                    Event::Key(KeyEvent { code, modifiers }) => {
-                        match (modifiers, code, self.edit_mode) {
-                            (KeyModifiers::NONE, KeyCode::Tab, _) => {
-                                let mut line_buffer = self.editor.line_buffer();
-                                self.tab_handler.handle(&mut line_buffer);
-                            }
-                            (KeyModifiers::CONTROL, KeyCode::Char('d'), _) => {
-                                if self.editor.is_empty() {
-                                    self.editor.reset_olds();
-                                    return Ok(Signal::CtrlD);
-                                } else if let Some(binding) = self.find_keybinding(modifiers, code)
-                                {
-                                    self.run_edit_commands(&binding);
-                                }
-                            }
-                            (KeyModifiers::CONTROL, KeyCode::Char('c'), _) => {
-                                if let Some(binding) = self.find_keybinding(modifiers, code) {
-                                    self.run_edit_commands(&binding);
-                                }
-                                self.editor.reset_olds();
-                                return Ok(Signal::CtrlC);
-                            }
-                            (KeyModifiers::CONTROL, KeyCode::Char('l'), EditMode::Emacs) => {
-                                self.editor.reset_olds();
-                                return Ok(Signal::CtrlL);
-                            }
-                            (KeyModifiers::NONE, KeyCode::Char(c), x)
-                            | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
-                                if x == EditMode::ViNormal =>
-                            {
-                                self.run_edit_commands(&[EditCommand::ViCommandFragment(c)]);
-                                self.editor.set_previous_lines(false);
-                            }
-                            (KeyModifiers::NONE, KeyCode::Char(c), x)
-                            | (KeyModifiers::SHIFT, KeyCode::Char(c), x)
-                                if x != EditMode::ViNormal =>
-                            {
-                                let line_start = if self.editor.line() == 0 {
-                                    prompt_offset.0
-                                } else {
-                                    0
-                                };
-                                if self.maybe_wrap(terminal_size.0, line_start, c) {
-                                    let (original_column, original_row) = position()?;
-                                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
-
-                                    self.buffer_paint(prompt_offset)?;
-
-                                    let (new_column, _) = position()?;
-
-                                    if new_column < original_column
-                                        && original_row + 1 == (terminal_size.1)
-                                    {
-                                        // We have wrapped off bottom of screen, and prompt is on new row
-                                        // We need to update the prompt location in this case
-                                        prompt_origin.1 -= 1;
-                                        prompt_offset.1 -= 1;
-                                    }
-                                } else {
-                                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
-                                }
-                                self.editor.set_previous_lines(false);
-                            }
-                            (KeyModifiers::NONE, KeyCode::Enter, x) if x != EditMode::ViNormal => {
-                                match self.input_mode {
-                                    InputMode::Regular | InputMode::HistoryTraversal => {
-                                        let buffer = self.insertion_line().to_string();
-
-                                        self.run_edit_commands(&[
-                                            EditCommand::AppendToHistory,
-                                            EditCommand::Clear,
-                                        ]);
-                                        self.print_crlf()?;
-                                        self.editor.reset_olds();
-
-                                        return Ok(Signal::Success(buffer));
-                                    }
-                                    InputMode::HistorySearch => {
-                                        self.queue_prompt_indicator(prompt)?;
-
-                                        if let Some(string) = self.history.string_at_cursor() {
-                                            self.set_buffer(string)
-                                        }
-
-                                        self.input_mode = InputMode::Regular;
-                                    }
-                                }
-                            }
-                            _ => {
-                                if let Some(binding) = self.find_keybinding(modifiers, code) {
-                                    self.run_edit_commands(&binding);
-                                }
-                            }
-                        }
-                    }
-                    Event::Mouse(_) => {}
-                    Event::Resize(width, height) => {
-                        terminal_size = (width, height);
-                        // TODO properly adjusting prompt_origin on resizing while lines > 1
-                        prompt_origin.1 = position()?.1.saturating_sub(1);
-                        prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
-                        continue;
-                    }
-                }
+            let event = if event::poll(Duration::from_secs(1))? {
+                self.event_gen()?
             } else {
-                // No key event:
-                // Repaint the prompt for the clock
-                self.need_full_repaint = true;
-            }
+                ReedlineEvent::Repaint
+            };
 
-            // Repainting
-            if self.input_mode == InputMode::HistorySearch {
-                self.history_search_paint(prompt)?;
-            } else if self.need_full_repaint {
-                prompt_offset = self.full_repaint(prompt, prompt_origin, terminal_size)?;
-                self.need_full_repaint = false;
-            } else {
-                self.buffer_paint(prompt_offset)?;
+            if let Some(signal) = self.handle_event(prompt, event)? {
+                return Ok(signal);
             }
         }
+    }
+
+    fn repaint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
+        // Repainting
+        if self.input_mode == InputMode::HistorySearch {
+            self.history_search_paint(prompt)?;
+        } else {
+            self.buffer_paint(self.prompt_widget.offset)?;
+        }
+
+        Ok(())
     }
 }
