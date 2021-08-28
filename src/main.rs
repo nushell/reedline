@@ -55,7 +55,7 @@ fn main() -> Result<()> {
         Box::new(Emacs::new(keybindings))
     };
 
-    let mut line_editor = Reedline::new()?
+    let mut line_editor = Reedline::create()?
         .with_history(history)?
         .with_edit_mode(edit_mode)
         .with_highlighter(Box::new(DefaultHighlighter::new(commands)))

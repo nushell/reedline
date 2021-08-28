@@ -15,7 +15,7 @@
 use reedline::{DefaultPrompt, Reedline, Signal};
 
 fn main() {
-    let mut line_editor = Reedline::new();
+    let mut line_editor = Reedline::create()?;
     let prompt = DefaultPrompt::default();
 
     loop {
@@ -57,7 +57,7 @@ keybindings.add_binding(
   vec![EditCommand::BackspaceWord],
 );
 
-let mut line_editor = Reedline::new().with_keybindings(keybindings);
+let mut line_editor = Reedline::create()?.with_keybindings(keybindings);
 ```
 
 ## Integrate with custom History
@@ -71,7 +71,7 @@ let history = Box::new(
   FileBackedHistory::with_file(5, "history.txt".into())
   	.expect("Error configuring history with file"),
 );
-let mut line_editor = Reedline::new()
+let mut line_editor = Reedline::create()?
 	.with_history(history)
 	.expect("Error configuring reedline with history");
 ```
@@ -90,7 +90,7 @@ let commands = vec![
   "this is the reedline crate".into(),
 ];
 let mut line_editor =
-Reedline::new().with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+Reedline::create()?.with_highlighter(Box::new(DefaultHighlighter::new(commands)));
 ```
 
 ## Integrate with custom Tab-Handler
@@ -108,7 +108,7 @@ let commands = vec![
 ];
 let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
-let mut line_editor = Reedline::new().with_completion_action_handler(Box::new(
+let mut line_editor = Reedline::create()?.with_completion_action_handler(Box::new(
   DefaultCompletionActionHandler::default().with_completer(completer),
 ));
 ```
@@ -135,7 +135,7 @@ let commands = vec![
 ];
 let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
-let mut line_editor = Reedline::new().with_hinter(Box::new(
+let mut line_editor = Reedline::create()?.with_hinter(Box::new(
   DefaultHinter::default()
   .with_completer(completer) // or .with_history()
   // .with_inside_line()
@@ -150,7 +150,7 @@ let mut line_editor = Reedline::new().with_hinter(Box::new(
 
 use reedline::{EditMode, Reedline};
 
-let mut line_editor = Reedline::new().with_edit_mode(
+let mut line_editor = Reedline::create()?.with_edit_mode(
   EditMode::ViNormal, // or EditMode::Emacs or EditMode::ViInsert
 );
 ```

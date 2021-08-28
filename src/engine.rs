@@ -57,7 +57,7 @@ impl PromptWidget {
 /// ```no_run
 /// use std::io;
 /// use reedline::{Reedline, Signal, DefaultPrompt};
-/// let mut line_editor = Reedline::new()?;
+/// let mut line_editor = Reedline::create()?;
 /// let prompt = DefaultPrompt::default();
 ///
 /// let out = line_editor.read_line(&prompt).unwrap();
@@ -91,7 +91,7 @@ pub struct Reedline {
 
 impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
-    pub fn new() -> io::Result<Reedline> {
+    pub fn create() -> io::Result<Reedline> {
         let history = Box::new(FileBackedHistory::default());
         let buffer_highlighter = Box::new(DefaultHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
@@ -137,7 +137,7 @@ impl Reedline {
     /// ];
     /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
     ///
-    /// let mut line_editor = Reedline::new()?.with_hinter(Box::new(
+    /// let mut line_editor = Reedline::create()?.with_hinter(Box::new(
     ///     DefaultHinter::default()
     ///     .with_completer(completer) // or .with_history()
     ///     // .with_inside_line()
@@ -166,7 +166,7 @@ impl Reedline {
     /// ];
     /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
     ///
-    /// let mut line_editor = Reedline::new()?.with_completion_action_handler(Box::new(
+    /// let mut line_editor = Reedline::create()?.with_completion_action_handler(Box::new(
     ///   DefaultCompletionActionHandler::default().with_completer(completer),
     /// ));
     /// # Ok::<(), io::Error>(())
@@ -194,7 +194,7 @@ impl Reedline {
     ///   "this is the reedline crate".into(),
     /// ];
     /// let mut line_editor =
-    /// Reedline::new()?.with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+    /// Reedline::create()?.with_highlighter(Box::new(DefaultHighlighter::new(commands)));
     /// # Ok::<(), io::Error>(())
     /// ```
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Reedline {
@@ -214,7 +214,7 @@ impl Reedline {
     /// FileBackedHistory::with_file(5, "history.txt".into())
     ///     .expect("Error configuring history with file"),
     /// );
-    /// let mut line_editor = Reedline::new()?
+    /// let mut line_editor = Reedline::create()?
     ///     .with_history(history)
     ///     .expect("Error configuring reedline with history");
     /// # Ok::<(), io::Error>(())

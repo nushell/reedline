@@ -9,7 +9,7 @@
 //! use reedline::{DefaultPrompt, Reedline, Signal};
 //! use std::io;
 //!
-//!  let mut line_editor = Reedline::new()?;
+//!  let mut line_editor = Reedline::create()?;
 //!  let prompt = DefaultPrompt::default();
 //!
 //!  loop {
@@ -41,7 +41,7 @@
 //! use std::io;
 //! use {
 //!   crossterm::event::{KeyCode, KeyModifiers},
-//!   reedline::{default_emacs_keybindings, EditCommand, Reedline},
+//!   reedline::{default_emacs_keybindings, EditCommand, Reedline, Emacs},
 //! };
 //!
 //! let mut keybindings = default_emacs_keybindings();
@@ -50,8 +50,9 @@
 //!     KeyCode::Char('m'),
 //!     vec![EditCommand::BackspaceWord],
 //! );
+//! let edit_mode = Box::new(Emacs::new(keybindings));
 //!
-//! let mut line_editor = Reedline::new()?.with_keybindings(keybindings);
+//! let mut line_editor = Reedline::create()?.with_edit_mode(edit_mode);
 //! # Ok::<(), io::Error>(())
 //! ```
 //!
@@ -67,7 +68,7 @@
 //!     FileBackedHistory::with_file(5, "history.txt".into())
 //!         .expect("Error configuring history with file"),
 //! );
-//! let mut line_editor = Reedline::new()?
+//! let mut line_editor = Reedline::create()?
 //!     .with_history(history)
 //!     .expect("Error configuring reedline with history");
 //! # Ok::<(), io::Error>(())
@@ -88,7 +89,7 @@
 //!   "this is the reedline crate".into(),
 //! ];
 //! let mut line_editor =
-//! Reedline::new()?.with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+//! Reedline::create()?.with_highlighter(Box::new(DefaultHighlighter::new(commands)));
 //! # Ok::<(), io::Error>(())
 //! ```
 //!
@@ -108,7 +109,7 @@
 //! ];
 //! let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 //!
-//! let mut line_editor = Reedline::new()?.with_completion_action_handler(Box::new(
+//! let mut line_editor = Reedline::create()?.with_completion_action_handler(Box::new(
 //!   DefaultCompletionActionHandler::default().with_completer(completer),
 //! ));
 //! # Ok::<(), io::Error>(())
@@ -137,7 +138,7 @@
 //! ];
 //! let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 //!
-//! let mut line_editor = Reedline::new()?.with_hinter(Box::new(
+//! let mut line_editor = Reedline::create()?.with_hinter(Box::new(
 //!   DefaultHinter::default()
 //!   .with_completer(completer) // or .with_history()
 //!   // .with_inside_line()
