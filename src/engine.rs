@@ -85,6 +85,10 @@ pub struct Reedline {
 
     tab_handler: Box<dyn ComplationActionHandler>,
 
+    highlighter: Box<dyn Highlighter>,
+
+    hinter: Box<dyn Hinter>,
+
     terminal_size: (u16, u16),
     prompt_widget: PromptWidget,
 }
@@ -96,6 +100,8 @@ impl Reedline {
         let buffer_highlighter = Box::new(DefaultHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
         let painter = Painter::new(stdout(), buffer_highlighter, hinter);
+        let buffer_highlighter = Box::new(DefaultHighlighter::default());
+        let hinter = Box::new(DefaultHinter::default());
 
         let terminal_size = terminal::size()?;
         // Note: this is started with a garbage value
@@ -112,6 +118,8 @@ impl Reedline {
             tab_handler: Box::new(DefaultCompletionActionHandler::default()),
             terminal_size,
             prompt_widget,
+            highlighter: buffer_highlighter,
+            hinter,
         };
 
         Ok(reedline)
@@ -146,7 +154,7 @@ impl Reedline {
     /// # Ok::<(), io::Error>(())
     /// ```
     pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Reedline {
-        self.painter.set_hinter(hinter);
+        self.hinter = hinter;
         self
     }
 
@@ -198,7 +206,7 @@ impl Reedline {
     /// # Ok::<(), io::Error>(())
     /// ```
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Reedline {
-        self.painter.set_highlighter(highlighter);
+        self.highlighter = highlighter;
         self
     }
 
@@ -544,12 +552,24 @@ impl Reedline {
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
         let cursor_position_in_buffer = self.editor.offset();
         let buffer_to_paint = self.insertion_line().to_string();
+        let highlighted_line = self
+            .highlighter
+            .highlight(&buffer_to_paint)
+            .render_around_insertion_point(cursor_position_in_buffer);
+        let hint: String = self.hinter.handle(
+            &buffer_to_paint,
+            cursor_position_in_buffer,
+            self.history.as_ref(),
+        );
+        println!("{:?}", highlighted_line);
+        println!("{}", hint);
 
         self.painter.queue_buffer(
             buffer_to_paint,
+            highlighted_line,
+            hint,
             prompt_offset,
             cursor_position_in_buffer,
-            self.history.as_ref(),
         )?;
         self.painter.flush()?;
 
@@ -565,6 +585,15 @@ impl Reedline {
         let buffer_to_paint = self.insertion_line().to_string();
 
         let cursor_position_in_buffer = self.editor.offset();
+        let highlighted_line = self
+            .highlighter
+            .highlight(&buffer_to_paint)
+            .render_around_insertion_point(cursor_position_in_buffer);
+        let hint: String = self.hinter.handle(
+            &buffer_to_paint,
+            cursor_position_in_buffer,
+            self.history.as_ref(),
+        );
 
         self.painter.repaint_everything(
             prompt,
@@ -572,8 +601,9 @@ impl Reedline {
             prompt_origin,
             cursor_position_in_buffer,
             buffer_to_paint,
+            highlighted_line,
+            hint,
             self.terminal_size,
-            self.history.as_ref(),
         )
 
         // Ok(prompt_offset)

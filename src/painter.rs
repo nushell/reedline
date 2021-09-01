@@ -91,21 +91,19 @@ impl Painter {
         Ok(())
     }
 
+    // - Pass in highlighted line and hinted line down to this function
+
     /// Repaint logic for the normal input prompt buffer
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     pub fn queue_buffer(
         &mut self,
         original_line: String,
+        highlighted_line: (String, String),
+        hint: String,
         prompt_offset: (u16, u16),
         cursor_position_in_buffer: usize,
-        history: &dyn History,
     ) -> Result<()> {
-        let highlighted_line = self
-            .buffer_highlighter
-            .highlight(&original_line)
-            .render_around_insertion_point(cursor_position_in_buffer);
-
         let (before_cursor, after_cursor) = highlighted_line;
 
         let before_cursor_lines = before_cursor.lines();
@@ -122,13 +120,7 @@ impl Painter {
             commands = commands.queue(Print(before_cursor_line))?;
         }
 
-        commands = commands
-            .queue(SavePosition)?
-            .queue(Print(self.hinter.handle(
-                &original_line,
-                cursor_position_in_buffer,
-                history,
-            )))?;
+        commands = commands.queue(SavePosition)?.queue(Print(hint))?;
 
         for (idx, after_cursor_line) in after_cursor_lines.enumerate() {
             if idx != 0 {
@@ -153,8 +145,9 @@ impl Painter {
         prompt_origin: (u16, u16),
         cursor_position_in_buffer: usize,
         buffer: String,
+        highlighted_line: (String, String),
+        hint: String,
         terminal_size: (u16, u16),
-        history: &dyn History,
     ) -> Result<(u16, u16)> {
         self.stdout.queue(cursor::Hide)?;
         self.queue_move_to(prompt_origin.0, prompt_origin.1)?;
@@ -163,7 +156,13 @@ impl Painter {
         self.flush()?;
         // set where the input begins
         let prompt_offset = position()?;
-        self.queue_buffer(buffer, prompt_offset, cursor_position_in_buffer, history)?;
+        self.queue_buffer(
+            buffer,
+            highlighted_line,
+            hint,
+            prompt_offset,
+            cursor_position_in_buffer,
+        )?;
         self.stdout.queue(cursor::Show)?;
         self.flush()?;
 
