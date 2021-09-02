@@ -1,8 +1,7 @@
 use {
     crate::{
-        hinter::Hinter,
         prompt::{PromptEditMode, PromptHistorySearch},
-        Highlighter, History, Prompt,
+        Prompt,
     },
     crossterm::{
         cursor::{self, position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
@@ -16,38 +15,17 @@ use {
 pub struct Painter {
     // Stdout
     stdout: Stdout,
-
-    // Buffer Highlighter
-    buffer_highlighter: Box<dyn Highlighter>,
-
-    hinter: Box<dyn Hinter>,
 }
 
 impl Painter {
-    pub fn new(
-        stdout: Stdout,
-        buffer_highlighter: Box<dyn Highlighter>,
-        hinter: Box<dyn Hinter>,
-    ) -> Self {
-        Painter {
-            stdout,
-            buffer_highlighter,
-            hinter,
-        }
+    pub fn new(stdout: Stdout) -> Self {
+        Painter { stdout }
     }
 
     pub fn queue_move_to(&mut self, column: u16, row: u16) -> Result<()> {
         self.stdout.queue(cursor::MoveTo(column, row))?;
 
         Ok(())
-    }
-
-    pub fn set_highlighter(&mut self, buffer_highlighter: Box<dyn Highlighter>) {
-        self.buffer_highlighter = buffer_highlighter;
-    }
-
-    pub fn set_hinter(&mut self, hinter: Box<dyn Hinter>) {
-        self.hinter = hinter;
     }
 
     /// Queue the complete prompt to display including status indicators (e.g. pwd, time)
@@ -91,18 +69,14 @@ impl Painter {
         Ok(())
     }
 
-    // - Pass in highlighted line and hinted line down to this function
-
     /// Repaint logic for the normal input prompt buffer
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     pub fn queue_buffer(
         &mut self,
-        original_line: String,
         highlighted_line: (String, String),
         hint: String,
         prompt_offset: (u16, u16),
-        cursor_position_in_buffer: usize,
     ) -> Result<()> {
         let (before_cursor, after_cursor) = highlighted_line;
 
@@ -143,8 +117,6 @@ impl Painter {
         prompt: &dyn Prompt,
         prompt_mode: PromptEditMode,
         prompt_origin: (u16, u16),
-        cursor_position_in_buffer: usize,
-        buffer: String,
         highlighted_line: (String, String),
         hint: String,
         terminal_size: (u16, u16),
@@ -156,13 +128,7 @@ impl Painter {
         self.flush()?;
         // set where the input begins
         let prompt_offset = position()?;
-        self.queue_buffer(
-            buffer,
-            highlighted_line,
-            hint,
-            prompt_offset,
-            cursor_position_in_buffer,
-        )?;
+        self.queue_buffer(highlighted_line, hint, prompt_offset)?;
         self.stdout.queue(cursor::Show)?;
         self.flush()?;
 

@@ -81,14 +81,19 @@ pub struct Reedline {
     // Stdout
     painter: Painter,
 
+    // Edit Mode: Vi, Emacs
     edit_mode: Box<dyn EditMode>,
 
+    // Perform action when user hits tab
     tab_handler: Box<dyn ComplationActionHandler>,
 
+    // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
 
+    // Showcase hints based on various stratiges (history, language-completion, spellcheck, etc)
     hinter: Box<dyn Hinter>,
 
+    // UI State
     terminal_size: (u16, u16),
     prompt_widget: PromptWidget,
 }
@@ -97,9 +102,7 @@ impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     pub fn create() -> io::Result<Reedline> {
         let history = Box::new(FileBackedHistory::default());
-        let buffer_highlighter = Box::new(DefaultHighlighter::default());
-        let hinter = Box::new(DefaultHinter::default());
-        let painter = Painter::new(stdout(), buffer_highlighter, hinter);
+        let painter = Painter::new(stdout());
         let buffer_highlighter = Box::new(DefaultHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
 
@@ -561,16 +564,9 @@ impl Reedline {
             cursor_position_in_buffer,
             self.history.as_ref(),
         );
-        println!("{:?}", highlighted_line);
-        println!("{}", hint);
 
-        self.painter.queue_buffer(
-            buffer_to_paint,
-            highlighted_line,
-            hint,
-            prompt_offset,
-            cursor_position_in_buffer,
-        )?;
+        self.painter
+            .queue_buffer(highlighted_line, hint, prompt_offset)?;
         self.painter.flush()?;
 
         Ok(())
@@ -599,8 +595,6 @@ impl Reedline {
             prompt,
             prompt_mode,
             prompt_origin,
-            cursor_position_in_buffer,
-            buffer_to_paint,
             highlighted_line,
             hint,
             self.terminal_size,
