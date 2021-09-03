@@ -41,14 +41,14 @@
 //! use std::io;
 //! use {
 //!   crossterm::event::{KeyCode, KeyModifiers},
-//!   reedline::{default_emacs_keybindings, EditCommand, Reedline, Emacs},
+//!   reedline::{default_emacs_keybindings, EditCommand, Reedline, Emacs, ReedlineEvent},
 //! };
 //!
 //! let mut keybindings = default_emacs_keybindings();
 //! keybindings.add_binding(
 //!     KeyModifiers::ALT,
 //!     KeyCode::Char('m'),
-//!     vec![EditCommand::BackspaceWord],
+//!     ReedlineEvent::Edit(vec![EditCommand::BackspaceWord]),
 //! );
 //! let edit_mode = Box::new(Emacs::new(keybindings));
 //!
