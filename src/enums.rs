@@ -114,9 +114,6 @@ pub enum ReedlineEvent {
     /// trigger termimal resize
     Resize(u16, u16),
 
-    /// HACK: Special handling for insert
-    EditInsert(EditCommand),
-
     /// Run these commands in the editor
     Edit(Vec<EditCommand>),
 

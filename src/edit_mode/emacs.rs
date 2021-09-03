@@ -31,7 +31,7 @@ impl EditMode for Emacs {
                 (KeyModifiers::CONTROL, KeyCode::Char('l')) => ReedlineEvent::ClearScreen,
                 (KeyModifiers::NONE, KeyCode::Char(c))
                 | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
-                    ReedlineEvent::EditInsert(EditCommand::InsertChar(c))
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
                 }
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                 _ => {

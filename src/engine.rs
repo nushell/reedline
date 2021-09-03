@@ -430,15 +430,6 @@ impl Reedline {
                 self.repaint(prompt)?;
                 Ok(None)
             }
-            ReedlineEvent::EditInsert(EditCommand::InsertChar(c)) => {
-                let commnds = vec![EditCommand::InsertChar(c)];
-                self.run_history_commands(&commnds);
-
-                self.repaint(prompt)?;
-                Ok(None)
-            }
-            // HACK: To have special case for insert
-            ReedlineEvent::EditInsert(_) => Ok(None),
             ReedlineEvent::Edit(commands) => {
                 self.run_history_commands(&commands);
                 self.repaint(prompt)?;
@@ -533,35 +524,14 @@ impl Reedline {
                 let buffer = self.editor.get_buffer().to_string();
 
                 self.append_to_history();
-                self.run_edit_commands(&[EditCommand::Clear]);
+                self.run_edit_commands(&[EditCommand::Clear], prompt)?;
                 self.print_crlf()?;
                 self.editor.reset_olds();
 
                 Ok(Some(Signal::Success(buffer)))
             }
-            ReedlineEvent::EditInsert(EditCommand::InsertChar(c)) => {
-                let line_start = if self.editor.line() == 0 {
-                    self.prompt_widget.offset_columns()
-                } else {
-                    0
-                };
-
-                if self.might_require_wrapping(line_start, c) {
-                    let position = cursor::position()?;
-                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
-                    self.wrap(position)?;
-                } else {
-                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
-                }
-                self.editor.set_previous_lines(false);
-
-                self.repaint(prompt)?;
-                Ok(None)
-            }
-            // HACK: To have special case for insert
-            ReedlineEvent::EditInsert(_) => Ok(None),
             ReedlineEvent::Edit(commands) => {
-                self.run_edit_commands(&commands);
+                self.run_edit_commands(&commands, prompt)?;
                 self.repaint(prompt)?;
                 Ok(None)
             }
@@ -722,7 +692,11 @@ impl Reedline {
     }
 
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
-    fn run_edit_commands(&mut self, commands: &[EditCommand]) {
+    fn run_edit_commands(
+        &mut self,
+        commands: &[EditCommand],
+        prompt: &dyn Prompt,
+    ) -> io::Result<()> {
         if self.input_mode == InputMode::HistoryTraversal {
             if matches!(
                 self.history.get_navigation(),
@@ -744,7 +718,29 @@ impl Reedline {
                 EditCommand::MoveRight => self.editor.move_right(),
                 EditCommand::MoveWordLeft => self.editor.move_word_left(),
                 EditCommand::MoveWordRight => self.editor.move_word_right(),
-                EditCommand::InsertChar(c) => self.editor.insert_char(*c),
+                // Performing mutation here might incur a perf hit down this line when
+                // we would like to do multiple inserts.
+                // A simple solution that we can do is to queue up these and perform the wrapping
+                // check after the loop finishes. Will need to sort out the details.
+                EditCommand::InsertChar(c) => {
+                    let line_start = if self.editor.line() == 0 {
+                        self.prompt_widget.offset_columns()
+                    } else {
+                        0
+                    };
+
+                    if self.might_require_wrapping(line_start, *c) {
+                        let position = cursor::position()?;
+                        self.editor.insert_char(*c);
+                        self.wrap(position)?;
+                    } else {
+                        self.editor.insert_char(*c);
+                    }
+                    self.editor.set_previous_lines(false);
+
+                    self.repaint(prompt)?;
+                    self.editor.insert_char(*c);
+                }
                 EditCommand::Backspace => self.editor.backspace(),
                 EditCommand::Delete => self.editor.delete(),
                 EditCommand::BackspaceWord => self.editor.backspace_word(),
@@ -785,6 +781,8 @@ impl Reedline {
                 self.editor.set_previous_lines(true);
             }
         }
+
+        Ok(())
     }
 
     /// Set the cursor position as understood by the underlying [`LineBuffer`] for the current line
