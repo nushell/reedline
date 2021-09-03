@@ -483,7 +483,7 @@ impl Reedline {
     }
 
     /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.
-    fn maybe_wrap(&self, start_offset: u16, c: char) -> bool {
+    fn might_require_wrapping(&self, start_offset: u16, c: char) -> bool {
         use unicode_width::UnicodeWidthStr;
 
         let terminal_width = self.terminal_columns();
@@ -721,25 +721,10 @@ impl Reedline {
                         0
                     };
 
-                    if self.maybe_wrap(line_start, c) {
-                        let (original_column, original_row) = cursor::position()?;
+                    if self.might_require_wrapping(line_start, c) {
+                        let position = cursor::position()?;
                         self.run_edit_commands(&[EditCommand::InsertChar(c)]);
-
-                        self.buffer_paint(self.prompt_widget.offset)?;
-
-                        let (new_column, _) = cursor::position()?;
-
-                        if new_column < original_column && original_row + 1 == self.terminal_rows()
-                        {
-                            // We have wrapped off bottom of screen, and prompt is on new row
-                            // We need to update the prompt location in this case
-                            let (prompt_offset_columns, prompt_offset_rows) =
-                                self.prompt_widget.offset;
-                            let (prompt_origin_columns, prompt_origin_rows) =
-                                self.prompt_widget.origin;
-                            self.set_prompt_offset((prompt_offset_columns, prompt_offset_rows - 1));
-                            self.set_prompt_origin((prompt_origin_columns, prompt_origin_rows - 1));
-                        }
+                        self.wrap(position)?;
                     } else {
                         self.run_edit_commands(&[EditCommand::InsertChar(c)]);
                     }
@@ -835,6 +820,24 @@ impl Reedline {
                 Ok(None)
             }
         }
+    }
+
+    fn wrap(&mut self, original_position: (u16, u16)) -> io::Result<()> {
+        let (original_column, original_row) = original_position;
+        self.buffer_paint(self.prompt_widget.offset)?;
+
+        let (new_column, _) = cursor::position()?;
+
+        if new_column < original_column && original_row + 1 == self.terminal_rows() {
+            // We have wrapped off bottom of screen, and prompt is on new row
+            // We need to update the prompt location in this case
+            let (prompt_offset_columns, prompt_offset_rows) = self.prompt_widget.offset;
+            let (prompt_origin_columns, prompt_origin_rows) = self.prompt_widget.origin;
+            self.set_prompt_offset((prompt_offset_columns, prompt_offset_rows - 1));
+            self.set_prompt_origin((prompt_origin_columns, prompt_origin_rows - 1));
+        }
+
+        Ok(())
     }
 
     fn event_gen(&mut self) -> io::Result<ReedlineEvent> {
