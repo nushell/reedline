@@ -85,7 +85,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
     kb.add_binding(KM::CONTROL, KC::Char('p'), ReedlineEvent::PreviousHistory);
     kb.add_binding(KM::CONTROL, KC::Char('n'), ReedlineEvent::NextHistory);
-    kb.add_binding(KM::CONTROL, KC::Char('r'), edit_bind(EC::SearchHistory));
+    kb.add_binding(KM::CONTROL, KC::Char('r'), ReedlineEvent::SearchHistory);
     kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
     kb.add_binding(KM::ALT, KC::Char('b'), edit_bind(EC::MoveWordLeft));
     kb.add_binding(KM::ALT, KC::Char('f'), edit_bind(EC::MoveWordRight));

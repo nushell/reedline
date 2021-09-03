@@ -331,9 +331,6 @@ impl Reedline {
                         self.history.back()
                     }
                 }
-                EditCommand::SearchHistory => {
-                    self.history.back();
-                }
                 _ => {
                     self.input_mode = InputMode::Regular;
                 }
@@ -433,7 +430,6 @@ impl Reedline {
                 EditCommand::BackspaceWord => self.editor.backspace_word(),
                 EditCommand::DeleteWord => self.editor.delete_word(),
                 EditCommand::Clear => self.editor.clear(),
-                EditCommand::SearchHistory => self.search_history(),
                 EditCommand::CutFromStart => self.editor.cut_from_start(),
                 EditCommand::CutToEnd => self.editor.cut_from_end(),
                 EditCommand::CutWordLeft => self.editor.cut_word_left(),
@@ -827,6 +823,15 @@ impl Reedline {
                     self.down_command();
                 }
                 self.buffer_paint(self.prompt_widget.offset)?;
+                Ok(None)
+            }
+            ReedlineEvent::SearchHistory => {
+                if self.input_mode == InputMode::HistorySearch {
+                    self.history.back();
+                } else {
+                    self.search_history();
+                }
+                self.repaint(prompt)?;
                 Ok(None)
             }
         }

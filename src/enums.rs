@@ -50,9 +50,6 @@ pub enum EditCommand {
     /// Delete in-place a word from the current insertion point
     DeleteWord,
 
-    /// Search the history for a string
-    SearchHistory,
-
     /// Clear the current buffer
     Clear,
 
@@ -137,4 +134,7 @@ pub enum ReedlineEvent {
 
     /// Navigate to the next historic buffer
     NextHistory,
+
+    /// Search the history for a string
+    SearchHistory,
 }
