@@ -413,12 +413,6 @@ impl Reedline {
 
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
     fn run_edit_commands(&mut self, commands: &[EditCommand]) {
-        // Handle command for history inputs
-        if self.input_mode == InputMode::HistorySearch {
-            self.run_history_commands(commands);
-            return;
-        }
-
         if self.input_mode == InputMode::HistoryTraversal {
             for command in commands {
                 match command {
@@ -744,39 +738,52 @@ impl Reedline {
                 }
             },
             ReedlineEvent::EditInsert(EditCommand::InsertChar(c)) => {
-                let line_start = if self.editor.line() == 0 {
-                    self.prompt_widget.offset_columns()
+                if self.input_mode == InputMode::HistorySearch {
+                    let commnds = vec![EditCommand::InsertChar(c)];
+                    self.run_history_commands(&commnds);
                 } else {
-                    0
-                };
+                    let line_start = if self.editor.line() == 0 {
+                        self.prompt_widget.offset_columns()
+                    } else {
+                        0
+                    };
 
-                if self.maybe_wrap(line_start, c) {
-                    let (original_column, original_row) = cursor::position()?;
-                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
+                    if self.maybe_wrap(line_start, c) {
+                        let (original_column, original_row) = cursor::position()?;
+                        self.run_edit_commands(&[EditCommand::InsertChar(c)]);
 
-                    self.buffer_paint(self.prompt_widget.offset)?;
+                        self.buffer_paint(self.prompt_widget.offset)?;
 
-                    let (new_column, _) = cursor::position()?;
+                        let (new_column, _) = cursor::position()?;
 
-                    if new_column < original_column && original_row + 1 == self.terminal_rows() {
-                        // We have wrapped off bottom of screen, and prompt is on new row
-                        // We need to update the prompt location in this case
-                        let (prompt_offset_columns, prompt_offset_rows) = self.prompt_widget.offset;
-                        let (prompt_origin_columns, prompt_origin_rows) = self.prompt_widget.origin;
-                        self.set_prompt_offset((prompt_offset_columns, prompt_offset_rows - 1));
-                        self.set_prompt_origin((prompt_origin_columns, prompt_origin_rows - 1));
+                        if new_column < original_column && original_row + 1 == self.terminal_rows()
+                        {
+                            // We have wrapped off bottom of screen, and prompt is on new row
+                            // We need to update the prompt location in this case
+                            let (prompt_offset_columns, prompt_offset_rows) =
+                                self.prompt_widget.offset;
+                            let (prompt_origin_columns, prompt_origin_rows) =
+                                self.prompt_widget.origin;
+                            self.set_prompt_offset((prompt_offset_columns, prompt_offset_rows - 1));
+                            self.set_prompt_origin((prompt_origin_columns, prompt_origin_rows - 1));
+                        }
+                    } else {
+                        self.run_edit_commands(&[EditCommand::InsertChar(c)]);
                     }
-                } else {
-                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
+                    self.editor.set_previous_lines(false);
                 }
-                self.editor.set_previous_lines(false);
+
                 self.repaint(prompt)?;
                 Ok(None)
             }
             // HACK: To have special case for insert
             ReedlineEvent::EditInsert(_) => Ok(None),
             ReedlineEvent::Edit(commands) => {
-                self.run_edit_commands(&commands);
+                if self.input_mode == InputMode::HistorySearch {
+                    self.run_history_commands(&commands);
+                } else {
+                    self.run_edit_commands(&commands);
+                }
                 self.repaint(prompt)?;
                 Ok(None)
             }
