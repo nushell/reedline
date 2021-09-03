@@ -462,7 +462,6 @@ impl Reedline {
                 EditCommand::SwapGraphemes => self.editor.swap_graphemes(),
                 EditCommand::Undo => self.editor.undo(),
                 EditCommand::Redo => self.editor.redo(),
-                _ => {}
             }
 
             if [

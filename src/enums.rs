@@ -92,9 +92,6 @@ pub enum EditCommand {
     /// Swap the current grapheme/character with the one to the right
     SwapGraphemes,
 
-    /// Send a code fragment to the vi handler
-    ViCommandFragment(char),
-
     /// Undo the previous edit command
     Undo,
 
