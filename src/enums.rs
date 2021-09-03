@@ -56,9 +56,6 @@ pub enum EditCommand {
     /// Delete in-place a word from the current insertion point
     DeleteWord,
 
-    /// Add a buffer to the historic buffers
-    AppendToHistory,
-
     /// Navigate to the previous historic buffer
     PreviousHistory,
 

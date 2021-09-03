@@ -456,7 +456,6 @@ impl Reedline {
                 EditCommand::BackspaceWord => self.editor.backspace_word(),
                 EditCommand::DeleteWord => self.editor.delete_word(),
                 EditCommand::Clear => self.editor.clear(),
-                EditCommand::AppendToHistory => self.append_to_history(),
                 EditCommand::PreviousHistory => self.previous_history(),
                 EditCommand::NextHistory => self.next_history(),
                 EditCommand::Up => self.up_command(),
@@ -725,7 +724,8 @@ impl Reedline {
                 InputMode::Regular | InputMode::HistoryTraversal => {
                     let buffer = self.insertion_line().to_string();
 
-                    self.run_edit_commands(&[EditCommand::AppendToHistory, EditCommand::Clear]);
+                    self.append_to_history();
+                    self.run_edit_commands(&[EditCommand::Clear]);
                     self.print_crlf()?;
                     self.editor.reset_olds();
 
