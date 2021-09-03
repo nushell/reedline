@@ -714,18 +714,8 @@ impl Reedline {
                 self.editor.reset_olds();
                 Ok(Some(Signal::CtrlL))
             }
-            ReedlineEvent::Enter => match self.input_mode {
-                InputMode::Regular | InputMode::HistoryTraversal => {
-                    let buffer = self.insertion_line().to_string();
-
-                    self.append_to_history();
-                    self.run_edit_commands(&[EditCommand::Clear]);
-                    self.print_crlf()?;
-                    self.editor.reset_olds();
-
-                    Ok(Some(Signal::Success(buffer)))
-                }
-                InputMode::HistorySearch => {
+            ReedlineEvent::Enter => {
+                if self.input_mode == InputMode::HistorySearch {
                     self.queue_prompt_indicator(prompt)?;
 
                     if let Some(string) = self.history.string_at_cursor() {
@@ -735,8 +725,17 @@ impl Reedline {
                     self.input_mode = InputMode::Regular;
                     self.repaint(prompt)?;
                     Ok(None)
+                } else {
+                    let buffer = self.insertion_line().to_string();
+
+                    self.append_to_history();
+                    self.run_edit_commands(&[EditCommand::Clear]);
+                    self.print_crlf()?;
+                    self.editor.reset_olds();
+
+                    Ok(Some(Signal::Success(buffer)))
                 }
-            },
+            }
             ReedlineEvent::EditInsert(EditCommand::InsertChar(c)) => {
                 if self.input_mode == InputMode::HistorySearch {
                     let commnds = vec![EditCommand::InsertChar(c)];
