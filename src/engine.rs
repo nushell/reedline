@@ -660,6 +660,116 @@ impl Reedline {
         self.prompt_widget.origin = origin;
     }
 
+    fn handle_history_search_event(
+        &mut self,
+        prompt: &dyn Prompt,
+        event: ReedlineEvent,
+    ) -> io::Result<Option<Signal>> {
+        match event {
+            ReedlineEvent::HandleTab => {
+                let mut line_buffer = self.editor.line_buffer();
+                self.tab_handler.handle(&mut line_buffer);
+                self.repaint(prompt)?;
+                Ok(None)
+            }
+            ReedlineEvent::CtrlD => {
+                if self.editor.is_empty() {
+                    self.editor.reset_olds();
+                    Ok(Some(Signal::CtrlD))
+                } else {
+                    Ok(None)
+                }
+            }
+            ReedlineEvent::CtrlC => {
+                self.editor.reset_olds();
+                Ok(Some(Signal::CtrlC))
+            }
+            ReedlineEvent::ClearScreen => {
+                self.editor.reset_olds();
+                Ok(Some(Signal::CtrlL))
+            }
+            ReedlineEvent::Enter => {
+                self.queue_prompt_indicator(prompt)?;
+
+                if let Some(string) = self.history.string_at_cursor() {
+                    self.set_buffer(string)
+                }
+
+                self.input_mode = InputMode::Regular;
+                self.repaint(prompt)?;
+                Ok(None)
+            }
+            ReedlineEvent::EditInsert(EditCommand::InsertChar(c)) => {
+                let commnds = vec![EditCommand::InsertChar(c)];
+                self.run_history_commands(&commnds);
+
+                self.repaint(prompt)?;
+                Ok(None)
+            }
+            // HACK: To have special case for insert
+            ReedlineEvent::EditInsert(_) => Ok(None),
+            ReedlineEvent::Edit(commands) => {
+                self.run_history_commands(&commands);
+                self.repaint(prompt)?;
+                Ok(None)
+            }
+            ReedlineEvent::Mouse => Ok(None),
+            ReedlineEvent::Resize(width, height) => {
+                self.terminal_size = (width, height);
+                // TODO properly adjusting prompt_origin on resizing while lines > 1
+
+                let new_prompt_origin_row = cursor::position()?.1.saturating_sub(1);
+                self.set_prompt_offset((
+                    self.prompt_widget.origin_columns(),
+                    new_prompt_origin_row,
+                ));
+                let new_prompt_offset = self.full_repaint(prompt, self.prompt_widget.offset)?;
+                self.set_prompt_offset(new_prompt_offset);
+                self.repaint(prompt)?;
+                Ok(None)
+            }
+            ReedlineEvent::Repaint => {
+                if self.input_mode != InputMode::HistorySearch {
+                    self.full_repaint(prompt, self.prompt_widget.origin)?;
+                }
+                Ok(None)
+            }
+            ReedlineEvent::PreviousHistory => {
+                self.previous_history();
+                self.buffer_paint(self.prompt_widget.offset)?;
+                Ok(None)
+            }
+            ReedlineEvent::NextHistory => {
+                self.history.forward();
+                // Hacky way to ensure that we don't fall of into failed search going forward
+                if self.history.string_at_cursor().is_none() {
+                    self.history.back();
+                }
+                self.buffer_paint(self.prompt_widget.offset)?;
+                Ok(None)
+            }
+            ReedlineEvent::Up => {
+                self.history.back();
+                self.buffer_paint(self.prompt_widget.offset)?;
+                Ok(None)
+            }
+            ReedlineEvent::Down => {
+                self.history.forward();
+                // Hacky way to ensure that we don't fall of into failed search going forward
+                if self.history.string_at_cursor().is_none() {
+                    self.history.back();
+                }
+                self.buffer_paint(self.prompt_widget.offset)?;
+                Ok(None)
+            }
+            ReedlineEvent::SearchHistory => {
+                self.history.back();
+                self.repaint(prompt)?;
+                Ok(None)
+            }
+        }
+    }
+
     fn handle_event(
         &mut self,
         prompt: &dyn Prompt,
@@ -689,47 +799,30 @@ impl Reedline {
                 Ok(Some(Signal::CtrlL))
             }
             ReedlineEvent::Enter => {
-                if self.input_mode == InputMode::HistorySearch {
-                    self.queue_prompt_indicator(prompt)?;
+                let buffer = self.insertion_line().to_string();
 
-                    if let Some(string) = self.history.string_at_cursor() {
-                        self.set_buffer(string)
-                    }
+                self.append_to_history();
+                self.run_edit_commands(&[EditCommand::Clear]);
+                self.print_crlf()?;
+                self.editor.reset_olds();
 
-                    self.input_mode = InputMode::Regular;
-                    self.repaint(prompt)?;
-                    Ok(None)
-                } else {
-                    let buffer = self.insertion_line().to_string();
-
-                    self.append_to_history();
-                    self.run_edit_commands(&[EditCommand::Clear]);
-                    self.print_crlf()?;
-                    self.editor.reset_olds();
-
-                    Ok(Some(Signal::Success(buffer)))
-                }
+                Ok(Some(Signal::Success(buffer)))
             }
             ReedlineEvent::EditInsert(EditCommand::InsertChar(c)) => {
-                if self.input_mode == InputMode::HistorySearch {
-                    let commnds = vec![EditCommand::InsertChar(c)];
-                    self.run_history_commands(&commnds);
+                let line_start = if self.editor.line() == 0 {
+                    self.prompt_widget.offset_columns()
                 } else {
-                    let line_start = if self.editor.line() == 0 {
-                        self.prompt_widget.offset_columns()
-                    } else {
-                        0
-                    };
+                    0
+                };
 
-                    if self.might_require_wrapping(line_start, c) {
-                        let position = cursor::position()?;
-                        self.run_edit_commands(&[EditCommand::InsertChar(c)]);
-                        self.wrap(position)?;
-                    } else {
-                        self.run_edit_commands(&[EditCommand::InsertChar(c)]);
-                    }
-                    self.editor.set_previous_lines(false);
+                if self.might_require_wrapping(line_start, c) {
+                    let position = cursor::position()?;
+                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
+                    self.wrap(position)?;
+                } else {
+                    self.run_edit_commands(&[EditCommand::InsertChar(c)]);
                 }
+                self.editor.set_previous_lines(false);
 
                 self.repaint(prompt)?;
                 Ok(None)
@@ -737,11 +830,7 @@ impl Reedline {
             // HACK: To have special case for insert
             ReedlineEvent::EditInsert(_) => Ok(None),
             ReedlineEvent::Edit(commands) => {
-                if self.input_mode == InputMode::HistorySearch {
-                    self.run_history_commands(&commands);
-                } else {
-                    self.run_edit_commands(&commands);
-                }
+                self.run_edit_commands(&commands);
                 self.repaint(prompt)?;
                 Ok(None)
             }
@@ -767,55 +856,27 @@ impl Reedline {
                 Ok(None)
             }
             ReedlineEvent::PreviousHistory => {
-                if self.input_mode == InputMode::HistorySearch {
-                    self.history.back();
-                } else {
-                    self.previous_history();
-                }
+                self.history.back();
                 self.buffer_paint(self.prompt_widget.offset)?;
                 Ok(None)
             }
             ReedlineEvent::NextHistory => {
-                if self.input_mode == InputMode::HistorySearch {
-                    self.history.forward();
-                    // Hacky way to ensure that we don't fall of into failed search going forward
-                    if self.history.string_at_cursor().is_none() {
-                        self.history.back();
-                    }
-                } else {
-                    self.next_history();
-                }
+                self.next_history();
                 self.buffer_paint(self.prompt_widget.offset)?;
                 Ok(None)
             }
             ReedlineEvent::Up => {
-                if self.input_mode == InputMode::HistorySearch {
-                    self.history.back();
-                } else {
-                    self.up_command();
-                }
+                self.up_command();
                 self.buffer_paint(self.prompt_widget.offset)?;
                 Ok(None)
             }
             ReedlineEvent::Down => {
-                if self.input_mode == InputMode::HistorySearch {
-                    self.history.forward();
-                    // Hacky way to ensure that we don't fall of into failed search going forward
-                    if self.history.string_at_cursor().is_none() {
-                        self.history.back();
-                    }
-                } else {
-                    self.down_command();
-                }
+                self.down_command();
                 self.buffer_paint(self.prompt_widget.offset)?;
                 Ok(None)
             }
             ReedlineEvent::SearchHistory => {
-                if self.input_mode == InputMode::HistorySearch {
-                    self.history.back();
-                } else {
-                    self.search_history();
-                }
+                self.search_history();
                 self.repaint(prompt)?;
                 Ok(None)
             }
@@ -865,7 +926,11 @@ impl Reedline {
                 ReedlineEvent::Repaint
             };
 
-            if let Some(signal) = self.handle_event(prompt, event)? {
+            if self.input_mode == InputMode::HistorySearch {
+                if let Some(signal) = self.handle_history_search_event(prompt, event)? {
+                    return Ok(signal);
+                }
+            } else if let Some(signal) = self.handle_event(prompt, event)? {
                 return Ok(signal);
             }
         }
