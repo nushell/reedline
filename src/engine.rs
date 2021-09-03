@@ -359,7 +359,7 @@ impl Reedline {
     }
 
     fn append_to_history(&mut self) {
-        self.history.append(self.insertion_line().to_string());
+        self.history.append(self.editor.get_buffer().to_string());
     }
 
     fn previous_history(&mut self) {
@@ -389,7 +389,7 @@ impl Reedline {
                 self.editor.line_buffer().clone(),
             ));
         } else {
-            let buffer = self.insertion_line().to_string();
+            let buffer = self.editor.get_buffer().to_string();
             self.history
                 .set_navigation(HistoryNavigationQuery::PrefixSearch(buffer));
         }
@@ -409,7 +409,7 @@ impl Reedline {
                 HistoryNavigationQuery::Normal(_)
             ) {
                 if let Some(string) = self.history.string_at_cursor() {
-                    self.set_buffer(string)
+                    self.editor.set_buffer(string)
                 }
             }
             self.input_mode = InputMode::Regular;
@@ -472,23 +472,13 @@ impl Reedline {
         self.editor.set_insertion_point(self.editor.line(), pos)
     }
 
-    /// Get the current line of a multi-line edit [`LineBuffer`]
-    fn insertion_line(&self) -> &str {
-        self.editor.get_buffer()
-    }
-
-    /// Reset the [`LineBuffer`] to be a line specified by `buffer`
-    fn set_buffer(&mut self, buffer: String) {
-        self.editor.set_buffer(buffer)
-    }
-
     /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.
     fn might_require_wrapping(&self, start_offset: u16, c: char) -> bool {
         use unicode_width::UnicodeWidthStr;
 
         let terminal_width = self.terminal_columns();
 
-        let mut test_buffer = self.insertion_line().to_string();
+        let mut test_buffer = self.editor.get_buffer().to_string();
         test_buffer.push(c);
 
         let display_width = UnicodeWidthStr::width(test_buffer.as_str()) + start_offset as usize;
@@ -521,7 +511,7 @@ impl Reedline {
     /// Requires coordinates where the input buffer begins after the prompt.
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
         let cursor_position_in_buffer = self.editor.offset();
-        let buffer_to_paint = self.insertion_line().to_string();
+        let buffer_to_paint = self.editor.get_buffer().to_string();
         let highlighted_line = self
             .highlighter
             .highlight(&buffer_to_paint)
@@ -545,7 +535,7 @@ impl Reedline {
         prompt_origin: (u16, u16),
     ) -> Result<(u16, u16)> {
         let prompt_mode = self.prompt_edit_mode();
-        let buffer_to_paint = self.insertion_line().to_string();
+        let buffer_to_paint = self.editor.get_buffer().to_string();
 
         let cursor_position_in_buffer = self.editor.offset();
         let highlighted_line = self
@@ -692,7 +682,7 @@ impl Reedline {
                 self.queue_prompt_indicator(prompt)?;
 
                 if let Some(string) = self.history.string_at_cursor() {
-                    self.set_buffer(string)
+                    self.editor.set_buffer(string)
                 }
 
                 self.input_mode = InputMode::Regular;
@@ -799,7 +789,7 @@ impl Reedline {
                 Ok(Some(Signal::CtrlL))
             }
             ReedlineEvent::Enter => {
-                let buffer = self.insertion_line().to_string();
+                let buffer = self.editor.get_buffer().to_string();
 
                 self.append_to_history();
                 self.run_edit_commands(&[EditCommand::Clear]);
