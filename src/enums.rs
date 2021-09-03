@@ -35,12 +35,6 @@ pub enum EditCommand {
     /// Move one word to the right
     MoveWordRight,
 
-    /// Move up to the previous line, if multiline, or up into the historic buffers
-    Up,
-
-    /// Move down to the next line, if multiline, or down through the historic buffers
-    Down,
-
     /// Insert a character at the current insertion point
     InsertChar(char),
 
@@ -134,6 +128,12 @@ pub enum ReedlineEvent {
 
     /// Navigate to the previous historic buffer
     PreviousHistory,
+
+    /// Move up to the previous line, if multiline, or up into the historic buffers
+    Up,
+
+    /// Move down to the next line, if multiline, or down through the historic buffers
+    Down,
 
     /// Navigate to the next historic buffer
     NextHistory,

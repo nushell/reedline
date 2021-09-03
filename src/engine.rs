@@ -331,15 +331,8 @@ impl Reedline {
                         self.history.back()
                     }
                 }
-                EditCommand::SearchHistory | EditCommand::Up => {
+                EditCommand::SearchHistory => {
                     self.history.back();
-                }
-                EditCommand::Down => {
-                    self.history.forward();
-                    // Hacky way to ensure that we don't fall of into failed search going forward
-                    if self.history.string_at_cursor().is_none() {
-                        self.history.back();
-                    }
                 }
                 _ => {
                     self.input_mode = InputMode::Regular;
@@ -414,22 +407,15 @@ impl Reedline {
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
     fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         if self.input_mode == InputMode::HistoryTraversal {
-            for command in commands {
-                match command {
-                    EditCommand::Up | EditCommand::Down => {}
-                    _ => {
-                        if matches!(
-                            self.history.get_navigation(),
-                            HistoryNavigationQuery::Normal(_)
-                        ) {
-                            if let Some(string) = self.history.string_at_cursor() {
-                                self.set_buffer(string)
-                            }
-                        }
-                        self.input_mode = InputMode::Regular;
-                    }
+            if matches!(
+                self.history.get_navigation(),
+                HistoryNavigationQuery::Normal(_)
+            ) {
+                if let Some(string) = self.history.string_at_cursor() {
+                    self.set_buffer(string)
                 }
             }
+            self.input_mode = InputMode::Regular;
         }
 
         // Run the commands over the edit buffer
@@ -447,8 +433,6 @@ impl Reedline {
                 EditCommand::BackspaceWord => self.editor.backspace_word(),
                 EditCommand::DeleteWord => self.editor.delete_word(),
                 EditCommand::Clear => self.editor.clear(),
-                EditCommand::Up => self.up_command(),
-                EditCommand::Down => self.down_command(),
                 EditCommand::SearchHistory => self.search_history(),
                 EditCommand::CutFromStart => self.editor.cut_from_start(),
                 EditCommand::CutToEnd => self.editor.cut_from_end(),
@@ -819,6 +803,28 @@ impl Reedline {
                     }
                 } else {
                     self.next_history();
+                }
+                self.buffer_paint(self.prompt_widget.offset)?;
+                Ok(None)
+            }
+            ReedlineEvent::Up => {
+                if self.input_mode == InputMode::HistorySearch {
+                    self.history.back();
+                } else {
+                    self.up_command();
+                }
+                self.buffer_paint(self.prompt_widget.offset)?;
+                Ok(None)
+            }
+            ReedlineEvent::Down => {
+                if self.input_mode == InputMode::HistorySearch {
+                    self.history.forward();
+                    // Hacky way to ensure that we don't fall of into failed search going forward
+                    if self.history.string_at_cursor().is_none() {
+                        self.history.back();
+                    }
+                } else {
+                    self.down_command();
                 }
                 self.buffer_paint(self.prompt_widget.offset)?;
                 Ok(None)
