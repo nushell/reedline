@@ -108,16 +108,36 @@ pub enum EditCommand {
     Redo,
 }
 
+/// Reedline supported actions.
 #[derive(Serialize, Deserialize, Clone)]
 pub enum ReedlineEvent {
+    /// Trigger Tab
     HandleTab,
-    CtrlD, // Don't know a better name for this
-    CtrlC, // Don't know a better name for this
+
+    /// Don't know a better name for this
+    CtrlD,
+
+    /// Don't know a better name for this
+    CtrlC,
+
+    /// Clears the screen and sets prompt to first line
     ClearScreen,
+
+    /// Handle enter event
     Enter,
+
+    /// Mouse
     Mouse, // Fill in details later
+
+    /// trigger termimal resize
     Resize(u16, u16),
-    EditInsert(EditCommand), // HACK: Special handling for insert
+
+    /// HACK: Special handling for insert
+    EditInsert(EditCommand),
+
+    /// Run these commands in the editor
     Edit(Vec<EditCommand>),
+
+    /// Trigger full repaint
     Repaint,
 }
