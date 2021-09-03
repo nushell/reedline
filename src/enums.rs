@@ -108,6 +108,7 @@ pub enum EditCommand {
     Redo,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 pub enum ReedlineEvent {
     HandleTab,
     CtrlD, // Don't know a better name for this

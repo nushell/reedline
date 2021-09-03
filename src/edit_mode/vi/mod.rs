@@ -53,7 +53,7 @@ impl EditMode for Vi {
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                 _ => {
                     if let Some(binding) = self.keybindings.find_binding(modifiers, code) {
-                        ReedlineEvent::Edit(binding)
+                        binding
                     } else {
                         ReedlineEvent::Edit(vec![])
                     }

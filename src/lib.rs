@@ -182,7 +182,7 @@ mod core_editor;
 mod text_manipulation;
 
 mod enums;
-pub use enums::{EditCommand, Signal};
+pub use enums::{EditCommand, ReedlineEvent, Signal};
 
 mod painter;
 
