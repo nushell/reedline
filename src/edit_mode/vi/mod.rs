@@ -94,12 +94,12 @@ impl Vi {
                 'j' => {
                     // j in normal mode is not an editor command but it prompts us to execute the
                     // down routine
-                    return ReedlineEvent::NextHistory;
+                    return ReedlineEvent::Down;
                 }
                 'k' => {
                     // k in normal mode is not an editor command but it prompts us to execute the
                     // up routine
-                    return ReedlineEvent::PreviousHistory;
+                    return ReedlineEvent::Up;
                 }
                 'i' => {
                     // NOTE: Ability to handle this with multiple events
