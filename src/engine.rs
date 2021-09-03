@@ -331,10 +331,10 @@ impl Reedline {
                         self.history.back()
                     }
                 }
-                EditCommand::SearchHistory | EditCommand::Up | EditCommand::PreviousHistory => {
+                EditCommand::SearchHistory | EditCommand::Up => {
                     self.history.back();
                 }
-                EditCommand::Down | EditCommand::NextHistory => {
+                EditCommand::Down => {
                     self.history.forward();
                     // Hacky way to ensure that we don't fall of into failed search going forward
                     if self.history.string_at_cursor().is_none() {
@@ -416,10 +416,7 @@ impl Reedline {
         if self.input_mode == InputMode::HistoryTraversal {
             for command in commands {
                 match command {
-                    EditCommand::Up
-                    | EditCommand::Down
-                    | EditCommand::NextHistory
-                    | EditCommand::PreviousHistory => {}
+                    EditCommand::Up | EditCommand::Down => {}
                     _ => {
                         if matches!(
                             self.history.get_navigation(),
@@ -450,8 +447,6 @@ impl Reedline {
                 EditCommand::BackspaceWord => self.editor.backspace_word(),
                 EditCommand::DeleteWord => self.editor.delete_word(),
                 EditCommand::Clear => self.editor.clear(),
-                EditCommand::PreviousHistory => self.previous_history(),
-                EditCommand::NextHistory => self.next_history(),
                 EditCommand::Up => self.up_command(),
                 EditCommand::Down => self.down_command(),
                 EditCommand::SearchHistory => self.search_history(),
@@ -805,6 +800,28 @@ impl Reedline {
                 if self.input_mode != InputMode::HistorySearch {
                     self.full_repaint(prompt, self.prompt_widget.origin)?;
                 }
+                Ok(None)
+            }
+            ReedlineEvent::PreviousHistory => {
+                if self.input_mode == InputMode::HistorySearch {
+                    self.history.back();
+                } else {
+                    self.previous_history();
+                }
+                self.buffer_paint(self.prompt_widget.offset)?;
+                Ok(None)
+            }
+            ReedlineEvent::NextHistory => {
+                if self.input_mode == InputMode::HistorySearch {
+                    self.history.forward();
+                    // Hacky way to ensure that we don't fall of into failed search going forward
+                    if self.history.string_at_cursor().is_none() {
+                        self.history.back();
+                    }
+                } else {
+                    self.next_history();
+                }
+                self.buffer_paint(self.prompt_widget.offset)?;
                 Ok(None)
             }
         }

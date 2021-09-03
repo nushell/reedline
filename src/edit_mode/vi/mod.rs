@@ -92,10 +92,14 @@ impl Vi {
                     output.push(EditCommand::MoveRight);
                 }
                 'j' => {
-                    output.push(EditCommand::PreviousHistory);
+                    // j in normal mode is not an editor command but it prompts us to execute the
+                    // down routine
+                    return ReedlineEvent::NextHistory;
                 }
                 'k' => {
-                    output.push(EditCommand::NextHistory);
+                    // k in normal mode is not an editor command but it prompts us to execute the
+                    // up routine
+                    return ReedlineEvent::PreviousHistory;
                 }
                 'i' => {
                     // NOTE: Ability to handle this with multiple events
