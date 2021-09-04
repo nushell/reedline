@@ -209,7 +209,7 @@ mod syntax_highlighting_fileio;
 mod highlighter;
 pub use highlighter::{DefaultHighlighter, Highlighter};
 
-mod styled_text;
+mod styled_lllllltext;
 pub use styled_text::StyledText;
 
 mod completion;
