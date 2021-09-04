@@ -34,7 +34,7 @@ impl EditMode for Emacs {
                     ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
                 }
                 (m, KeyCode::Char(c)) if m == KeyModifiers::CONTROL | KeyModifiers::ALT => {
-                    ReedlineEvent::EditInsert(EditCommand::InsertChar(c))
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
                 }
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                 _ => {

@@ -54,7 +54,7 @@ impl EditMode for Vi {
                     if self.mode == Mode::Normal {
                         self.parse_vi_fragment(c)
                     } else {
-                        ReedlineEvent::EditInsert(EditCommand::InsertChar(c))
+                        ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
                     }
                 }
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
