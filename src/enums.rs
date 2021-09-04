@@ -35,12 +35,6 @@ pub enum EditCommand {
     /// Move one word to the right
     MoveWordRight,
 
-    /// Move up to the previous line, if multiline, or up into the historic buffers
-    Up,
-
-    /// Move down to the next line, if multiline, or down through the historic buffers
-    Down,
-
     /// Insert a character at the current insertion point
     InsertChar(char),
 
@@ -55,18 +49,6 @@ pub enum EditCommand {
 
     /// Delete in-place a word from the current insertion point
     DeleteWord,
-
-    /// Add a buffer to the historic buffers
-    AppendToHistory,
-
-    /// Navigate to the previous historic buffer
-    PreviousHistory,
-
-    /// Navigate to the next historic buffer
-    NextHistory,
-
-    /// Search the history for a string
-    SearchHistory,
 
     /// Clear the current buffer
     Clear,
@@ -101,9 +83,6 @@ pub enum EditCommand {
     /// Swap the current grapheme/character with the one to the right
     SwapGraphemes,
 
-    /// Send a code fragment to the vi handler
-    ViCommandFragment(char),
-
     /// Undo the previous edit command
     Undo,
 
@@ -111,15 +90,48 @@ pub enum EditCommand {
     Redo,
 }
 
+/// Reedline supported actions.
+#[derive(Serialize, Deserialize, Clone)]
 pub enum ReedlineEvent {
+    /// Trigger Tab
     HandleTab,
-    CtrlD, // Don't know a better name for this
-    CtrlC, // Don't know a better name for this
+
+    /// Don't know a better name for this
+    CtrlD,
+
+    /// Don't know a better name for this
+    CtrlC,
+
+    /// Clears the screen and sets prompt to first line
     ClearScreen,
+
+    /// Handle enter event
     Enter,
+
+    /// Mouse
     Mouse, // Fill in details later
+
+    /// trigger termimal resize
     Resize(u16, u16),
-    EditInsert(EditCommand), // HACK: Special handling for insert
+
+    /// Run these commands in the editor
     Edit(Vec<EditCommand>),
+
+    /// Trigger full repaint
     Repaint,
+
+    /// Navigate to the previous historic buffer
+    PreviousHistory,
+
+    /// Move up to the previous line, if multiline, or up into the historic buffers
+    Up,
+
+    /// Move down to the next line, if multiline, or down through the historic buffers
+    Down,
+
+    /// Navigate to the next historic buffer
+    NextHistory,
+
+    /// Search the history for a string
+    SearchHistory,
 }
