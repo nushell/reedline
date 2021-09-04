@@ -1,4 +1,7 @@
-use {std::ops::Range, unicode_segmentation::UnicodeSegmentation};
+use {
+    std::{convert::From, ops::Range},
+    unicode_segmentation::UnicodeSegmentation,
+};
 
 /// Cursor coordinates relative to the Unicode representation of [`LineBuffer`]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -29,6 +32,14 @@ pub struct LineBuffer {
 impl Default for LineBuffer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl From<&str> for LineBuffer {
+    fn from(input: &str) -> Self {
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.insert_str(input);
+        line_buffer
     }
 }
 
