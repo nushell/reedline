@@ -9,7 +9,7 @@ use {
     reedline::{
         default_emacs_keybindings, DefaultCompleter, DefaultCompletionActionHandler,
         DefaultHighlighter, DefaultHinter, DefaultPrompt, EditCommand, FileBackedHistory, Reedline,
-        Signal,
+        ReedlineEvent, Signal,
     },
     std::{
         io::{stdout, Write},
@@ -50,7 +50,7 @@ fn main() -> Result<()> {
         keybindings.add_binding(
             KeyModifiers::ALT,
             KeyCode::Char('m'),
-            vec![EditCommand::BackspaceWord],
+            ReedlineEvent::Edit(vec![EditCommand::BackspaceWord]),
         );
         Box::new(Emacs::new(keybindings))
     };

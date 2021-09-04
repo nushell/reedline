@@ -13,17 +13,20 @@
 //!  let prompt = DefaultPrompt::default();
 //!
 //!  loop {
-//!      let sig = line_editor.read_line(&prompt).unwrap();
+//!      let sig = line_editor.read_line(&prompt);
 //!      match sig {
-//!          Signal::Success(buffer) => {
+//!          Ok(Signal::Success(buffer)) => {
 //!              println!("We processed: {}", buffer);
 //!          }
-//!          Signal::CtrlD | Signal::CtrlC => {
-//!              line_editor.print_crlf().unwrap();
+//!          Ok(Signal::CtrlD) | Ok(Signal::CtrlC) => {
+//!              let _ = line_editor.print_crlf();
 //!              break;
 //!          }
-//!          Signal::CtrlL => {
-//!              line_editor.clear_screen().unwrap();
+//!          Ok(Signal::CtrlL) => {
+//!              line_editor.clear_screen();
+//!          }
+//!          x => {
+//!              println!("Event: {:?}", x);
 //!          }
 //!      }
 //!  }
@@ -31,7 +34,7 @@
 //! ```
 //! ## Integrate with custom Keybindings
 //!
-//! ```rust
+//! ```rust,no_run
 //! // Configure reedline with custom keybindings
 //!
 //! //Cargo.toml
@@ -41,14 +44,14 @@
 //! use std::io;
 //! use {
 //!   crossterm::event::{KeyCode, KeyModifiers},
-//!   reedline::{default_emacs_keybindings, EditCommand, Reedline, Emacs},
+//!   reedline::{default_emacs_keybindings, EditCommand, Reedline, Emacs, ReedlineEvent},
 //! };
 //!
 //! let mut keybindings = default_emacs_keybindings();
 //! keybindings.add_binding(
 //!     KeyModifiers::ALT,
 //!     KeyCode::Char('m'),
-//!     vec![EditCommand::BackspaceWord],
+//!     ReedlineEvent::Edit(vec![EditCommand::BackspaceWord]),
 //! );
 //! let edit_mode = Box::new(Emacs::new(keybindings));
 //!
@@ -76,7 +79,7 @@
 //!
 //! ## Integrate with custom Highlighter
 //!
-//! ```rust
+//! ```rust,no_run
 //! // Create a reedline object with highlighter support
 //!
 //! use std::io;
@@ -95,7 +98,7 @@
 //!
 //! ## Integrate with custom Tab-Handler
 //!
-//! ```rust
+//! ```rust,no_run
 //! // Create a reedline object with tab completions support
 //!
 //! use std::io;
@@ -117,7 +120,7 @@
 //!
 //! ## Integrate with custom Hinter
 //!
-//! ```rust
+//! ```rust,no_run
 //! // Create a reedline object with in-line hint support
 //!
 //! //Cargo.toml
@@ -182,7 +185,7 @@ mod core_editor;
 mod text_manipulation;
 
 mod enums;
-pub use enums::{EditCommand, Signal};
+pub use enums::{EditCommand, ReedlineEvent, Signal};
 
 mod painter;
 

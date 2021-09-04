@@ -47,7 +47,7 @@ impl EditMode for Vi {
                     if self.mode == Mode::Normal {
                         self.parse_vi_fragment(c)
                     } else {
-                        ReedlineEvent::EditInsert(EditCommand::InsertChar(c))
+                        ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
                     }
                 }
                 (m, KeyCode::Char(c)) if m == KeyModifiers::CONTROL | KeyModifiers::ALT => {
@@ -60,7 +60,7 @@ impl EditMode for Vi {
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                 _ => {
                     if let Some(binding) = self.keybindings.find_binding(modifiers, code) {
-                        ReedlineEvent::Edit(binding)
+                        binding
                     } else {
                         ReedlineEvent::Edit(vec![])
                     }
@@ -99,10 +99,14 @@ impl Vi {
                     output.push(EditCommand::MoveRight);
                 }
                 'j' => {
-                    output.push(EditCommand::PreviousHistory);
+                    // j in normal mode is not an editor command but it prompts us to execute the
+                    // down routine
+                    return ReedlineEvent::Down;
                 }
                 'k' => {
-                    output.push(EditCommand::NextHistory);
+                    // k in normal mode is not an editor command but it prompts us to execute the
+                    // up routine
+                    return ReedlineEvent::Up;
                 }
                 'w' => {
                     output.push(EditCommand::MoveWordRight);
