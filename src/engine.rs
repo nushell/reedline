@@ -776,7 +776,7 @@ impl Reedline {
                 EditCommand::CutWordLeft,
                 EditCommand::CutWordRight,
             ]
-            .contains(&command)
+            .contains(command)
             {
                 self.editor.set_previous_lines(true);
             }
