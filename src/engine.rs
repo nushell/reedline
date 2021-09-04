@@ -739,7 +739,6 @@ impl Reedline {
                     self.editor.set_previous_lines(false);
 
                     self.repaint(prompt)?;
-                    self.editor.insert_char(*c);
                 }
                 EditCommand::Backspace => self.editor.backspace(),
                 EditCommand::Delete => self.editor.delete(),
