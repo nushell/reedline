@@ -13,17 +13,20 @@
 //!  let prompt = DefaultPrompt::default();
 //!
 //!  loop {
-//!      let sig = line_editor.read_line(&prompt).unwrap();
+//!      let sig = line_editor.read_line(&prompt);
 //!      match sig {
-//!          Signal::Success(buffer) => {
+//!          Ok(Signal::Success(buffer)) => {
 //!              println!("We processed: {}", buffer);
 //!          }
-//!          Signal::CtrlD | Signal::CtrlC => {
-//!              line_editor.print_crlf().unwrap();
+//!          Ok(Signal::CtrlD) | Ok(Signal::CtrlC) => {
+//!              let _ = line_editor.print_crlf();
 //!              break;
 //!          }
-//!          Signal::CtrlL => {
-//!              line_editor.clear_screen().unwrap();
+//!          Ok(Signal::CtrlL) => {
+//!              line_editor.clear_screen();
+//!          }
+//!          x => {
+//!              println!("Event: {:?}", x);
 //!          }
 //!      }
 //!  }
