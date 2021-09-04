@@ -50,6 +50,13 @@ impl EditMode for Vi {
                         ReedlineEvent::EditInsert(EditCommand::InsertChar(c))
                     }
                 }
+                (m, KeyCode::Char(c)) if m == KeyModifiers::CONTROL | KeyModifiers::ALT => {
+                    if self.mode == Mode::Normal {
+                        self.parse_vi_fragment(c)
+                    } else {
+                        ReedlineEvent::EditInsert(EditCommand::InsertChar(c))
+                    }
+                }
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                 _ => {
                     if let Some(binding) = self.keybindings.find_binding(modifiers, code) {
@@ -96,6 +103,28 @@ impl Vi {
                 }
                 'k' => {
                     output.push(EditCommand::NextHistory);
+                }
+                'w' => {
+                    output.push(EditCommand::MoveWordRight);
+                }
+                'b' => {
+                    output.push(EditCommand::MoveWordLeft);
+                }
+                '0' => {
+                    output.push(EditCommand::MoveToStart);
+                }
+                '$' => {
+                    output.push(EditCommand::MoveToEnd);
+                }
+                'A' => {
+                    output.push(EditCommand::MoveToEnd);
+                    self.mode = Mode::Insert;
+                }
+                'D' => {
+                    output.push(EditCommand::CutToEnd);
+                }
+                'u' => {
+                    output.push(EditCommand::Undo);
                 }
                 'i' => {
                     // NOTE: Ability to handle this with multiple events

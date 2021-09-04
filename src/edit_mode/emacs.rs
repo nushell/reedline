@@ -33,6 +33,9 @@ impl EditMode for Emacs {
                 | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                     ReedlineEvent::EditInsert(EditCommand::InsertChar(c))
                 }
+                (m, KeyCode::Char(c)) if m == KeyModifiers::CONTROL | KeyModifiers::ALT => {
+                    ReedlineEvent::EditInsert(EditCommand::InsertChar(c))
+                }
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                 _ => {
                     if let Some(binding) = self.keybindings.find_binding(modifiers, code) {
