@@ -34,7 +34,7 @@
 //! ```
 //! ## Integrate with custom Keybindings
 //!
-//! ```rust
+//! ```rust,no_run
 //! // Configure reedline with custom keybindings
 //!
 //! //Cargo.toml
@@ -79,7 +79,7 @@
 //!
 //! ## Integrate with custom Highlighter
 //!
-//! ```rust
+//! ```rust,no_run
 //! // Create a reedline object with highlighter support
 //!
 //! use std::io;
@@ -98,7 +98,7 @@
 //!
 //! ## Integrate with custom Tab-Handler
 //!
-//! ```rust
+//! ```rust,no_run
 //! // Create a reedline object with tab completions support
 //!
 //! use std::io;
@@ -120,7 +120,7 @@
 //!
 //! ## Integrate with custom Hinter
 //!
-//! ```rust
+//! ```rust,no_run
 //! // Create a reedline object with in-line hint support
 //!
 //! //Cargo.toml
