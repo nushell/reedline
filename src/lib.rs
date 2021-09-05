@@ -204,8 +204,6 @@ pub use prompt::{
 mod edit_mode;
 pub use edit_mode::{default_emacs_keybindings, EditMode, Emacs, Vi};
 
-mod syntax_highlighting_fileio;
-
 mod highlighter;
 pub use highlighter::{DefaultHighlighter, Highlighter};
 
