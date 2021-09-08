@@ -25,20 +25,12 @@ impl EditMode for Emacs {
     fn parse_event(&mut self, event: Event) -> ReedlineEvent {
         match event {
             Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
-                (m, KeyCode::Char(c)) if m == KeyModifiers::SHIFT | KeyModifiers::NONE => {
-                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
-                }
-                (m, KeyCode::Char(c)) if m == KeyModifiers::CONTROL | KeyModifiers::ALT => {
-                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
-                }
+                (_, KeyCode::Char(c)) => ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)]),
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
-                _ => {
-                    if let Some(binding) = self.keybindings.find_binding(modifiers, code) {
-                        binding
-                    } else {
-                        ReedlineEvent::Edit(vec![])
-                    }
-                }
+                _ => self
+                    .keybindings
+                    .find_binding(modifiers, code)
+                    .unwrap_or_else(|| ReedlineEvent::Edit(vec![])),
             },
 
             Event::Mouse(_) => ReedlineEvent::Mouse,
