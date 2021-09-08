@@ -16,7 +16,7 @@ pub enum Signal {
 /// Editing actions which can be mapped to key bindings.
 ///
 /// Executed by `Reedline::run_edit_commands()`
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum EditCommand {
     /// Move to the start of the buffer
     MoveToStart,
@@ -92,7 +92,7 @@ pub enum EditCommand {
 }
 
 /// Reedline supported actions.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub enum ReedlineEvent {
     /// Trigger Tab
     HandleTab,
