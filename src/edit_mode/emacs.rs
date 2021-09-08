@@ -51,3 +51,41 @@ impl Emacs {
         Emacs { keybindings }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn ctrl_l_leads_to_clear_screen_event() {
+        let mut emacs = Emacs::default();
+        let ctrl_l = Event::Key(KeyEvent {
+            modifiers: KeyModifiers::CONTROL,
+            code: KeyCode::Char('l'),
+        });
+        let result = emacs.parse_event(ctrl_l);
+
+        assert_eq!(result, ReedlineEvent::ClearScreen);
+    }
+
+    #[ignore = "Unsure what the desired behaviour is"]
+    #[test]
+    fn overriding_default_keybindings_works() {
+        let mut keybindings = default_emacs_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('l'),
+            ReedlineEvent::HandleTab,
+        );
+
+        let mut emacs = Emacs::new(keybindings);
+        let ctrl_l = Event::Key(KeyEvent {
+            modifiers: KeyModifiers::CONTROL,
+            code: KeyCode::Char('l'),
+        });
+        let result = emacs.parse_event(ctrl_l);
+
+        assert_eq!(result, ReedlineEvent::HandleTab);
+    }
+}
