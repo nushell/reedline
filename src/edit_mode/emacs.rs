@@ -25,8 +25,11 @@ impl EditMode for Emacs {
     fn parse_event(&mut self, event: Event) -> ReedlineEvent {
         match event {
             Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
-                (m, KeyCode::Char(c)) if m == KeyModifiers::NONE | KeyModifiers::SHIFT => {
+                (KeyModifiers::NONE, KeyCode::Char(c)) => {
                     ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
+                }
+                (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c.to_ascii_uppercase())])
                 }
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                 _ => self
@@ -87,5 +90,36 @@ mod test {
         let result = emacs.parse_event(ctrl_l);
 
         assert_eq!(result, ReedlineEvent::HandleTab);
+    }
+
+    #[test]
+    fn inserting_character_works() {
+        let mut emacs = Emacs::default();
+        let l = Event::Key(KeyEvent {
+            modifiers: KeyModifiers::NONE,
+            code: KeyCode::Char('l'),
+        });
+        let result = emacs.parse_event(l);
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('l')])
+        );
+    }
+
+    #[test]
+    fn inserting_capital_character_works() {
+        let mut emacs = Emacs::default();
+
+        let uppercase_l = Event::Key(KeyEvent {
+            modifiers: KeyModifiers::SHIFT,
+            code: KeyCode::Char('l'),
+        });
+        let result = emacs.parse_event(uppercase_l);
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('L')])
+        );
     }
 }
