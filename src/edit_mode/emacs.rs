@@ -122,4 +122,20 @@ mod test {
             ReedlineEvent::Edit(vec![EditCommand::InsertChar('L')])
         );
     }
+
+    #[ignore = "Unsure what the desired behaviour is"]
+    #[test]
+    fn return_IDONT_KNOW_WHAT_when_keybinding_is_not_found() {
+        let keybindings = Keybindings::default();
+
+        let mut emacs = Emacs::new(keybindings);
+        let ctrl_l = Event::Key(KeyEvent {
+            modifiers: KeyModifiers::CONTROL,
+            code: KeyCode::Char('l'),
+        });
+        let result = emacs.parse_event(ctrl_l);
+
+        // Right now this returns ReedlineEvent::Edit(vec![]), but what should we really return
+        assert_eq!(result, ReedlineEvent::HandleTab);
+    }
 }
