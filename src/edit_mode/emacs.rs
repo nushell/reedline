@@ -25,7 +25,9 @@ impl EditMode for Emacs {
     fn parse_event(&mut self, event: Event) -> ReedlineEvent {
         match event {
             Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
-                (_, KeyCode::Char(c)) => ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)]),
+                (m, KeyCode::Char(c)) if m == KeyModifiers::NONE | KeyModifiers::SHIFT => {
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
+                }
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                 _ => self
                     .keybindings
