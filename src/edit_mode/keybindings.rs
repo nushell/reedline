@@ -29,6 +29,10 @@ impl Keybindings {
         Self { bindings: vec![] }
     }
 
+    pub fn empty() -> Self {
+        Self::new()
+    }
+
     pub fn add_binding(
         &mut self,
         modifier: KeyModifiers,
