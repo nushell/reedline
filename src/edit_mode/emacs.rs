@@ -138,4 +138,20 @@ mod test {
         // Right now this returns ReedlineEvent::Edit(vec![]), but what should we really return
         assert_eq!(result, ReedlineEvent::HandleTab);
     }
+
+    #[test]
+    fn inserting_capital_character_for_non_ascii_remains_as_is() {
+        let mut emacs = Emacs::default();
+
+        let uppercase_l = Event::Key(KeyEvent {
+            modifiers: KeyModifiers::SHIFT,
+            code: KeyCode::Char('😀'),
+        });
+        let result = emacs.parse_event(uppercase_l);
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('😀')])
+        );
+    }
 }
