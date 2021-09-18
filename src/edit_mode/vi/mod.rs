@@ -57,11 +57,11 @@ impl EditMode for Vi {
                 (Mode::Normal, _, _) => self
                     .normal_keybindings
                     .find_binding(modifiers, code)
-                    .unwrap_or_else(|| ReedlineEvent::Edit(vec![])),
+                    .unwrap_or(ReedlineEvent::None),
                 (Mode::Insert, _, _) => self
                     .insert_keybindings
                     .find_binding(modifiers, code)
-                    .unwrap_or_else(|| ReedlineEvent::Edit(vec![])),
+                    .unwrap_or(ReedlineEvent::None),
             },
 
             Event::Mouse(_) => ReedlineEvent::Mouse,
@@ -229,5 +229,25 @@ mod test {
 
         assert_eq!(result, ReedlineEvent::Repaint);
         assert_eq!(vi.mode, Mode::Normal);
+    }
+
+    #[rstest]
+    #[case(Mode::Normal)]
+    #[case(Mode::Insert)]
+    fn return_none_reedline_event_when_keybinding_is_not_found(#[case] mode: Mode) {
+        let mut vi = Vi {
+            insert_keybindings: Keybindings::empty(),
+            normal_keybindings: Keybindings::empty(),
+            partial: None,
+            mode,
+        };
+
+        let ctrl_l = Event::Key(KeyEvent {
+            modifiers: KeyModifiers::CONTROL,
+            code: KeyCode::Char('l'),
+        });
+        let result = vi.parse_event(ctrl_l);
+
+        assert_eq!(result, ReedlineEvent::None);
     }
 }
