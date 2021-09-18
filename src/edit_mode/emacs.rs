@@ -35,7 +35,7 @@ impl EditMode for Emacs {
                 _ => self
                     .keybindings
                     .find_binding(modifiers, code)
-                    .unwrap_or_else(|| ReedlineEvent::Edit(vec![])),
+                    .unwrap_or(ReedlineEvent::None),
             },
 
             Event::Mouse(_) => ReedlineEvent::Mouse,
@@ -123,9 +123,8 @@ mod test {
         );
     }
 
-    #[ignore = "Unsure what the desired behaviour is"]
     #[test]
-    fn return_IDONT_KNOW_WHAT_when_keybinding_is_not_found() {
+    fn return_none_reedline_event_when_keybinding_is_not_found() {
         let keybindings = Keybindings::default();
 
         let mut emacs = Emacs::new(keybindings);
@@ -135,8 +134,7 @@ mod test {
         });
         let result = emacs.parse_event(ctrl_l);
 
-        // Right now this returns ReedlineEvent::Edit(vec![]), but what should we really return
-        assert_eq!(result, ReedlineEvent::HandleTab);
+        assert_eq!(result, ReedlineEvent::None);
     }
 
     #[test]

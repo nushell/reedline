@@ -1,12 +1,13 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
+use super::EditMode;
 use crate::{
-    default_emacs_keybindings,
+    edit_mode::keybindings::{
+        default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings,
+    },
     enums::{EditCommand, ReedlineEvent},
     PromptEditMode, PromptViMode,
 };
-
-use super::{keybindings::Keybindings, EditMode};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Mode {
@@ -22,19 +23,11 @@ pub struct Vi {
     mode: Mode,
 }
 
-fn default_vi_insert_mode_keybindings() -> Keybindings {
-    default_emacs_keybindings()
-}
-
-fn default_vi_normal_mode_keybindings() -> Keybindings {
-    Keybindings::new()
-}
-
 impl Default for Vi {
     fn default() -> Self {
         Vi {
-            insert_keybindings: default_vi_insert_mode_keybindings(),
-            normal_keybindings: default_vi_normal_mode_keybindings(),
+            insert_keybindings: default_vi_insert_keybindings(),
+            normal_keybindings: default_vi_normal_keybindings(),
             partial: None,
             mode: Mode::Normal,
         }

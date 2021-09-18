@@ -117,3 +117,24 @@ pub fn default_emacs_keybindings() -> Keybindings {
 
     kb
 }
+
+pub fn default_vi_normal_keybindings() -> Keybindings {
+    Keybindings::new()
+}
+
+pub fn default_vi_insert_keybindings() -> Keybindings {
+    use EditCommand as EC;
+    use KeyCode as KC;
+    use KeyModifiers as KM;
+
+    let mut keybindings = Keybindings::new();
+
+    keybindings.add_binding(KM::NONE, KC::Up, ReedlineEvent::Up);
+    keybindings.add_binding(KM::NONE, KC::Down, ReedlineEvent::Down);
+    keybindings.add_binding(KM::NONE, KC::Left, edit_bind(EC::MoveLeft));
+    keybindings.add_binding(KM::NONE, KC::Right, edit_bind(EC::MoveRight));
+    keybindings.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
+    keybindings.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
+
+    keybindings
+}

@@ -94,6 +94,9 @@ pub enum EditCommand {
 /// Reedline supported actions.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub enum ReedlineEvent {
+    /// No op event
+    None,
+
     /// Trigger Tab
     HandleTab,
 
