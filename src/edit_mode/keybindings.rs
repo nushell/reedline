@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::enums::ReedlineEvent;
 
 use {
@@ -6,16 +8,15 @@ use {
     serde::{Deserialize, Serialize},
 };
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct Keybinding {
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+pub struct KeyCombination {
     modifier: KeyModifiers,
     key_code: KeyCode,
-    command: ReedlineEvent,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Keybindings {
-    pub bindings: Vec<Keybinding>,
+    pub bindings: HashMap<KeyCombination, ReedlineEvent>,
 }
 
 impl Default for Keybindings {
@@ -26,7 +27,9 @@ impl Default for Keybindings {
 
 impl Keybindings {
     pub fn new() -> Self {
-        Self { bindings: vec![] }
+        Self {
+            bindings: HashMap::new(),
+        }
     }
 
     pub fn empty() -> Self {
@@ -39,21 +42,13 @@ impl Keybindings {
         key_code: KeyCode,
         command: ReedlineEvent,
     ) {
-        self.bindings.push(Keybinding {
-            modifier,
-            key_code,
-            command,
-        });
+        let key_combo = KeyCombination { modifier, key_code };
+        self.bindings.insert(key_combo, command);
     }
 
     pub fn find_binding(&self, modifier: KeyModifiers, key_code: KeyCode) -> Option<ReedlineEvent> {
-        for binding in &self.bindings {
-            if binding.modifier == modifier && binding.key_code == key_code {
-                return Some(binding.command.clone());
-            }
-        }
-
-        None
+        let key_combo = KeyCombination { modifier, key_code };
+        self.bindings.get(&key_combo).cloned()
     }
 }
 

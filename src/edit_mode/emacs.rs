@@ -72,7 +72,6 @@ mod test {
         assert_eq!(result, ReedlineEvent::ClearScreen);
     }
 
-    #[ignore = "Unsure what the desired behaviour is"]
     #[test]
     fn overriding_default_keybindings_works() {
         let mut keybindings = default_emacs_keybindings();

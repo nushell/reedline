@@ -230,21 +230,4 @@ mod test {
         assert_eq!(result, ReedlineEvent::Repaint);
         assert_eq!(vi.mode, Mode::Normal);
     }
-
-    #[test]
-    fn ctrl_l_leads_to_clear_screen_event_in_insert_mode() {
-        let mut vi = Vi {
-            insert_keybindings: default_vi_insert_mode_keybindings(),
-            normal_keybindings: Keybindings::empty(),
-            partial: None,
-            mode: Mode::Insert,
-        };
-        let ctrl_l = Event::Key(KeyEvent {
-            modifiers: KeyModifiers::CONTROL,
-            code: KeyCode::Char('l'),
-        });
-        let result = vi.parse_event(ctrl_l);
-
-        assert_eq!(result, ReedlineEvent::ClearScreen);
-    }
 }
