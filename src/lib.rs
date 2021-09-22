@@ -217,3 +217,6 @@ pub use completion::{
 
 mod hinter;
 pub use hinter::{DefaultHinter, Hinter};
+
+mod validator;
+pub use validator::{DefaultValidator, ValidationResult, Validator};
