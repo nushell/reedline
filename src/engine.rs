@@ -251,12 +251,6 @@ impl Reedline {
     /// use std::io;
     /// use reedline::{DefaultValidator, Reedline};
     ///
-    /// let commands = vec![
-    ///   "test".into(),
-    ///   "hello world".into(),
-    ///   "hello world reedline".into(),
-    ///   "this is the reedline crate".into(),
-    /// ];
     /// let mut line_editor =
     /// Reedline::create()?.with_validator(Box::new(DefaultValidator));
     /// # Ok::<(), io::Error>(())
