@@ -391,7 +391,10 @@ impl LineBuffer {
         self.set_insertion_point(self.line(), position);
 
         // Move right from this position to the column we were at
-        while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
+        while position < buffer.len()
+            && &buffer[position..(position + 1)] != "\n"
+            && num_of_move_lefts > 0
+        {
             self.move_right();
             position = self.offset();
             num_of_move_lefts -= 1;
