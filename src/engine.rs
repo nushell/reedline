@@ -559,6 +559,7 @@ impl Reedline {
                     Ok(Some(Signal::Success(buffer)))
                 } else {
                     self.run_edit_commands(&[EditCommand::InsertChar('\n')], prompt)?;
+
                     Ok(None)
                 }
             }
@@ -819,7 +820,7 @@ impl Reedline {
 
     /// Set the cursor position as understood by the underlying [`LineBuffer`] for the current line
     fn set_offset(&mut self, pos: usize) {
-        self.editor.set_insertion_point(self.editor.line(), pos)
+        self.editor.set_insertion_point(pos)
     }
 
     fn terminal_columns(&self) -> u16 {

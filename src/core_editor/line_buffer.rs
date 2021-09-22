@@ -3,13 +3,12 @@ use {std::ops::Range, unicode_segmentation::UnicodeSegmentation};
 /// Cursor coordinates relative to the Unicode representation of [`LineBuffer`]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct InsertionPoint {
-    line: usize,
     offset: usize,
 }
 
 impl InsertionPoint {
     pub fn new() -> Self {
-        Self { line: 0, offset: 0 }
+        Self { offset: 0 }
     }
 }
 
@@ -22,7 +21,7 @@ impl Default for InsertionPoint {
 /// In memory representation of the entered line(s) to facilitate cursor based editing.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct LineBuffer {
-    lines: Vec<String>,
+    lines: String,
     insertion_point: InsertionPoint,
 }
 
@@ -35,50 +34,49 @@ impl Default for LineBuffer {
 impl LineBuffer {
     pub fn new() -> LineBuffer {
         LineBuffer {
-            lines: vec![String::new()],
+            lines: String::new(),
             insertion_point: InsertionPoint::new(),
         }
     }
 
     /// Replaces the content between [`start`..`end`] with `text`
-    pub fn replace(&mut self, range: Range<usize>, line_num: usize, text: &str) {
-        self.lines[line_num].replace_range(range, text);
+    pub fn replace(&mut self, range: Range<usize>, text: &str) {
+        self.lines.replace_range(range, text);
     }
 
     pub fn is_empty(&self) -> bool {
-        self.lines.is_empty() || self.lines.len() == 1 && self.lines[0].is_empty()
+        self.lines.is_empty()
     }
 
     pub fn offset(&self) -> usize {
         self.insertion_point.offset
     }
 
-    pub fn line(&self) -> usize {
-        self.insertion_point.line
-    }
-
-    pub fn set_insertion_point(&mut self, line: usize, offset: usize) {
-        self.insertion_point = InsertionPoint { line, offset };
+    pub fn set_insertion_point(&mut self, offset: usize) {
+        self.insertion_point = InsertionPoint { offset };
     }
 
     /// Output the current line in the multiline buffer
     pub fn get_buffer(&self) -> &str {
-        &self.lines[self.insertion_point.line]
+        &self.lines
+    }
+
+    /// Calculates the current the user is on
+    pub fn line(&self) -> usize {
+        let offset = self.insertion_point.offset;
+        let count = self.lines[0..offset].lines().count();
+        if count == 0 {
+            0
+        } else {
+            count - 1
+        }
     }
 
     /// Set to a single line of `buffer` and reset the `InsertionPoint` cursor
     pub fn set_buffer(&mut self, buffer: String) {
-        let buffer = buffer.lines().map(|s| s.into()).collect::<Vec<String>>();
-
-        // Note: `buffer` will have at least one element so the following operations are safe
-        let last_line_index = buffer.len() - 1;
-        let last_line_length = buffer.last().unwrap().len();
-
+        let offset = buffer.len();
         self.lines = buffer;
-        self.insertion_point = InsertionPoint {
-            line: last_line_index,
-            offset: last_line_length,
-        };
+        self.insertion_point = InsertionPoint { offset };
     }
 
     /// Reset the insertion point to the start of the buffer
@@ -88,24 +86,21 @@ impl LineBuffer {
 
     /// Set the insertion point *behind* the last character.
     pub fn move_to_end(&mut self) {
-        if let Some(end) = self.lines.last() {
-            let length_of_last_line = end.len();
-            self.insertion_point.offset = length_of_last_line;
-        }
+        self.insertion_point.offset = self.lines.len();
     }
 
     /// Cursor position *behind* the next unicode grapheme to the right
     pub fn grapheme_right_index(&self) -> usize {
-        self.lines[self.insertion_point.line][self.insertion_point.offset..]
+        self.lines[self.insertion_point.offset..]
             .grapheme_indices(true)
             .nth(1)
             .map(|(i, _)| self.insertion_point.offset + i)
-            .unwrap_or_else(|| self.lines[self.insertion_point.line].len())
+            .unwrap_or_else(|| self.lines.len())
     }
 
     /// Cursor position *in front of* the next unicode grapheme to the left
     pub fn grapheme_left_index(&self) -> usize {
-        self.lines[self.insertion_point.line][..self.insertion_point.offset]
+        self.lines[..self.insertion_point.offset]
             .grapheme_indices(true)
             .last()
             .map(|(i, _)| i)
@@ -114,16 +109,16 @@ impl LineBuffer {
 
     /// Cursor position *behind* the next word to the right
     pub fn word_right_index(&self) -> usize {
-        self.lines[self.insertion_point.line][self.insertion_point.offset..]
+        self.lines[self.insertion_point.offset..]
             .split_word_bound_indices()
             .find(|(_, word)| !is_word_boundary(word))
             .map(|(i, word)| self.insertion_point.offset + i + word.len())
-            .unwrap_or_else(|| self.lines[self.insertion_point.line].len())
+            .unwrap_or_else(|| self.lines.len())
     }
 
     /// Cursor position *in front of* the next word to the left
     pub fn word_left_index(&self) -> usize {
-        self.lines[self.insertion_point.line][..self.insertion_point.offset]
+        self.lines[..self.insertion_point.offset]
             .split_word_bound_indices()
             .filter(|(_, word)| !is_word_boundary(word))
             .last()
@@ -156,7 +151,7 @@ impl LineBuffer {
     ///Insert a single character at the insertion point and move right
     pub fn insert_char(&mut self, c: char) {
         let pos = self.insertion_point();
-        self.lines[pos.line].insert(pos.offset, c);
+        self.lines.insert(pos.offset, c);
         self.move_right();
     }
 
@@ -165,21 +160,20 @@ impl LineBuffer {
     /// TODO: Check unicode validation
     pub fn insert_str(&mut self, string: &str) {
         let pos = self.insertion_point();
-        self.lines[pos.line].insert_str(pos.offset, string);
+        self.lines.insert_str(pos.offset, string);
         self.insertion_point.offset = pos.offset + string.len();
     }
 
     /// Empty buffer and reset cursor
     pub fn clear(&mut self) {
-        self.lines.clear();
-        self.lines.push(String::new());
+        self.lines = String::new();
         self.insertion_point = InsertionPoint::new();
     }
 
     /// Clear everything beginning at the cursor to the right/end.
     /// Keeps the cursor at the end.
     pub fn clear_to_end(&mut self) {
-        self.lines[self.insertion_point.line].truncate(self.insertion_point.offset);
+        self.lines.truncate(self.insertion_point.offset);
     }
 
     /// Clear from the start of the line to the cursor.
@@ -206,11 +200,11 @@ impl LineBuffer {
     where
         R: std::ops::RangeBounds<usize>,
     {
-        self.lines[self.insertion_point.line].replace_range(range, replace_with);
+        self.lines.replace_range(range, replace_with);
     }
 
     pub fn on_whitespace(&self) -> bool {
-        self.lines[self.insertion_point.line][self.insertion_point.offset..]
+        self.lines[self.insertion_point.offset..]
             .chars()
             .next()
             .map(char::is_whitespace)
@@ -241,7 +235,7 @@ impl LineBuffer {
     }
 
     pub fn word_count(&self) -> usize {
-        self.lines.concat().trim().split_whitespace().count()
+        self.lines.trim().split_whitespace().count()
     }
 
     pub fn capitalize_char(&mut self) {
@@ -353,7 +347,7 @@ impl LineBuffer {
         } else {
             position = 0;
         }
-        self.set_insertion_point(self.line(), position);
+        self.set_insertion_point(position);
 
         // Move right from this position to the column we were at
         while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
@@ -388,7 +382,7 @@ impl LineBuffer {
 
         position += pos + 1;
 
-        self.set_insertion_point(self.line(), position);
+        self.set_insertion_point(position);
 
         // Move right from this position to the column we were at
         while position < buffer.len()
@@ -452,10 +446,7 @@ mod test {
         let mut line_buffer = LineBuffer::new();
         line_buffer.insert_str("this is a command");
 
-        let expected_updated_insertion_point = InsertionPoint {
-            line: 0,
-            offset: 17,
-        };
+        let expected_updated_insertion_point = InsertionPoint { offset: 17 };
 
         assert_eq!(
             expected_updated_insertion_point,
@@ -468,7 +459,7 @@ mod test {
         let mut line_buffer = LineBuffer::new();
         line_buffer.insert_char('c');
 
-        let expected_updated_insertion_point = InsertionPoint { line: 0, offset: 1 };
+        let expected_updated_insertion_point = InsertionPoint { offset: 1 };
 
         assert_eq!(
             expected_updated_insertion_point,
@@ -479,36 +470,24 @@ mod test {
     #[test]
     fn set_buffer_updates_insertion_point_to_new_buffer_length() {
         let mut line_buffer = buffer_with("test string");
-        let before_operation_location = InsertionPoint {
-            line: 0,
-            offset: 11,
-        };
+        let before_operation_location = InsertionPoint { offset: 11 };
         assert_eq!(before_operation_location, line_buffer.insertion_point());
 
         line_buffer.set_buffer("new string".to_string());
 
-        let after_operation_location = InsertionPoint {
-            line: 0,
-            offset: 10,
-        };
+        let after_operation_location = InsertionPoint { offset: 10 };
         assert_eq!(after_operation_location, line_buffer.insertion_point());
     }
 
     #[test]
     fn set_buffer_works_with_multi_line_string() {
         let mut line_buffer = buffer_with("test string");
-        let before_operation_location = InsertionPoint {
-            line: 0,
-            offset: 11,
-        };
+        let before_operation_location = InsertionPoint { offset: 11 };
         assert_eq!(before_operation_location, line_buffer.insertion_point());
 
         line_buffer.set_buffer("new line 1\nnew_line 2".to_string());
 
-        let after_operation_location = InsertionPoint {
-            line: 1,
-            offset: 10,
-        };
+        let after_operation_location = InsertionPoint { offset: 10 };
         assert_eq!(after_operation_location, line_buffer.insertion_point());
     }
 

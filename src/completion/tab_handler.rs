@@ -89,8 +89,8 @@ impl ComplationActionHandler for DefaultCompletionActionHandler {
                     offset += completions[index].1.len() - (span.end - span.start);
 
                     // TODO improve the support for multiline replace
-                    present_buffer.replace(span.start..span.end, 0, &completions[index].1);
-                    present_buffer.set_insertion_point(present_buffer.line(), offset);
+                    present_buffer.replace(span.start..span.end, &completions[index].1);
+                    present_buffer.set_insertion_point(offset);
                 }
                 _ => {
                     self.reset_index();
@@ -162,14 +162,14 @@ mod test {
         let mut buf = buffer_with("th is my test th");
 
         // Hitting tab after `th` fills the first completion `that`
-        buf.set_insertion_point(0, 2);
+        buf.set_insertion_point(2);
         tab.handle(&mut buf);
         let mut expected_buffer = buffer_with("that is my test th");
-        expected_buffer.set_insertion_point(0, 4);
+        expected_buffer.set_insertion_point(4);
         assert_eq!(buf, expected_buffer);
 
         // updating the cursor to end should reset the completions
-        buf.set_insertion_point(0, 18);
+        buf.set_insertion_point(18);
         tab.handle(&mut buf);
         assert_eq!(buf, buffer_with("that is my test that"));
     }
