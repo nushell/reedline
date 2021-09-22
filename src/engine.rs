@@ -67,6 +67,7 @@ impl PromptWidget {
 ///    }
 ///    _ => {
 ///        eprintln!("Entry aborted!");
+///
 ///    }
 /// }
 /// # Ok::<(), io::Error>(())
@@ -489,6 +490,10 @@ impl Reedline {
                 self.repaint(prompt)?;
                 Ok(None)
             }
+            ReedlineEvent::None => {
+                // Default no operation
+                Ok(None)
+            }
         }
     }
 
@@ -581,6 +586,7 @@ impl Reedline {
                 self.repaint(prompt)?;
                 Ok(None)
             }
+            ReedlineEvent::None => Ok(None),
         }
     }
 

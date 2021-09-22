@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::enums::ReedlineEvent;
 
 use {
@@ -6,16 +8,15 @@ use {
     serde::{Deserialize, Serialize},
 };
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct Keybinding {
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+pub struct KeyCombination {
     modifier: KeyModifiers,
     key_code: KeyCode,
-    command: ReedlineEvent,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Keybindings {
-    pub bindings: Vec<Keybinding>,
+    pub bindings: HashMap<KeyCombination, ReedlineEvent>,
 }
 
 impl Default for Keybindings {
@@ -26,7 +27,13 @@ impl Default for Keybindings {
 
 impl Keybindings {
     pub fn new() -> Self {
-        Self { bindings: vec![] }
+        Self {
+            bindings: HashMap::new(),
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self::new()
     }
 
     pub fn add_binding(
@@ -35,21 +42,13 @@ impl Keybindings {
         key_code: KeyCode,
         command: ReedlineEvent,
     ) {
-        self.bindings.push(Keybinding {
-            modifier,
-            key_code,
-            command,
-        });
+        let key_combo = KeyCombination { modifier, key_code };
+        self.bindings.insert(key_combo, command);
     }
 
     pub fn find_binding(&self, modifier: KeyModifiers, key_code: KeyCode) -> Option<ReedlineEvent> {
-        for binding in &self.bindings {
-            if binding.modifier == modifier && binding.key_code == key_code {
-                return Some(binding.command.clone());
-            }
-        }
-
-        None
+        let key_combo = KeyCombination { modifier, key_code };
+        self.bindings.get(&key_combo).cloned()
     }
 }
 
@@ -70,6 +69,8 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::CONTROL, KC::Right, edit_bind(EC::MoveWordRight));
     kb.add_binding(KM::CONTROL, KC::Delete, edit_bind(EC::DeleteWord));
     kb.add_binding(KM::CONTROL, KC::Backspace, edit_bind(EC::BackspaceWord));
+    kb.add_binding(KM::CONTROL, KC::Char('d'), ReedlineEvent::CtrlD);
+    kb.add_binding(KM::CONTROL, KC::Char('c'), ReedlineEvent::CtrlC);
     kb.add_binding(KM::CONTROL, KC::Char('g'), edit_bind(EC::Redo));
     kb.add_binding(KM::CONTROL, KC::Char('z'), edit_bind(EC::Undo));
     kb.add_binding(KM::CONTROL, KC::Char('d'), edit_bind(EC::Delete));
@@ -87,6 +88,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::CONTROL, KC::Char('n'), ReedlineEvent::NextHistory);
     kb.add_binding(KM::CONTROL, KC::Char('r'), ReedlineEvent::SearchHistory);
     kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
+    kb.add_binding(KM::CONTROL, KC::Char('l'), ReedlineEvent::ClearScreen);
     kb.add_binding(KM::ALT, KC::Char('b'), edit_bind(EC::MoveWordLeft));
     kb.add_binding(KM::ALT, KC::Char('f'), edit_bind(EC::MoveWordRight));
     kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
@@ -100,6 +102,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::ALT, KC::Backspace, edit_bind(EC::BackspaceWord));
     kb.add_binding(KM::NONE, KC::Up, ReedlineEvent::Up);
     kb.add_binding(KM::NONE, KC::End, edit_bind(EC::MoveToEnd));
+    kb.add_binding(KM::NONE, KC::Tab, ReedlineEvent::HandleTab);
     kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToStart));
     kb.add_binding(KM::NONE, KC::Down, ReedlineEvent::Down);
     kb.add_binding(KM::NONE, KC::Left, edit_bind(EC::MoveLeft));
@@ -108,4 +111,25 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
 
     kb
+}
+
+pub fn default_vi_normal_keybindings() -> Keybindings {
+    Keybindings::new()
+}
+
+pub fn default_vi_insert_keybindings() -> Keybindings {
+    use EditCommand as EC;
+    use KeyCode as KC;
+    use KeyModifiers as KM;
+
+    let mut keybindings = Keybindings::new();
+
+    keybindings.add_binding(KM::NONE, KC::Up, ReedlineEvent::Up);
+    keybindings.add_binding(KM::NONE, KC::Down, ReedlineEvent::Down);
+    keybindings.add_binding(KM::NONE, KC::Left, edit_bind(EC::MoveLeft));
+    keybindings.add_binding(KM::NONE, KC::Right, edit_bind(EC::MoveRight));
+    keybindings.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
+    keybindings.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
+
+    keybindings
 }
