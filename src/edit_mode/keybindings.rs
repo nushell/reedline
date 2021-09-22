@@ -97,7 +97,6 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::ALT, KC::Char('c'), edit_bind(EC::CapitalizeChar));
     kb.add_binding(KM::ALT, KC::Left, edit_bind(EC::MoveWordLeft));
     kb.add_binding(KM::ALT, KC::Right, edit_bind(EC::MoveWordRight));
-    kb.add_binding(KM::ALT, KC::Enter, edit_bind(EC::InsertChar('\n')));
     kb.add_binding(KM::ALT, KC::Delete, edit_bind(EC::DeleteWord));
     kb.add_binding(KM::ALT, KC::Backspace, edit_bind(EC::BackspaceWord));
     kb.add_binding(KM::NONE, KC::Up, ReedlineEvent::Up);

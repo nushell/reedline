@@ -5,6 +5,7 @@ use crossterm::event;
 use crate::{
     edit_mode::{EditMode, Emacs},
     enums::ReedlineEvent,
+    DefaultValidator, ValidationResult, Validator,
 };
 
 use {
@@ -79,6 +80,9 @@ pub struct Reedline {
     history: Box<dyn History>,
     input_mode: InputMode,
 
+    // Validator
+    validator: Box<dyn Validator>,
+
     // Stdout
     painter: Painter,
 
@@ -106,6 +110,7 @@ impl Reedline {
         let painter = Painter::new(stdout());
         let buffer_highlighter = Box::new(DefaultHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
+        let validator = Box::new(DefaultValidator);
 
         let terminal_size = terminal::size()?;
         // Note: this is started with a garbage value
@@ -124,6 +129,7 @@ impl Reedline {
             prompt_widget,
             highlighter: buffer_highlighter,
             hinter,
+            validator,
         };
 
         Ok(reedline)
@@ -235,6 +241,23 @@ impl Reedline {
         self.history = history;
 
         Ok(self)
+    }
+
+    /// A builder that configures the validator for your instance of the Reedline engine
+    /// # Example
+    /// ```rust,no_run
+    /// // Create a reedline object with validator support
+    ///
+    /// use std::io;
+    /// use reedline::{DefaultValidator, Reedline};
+    ///
+    /// let mut line_editor =
+    /// Reedline::create()?.with_validator(Box::new(DefaultValidator));
+    /// # Ok::<(), io::Error>(())
+    /// ```
+    pub fn with_validator(mut self, validator: Box<dyn Validator>) -> Reedline {
+        self.validator = validator;
+        self
     }
 
     /// A builder which configures the edit mode for your instance of the Reedline engine
@@ -527,13 +550,17 @@ impl Reedline {
             }
             ReedlineEvent::Enter => {
                 let buffer = self.editor.get_buffer().to_string();
+                if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
+                    self.append_to_history();
+                    self.run_edit_commands(&[EditCommand::Clear], prompt)?;
+                    self.print_crlf()?;
+                    self.editor.reset_olds();
 
-                self.append_to_history();
-                self.run_edit_commands(&[EditCommand::Clear], prompt)?;
-                self.print_crlf()?;
-                self.editor.reset_olds();
-
-                Ok(Some(Signal::Success(buffer)))
+                    Ok(Some(Signal::Success(buffer)))
+                } else {
+                    self.run_edit_commands(&[EditCommand::InsertChar('\n')], prompt)?;
+                    Ok(None)
+                }
             }
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands, prompt)?;
