@@ -432,6 +432,7 @@ fn is_word_boundary(s: &str) -> bool {
 mod test {
     use super::*;
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     fn buffer_with(content: &str) -> LineBuffer {
         let mut line_buffer = LineBuffer::new();
@@ -481,88 +482,45 @@ mod test {
         );
     }
 
-    #[test]
-    fn set_buffer_updates_insertion_point_to_new_buffer_length() {
+    #[rstest]
+    #[case("new string", InsertionPoint { offset: 10})]
+    #[case("new line1\nnew line 2", InsertionPoint { offset: 20})]
+    fn set_buffer_updates_insertion_point_to_new_buffer_length(
+        #[case] string_to_set: &str,
+        #[case] expected_insertion_point: InsertionPoint,
+    ) {
         let mut line_buffer = buffer_with("test string");
         let before_operation_location = InsertionPoint { offset: 11 };
         assert_eq!(before_operation_location, line_buffer.insertion_point());
 
-        line_buffer.set_buffer("new string".to_string());
+        line_buffer.set_buffer(string_to_set.to_string());
 
-        let after_operation_location = InsertionPoint { offset: 10 };
-        assert_eq!(after_operation_location, line_buffer.insertion_point());
+        assert_eq!(expected_insertion_point, line_buffer.insertion_point());
     }
 
-    #[test]
-    fn set_buffer_works_with_multi_line_string() {
-        let mut line_buffer = buffer_with("test string");
-        let before_operation_location = InsertionPoint { offset: 11 };
-        assert_eq!(before_operation_location, line_buffer.insertion_point());
-
-        line_buffer.set_buffer("new line 1\nnew_line 2".to_string());
-
-        let after_operation_location = InsertionPoint { offset: 21 };
-        assert_eq!(after_operation_location, line_buffer.insertion_point());
-    }
-
-    #[test]
-    fn delete_left_grapheme_works() {
-        let mut line_buffer = buffer_with("This is a test");
+    #[rstest]
+    #[case("This is a test", "This is a tes")]
+    #[case("This is a test 😊", "This is a test ")]
+    #[case("", "")]
+    fn delete_left_grapheme_works(#[case] input: &str, #[case] expected: &str) {
+        let mut line_buffer = buffer_with(input);
         line_buffer.delete_left_grapheme();
 
-        let expected_line_buffer = buffer_with("This is a tes");
+        let expected_line_buffer = buffer_with(expected);
 
         assert_eq!(expected_line_buffer, line_buffer);
     }
 
-    #[test]
-    fn delete_left_grapheme_works_with_emojis() {
-        let mut line_buffer = buffer_with("This is a test 😊");
-        line_buffer.delete_left_grapheme();
-
-        let expected_line_buffer = buffer_with("This is a test ");
-
-        assert_eq!(expected_line_buffer, line_buffer);
-    }
-
-    #[test]
-    fn delete_left_grapheme_on_an_empty_buffer_is_a_no_op() {
-        let mut line_buffer = buffer_with("");
-        line_buffer.delete_left_grapheme();
-
-        let expected_line_buffer = buffer_with("");
-
-        assert_eq!(expected_line_buffer, line_buffer);
-    }
-
-    #[test]
-    fn delete_right_grapheme_works() {
-        let mut line_buffer = buffer_with("This is a test");
+    #[rstest]
+    #[case("This is a test", "This is a tes")]
+    #[case("This is a test 😊", "This is a test ")]
+    #[case("", "")]
+    fn delete_right_grapheme_works(#[case] input: &str, #[case] expected: &str) {
+        let mut line_buffer = buffer_with(input);
         line_buffer.move_left();
         line_buffer.delete_right_grapheme();
 
-        let expected_line_buffer = buffer_with("This is a tes");
-
-        assert_eq!(expected_line_buffer, line_buffer);
-    }
-
-    #[test]
-    fn delete_right_grapheme_works_with_emojis() {
-        let mut line_buffer = buffer_with("This is a test 😊");
-        line_buffer.move_left();
-        line_buffer.delete_right_grapheme();
-
-        let expected_line_buffer = buffer_with("This is a test ");
-
-        assert_eq!(expected_line_buffer, line_buffer);
-    }
-
-    #[test]
-    fn delete_right_grapheme_on_an_empty_buffer_is_a_no_op() {
-        let mut line_buffer = buffer_with("");
-        line_buffer.delete_right_grapheme();
-
-        let expected_line_buffer = buffer_with("");
+        let expected_line_buffer = buffer_with(expected);
 
         assert_eq!(expected_line_buffer, line_buffer);
     }
@@ -588,35 +546,14 @@ mod test {
         assert_eq!(expected_line_buffer, line_buffer);
     }
 
-    #[test]
-    #[ignore] // Note: Not sure if this is the intended behaviour
-    fn uppercase_word_works_when_one_last_index() {
-        let mut line_buffer = buffer_with("This is a test");
-        line_buffer.uppercase_word();
+    #[rstest]
+    #[case("This is a te", 4)]
+    #[case("This is a test", 4)]
+    #[case("This      is a test", 4)]
+    fn word_count_works(#[case] input: &str, #[case] expected_count: usize) {
+        let line_buffer1 = buffer_with(input);
 
-        let expected_line_buffer = buffer_with("This is a TEST");
-
-        assert_eq!(expected_line_buffer, line_buffer);
-    }
-
-    #[test]
-    fn uppercase_word_works() {
-        let mut line_buffer = buffer_with("This is a test");
-        line_buffer.move_word_left();
-        line_buffer.uppercase_word();
-
-        let expected_line_buffer = buffer_with("This is a TEST");
-
-        assert_eq!(expected_line_buffer, line_buffer);
-    }
-
-    #[test]
-    fn word_count_works() {
-        let line_buffer1 = buffer_with("This is a te");
-        let line_buffer2 = buffer_with("This is a test");
-
-        assert_eq!(4, line_buffer1.word_count());
-        assert_eq!(4, line_buffer2.word_count());
+        assert_eq!(expected_count, line_buffer1.word_count());
     }
 
     #[test]
@@ -625,11 +562,148 @@ mod test {
 
         assert_eq!(4, line_buffer.word_count());
     }
-}
 
-#[test]
-fn emoji_test() {
-    //TODO
-    // "😊";
-    // "🤦🏼‍♂️";
+    #[rstest]
+    // FIXME: capitalize_char move insertion point to the end
+    #[case("This is a test", 13, "This is a tesT", 14)]
+    // FIXME: capitalize_char move insertion point to the end
+    #[case("This is a test", 10, "This is a Test", 14)]
+    fn capitalize_char_works(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] output: &str,
+        #[case] out_location: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+        line_buffer.capitalize_char();
+
+        let mut expected = buffer_with(output);
+        expected.set_insertion_point(out_location);
+
+        assert_eq!(expected, line_buffer);
+    }
+
+    #[rstest]
+    // FIXME: uppercase_word does not work when on penultimate location
+    // #[case("This is a test", 13, "This is a TEST", 13)]
+    // FIXME: uppercase_word updates the insertion point location
+    #[case("This is a test", 10, "This is a TEST", 14)]
+    fn uppercase_word_works(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] output: &str,
+        #[case] out_location: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+        line_buffer.uppercase_word();
+
+        let mut expected = buffer_with(output);
+        expected.set_insertion_point(out_location);
+
+        assert_eq!(expected, line_buffer);
+    }
+
+    #[rstest]
+    // FIXME: uppercase_word does not work when on penultimate location
+    // #[case("This is a TEST", 13, "This is a test", 13)]
+    // FIXME: uppercase_word updates the insertion point location
+    #[case("This is a TEST", 10, "This is a test", 14)]
+    fn lowercase_word_works(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] output: &str,
+        #[case] out_location: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+        line_buffer.lowercase_word();
+
+        let mut expected = buffer_with(output);
+        expected.set_insertion_point(out_location);
+
+        assert_eq!(expected, line_buffer);
+    }
+
+    #[rstest]
+    #[case("This is a test", 13, "This is a tets", 14)]
+    #[case("This is a test", 14, "This is a test", 14)]
+    // FIXME: swap_graphemes does not work with first index
+    // #[case("This is a test", (0, 0), "hTis is a test", (0, 0))]
+    fn swap_graphemes_work(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] output: &str,
+        #[case] out_location: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        line_buffer.swap_graphemes();
+
+        let mut expected = buffer_with(output);
+        expected.set_insertion_point(out_location);
+
+        assert_eq!(line_buffer, expected);
+    }
+
+    #[rstest]
+    #[case("This is a test", 9, "This is test a", 14)]
+    // FIXME: Shouldn't this be a no-op
+    // #[case("This is a test", 14, "This is a test", 14)]
+    fn swap_words_works(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] output: &str,
+        #[case] out_location: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        line_buffer.swap_words();
+
+        let mut expected = buffer_with(output);
+        expected.set_insertion_point(out_location);
+
+        assert_eq!(line_buffer, expected);
+    }
+
+    #[rstest]
+    #[case("line 1\nline 2", 7, "line 1\nline 2", 0)]
+    fn moving_up_works(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] output: &str,
+        #[case] out_location: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        line_buffer.move_line_up();
+
+        let mut expected = buffer_with(output);
+        expected.set_insertion_point(out_location);
+
+        assert_eq!(line_buffer, expected);
+    }
+
+    #[rstest]
+    #[case("line 1\nline 2", 0, "line 1\nline 2", 7)]
+    fn moving_down_works(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] output: &str,
+        #[case] out_location: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        line_buffer.move_line_down();
+
+        let mut expected = buffer_with(output);
+        expected.set_insertion_point(out_location);
+
+        assert_eq!(line_buffer, expected);
+    }
 }
