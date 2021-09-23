@@ -111,6 +111,15 @@ impl Painter {
         Ok(())
     }
 
+    /// Scroll by n rows
+    pub fn scroll_rows(&mut self, num_rows: u16) -> Result<()> {
+        self.stdout
+            .queue(crossterm::terminal::ScrollUp(num_rows))?
+            .flush()?;
+
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn repaint_everything(
         &mut self,

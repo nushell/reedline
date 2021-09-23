@@ -108,8 +108,8 @@ impl Editor {
         self.line_buffer.swap_graphemes();
     }
 
-    pub fn set_insertion_point(&mut self, line: usize, pos: usize) {
-        self.line_buffer.set_insertion_point(line, pos)
+    pub fn set_insertion_point(&mut self, pos: usize) {
+        self.line_buffer.set_insertion_point(pos)
     }
 
     pub fn get_buffer(&self) -> &str {
@@ -143,8 +143,16 @@ impl Editor {
         self.line_buffer.line()
     }
 
+    pub fn num_lines(&self) -> usize {
+        self.line_buffer.num_lines()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.line_buffer.is_empty()
+    }
+
+    pub fn ends_with(&self, c: char) -> bool {
+        self.line_buffer.ends_with(c)
     }
 
     pub fn is_cursor_at_first_line(&self) -> bool {
@@ -239,8 +247,7 @@ impl Editor {
             self.cut_buffer
                 .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
             self.clear_range(cut_range);
-            self.line_buffer
-                .set_insertion_point(self.line_buffer.line(), left_index);
+            self.line_buffer.set_insertion_point(left_index);
         }
     }
 
