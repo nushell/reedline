@@ -520,6 +520,35 @@ impl Reedline {
         }
     }
 
+    fn adjust_prompt_position(&mut self) -> Result<()> {
+        let (prompt_origin_column, prompt_origin_row) = self.prompt_widget.origin;
+        let (prompt_offset_column, prompt_offset_row) = self.prompt_widget.offset;
+
+        let buffer_line_count = self.editor.num_lines() as u16;
+
+        let ends_in_newline = self.editor.ends_with('\n');
+
+        let terminal_rows = self.terminal_rows();
+
+        if prompt_offset_row + buffer_line_count > terminal_rows {
+            let spill = prompt_offset_row + buffer_line_count - terminal_rows;
+
+            // FIXME: see if we want this as the permanent home
+            if ends_in_newline {
+                self.painter.scroll_rows(spill - 1)?;
+            } else {
+                self.painter.scroll_rows(spill)?;
+            }
+
+            // We have wrapped off bottom of screen, and prompt is on new row
+            // We need to update the prompt location in this case
+            self.set_prompt_offset((prompt_offset_column, prompt_offset_row - spill));
+            self.set_prompt_origin((prompt_origin_column, prompt_origin_row - spill));
+        }
+
+        Ok(())
+    }
+
     fn handle_event(
         &mut self,
         prompt: &dyn Prompt,
@@ -559,6 +588,8 @@ impl Reedline {
                     Ok(Some(Signal::Success(buffer)))
                 } else {
                     self.run_edit_commands(&[EditCommand::InsertChar('\n')], prompt)?;
+                    self.adjust_prompt_position()?;
+                    self.full_repaint(prompt, self.prompt_widget.origin)?;
 
                     Ok(None)
                 }
@@ -601,12 +632,14 @@ impl Reedline {
             }
             ReedlineEvent::Up => {
                 self.up_command();
-                self.buffer_paint(self.prompt_widget.offset)?;
+                self.adjust_prompt_position()?;
+                self.full_repaint(prompt, self.prompt_widget.origin)?;
                 Ok(None)
             }
             ReedlineEvent::Down => {
                 self.down_command();
-                self.buffer_paint(self.prompt_widget.offset)?;
+                self.adjust_prompt_position()?;
+                self.full_repaint(prompt, self.prompt_widget.origin)?;
                 Ok(None)
             }
             ReedlineEvent::SearchHistory => {

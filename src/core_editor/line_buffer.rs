@@ -72,6 +72,20 @@ impl LineBuffer {
         }
     }
 
+    pub fn num_lines(&self) -> usize {
+        let count = self.lines.split('\n').count();
+
+        if count == 0 {
+            1
+        } else {
+            count
+        }
+    }
+
+    pub fn ends_with(&self, c: char) -> bool {
+        self.lines.ends_with(c)
+    }
+
     /// Set to a single line of `buffer` and reset the `InsertionPoint` cursor
     pub fn set_buffer(&mut self, buffer: String) {
         let offset = buffer.len();
