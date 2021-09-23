@@ -80,8 +80,8 @@ impl Painter {
     ) -> Result<()> {
         let (before_cursor, after_cursor) = highlighted_line;
 
-        let before_cursor_lines = before_cursor.lines();
-        let after_cursor_lines = after_cursor.lines();
+        let before_cursor_lines = before_cursor.split('\n');
+        let after_cursor_lines = after_cursor.split('\n');
 
         let mut commands = self
             .stdout
