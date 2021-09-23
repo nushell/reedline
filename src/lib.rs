@@ -1,6 +1,11 @@
 //! # reedline `\|/`
 //! # A readline replacement written in Rust
 //!
+//! Reedline is a project to create a readline-style crate
+//! for Rust that supports many of the modern conveniences of CLIs,
+//! including syntax highlighting, completions, multiline support,
+//! Unicode support, and more.
+//!
 //! ## Basic example
 //!
 //! ```rust,no_run
@@ -163,9 +168,10 @@
 //! - [x] Basic EMACS-style editing shortcuts.
 //! - [x] Configurable keybindings.
 //! - [x] Basic system integration with clipboard or optional stored history file.
-//! - [x] Content aware highlighting or validation.
+//! - [x] Content aware highlighting.
 //! - [x] Autocompletion.
-//! - [ ] Advanced multiline unicode aware editing.
+//! - [x] Undo support.
+//! - [x] Multiline aware editing with line completion validation.
 //!
 //! For a more detailed roadmap check out [TODO.txt](https://github.com/jntrnr/reedline/blob/main/TODO.txt).
 //!
