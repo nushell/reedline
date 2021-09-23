@@ -50,6 +50,14 @@ impl EditMode for Vi {
                 (Mode::Insert, KeyModifiers::NONE, KeyCode::Char(c)) => {
                     ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
                 }
+                // This combination of modifiers (CONTROL | ALT) is needed for non american keyboards.
+                // There is a special key called 'alt gr' that is captured with the combinations
+                // of those two modifiers
+                (Mode::Insert, m, KeyCode::Char(c))
+                    if m == KeyModifiers::CONTROL | KeyModifiers::ALT =>
+                {
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
+                }
                 (Mode::Insert, KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                     ReedlineEvent::Edit(vec![EditCommand::InsertChar(c.to_ascii_uppercase())])
                 }
