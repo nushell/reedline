@@ -28,25 +28,23 @@ impl Validator for DefaultValidator {
 }
 
 fn incomplete_brackets(line: &str) -> bool {
-    let mut brackets = 0;
-    let mut square_brackets = 0;
-    let mut pharentesis = 0;
+    let mut balance: Vec<char> = Vec::new();
 
     for c in line.chars() {
         if c == '{' {
-            brackets += 1;
-        } else if c == '}' {
-            brackets -= 1;
+            balance.push('}')
         } else if c == '[' {
-            square_brackets += 1
-        } else if c == ']' {
-            square_brackets -= 1
+            balance.push(']')
         } else if c == '(' {
-            pharentesis += 1
-        } else if c == ')' {
-            pharentesis -= 1
+            balance.push(')')
+        } else if ['}', ']', ')'].contains(&c) {
+            if let Some(last) = balance.last() {
+                if last == &c {
+                    balance.pop();
+                }
+            }
         }
     }
 
-    !(brackets == 0 && square_brackets == 0 && pharentesis == 0)
+    !balance.is_empty()
 }
