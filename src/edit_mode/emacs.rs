@@ -28,6 +28,9 @@ impl EditMode for Emacs {
                 (KeyModifiers::NONE, KeyCode::Char(c)) => {
                     ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
                 }
+                (m, KeyCode::Char(c)) if m == KeyModifiers::CONTROL | KeyModifiers::ALT => {
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
+                }
                 (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                     ReedlineEvent::Edit(vec![EditCommand::InsertChar(c.to_ascii_uppercase())])
                 }
@@ -49,7 +52,7 @@ impl EditMode for Emacs {
 }
 
 impl Emacs {
-    /// Emacs style input parsing constructer if you want to use custom keybindings
+    /// Emacs style input parsing constructor if you want to use custom keybindings
     pub fn new(keybindings: Keybindings) -> Self {
         Emacs { keybindings }
     }
