@@ -89,6 +89,7 @@ impl Painter {
 
         for (idx, before_cursor_line) in before_cursor_lines.enumerate() {
             if idx != 0 {
+                commands = commands.queue(Clear(ClearType::UntilNewLine))?;
                 commands = commands.queue(Print("\r\n"))?;
             }
             commands = commands.queue(Print(before_cursor_line))?;
@@ -98,6 +99,7 @@ impl Painter {
 
         for (idx, after_cursor_line) in after_cursor_lines.enumerate() {
             if idx != 0 {
+                commands = commands.queue(Clear(ClearType::UntilNewLine))?;
                 commands = commands.queue(Print("\r\n"))?;
             }
             commands = commands.queue(Print(after_cursor_line))?;
