@@ -501,7 +501,7 @@ mod test {
 
         line_buffer.set_buffer("new line 1\nnew_line 2".to_string());
 
-        let after_operation_location = InsertionPoint { offset: 10 };
+        let after_operation_location = InsertionPoint { offset: 21 };
         assert_eq!(after_operation_location, line_buffer.insertion_point());
     }
 
