@@ -28,6 +28,9 @@ impl EditMode for Emacs {
                 (KeyModifiers::NONE, KeyCode::Char(c)) => {
                     ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
                 }
+                // This combination of modifiers (CONTROL | ALT) is needed for non american keyboards.
+                // There is a special key called 'alt gr' that is captured with the combination
+                // of those two modifiers
                 (m, KeyCode::Char(c)) if m == KeyModifiers::CONTROL | KeyModifiers::ALT => {
                     ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
                 }
