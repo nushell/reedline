@@ -3,18 +3,12 @@ Line editor
 TODO:
 
 * vi mode
-* 'dw' => delete word. 'delete' first part, and 'word' second part
-* Repeats '10dw' => 10x 'dw'
+  * 'dw' => delete word. 'delete' first part, and 'word' second part
+  * Repeats '10dw' => 10x 'dw'
 * Make idle animations configurable (and able to be disabled)
 * Make more clear that keybindings are for emacs
-* Undo (ctrl-z)
-* Multiline support
-* Document recent API additions
-* Validation
 * UX improvements
-  * Autocompletion
   * Under status
-  * Hinting
 * History handle multiple instances. Could potentially create multiple history files based on the instance of reedline
 
 DONE:
@@ -72,3 +66,9 @@ X Syntax highlighting
   * Move syntax highlighting from ansi strings to styled buffer
   * color -> style (color, bold/italic/underline)
 X history hinting
+X Undo (ctrl-z)
+X Multiline support
+X Document recent API additions
+X Validation
+X Hinting
+X Autocompletion
