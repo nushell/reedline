@@ -143,6 +143,18 @@ let mut line_editor = Reedline::create()?.with_hinter(Box::new(
 ));
 ```
 
+## Integrate with custom line completion Validator
+
+```rust,no_run
+// Create a reedline object with line completion validation support
+
+use reedline::{DefaultValidator, Reedline};
+
+let validator = Box::new(DefaultValidator);
+
+let mut line_editor = Reedline::create()?.with_validator(validator);
+```
+
 ## Integrate with custom Edit Mode
 
 ```rust,no_run
