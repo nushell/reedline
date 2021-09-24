@@ -324,24 +324,26 @@ impl LineBuffer {
     }
 
     pub fn swap_graphemes(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
+        let initial_offset = self.insertion_point().offset;
 
-        if insertion_offset == 0 {
+        if initial_offset == 0 {
             self.move_right()
-        } else if insertion_offset == self.get_buffer().len() {
+        } else if initial_offset == self.get_buffer().len() {
             self.move_left()
         }
+
+        let updated_offset = self.insertion_point().offset;
         let grapheme_1_start = self.grapheme_left_index();
         let grapheme_2_end = self.grapheme_right_index();
 
-        if grapheme_1_start < insertion_offset && grapheme_2_end > insertion_offset {
-            let grapheme_1 = self.get_buffer()[grapheme_1_start..insertion_offset].to_string();
-            let grapheme_2 = self.get_buffer()[insertion_offset..grapheme_2_end].to_string();
-            self.replace_range(insertion_offset..grapheme_2_end, &grapheme_1);
-            self.replace_range(grapheme_1_start..insertion_offset, &grapheme_2);
+        if grapheme_1_start < updated_offset && grapheme_2_end > updated_offset {
+            let grapheme_1 = self.get_buffer()[grapheme_1_start..updated_offset].to_string();
+            let grapheme_2 = self.get_buffer()[updated_offset..grapheme_2_end].to_string();
+            self.replace_range(updated_offset..grapheme_2_end, &grapheme_1);
+            self.replace_range(grapheme_1_start..updated_offset, &grapheme_2);
             self.insertion_point.offset = grapheme_2_end;
         } else {
-            self.insertion_point.offset = insertion_offset;
+            self.insertion_point.offset = updated_offset;
         }
     }
 
@@ -634,9 +636,9 @@ mod test {
 
     #[rstest]
     #[case("This is a test", 13, "This is a tets", 14)]
-    #[case("This is a test", 14, "This is a test", 14)]
-    // FIXME: swap_graphemes does not work with first index
-    // #[case("This is a test", (0, 0), "hTis is a test", (0, 0))]
+    #[case("This is a test", 14, "This is a tets", 14)] // NOTE: Swaping works in opposite direction at last index
+    #[case("This is a test", 4, "Thi sis a test", 5)] // NOTE: Swaps space, moves right
+    #[case("This is a test", 0, "hTis is a test", 2)]
     fn swap_graphemes_work(
         #[case] input: &str,
         #[case] in_location: usize,
