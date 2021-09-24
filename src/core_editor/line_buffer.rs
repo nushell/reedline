@@ -225,27 +225,30 @@ impl LineBuffer {
             .unwrap_or(false)
     }
 
-    pub fn uppercase_word(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
+    pub fn current_word_range(&mut self) -> Range<usize> {
         let right_index = self.word_right_index();
+        let left_index = self.lines[..right_index]
+            .split_word_bound_indices()
+            .filter(|(_, word)| !is_word_boundary(word))
+            .last()
+            .map(|(i, _)| i)
+            .unwrap_or(0);
 
-        if right_index > insertion_offset {
-            let change_range = insertion_offset..right_index;
-            let uppercased = self.get_buffer()[change_range.clone()].to_uppercase();
-            self.replace_range(change_range, &uppercased);
-            self.move_word_right();
-        }
+        left_index..right_index
+    }
+
+    pub fn uppercase_word(&mut self) {
+        let change_range = self.current_word_range();
+        let uppercased = self.get_buffer()[change_range.clone()].to_uppercase();
+        self.replace_range(change_range, &uppercased);
+        self.move_word_right();
     }
 
     pub fn lowercase_word(&mut self) {
-        let insertion_offset = self.insertion_point().offset;
-        let right_index = self.word_right_index();
-        if right_index > insertion_offset {
-            let change_range = insertion_offset..right_index;
-            let lowercased = self.get_buffer()[change_range.clone()].to_lowercase();
-            self.replace_range(change_range, &lowercased);
-            self.move_word_right();
-        }
+        let change_range = self.current_word_range();
+        let uppercased = self.get_buffer()[change_range.clone()].to_lowercase();
+        self.replace_range(change_range, &uppercased);
+        self.move_word_right();
     }
 
     pub fn word_count(&self) -> usize {
@@ -586,10 +589,11 @@ mod test {
     }
 
     #[rstest]
-    // FIXME: uppercase_word does not work when on penultimate location
-    // #[case("This is a test", 13, "This is a TEST", 13)]
-    // FIXME: uppercase_word updates the insertion point location
+    #[case("This is a test", 13, "This is a TEST", 14)]
     #[case("This is a test", 10, "This is a TEST", 14)]
+    #[case("", 0, "", 0)]
+    #[case("This", 0, "THIS", 4)]
+    #[case("This", 4, "THIS", 4)]
     fn uppercase_word_works(
         #[case] input: &str,
         #[case] in_location: usize,
@@ -607,10 +611,11 @@ mod test {
     }
 
     #[rstest]
-    // FIXME: uppercase_word does not work when on penultimate location
-    // #[case("This is a TEST", 13, "This is a test", 13)]
-    // FIXME: uppercase_word updates the insertion point location
+    #[case("This is a TEST", 13, "This is a test", 14)]
     #[case("This is a TEST", 10, "This is a test", 14)]
+    #[case("", 0, "", 0)]
+    #[case("THIS", 0, "this", 4)]
+    #[case("THIS", 4, "this", 4)]
     fn lowercase_word_works(
         #[case] input: &str,
         #[case] in_location: usize,
