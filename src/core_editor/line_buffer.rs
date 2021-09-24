@@ -302,24 +302,17 @@ impl LineBuffer {
     }
 
     pub fn swap_words(&mut self) {
-        let old_insertion_point = self.insertion_point().offset;
+        let word_1_range = self.current_word_range();
         self.move_word_right();
-        let word_2_end = self.insertion_point().offset;
-        self.move_word_left();
-        let word_2_start = self.insertion_point().offset;
-        self.move_word_left();
-        let word_1_start = self.insertion_point().offset;
-        let word_1_end = self.word_right_index();
+        let word_2_range = self.current_word_range();
 
-        if word_1_start < word_1_end && word_1_end < word_2_start && word_2_start < word_2_end {
+        if word_1_range != word_2_range {
+            self.move_word_left();
             let insertion_line = self.get_buffer();
-            let word_1 = insertion_line[word_1_start..word_1_end].to_string();
-            let word_2 = insertion_line[word_2_start..word_2_end].to_string();
-            self.replace_range(word_2_start..word_2_end, &word_1);
-            self.replace_range(word_1_start..word_1_end, &word_2);
-            self.insertion_point.offset = word_2_end;
-        } else {
-            self.insertion_point.offset = old_insertion_point;
+            let word_1 = insertion_line[word_1_range.clone()].to_string();
+            let word_2 = insertion_line[word_2_range.clone()].to_string();
+            self.replace_range(word_2_range, &word_1);
+            self.replace_range(word_1_range, &word_2);
         }
     }
 
@@ -657,9 +650,9 @@ mod test {
     }
 
     #[rstest]
-    #[case("This is a test", 9, "This is test a", 14)]
-    // FIXME: Shouldn't this be a no-op
-    // #[case("This is a test", 14, "This is a test", 14)]
+    #[case("This is a test", 8, "This is test a", 8)]
+    #[case("This is a test", 0, "is This a test", 0)]
+    #[case("This is a test", 14, "This is a test", 14)]
     fn swap_words_works(
         #[case] input: &str,
         #[case] in_location: usize,
