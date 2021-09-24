@@ -252,6 +252,8 @@ impl LineBuffer {
         self.lines.trim().split_whitespace().count()
     }
 
+    // Capitallize the character at insertion point and move the insertion point right one
+    // grapheme.
     pub fn capitalize_char(&mut self) {
         if self.on_whitespace() {
             self.move_word_right();
@@ -259,11 +261,12 @@ impl LineBuffer {
         }
         let insertion_offset = self.insertion_point().offset;
         let right_index = self.grapheme_right_index();
+
         if right_index > insertion_offset {
             let change_range = insertion_offset..right_index;
             let uppercased = self.get_buffer()[change_range.clone()].to_uppercase();
             self.replace_range(change_range, &uppercased);
-            self.move_word_right();
+            self.move_right();
         }
     }
 
@@ -564,10 +567,8 @@ mod test {
     }
 
     #[rstest]
-    // FIXME: capitalize_char move insertion point to the end
     #[case("This is a test", 13, "This is a tesT", 14)]
-    // FIXME: capitalize_char move insertion point to the end
-    #[case("This is a test", 10, "This is a Test", 14)]
+    #[case("This is a test", 10, "This is a Test", 11)]
     fn capitalize_char_works(
         #[case] input: &str,
         #[case] in_location: usize,
