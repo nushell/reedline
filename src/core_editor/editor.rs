@@ -5,10 +5,33 @@ use super::{
     Clipboard, LineBuffer,
 };
 
+#[allow(dead_code)]
+fn undo_strategy_allow_all(
+    undo_stack: &mut Box<dyn UndoStack<LineBuffer>>,
+    latest_entry: &LineBuffer,
+) {
+    undo_stack.insert(latest_entry.clone());
+}
+
+fn undo_strategy_club_similar(
+    undo_stack: &mut Box<dyn UndoStack<LineBuffer>>,
+    latest_entry: &LineBuffer,
+) {
+    // TODO: Add more intelligence
+    if undo_stack.current().word_count() == latest_entry.word_count() {
+        undo_stack.undo();
+    }
+    undo_stack.insert(latest_entry.clone())
+}
+
+type UndoStrategy =
+    for<'r, 's> fn(&'r mut Box<(dyn UndoStack<LineBuffer> + 'static)>, &'s LineBuffer);
+
 pub struct Editor {
     line_buffer: LineBuffer,
     cut_buffer: Box<dyn Clipboard>,
     undo_stack: Box<dyn UndoStack<LineBuffer>>,
+    undo_strategy: UndoStrategy,
 }
 
 impl Default for Editor {
@@ -17,6 +40,7 @@ impl Default for Editor {
             line_buffer: LineBuffer::new(),
             cut_buffer: Box::new(get_default_clipboard()),
             undo_stack: Box::new(BasicUndoStack::new()),
+            undo_strategy: undo_strategy_club_similar,
         }
     }
 }
@@ -200,21 +224,6 @@ impl Editor {
         self.line_buffer = val.clone();
     }
 
-    // pub fn set_previous_lines(&mut self, is_after_action: bool) -> Option<()> {
-    //     self.reset_index_undo();
-    //
-    //     if self.edits.len() > 1
-    //         && self.edits.last()?.word_count() == self.line_buffer.word_count()
-    //         && !is_after_action
-    //     {
-    //         self.edits.pop();
-    //     }
-    //     self.edits.push(self.line_buffer.clone());
-    //
-    //     Some(())
-    // }
-    //
-
     pub fn cut_from_start(&mut self) {
         let insertion_offset = self.line_buffer.offset();
         if insertion_offset > 0 {
@@ -261,8 +270,7 @@ impl Editor {
     }
 
     fn insert_to_undo_stack(&mut self) {
-        // PERF: Use some strategy to insert into undo stack instead of inserting everything
-        self.undo_stack.insert(self.line_buffer.clone());
+        (self.undo_strategy)(&mut self.undo_stack, &self.line_buffer)
     }
 }
 
@@ -270,11 +278,47 @@ impl Editor {
 mod test {
     use super::*;
     use pretty_assertions::assert_eq;
-    use rstest::rstest;
+
+    fn editor(
+        cut_buffer: Box<dyn Clipboard>,
+        undo_stack: Box<dyn UndoStack<LineBuffer>>,
+        undo_strategy: UndoStrategy,
+    ) -> Editor {
+        Editor {
+            line_buffer: LineBuffer::new(),
+            cut_buffer,
+            undo_stack,
+            undo_strategy,
+        }
+    }
 
     #[test]
-    fn undo_which_captures_all_operations() {
+    fn default_undo_strategy_clubs_words() {
         let mut editor = Editor::default();
+
+        editor.insert_char('a');
+        editor.insert_char('b');
+        editor.insert_char(' ');
+        editor.insert_char('c');
+
+        let expected_edits = vec![
+            LineBuffer::new(),
+            LineBuffer::from("ab "),
+            LineBuffer::from("ab c"),
+        ];
+
+        let actual_edits: Vec<LineBuffer> = editor.undo_stack.edits().cloned().collect();
+
+        assert_eq!(expected_edits, actual_edits);
+    }
+
+    #[test]
+    fn undo_strategy_that_tracks_all() {
+        let mut editor = editor(
+            Box::new(get_default_clipboard()),
+            Box::new(BasicUndoStack::new()),
+            undo_strategy_allow_all,
+        );
 
         editor.insert_char('a');
         editor.insert_char('b');
