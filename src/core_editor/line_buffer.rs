@@ -52,6 +52,11 @@ impl LineBuffer {
         self.insertion_point.offset
     }
 
+    /// Return cursor
+    fn insertion_point(&self) -> InsertionPoint {
+        self.insertion_point
+    }
+
     pub fn set_insertion_point(&mut self, offset: usize) {
         self.insertion_point = InsertionPoint { offset };
     }
@@ -59,6 +64,13 @@ impl LineBuffer {
     /// Output the current line in the multiline buffer
     pub fn get_buffer(&self) -> &str {
         &self.lines
+    }
+
+    /// Set to a single line of `buffer` and reset the `InsertionPoint` cursor to the end
+    pub fn set_buffer(&mut self, buffer: String) {
+        let offset = buffer.len();
+        self.lines = buffer;
+        self.insertion_point = InsertionPoint { offset };
     }
 
     /// Calculates the current the user is on
@@ -84,13 +96,6 @@ impl LineBuffer {
 
     pub fn ends_with(&self, c: char) -> bool {
         self.lines.ends_with(c)
-    }
-
-    /// Set to a single line of `buffer` and reset the `InsertionPoint` cursor
-    pub fn set_buffer(&mut self, buffer: String) {
-        let offset = buffer.len();
-        self.lines = buffer;
-        self.insertion_point = InsertionPoint { offset };
     }
 
     /// Reset the insertion point to the start of the buffer
@@ -410,17 +415,12 @@ impl LineBuffer {
         }
     }
 
-    /// Return 2D-cursor (line_number, col_in_line)
-    fn insertion_point(&self) -> InsertionPoint {
-        self.insertion_point
-    }
-
     pub fn is_cursor_at_first_line(&self) -> bool {
-        self.get_buffer()[0..self.offset()].contains('\n')
+        !self.get_buffer()[0..self.offset()].contains('\n')
     }
 
     pub fn is_cursor_at_last_line(&self) -> bool {
-        self.get_buffer()[self.offset()..].contains('\n')
+        !self.get_buffer()[self.offset()..].contains('\n')
     }
 }
 

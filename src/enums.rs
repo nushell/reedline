@@ -100,10 +100,22 @@ pub enum ReedlineEvent {
     /// Trigger Tab
     HandleTab,
 
-    /// Don't know a better name for this
+    /// Handle EndOfLine event
+    ///
+    /// Expected Behavior:
+    ///
+    /// - On empty line breaks execution to exit with [`Signal::CtrlD`]
+    /// - Secondary behavior [`EditCommand::Delete`]
     CtrlD,
 
-    /// Don't know a better name for this
+    /// Handle SIGTERM key input
+    ///
+    /// Expected behavior:
+    ///
+    /// Abort entry
+    /// Run [`EditCommand::Clear`]
+    /// Clear the current undo
+    /// Bubble up [`Signal::CtrlC`]
     CtrlC,
 
     /// Clears the screen and sets prompt to first line

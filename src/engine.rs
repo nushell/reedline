@@ -1,31 +1,35 @@
-use std::{io, time::Duration};
-
-use crossterm::event;
-
-use crate::{
-    edit_mode::{EditMode, Emacs},
-    enums::ReedlineEvent,
-    DefaultValidator, ValidationResult, Validator,
-};
-
 use {
     crate::{
-        completion::{ComplationActionHandler, DefaultCompletionActionHandler},
+        completion::{CompletionActionHandler, DefaultCompletionActionHandler},
         core_editor::Editor,
+        edit_mode::{EditMode, Emacs},
+        enums::ReedlineEvent,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         painter::Painter,
         prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus},
-        text_manipulation, DefaultHighlighter, EditCommand, Highlighter, Prompt, Signal,
+        text_manipulation, DefaultHighlighter, DefaultValidator, EditCommand, Highlighter, Prompt,
+        Signal, ValidationResult, Validator,
     },
-    crossterm::{cursor, event::read, terminal, Result},
-    std::io::stdout,
+    crossterm::{cursor, event, terminal, Result},
+    std::{io, time::Duration},
 };
 
+/// Determines if inputs should be used to extend the regular line buffer,
+/// traverse the history in the standard prompt or edit the search string in the
+/// reverse search
 #[derive(Debug, PartialEq, Eq)]
 enum InputMode {
+    /// Regular input by user typing or previous insertion.
+    /// Undo tracking is active
     Regular,
+    /// Full reverse search mode with different prompt,
+    /// editing affects the search string,
+    /// suggestions are provided to be inserted in the line buffer
     HistorySearch,
+    /// Hybrid mode indicating that history is walked through in the standard prompt
+    /// Either bash style up/down history or fish style prefix search,
+    /// Edits directly switch to [`InputMode::Regular`]
     HistoryTraversal,
 }
 
@@ -90,7 +94,7 @@ pub struct Reedline {
     edit_mode: Box<dyn EditMode>,
 
     // Perform action when user hits tab
-    tab_handler: Box<dyn ComplationActionHandler>,
+    tab_handler: Box<dyn CompletionActionHandler>,
 
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
@@ -107,7 +111,7 @@ impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     pub fn create() -> io::Result<Reedline> {
         let history = Box::new(FileBackedHistory::default());
-        let painter = Painter::new(stdout());
+        let painter = Painter::new(io::stdout());
         let buffer_highlighter = Box::new(DefaultHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
         let validator = Box::new(DefaultValidator);
@@ -191,7 +195,7 @@ impl Reedline {
     /// ```
     pub fn with_completion_action_handler(
         mut self,
-        tab_handler: Box<dyn ComplationActionHandler>,
+        tab_handler: Box<dyn CompletionActionHandler>,
     ) -> Reedline {
         self.tab_handler = tab_handler;
         self
@@ -352,66 +356,8 @@ impl Reedline {
         }
     }
 
-    /// Repaint logic for the history reverse search
-    ///
-    /// Overwrites the prompt indicator and highlights the search string
-    /// separately from the result bufer.
-    fn history_search_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
-        let navigation = self.history.get_navigation();
-
-        if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
-            let status = if !substring.is_empty() && self.history.string_at_cursor().is_none() {
-                PromptHistorySearchStatus::Failing
-            } else {
-                PromptHistorySearchStatus::Passing
-            };
-
-            let prompt_history_search = PromptHistorySearch::new(status, substring);
-
-            self.painter
-                .queue_history_search_indicator(prompt, prompt_history_search)?;
-
-            match self.history.string_at_cursor() {
-                Some(string) => {
-                    self.painter
-                        .queue_history_search_result(&string, string.len())?;
-                    self.painter.flush()?;
-                }
-
-                None => {
-                    self.painter.clear_until_newline()?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn initialize_prompt(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
-        let origin = {
-            let (column, row) = cursor::position()?;
-            if (column, row) == (0, 0) {
-                (0, 0)
-            } else if row + 1 == self.terminal_rows() {
-                self.painter.paint_carriage_return()?;
-                (0, row.saturating_sub(1))
-            } else if row + 2 == self.terminal_rows() {
-                self.painter.paint_carriage_return()?;
-                (0, row)
-            } else {
-                (0, row + 1)
-            }
-        };
-
-        self.set_prompt_origin(origin);
-        let prompt_offset = self.full_repaint(prompt, origin)?;
-        self.set_prompt_offset(prompt_offset);
-
-        Ok(())
-    }
-
     fn get_event(&mut self) -> io::Result<ReedlineEvent> {
-        let event = read()?;
+        let event = event::read()?;
         Ok(self.edit_mode.parse_event(event))
     }
 
@@ -421,33 +367,27 @@ impl Reedline {
         event: ReedlineEvent,
     ) -> io::Result<Option<Signal>> {
         match event {
-            ReedlineEvent::HandleTab => {
-                let mut line_buffer = self.editor.line_buffer();
-                self.tab_handler.handle(&mut line_buffer);
-                self.repaint(prompt)?;
-                Ok(None)
-            }
             ReedlineEvent::CtrlD => {
                 if self.editor.is_empty() {
+                    self.input_mode = InputMode::Regular;
                     self.editor.reset_olds();
                     Ok(Some(Signal::CtrlD))
                 } else {
+                    self.run_history_commands(&[EditCommand::Delete]);
                     Ok(None)
                 }
             }
             ReedlineEvent::CtrlC => {
-                self.editor.reset_olds();
+                self.input_mode = InputMode::Regular;
                 Ok(Some(Signal::CtrlC))
             }
-            ReedlineEvent::ClearScreen => {
-                self.editor.reset_olds();
-                Ok(Some(Signal::CtrlL))
-            }
-            ReedlineEvent::Enter => {
+            ReedlineEvent::ClearScreen => Ok(Some(Signal::CtrlL)),
+            ReedlineEvent::Enter | ReedlineEvent::HandleTab => {
                 self.queue_prompt_indicator(prompt)?;
 
                 if let Some(string) = self.history.string_at_cursor() {
-                    self.editor.set_buffer(string)
+                    self.editor.set_buffer(string);
+                    self.editor.set_previous_lines(true);
                 }
 
                 self.input_mode = InputMode::Regular;
@@ -461,17 +401,7 @@ impl Reedline {
             }
             ReedlineEvent::Mouse => Ok(None),
             ReedlineEvent::Resize(width, height) => {
-                self.terminal_size = (width, height);
-                // TODO properly adjusting prompt_origin on resizing while lines > 1
-
-                let new_prompt_origin_row = cursor::position()?.1.saturating_sub(1);
-                self.set_prompt_offset((
-                    self.prompt_widget.origin_columns(),
-                    new_prompt_origin_row,
-                ));
-                let new_prompt_offset = self.full_repaint(prompt, self.prompt_widget.offset)?;
-                self.set_prompt_offset(new_prompt_offset);
-                self.repaint(prompt)?;
+                self.handle_resize(width, height, prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Repaint => {
@@ -480,36 +410,17 @@ impl Reedline {
                 }
                 Ok(None)
             }
-            ReedlineEvent::PreviousHistory => {
-                self.previous_history();
-                self.buffer_paint(self.prompt_widget.offset)?;
+            ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
+                self.history.back();
+                self.repaint(prompt)?;
                 Ok(None)
             }
-            ReedlineEvent::NextHistory => {
+            ReedlineEvent::NextHistory | ReedlineEvent::Down => {
                 self.history.forward();
                 // Hacky way to ensure that we don't fall of into failed search going forward
                 if self.history.string_at_cursor().is_none() {
                     self.history.back();
                 }
-                self.buffer_paint(self.prompt_widget.offset)?;
-                Ok(None)
-            }
-            ReedlineEvent::Up => {
-                self.history.back();
-                self.buffer_paint(self.prompt_widget.offset)?;
-                Ok(None)
-            }
-            ReedlineEvent::Down => {
-                self.history.forward();
-                // Hacky way to ensure that we don't fall of into failed search going forward
-                if self.history.string_at_cursor().is_none() {
-                    self.history.back();
-                }
-                self.buffer_paint(self.prompt_widget.offset)?;
-                Ok(None)
-            }
-            ReedlineEvent::SearchHistory => {
-                self.history.back();
                 self.repaint(prompt)?;
                 Ok(None)
             }
@@ -520,6 +431,23 @@ impl Reedline {
         }
     }
 
+    /// Updates prompt origin and offset and performs a repaint to handle a screen resize event
+    fn handle_resize(&mut self, width: u16, height: u16, prompt: &dyn Prompt) -> Result<()> {
+        self.terminal_size = (width, height);
+        // TODO properly adjusting prompt_origin on resizing while lines > 1
+
+        let new_prompt_origin_row = cursor::position()?.1.saturating_sub(1);
+        self.set_prompt_offset((self.prompt_widget.origin_columns(), new_prompt_origin_row));
+        let new_prompt_offset = self.full_repaint(prompt, self.prompt_widget.offset)?;
+        self.set_prompt_offset(new_prompt_offset);
+        self.repaint(prompt)?;
+        Ok(())
+    }
+
+    /// Repositions the prompt, if the buffer content would overflow the bottom of the screen.
+    /// Checks for content that might overflow in the core buffer.
+    /// Performs scrolling and updates prompt origin and offset.
+    /// Does not trigger a full repaint!
     fn adjust_prompt_position(&mut self) -> Result<()> {
         let (prompt_origin_column, prompt_origin_row) = self.prompt_widget.origin;
         let (prompt_offset_column, prompt_offset_row) = self.prompt_widget.offset;
@@ -566,17 +494,16 @@ impl Reedline {
                     self.editor.reset_olds();
                     Ok(Some(Signal::CtrlD))
                 } else {
+                    self.run_edit_commands(&[EditCommand::Delete], prompt)?;
                     Ok(None)
                 }
             }
             ReedlineEvent::CtrlC => {
+                self.run_edit_commands(&[EditCommand::Clear], prompt)?;
                 self.editor.reset_olds();
                 Ok(Some(Signal::CtrlC))
             }
-            ReedlineEvent::ClearScreen => {
-                self.editor.reset_olds();
-                Ok(Some(Signal::CtrlL))
-            }
+            ReedlineEvent::ClearScreen => Ok(Some(Signal::CtrlL)),
             ReedlineEvent::Enter => {
                 let buffer = self.editor.get_buffer().to_string();
                 if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
@@ -601,17 +528,7 @@ impl Reedline {
             }
             ReedlineEvent::Mouse => Ok(None),
             ReedlineEvent::Resize(width, height) => {
-                self.terminal_size = (width, height);
-                // TODO properly adjusting prompt_origin on resizing while lines > 1
-
-                let new_prompt_origin_row = cursor::position()?.1.saturating_sub(1);
-                self.set_prompt_offset((
-                    self.prompt_widget.origin_columns(),
-                    new_prompt_origin_row,
-                ));
-                let new_prompt_offset = self.full_repaint(prompt, self.prompt_widget.offset)?;
-                self.set_prompt_offset(new_prompt_offset);
-                self.repaint(prompt)?;
+                self.handle_resize(width, height, prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Repaint => {
@@ -621,28 +538,37 @@ impl Reedline {
                 Ok(None)
             }
             ReedlineEvent::PreviousHistory => {
-                self.history.back();
-                self.buffer_paint(self.prompt_widget.offset)?;
+                self.previous_history();
+
+                self.adjust_prompt_position()?;
+                self.full_repaint(prompt, self.prompt_widget.origin)?;
                 Ok(None)
             }
             ReedlineEvent::NextHistory => {
                 self.next_history();
-                self.buffer_paint(self.prompt_widget.offset)?;
+
+                self.adjust_prompt_position()?;
+                self.full_repaint(prompt, self.prompt_widget.origin)?;
                 Ok(None)
             }
             ReedlineEvent::Up => {
                 self.up_command();
+
                 self.adjust_prompt_position()?;
                 self.full_repaint(prompt, self.prompt_widget.origin)?;
                 Ok(None)
             }
             ReedlineEvent::Down => {
                 self.down_command();
+
                 self.adjust_prompt_position()?;
                 self.full_repaint(prompt, self.prompt_widget.origin)?;
                 Ok(None)
             }
             ReedlineEvent::SearchHistory => {
+                // Make sure we are able to undo the result of a reverse history search
+                self.editor.set_previous_lines(true);
+
                 self.search_history();
                 self.repaint(prompt)?;
                 Ok(None)
@@ -675,19 +601,31 @@ impl Reedline {
         self.update_buffer_from_history();
     }
 
+    /// Enable the search and navigation through the history from the line buffer prompt
+    ///
+    /// Enables either prefix search with output in the line buffer or simple traversal
     fn set_history_navigation_based_on_line_buffer(&mut self) {
         if self.editor.is_empty() || self.editor.offset() != self.editor.get_buffer().len() {
+            // Perform bash-style basic up/down entry walking
             self.history.set_navigation(HistoryNavigationQuery::Normal(
-                // Hack: Hight coupling point
+                // Hack: Tight coupling point to be able to restore previously typed input
                 self.editor.line_buffer().clone(),
             ));
         } else {
+            // Prefix search like found in fish, zsh, etc.
+            // Search string is set once from the current buffer
+            // Current setup (code in other methods)
+            // Continuing with typing will leave the search
+            // but next invocation of this method will start the next search
             let buffer = self.editor.get_buffer().to_string();
             self.history
                 .set_navigation(HistoryNavigationQuery::PrefixSearch(buffer));
         }
     }
 
+    /// Switch into reverse history search mode
+    ///
+    /// This mode uses a separate prompt and handles keybindings sligthly differently!
     fn search_history(&mut self) {
         self.input_mode = InputMode::HistorySearch;
         self.history
@@ -734,6 +672,10 @@ impl Reedline {
         }
     }
 
+    /// Set the buffer contents for history traversal/search in the standard prompt
+    ///
+    /// When using the up/down traversal or fish/zsh style prefix search update the main line buffer accordingly.
+    /// Not used for the separate modal reverse search!
     fn update_buffer_from_history(&mut self) {
         match self.history.get_navigation() {
             HistoryNavigationQuery::Normal(original) => {
@@ -866,7 +808,7 @@ impl Reedline {
 
     fn up_command(&mut self) {
         // If we're at the top, then:
-        if !self.editor.is_cursor_at_first_line() {
+        if self.editor.is_cursor_at_first_line() {
             // If we're at the top, move to previous history
             self.previous_history();
         } else {
@@ -876,7 +818,7 @@ impl Reedline {
 
     fn down_command(&mut self) {
         // If we're at the top, then:
-        if !self.editor.is_cursor_at_last_line() {
+        if self.editor.is_cursor_at_last_line() {
             // If we're at the top, move to previous history
             self.next_history();
         } else {
@@ -892,6 +834,8 @@ impl Reedline {
         self.prompt_widget.origin = origin;
     }
 
+    /// TODO! FIX the naming and provide an accurate doccomment
+    /// This function repaints and updates offsets but does not purely concern it self with wrapping
     fn wrap(&mut self, original_position: (u16, u16)) -> io::Result<()> {
         let (original_column, original_row) = original_position;
         self.buffer_paint(self.prompt_widget.offset)?;
@@ -905,17 +849,6 @@ impl Reedline {
             let (prompt_origin_columns, prompt_origin_rows) = self.prompt_widget.origin;
             self.set_prompt_offset((prompt_offset_columns, prompt_offset_rows - 1));
             self.set_prompt_origin((prompt_origin_columns, prompt_origin_rows - 1));
-        }
-
-        Ok(())
-    }
-
-    fn repaint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
-        // Repainting
-        if self.input_mode == InputMode::HistorySearch {
-            self.history_search_paint(prompt)?;
-        } else {
-            self.buffer_paint(self.prompt_widget.offset)?;
         }
 
         Ok(())
@@ -947,18 +880,93 @@ impl Reedline {
         Ok(())
     }
 
+    /// Performs full repaint and sets the prompt origin and offset position.
+    ///
+    /// Prints prompt (and buffer)
+    fn initialize_prompt(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
+        let origin = {
+            let (column, row) = cursor::position()?;
+            if (column, row) == (0, 0) {
+                (0, 0)
+            } else if row + 1 == self.terminal_rows() {
+                self.painter.paint_carriage_return()?;
+                (0, row.saturating_sub(1))
+            } else if row + 2 == self.terminal_rows() {
+                self.painter.paint_carriage_return()?;
+                (0, row)
+            } else {
+                (0, row + 1)
+            }
+        };
+
+        self.set_prompt_origin(origin);
+        let prompt_offset = self.full_repaint(prompt, origin)?;
+        self.set_prompt_offset(prompt_offset);
+
+        Ok(())
+    }
+
+    /// *Partial* repaint of either the buffer or the parts for reverse history search
+    fn repaint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
+        // Repainting
+        if self.input_mode == InputMode::HistorySearch {
+            self.history_search_paint(prompt)?;
+        } else {
+            self.buffer_paint(self.prompt_widget.offset)?;
+        }
+
+        Ok(())
+    }
+
+    /// Repaint logic for the history reverse search
+    ///
+    /// Overwrites the prompt indicator and highlights the search string
+    /// separately from the result bufer.
+    fn history_search_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+        let navigation = self.history.get_navigation();
+
+        if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
+            let status = if !substring.is_empty() && self.history.string_at_cursor().is_none() {
+                PromptHistorySearchStatus::Failing
+            } else {
+                PromptHistorySearchStatus::Passing
+            };
+
+            let prompt_history_search = PromptHistorySearch::new(status, substring);
+
+            self.painter
+                .queue_history_search_indicator(prompt, prompt_history_search)?;
+
+            match self.history.string_at_cursor() {
+                Some(string) => {
+                    self.painter
+                        .queue_history_search_result(&string, string.len())?;
+                    self.painter.flush()?;
+                }
+
+                None => {
+                    self.painter.clear_until_newline()?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Repaint logic for the normal input prompt buffer
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
+    /// Performs highlighting and hinting at the moment!
     fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
         let cursor_position_in_buffer = self.editor.offset();
-        let buffer_to_paint = self.editor.get_buffer().to_string();
+        let buffer_to_paint = self.editor.get_buffer();
+
         let highlighted_line = self
             .highlighter
-            .highlight(&buffer_to_paint)
+            .highlight(buffer_to_paint)
             .render_around_insertion_point(cursor_position_in_buffer);
         let hint: String = self.hinter.handle(
-            &buffer_to_paint,
+            buffer_to_paint,
             cursor_position_in_buffer,
             self.history.as_ref(),
         );
@@ -970,21 +978,24 @@ impl Reedline {
         Ok(())
     }
 
+    /// Triggers a full repaint including the prompt parts
+    ///
+    /// Includes the highlighting and hinting calls.
     fn full_repaint(
         &mut self,
         prompt: &dyn Prompt,
         prompt_origin: (u16, u16),
     ) -> Result<(u16, u16)> {
         let prompt_mode = self.prompt_edit_mode();
-        let buffer_to_paint = self.editor.get_buffer().to_string();
-
+        let buffer_to_paint = self.editor.get_buffer();
         let cursor_position_in_buffer = self.editor.offset();
+
         let highlighted_line = self
             .highlighter
-            .highlight(&buffer_to_paint)
+            .highlight(buffer_to_paint)
             .render_around_insertion_point(cursor_position_in_buffer);
         let hint: String = self.hinter.handle(
-            &buffer_to_paint,
+            buffer_to_paint,
             cursor_position_in_buffer,
             self.history.as_ref(),
         );
@@ -997,7 +1008,5 @@ impl Reedline {
             hint,
             self.terminal_size,
         )
-
-        // Ok(prompt_offset)
     }
 }
