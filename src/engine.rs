@@ -803,7 +803,6 @@ impl Reedline {
                     } else {
                         self.editor.insert_char(*c);
                     }
-                    self.editor.set_previous_lines(false);
 
                     self.repaint(prompt)?;
                 }
@@ -824,27 +823,6 @@ impl Reedline {
                 EditCommand::SwapGraphemes => self.editor.swap_graphemes(),
                 EditCommand::Undo => self.editor.undo(),
                 EditCommand::Redo => self.editor.redo(),
-            }
-
-            if [
-                EditCommand::MoveToEnd,
-                EditCommand::MoveToStart,
-                EditCommand::MoveLeft,
-                EditCommand::MoveRight,
-                EditCommand::MoveWordLeft,
-                EditCommand::MoveWordRight,
-                EditCommand::Backspace,
-                EditCommand::Delete,
-                EditCommand::BackspaceWord,
-                EditCommand::DeleteWord,
-                EditCommand::CutFromStart,
-                EditCommand::CutToEnd,
-                EditCommand::CutWordLeft,
-                EditCommand::CutWordRight,
-            ]
-            .contains(command)
-            {
-                self.editor.set_previous_lines(true);
             }
         }
 

@@ -31,6 +31,14 @@ impl Default for LineBuffer {
     }
 }
 
+impl From<&str> for LineBuffer {
+    fn from(input: &str) -> Self {
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.insert_str(input);
+        line_buffer
+    }
+}
+
 impl LineBuffer {
     pub fn new() -> LineBuffer {
         LineBuffer {
