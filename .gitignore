@@ -1,3 +1,5 @@
 target/
 history.txt
 .DS_Store
+target-coverage/
+tarpaulin-report.html
