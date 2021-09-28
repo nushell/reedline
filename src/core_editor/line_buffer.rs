@@ -707,4 +707,37 @@ mod test {
 
         assert_eq!(line_buffer, expected);
     }
+
+    #[rstest]
+    #[case("line 1\nline 2\nline 3", 0, true)]
+    #[case("line 1\nline 2\nline 3", 6, true)]
+    #[case("line 1\nline 2\nline 3", 8, false)]
+    fn test_first_line_detection(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] expected: bool,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        assert_eq!(line_buffer.is_cursor_at_first_line(), expected);
+    }
+
+    #[rstest]
+    #[case("line 1\nline 2\nline 3", 8, false)]
+    #[case("line 1\nline 2\nline 3", 13, false)]
+    #[case("line 1\nline 2\nline 3", 14, true)]
+    #[case("line 1\nline 2\nline 3", 20, true)]
+    #[case("line 1\nline 2\nline 3\n", 20, false)]
+    #[case("line 1\nline 2\nline 3\n", 21, true)]
+    fn test_last_line_detection(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] expected: bool,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        assert_eq!(line_buffer.is_cursor_at_last_line(), expected);
+    }
 }
