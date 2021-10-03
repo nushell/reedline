@@ -17,7 +17,7 @@ impl Default for Editor {
             cut_buffer: Box::new(get_default_clipboard()),
 
             // Note: Using list-zipper we can reduce these to one field
-            edits: vec![],
+            edits: vec![LineBuffer::new()],
             index_undo: 2,
         }
     }
@@ -265,5 +265,32 @@ impl Editor {
     pub fn insert_cut_buffer(&mut self) {
         let cut_buffer = self.cut_buffer.get();
         self.line_buffer.insert_str(&cut_buffer);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_undo_initial_char() {
+        let mut editor = Editor::default();
+        editor.line_buffer().set_buffer(String::from("a"));
+        editor.remember_undo_state(false);
+        editor.line_buffer().set_buffer(String::from("ab"));
+        editor.remember_undo_state(false);
+        editor.line_buffer().set_buffer(String::from("ab "));
+        editor.remember_undo_state(false);
+        editor.line_buffer().set_buffer(String::from("ab c"));
+        editor.remember_undo_state(true);
+
+        assert_eq!(
+            vec![
+                LineBuffer::from(""),
+                LineBuffer::from("ab "),
+                LineBuffer::from("ab c")
+            ],
+            editor.edits
+        );
     }
 }
