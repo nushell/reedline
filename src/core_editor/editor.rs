@@ -276,13 +276,13 @@ mod test {
     fn test_undo_initial_char() {
         let mut editor = Editor::default();
         editor.line_buffer().set_buffer(String::from("a"));
-        editor.set_previous_lines(false);
+        editor.remember_undo_state(false);
         editor.line_buffer().set_buffer(String::from("ab"));
-        editor.set_previous_lines(false);
+        editor.remember_undo_state(false);
         editor.line_buffer().set_buffer(String::from("ab "));
-        editor.set_previous_lines(false);
+        editor.remember_undo_state(false);
         editor.line_buffer().set_buffer(String::from("ab c"));
-        editor.set_previous_lines(true);
+        editor.remember_undo_state(true);
 
         assert_eq!(
             vec![
