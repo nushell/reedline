@@ -160,8 +160,8 @@
 //! This crate is currently under active development
 //! in JT's [live-coding streams](https://www.twitch.tv/jntrnr).
 //! If you want to see a feature, jump by the streams,
-//! file an [issue](https://github.com/jntrnr/reedline/issues)
-//! or contribute a [PR](https://github.com/jntrnr/reedline/pulls)!
+//! file an [issue](https://github.com/nushell/reedline/issues)
+//! or contribute a [PR](https://github.com/nushell/reedline/pulls)!
 //!
 //! - [x] Basic unicode grapheme aware cursor editing.
 //! - [x] Configurable prompt
@@ -173,9 +173,9 @@
 //! - [x] Undo support.
 //! - [x] Multiline aware editing with line completion validation.
 //!
-//! For a more detailed roadmap check out [TODO.txt](https://github.com/jntrnr/reedline/blob/main/TODO.txt).
+//! For a more detailed roadmap check out [TODO.txt](https://github.com/nushell/reedline/blob/main/TODO.txt).
 //!
-//! Join the vision discussion in the [vision milestone list](https://github.com/jntrnr/reedline/milestone/1) by contributing suggestions or voting.
+//! Join the vision discussion in the [vision milestone list](https://github.com/nushell/reedline/milestone/1) by contributing suggestions or voting.
 //!
 //! ### Alternatives
 //!
