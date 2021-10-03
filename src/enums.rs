@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// Valid ways how [`Reedline::read_line()`] can return
+/// Valid ways how `Reedline::read_line()` can return
 #[derive(Debug)]
 pub enum Signal {
     /// Entry succeeded with the provided content
