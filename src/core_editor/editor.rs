@@ -163,7 +163,7 @@ impl Editor {
         self.line_buffer.is_cursor_at_last_line()
     }
 
-    pub fn reset_olds(&mut self) {
+    pub fn reset_undo_stack(&mut self) {
         self.edits = vec![LineBuffer::new()];
         self.index_undo = 2;
     }
@@ -204,7 +204,7 @@ impl Editor {
         Some(())
     }
 
-    pub fn set_previous_lines(&mut self, is_after_action: bool) -> Option<()> {
+    pub fn remember_undo_state(&mut self, is_after_action: bool) -> Option<()> {
         self.reset_index_undo();
 
         if self.edits.len() > 1
@@ -218,7 +218,7 @@ impl Editor {
         Some(())
     }
 
-    pub fn reset_index_undo(&mut self) {
+    fn reset_index_undo(&mut self) {
         self.index_undo = 2;
     }
 

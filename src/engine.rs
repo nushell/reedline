@@ -370,7 +370,7 @@ impl Reedline {
             ReedlineEvent::CtrlD => {
                 if self.editor.is_empty() {
                     self.input_mode = InputMode::Regular;
-                    self.editor.reset_olds();
+                    self.editor.reset_undo_stack();
                     Ok(Some(Signal::CtrlD))
                 } else {
                     self.run_history_commands(&[EditCommand::Delete]);
@@ -387,7 +387,7 @@ impl Reedline {
 
                 if let Some(string) = self.history.string_at_cursor() {
                     self.editor.set_buffer(string);
-                    self.editor.set_previous_lines(true);
+                    self.editor.remember_undo_state(true);
                 }
 
                 self.input_mode = InputMode::Regular;
@@ -491,7 +491,7 @@ impl Reedline {
             }
             ReedlineEvent::CtrlD => {
                 if self.editor.is_empty() {
-                    self.editor.reset_olds();
+                    self.editor.reset_undo_stack();
                     Ok(Some(Signal::CtrlD))
                 } else {
                     self.run_edit_commands(&[EditCommand::Delete], prompt)?;
@@ -500,7 +500,7 @@ impl Reedline {
             }
             ReedlineEvent::CtrlC => {
                 self.run_edit_commands(&[EditCommand::Clear], prompt)?;
-                self.editor.reset_olds();
+                self.editor.reset_undo_stack();
                 Ok(Some(Signal::CtrlC))
             }
             ReedlineEvent::ClearScreen => Ok(Some(Signal::CtrlL)),
@@ -510,7 +510,7 @@ impl Reedline {
                     self.append_to_history();
                     self.run_edit_commands(&[EditCommand::Clear], prompt)?;
                     self.print_crlf()?;
-                    self.editor.reset_olds();
+                    self.editor.reset_undo_stack();
 
                     Ok(Some(Signal::Success(buffer)))
                 } else {
@@ -567,7 +567,7 @@ impl Reedline {
             }
             ReedlineEvent::SearchHistory => {
                 // Make sure we are able to undo the result of a reverse history search
-                self.editor.set_previous_lines(true);
+                self.editor.remember_undo_state(true);
 
                 self.search_history();
                 self.repaint(prompt)?;
@@ -745,7 +745,7 @@ impl Reedline {
                     } else {
                         self.editor.insert_char(*c);
                     }
-                    self.editor.set_previous_lines(false);
+                    self.editor.remember_undo_state(false);
 
                     self.repaint(prompt)?;
                 }
@@ -786,7 +786,7 @@ impl Reedline {
             ]
             .contains(command)
             {
-                self.editor.set_previous_lines(true);
+                self.editor.remember_undo_state(true);
             }
         }
 
