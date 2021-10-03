@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// Valid ways how [`Reedline::read_line()`] can return
+/// Valid ways how `Reedline::read_line()` can return
 #[derive(Debug)]
 pub enum Signal {
     /// Entry succeeded with the provided content
@@ -16,7 +16,7 @@ pub enum Signal {
 /// Editing actions which can be mapped to key bindings.
 ///
 /// Executed by `Reedline::run_edit_commands()`
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum EditCommand {
     /// Move to the start of the buffer
     MoveToStart,
@@ -92,15 +92,30 @@ pub enum EditCommand {
 }
 
 /// Reedline supported actions.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub enum ReedlineEvent {
+    /// No op event
+    None,
+
     /// Trigger Tab
     HandleTab,
 
-    /// Don't know a better name for this
+    /// Handle EndOfLine event
+    ///
+    /// Expected Behavior:
+    ///
+    /// - On empty line breaks execution to exit with [`Signal::CtrlD`]
+    /// - Secondary behavior [`EditCommand::Delete`]
     CtrlD,
 
-    /// Don't know a better name for this
+    /// Handle SIGTERM key input
+    ///
+    /// Expected behavior:
+    ///
+    /// Abort entry
+    /// Run [`EditCommand::Clear`]
+    /// Clear the current undo
+    /// Bubble up [`Signal::CtrlC`]
     CtrlC,
 
     /// Clears the screen and sets prompt to first line

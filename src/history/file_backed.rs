@@ -7,10 +7,7 @@ use std::{
 
 use crate::core_editor::LineBuffer;
 
-use super::{
-    base::{HistoryAppender, HistoryNavigationQuery, HistoryView},
-    History,
-};
+use super::{base::HistoryNavigationQuery, History};
 
 /// Default size of the [`FileBackedHistory`] used when calling [`FileBackedHistory::default()`]
 pub const HISTORY_SIZE: usize = 1000;
@@ -41,9 +38,7 @@ impl Default for FileBackedHistory {
     }
 }
 
-impl History for FileBackedHistory {}
-
-impl HistoryAppender for FileBackedHistory {
+impl History for FileBackedHistory {
     /// Appends an entry if non-empty and not repetition of the previous entry.
     /// Resets the browsing cursor to the default state in front of the most recent entry.
     ///
@@ -70,9 +65,7 @@ impl HistoryAppender for FileBackedHistory {
     fn iter_chronologic(&self) -> Iter<'_, String> {
         self.entries.iter()
     }
-}
 
-impl HistoryView for FileBackedHistory {
     fn back(&mut self) {
         match self.query.clone() {
             HistoryNavigationQuery::Normal(_) => {

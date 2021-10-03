@@ -1,13 +1,19 @@
 # A readline replacement written in Rust
 
-![GitHub](https://img.shields.io/github/license/jntrnr/reedline) 
+![GitHub](https://img.shields.io/github/license/nushell/reedline) 
 [![Crates.io](https://img.shields.io/crates/v/reedline)](https://crates.io/crates/reedline)
 [![docs.rs](https://img.shields.io/docsrs/reedline)](https://docs.rs/reedline/)
-[![CI status](https://github.com/jntrnr/reedline/actions/workflows/ci.yml/badge.svg)](https://github.com/jntrnr/reedline/actions)
+[![CI status](https://github.com/nushell/reedline/actions/workflows/ci.yml/badge.svg)](https://github.com/nushell/reedline/actions)
 [![Discord](https://img.shields.io/discord/601130461678272522.svg?logo=discord)](https://discord.gg/NtAbbGn)
 [![Twitch Status](https://img.shields.io/twitch/status/jntrnr?style=social)](https://twitch.tv/jntrnr)
 
-## Basic example
+## Introduction
+
+Reedline is a project to create a readline-style crate for Rust that supports many of the modern conveniences of CLIs, including syntax highlighting, completions, multiline support, Unicode support, and more.
+
+## Examples
+
+### Basic example
 
 ```rust,no_run
 // Create a default reedline object to handle user input
@@ -36,7 +42,7 @@ fn main() {
 }
 ```
 
-## Integrate with custom Keybindings
+### Integrate with custom Keybindings
 
 ```rust,no_run
 // Configure reedline with custom keybindings
@@ -76,7 +82,7 @@ let mut line_editor = Reedline::create()?
 	.expect("Error configuring reedline with history");
 ```
 
-## Integrate with custom Highlighter
+### Integrate with custom Highlighter
 
 ```rust,no_run
 // Create a reedline object with highlighter support
@@ -93,7 +99,7 @@ let mut line_editor =
 Reedline::create()?.with_highlighter(Box::new(DefaultHighlighter::new(commands)));
 ```
 
-## Integrate with custom Tab-Handler
+### Integrate with custom Tab-Handler
 
 ```rust,no_run
 // Create a reedline object with tab completions support
@@ -113,7 +119,7 @@ let mut line_editor = Reedline::create()?.with_completion_action_handler(Box::ne
 ));
 ```
 
-## Integrate with custom Hinter
+### Integrate with custom Hinter
 
 ```rust,no_run
 // Create a reedline object with in-line hint support
@@ -143,7 +149,19 @@ let mut line_editor = Reedline::create()?.with_hinter(Box::new(
 ));
 ```
 
-## Integrate with custom Edit Mode
+### Integrate with custom line completion Validator
+
+```rust,no_run
+// Create a reedline object with line completion validation support
+
+use reedline::{DefaultValidator, Reedline};
+
+let validator = Box::new(DefaultValidator);
+
+let mut line_editor = Reedline::create()?.with_validator(validator);
+```
+
+### Integrate with custom Edit Mode
 
 ```rust,no_run
 // Create a reedline object with custom edit mode
@@ -158,20 +176,21 @@ let mut line_editor = Reedline::create()?.with_edit_mode(
 ## Are we prompt yet? (Development status)
 
 This crate is currently under active development in JT's [live-coding streams](https://www.twitch.tv/jntrnr).
-If you want to see a feature, jump by the streams, file an [issue](https://github.com/jntrnr/reedline/issues) or contribute a [PR](https://github.com/jntrnr/reedline/pulls)!
+If you want to see a feature, jump by the streams, file an [issue](https://github.com/nushell/reedline/issues) or contribute a [PR](https://github.com/nushell/reedline/pulls)!
 
 - [x] Basic unicode grapheme aware cursor editing.
 - [x] Configurable prompt
 - [x] Basic EMACS-style editing shortcuts.
 - [x] Configurable keybindings.
 - [x] Basic system integration with clipboard or optional stored history file.
-- [x] Content aware highlighting or validation.
+- [x] Content aware highlighting.
 - [x] Autocompletion.
-- [ ] Advanced multiline unicode aware editing.
+- [x] Undo support.
+- [x] Multiline aware editing with line completion validation.
 
-For a more detailed roadmap check out [TODO.txt](https://github.com/jntrnr/reedline/blob/main/TODO.txt).
+For a more detailed roadmap check out [TODO.txt](https://github.com/nushell/reedline/blob/main/TODO.txt).
 
-Join the vision discussion in the [vision milestone list](https://github.com/jntrnr/reedline/milestone/1) by contributing suggestions or voting.
+Join the vision discussion in the [vision milestone list](https://github.com/nushell/reedline/milestone/1) by contributing suggestions or voting.
 
 ### Alternatives
 

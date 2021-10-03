@@ -28,7 +28,7 @@ impl Span {
 /// The handler for when the user begins a completion action, often using the tab key
 /// This handler will then present the options to the user, allowing them to navigate the options
 /// and pick the completion they want
-pub trait ComplationActionHandler {
+pub trait CompletionActionHandler {
     /// Handle the completion action from the given line buffer
     fn handle(&mut self, line: &mut LineBuffer);
 }

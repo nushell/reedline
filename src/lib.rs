@@ -1,6 +1,11 @@
 //! # reedline `\|/`
 //! # A readline replacement written in Rust
 //!
+//! Reedline is a project to create a readline-style crate
+//! for Rust that supports many of the modern conveniences of CLIs,
+//! including syntax highlighting, completions, multiline support,
+//! Unicode support, and more.
+//!
 //! ## Basic example
 //!
 //! ```rust,no_run
@@ -155,21 +160,22 @@
 //! This crate is currently under active development
 //! in JT's [live-coding streams](https://www.twitch.tv/jntrnr).
 //! If you want to see a feature, jump by the streams,
-//! file an [issue](https://github.com/jntrnr/reedline/issues)
-//! or contribute a [PR](https://github.com/jntrnr/reedline/pulls)!
+//! file an [issue](https://github.com/nushell/reedline/issues)
+//! or contribute a [PR](https://github.com/nushell/reedline/pulls)!
 //!
 //! - [x] Basic unicode grapheme aware cursor editing.
 //! - [x] Configurable prompt
 //! - [x] Basic EMACS-style editing shortcuts.
 //! - [x] Configurable keybindings.
 //! - [x] Basic system integration with clipboard or optional stored history file.
-//! - [x] Content aware highlighting or validation.
+//! - [x] Content aware highlighting.
 //! - [x] Autocompletion.
-//! - [ ] Advanced multiline unicode aware editing.
+//! - [x] Undo support.
+//! - [x] Multiline aware editing with line completion validation.
 //!
-//! For a more detailed roadmap check out [TODO.txt](https://github.com/jntrnr/reedline/blob/main/TODO.txt).
+//! For a more detailed roadmap check out [TODO.txt](https://github.com/nushell/reedline/blob/main/TODO.txt).
 //!
-//! Join the vision discussion in the [vision milestone list](https://github.com/jntrnr/reedline/milestone/1) by contributing suggestions or voting.
+//! Join the vision discussion in the [vision milestone list](https://github.com/nushell/reedline/milestone/1) by contributing suggestions or voting.
 //!
 //! ### Alternatives
 //!
@@ -193,7 +199,7 @@ mod engine;
 pub use engine::Reedline;
 
 mod history;
-pub use history::{FileBackedHistory, History, HISTORY_SIZE};
+pub use history::{FileBackedHistory, History, HistoryNavigationQuery, HISTORY_SIZE};
 
 mod prompt;
 pub use prompt::{
@@ -204,8 +210,6 @@ pub use prompt::{
 mod edit_mode;
 pub use edit_mode::{default_emacs_keybindings, EditMode, Emacs, Vi};
 
-mod syntax_highlighting_fileio;
-
 mod highlighter;
 pub use highlighter::{DefaultHighlighter, Highlighter};
 
@@ -214,8 +218,11 @@ pub use styled_text::StyledText;
 
 mod completion;
 pub use completion::{
-    ComplationActionHandler, Completer, DefaultCompleter, DefaultCompletionActionHandler, Span,
+    Completer, CompletionActionHandler, DefaultCompleter, DefaultCompletionActionHandler, Span,
 };
 
 mod hinter;
 pub use hinter::{DefaultHinter, Hinter};
+
+mod validator;
+pub use validator::{DefaultValidator, ValidationResult, Validator};

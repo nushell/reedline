@@ -80,8 +80,8 @@ impl Painter {
     ) -> Result<()> {
         let (before_cursor, after_cursor) = highlighted_line;
 
-        let before_cursor_lines = before_cursor.lines();
-        let after_cursor_lines = after_cursor.lines();
+        let before_cursor_lines = before_cursor.split('\n');
+        let after_cursor_lines = after_cursor.split('\n');
 
         let mut commands = self
             .stdout
@@ -89,6 +89,7 @@ impl Painter {
 
         for (idx, before_cursor_line) in before_cursor_lines.enumerate() {
             if idx != 0 {
+                commands = commands.queue(Clear(ClearType::UntilNewLine))?;
                 commands = commands.queue(Print("\r\n"))?;
             }
             commands = commands.queue(Print(before_cursor_line))?;
@@ -98,6 +99,7 @@ impl Painter {
 
         for (idx, after_cursor_line) in after_cursor_lines.enumerate() {
             if idx != 0 {
+                commands = commands.queue(Clear(ClearType::UntilNewLine))?;
                 commands = commands.queue(Print("\r\n"))?;
             }
             commands = commands.queue(Print(after_cursor_line))?;
@@ -106,6 +108,15 @@ impl Painter {
         commands
             .queue(Clear(ClearType::FromCursorDown))?
             .queue(RestorePosition)?
+            .flush()?;
+
+        Ok(())
+    }
+
+    /// Scroll by n rows
+    pub fn scroll_rows(&mut self, num_rows: u16) -> Result<()> {
+        self.stdout
+            .queue(crossterm::terminal::ScrollUp(num_rows))?
             .flush()?;
 
         Ok(())

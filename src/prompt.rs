@@ -124,7 +124,7 @@ impl Prompt for DefaultPrompt {
         // NOTE: magic strings, givent there is logic on how these compose I am not sure if it
         // is worth extracting in to static constant
         Cow::Owned(format!(
-            "({}reverse-search: {})",
+            "({}reverse-search: {}) ",
             prefix, history_search.term
         ))
     }
