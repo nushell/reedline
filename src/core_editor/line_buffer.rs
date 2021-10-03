@@ -52,6 +52,11 @@ impl LineBuffer {
         self.insertion_point.offset
     }
 
+    /// Return cursor
+    fn insertion_point(&self) -> InsertionPoint {
+        self.insertion_point
+    }
+
     pub fn set_insertion_point(&mut self, offset: usize) {
         self.insertion_point = InsertionPoint { offset };
     }
@@ -59,6 +64,13 @@ impl LineBuffer {
     /// Output the current line in the multiline buffer
     pub fn get_buffer(&self) -> &str {
         &self.lines
+    }
+
+    /// Set to a single line of `buffer` and reset the `InsertionPoint` cursor to the end
+    pub fn set_buffer(&mut self, buffer: String) {
+        let offset = buffer.len();
+        self.lines = buffer;
+        self.insertion_point = InsertionPoint { offset };
     }
 
     /// Calculates the current the user is on
@@ -84,13 +96,6 @@ impl LineBuffer {
 
     pub fn ends_with(&self, c: char) -> bool {
         self.lines.ends_with(c)
-    }
-
-    /// Set to a single line of `buffer` and reset the `InsertionPoint` cursor
-    pub fn set_buffer(&mut self, buffer: String) {
-        let offset = buffer.len();
-        self.lines = buffer;
-        self.insertion_point = InsertionPoint { offset };
     }
 
     /// Reset the insertion point to the start of the buffer
@@ -410,17 +415,12 @@ impl LineBuffer {
         }
     }
 
-    /// Return 2D-cursor (line_number, col_in_line)
-    fn insertion_point(&self) -> InsertionPoint {
-        self.insertion_point
-    }
-
     pub fn is_cursor_at_first_line(&self) -> bool {
-        self.get_buffer()[0..self.offset()].contains('\n')
+        !self.get_buffer()[0..self.offset()].contains('\n')
     }
 
     pub fn is_cursor_at_last_line(&self) -> bool {
-        self.get_buffer()[self.offset()..].contains('\n')
+        !self.get_buffer()[self.offset()..].contains('\n')
     }
 }
 
@@ -706,5 +706,38 @@ mod test {
         expected.set_insertion_point(out_location);
 
         assert_eq!(line_buffer, expected);
+    }
+
+    #[rstest]
+    #[case("line 1\nline 2\nline 3", 0, true)]
+    #[case("line 1\nline 2\nline 3", 6, true)]
+    #[case("line 1\nline 2\nline 3", 8, false)]
+    fn test_first_line_detection(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] expected: bool,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        assert_eq!(line_buffer.is_cursor_at_first_line(), expected);
+    }
+
+    #[rstest]
+    #[case("line 1\nline 2\nline 3", 8, false)]
+    #[case("line 1\nline 2\nline 3", 13, false)]
+    #[case("line 1\nline 2\nline 3", 14, true)]
+    #[case("line 1\nline 2\nline 3", 20, true)]
+    #[case("line 1\nline 2\nline 3\n", 20, false)]
+    #[case("line 1\nline 2\nline 3\n", 21, true)]
+    fn test_last_line_detection(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] expected: bool,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        assert_eq!(line_buffer.is_cursor_at_last_line(), expected);
     }
 }

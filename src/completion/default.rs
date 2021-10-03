@@ -7,8 +7,10 @@ use std::{
 use crate::{Completer, Span};
 
 /// A default completer that can detect keywords
+///
 /// # Example
-/// # Example
+///
+/// ```rust, no_run
 /// use reedline::{DefaultCompleter, DefaultCompletionActionHandler, Reedline};
 ///
 /// let commands = vec![
@@ -19,9 +21,11 @@ use crate::{Completer, Span};
 /// ];
 /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 ///
-/// let mut line_editor = Reedline::new().with_completion_action_handler(Box::new(
+/// let mut line_editor = Reedline::create().unwrap()
+///         .with_completion_action_handler(Box::new(
 ///   DefaultCompletionActionHandler::default().with_completer(completer),
 /// ));
+/// ```
 #[derive(Debug, Clone)]
 pub struct DefaultCompleter {
     root: CompletionNode,

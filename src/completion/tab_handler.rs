@@ -1,4 +1,4 @@
-use crate::{core_editor::LineBuffer, ComplationActionHandler, Completer, DefaultCompleter};
+use crate::{core_editor::LineBuffer, Completer, CompletionActionHandler, DefaultCompleter};
 
 /// A simple handler that will do a cycle-based rotation through the options given by the Completer
 pub struct DefaultCompletionActionHandler {
@@ -10,7 +10,7 @@ pub struct DefaultCompletionActionHandler {
 }
 
 impl DefaultCompletionActionHandler {
-    /// Build a DefaultCompletionActionHander configured to use a specific completer
+    /// Build a `DefaultCompletionActionHandler` configured to use a specific completer
     ///
     /// # Arguments
     ///
@@ -53,7 +53,7 @@ impl DefaultCompletionActionHandler {
     }
 }
 
-impl ComplationActionHandler for DefaultCompletionActionHandler {
+impl CompletionActionHandler for DefaultCompletionActionHandler {
     // With this function we handle the tab events.
     //
     // If completions vector is not empty we proceed to replace

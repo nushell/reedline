@@ -23,7 +23,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     // if -k is passed, show the events
     if args.len() > 1 && args[1] == "-k" {
-        println!("Ready to print events:");
+        println!("Ready to print events (Abort with ESC):");
         print_events()?;
         println!();
         return Ok(());
