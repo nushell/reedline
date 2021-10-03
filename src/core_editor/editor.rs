@@ -24,10 +24,6 @@ impl Default for Editor {
 }
 
 impl Editor {
-    pub fn get_edits(self) -> Vec<LineBuffer> {
-        self.edits
-    }
-
     pub fn line_buffer(&mut self) -> &mut LineBuffer {
         &mut self.line_buffer
     }
@@ -200,28 +196,6 @@ impl Editor {
         Some(())
     }
 
-    /// ```
-    /// use reedline::{Editor, LineBuffer};
-    ///
-    /// let mut editor = Editor::default();
-    /// editor.line_buffer().set_buffer(String::from("a"));
-    /// editor.set_previous_lines(false);
-    /// editor.line_buffer().set_buffer(String::from("ab"));
-    /// editor.set_previous_lines(false);
-    /// editor.line_buffer().set_buffer(String::from("ab "));
-    /// editor.set_previous_lines(false);
-    /// editor.line_buffer().set_buffer(String::from("ab c"));
-    /// editor.set_previous_lines(true);
-    ///
-    /// assert_eq!(
-    ///     vec![
-    ///         LineBuffer::from(""),
-    ///         LineBuffer::from("ab "),
-    ///         LineBuffer::from("ab c")
-    ///     ],
-    ///     editor.get_edits()
-    /// );
-    /// ```
     pub fn set_previous_lines(&mut self, is_after_action: bool) -> Option<()> {
         self.reset_index_undo();
 
@@ -284,5 +258,32 @@ impl Editor {
     pub fn insert_cut_buffer(&mut self) {
         let cut_buffer = self.cut_buffer.get();
         self.line_buffer.insert_str(&cut_buffer);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_undo_initial_char() {
+        let mut editor = Editor::default();
+        editor.line_buffer().set_buffer(String::from("a"));
+        editor.set_previous_lines(false);
+        editor.line_buffer().set_buffer(String::from("ab"));
+        editor.set_previous_lines(false);
+        editor.line_buffer().set_buffer(String::from("ab "));
+        editor.set_previous_lines(false);
+        editor.line_buffer().set_buffer(String::from("ab c"));
+        editor.set_previous_lines(true);
+
+        assert_eq!(
+            vec![
+                LineBuffer::from(""),
+                LineBuffer::from("ab "),
+                LineBuffer::from("ab c")
+            ],
+            editor.edits
+        );
     }
 }
