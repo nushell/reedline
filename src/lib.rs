@@ -107,7 +107,7 @@
 //! // Create a reedline object with tab completions support
 //!
 //! use std::io;
-//! use reedline::{DefaultCompleter, DefaultCompletionActionHandler, Reedline};
+//! use reedline::{DefaultCompleter, CircularCompletionHandler, Reedline};
 //!
 //! let commands = vec![
 //!   "test".into(),
@@ -118,7 +118,7 @@
 //! let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 //!
 //! let mut line_editor = Reedline::create()?.with_completion_action_handler(Box::new(
-//!   DefaultCompletionActionHandler::default().with_completer(completer),
+//!   CircularCompletionHandler::default().with_completer(completer),
 //! ));
 //! # Ok::<(), io::Error>(())
 //! ```
@@ -218,7 +218,8 @@ pub use styled_text::StyledText;
 
 mod completion;
 pub use completion::{
-    Completer, CompletionActionHandler, DefaultCompleter, DefaultCompletionActionHandler, Span,
+    CircularCompletionHandler, Completer, CompletionActionHandler, DefaultCompleter,
+    ListCompletionHandler, Span,
 };
 
 mod hinter;

@@ -1,7 +1,9 @@
 mod base;
+mod circular;
 mod default;
-mod tab_handler;
+mod list;
 
 pub use base::{Completer, CompletionActionHandler, Span};
+pub use circular::CircularCompletionHandler;
 pub use default::DefaultCompleter;
-pub use tab_handler::DefaultCompletionActionHandler;
+pub use list::ListCompletionHandler;
