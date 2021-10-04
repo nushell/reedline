@@ -1,6 +1,6 @@
 use {
     crate::{
-        completion::{CompletionActionHandler, DefaultCompletionActionHandler},
+        completion::{CircularCompletionHandler, CompletionActionHandler},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
         enums::ReedlineEvent,
@@ -128,7 +128,7 @@ impl Reedline {
             input_mode: InputMode::Regular,
             painter,
             edit_mode,
-            tab_handler: Box::new(DefaultCompletionActionHandler::default()),
+            tab_handler: Box::new(CircularCompletionHandler::default()),
             terminal_size,
             prompt_widget,
             highlighter: buffer_highlighter,
@@ -178,7 +178,7 @@ impl Reedline {
     /// // Create a reedline object with tab completions support
     ///
     /// use std::io;
-    /// use reedline::{DefaultCompleter, DefaultCompletionActionHandler, Reedline};
+    /// use reedline::{DefaultCompleter, CircularCompletionHandler, Reedline};
     ///
     /// let commands = vec![
     ///   "test".into(),
@@ -189,7 +189,7 @@ impl Reedline {
     /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
     ///
     /// let mut line_editor = Reedline::create()?.with_completion_action_handler(Box::new(
-    ///   DefaultCompletionActionHandler::default().with_completer(completer),
+    ///   CircularCompletionHandler::default().with_completer(completer),
     /// ));
     /// # Ok::<(), io::Error>(())
     /// ```

@@ -11,7 +11,7 @@ use crate::{Completer, Span};
 /// # Example
 ///
 /// ```rust, no_run
-/// use reedline::{DefaultCompleter, DefaultCompletionActionHandler, Reedline};
+/// use reedline::{DefaultCompleter, CircularCompletionHandler, Reedline};
 ///
 /// let commands = vec![
 ///  "test".into(),
@@ -23,7 +23,7 @@ use crate::{Completer, Span};
 ///
 /// let mut line_editor = Reedline::create().unwrap()
 ///         .with_completion_action_handler(Box::new(
-///   DefaultCompletionActionHandler::default().with_completer(completer),
+///   CircularCompletionHandler::default().with_completer(completer),
 /// ));
 /// ```
 #[derive(Debug, Clone)]

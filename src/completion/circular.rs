@@ -1,7 +1,7 @@
 use crate::{core_editor::LineBuffer, Completer, CompletionActionHandler, DefaultCompleter};
 
 /// A simple handler that will do a cycle-based rotation through the options given by the Completer
-pub struct DefaultCompletionActionHandler {
+pub struct CircularCompletionHandler {
     completer: Box<dyn Completer>,
     initial_line: LineBuffer,
     index: usize,
@@ -9,8 +9,8 @@ pub struct DefaultCompletionActionHandler {
     last_buffer: Option<LineBuffer>,
 }
 
-impl DefaultCompletionActionHandler {
-    /// Build a `DefaultCompletionActionHandler` configured to use a specific completer
+impl CircularCompletionHandler {
+    /// Build a `CircularCompletionHandler` configured to use a specific completer
     ///
     /// # Arguments
     ///
@@ -18,7 +18,7 @@ impl DefaultCompletionActionHandler {
     ///
     /// # Example
     /// ```
-    /// use reedline::{DefaultCompletionActionHandler, DefaultCompleter, Completer, Span};
+    /// use reedline::{CircularCompletionHandler, DefaultCompleter, Completer, Span};
     ///
     /// let mut completer = DefaultCompleter::default();
     /// completer.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
@@ -26,19 +26,16 @@ impl DefaultCompletionActionHandler {
     ///     completer.complete("te",2),
     ///     vec![(Span { start: 0, end: 2 }, "test".into())]);
     ///
-    /// let mut completions = DefaultCompletionActionHandler::default().with_completer(Box::new(completer));
+    /// let mut completions = CircularCompletionHandler::default().with_completer(Box::new(completer));
     /// ```
-    pub fn with_completer(
-        mut self,
-        completer: Box<dyn Completer>,
-    ) -> DefaultCompletionActionHandler {
+    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> CircularCompletionHandler {
         self.completer = completer;
         self
     }
 }
-impl Default for DefaultCompletionActionHandler {
+impl Default for CircularCompletionHandler {
     fn default() -> Self {
-        DefaultCompletionActionHandler {
+        CircularCompletionHandler {
             completer: Box::new(DefaultCompleter::default()),
             initial_line: LineBuffer::new(),
             index: 0,
@@ -47,13 +44,13 @@ impl Default for DefaultCompletionActionHandler {
     }
 }
 
-impl DefaultCompletionActionHandler {
+impl CircularCompletionHandler {
     fn reset_index(&mut self) {
         self.index = 0;
     }
 }
 
-impl CompletionActionHandler for DefaultCompletionActionHandler {
+impl CompletionActionHandler for CircularCompletionHandler {
     // With this function we handle the tab events.
     //
     // If completions vector is not empty we proceed to replace
@@ -106,11 +103,11 @@ mod test {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn get_tab_handler_with(values: Vec<&'_ str>) -> DefaultCompletionActionHandler {
+    fn get_tab_handler_with(values: Vec<&'_ str>) -> CircularCompletionHandler {
         let mut completer = DefaultCompleter::default();
         completer.insert(values.iter().map(|s| s.to_string()).collect());
 
-        DefaultCompletionActionHandler::default().with_completer(Box::new(completer))
+        CircularCompletionHandler::default().with_completer(Box::new(completer))
     }
 
     fn buffer_with(content: &str) -> LineBuffer {
