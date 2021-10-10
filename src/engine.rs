@@ -38,21 +38,21 @@ enum InputMode {
 
 #[derive(Default)]
 struct PromptCoordinates {
-    offset: (u16, u16),
-    origin: (u16, u16),
+    prompt_start: (u16, u16),
+    input_start: (u16, u16),
 }
 
 impl PromptCoordinates {
-    fn offset_columns(&self) -> u16 {
-        self.offset.0
+    fn input_start_col(&self) -> u16 {
+        self.input_start.0
     }
 
-    fn set_origin(&mut self, col: u16, row: u16) {
-        self.origin = (col, row);
+    fn set_prompt_start(&mut self, col: u16, row: u16) {
+        self.prompt_start = (col, row);
     }
 
-    fn set_offset(&mut self, col: u16, row: u16) {
-        self.offset = (col, row);
+    fn set_input_start(&mut self, col: u16, row: u16) {
+        self.input_start = (col, row);
     }
 }
 
@@ -516,7 +516,7 @@ impl Reedline {
         self.terminal_size = (width, height);
         // TODO properly adjusting prompt_origin on resizing while lines > 1
 
-        let current_origin = self.prompt_coords.origin;
+        let current_origin = self.prompt_coords.prompt_start;
 
         if current_origin.1 >= (height - 1) {
             // Terminal is shrinking up
@@ -524,13 +524,13 @@ impl Reedline {
             // Note: you can't just subtract the offset from the origin,
             // as we could be shrinking so fast that the offset we read back from
             // crossterm is past where it would have been.
-            self.prompt_coords.set_origin(current_origin.0, height - 2);
+            self.prompt_coords.set_prompt_start(current_origin.0, height - 2);
         } else if prev_terminal_size.1 < height {
             // Terminal is growing down, so move the prompt down the same amount to make space
             // for history that's on the screen
             // Note: if the terminal doesn't have sufficient history, this will leave a trail
             // of previous prompts currently.
-            self.prompt_coords.set_origin(
+            self.prompt_coords.set_prompt_start(
                 current_origin.0,
                 current_origin.1 + (height - prev_terminal_size.1),
             );
@@ -542,11 +542,11 @@ impl Reedline {
 
     /// Repositions the prompt, if the buffer content would overflow the bottom of the screen.
     /// Checks for content that might overflow in the core buffer.
-    /// Performs scrolling and updates prompt origin and offset.
+    /// Performs scrolling and updates prompt and input position.
     /// Does not trigger a full repaint!
     fn adjust_prompt_position(&mut self) -> Result<()> {
-        let (prompt_origin_column, prompt_origin_row) = self.prompt_coords.origin;
-        let (prompt_offset_column, prompt_offset_row) = self.prompt_coords.offset;
+        let (prompt_start_col, prompt_start_row) = self.prompt_coords.prompt_start;
+        let (input_start_col, input_start_row) = self.prompt_coords.input_start;
 
         let mut buffer_line_count = self.editor.num_lines() as u16;
 
@@ -567,8 +567,8 @@ impl Reedline {
 
         let terminal_rows = self.terminal_rows();
 
-        if prompt_offset_row + buffer_line_count > terminal_rows {
-            let spill = prompt_offset_row + buffer_line_count - terminal_rows;
+        if input_start_row + buffer_line_count > terminal_rows {
+            let spill = input_start_row + buffer_line_count - terminal_rows;
 
             // FIXME: see if we want this as the permanent home
             if ends_in_newline {
@@ -580,9 +580,9 @@ impl Reedline {
             // We have wrapped off bottom of screen, and prompt is on new row
             // We need to update the prompt location in this case
             self.prompt_coords
-                .set_offset(prompt_offset_column, prompt_offset_row - spill);
+                .set_input_start(input_start_col, input_start_row - spill);
             self.prompt_coords
-                .set_origin(prompt_origin_column, prompt_origin_row - spill);
+                .set_prompt_start(prompt_start_col, prompt_start_row - spill);
         }
 
         Ok(())
@@ -927,19 +927,19 @@ impl Reedline {
     /// This function repaints and updates offsets but does not purely concern it self with wrapping
     fn wrap(&mut self, original_position: (u16, u16), prompt: &dyn Prompt) -> io::Result<()> {
         let (original_column, original_row) = original_position;
-        self.buffer_paint(prompt, self.prompt_coords.offset)?;
+        self.buffer_paint(prompt, self.prompt_coords.input_start)?;
 
         let (new_column, _) = cursor::position()?;
 
         if new_column < original_column && original_row + 1 == self.terminal_rows() {
             // We have wrapped off bottom of screen, and prompt is on new row
             // We need to update the prompt location in this case
-            let (prompt_offset_columns, prompt_offset_rows) = self.prompt_coords.offset;
-            let (prompt_origin_columns, prompt_origin_rows) = self.prompt_coords.origin;
+            let (input_start_col, input_start_row) = self.prompt_coords.input_start;
+            let (prompt_start_col, prompt_start_row) = self.prompt_coords.prompt_start;
             self.prompt_coords
-                .set_offset(prompt_offset_columns, prompt_offset_rows - 1);
+                .set_input_start(input_start_col, input_start_row - 1);
             self.prompt_coords
-                .set_origin(prompt_origin_columns, prompt_origin_rows - 1);
+                .set_prompt_start(prompt_start_col, prompt_start_row - 1);
         }
 
         Ok(())
@@ -948,7 +948,7 @@ impl Reedline {
     /// Heuristic to determine if we need to wrap text around.
     fn require_wrapping(&self) -> bool {
         let line_start = if self.editor.line() == 0 {
-            self.prompt_coords.offset_columns()
+            self.prompt_coords.input_start_col()
         } else {
             0
         };
@@ -973,7 +973,7 @@ impl Reedline {
         Ok(())
     }
 
-    /// Performs full repaint and sets the prompt origin and offset position.
+    /// Performs full repaint and sets the prompt and input origin position.
     ///
     /// Prints prompt (and buffer)
     fn initialize_prompt(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
@@ -992,7 +992,7 @@ impl Reedline {
             }
         };
 
-        self.prompt_coords.set_origin(0, new_row);
+        self.prompt_coords.set_prompt_start(0, new_row);
         self.full_repaint(prompt)?;
         Ok(())
     }
@@ -1003,7 +1003,7 @@ impl Reedline {
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)?;
         } else {
-            self.buffer_paint(prompt, self.prompt_coords.offset)?;
+            self.buffer_paint(prompt, self.prompt_coords.input_start)?;
         }
 
         Ok(())
@@ -1048,7 +1048,7 @@ impl Reedline {
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     /// Performs highlighting and hinting at the moment!
-    fn buffer_paint(&mut self, prompt: &dyn Prompt, prompt_offset: (u16, u16)) -> Result<()> {
+    fn buffer_paint(&mut self, prompt: &dyn Prompt, input_start: (u16, u16)) -> Result<()> {
         let cursor_position_in_buffer = self.editor.offset();
         let buffer_to_paint = self.editor.get_buffer();
 
@@ -1068,7 +1068,7 @@ impl Reedline {
         );
 
         self.painter
-            .queue_buffer(highlighted_line, hint, prompt_offset)?;
+            .queue_buffer(highlighted_line, hint, input_start)?;
         self.painter.flush()?;
 
         Ok(())
@@ -1101,7 +1101,7 @@ impl Reedline {
         let (col, row) = self.painter.repaint_everything(
             prompt,
             prompt_mode,
-            self.prompt_coords.origin,
+            self.prompt_coords.prompt_start,
             highlighted_line,
             hint,
             self.terminal_size,
@@ -1109,7 +1109,7 @@ impl Reedline {
         )?;
 
         // Update the offset position after the prompt
-        self.prompt_coords.set_offset(col, row);
+        self.prompt_coords.set_input_start(col, row);
 
         Ok(())
     }

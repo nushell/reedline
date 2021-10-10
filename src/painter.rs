@@ -94,7 +94,7 @@ impl Painter {
         &mut self,
         highlighted_line: (String, String),
         hint: String,
-        prompt_offset: (u16, u16),
+        input_start: (u16, u16),
     ) -> Result<()> {
         let (before_cursor, after_cursor) = highlighted_line;
 
@@ -112,9 +112,7 @@ impl Painter {
             after_cursor.split("\n")
         };
 
-        let mut commands = self
-            .stdout
-            .queue(MoveTo(prompt_offset.0, prompt_offset.1))?;
+        let mut commands = self.stdout.queue(MoveTo(input_start.0, input_start.1))?;
 
         for (idx, before_cursor_line) in before_cursor_lines.enumerate() {
             if idx != 0 {
@@ -155,23 +153,23 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         prompt_mode: PromptEditMode,
-        prompt_origin: (u16, u16),
+        prompt_start: (u16, u16),
         highlighted_line: (String, String),
         hint: String,
         terminal_size: (u16, u16),
         use_ansi_coloring: bool,
     ) -> Result<(u16, u16)> {
         self.stdout.queue(cursor::Hide)?;
-        self.queue_move_to(prompt_origin.0, prompt_origin.1)?;
+        self.queue_move_to(prompt_start.0, prompt_start.1)?;
         self.queue_prompt(prompt, prompt_mode, terminal_size, use_ansi_coloring)?;
         self.flush()?;
         // set where the input begins
-        let prompt_offset = position()?;
-        self.queue_buffer(highlighted_line, hint, prompt_offset)?;
+        let input_start = position()?;
+        self.queue_buffer(highlighted_line, hint, input_start)?;
         self.stdout.queue(cursor::Show)?;
         self.flush()?;
 
-        Ok(prompt_offset)
+        Ok(input_start)
     }
 
     pub fn queue_history_search_indicator(
