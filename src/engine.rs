@@ -37,18 +37,23 @@ enum InputMode {
 }
 
 #[derive(Default)]
-struct PromptWidget {
+struct PromptCoordinates {
     offset: (u16, u16),
     origin: (u16, u16),
 }
 
-impl PromptWidget {
+impl PromptCoordinates {
     fn offset_columns(&self) -> u16 {
         self.offset.0
     }
-    // fn origin_columns(&self) -> u16 {
-    //     self.origin.0
-    // }
+
+    fn set_origin(&mut self, col: u16, row: u16) {
+        self.origin = (col, row);
+    }
+
+    fn set_offset(&mut self, col: u16, row: u16) {
+        self.offset = (col, row);
+    }
 }
 
 /// Line editor engine
@@ -99,7 +104,7 @@ pub struct Reedline {
 
     // UI State
     terminal_size: (u16, u16),
-    prompt_widget: PromptWidget,
+    prompt_coords: PromptCoordinates,
 
     // Is Some(n) read_line() should repaint prompt every `n` milliseconds
     animate: bool,
@@ -127,7 +132,7 @@ impl Reedline {
 
         let terminal_size = terminal::size()?;
         // Note: this is started with a garbage value
-        let prompt_widget = PromptWidget::default();
+        let prompt_coords = PromptCoordinates::default();
 
         let edit_mode = Box::new(Emacs::default());
 
@@ -139,7 +144,7 @@ impl Reedline {
             edit_mode,
             tab_handler: Box::new(CircularCompletionHandler::default()),
             terminal_size,
-            prompt_widget,
+            prompt_coords,
             highlighter: buffer_highlighter,
             hinter,
             validator,
@@ -479,7 +484,7 @@ impl Reedline {
             }
             ReedlineEvent::Repaint => {
                 if self.input_mode != InputMode::HistorySearch {
-                    self.full_repaint(prompt, self.prompt_widget.origin)?;
+                    self.full_repaint(prompt)?;
                 }
                 Ok(None)
             }
@@ -511,7 +516,7 @@ impl Reedline {
         self.terminal_size = (width, height);
         // TODO properly adjusting prompt_origin on resizing while lines > 1
 
-        let current_origin = self.prompt_widget.origin;
+        let current_origin = self.prompt_coords.origin;
 
         if current_origin.1 >= (height - 1) {
             // Terminal is shrinking up
@@ -519,20 +524,19 @@ impl Reedline {
             // Note: you can't just subtract the offset from the origin,
             // as we could be shrinking so fast that the offset we read back from
             // crossterm is past where it would have been.
-            self.set_prompt_origin((current_origin.0, height - 2));
+            self.prompt_coords.set_origin(current_origin.0, height - 2);
         } else if prev_terminal_size.1 < height {
             // Terminal is growing down, so move the prompt down the same amount to make space
             // for history that's on the screen
             // Note: if the terminal doesn't have sufficient history, this will leave a trail
             // of previous prompts currently.
-            self.set_prompt_origin((
+            self.prompt_coords.set_origin(
                 current_origin.0,
                 current_origin.1 + (height - prev_terminal_size.1),
-            ));
+            );
         }
 
-        let prompt_offset = self.full_repaint(prompt, self.prompt_widget.origin)?;
-        self.set_prompt_offset(prompt_offset);
+        self.full_repaint(prompt)?;
         Ok(())
     }
 
@@ -541,8 +545,8 @@ impl Reedline {
     /// Performs scrolling and updates prompt origin and offset.
     /// Does not trigger a full repaint!
     fn adjust_prompt_position(&mut self) -> Result<()> {
-        let (prompt_origin_column, prompt_origin_row) = self.prompt_widget.origin;
-        let (prompt_offset_column, prompt_offset_row) = self.prompt_widget.offset;
+        let (prompt_origin_column, prompt_origin_row) = self.prompt_coords.origin;
+        let (prompt_offset_column, prompt_offset_row) = self.prompt_coords.offset;
 
         let mut buffer_line_count = self.editor.num_lines() as u16;
 
@@ -575,8 +579,10 @@ impl Reedline {
 
             // We have wrapped off bottom of screen, and prompt is on new row
             // We need to update the prompt location in this case
-            self.set_prompt_offset((prompt_offset_column, prompt_offset_row - spill));
-            self.set_prompt_origin((prompt_origin_column, prompt_origin_row - spill));
+            self.prompt_coords
+                .set_offset(prompt_offset_column, prompt_offset_row - spill);
+            self.prompt_coords
+                .set_origin(prompt_origin_column, prompt_origin_row - spill);
         }
 
         Ok(())
@@ -592,9 +598,7 @@ impl Reedline {
                 let line_buffer = self.editor.line_buffer();
                 self.tab_handler.handle(line_buffer);
 
-                let (prompt_origin_column, prompt_origin_row) = self.prompt_widget.origin;
-
-                self.full_repaint(prompt, (prompt_origin_column, prompt_origin_row))?;
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::CtrlD => {
@@ -628,7 +632,7 @@ impl Reedline {
                     }
                     self.run_edit_commands(&[EditCommand::InsertChar('\n')], prompt)?;
                     self.adjust_prompt_position()?;
-                    self.full_repaint(prompt, self.prompt_widget.origin)?;
+                    self.full_repaint(prompt)?;
 
                     Ok(None)
                 }
@@ -645,7 +649,7 @@ impl Reedline {
             }
             ReedlineEvent::Repaint => {
                 if self.input_mode != InputMode::HistorySearch {
-                    self.full_repaint(prompt, self.prompt_widget.origin)?;
+                    self.full_repaint(prompt)?;
                 }
                 Ok(None)
             }
@@ -653,28 +657,28 @@ impl Reedline {
                 self.previous_history();
 
                 self.adjust_prompt_position()?;
-                self.full_repaint(prompt, self.prompt_widget.origin)?;
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::NextHistory => {
                 self.next_history();
 
                 self.adjust_prompt_position()?;
-                self.full_repaint(prompt, self.prompt_widget.origin)?;
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Up => {
                 self.up_command();
 
                 self.adjust_prompt_position()?;
-                self.full_repaint(prompt, self.prompt_widget.origin)?;
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Down => {
                 self.down_command();
 
                 self.adjust_prompt_position()?;
-                self.full_repaint(prompt, self.prompt_widget.origin)?;
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::SearchHistory => {
@@ -919,29 +923,23 @@ impl Reedline {
         }
     }
 
-    fn set_prompt_offset(&mut self, offset: (u16, u16)) {
-        self.prompt_widget.offset = offset;
-    }
-
-    fn set_prompt_origin(&mut self, origin: (u16, u16)) {
-        self.prompt_widget.origin = origin;
-    }
-
     /// TODO! FIX the naming and provide an accurate doccomment
     /// This function repaints and updates offsets but does not purely concern it self with wrapping
     fn wrap(&mut self, original_position: (u16, u16), prompt: &dyn Prompt) -> io::Result<()> {
         let (original_column, original_row) = original_position;
-        self.buffer_paint(prompt, self.prompt_widget.offset)?;
+        self.buffer_paint(prompt, self.prompt_coords.offset)?;
 
         let (new_column, _) = cursor::position()?;
 
         if new_column < original_column && original_row + 1 == self.terminal_rows() {
             // We have wrapped off bottom of screen, and prompt is on new row
             // We need to update the prompt location in this case
-            let (prompt_offset_columns, prompt_offset_rows) = self.prompt_widget.offset;
-            let (prompt_origin_columns, prompt_origin_rows) = self.prompt_widget.origin;
-            self.set_prompt_offset((prompt_offset_columns, prompt_offset_rows - 1));
-            self.set_prompt_origin((prompt_origin_columns, prompt_origin_rows - 1));
+            let (prompt_offset_columns, prompt_offset_rows) = self.prompt_coords.offset;
+            let (prompt_origin_columns, prompt_origin_rows) = self.prompt_coords.origin;
+            self.prompt_coords
+                .set_offset(prompt_offset_columns, prompt_offset_rows - 1);
+            self.prompt_coords
+                .set_origin(prompt_origin_columns, prompt_origin_rows - 1);
         }
 
         Ok(())
@@ -950,7 +948,7 @@ impl Reedline {
     /// Heuristic to determine if we need to wrap text around.
     fn require_wrapping(&self) -> bool {
         let line_start = if self.editor.line() == 0 {
-            self.prompt_widget.offset_columns()
+            self.prompt_coords.offset_columns()
         } else {
             0
         };
@@ -979,25 +977,23 @@ impl Reedline {
     ///
     /// Prints prompt (and buffer)
     fn initialize_prompt(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
-        let origin = {
-            let (column, row) = cursor::position()?;
+        let (column, row) = cursor::position()?;
+        let new_row = {
             if (column, row) == (0, 0) {
-                (0, 0)
+                0
             } else if row + 1 == self.terminal_rows() {
                 self.painter.paint_carriage_return()?;
-                (0, row.saturating_sub(1))
+                row.saturating_sub(1)
             } else if row + 2 == self.terminal_rows() {
                 self.painter.paint_carriage_return()?;
-                (0, row)
+                row
             } else {
-                (0, row + 1)
+                row + 1
             }
         };
 
-        self.set_prompt_origin(origin);
-        let prompt_offset = self.full_repaint(prompt, origin)?;
-        self.set_prompt_offset(prompt_offset);
-
+        self.prompt_coords.set_origin(0, new_row);
+        self.full_repaint(prompt)?;
         Ok(())
     }
 
@@ -1007,7 +1003,7 @@ impl Reedline {
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)?;
         } else {
-            self.buffer_paint(prompt, self.prompt_widget.offset)?;
+            self.buffer_paint(prompt, self.prompt_coords.offset)?;
         }
 
         Ok(())
@@ -1081,11 +1077,7 @@ impl Reedline {
     /// Triggers a full repaint including the prompt parts
     ///
     /// Includes the highlighting and hinting calls.
-    fn full_repaint(
-        &mut self,
-        prompt: &dyn Prompt,
-        prompt_origin: (u16, u16),
-    ) -> Result<(u16, u16)> {
+    fn full_repaint(&mut self, prompt: &dyn Prompt) -> Result<()> {
         let prompt_mode = self.prompt_edit_mode();
         // let prompt_style = Style::new().fg(nu_ansi_term::Color::LightBlue);
         let buffer_to_paint = self.editor.get_buffer();
@@ -1106,14 +1098,19 @@ impl Reedline {
             self.use_ansi_coloring,
         );
 
-        self.painter.repaint_everything(
+        let (col, row) = self.painter.repaint_everything(
             prompt,
             prompt_mode,
-            prompt_origin,
+            self.prompt_coords.origin,
             highlighted_line,
             hint,
             self.terminal_size,
             self.use_ansi_coloring,
-        )
+        )?;
+
+        // Update the offset position after the prompt
+        self.prompt_coords.set_offset(col, row);
+
+        Ok(())
     }
 }
