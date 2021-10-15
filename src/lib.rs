@@ -220,7 +220,7 @@ pub use styled_text::StyledText;
 mod completion;
 pub use completion::{
     CircularCompletionHandler, Completer, CompletionActionHandler, DefaultCompleter,
-    ListCompletionHandler, Span,
+    ListCompletionHandler, Span, Suggestion,
 };
 
 mod hinter;

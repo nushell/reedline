@@ -1,4 +1,6 @@
-use crate::{core_editor::LineBuffer, Completer, CompletionActionHandler, DefaultCompleter, Span};
+use crate::{
+    core_editor::LineBuffer, Completer, CompletionActionHandler, DefaultCompleter, Span, Suggestion,
+};
 
 /// A simple handler that will do a cycle-based rotation through the options given by the Completer
 pub struct ListCompletionHandler {
@@ -71,10 +73,10 @@ impl CompletionActionHandler for ListCompletionHandler {
             let span = completions[0].0;
 
             let mut offset = present_buffer.offset();
-            offset += completions[0].1.len() - (span.end - span.start);
+            offset += completions[0].1.replacement.len() - (span.end - span.start);
 
             // TODO improve the support for multiline replace
-            present_buffer.replace(span.start..span.end, &completions[0].1);
+            present_buffer.replace(span.start..span.end, &completions[0].1.replacement);
             present_buffer.set_insertion_point(offset);
             self.complete = true;
         } else {
@@ -90,18 +92,18 @@ impl CompletionActionHandler for ListCompletionHandler {
             print!("\r\n");
             for completion in completions {
                 // TODO: make this list pretty
-                print!("{}\r\n", completion.1);
+                print!("{}\r\n", completion.1.display);
             }
             print!("\r\n");
         }
     }
 }
 
-fn calculate_prefix(inputs: &[(Span, String)]) -> String {
+fn calculate_prefix(inputs: &[(Span, Suggestion)]) -> String {
     let mut iter = inputs.iter();
 
     if let Some(first) = iter.next() {
-        let prefix = first.1.clone();
+        let prefix = first.1.replacement.clone();
         let prefix_bytes = prefix.as_bytes();
 
         let mut longest_match = prefix.len();
@@ -109,7 +111,8 @@ fn calculate_prefix(inputs: &[(Span, String)]) -> String {
         for i in iter {
             longest_match = std::cmp::min(
                 longest_match,
-                i.1.as_bytes()
+                i.1.replacement
+                    .as_bytes()
                     .iter()
                     .zip(prefix_bytes)
                     .take_while(|(x, y)| x == y)

@@ -32,7 +32,7 @@ impl Hinter for DefaultHinter {
             }
 
             if !completions.is_empty() {
-                let mut hint = completions[0].1.clone();
+                let mut hint = completions[0].1.replacement.clone();
                 let span = completions[0].0;
                 hint.replace_range(0..(span.end - span.start), "");
 

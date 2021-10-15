@@ -4,7 +4,7 @@ use std::{
     str::Chars,
 };
 
-use crate::{Completer, Span};
+use crate::{Completer, Span, Suggestion};
 
 /// A default completer that can detect keywords
 ///
@@ -74,7 +74,7 @@ impl Completer for DefaultCompleter {
     ///         (Span { start: 7, end: 10 }, "batmobile".into()),
     ///     ]);
     /// ```
-    fn complete(&self, line: &str, pos: usize) -> Vec<(Span, String)> {
+    fn complete(&self, line: &str, pos: usize) -> Vec<(Span, Suggestion)> {
         let mut span_line_whitespaces = 0;
         let mut completions = vec![];
         if !line.is_empty() {
@@ -102,11 +102,14 @@ impl Completer for DefaultCompleter {
                                             pos - span_line.len() - span_line_whitespaces,
                                             pos,
                                         ),
-                                        format!("{}{}", span_line, ext),
+                                        Suggestion {
+                                            display: format!("{}{}", span_line, ext),
+                                            replacement: format!("{}{}", span_line, ext),
+                                        },
                                     )
                                 })
-                                .filter(|t| t.1.len() > (t.0.end - t.0.start))
-                                .collect::<Vec<(Span, String)>>(),
+                                .filter(|t| t.1.replacement.len() > (t.0.end - t.0.start))
+                                .collect::<Vec<(Span, Suggestion)>>(),
                         );
                     }
                 }

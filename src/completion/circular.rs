@@ -83,10 +83,10 @@ impl CompletionActionHandler for CircularCompletionHandler {
                     let span = completions[index].0;
 
                     let mut offset = present_buffer.offset();
-                    offset += completions[index].1.len() - (span.end - span.start);
+                    offset += completions[index].1.replacement.len() - (span.end - span.start);
 
                     // TODO improve the support for multiline replace
-                    present_buffer.replace(span.start..span.end, &completions[index].1);
+                    present_buffer.replace(span.start..span.end, &completions[index].1.replacement);
                     present_buffer.set_insertion_point(offset);
                 }
                 _ => {

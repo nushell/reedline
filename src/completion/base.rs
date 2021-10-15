@@ -1,4 +1,5 @@
 use crate::core_editor::LineBuffer;
+use std::fmt::{self, Display, Formatter};
 
 /// A span of source code, with positions in bytes
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
@@ -33,9 +34,21 @@ pub trait CompletionActionHandler {
     fn handle(&mut self, line: &mut LineBuffer);
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub struct Suggestion {
+    pub display: String,
+    pub replacement: String,
+}
+
+impl Display for Suggestion {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self.display)
+    }
+}
+
 /// A trait that defines how to convert a line and position to a list of potential completions in that position.
 pub trait Completer {
     /// the action that will take the line and position and convert it to a vector of completions, which include the
     /// span to replace and the contents of that replacement
-    fn complete(&self, line: &str, pos: usize) -> Vec<(Span, String)>;
+    fn complete(&self, line: &str, pos: usize) -> Vec<(Span, Suggestion)>;
 }
