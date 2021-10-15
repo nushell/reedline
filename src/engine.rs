@@ -486,7 +486,10 @@ impl Reedline {
             ReedlineEvent::HandleTab => {
                 let mut line_buffer = self.editor.line_buffer();
                 self.tab_handler.handle(&mut line_buffer);
-                self.repaint(prompt)?;
+
+                let (prompt_origin_column, prompt_origin_row) = self.prompt_widget.origin;
+
+                self.full_repaint(prompt, (prompt_origin_column, prompt_origin_row))?;
                 Ok(None)
             }
             ReedlineEvent::CtrlD => {
