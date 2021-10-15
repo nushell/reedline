@@ -187,6 +187,7 @@
 #![warn(missing_docs)]
 // #![deny(warnings)]
 mod core_editor;
+pub use core_editor::LineBuffer;
 
 mod text_manipulation;
 

@@ -43,6 +43,7 @@ impl From<&str> for LineBuffer {
 }
 
 impl LineBuffer {
+    /// Create a line buffer instance
     pub fn new() -> LineBuffer {
         LineBuffer {
             lines: String::new(),
@@ -55,10 +56,12 @@ impl LineBuffer {
         self.lines.replace_range(range, text);
     }
 
+    /// Check to see if the line buffer is empty
     pub fn is_empty(&self) -> bool {
         self.lines.is_empty()
     }
 
+    /// Gets the current edit position
     pub fn offset(&self) -> usize {
         self.insertion_point.offset
     }
@@ -68,6 +71,7 @@ impl LineBuffer {
         self.insertion_point
     }
 
+    /// Sets the current edit position
     pub fn set_insertion_point(&mut self, offset: usize) {
         self.insertion_point = InsertionPoint { offset };
     }
@@ -95,6 +99,7 @@ impl LineBuffer {
         }
     }
 
+    /// Counts the number of lines in the buffer
     pub fn num_lines(&self) -> usize {
         let count = self.lines.split('\n').count();
 
@@ -105,6 +110,7 @@ impl LineBuffer {
         }
     }
 
+    /// Checks to see if the buffer ends with a given character
     pub fn ends_with(&self, c: char) -> bool {
         self.lines.ends_with(c)
     }
@@ -233,6 +239,7 @@ impl LineBuffer {
         self.lines.replace_range(range, replace_with);
     }
 
+    /// Checks to see if the current edit position is pointing to whitespace
     pub fn on_whitespace(&self) -> bool {
         self.lines[self.insertion_point.offset..]
             .chars()
@@ -241,6 +248,7 @@ impl LineBuffer {
             .unwrap_or(false)
     }
 
+    /// Gets the range of the word the current edit position is pointing to
     pub fn current_word_range(&mut self) -> Range<usize> {
         let right_index = self.word_right_index();
         let left_index = self.lines[..right_index]
@@ -253,6 +261,7 @@ impl LineBuffer {
         left_index..right_index
     }
 
+    /// Uppercases the current word
     pub fn uppercase_word(&mut self) {
         let change_range = self.current_word_range();
         let uppercased = self.get_buffer()[change_range.clone()].to_uppercase();
@@ -260,6 +269,7 @@ impl LineBuffer {
         self.move_word_right();
     }
 
+    /// Lowercases the current word
     pub fn lowercase_word(&mut self) {
         let change_range = self.current_word_range();
         let uppercased = self.get_buffer()[change_range.clone()].to_lowercase();
@@ -267,12 +277,13 @@ impl LineBuffer {
         self.move_word_right();
     }
 
+    /// Counts the number of words in the buffer
     pub fn word_count(&self) -> usize {
         self.lines.trim().split_whitespace().count()
     }
 
-    // Capitallize the character at insertion point and move the insertion point right one
-    // grapheme.
+    /// Capitallize the character at insertion point and move the insertion point right one
+    /// grapheme.
     pub fn capitalize_char(&mut self) {
         if self.on_whitespace() {
             self.move_word_right();
@@ -289,6 +300,7 @@ impl LineBuffer {
         }
     }
 
+    /// Deletes on grapheme to the left
     pub fn delete_left_grapheme(&mut self) {
         let left_index = self.grapheme_left_index();
         let insertion_offset = self.insertion_point().offset;
@@ -298,6 +310,7 @@ impl LineBuffer {
         }
     }
 
+    /// Deletes one grapheme to the right
     pub fn delete_right_grapheme(&mut self) {
         let right_index = self.grapheme_right_index();
         let insertion_offset = self.insertion_point().offset;
@@ -306,17 +319,20 @@ impl LineBuffer {
         }
     }
 
+    /// Deletes one word to the left
     pub fn delete_word_left(&mut self) {
         let left_word_index = self.word_left_index();
         self.clear_range(left_word_index..self.insertion_point().offset);
         self.insertion_point.offset = left_word_index;
     }
 
+    /// Deletes one word to the right
     pub fn delete_word_right(&mut self) {
         let right_word_index = self.word_right_index();
         self.clear_range(self.insertion_point().offset..right_word_index);
     }
 
+    /// Swaps current word with word on right
     pub fn swap_words(&mut self) {
         let word_1_range = self.current_word_range();
         self.move_word_right();
@@ -332,6 +348,7 @@ impl LineBuffer {
         }
     }
 
+    /// Swaps current grapheme with grapheme on right
     pub fn swap_graphemes(&mut self) {
         let initial_offset = self.insertion_point().offset;
 
@@ -356,6 +373,7 @@ impl LineBuffer {
         }
     }
 
+    /// Moves one line up
     pub fn move_line_up(&mut self) {
         // If we're not at the top, move up a line in the multiline buffer
         let mut position = self.offset();
@@ -388,6 +406,7 @@ impl LineBuffer {
         }
     }
 
+    /// Moves one line down
     pub fn move_line_down(&mut self) {
         // If we're not at the top, move up a line in the multiline buffer
         let mut position = self.offset();
@@ -426,10 +445,12 @@ impl LineBuffer {
         }
     }
 
+    /// Checks to see if the cursor is on the first line of the buffer
     pub fn is_cursor_at_first_line(&self) -> bool {
         !self.get_buffer()[0..self.offset()].contains('\n')
     }
 
+    /// Checks to see if the cursor is on the last line of the buffer
     pub fn is_cursor_at_last_line(&self) -> bool {
         !self.get_buffer()[self.offset()..].contains('\n')
     }
