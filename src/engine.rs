@@ -11,7 +11,7 @@ use {
         text_manipulation, DefaultHighlighter, DefaultValidator, EditCommand, Highlighter, Prompt,
         Signal, ValidationResult, Validator,
     },
-    crossterm::{cursor, event, terminal, Result},
+    crossterm::{cursor, terminal, event, Result},
     std::{io, time::Duration},
 };
 
@@ -105,6 +105,9 @@ pub struct Reedline {
     // UI State
     terminal_size: (u16, u16),
     prompt_widget: PromptWidget,
+
+    // True if read_line() should repaint prompt every second
+    repaint: bool
 }
 
 impl Reedline {
@@ -134,6 +137,7 @@ impl Reedline {
             highlighter: buffer_highlighter,
             hinter,
             validator,
+            repaint: true,
         };
 
         Ok(reedline)
@@ -198,6 +202,12 @@ impl Reedline {
         tab_handler: Box<dyn CompletionActionHandler>,
     ) -> Reedline {
         self.tab_handler = tab_handler;
+        self
+    }
+
+    /// A builder which disables repainting of prompt
+    pub fn without_repaint(mut self) -> Reedline {
+        self.repaint = false;
         self
     }
 
@@ -342,8 +352,10 @@ impl Reedline {
         loop {
             let event = if event::poll(Duration::from_secs(1))? {
                 self.get_event()?
-            } else {
+            } else if self.repaint {
                 ReedlineEvent::Repaint
+            } else {
+                ReedlineEvent::None
             };
 
             if self.input_mode == InputMode::HistorySearch {
@@ -1013,3 +1025,4 @@ impl Reedline {
         )
     }
 }
+
