@@ -106,8 +106,8 @@ pub struct Reedline {
     terminal_size: (u16, u16),
     prompt_widget: PromptWidget,
 
-    // True if read_line() should repaint prompt every second
-    repaint: bool
+    // Is Some(n) read_line() should repaint prompt every `n` milliseconds
+    repaint: Option<u64>, 
 }
 
 impl Reedline {
@@ -137,7 +137,7 @@ impl Reedline {
             highlighter: buffer_highlighter,
             hinter,
             validator,
-            repaint: true,
+            repaint: Some(1000),
         };
 
         Ok(reedline)
@@ -205,9 +205,12 @@ impl Reedline {
         self
     }
 
-    /// A builder which disables repainting of prompt
-    pub fn without_repaint(mut self) -> Reedline {
-        self.repaint = false;
+    /// A builder which enables or disables repainting of prompt.
+    /// If `repaint` contains `Some(m)` for, then the prompt will be repainted
+    /// every `m` milliseconds.  
+    /// Dynamic repainting is disabled if `repaint` contains `None`.
+    pub fn with_repaint(mut self, repaint: Option<u64>) -> Reedline {
+        self.repaint = repaint;
         self
     }
 
@@ -350,12 +353,14 @@ impl Reedline {
         self.initialize_prompt(prompt)?;
 
         loop {
-            let event = if event::poll(Duration::from_secs(1))? {
-                self.get_event()?
-            } else if self.repaint {
-                ReedlineEvent::Repaint
+            let event = if let Some(millis) = self.repaint {
+                if event::poll(Duration::from_millis(millis))? {
+                    self.get_event()?
+                } else {
+                    ReedlineEvent::Repaint
+                }
             } else {
-                ReedlineEvent::None
+                self.get_event()?
             };
 
             if self.input_mode == InputMode::HistorySearch {
