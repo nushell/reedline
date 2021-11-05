@@ -11,7 +11,7 @@ use {
         text_manipulation, DefaultHighlighter, DefaultValidator, EditCommand, Highlighter, Prompt,
         Signal, ValidationResult, Validator,
     },
-    crossterm::{cursor, terminal, event, Result},
+    crossterm::{cursor, event, terminal, Result},
     std::{io, time::Duration},
 };
 
@@ -107,7 +107,7 @@ pub struct Reedline {
     prompt_widget: PromptWidget,
 
     // Is Some(n) read_line() should repaint prompt every `n` milliseconds
-    repaint: Option<u64>, 
+    repaint: Option<u64>,
 }
 
 impl Reedline {
@@ -1030,4 +1030,3 @@ impl Reedline {
         )
     }
 }
-
