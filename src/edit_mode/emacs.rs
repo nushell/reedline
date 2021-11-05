@@ -34,9 +34,17 @@ impl EditMode for Emacs {
                 (m, KeyCode::Char(c)) if m == KeyModifiers::CONTROL | KeyModifiers::ALT => {
                     ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
                 }
+
+                (m, KeyCode::Char(c))
+                    if m == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT =>
+                {
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
+                }
+
                 (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                     ReedlineEvent::Edit(vec![EditCommand::InsertChar(c.to_ascii_uppercase())])
                 }
+
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                 _ => self
                     .keybindings
