@@ -2,7 +2,7 @@ use reedline::{EditMode, Emacs, ListCompletionHandler, Vi};
 
 use {
     crossterm::{
-        event::{poll, Event, KeyCode, KeyModifiers},
+        event::{poll, Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, Result,
     },
     nu_ansi_term::{Color, Style},
@@ -131,7 +131,27 @@ fn print_events_helper() -> Result<()> {
             let event = crossterm::event::read()?;
 
             // just reuse the print_message fn to show events
-            println!("Event::{:?}\r", event);
+            if let Event::Key(KeyEvent { code, modifiers }) = event {
+                match code {
+                    KeyCode::Char(c) => {
+                        println!(
+                            "Char: {} code: {:#08x}; Modifier {:?}; Flags {:#08b}",
+                            c,
+                            u32::from(c),
+                            modifiers,
+                            modifiers
+                        );
+                    }
+                    _ => {
+                        println!(
+                            "Keycode: {:?}; Modifier {:?}; Flags {:#08b}",
+                            code, modifiers, modifiers
+                        );
+                    }
+                }
+            } else {
+                println!("Event::{:?}\r", event);
+            }
 
             // hit the esc key to git out
             if event == Event::Key(KeyCode::Esc.into()) {
