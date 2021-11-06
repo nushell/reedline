@@ -58,6 +58,13 @@ impl EditMode for Vi {
                 {
                     ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
                 }
+
+                (Mode::Insert, m, KeyCode::Char(c))
+                    if m == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT =>
+                {
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
+                }
+
                 (Mode::Insert, KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                     ReedlineEvent::Edit(vec![EditCommand::InsertChar(c.to_ascii_uppercase())])
                 }
