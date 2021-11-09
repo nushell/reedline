@@ -34,21 +34,32 @@ impl StyledText {
 
         for pair in &self.buffer {
             if current_idx >= insertion_point {
-                right_string.push_str(&pair.0.paint(&pair.1).to_string());
+                right_string.push_str(&render_as_string(pair));
             } else if pair.1.len() + current_idx <= insertion_point {
-                left_string.push_str(&pair.0.paint(&pair.1).to_string());
+                left_string.push_str(&render_as_string(pair));
             } else if pair.1.len() + current_idx > insertion_point {
                 let offset = insertion_point - current_idx;
 
                 let left_side = pair.1[..offset].to_string();
                 let right_side = pair.1[offset..].to_string();
 
-                left_string.push_str(&pair.0.paint(&left_side).to_string());
-                right_string.push_str(&pair.0.paint(&right_side).to_string());
+                left_string.push_str(&render_as_string(&(pair.0, left_side)));
+                right_string.push_str(&render_as_string(&(pair.0, right_side)));
             }
             current_idx += pair.1.len();
         }
 
         (left_string, right_string)
     }
+}
+
+fn render_as_string(renderable: &(Style, String)) -> String {
+    let mut rendered = String::new();
+    for (line_number, line) in renderable.1.split('\n').enumerate() {
+        if line_number != 0 {
+            rendered.push_str("\n: ");
+        }
+        rendered.push_str(&renderable.0.paint(line).to_string());
+    }
+    rendered
 }
