@@ -376,8 +376,27 @@ impl Reedline {
                     reedline_events.push(ReedlineEvent::Resize(x, y));
                 }
 
+                let mut last_edit_commands = None;
                 for event in crossterm_events.drain(..) {
-                    reedline_events.push(self.edit_mode.parse_event(event))
+                    match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
+                        (None, ReedlineEvent::Edit(ec)) => {
+                            last_edit_commands = Some(ec);
+                        }
+                        (None, other_event) => {
+                            reedline_events.push(other_event);
+                        }
+                        (Some(ref mut last_ecs), ReedlineEvent::Edit(ec)) => {
+                            last_ecs.extend(ec);
+                        }
+                        (ref mut a @ Some(_), other_event) => {
+                            reedline_events.push(ReedlineEvent::Edit(a.take().unwrap()));
+
+                            reedline_events.push(other_event);
+                        }
+                    }
+                }
+                if let Some(ec) = last_edit_commands {
+                    reedline_events.push(ReedlineEvent::Edit(ec));
                 }
             } else if self.repaint.is_some() {
                 reedline_events.push(ReedlineEvent::Repaint);
