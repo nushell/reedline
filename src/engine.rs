@@ -1007,6 +1007,7 @@ impl Reedline {
         prompt_origin: (u16, u16),
     ) -> Result<(u16, u16)> {
         let prompt_mode = self.prompt_edit_mode();
+        // let prompt_style = Style::new().fg(nu_ansi_term::Color::LightBlue);
         let buffer_to_paint = self.editor.get_buffer();
         let cursor_position_in_buffer = self.editor.offset();
 
