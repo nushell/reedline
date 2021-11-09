@@ -356,13 +356,13 @@ impl Reedline {
         let mut reedline_events: Vec<ReedlineEvent> = vec![];
 
         loop {
-            if event::poll(Duration::from_secs(self.repaint.unwrap_or(0)))? {
+            if event::poll(Duration::from_millis(self.repaint.unwrap_or(0)))? {
                 let mut latest_resize = None;
 
                 // There could be multiple events queued up!
                 // pasting text, resizes, blocking this thread (e.g. during debugging)
                 // We should be able to handle all of them as quickly as possible without causing unnecessary output steps.
-                while event::poll(Duration::from_secs(0))? {
+                while event::poll(Duration::from_millis(0))? {
                     // TODO: Maybe replace with a separate function processing the buffered event
                     match event::read()? {
                         Event::Resize(x, y) => {
