@@ -796,19 +796,14 @@ impl Reedline {
                 // A simple solution that we can do is to queue up these and perform the wrapping
                 // check after the loop finishes. Will need to sort out the details.
                 EditCommand::InsertChar(c) => {
-                    let line_start = if self.editor.line() == 0 {
-                        self.prompt_widget.offset_columns()
-                    } else {
-                        0
-                    };
 
-                    if self.might_require_wrapping(line_start, *c) {
+                    self.editor.insert_char(*c);
+                    
+                    if self.require_wrapping() {
                         let position = cursor::position()?;
-                        self.editor.insert_char(*c);
                         self.wrap(position)?;
-                    } else {
-                        self.editor.insert_char(*c);
-                    }
+                    } 
+
                     self.editor.remember_undo_state(false);
 
                     self.repaint(prompt)?;
@@ -918,16 +913,19 @@ impl Reedline {
         Ok(())
     }
 
-    /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.
-    fn might_require_wrapping(&self, start_offset: u16, c: char) -> bool {
+    /// Heuristic to determine if we need to wrap text around.
+    fn require_wrapping(&self) -> bool {
         use unicode_width::UnicodeWidthStr;
+
+        let line_start = if self.editor.line() == 0 {
+            self.prompt_widget.offset_columns()
+        } else {
+            0
+        };
 
         let terminal_width = self.terminal_columns();
 
-        let mut test_buffer = self.editor.get_buffer().to_string();
-        test_buffer.push(c);
-
-        let display_width = UnicodeWidthStr::width(test_buffer.as_str()) + start_offset as usize;
+        let display_width = UnicodeWidthStr::width(self.editor.get_buffer()) + line_start as usize;
 
         display_width >= terminal_width as usize
     }
