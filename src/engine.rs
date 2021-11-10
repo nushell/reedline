@@ -796,13 +796,12 @@ impl Reedline {
                 // A simple solution that we can do is to queue up these and perform the wrapping
                 // check after the loop finishes. Will need to sort out the details.
                 EditCommand::InsertChar(c) => {
-
                     self.editor.insert_char(*c);
-                    
+
                     if self.require_wrapping() {
                         let position = cursor::position()?;
                         self.wrap(position)?;
-                    } 
+                    }
 
                     self.editor.remember_undo_state(false);
 
