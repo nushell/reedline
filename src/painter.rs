@@ -107,8 +107,7 @@ impl Painter {
 
         commands
             .queue(Clear(ClearType::FromCursorDown))?
-            .queue(RestorePosition)?
-            .flush()?;
+            .queue(RestorePosition)?;
 
         Ok(())
     }
