@@ -494,14 +494,29 @@ impl Reedline {
 
     /// Updates prompt origin and offset and performs a repaint to handle a screen resize event
     fn handle_resize(&mut self, width: u16, height: u16, prompt: &dyn Prompt) -> Result<()> {
+        let prev_terminal_size = self.terminal_size;
+
         self.terminal_size = (width, height);
         // TODO properly adjusting prompt_origin on resizing while lines > 1
 
         let current_origin = self.prompt_widget.origin;
 
         if current_origin.1 >= (height - 1) {
-            //FIXME: use actual prompt height
+            // Terminal is shrinking up
+            // FIXME: use actual prompt size at some point
+            // Note: you can't just subtract the offset from the origin,
+            // as we could be shrinking so fast that the offset we read back from
+            // crossterm is past where it would have been.
             self.set_prompt_origin((current_origin.0, height - 2))
+        } else if prev_terminal_size.1 < height {
+            // Terminal is growing down, so move the prompt down the same amount to make space
+            // for history that's on the screen
+            // Note: if the terminal doesn't have sufficient history, this will leave a trail
+            // of previous prompts currently.
+            self.set_prompt_origin((
+                current_origin.0,
+                current_origin.1 + (height - prev_terminal_size.1),
+            ))
         }
 
         let prompt_offset = self.full_repaint(prompt, self.prompt_widget.origin)?;
