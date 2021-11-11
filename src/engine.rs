@@ -51,9 +51,9 @@ impl PromptWidget {
     fn offset_columns(&self) -> u16 {
         self.offset.0
     }
-    fn origin_columns(&self) -> u16 {
-        self.origin.0
-    }
+    // fn origin_columns(&self) -> u16 {
+    //     self.origin.0
+    // }
 }
 
 /// Line editor engine
@@ -497,11 +497,15 @@ impl Reedline {
         self.terminal_size = (width, height);
         // TODO properly adjusting prompt_origin on resizing while lines > 1
 
-        let new_prompt_origin_row = cursor::position()?.1.saturating_sub(1);
-        self.set_prompt_offset((self.prompt_widget.origin_columns(), new_prompt_origin_row));
-        let new_prompt_offset = self.full_repaint(prompt, self.prompt_widget.offset)?;
-        self.set_prompt_offset(new_prompt_offset);
-        self.repaint(prompt)?;
+        let current_origin = self.prompt_widget.origin;
+
+        if current_origin.1 >= (height - 1) {
+            //FIXME: use actual prompt height
+            self.set_prompt_origin((current_origin.0, height - 2))
+        }
+
+        let prompt_offset = self.full_repaint(prompt, self.prompt_widget.origin)?;
+        self.set_prompt_offset(prompt_offset);
         Ok(())
     }
 
