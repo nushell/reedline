@@ -761,7 +761,7 @@ impl Reedline {
                     if self.might_require_wrapping(line_start, *c) {
                         let position = cursor::position()?;
                         self.editor.insert_char(*c);
-                        self.wrap(position)?;
+                        self.wrap(position, prompt)?;
                     } else {
                         self.editor.insert_char(*c);
                     }
@@ -856,9 +856,9 @@ impl Reedline {
 
     /// TODO! FIX the naming and provide an accurate doccomment
     /// This function repaints and updates offsets but does not purely concern it self with wrapping
-    fn wrap(&mut self, original_position: (u16, u16)) -> io::Result<()> {
+    fn wrap(&mut self, original_position: (u16, u16), prompt: &dyn Prompt) -> io::Result<()> {
         let (original_column, original_row) = original_position;
-        self.buffer_paint(self.prompt_widget.offset)?;
+        self.buffer_paint(prompt, self.prompt_widget.offset)?;
 
         let (new_column, _) = cursor::position()?;
 
@@ -932,7 +932,7 @@ impl Reedline {
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)?;
         } else {
-            self.buffer_paint(self.prompt_widget.offset)?;
+            self.buffer_paint(prompt, self.prompt_widget.offset)?;
         }
 
         Ok(())
@@ -977,14 +977,17 @@ impl Reedline {
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     /// Performs highlighting and hinting at the moment!
-    fn buffer_paint(&mut self, prompt_offset: (u16, u16)) -> Result<()> {
+    fn buffer_paint(&mut self, prompt: &dyn Prompt, prompt_offset: (u16, u16)) -> Result<()> {
         let cursor_position_in_buffer = self.editor.offset();
         let buffer_to_paint = self.editor.get_buffer();
 
         let highlighted_line = self
             .highlighter
             .highlight(buffer_to_paint)
-            .render_around_insertion_point(cursor_position_in_buffer);
+            .render_around_insertion_point(
+                cursor_position_in_buffer,
+                prompt.render_prompt_multiline_indicator(),
+            );
         let hint: String = self.hinter.handle(
             buffer_to_paint,
             cursor_position_in_buffer,
@@ -1014,7 +1017,10 @@ impl Reedline {
         let highlighted_line = self
             .highlighter
             .highlight(buffer_to_paint)
-            .render_around_insertion_point(cursor_position_in_buffer);
+            .render_around_insertion_point(
+                cursor_position_in_buffer,
+                prompt.render_prompt_multiline_indicator(),
+            );
         let hint: String = self.hinter.handle(
             buffer_to_paint,
             cursor_position_in_buffer,
