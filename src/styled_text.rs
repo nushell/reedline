@@ -1,4 +1,4 @@
-use nu_ansi_term::Style;
+use nu_ansi_term::{Color, Style};
 
 /// A representation of a buffer with styling, used for doing syntax highlighting
 pub struct StyledText {
@@ -27,28 +27,43 @@ impl StyledText {
     /// place to put the cursor. This assumes a logic that prints the first part of the
     /// string, saves the cursor position, prints the second half, and then restores
     /// the cursor position
-    pub fn render_around_insertion_point(&self, insertion_point: usize) -> (String, String) {
+    pub fn render_around_insertion_point(
+        &self,
+        insertion_point: usize,
+        // prompt_style: &Style,
+    ) -> (String, String) {
         let mut current_idx = 0;
         let mut left_string = String::new();
         let mut right_string = String::new();
-
+        let prompt_style = Style::new().fg(Color::LightBlue);
         for pair in &self.buffer {
             if current_idx >= insertion_point {
-                right_string.push_str(&pair.0.paint(&pair.1).to_string());
+                right_string.push_str(&render_as_string(pair, &prompt_style));
             } else if pair.1.len() + current_idx <= insertion_point {
-                left_string.push_str(&pair.0.paint(&pair.1).to_string());
+                left_string.push_str(&render_as_string(pair, &prompt_style));
             } else if pair.1.len() + current_idx > insertion_point {
                 let offset = insertion_point - current_idx;
 
                 let left_side = pair.1[..offset].to_string();
                 let right_side = pair.1[offset..].to_string();
 
-                left_string.push_str(&pair.0.paint(&left_side).to_string());
-                right_string.push_str(&pair.0.paint(&right_side).to_string());
+                left_string.push_str(&render_as_string(&(pair.0, left_side), &prompt_style));
+                right_string.push_str(&render_as_string(&(pair.0, right_side), &prompt_style));
             }
             current_idx += pair.1.len();
         }
 
         (left_string, right_string)
     }
+}
+
+fn render_as_string(renderable: &(Style, String), prompt_style: &Style) -> String {
+    let mut rendered = String::new();
+    for (line_number, line) in renderable.1.split('\n').enumerate() {
+        if line_number != 0 {
+            rendered.push_str(&prompt_style.paint("\n: ").to_string());
+        }
+        rendered.push_str(&renderable.0.paint(line).to_string());
+    }
+    rendered
 }
