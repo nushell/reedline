@@ -11,7 +11,7 @@ use {
         text_manipulation, DefaultHighlighter, DefaultValidator, EditCommand, Highlighter, Prompt,
         Signal, ValidationResult, Validator,
     },
-    crossterm::{cursor, event, terminal, Result},
+    crossterm::{cursor, event, event::Event, terminal, Result},
     std::{io, time::Duration},
 };
 
@@ -51,9 +51,9 @@ impl PromptWidget {
     fn offset_columns(&self) -> u16 {
         self.offset.0
     }
-    fn origin_columns(&self) -> u16 {
-        self.origin.0
-    }
+    // fn origin_columns(&self) -> u16 {
+    //     self.origin.0
+    // }
 }
 
 /// Line editor engine
@@ -352,30 +352,74 @@ impl Reedline {
         self.terminal_size = terminal::size()?;
         self.initialize_prompt(prompt)?;
 
+        let mut crossterm_events: Vec<Event> = vec![];
+        let mut reedline_events: Vec<ReedlineEvent> = vec![];
+
         loop {
-            let event = if let Some(millis) = self.repaint {
-                if event::poll(Duration::from_millis(millis))? {
-                    self.get_event()?
-                } else {
-                    ReedlineEvent::Repaint
+            if event::poll(Duration::from_millis(self.repaint.unwrap_or(0)))? {
+                let mut latest_resize = None;
+
+                // There could be multiple events queued up!
+                // pasting text, resizes, blocking this thread (e.g. during debugging)
+                // We should be able to handle all of them as quickly as possible without causing unnecessary output steps.
+                while event::poll(Duration::from_millis(0))? {
+                    // TODO: Maybe replace with a separate function processing the buffered event
+                    match event::read()? {
+                        Event::Resize(x, y) => {
+                            latest_resize = Some((x, y));
+                        }
+                        x => crossterm_events.push(x),
+                    }
                 }
-            } else {
-                self.get_event()?
+
+                if let Some((x, y)) = latest_resize {
+                    reedline_events.push(ReedlineEvent::Resize(x, y));
+                }
+
+                let mut last_edit_commands = None;
+                for event in crossterm_events.drain(..) {
+                    match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
+                        (None, ReedlineEvent::Edit(ec)) => {
+                            last_edit_commands = Some(ec);
+                        }
+                        (None, other_event) => {
+                            reedline_events.push(other_event);
+                        }
+                        (Some(ref mut last_ecs), ReedlineEvent::Edit(ec)) => {
+                            last_ecs.extend(ec);
+                        }
+                        (ref mut a @ Some(_), other_event) => {
+                            reedline_events.push(ReedlineEvent::Edit(a.take().unwrap()));
+
+                            reedline_events.push(other_event);
+                        }
+                    }
+                }
+                if let Some(ec) = last_edit_commands {
+                    reedline_events.push(ReedlineEvent::Edit(ec));
+                }
+            } else if self.repaint.is_some() {
+                reedline_events.push(ReedlineEvent::Repaint);
             };
 
-            if self.input_mode == InputMode::HistorySearch {
-                if let Some(signal) = self.handle_history_search_event(prompt, event)? {
+            for event in reedline_events.drain(..) {
+                if let Some(signal) = self.handle_event(prompt, event)? {
                     return Ok(signal);
                 }
-            } else if let Some(signal) = self.handle_event(prompt, event)? {
-                return Ok(signal);
             }
         }
     }
 
-    fn get_event(&mut self) -> io::Result<ReedlineEvent> {
-        let event = event::read()?;
-        Ok(self.edit_mode.parse_event(event))
+    fn handle_event(
+        &mut self,
+        prompt: &dyn Prompt,
+        event: ReedlineEvent,
+    ) -> Result<Option<Signal>> {
+        if self.input_mode == InputMode::HistorySearch {
+            self.handle_history_search_event(prompt, event)
+        } else {
+            self.handle_editor_event(prompt, event)
+        }
     }
 
     fn handle_history_search_event(
@@ -450,14 +494,33 @@ impl Reedline {
 
     /// Updates prompt origin and offset and performs a repaint to handle a screen resize event
     fn handle_resize(&mut self, width: u16, height: u16, prompt: &dyn Prompt) -> Result<()> {
+        let prev_terminal_size = self.terminal_size;
+
         self.terminal_size = (width, height);
         // TODO properly adjusting prompt_origin on resizing while lines > 1
 
-        let new_prompt_origin_row = cursor::position()?.1.saturating_sub(1);
-        self.set_prompt_offset((self.prompt_widget.origin_columns(), new_prompt_origin_row));
-        let new_prompt_offset = self.full_repaint(prompt, self.prompt_widget.offset)?;
-        self.set_prompt_offset(new_prompt_offset);
-        self.repaint(prompt)?;
+        let current_origin = self.prompt_widget.origin;
+
+        if current_origin.1 >= (height - 1) {
+            // Terminal is shrinking up
+            // FIXME: use actual prompt size at some point
+            // Note: you can't just subtract the offset from the origin,
+            // as we could be shrinking so fast that the offset we read back from
+            // crossterm is past where it would have been.
+            self.set_prompt_origin((current_origin.0, height - 2))
+        } else if prev_terminal_size.1 < height {
+            // Terminal is growing down, so move the prompt down the same amount to make space
+            // for history that's on the screen
+            // Note: if the terminal doesn't have sufficient history, this will leave a trail
+            // of previous prompts currently.
+            self.set_prompt_origin((
+                current_origin.0,
+                current_origin.1 + (height - prev_terminal_size.1),
+            ))
+        }
+
+        let prompt_offset = self.full_repaint(prompt, self.prompt_widget.origin)?;
+        self.set_prompt_offset(prompt_offset);
         Ok(())
     }
 
@@ -494,7 +557,7 @@ impl Reedline {
         Ok(())
     }
 
-    fn handle_event(
+    fn handle_editor_event(
         &mut self,
         prompt: &dyn Prompt,
         event: ReedlineEvent,
@@ -752,19 +815,13 @@ impl Reedline {
                 // A simple solution that we can do is to queue up these and perform the wrapping
                 // check after the loop finishes. Will need to sort out the details.
                 EditCommand::InsertChar(c) => {
-                    let line_start = if self.editor.line() == 0 {
-                        self.prompt_widget.offset_columns()
-                    } else {
-                        0
-                    };
+                    self.editor.insert_char(*c);
 
-                    if self.might_require_wrapping(line_start, *c) {
+                    if self.require_wrapping() {
                         let position = cursor::position()?;
-                        self.editor.insert_char(*c);
                         self.wrap(position, prompt)?;
-                    } else {
-                        self.editor.insert_char(*c);
                     }
+
                     self.editor.remember_undo_state(false);
 
                     self.repaint(prompt)?;
@@ -874,16 +931,19 @@ impl Reedline {
         Ok(())
     }
 
-    /// Heuristic to predetermine if we need to poll the terminal if the text wrapped around.
-    fn might_require_wrapping(&self, start_offset: u16, c: char) -> bool {
+    /// Heuristic to determine if we need to wrap text around.
+    fn require_wrapping(&self) -> bool {
         use unicode_width::UnicodeWidthStr;
+
+        let line_start = if self.editor.line() == 0 {
+            self.prompt_widget.offset_columns()
+        } else {
+            0
+        };
 
         let terminal_width = self.terminal_columns();
 
-        let mut test_buffer = self.editor.get_buffer().to_string();
-        test_buffer.push(c);
-
-        let display_width = UnicodeWidthStr::width(test_buffer.as_str()) + start_offset as usize;
+        let display_width = UnicodeWidthStr::width(self.editor.get_buffer()) + line_start as usize;
 
         display_width >= terminal_width as usize
     }

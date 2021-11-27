@@ -107,8 +107,7 @@ impl Painter {
 
         commands
             .queue(Clear(ClearType::FromCursorDown))?
-            .queue(RestorePosition)?
-            .flush()?;
+            .queue(RestorePosition)?;
 
         Ok(())
     }
@@ -139,6 +138,7 @@ impl Painter {
         self.flush()?;
         // set where the input begins
         let prompt_offset = position()?;
+        self.stdout.queue(cursor::Hide)?;
         self.queue_buffer(highlighted_line, hint, prompt_offset)?;
         self.stdout.queue(cursor::Show)?;
         self.flush()?;
