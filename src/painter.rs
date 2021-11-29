@@ -134,11 +134,9 @@ impl Painter {
         self.stdout.queue(cursor::Hide)?;
         self.queue_move_to(prompt_origin.0, prompt_origin.1)?;
         self.queue_prompt(prompt, prompt_mode, terminal_size)?;
-        self.stdout.queue(cursor::Show)?;
         self.flush()?;
         // set where the input begins
         let prompt_offset = position()?;
-        self.stdout.queue(cursor::Hide)?;
         self.queue_buffer(highlighted_line, hint, prompt_offset)?;
         self.stdout.queue(cursor::Show)?;
         self.flush()?;
