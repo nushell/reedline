@@ -107,7 +107,7 @@ pub struct Reedline {
     prompt_widget: PromptWidget,
 
     // Is Some(n) read_line() should repaint prompt every `n` milliseconds
-    repaint: Option<u64>,
+    animate: bool,
 }
 
 impl Reedline {
@@ -137,7 +137,7 @@ impl Reedline {
             highlighter: buffer_highlighter,
             hinter,
             validator,
-            repaint: Some(1000),
+            animate: true,
         };
 
         Ok(reedline)
@@ -205,12 +205,10 @@ impl Reedline {
         self
     }
 
-    /// A builder which enables or disables repainting of prompt.
-    /// If `repaint` contains `Some(m)` for, then the prompt will be repainted
-    /// every `m` milliseconds.  
-    /// Dynamic repainting is disabled if `repaint` contains `None`.
-    pub fn with_repaint(mut self, repaint: Option<u64>) -> Reedline {
-        self.repaint = repaint;
+    /// A builder which enables or disables animations/automatic repainting of prompt.
+    /// If `repaint` is true, every second the prompt will be repainted and the clock updates
+    pub fn with_animation(mut self, repaint: bool) -> Reedline {
+        self.animate = repaint;
         self
     }
 
@@ -356,7 +354,7 @@ impl Reedline {
         let mut reedline_events: Vec<ReedlineEvent> = vec![];
 
         loop {
-            if event::poll(Duration::from_millis(self.repaint.unwrap_or(0)))? {
+            if event::poll(Duration::from_millis(1000))? {
                 let mut latest_resize = None;
 
                 // There could be multiple events queued up!
@@ -398,7 +396,7 @@ impl Reedline {
                 if let Some(ec) = last_edit_commands {
                     reedline_events.push(ReedlineEvent::Edit(ec));
                 }
-            } else if self.repaint.is_some() {
+            } else if self.animate {
                 reedline_events.push(ReedlineEvent::Repaint);
             };
 
