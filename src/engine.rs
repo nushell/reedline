@@ -356,7 +356,7 @@ impl Reedline {
         let mut reedline_events: Vec<ReedlineEvent> = vec![];
 
         loop {
-            if event::poll(Duration::from_millis(self.repaint.unwrap_or(0)))? {
+            if event::poll(Duration::from_millis(self.repaint.unwrap_or(1000)))? {
                 let mut latest_resize = None;
 
                 // There could be multiple events queued up!
