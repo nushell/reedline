@@ -192,7 +192,7 @@ pub use core_editor::LineBuffer;
 mod text_manipulation;
 
 mod enums;
-pub use enums::{EditCommand, ReedlineEvent, Signal};
+pub use enums::{EditCommand, ReedlineEvent, Signal, UndoBehavior};
 
 mod painter;
 

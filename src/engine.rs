@@ -3,7 +3,7 @@ use {
         completion::{CircularCompletionHandler, CompletionActionHandler},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
-        enums::ReedlineEvent,
+        enums::{ReedlineEvent, UndoBehavior},
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         painter::Painter,
@@ -820,8 +820,6 @@ impl Reedline {
                         self.wrap(position, prompt)?;
                     }
 
-                    self.editor.remember_undo_state(false);
-
                     self.repaint(prompt)?;
                 }
                 EditCommand::Backspace => self.editor.backspace(),
@@ -843,25 +841,14 @@ impl Reedline {
                 EditCommand::Redo => self.editor.redo(),
             }
 
-            if [
-                EditCommand::MoveToEnd,
-                EditCommand::MoveToStart,
-                EditCommand::MoveLeft,
-                EditCommand::MoveRight,
-                EditCommand::MoveWordLeft,
-                EditCommand::MoveWordRight,
-                EditCommand::Backspace,
-                EditCommand::Delete,
-                EditCommand::BackspaceWord,
-                EditCommand::DeleteWord,
-                EditCommand::CutFromStart,
-                EditCommand::CutToEnd,
-                EditCommand::CutWordLeft,
-                EditCommand::CutWordRight,
-            ]
-            .contains(command)
-            {
-                self.editor.remember_undo_state(true);
+            match command.undo_behavior() {
+                UndoBehavior::Ignore => {}
+                UndoBehavior::Full => {
+                    self.editor.remember_undo_state(true);
+                }
+                UndoBehavior::Coalesce => {
+                    self.editor.remember_undo_state(false);
+                }
             }
         }
 
