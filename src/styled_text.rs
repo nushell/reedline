@@ -32,7 +32,6 @@ impl StyledText {
     pub fn render_around_insertion_point(
         &self,
         insertion_point: usize,
-        // prompt_style: &Style,
         multiline_prompt: Cow<str>,
     ) -> (String, String) {
         let mut current_idx = 0;
