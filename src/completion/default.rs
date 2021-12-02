@@ -29,7 +29,6 @@ use crate::{Completer, Span};
 #[derive(Debug, Clone)]
 pub struct DefaultCompleter {
     root: CompletionNode,
-    inclusions: Rc<BTreeSet<char>>,
     min_word_len: usize,
 }
 
@@ -37,8 +36,7 @@ impl Default for DefaultCompleter {
     fn default() -> Self {
         let inclusions = Rc::new(BTreeSet::new());
         Self {
-            root: CompletionNode::new(inclusions.clone()),
-            inclusions,
+            root: CompletionNode::new(inclusions),
             min_word_len: 2,
         }
     }
@@ -131,11 +129,11 @@ impl DefaultCompleter {
         dc
     }
 
-    /// Insert external_commands list in the object root
+    /// Insert `external_commands` list in the object root
     ///
     /// # Arguments
     ///
-    /// * `line`    A vector of String containing the external commands
+    /// * `line`    A vector of `String` containing the external commands
     ///
     /// # Example
     /// ```
@@ -158,8 +156,8 @@ impl DefaultCompleter {
         }
     }
 
-    /// Create a new DefaultCompleter with provided non alphabet characters whitelisted.
-    /// The default DefaultCompleter will only parse alphabet characters (a-z, A-Z). Use this to
+    /// Create a new `DefaultCompleter` with provided non alphabet characters whitelisted.
+    /// The default `DefaultCompleter` will only parse alphabet characters (a-z, A-Z). Use this to
     /// introduce additional accepted special characters.
     ///
     /// # Arguments
@@ -187,13 +185,10 @@ impl DefaultCompleter {
     /// ```
     pub fn with_inclusions(incl: &[char]) -> Self {
         let mut set = BTreeSet::new();
-        incl.iter().for_each(|c| {
-            set.insert(*c);
-        });
+        set.extend(incl.iter());
         let inclusions = Rc::new(set);
         Self {
-            root: CompletionNode::new(inclusions.clone()),
-            inclusions,
+            root: CompletionNode::new(inclusions),
             ..Self::default()
         }
     }
@@ -293,7 +288,7 @@ impl CompletionNode {
     }
 
     fn word_count(&self) -> u32 {
-        let mut count = self.subnodes.values().map(|n| n.word_count()).sum();
+        let mut count = self.subnodes.values().map(CompletionNode::word_count).sum();
         if self.leaf {
             count += 1;
         }
@@ -303,7 +298,7 @@ impl CompletionNode {
     fn subnode_count(&self) -> u32 {
         self.subnodes
             .values()
-            .map(|n| n.subnode_count())
+            .map(CompletionNode::subnode_count)
             .sum::<u32>()
             + 1
     }
@@ -333,21 +328,21 @@ impl CompletionNode {
                 None
             }
         } else {
-            Some(self.collect("".to_string()))
+            Some(self.collect(""))
         }
     }
 
-    fn collect(&self, partial: String) -> Vec<String> {
+    fn collect(&self, partial: &str) -> Vec<String> {
         let mut completions = vec![];
         if self.leaf {
-            completions.push(partial.clone());
+            completions.push(partial.to_string());
         }
 
         if !self.subnodes.is_empty() {
             for (c, node) in &self.subnodes {
-                let mut partial = partial.clone();
+                let mut partial = partial.to_string();
                 partial.push(*c);
-                completions.append(&mut node.collect(partial));
+                completions.append(&mut node.collect(&partial));
             }
         }
         completions

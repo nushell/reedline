@@ -59,7 +59,7 @@ impl History for FileBackedHistory {
             }
             self.entries.push_back(entry);
         }
-        self.reset_cursor()
+        self.reset_cursor();
     }
 
     fn iter_chronologic(&self) -> Iter<'_, String> {
@@ -74,10 +74,10 @@ impl History for FileBackedHistory {
                 }
             }
             HistoryNavigationQuery::PrefixSearch(prefix) => {
-                self.back_with_criteria(&|entry| entry.starts_with(&prefix))
+                self.back_with_criteria(&|entry| entry.starts_with(&prefix));
             }
             HistoryNavigationQuery::SubstringSearch(substring) => {
-                self.back_with_criteria(&|entry| entry.contains(&substring))
+                self.back_with_criteria(&|entry| entry.contains(&substring));
             }
         }
     }
@@ -90,10 +90,10 @@ impl History for FileBackedHistory {
                 }
             }
             HistoryNavigationQuery::PrefixSearch(prefix) => {
-                self.forward_with_criteria(&|entry| entry.starts_with(&prefix))
+                self.forward_with_criteria(&|entry| entry.starts_with(&prefix));
             }
             HistoryNavigationQuery::SubstringSearch(substring) => {
-                self.forward_with_criteria(&|entry| entry.contains(&substring))
+                self.forward_with_criteria(&|entry| entry.contains(&substring));
             }
         }
     }
@@ -114,6 +114,10 @@ impl History for FileBackedHistory {
 
 impl FileBackedHistory {
     /// Creates a new in-memory history that remembers `n <= capacity` elements
+    ///
+    /// # Panics
+    ///
+    /// If `capacity == usize::MAX`
     pub fn new(capacity: usize) -> Self {
         if capacity == usize::MAX {
             panic!("History capacity too large to be addressed safely");
@@ -199,7 +203,7 @@ impl FileBackedHistory {
                 .find(|(_, entry)| criteria(entry) && previous_match != Some(entry))
             {
                 // set to entry
-                self.cursor = next_cursor
+                self.cursor = next_cursor;
             }
         }
     }
@@ -214,9 +218,9 @@ impl FileBackedHistory {
             .find(|(_, entry)| criteria(entry) && previous_match != Some(entry))
         {
             // set to entry
-            self.cursor = next_cursor
+            self.cursor = next_cursor;
         } else {
-            self.reset_cursor()
+            self.reset_cursor();
         }
     }
 
@@ -262,7 +266,7 @@ impl FileBackedHistory {
 impl Drop for FileBackedHistory {
     /// On drop the content of the [`History`] will be written to the file if specified via [`FileBackedHistory::with_file()`].
     fn drop(&mut self) {
-        let _ = self.flush();
+        let _res = self.flush();
     }
 }
 

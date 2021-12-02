@@ -7,7 +7,7 @@ use crate::{enums::ReedlineEvent, PromptEditMode};
 /// - Emacs
 /// - Vi
 pub trait EditMode {
-    /// Translate the given user input event into what the LineEditor understands
+    /// Translate the given user input event into what the `LineEditor` understands
     fn parse_event(&mut self, event: Event) -> ReedlineEvent;
 
     /// What to display in the prompt indicator

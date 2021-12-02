@@ -13,6 +13,9 @@ pub struct Span {
 impl Span {
     /// Creates a new `Span` from start and end inputs.
     /// The end parameter must be greater than or equal to the start parameter.
+    ///
+    /// # Panics
+    /// If `end < start`
     pub fn new(start: usize, end: usize) -> Span {
         assert!(
             end >= start,

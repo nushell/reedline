@@ -1,5 +1,3 @@
-use std::borrow::{Borrow, Cow};
-
 use nu_ansi_term::{Color, Style};
 
 /// A representation of a buffer with styling, used for doing syntax highlighting
@@ -14,7 +12,7 @@ impl Default for StyledText {
 }
 
 impl StyledText {
-    /// Construct a new StyledText
+    /// Construct a new `StyledText`
     pub fn new() -> Self {
         Self { buffer: vec![] }
     }
@@ -32,7 +30,7 @@ impl StyledText {
     pub fn render_around_insertion_point(
         &self,
         insertion_point: usize,
-        multiline_prompt: Cow<str>,
+        multiline_prompt: &str,
     ) -> (String, String) {
         let mut current_idx = 0;
         let mut left_string = String::new();
@@ -40,17 +38,9 @@ impl StyledText {
         let prompt_style = Style::new().fg(Color::LightBlue);
         for pair in &self.buffer {
             if current_idx >= insertion_point {
-                right_string.push_str(&render_as_string(
-                    pair,
-                    &prompt_style,
-                    multiline_prompt.borrow(),
-                ));
+                right_string.push_str(&render_as_string(pair, &prompt_style, multiline_prompt));
             } else if pair.1.len() + current_idx <= insertion_point {
-                left_string.push_str(&render_as_string(
-                    pair,
-                    &prompt_style,
-                    multiline_prompt.borrow(),
-                ));
+                left_string.push_str(&render_as_string(pair, &prompt_style, multiline_prompt));
             } else if pair.1.len() + current_idx > insertion_point {
                 let offset = insertion_point - current_idx;
 
@@ -60,12 +50,12 @@ impl StyledText {
                 left_string.push_str(&render_as_string(
                     &(pair.0, left_side),
                     &prompt_style,
-                    multiline_prompt.borrow(),
+                    multiline_prompt,
                 ));
                 right_string.push_str(&render_as_string(
                     &(pair.0, right_side),
                     &prompt_style,
-                    multiline_prompt.borrow(),
+                    multiline_prompt,
                 ));
             }
             current_idx += pair.1.len();

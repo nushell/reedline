@@ -32,11 +32,11 @@ fn incomplete_brackets(line: &str) -> bool {
 
     for c in line.chars() {
         if c == '{' {
-            balance.push('}')
+            balance.push('}');
         } else if c == '[' {
-            balance.push(']')
+            balance.push(']');
         } else if c == '(' {
-            balance.push(')')
+            balance.push(')');
         } else if ['}', ']', ')'].contains(&c) {
             if let Some(last) = balance.last() {
                 if last == &c {

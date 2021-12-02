@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+
 use {
     crate::{
         completion::{CircularCompletionHandler, CompletionActionHandler},
@@ -33,18 +35,10 @@ enum InputMode {
     HistoryTraversal,
 }
 
+#[derive(Default)]
 struct PromptWidget {
     offset: (u16, u16),
     origin: (u16, u16),
-}
-
-impl Default for PromptWidget {
-    fn default() -> Self {
-        PromptWidget {
-            offset: Default::default(),
-            origin: Default::default(),
-        }
-    }
 }
 
 impl PromptWidget {
@@ -121,7 +115,7 @@ impl Reedline {
 
         let terminal_size = terminal::size()?;
         // Note: this is started with a garbage value
-        let prompt_widget = Default::default();
+        let prompt_widget = PromptWidget::default();
 
         let edit_mode = Box::new(Emacs::default());
 
@@ -505,7 +499,7 @@ impl Reedline {
             // Note: you can't just subtract the offset from the origin,
             // as we could be shrinking so fast that the offset we read back from
             // crossterm is past where it would have been.
-            self.set_prompt_origin((current_origin.0, height - 2))
+            self.set_prompt_origin((current_origin.0, height - 2));
         } else if prev_terminal_size.1 < height {
             // Terminal is growing down, so move the prompt down the same amount to make space
             // for history that's on the screen
@@ -514,7 +508,7 @@ impl Reedline {
             self.set_prompt_origin((
                 current_origin.0,
                 current_origin.1 + (height - prev_terminal_size.1),
-            ))
+            ));
         }
 
         let prompt_offset = self.full_repaint(prompt, self.prompt_widget.origin)?;
@@ -562,8 +556,8 @@ impl Reedline {
     ) -> io::Result<Option<Signal>> {
         match event {
             ReedlineEvent::HandleTab => {
-                let mut line_buffer = self.editor.line_buffer();
-                self.tab_handler.handle(&mut line_buffer);
+                let line_buffer = self.editor.line_buffer();
+                self.tab_handler.handle(line_buffer);
 
                 let (prompt_origin_column, prompt_origin_row) = self.prompt_widget.origin;
 
@@ -729,7 +723,7 @@ impl Reedline {
                         self.history
                             .set_navigation(HistoryNavigationQuery::SubstringSearch(String::from(
                                 *c,
-                            )))
+                            )));
                     }
                     self.history.back();
                 }
@@ -743,7 +737,7 @@ impl Reedline {
                             .set_navigation(HistoryNavigationQuery::SubstringSearch(
                                 new_substring.to_string(),
                             ));
-                        self.history.back()
+                        self.history.back();
                     }
                 }
                 _ => {
@@ -762,10 +756,10 @@ impl Reedline {
             HistoryNavigationQuery::Normal(original) => {
                 if let Some(buffer_to_paint) = self.history.string_at_cursor() {
                     self.editor.set_buffer(buffer_to_paint.clone());
-                    self.set_offset(buffer_to_paint.len())
+                    self.set_offset(buffer_to_paint.len());
                 } else {
                     // Hack
-                    self.editor.set_line_buffer(original)
+                    self.editor.set_line_buffer(original);
                 }
             }
             HistoryNavigationQuery::PrefixSearch(prefix) => {
@@ -793,7 +787,7 @@ impl Reedline {
                 HistoryNavigationQuery::Normal(_)
             ) {
                 if let Some(string) = self.history.string_at_cursor() {
-                    self.editor.set_buffer(string)
+                    self.editor.set_buffer(string);
                 }
             }
             self.input_mode = InputMode::Regular;
@@ -870,7 +864,7 @@ impl Reedline {
 
     /// Set the cursor position as understood by the underlying [`LineBuffer`] for the current line
     fn set_offset(&mut self, pos: usize) {
-        self.editor.set_insertion_point(pos)
+        self.editor.set_insertion_point(pos);
     }
 
     fn terminal_columns(&self) -> u16 {
@@ -897,7 +891,7 @@ impl Reedline {
             // If we're at the top, move to previous history
             self.next_history();
         } else {
-            self.editor.move_line_down()
+            self.editor.move_line_down();
         }
     }
 
@@ -1044,7 +1038,7 @@ impl Reedline {
             .highlight(buffer_to_paint)
             .render_around_insertion_point(
                 cursor_position_in_buffer,
-                prompt.render_prompt_multiline_indicator(),
+                prompt.render_prompt_multiline_indicator().borrow(),
             );
         let hint: String = self.hinter.handle(
             buffer_to_paint,
@@ -1077,7 +1071,7 @@ impl Reedline {
             .highlight(buffer_to_paint)
             .render_around_insertion_point(
                 cursor_position_in_buffer,
-                prompt.render_prompt_multiline_indicator(),
+                prompt.render_prompt_multiline_indicator().borrow(),
             );
         let hint: String = self.hinter.handle(
             buffer_to_paint,

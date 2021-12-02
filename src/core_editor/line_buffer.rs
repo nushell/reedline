@@ -306,7 +306,7 @@ impl LineBuffer {
         let insertion_offset = self.insertion_point().offset;
         if left_index < insertion_offset {
             self.clear_range(left_index..insertion_offset);
-            self.insertion_point.offset = left_index
+            self.insertion_point.offset = left_index;
         }
     }
 
@@ -353,9 +353,9 @@ impl LineBuffer {
         let initial_offset = self.insertion_point().offset;
 
         if initial_offset == 0 {
-            self.move_right()
+            self.move_right();
         } else if initial_offset == self.get_buffer().len() {
-            self.move_left()
+            self.move_left();
         }
 
         let updated_offset = self.insertion_point().offset;
@@ -399,7 +399,7 @@ impl LineBuffer {
         self.set_insertion_point(position);
 
         // Move right from this position to the column we were at
-        while &buffer[position..(position + 1)] != "\n" && num_of_move_lefts > 0 {
+        while &buffer[position..=position] != "\n" && num_of_move_lefts > 0 {
             self.move_right();
             position = self.offset();
             num_of_move_lefts -= 1;
@@ -436,7 +436,7 @@ impl LineBuffer {
 
         // Move right from this position to the column we were at
         while position < buffer.len()
-            && &buffer[position..(position + 1)] != "\n"
+            && &buffer[position..=position] != "\n"
             && num_of_move_lefts > 0
         {
             self.move_right();
