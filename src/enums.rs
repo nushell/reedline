@@ -91,6 +91,58 @@ pub enum EditCommand {
     Redo,
 }
 
+impl EditCommand {
+    /// Determine if a certain operation should be undoable
+    /// or if the operations should be coalesced for undoing
+    pub fn undo_behavior(&self) -> UndoBehavior {
+        match self {
+            // Cursor moves
+            EditCommand::MoveToStart
+            | EditCommand::MoveToEnd
+            | EditCommand::MoveLeft
+            | EditCommand::MoveRight
+            | EditCommand::MoveWordLeft
+            | EditCommand::MoveWordRight => UndoBehavior::Full,
+
+            // Coalesceable insert
+            EditCommand::InsertChar(_) => UndoBehavior::Coalesce,
+
+            // Full edits
+            EditCommand::Backspace
+            | EditCommand::Delete
+            | EditCommand::BackspaceWord
+            | EditCommand::DeleteWord
+            | EditCommand::Clear
+            | EditCommand::CutFromStart
+            | EditCommand::CutToEnd
+            | EditCommand::CutWordLeft
+            | EditCommand::CutWordRight
+            | EditCommand::PasteCutBuffer
+            | EditCommand::UppercaseWord
+            | EditCommand::LowercaseWord
+            | EditCommand::CapitalizeChar
+            | EditCommand::SwapWords
+            | EditCommand::SwapGraphemes => UndoBehavior::Full,
+
+            EditCommand::Undo | EditCommand::Redo => UndoBehavior::Ignore,
+        }
+    }
+}
+
+/// Specifies how the (previously executed) operation should be treated in the Undo stack.
+pub enum UndoBehavior {
+    /// Operation is not affecting the LineBuffers content and should be ignored
+    ///
+    /// e.g. the undo commands themselves are not stored in the undo stack
+    Ignore,
+    /// The operation is one logical unit of work that should be stored in the undo stack
+    Full,
+    /// The operation is a single operation that should be best coalesced in logical units such as words
+    ///
+    /// e.g. insertion of characters by typing
+    Coalesce,
+}
+
 /// Reedline supported actions.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub enum ReedlineEvent {
