@@ -102,7 +102,7 @@ impl EditCommand {
             | EditCommand::MoveLeft
             | EditCommand::MoveRight
             | EditCommand::MoveWordLeft
-            | EditCommand::MoveWordRight => UndoBehavior::Ignore,
+            | EditCommand::MoveWordRight => UndoBehavior::Full,
 
             // Coalesceable insert
             EditCommand::InsertChar(_) => UndoBehavior::Coalesce,
