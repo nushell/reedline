@@ -98,14 +98,15 @@ impl Prompt for DefaultPrompt {
 
     fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<str> {
         match edit_mode {
-            PromptEditMode::Default => DEFAULT_PROMPT_INDICATOR.into(),
-            PromptEditMode::Emacs => DEFAULT_PROMPT_INDICATOR.into(),
+            PromptEditMode::Default | PromptEditMode::Emacs => DEFAULT_PROMPT_INDICATOR.into(),
             PromptEditMode::Vi(vi_mode) => match vi_mode {
                 PromptViMode::Normal => DEFAULT_PROMPT_INDICATOR.into(),
                 PromptViMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
                 PromptViMode::Visual => DEFAULT_VI_VISUAL_PROMPT_INDICATOR.into(),
             },
-            PromptEditMode::Custom(str) => self.default_wrapped_custom_string(str).into(),
+            PromptEditMode::Custom(str) => {
+                DefaultPrompt::default_wrapped_custom_string(&str).into()
+            }
         }
     }
 
@@ -178,7 +179,7 @@ impl DefaultPrompt {
         Cow::Owned(prompt_str)
     }
 
-    fn default_wrapped_custom_string(&self, str: String) -> String {
+    fn default_wrapped_custom_string(str: &str) -> String {
         format!("({})", str)
     }
 }

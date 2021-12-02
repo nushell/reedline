@@ -33,19 +33,19 @@ impl Editor {
     }
 
     pub fn move_to_start(&mut self) {
-        self.line_buffer.move_to_start()
+        self.line_buffer.move_to_start();
     }
 
     pub fn move_to_end(&mut self) {
-        self.line_buffer.move_to_end()
+        self.line_buffer.move_to_end();
     }
 
     pub fn move_left(&mut self) {
-        self.line_buffer.move_left()
+        self.line_buffer.move_left();
     }
 
     pub fn move_right(&mut self) {
-        self.line_buffer.move_right()
+        self.line_buffer.move_right();
     }
 
     pub fn move_word_left(&mut self) {
@@ -65,7 +65,7 @@ impl Editor {
     }
 
     pub fn insert_char(&mut self, c: char) {
-        self.line_buffer.insert_char(c)
+        self.line_buffer.insert_char(c);
     }
 
     pub fn backspace(&mut self) {
@@ -109,7 +109,7 @@ impl Editor {
     }
 
     pub fn set_insertion_point(&mut self, pos: usize) {
-        self.line_buffer.set_insertion_point(pos)
+        self.line_buffer.set_insertion_point(pos);
     }
 
     pub fn get_buffer(&self) -> &str {
@@ -117,22 +117,22 @@ impl Editor {
     }
 
     pub fn set_buffer(&mut self, buffer: String) {
-        self.line_buffer.set_buffer(buffer)
+        self.line_buffer.set_buffer(buffer);
     }
 
     pub fn clear_to_end(&mut self) {
-        self.line_buffer.clear_to_end()
+        self.line_buffer.clear_to_end();
     }
 
     pub fn clear_to_insertion_point(&mut self) {
-        self.line_buffer.clear_to_insertion_point()
+        self.line_buffer.clear_to_insertion_point();
     }
 
     pub fn clear_range<R>(&mut self, range: R)
     where
         R: std::ops::RangeBounds<usize>,
     {
-        self.line_buffer.clear_range(range)
+        self.line_buffer.clear_range(range);
     }
 
     pub fn offset(&self) -> usize {
