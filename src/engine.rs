@@ -1044,6 +1044,7 @@ impl Reedline {
             buffer_to_paint,
             cursor_position_in_buffer,
             self.history.as_ref(),
+            self.use_ansi_coloring,
         );
 
         self.painter
@@ -1078,6 +1079,7 @@ impl Reedline {
             buffer_to_paint,
             cursor_position_in_buffer,
             self.history.as_ref(),
+            self.use_ansi_coloring,
         );
 
         self.painter.repaint_everything(
