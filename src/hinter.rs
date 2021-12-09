@@ -7,7 +7,13 @@ use {
 /// Hints are often shown in-line as part of the buffer, showing the user text they can accept or ignore
 pub trait Hinter {
     /// Handle the hinting duty by using the line, position, and current history
-    fn handle(&mut self, line: &str, pos: usize, history: &dyn History) -> String;
+    fn handle(
+        &mut self,
+        line: &str,
+        pos: usize,
+        history: &dyn History,
+        use_ansi_coloring: bool,
+    ) -> String;
 }
 
 /// A default example hinter that use the completions or the history to show a hint to the user
@@ -19,7 +25,13 @@ pub struct DefaultHinter {
 }
 
 impl Hinter for DefaultHinter {
-    fn handle(&mut self, line: &str, pos: usize, history: &dyn History) -> String {
+    fn handle(
+        &mut self,
+        line: &str,
+        pos: usize,
+        history: &dyn History,
+        use_ansi_coloring: bool,
+    ) -> String {
         let mut completions = vec![];
         let mut output = String::new();
 
@@ -40,7 +52,13 @@ impl Hinter for DefaultHinter {
             }
         }
 
-        output
+        if use_ansi_coloring {
+            output
+        } else if let Ok(bytes) = strip_ansi_escapes::strip(&output) {
+            String::from_utf8_lossy(&bytes).to_string()
+        } else {
+            output
+        }
     }
 }
 

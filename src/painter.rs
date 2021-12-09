@@ -36,16 +36,26 @@ impl Painter {
         prompt: &dyn Prompt,
         prompt_mode: PromptEditMode,
         terminal_size: (u16, u16),
+        use_ansi_coloring: bool,
     ) -> Result<()> {
         let (screen_width, _) = terminal_size;
 
-        // print our prompt
-        self.stdout
-            .queue(MoveToColumn(0))?
-            .queue(SetForegroundColor(prompt.get_prompt_color()))?
-            .queue(Print(prompt.render_prompt(screen_width as usize)))?
-            .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?
-            .queue(ResetColor)?;
+        if use_ansi_coloring {
+            // print our prompt with color
+            self.stdout
+                .queue(MoveToColumn(0))?
+                .queue(SetForegroundColor(prompt.get_prompt_color()))?
+                .queue(Print(prompt.render_prompt(screen_width as usize)))?
+                .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?
+                .queue(ResetColor)?;
+        } else {
+            // print our prompt without color
+            self.stdout
+                .queue(MoveToColumn(0))?
+                .queue(Print(prompt.render_prompt(screen_width as usize)))?
+                .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?
+                .queue(ResetColor)?;
+        }
 
         Ok(())
     }
@@ -58,14 +68,22 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         prompt_mode: PromptEditMode,
+        use_ansi_coloring: bool,
     ) -> Result<()> {
-        // print our prompt
-        self.stdout
-            .queue(MoveToColumn(0))?
-            .queue(SetForegroundColor(prompt.get_prompt_color()))?
-            .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?
-            .queue(ResetColor)?;
-
+        if use_ansi_coloring {
+            // print our prompt with color
+            self.stdout
+                .queue(MoveToColumn(0))?
+                .queue(SetForegroundColor(prompt.get_prompt_color()))?
+                .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?
+                .queue(ResetColor)?;
+        } else {
+            // print our prompt without color
+            self.stdout
+                .queue(MoveToColumn(0))?
+                .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?
+                .queue(ResetColor)?;
+        }
         Ok(())
     }
 
@@ -130,10 +148,11 @@ impl Painter {
         highlighted_line: (String, String),
         hint: String,
         terminal_size: (u16, u16),
+        use_ansi_coloring: bool,
     ) -> Result<(u16, u16)> {
         self.stdout.queue(cursor::Hide)?;
         self.queue_move_to(prompt_origin.0, prompt_origin.1)?;
-        self.queue_prompt(prompt, prompt_mode, terminal_size)?;
+        self.queue_prompt(prompt, prompt_mode, terminal_size, use_ansi_coloring)?;
         self.flush()?;
         // set where the input begins
         let prompt_offset = position()?;

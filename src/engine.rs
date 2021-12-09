@@ -102,6 +102,9 @@ pub struct Reedline {
 
     // Is Some(n) read_line() should repaint prompt every `n` milliseconds
     animate: bool,
+
+    // Use ansi coloring or not
+    use_ansi_coloring: bool,
 }
 
 impl Reedline {
@@ -132,6 +135,7 @@ impl Reedline {
             hinter,
             validator,
             animate: true,
+            use_ansi_coloring: true,
         };
 
         Ok(reedline)
@@ -196,6 +200,13 @@ impl Reedline {
         tab_handler: Box<dyn CompletionActionHandler>,
     ) -> Reedline {
         self.tab_handler = tab_handler;
+        self
+    }
+
+    /// A builder which enables or disables the use of ansi coloring in the prompt
+    /// and in the command line syntax highlighting.
+    pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Reedline {
+        self.use_ansi_coloring = use_ansi_coloring;
         self
     }
 
@@ -934,7 +945,8 @@ impl Reedline {
     fn queue_prompt_indicator(&mut self, prompt: &dyn Prompt) -> Result<()> {
         // print our prompt
         let prompt_mode = self.prompt_edit_mode();
-        self.painter.queue_prompt_indicator(prompt, prompt_mode)?;
+        self.painter
+            .queue_prompt_indicator(prompt, prompt_mode, self.use_ansi_coloring)?;
 
         Ok(())
     }
@@ -1026,11 +1038,13 @@ impl Reedline {
             .render_around_insertion_point(
                 cursor_position_in_buffer,
                 prompt.render_prompt_multiline_indicator().borrow(),
+                self.use_ansi_coloring,
             );
         let hint: String = self.hinter.handle(
             buffer_to_paint,
             cursor_position_in_buffer,
             self.history.as_ref(),
+            self.use_ansi_coloring,
         );
 
         self.painter
@@ -1059,11 +1073,13 @@ impl Reedline {
             .render_around_insertion_point(
                 cursor_position_in_buffer,
                 prompt.render_prompt_multiline_indicator().borrow(),
+                self.use_ansi_coloring,
             );
         let hint: String = self.hinter.handle(
             buffer_to_paint,
             cursor_position_in_buffer,
             self.history.as_ref(),
+            self.use_ansi_coloring,
         );
 
         self.painter.repaint_everything(
@@ -1073,6 +1089,7 @@ impl Reedline {
             highlighted_line,
             hint,
             self.terminal_size,
+            self.use_ansi_coloring,
         )
     }
 }

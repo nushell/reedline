@@ -31,6 +31,7 @@ impl StyledText {
         &self,
         insertion_point: usize,
         multiline_prompt: &str,
+        use_ansi_coloring: bool,
     ) -> (String, String) {
         let mut current_idx = 0;
         let mut left_string = String::new();
@@ -61,7 +62,19 @@ impl StyledText {
             current_idx += pair.1.len();
         }
 
-        (left_string, right_string)
+        if use_ansi_coloring {
+            (left_string, right_string)
+        } else {
+            (strip_ansi(&left_string), strip_ansi(&right_string))
+        }
+    }
+}
+
+fn strip_ansi(astring: &str) -> String {
+    if let Ok(bytes) = strip_ansi_escapes::strip(astring) {
+        String::from_utf8_lossy(&bytes).to_string()
+    } else {
+        astring.to_string()
     }
 }
 
