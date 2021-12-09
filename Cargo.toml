@@ -22,6 +22,7 @@ nu-ansi-term = "0.39.0"
 serde = { version = "1.0", features = ["derive"] }
 unicode-segmentation = "1.7.1"
 unicode-width = "0.1.8"
+strip-ansi-escapes = "0.1.1"
 
 [dev-dependencies]
 tempfile = "3.2.0"

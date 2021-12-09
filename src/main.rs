@@ -66,7 +66,8 @@ fn main() -> Result<()> {
                 .with_completer(completer) // or .with_history()
                 // .with_inside_line()
                 .with_style(Style::new().italic().fg(Color::LightGray)),
-        ));
+        ))
+        .with_ansi_colors(true);
 
     let prompt = DefaultPrompt::new(1);
 
