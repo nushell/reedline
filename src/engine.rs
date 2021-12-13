@@ -15,6 +15,7 @@ use {
     },
     crossterm::{cursor, event, event::Event, terminal, Result},
     std::{io, time::Duration},
+    unicode_width::UnicodeWidthStr,
 };
 
 /// Determines if inputs should be used to extend the regular line buffer,
@@ -535,7 +536,20 @@ impl Reedline {
         let (prompt_origin_column, prompt_origin_row) = self.prompt_widget.origin;
         let (prompt_offset_column, prompt_offset_row) = self.prompt_widget.offset;
 
-        let buffer_line_count = self.editor.num_lines() as u16;
+        let mut buffer_line_count = self.editor.num_lines() as u16;
+
+        let terminal_columns = self.terminal_columns();
+
+        // Estimate where we're going to wrap around the edge of the terminal
+        for line in self.editor.line_buffer().get_buffer().lines() {
+            let estimated_width = UnicodeWidthStr::width(line);
+
+            let estimated_line_count = estimated_width as f64 / terminal_columns as f64;
+            let estimated_line_count = estimated_line_count.ceil() as u64;
+
+            // Any wrapping we estimate we might have, go ahead and add it to our line count
+            buffer_line_count += (estimated_line_count - 1) as u16;
+        }
 
         let ends_in_newline = self.editor.ends_with('\n');
 
@@ -923,8 +937,6 @@ impl Reedline {
 
     /// Heuristic to determine if we need to wrap text around.
     fn require_wrapping(&self) -> bool {
-        use unicode_width::UnicodeWidthStr;
-
         let line_start = if self.editor.line() == 0 {
             self.prompt_widget.offset_columns()
         } else {
