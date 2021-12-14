@@ -614,6 +614,10 @@ impl Reedline {
 
                     Ok(Some(Signal::Success(buffer)))
                 } else {
+                    #[cfg(windows)]
+                    {
+                        self.run_edit_commands(&[EditCommand::InsertChar('\r')], prompt)?;
+                    }
                     self.run_edit_commands(&[EditCommand::InsertChar('\n')], prompt)?;
                     self.adjust_prompt_position()?;
                     self.full_repaint(prompt, self.prompt_widget.origin)?;

@@ -98,8 +98,19 @@ impl Painter {
     ) -> Result<()> {
         let (before_cursor, after_cursor) = highlighted_line;
 
-        let before_cursor_lines = before_cursor.split('\n');
-        let after_cursor_lines = after_cursor.split('\n');
+        let before_cursor_lines = if cfg!(windows) {
+            before_cursor.split("\r\n")
+        } else {
+            #[allow(clippy::single_char_pattern)]
+            before_cursor.split("\n")
+        };
+
+        let after_cursor_lines = if cfg!(windows) {
+            after_cursor.split("\r\n")
+        } else {
+            #[allow(clippy::single_char_pattern)]
+            after_cursor.split("\n")
+        };
 
         let mut commands = self
             .stdout
