@@ -108,6 +108,14 @@ pub struct Reedline {
     use_ansi_coloring: bool,
 }
 
+impl Drop for Reedline {
+    fn drop(&mut self) {
+        // Ensures that the terminal is in a good state if we panic semigracefully
+        // Calling `disable_raw_mode()` twice is fine with Linux
+        let _ = terminal::disable_raw_mode();
+    }
+}
+
 impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     pub fn create() -> io::Result<Reedline> {
