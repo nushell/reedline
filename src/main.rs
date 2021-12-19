@@ -93,8 +93,7 @@ fn main() -> Result<()> {
                 line_editor.print_line(&format!("Our buffer: {}", buffer))?;
             }
             Ok(Signal::CtrlC) => {
-                // We need to move one line down to start with the prompt on a new line
-                line_editor.print_crlf()?;
+                // Prompt has been cleared and should start on the next line
             }
             Ok(Signal::CtrlL) => {
                 line_editor.clear_screen()?;
