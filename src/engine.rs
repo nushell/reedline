@@ -310,13 +310,6 @@ impl Reedline {
         self.painter.paint_line(msg)
     }
 
-    /// Goes to the beginning of the next line
-    ///
-    /// Also works in raw mode
-    pub fn print_crlf(&mut self) -> Result<()> {
-        self.painter.paint_crlf()
-    }
-
     /// Clear the screen by printing enough whitespace to start the prompt or
     /// other output back at the first line of the terminal.
     pub fn clear_screen(&mut self) -> Result<()> {
@@ -510,7 +503,7 @@ impl Reedline {
                 if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
                     self.append_to_history();
                     self.run_edit_commands(&[EditCommand::Clear], prompt)?;
-                    self.print_crlf()?;
+                    self.painter.print_crlf()?;
                     self.editor.reset_undo_stack();
 
                     Ok(Some(Signal::Success(buffer)))
