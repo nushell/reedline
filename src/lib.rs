@@ -24,7 +24,7 @@
 //!              println!("We processed: {}", buffer);
 //!          }
 //!          Ok(Signal::CtrlD) | Ok(Signal::CtrlC) => {
-//!              let _ = line_editor.print_crlf();
+//!              println!("\nAborted!");
 //!              break;
 //!          }
 //!          Ok(Signal::CtrlL) => {
