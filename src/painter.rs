@@ -7,7 +7,7 @@ use {
     },
     crossterm::{
         cursor::{self, position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
-        style::{Color, Print, ResetColor, SetForegroundColor},
+        style::{Print, ResetColor, SetForegroundColor},
         terminal::{self, Clear, ClearType},
         QueueableCommand, Result,
     },
@@ -83,21 +83,17 @@ impl Painter {
     ) -> Result<()> {
         let (screen_width, _) = self.terminal_size;
 
+        self.stdout.queue(MoveToColumn(0))?;
         if use_ansi_coloring {
             // print our prompt with color
             self.stdout
-                .queue(MoveToColumn(0))?
-                .queue(SetForegroundColor(prompt.get_prompt_color()))?
-                .queue(Print(prompt.render_prompt(screen_width as usize)))?
-                .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?
-                .queue(ResetColor)?;
-        } else {
-            // print our prompt without color
-            self.stdout
-                .queue(MoveToColumn(0))?
-                .queue(Print(prompt.render_prompt(screen_width as usize)))?
-                .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?
-                .queue(ResetColor)?;
+                .queue(SetForegroundColor(prompt.get_prompt_color()))?;
+        }
+        self.stdout
+            .queue(Print(prompt.render_prompt(screen_width as usize)))?
+            .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?;
+        if use_ansi_coloring {
+            self.stdout.queue(ResetColor)?;
         }
 
         Ok(())
@@ -331,16 +327,20 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         prompt_search: PromptHistorySearch,
+        use_ansi_coloring: bool,
     ) -> Result<()> {
         // print search prompt
-        self.stdout
-            .queue(MoveToColumn(0))?
-            .queue(SetForegroundColor(Color::Blue))?
-            .queue(Print(
-                prompt.render_prompt_history_search_indicator(prompt_search),
-            ))?
-            .queue(ResetColor)?;
-
+        self.stdout.queue(MoveToColumn(0))?;
+        if use_ansi_coloring {
+            self.stdout
+                .queue(SetForegroundColor(prompt.get_prompt_color()))?;
+        }
+        self.stdout.queue(Print(
+            prompt.render_prompt_history_search_indicator(prompt_search),
+        ))?;
+        if use_ansi_coloring {
+            self.stdout.queue(ResetColor)?;
+        }
         Ok(())
     }
 

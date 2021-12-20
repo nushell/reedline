@@ -832,8 +832,11 @@ impl Reedline {
 
             let prompt_history_search = PromptHistorySearch::new(status, substring);
 
-            self.painter
-                .queue_history_search_indicator(prompt, prompt_history_search)?;
+            self.painter.queue_history_search_indicator(
+                prompt,
+                prompt_history_search,
+                self.use_ansi_coloring,
+            )?;
 
             match self.history.string_at_cursor() {
                 Some(string) => {
