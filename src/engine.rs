@@ -430,15 +430,13 @@ impl Reedline {
             }
             ReedlineEvent::ClearScreen => Ok(Some(Signal::CtrlL)),
             ReedlineEvent::Enter | ReedlineEvent::HandleTab => {
-                self.queue_prompt_indicator(prompt)?;
-
                 if let Some(string) = self.history.string_at_cursor() {
                     self.editor.set_buffer(string);
                     self.editor.remember_undo_state(true);
                 }
 
                 self.input_mode = InputMode::Regular;
-                self.repaint(prompt)?;
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Edit(commands) => {
@@ -804,19 +802,6 @@ impl Reedline {
         } else {
             self.editor.move_line_down();
         }
-    }
-
-    /// Display only the prompt components preceding the buffer
-    ///
-    /// Used to restore the prompt indicator after a search etc. that affected
-    /// the prompt
-    fn queue_prompt_indicator(&mut self, prompt: &dyn Prompt) -> Result<()> {
-        // print our prompt
-        let prompt_mode = self.prompt_edit_mode();
-        self.painter
-            .queue_prompt_indicator(prompt, prompt_mode, self.use_ansi_coloring)?;
-
-        Ok(())
     }
 
     /// *Partial* repaint of either the buffer or the parts for reverse history search

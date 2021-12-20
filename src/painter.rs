@@ -103,33 +103,6 @@ impl Painter {
         Ok(())
     }
 
-    /// Queue prompt components preceding the buffer to display
-    ///
-    /// Used to restore the prompt indicator after a search etc. that affected
-    /// the prompt
-    pub fn queue_prompt_indicator(
-        &mut self,
-        prompt: &dyn Prompt,
-        prompt_mode: PromptEditMode,
-        use_ansi_coloring: bool,
-    ) -> Result<()> {
-        if use_ansi_coloring {
-            // print our prompt with color
-            self.stdout
-                .queue(MoveToColumn(0))?
-                .queue(SetForegroundColor(prompt.get_prompt_color()))?
-                .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?
-                .queue(ResetColor)?;
-        } else {
-            // print our prompt without color
-            self.stdout
-                .queue(MoveToColumn(0))?
-                .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?
-                .queue(ResetColor)?;
-        }
-        Ok(())
-    }
-
     /// Repaint logic for the normal input prompt buffer
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
