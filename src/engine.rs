@@ -446,7 +446,7 @@ impl Reedline {
             }
             ReedlineEvent::Mouse => Ok(None),
             ReedlineEvent::Resize(width, height) => {
-                self.painter.handle_resize(width, height)?;
+                self.painter.handle_resize(width, height);
                 self.full_repaint(prompt)?;
                 Ok(None)
             }
@@ -533,7 +533,7 @@ impl Reedline {
             }
             ReedlineEvent::Mouse => Ok(None),
             ReedlineEvent::Resize(width, height) => {
-                self.painter.handle_resize(width, height)?;
+                self.painter.handle_resize(width, height);
                 self.full_repaint(prompt)?;
                 Ok(None)
             }

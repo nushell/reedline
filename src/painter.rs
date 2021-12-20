@@ -206,7 +206,7 @@ impl Painter {
     }
 
     /// Updates prompt origin and offset to handle a screen resize event
-    pub(crate) fn handle_resize(&mut self, width: u16, height: u16) -> Result<()> {
+    pub(crate) fn handle_resize(&mut self, width: u16, height: u16) {
         let prev_terminal_size = self.terminal_size;
 
         self.terminal_size = (width, height);
@@ -232,8 +232,6 @@ impl Painter {
                 current_origin.1 + (height - prev_terminal_size.1),
             );
         }
-
-        Ok(())
     }
 
     /// TODO! FIX the naming and provide an accurate doccomment
