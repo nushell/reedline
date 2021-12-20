@@ -1,3 +1,5 @@
+use crate::core_editor::Editor;
+
 use {
     crate::{
         prompt::{PromptEditMode, PromptHistorySearch},
@@ -10,18 +12,60 @@ use {
         QueueableCommand, Result,
     },
     std::io::{Stdout, Write},
+    unicode_width::UnicodeWidthStr,
 };
+
+#[derive(Default)]
+struct PromptCoordinates {
+    prompt_start: (u16, u16),
+    input_start: (u16, u16),
+}
+
+impl PromptCoordinates {
+    fn input_start_col(&self) -> u16 {
+        self.input_start.0
+    }
+
+    fn set_prompt_start(&mut self, col: u16, row: u16) {
+        self.prompt_start = (col, row);
+    }
+
+    fn set_input_start(&mut self, col: u16, row: u16) {
+        self.input_start = (col, row);
+    }
+}
 
 pub struct Painter {
     // Stdout
     stdout: Stdout,
+    prompt_coords: PromptCoordinates,
+    terminal_size: (u16, u16),
 }
 
 impl Painter {
     pub fn new(stdout: Stdout) -> Self {
-        Painter { stdout }
+        Painter {
+            stdout,
+            prompt_coords: PromptCoordinates::default(),
+            terminal_size: (0, 0),
+        }
     }
 
+    /// Update the terminal size information by polling the system
+    pub(crate) fn init_terminal_size(&mut self) -> Result<()> {
+        self.terminal_size = terminal::size()?;
+        Ok(())
+    }
+
+    fn terminal_columns(&self) -> u16 {
+        self.terminal_size.0
+    }
+
+    fn terminal_rows(&self) -> u16 {
+        self.terminal_size.1
+    }
+
+    /// Move cursor, doesn't flush
     pub fn queue_move_to(&mut self, column: u16, row: u16) -> Result<()> {
         self.stdout.queue(cursor::MoveTo(column, row))?;
 
@@ -35,10 +79,9 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         prompt_mode: PromptEditMode,
-        terminal_size: (u16, u16),
         use_ansi_coloring: bool,
     ) -> Result<()> {
-        let (screen_width, _) = terminal_size;
+        let (screen_width, _) = self.terminal_size;
 
         if use_ansi_coloring {
             // print our prompt with color
@@ -90,12 +133,7 @@ impl Painter {
     /// Repaint logic for the normal input prompt buffer
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
-    pub fn queue_buffer(
-        &mut self,
-        highlighted_line: (String, String),
-        hint: String,
-        input_start: (u16, u16),
-    ) -> Result<()> {
+    pub fn queue_buffer(&mut self, highlighted_line: (String, String), hint: String) -> Result<()> {
         let (before_cursor, after_cursor) = highlighted_line;
 
         let before_cursor_lines = if cfg!(windows) {
@@ -112,7 +150,10 @@ impl Painter {
             after_cursor.split("\n")
         };
 
-        let mut commands = self.stdout.queue(MoveTo(input_start.0, input_start.1))?;
+        let mut commands = self.stdout.queue(MoveTo(
+            self.prompt_coords.input_start.0,
+            self.prompt_coords.input_start.1,
+        ))?;
 
         for (idx, before_cursor_line) in before_cursor_lines.enumerate() {
             if idx != 0 {
@@ -148,28 +189,169 @@ impl Painter {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Performs full repaint and sets the prompt and input origin position.
+    ///
+    /// Prints prompt (and buffer)
+    pub(crate) fn initialize_prompt_position(&mut self) -> Result<()> {
+        let (column, row) = cursor::position()?;
+        let new_row = {
+            if (column, row) == (0, 0) {
+                0
+            } else if row + 1 == self.terminal_rows() {
+                self.paint_carriage_return()?;
+                row.saturating_sub(1)
+            } else if row + 2 == self.terminal_rows() {
+                self.paint_carriage_return()?;
+                row
+            } else {
+                row + 1
+            }
+        };
+
+        self.prompt_coords.set_prompt_start(0, new_row);
+        Ok(())
+    }
+
     pub fn repaint_everything(
         &mut self,
         prompt: &dyn Prompt,
         prompt_mode: PromptEditMode,
-        prompt_start: (u16, u16),
         highlighted_line: (String, String),
         hint: String,
-        terminal_size: (u16, u16),
         use_ansi_coloring: bool,
-    ) -> Result<(u16, u16)> {
+    ) -> Result<()> {
         self.stdout.queue(cursor::Hide)?;
-        self.queue_move_to(prompt_start.0, prompt_start.1)?;
-        self.queue_prompt(prompt, prompt_mode, terminal_size, use_ansi_coloring)?;
+        self.queue_move_to(
+            self.prompt_coords.prompt_start.0,
+            self.prompt_coords.prompt_start.1,
+        )?;
+        self.queue_prompt(prompt, prompt_mode, use_ansi_coloring)?;
         self.flush()?;
         // set where the input begins
-        let input_start = position()?;
-        self.queue_buffer(highlighted_line, hint, input_start)?;
+        self.prompt_coords.input_start = position()?;
+        self.queue_buffer(highlighted_line, hint)?;
         self.stdout.queue(cursor::Show)?;
         self.flush()?;
 
-        Ok(input_start)
+        Ok(())
+    }
+
+    /// Updates prompt origin and offset to handle a screen resize event
+    pub(crate) fn handle_resize(&mut self, width: u16, height: u16) -> Result<()> {
+        let prev_terminal_size = self.terminal_size;
+
+        self.terminal_size = (width, height);
+        // TODO properly adjusting prompt_origin on resizing while lines > 1
+
+        let current_origin = self.prompt_coords.prompt_start;
+
+        if current_origin.1 >= (height - 1) {
+            // Terminal is shrinking up
+            // FIXME: use actual prompt size at some point
+            // Note: you can't just subtract the offset from the origin,
+            // as we could be shrinking so fast that the offset we read back from
+            // crossterm is past where it would have been.
+            self.prompt_coords
+                .set_prompt_start(current_origin.0, height - 2);
+        } else if prev_terminal_size.1 < height {
+            // Terminal is growing down, so move the prompt down the same amount to make space
+            // for history that's on the screen
+            // Note: if the terminal doesn't have sufficient history, this will leave a trail
+            // of previous prompts currently.
+            self.prompt_coords.set_prompt_start(
+                current_origin.0,
+                current_origin.1 + (height - prev_terminal_size.1),
+            );
+        }
+
+        Ok(())
+    }
+
+    /// TODO! FIX the naming and provide an accurate doccomment
+    /// This function repaints and updates offsets but does not purely concern it self with wrapping
+    pub(crate) fn wrap(&mut self, highlighted_line: (String, String), hint: String) -> Result<()> {
+        let (original_column, original_row) = cursor::position()?;
+
+        self.queue_buffer(highlighted_line, hint)?;
+        self.flush()?;
+
+        let (new_column, _new_row) = cursor::position()?;
+
+        if new_column < original_column && original_row + 1 == self.terminal_rows() {
+            // We have wrapped off bottom of screen, and prompt is on new row
+            // We need to update the prompt location in this case
+            let (input_start_col, input_start_row) = self.prompt_coords.input_start;
+            let (prompt_start_col, prompt_start_row) = self.prompt_coords.prompt_start;
+            self.prompt_coords
+                .set_input_start(input_start_col, input_start_row - 1);
+            self.prompt_coords
+                .set_prompt_start(prompt_start_col, prompt_start_row - 1);
+        }
+
+        Ok(())
+    }
+
+    /// Heuristic to determine if we need to wrap text around.
+    pub(crate) fn require_wrapping(&self, editor: &Editor) -> bool {
+        let line_start = if editor.line() == 0 {
+            self.prompt_coords.input_start_col()
+        } else {
+            0
+        };
+
+        let terminal_width = self.terminal_columns();
+
+        let display_width = UnicodeWidthStr::width(editor.get_buffer()) + line_start as usize;
+
+        display_width >= terminal_width as usize
+    }
+
+    /// Repositions the prompt offset position, if the buffer content would overflow the bottom of the screen.
+    /// Checks for content that might overflow in the core buffer.
+    /// Performs scrolling and updates prompt and input position.
+    /// Does not trigger a full repaint!
+    pub(crate) fn adjust_prompt_position(&mut self, editor: &Editor) -> Result<()> {
+        let (prompt_start_col, prompt_start_row) = self.prompt_coords.prompt_start;
+        let (input_start_col, input_start_row) = self.prompt_coords.input_start;
+
+        let mut buffer_line_count = editor.num_lines() as u16;
+
+        let terminal_columns = self.terminal_columns();
+
+        // Estimate where we're going to wrap around the edge of the terminal
+        for line in editor.get_buffer().lines() {
+            let estimated_width = UnicodeWidthStr::width(line);
+
+            let estimated_line_count = estimated_width as f64 / terminal_columns as f64;
+            let estimated_line_count = estimated_line_count.ceil() as u64;
+
+            // Any wrapping we estimate we might have, go ahead and add it to our line count
+            buffer_line_count += (estimated_line_count - 1) as u16;
+        }
+
+        let ends_in_newline = editor.ends_with('\n');
+
+        let terminal_rows = self.terminal_rows();
+
+        if input_start_row + buffer_line_count > terminal_rows {
+            let spill = input_start_row + buffer_line_count - terminal_rows;
+
+            // FIXME: see if we want this as the permanent home
+            if ends_in_newline {
+                self.scroll_rows(spill - 1)?;
+            } else {
+                self.scroll_rows(spill)?;
+            }
+
+            // We have wrapped off bottom of screen, and prompt is on new row
+            // We need to update the prompt location in this case
+            self.prompt_coords
+                .set_input_start(input_start_col, input_start_row - spill);
+            self.prompt_coords
+                .set_prompt_start(prompt_start_col, prompt_start_row - spill);
+        }
+
+        Ok(())
     }
 
     pub fn queue_history_search_indicator(
