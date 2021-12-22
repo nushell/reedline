@@ -582,7 +582,14 @@ impl Reedline {
         match event {
             ReedlineEvent::HandleTab => {
                 let line_buffer = self.editor.line_buffer();
-                self.tab_handler.handle(line_buffer);
+
+                let current_hint = self.hinter.current_hint();
+                if !current_hint.is_empty() {
+                    self.editor.clear_to_end();
+                    self.run_edit_commands(&[EditCommand::InsertString(current_hint)], prompt)?;
+                } else {
+                    self.tab_handler.handle(line_buffer);
+                }
 
                 let (prompt_origin_column, prompt_origin_row) = self.prompt_widget.origin;
 
@@ -845,6 +852,18 @@ impl Reedline {
 
                     self.repaint(prompt)?;
                 }
+                EditCommand::InsertString(s) => {
+                    for c in s.chars() {
+                        self.editor.insert_char(c);
+                    }
+
+                    if self.require_wrapping() {
+                        let position = cursor::position()?;
+                        self.wrap(position, prompt)?;
+                    }
+
+                    self.repaint(prompt)?;
+                }
                 EditCommand::Backspace => self.editor.backspace(),
                 EditCommand::Delete => self.editor.delete(),
                 EditCommand::BackspaceWord => self.editor.backspace_word(),
@@ -1056,6 +1075,7 @@ impl Reedline {
                 prompt.render_prompt_multiline_indicator().borrow(),
                 self.use_ansi_coloring,
             );
+
         let hint: String = self.hinter.handle(
             buffer_to_paint,
             cursor_position_in_buffer,

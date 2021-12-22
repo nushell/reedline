@@ -59,13 +59,14 @@ fn main() -> Result<()> {
         .with_edit_mode(edit_mode)
         .with_highlighter(Box::new(DefaultHighlighter::new(commands)))
         .with_completion_action_handler(Box::new(
-            ListCompletionHandler::default().with_completer(completer.clone()),
+            ListCompletionHandler::default().with_completer(completer),
         ))
         .with_hinter(Box::new(
             DefaultHinter::default()
-                .with_completer(completer) // or .with_history()
+                .with_history()
+                // .with_completer(completer) // or .with_history()
                 // .with_inside_line()
-                .with_style(Style::new().italic().fg(Color::LightGray)),
+                .with_style(Style::new().fg(Color::DarkGray)),
         ))
         .with_ansi_colors(true);
 

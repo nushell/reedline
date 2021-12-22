@@ -39,6 +39,9 @@ pub enum EditCommand {
     /// Insert a character at the current insertion point
     InsertChar(char),
 
+    /// Insert a string at the current insertion point
+    InsertString(String),
+
     /// Backspace delete from the current insertion point
     Backspace,
 
@@ -106,6 +109,7 @@ impl EditCommand {
 
             // Coalesceable insert
             EditCommand::InsertChar(_) => UndoBehavior::Coalesce,
+            EditCommand::InsertString(_) => UndoBehavior::Coalesce,
 
             // Full edits
             EditCommand::Backspace
