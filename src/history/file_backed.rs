@@ -38,6 +38,14 @@ impl Default for FileBackedHistory {
     }
 }
 
+fn encode_entry(s: String) -> String {
+    s.replace("\n", "<\\n>")
+}
+
+fn decode_entry(s: String) -> String {
+    s.replace("<\\n>", "\n")
+}
+
 impl History for FileBackedHistory {
     /// Appends an entry if non-empty and not repetition of the previous entry.
     /// Resets the browsing cursor to the default state in front of the most recent entry.
@@ -57,6 +65,7 @@ impl History for FileBackedHistory {
                 self.len_on_disk = self.len_on_disk.saturating_sub(1);
                 self.truncate_file = true;
             }
+            let entry = encode_entry(entry);
             self.entries.push_back(entry);
         }
         self.reset_cursor();
@@ -99,7 +108,7 @@ impl History for FileBackedHistory {
     }
 
     fn string_at_cursor(&self) -> Option<String> {
-        self.entries.get(self.cursor).cloned()
+        self.entries.get(self.cursor).cloned().map(decode_entry)
     }
 
     fn set_navigation(&mut self, navigation: HistoryNavigationQuery) {
