@@ -254,10 +254,20 @@ impl Painter {
             // We need to update the prompt location in this case
             let (input_start_col, input_start_row) = self.prompt_coords.input_start;
             let (prompt_start_col, prompt_start_row) = self.prompt_coords.prompt_start;
-            self.prompt_coords
-                .set_input_start(input_start_col, input_start_row - 1);
-            self.prompt_coords
-                .set_prompt_start(prompt_start_col, prompt_start_row - 1);
+
+            if input_start_row >= 1 {
+                self.prompt_coords
+                    .set_input_start(input_start_col, input_start_row - 1);
+            } else {
+                self.prompt_coords.set_input_start(0, 0);
+            }
+
+            if prompt_start_row >= 1 {
+                self.prompt_coords
+                    .set_prompt_start(prompt_start_col, prompt_start_row - 1);
+            } else {
+                self.prompt_coords.set_prompt_start(0, 0);
+            }
         }
 
         Ok(())
@@ -298,7 +308,9 @@ impl Painter {
             let estimated_line_count = estimated_line_count.ceil() as u64;
 
             // Any wrapping we estimate we might have, go ahead and add it to our line count
-            buffer_line_count += (estimated_line_count - 1) as u16;
+            if estimated_line_count >= 1 {
+                buffer_line_count += (estimated_line_count - 1) as u16;
+            }
         }
 
         let ends_in_newline = editor.ends_with('\n');
@@ -317,10 +329,20 @@ impl Painter {
 
             // We have wrapped off bottom of screen, and prompt is on new row
             // We need to update the prompt location in this case
-            self.prompt_coords
-                .set_input_start(input_start_col, input_start_row - spill);
-            self.prompt_coords
-                .set_prompt_start(prompt_start_col, prompt_start_row - spill);
+
+            if spill <= input_start_row {
+                self.prompt_coords
+                    .set_input_start(input_start_col, input_start_row - spill);
+            } else {
+                self.prompt_coords.set_input_start(0, 0);
+            }
+
+            if spill <= prompt_start_row {
+                self.prompt_coords
+                    .set_prompt_start(prompt_start_col, prompt_start_row - spill);
+            } else {
+                self.prompt_coords.set_prompt_start(0, 0);
+            }
         }
 
         Ok(())

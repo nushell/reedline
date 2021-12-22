@@ -611,20 +611,26 @@ impl Reedline {
                 Ok(None)
             }
             ReedlineEvent::Paste(events) => {
+                let mut latest_signal = None;
                 // Making sure that only InsertChars are handled during a paste event
                 for event in events {
                     if let ReedlineEvent::Edit(commands) = event {
                         for command in commands {
-                            if let EditCommand::InsertChar(c) = command {
-                                self.editor.insert_char(c)
+                            match command {
+                                EditCommand::InsertChar(c) => self.editor.insert_char(c),
+                                x => {
+                                    self.run_edit_commands(&[x], prompt)?;
+                                }
                             }
                         }
+                    } else {
+                        latest_signal = self.handle_editor_event(prompt, event)?;
                     }
                 }
 
-                self.adjust_prompt_position()?;
-                self.full_repaint(prompt, self.prompt_widget.origin)?;
-                Ok(None)
+                self.painter.adjust_prompt_position(&self.editor)?;
+                self.full_repaint(prompt)?;
+                Ok(latest_signal)
             }
             ReedlineEvent::None => Ok(None),
         }
@@ -798,9 +804,8 @@ impl Reedline {
                         self.editor.insert_char(c);
                     }
 
-                    if self.require_wrapping() {
-                        let position = cursor::position()?;
-                        self.wrap(position, prompt)?;
+                    if self.painter.require_wrapping(&self.editor) {
+                        self.handle_wrap(prompt)?;
                     }
 
                     self.repaint(prompt)?;
