@@ -1,5 +1,7 @@
+use crate::completion::HistoryCompleter;
+
 use {
-    crate::{Completer, DefaultCompleter, History},
+    crate::{Completer, History},
     nu_ansi_term::{Color, Style},
 };
 
@@ -44,7 +46,7 @@ impl Hinter for DefaultHinter {
                 completions = c.complete(line, pos);
             } else if self.history {
                 let history: Vec<String> = history.iter_chronologic().cloned().collect();
-                completions = DefaultCompleter::new(history).complete(line, pos);
+                completions = HistoryCompleter::new(history).complete(line, pos);
             }
 
             if !completions.is_empty() {

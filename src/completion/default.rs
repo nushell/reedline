@@ -6,6 +6,40 @@ use std::{
 
 use crate::{Completer, Span};
 
+pub struct HistoryCompleter {
+    history: Vec<String>,
+}
+
+impl HistoryCompleter {
+    pub fn new(history: Vec<String>) -> Self {
+        Self { history }
+    }
+}
+
+impl Completer for HistoryCompleter {
+    fn complete(&self, line: &str, pos: usize) -> Vec<(Span, String)> {
+        let mut completions = vec![];
+
+        if line.is_empty() {
+            return vec![];
+        }
+
+        for hist in &self.history {
+            if hist.starts_with(&line[0..pos]) {
+                completions.push((
+                    Span {
+                        start: pos,
+                        end: line.len(),
+                    },
+                    hist[pos..].to_string(),
+                ));
+            }
+        }
+
+        completions
+    }
+}
+
 /// A default completer that can detect keywords
 ///
 /// # Example
@@ -148,8 +182,8 @@ impl DefaultCompleter {
     /// completions.insert(vec!["a","line","with"].iter().map(|s| s.to_string()).collect());
     /// completions.insert(vec!["many","words"].iter().map(|s| s.to_string()).collect());
     /// ```
-    pub fn insert(&mut self, external_commands: Vec<String>) {
-        for word in external_commands {
+    pub fn insert(&mut self, words: Vec<String>) {
+        for word in words {
             if word.len() >= self.min_word_len {
                 self.root.insert(word.chars());
             }
