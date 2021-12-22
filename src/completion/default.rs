@@ -37,7 +37,11 @@ impl Completer for HistoryCompleter {
             }
         }
 
-        completions
+        if let Some(last) = completions.last() {
+            vec![last.clone()]
+        } else {
+            completions
+        }
     }
 }
 
