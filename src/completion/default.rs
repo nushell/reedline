@@ -6,6 +6,7 @@ use std::{
 
 use crate::{Completer, Span};
 
+/// A history-specific completer with a focus on completing whole lines of history
 pub struct HistoryCompleter {
     history: Vec<String>,
 }
