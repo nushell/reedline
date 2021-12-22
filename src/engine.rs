@@ -13,9 +13,8 @@ use {
         text_manipulation, DefaultHighlighter, DefaultValidator, EditCommand, Highlighter, Prompt,
         Signal, ValidationResult, Validator,
     },
-    crossterm::{cursor, event, event::Event, terminal, Result},
+    crossterm::{event, event::Event, terminal, Result},
     std::{io, time::Duration},
-    unicode_width::UnicodeWidthStr,
 };
 
 // These two parameters define when an event is a Paste Event. The POLL_WAIT is used
@@ -46,21 +45,6 @@ enum InputMode {
     /// Either bash style up/down history or fish style prefix search,
     /// Edits directly switch to [`InputMode::Regular`]
     HistoryTraversal,
-}
-
-#[derive(Default)]
-struct PromptWidget {
-    offset: (u16, u16),
-    origin: (u16, u16),
-}
-
-impl PromptWidget {
-    fn offset_columns(&self) -> u16 {
-        self.offset.0
-    }
-    // fn origin_columns(&self) -> u16 {
-    //     self.origin.0
-    // }
 }
 
 /// Line editor engine
@@ -109,10 +93,6 @@ pub struct Reedline {
     // Showcase hints based on various stratiges (history, language-completion, spellcheck, etc)
     hinter: Box<dyn Hinter>,
 
-    // UI State
-    terminal_size: (u16, u16),
-    prompt_widget: PromptWidget,
-
     // Is Some(n) read_line() should repaint prompt every `n` milliseconds
     animate: bool,
 
@@ -137,10 +117,6 @@ impl Reedline {
         let hinter = Box::new(DefaultHinter::default());
         let validator = Box::new(DefaultValidator);
 
-        let terminal_size = terminal::size()?;
-        // Note: this is started with a garbage value
-        let prompt_widget = PromptWidget::default();
-
         let edit_mode = Box::new(Emacs::default());
 
         let reedline = Reedline {
@@ -150,8 +126,6 @@ impl Reedline {
             painter,
             edit_mode,
             tab_handler: Box::new(CircularCompletionHandler::default()),
-            terminal_size,
-            prompt_widget,
             highlighter: buffer_highlighter,
             hinter,
             validator,
@@ -348,13 +322,6 @@ impl Reedline {
         self.painter.paint_line(msg)
     }
 
-    /// Goes to the beginning of the next line
-    ///
-    /// Also works in raw mode
-    pub fn print_crlf(&mut self) -> Result<()> {
-        self.painter.paint_crlf()
-    }
-
     /// Clear the screen by printing enough whitespace to start the prompt or
     /// other output back at the first line of the terminal.
     pub fn clear_screen(&mut self) -> Result<()> {
@@ -366,15 +333,15 @@ impl Reedline {
     /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        // TODO: Should prompt be a property on the LineEditor
+        self.painter.init_terminal_size()?;
+        self.painter.initialize_prompt_position()?;
 
         // Redraw if Ctrl-L was used
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)?;
+        } else {
+            self.full_repaint(prompt)?;
         }
-
-        self.terminal_size = terminal::size()?;
-        self.initialize_prompt(prompt)?;
 
         let mut crossterm_events: Vec<Event> = vec![];
         let mut reedline_events: Vec<ReedlineEvent> = vec![];
@@ -483,15 +450,13 @@ impl Reedline {
             }
             ReedlineEvent::ClearScreen => Ok(Some(Signal::CtrlL)),
             ReedlineEvent::Enter | ReedlineEvent::HandleTab => {
-                self.queue_prompt_indicator(prompt)?;
-
                 if let Some(string) = self.history.string_at_cursor() {
                     self.editor.set_buffer(string);
                     self.editor.remember_undo_state(true);
                 }
 
                 self.input_mode = InputMode::Regular;
-                self.repaint(prompt)?;
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Edit(commands) => {
@@ -501,12 +466,13 @@ impl Reedline {
             }
             ReedlineEvent::Mouse => Ok(None),
             ReedlineEvent::Resize(width, height) => {
-                self.handle_resize(width, height, prompt)?;
+                self.painter.handle_resize(width, height);
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Repaint => {
                 if self.input_mode != InputMode::HistorySearch {
-                    self.full_repaint(prompt, self.prompt_widget.origin)?;
+                    self.full_repaint(prompt)?;
                 }
                 Ok(None)
             }
@@ -535,84 +501,6 @@ impl Reedline {
         }
     }
 
-    /// Updates prompt origin and offset and performs a repaint to handle a screen resize event
-    fn handle_resize(&mut self, width: u16, height: u16, prompt: &dyn Prompt) -> Result<()> {
-        let prev_terminal_size = self.terminal_size;
-
-        self.terminal_size = (width, height);
-        // TODO properly adjusting prompt_origin on resizing while lines > 1
-
-        let current_origin = self.prompt_widget.origin;
-
-        if current_origin.1 >= (height - 1) {
-            // Terminal is shrinking up
-            // FIXME: use actual prompt size at some point
-            // Note: you can't just subtract the offset from the origin,
-            // as we could be shrinking so fast that the offset we read back from
-            // crossterm is past where it would have been.
-            self.set_prompt_origin((current_origin.0, height - 2));
-        } else if prev_terminal_size.1 < height {
-            // Terminal is growing down, so move the prompt down the same amount to make space
-            // for history that's on the screen
-            // Note: if the terminal doesn't have sufficient history, this will leave a trail
-            // of previous prompts currently.
-            self.set_prompt_origin((
-                current_origin.0,
-                current_origin.1 + (height - prev_terminal_size.1),
-            ));
-        }
-
-        let prompt_offset = self.full_repaint(prompt, self.prompt_widget.origin)?;
-        self.set_prompt_offset(prompt_offset);
-        Ok(())
-    }
-
-    /// Repositions the prompt, if the buffer content would overflow the bottom of the screen.
-    /// Checks for content that might overflow in the core buffer.
-    /// Performs scrolling and updates prompt origin and offset.
-    /// Does not trigger a full repaint!
-    fn adjust_prompt_position(&mut self) -> Result<()> {
-        let (prompt_origin_column, prompt_origin_row) = self.prompt_widget.origin;
-        let (prompt_offset_column, prompt_offset_row) = self.prompt_widget.offset;
-
-        let mut buffer_line_count = self.editor.num_lines() as u16;
-
-        let terminal_columns = self.terminal_columns();
-
-        // Estimate where we're going to wrap around the edge of the terminal
-        for line in self.editor.line_buffer().get_buffer().lines() {
-            let estimated_width = UnicodeWidthStr::width(line);
-
-            let estimated_line_count = estimated_width as f64 / terminal_columns as f64;
-            let estimated_line_count = estimated_line_count.ceil() as u64;
-
-            // Any wrapping we estimate we might have, go ahead and add it to our line count
-            buffer_line_count += (estimated_line_count - 1) as u16;
-        }
-
-        let ends_in_newline = self.editor.ends_with('\n');
-
-        let terminal_rows = self.terminal_rows();
-
-        if prompt_offset_row + buffer_line_count > terminal_rows {
-            let spill = prompt_offset_row + buffer_line_count - terminal_rows;
-
-            // FIXME: see if we want this as the permanent home
-            if ends_in_newline {
-                self.painter.scroll_rows(spill - 1)?;
-            } else {
-                self.painter.scroll_rows(spill)?;
-            }
-
-            // We have wrapped off bottom of screen, and prompt is on new row
-            // We need to update the prompt location in this case
-            self.set_prompt_offset((prompt_offset_column, prompt_offset_row - spill));
-            self.set_prompt_origin((prompt_origin_column, prompt_origin_row - spill));
-        }
-
-        Ok(())
-    }
-
     fn handle_editor_event(
         &mut self,
         prompt: &dyn Prompt,
@@ -630,9 +518,7 @@ impl Reedline {
                     self.tab_handler.handle(line_buffer);
                 }
 
-                let (prompt_origin_column, prompt_origin_row) = self.prompt_widget.origin;
-
-                self.full_repaint(prompt, (prompt_origin_column, prompt_origin_row))?;
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::CtrlD => {
@@ -655,7 +541,7 @@ impl Reedline {
                 if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
                     self.append_to_history();
                     self.run_edit_commands(&[EditCommand::Clear], prompt)?;
-                    self.print_crlf()?;
+                    self.painter.print_crlf()?;
                     self.editor.reset_undo_stack();
 
                     Ok(Some(Signal::Success(buffer)))
@@ -665,8 +551,8 @@ impl Reedline {
                         self.run_edit_commands(&[EditCommand::InsertChar('\r')], prompt)?;
                     }
                     self.run_edit_commands(&[EditCommand::InsertChar('\n')], prompt)?;
-                    self.adjust_prompt_position()?;
-                    self.full_repaint(prompt, self.prompt_widget.origin)?;
+                    self.painter.adjust_prompt_position(&self.editor)?;
+                    self.full_repaint(prompt)?;
 
                     Ok(None)
                 }
@@ -678,41 +564,42 @@ impl Reedline {
             }
             ReedlineEvent::Mouse => Ok(None),
             ReedlineEvent::Resize(width, height) => {
-                self.handle_resize(width, height, prompt)?;
+                self.painter.handle_resize(width, height);
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Repaint => {
                 if self.input_mode != InputMode::HistorySearch {
-                    self.full_repaint(prompt, self.prompt_widget.origin)?;
+                    self.full_repaint(prompt)?;
                 }
                 Ok(None)
             }
             ReedlineEvent::PreviousHistory => {
                 self.previous_history();
 
-                self.adjust_prompt_position()?;
-                self.full_repaint(prompt, self.prompt_widget.origin)?;
+                self.painter.adjust_prompt_position(&self.editor)?;
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::NextHistory => {
                 self.next_history();
 
-                self.adjust_prompt_position()?;
-                self.full_repaint(prompt, self.prompt_widget.origin)?;
+                self.painter.adjust_prompt_position(&self.editor)?;
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Up => {
                 self.up_command();
 
-                self.adjust_prompt_position()?;
-                self.full_repaint(prompt, self.prompt_widget.origin)?;
+                self.painter.adjust_prompt_position(&self.editor)?;
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Down => {
                 self.down_command();
 
-                self.adjust_prompt_position()?;
-                self.full_repaint(prompt, self.prompt_widget.origin)?;
+                self.painter.adjust_prompt_position(&self.editor)?;
+                self.full_repaint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::SearchHistory => {
@@ -900,9 +787,8 @@ impl Reedline {
                 EditCommand::InsertChar(c) => {
                     self.editor.insert_char(*c);
 
-                    if self.require_wrapping() {
-                        let position = cursor::position()?;
-                        self.wrap(position, prompt)?;
+                    if self.painter.require_wrapping(&self.editor) {
+                        self.handle_wrap(prompt)?;
                     }
 
                     self.repaint(prompt)?;
@@ -957,14 +843,6 @@ impl Reedline {
         self.editor.set_insertion_point(pos);
     }
 
-    fn terminal_columns(&self) -> u16 {
-        self.terminal_size.0
-    }
-
-    fn terminal_rows(&self) -> u16 {
-        self.terminal_size.1
-    }
-
     fn up_command(&mut self) {
         // If we're at the top, then:
         if self.editor.is_cursor_at_first_line() {
@@ -985,95 +863,13 @@ impl Reedline {
         }
     }
 
-    fn set_prompt_offset(&mut self, offset: (u16, u16)) {
-        self.prompt_widget.offset = offset;
-    }
-
-    fn set_prompt_origin(&mut self, origin: (u16, u16)) {
-        self.prompt_widget.origin = origin;
-    }
-
-    /// TODO! FIX the naming and provide an accurate doccomment
-    /// This function repaints and updates offsets but does not purely concern it self with wrapping
-    fn wrap(&mut self, original_position: (u16, u16), prompt: &dyn Prompt) -> io::Result<()> {
-        let (original_column, original_row) = original_position;
-        self.buffer_paint(prompt, self.prompt_widget.offset)?;
-
-        let (new_column, _) = cursor::position()?;
-
-        if new_column < original_column && original_row + 1 == self.terminal_rows() {
-            // We have wrapped off bottom of screen, and prompt is on new row
-            // We need to update the prompt location in this case
-            let (prompt_offset_columns, prompt_offset_rows) = self.prompt_widget.offset;
-            let (prompt_origin_columns, prompt_origin_rows) = self.prompt_widget.origin;
-            self.set_prompt_offset((prompt_offset_columns, prompt_offset_rows - 1));
-            self.set_prompt_origin((prompt_origin_columns, prompt_origin_rows - 1));
-        }
-
-        Ok(())
-    }
-
-    /// Heuristic to determine if we need to wrap text around.
-    fn require_wrapping(&self) -> bool {
-        let line_start = if self.editor.line() == 0 {
-            self.prompt_widget.offset_columns()
-        } else {
-            0
-        };
-
-        let terminal_width = self.terminal_columns();
-
-        let display_width = UnicodeWidthStr::width(self.editor.get_buffer()) + line_start as usize;
-
-        display_width >= terminal_width as usize
-    }
-
-    /// Display only the prompt components preceding the buffer
-    ///
-    /// Used to restore the prompt indicator after a search etc. that affected
-    /// the prompt
-    fn queue_prompt_indicator(&mut self, prompt: &dyn Prompt) -> Result<()> {
-        // print our prompt
-        let prompt_mode = self.prompt_edit_mode();
-        self.painter
-            .queue_prompt_indicator(prompt, prompt_mode, self.use_ansi_coloring)?;
-
-        Ok(())
-    }
-
-    /// Performs full repaint and sets the prompt origin and offset position.
-    ///
-    /// Prints prompt (and buffer)
-    fn initialize_prompt(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
-        let origin = {
-            let (column, row) = cursor::position()?;
-            if (column, row) == (0, 0) {
-                (0, 0)
-            } else if row + 1 == self.terminal_rows() {
-                self.painter.paint_carriage_return()?;
-                (0, row.saturating_sub(1))
-            } else if row + 2 == self.terminal_rows() {
-                self.painter.paint_carriage_return()?;
-                (0, row)
-            } else {
-                (0, row + 1)
-            }
-        };
-
-        self.set_prompt_origin(origin);
-        let prompt_offset = self.full_repaint(prompt, origin)?;
-        self.set_prompt_offset(prompt_offset);
-
-        Ok(())
-    }
-
     /// *Partial* repaint of either the buffer or the parts for reverse history search
     fn repaint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
         // Repainting
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)?;
         } else {
-            self.buffer_paint(prompt, self.prompt_widget.offset)?;
+            self.buffer_paint(prompt)?;
         }
 
         Ok(())
@@ -1095,8 +891,11 @@ impl Reedline {
 
             let prompt_history_search = PromptHistorySearch::new(status, substring);
 
-            self.painter
-                .queue_history_search_indicator(prompt, prompt_history_search)?;
+            self.painter.queue_history_search_indicator(
+                prompt,
+                prompt_history_search,
+                self.use_ansi_coloring,
+            )?;
 
             match self.history.string_at_cursor() {
                 Some(string) => {
@@ -1118,7 +917,7 @@ impl Reedline {
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     /// Performs highlighting and hinting at the moment!
-    fn buffer_paint(&mut self, prompt: &dyn Prompt, prompt_offset: (u16, u16)) -> Result<()> {
+    fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
         let cursor_position_in_buffer = self.editor.offset();
         let buffer_to_paint = self.editor.get_buffer();
 
@@ -1138,8 +937,7 @@ impl Reedline {
             self.use_ansi_coloring,
         );
 
-        self.painter
-            .queue_buffer(highlighted_line, hint, prompt_offset)?;
+        self.painter.queue_buffer(highlighted_line, hint)?;
         self.painter.flush()?;
 
         Ok(())
@@ -1148,13 +946,8 @@ impl Reedline {
     /// Triggers a full repaint including the prompt parts
     ///
     /// Includes the highlighting and hinting calls.
-    fn full_repaint(
-        &mut self,
-        prompt: &dyn Prompt,
-        prompt_origin: (u16, u16),
-    ) -> Result<(u16, u16)> {
+    fn full_repaint(&mut self, prompt: &dyn Prompt) -> Result<()> {
         let prompt_mode = self.prompt_edit_mode();
-        // let prompt_style = Style::new().fg(nu_ansi_term::Color::LightBlue);
         let buffer_to_paint = self.editor.get_buffer();
         let cursor_position_in_buffer = self.editor.offset();
 
@@ -1176,11 +969,33 @@ impl Reedline {
         self.painter.repaint_everything(
             prompt,
             prompt_mode,
-            prompt_origin,
             highlighted_line,
             hint,
-            self.terminal_size,
             self.use_ansi_coloring,
-        )
+        )?;
+
+        Ok(())
+    }
+
+    fn handle_wrap(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
+        let cursor_position_in_buffer = self.editor.offset();
+        let buffer_to_paint = self.editor.get_buffer();
+
+        let highlighted_line = self
+            .highlighter
+            .highlight(buffer_to_paint)
+            .render_around_insertion_point(
+                cursor_position_in_buffer,
+                prompt.render_prompt_multiline_indicator().borrow(),
+                self.use_ansi_coloring,
+            );
+        let hint: String = self.hinter.handle(
+            buffer_to_paint,
+            cursor_position_in_buffer,
+            self.history.as_ref(),
+            self.use_ansi_coloring,
+        );
+
+        self.painter.wrap(highlighted_line, hint)
     }
 }

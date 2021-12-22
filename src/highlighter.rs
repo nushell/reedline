@@ -31,15 +31,15 @@ impl Highlighter for DefaultHighlighter {
             .iter()
             .any(|x| line.contains(x))
         {
-            let matches: Vec<String> = self
+            let matches: Vec<&str> = self
                 .external_commands
                 .iter()
                 .filter(|c| line.contains(*c))
-                .map(|c| c.to_string())
+                .map(std::ops::Deref::deref)
                 .collect();
-            let longest_match = matches.iter().fold("".to_string(), |acc, item| {
+            let longest_match = matches.iter().fold("".to_string(), |acc, &item| {
                 if item.len() > acc.len() {
-                    item.clone()
+                    item.to_string()
                 } else {
                     acc
                 }
@@ -55,10 +55,10 @@ impl Highlighter for DefaultHighlighter {
                 Style::new().bold().fg(self.neutral_color),
                 buffer_split[1].to_string(),
             ));
-        } else if !self.external_commands.is_empty() {
-            styled_text.push((Style::new().fg(self.notmatch_color), line.to_string()));
-        } else {
+        } else if self.external_commands.is_empty() {
             styled_text.push((Style::new().fg(self.neutral_color), line.to_string()));
+        } else {
+            styled_text.push((Style::new().fg(self.notmatch_color), line.to_string()));
         }
 
         styled_text

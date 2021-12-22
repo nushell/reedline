@@ -31,7 +31,7 @@ fn main() {
                 println!("We processed: {}", buffer);
             }
             Signal::CtrlD | Signal::CtrlC => {
-                line_editor.print_crlf().unwrap();
+                println!("\nAborted!");
                 break;
             }
             Signal::CtrlL => {
