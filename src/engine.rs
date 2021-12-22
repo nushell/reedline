@@ -752,7 +752,8 @@ impl Reedline {
                     }
                 }
 
-                self.repaint(prompt)?;
+                self.adjust_prompt_position()?;
+                self.full_repaint(prompt, self.prompt_widget.origin)?;
                 Ok(latest_signal)
             }
             ReedlineEvent::None => Ok(None),
