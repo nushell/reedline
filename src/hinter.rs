@@ -14,6 +14,9 @@ pub trait Hinter {
         history: &dyn History,
         use_ansi_coloring: bool,
     ) -> String;
+
+    /// Return the current hint being shown to the user
+    fn current_hint(&self) -> String;
 }
 
 /// A default example hinter that use the completions or the history to show a hint to the user
@@ -22,6 +25,7 @@ pub struct DefaultHinter {
     history: bool,
     style: Style,
     inside_line: bool,
+    current_hint: String,
 }
 
 impl Hinter for DefaultHinter {
@@ -48,8 +52,14 @@ impl Hinter for DefaultHinter {
                 let span = completions[0].0;
                 hint.replace_range(0..(span.end - span.start), "");
 
+                self.current_hint = hint.clone();
+
                 output = self.style.paint(hint).to_string();
+            } else {
+                self.current_hint = String::new();
             }
+        } else {
+            self.current_hint = String::new();
         }
 
         if use_ansi_coloring {
@@ -60,6 +70,10 @@ impl Hinter for DefaultHinter {
             output
         }
     }
+
+    fn current_hint(&self) -> String {
+        self.current_hint.clone()
+    }
 }
 
 impl Default for DefaultHinter {
@@ -69,6 +83,7 @@ impl Default for DefaultHinter {
             history: false,
             style: Style::new().fg(Color::LightGray),
             inside_line: false,
+            current_hint: String::new(),
         }
     }
 }
