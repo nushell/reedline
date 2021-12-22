@@ -206,4 +206,7 @@ pub enum ReedlineEvent {
 
     /// Search the history for a string
     SearchHistory,
+
+    /// Paste event
+    Paste(Vec<ReedlineEvent>),
 }
