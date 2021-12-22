@@ -587,7 +587,9 @@ impl Reedline {
             let estimated_line_count = estimated_line_count.ceil() as u64;
 
             // Any wrapping we estimate we might have, go ahead and add it to our line count
-            buffer_line_count += (estimated_line_count - 1) as u16;
+            if estimated_line_count > 1 {
+                buffer_line_count += (estimated_line_count - 1) as u16;
+            }
         }
 
         let ends_in_newline = self.editor.ends_with('\n');
@@ -606,8 +608,17 @@ impl Reedline {
 
             // We have wrapped off bottom of screen, and prompt is on new row
             // We need to update the prompt location in this case
-            self.set_prompt_offset((prompt_offset_column, prompt_offset_row - spill));
-            self.set_prompt_origin((prompt_origin_column, prompt_origin_row - spill));
+            if spill > prompt_offset_row {
+                self.set_prompt_offset((0, 0));
+            } else {
+                self.set_prompt_offset((prompt_offset_column, prompt_offset_row - spill));
+            }
+
+            if spill > prompt_origin_row {
+                self.set_prompt_origin((0, 0));
+            } else {
+                self.set_prompt_origin((prompt_origin_column, prompt_origin_row - spill));
+            }
         }
 
         Ok(())
@@ -724,19 +735,25 @@ impl Reedline {
                 Ok(None)
             }
             ReedlineEvent::Paste(events) => {
+                let mut latest_signal = None;
                 // Making sure that only InsertChars are handled during a paste event
                 for event in events {
                     if let ReedlineEvent::Edit(commands) = event {
                         for command in commands {
-                            if let EditCommand::InsertChar(c) = command {
-                                self.editor.insert_char(c)
+                            match command {
+                                EditCommand::InsertChar(c) => self.editor.insert_char(c),
+                                x => {
+                                    self.run_edit_commands(&[x], prompt)?;
+                                }
                             }
                         }
+                    } else {
+                        latest_signal = self.handle_editor_event(prompt, event)?;
                     }
                 }
 
                 self.repaint(prompt)?;
-                Ok(None)
+                Ok(latest_signal)
             }
             ReedlineEvent::None => Ok(None),
         }
@@ -1005,8 +1022,17 @@ impl Reedline {
             // We need to update the prompt location in this case
             let (prompt_offset_columns, prompt_offset_rows) = self.prompt_widget.offset;
             let (prompt_origin_columns, prompt_origin_rows) = self.prompt_widget.origin;
-            self.set_prompt_offset((prompt_offset_columns, prompt_offset_rows - 1));
-            self.set_prompt_origin((prompt_origin_columns, prompt_origin_rows - 1));
+            if prompt_offset_rows >= 1 {
+                self.set_prompt_offset((prompt_offset_columns, prompt_offset_rows - 1));
+            } else {
+                self.set_prompt_offset((0, 0));
+            }
+
+            if prompt_origin_rows >= 1 {
+                self.set_prompt_origin((prompt_origin_columns, prompt_origin_rows - 1));
+            } else {
+                self.set_prompt_origin((0, 0));
+            }
         }
 
         Ok(())
