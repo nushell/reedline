@@ -18,6 +18,18 @@ use {
     unicode_width::UnicodeWidthStr,
 };
 
+// These two parameters define when an event is a Paste Event. The POLL_WAIT is used
+// to specify for how long the POLL should wait for events. Having a POLL_WAIT
+// of zero means that every single event is treated as soon as it arrives. This
+// doesn't allow for the possibility of more than 1 event happening at the same
+// time.
+const POLL_WAIT: u64 = 10;
+// Since a paste event is multiple Event::Key events happening at the same time, we specify
+// how many events should be in the crossterm_events vector before it is considered
+// a paste. 10 events in 10 milliseconds is conservative enough (unlikely somebody
+// will type more than 10 characters in 10 milliseconds)
+const EVENTS_THRESHOLD: usize = 10;
+
 /// Determines if inputs should be used to extend the regular line buffer,
 /// traverse the history in the standard prompt or edit the search string in the
 /// reverse search
@@ -374,7 +386,7 @@ impl Reedline {
                 // There could be multiple events queued up!
                 // pasting text, resizes, blocking this thread (e.g. during debugging)
                 // We should be able to handle all of them as quickly as possible without causing unnecessary output steps.
-                while event::poll(Duration::from_millis(0))? {
+                while event::poll(Duration::from_millis(POLL_WAIT))? {
                     // TODO: Maybe replace with a separate function processing the buffered event
                     match event::read()? {
                         Event::Resize(x, y) => {
@@ -389,21 +401,27 @@ impl Reedline {
                 }
 
                 let mut last_edit_commands = None;
-                for event in crossterm_events.drain(..) {
-                    match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
-                        (None, ReedlineEvent::Edit(ec)) => {
-                            last_edit_commands = Some(ec);
-                        }
-                        (None, other_event) => {
-                            reedline_events.push(other_event);
-                        }
-                        (Some(ref mut last_ecs), ReedlineEvent::Edit(ec)) => {
-                            last_ecs.extend(ec);
-                        }
-                        (ref mut a @ Some(_), other_event) => {
-                            reedline_events.push(ReedlineEvent::Edit(a.take().unwrap()));
+                // If the size of crossterm_event vector is larger than threshold, we could assume
+                // that a lot of events were pasted into the prompt, indicating a paste
+                if crossterm_events.len() > EVENTS_THRESHOLD {
+                    reedline_events.push(self.handle_paste(&mut crossterm_events))
+                } else {
+                    for event in crossterm_events.drain(..) {
+                        match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
+                            (None, ReedlineEvent::Edit(ec)) => {
+                                last_edit_commands = Some(ec);
+                            }
+                            (None, other_event) => {
+                                reedline_events.push(other_event);
+                            }
+                            (Some(ref mut last_ecs), ReedlineEvent::Edit(ec)) => {
+                                last_ecs.extend(ec);
+                            }
+                            (ref mut a @ Some(_), other_event) => {
+                                reedline_events.push(ReedlineEvent::Edit(a.take().unwrap()));
 
-                            reedline_events.push(other_event);
+                                reedline_events.push(other_event);
+                            }
                         }
                     }
                 }
@@ -420,6 +438,15 @@ impl Reedline {
                 }
             }
         }
+    }
+
+    fn handle_paste(&mut self, crossterm_events: &mut Vec<Event>) -> ReedlineEvent {
+        let reedline_events = crossterm_events
+            .drain(..)
+            .map(|event| self.edit_mode.parse_event(event))
+            .collect::<Vec<ReedlineEvent>>();
+
+        ReedlineEvent::Paste(reedline_events)
     }
 
     fn handle_event(
@@ -495,6 +522,10 @@ impl Reedline {
                     self.history.back();
                 }
                 self.repaint(prompt)?;
+                Ok(None)
+            }
+            ReedlineEvent::Paste(_) => {
+                // No history search if a paste event is handled
                 Ok(None)
             }
             ReedlineEvent::None => {
@@ -689,6 +720,21 @@ impl Reedline {
                 self.editor.remember_undo_state(true);
 
                 self.search_history();
+                self.repaint(prompt)?;
+                Ok(None)
+            }
+            ReedlineEvent::Paste(events) => {
+                // Making sure that only InsertChars are handled during a paste event
+                for event in events {
+                    if let ReedlineEvent::Edit(commands) = event {
+                        for command in commands {
+                            if let EditCommand::InsertChar(c) = command {
+                                self.editor.insert_char(c)
+                            }
+                        }
+                    }
+                }
+
                 self.repaint(prompt)?;
                 Ok(None)
             }
