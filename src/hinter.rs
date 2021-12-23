@@ -54,7 +54,7 @@ impl Hinter for DefaultHinter {
                 let span = completions[0].0;
                 hint.replace_range(0..(span.end - span.start), "");
 
-                let hint = hint.replace("<\\n>", "\n");
+                let hint = hint.replace("<\\n>", "\r\n");
 
                 self.current_hint = hint.clone();
 
