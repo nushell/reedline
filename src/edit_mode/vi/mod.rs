@@ -1,3 +1,5 @@
+mod command;
+mod motion;
 mod parser;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -18,7 +20,7 @@ enum Mode {
     Insert,
 }
 
-/// This parses incomming input `Event`s like a Vi-Style editor
+/// This parses incoming input `Event`s like a Vi-Style editor
 pub struct Vi {
     cache: Vec<char>,
     insert_keybindings: Keybindings,

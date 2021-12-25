@@ -285,7 +285,12 @@ impl Editor {
 
     pub fn cut_right_until_char(&mut self, c: &char, before_char: bool) {
         if let Some(index) = self.line_buffer.find_char_right(c) {
-            let cut_slice = &self.line_buffer.get_buffer()[self.line_buffer.offset()..index];
+            // Saving the section of the string that will be deleted to be
+            // stored into the buffer
+            let extra = if before_char { 0 } else { 1 };
+            let cut_slice =
+                &self.line_buffer.get_buffer()[self.line_buffer.offset()..index + extra];
+
             if !cut_slice.is_empty() {
                 self.cut_buffer.set(cut_slice);
 
@@ -300,7 +305,12 @@ impl Editor {
 
     pub fn cut_left_until_char(&mut self, c: &char, before_char: bool) {
         if let Some(index) = self.line_buffer.find_char_left(c) {
-            let cut_slice = &self.line_buffer.get_buffer()[index..self.line_buffer.offset()];
+            // Saving the section of the string that will be deleted to be
+            // stored into the buffer
+            let extra = if before_char { 1 } else { 0 };
+            let cut_slice =
+                &self.line_buffer.get_buffer()[index + extra..self.line_buffer.offset()];
+
             if !cut_slice.is_empty() {
                 self.cut_buffer.set(cut_slice);
 
