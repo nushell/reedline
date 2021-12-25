@@ -11,6 +11,7 @@ use super::{base::HistoryNavigationQuery, History};
 
 /// Default size of the [`FileBackedHistory`] used when calling [`FileBackedHistory::default()`]
 pub const HISTORY_SIZE: usize = 1000;
+pub const NEWLINE_ESCAPE: &str = "<\\n>";
 
 /// Stateful history that allows up/down-arrow browsing with an internal cursor.
 ///
@@ -38,12 +39,12 @@ impl Default for FileBackedHistory {
     }
 }
 
-fn encode_entry(s: String) -> String {
-    s.replace("\n", "<\\n>")
+fn encode_entry(s: &str) -> String {
+    s.replace("\n", NEWLINE_ESCAPE)
 }
 
-fn decode_entry(s: String) -> String {
-    s.replace("<\\n>", "\n")
+fn decode_entry(s: &str) -> String {
+    s.replace(NEWLINE_ESCAPE, "\n")
 }
 
 impl History for FileBackedHistory {
@@ -65,7 +66,6 @@ impl History for FileBackedHistory {
                 self.len_on_disk = self.len_on_disk.saturating_sub(1);
                 self.truncate_file = true;
             }
-            let entry = encode_entry(entry);
             self.entries.push_back(entry);
         }
         self.reset_cursor();
@@ -108,7 +108,7 @@ impl History for FileBackedHistory {
     }
 
     fn string_at_cursor(&self) -> Option<String> {
-        self.entries.get(self.cursor).cloned().map(decode_entry)
+        self.entries.get(self.cursor).cloned()
     }
 
     fn set_navigation(&mut self, navigation: HistoryNavigationQuery) {
@@ -186,7 +186,10 @@ impl FileBackedHistory {
             },
             Ok(file) => {
                 let reader = BufReader::new(file);
-                let mut from_file: VecDeque<String> = reader.lines().map(Result::unwrap).collect();
+                let mut from_file = reader
+                    .lines()
+                    .map(|o| o.map(|i| decode_entry(&i)))
+                    .collect::<Result<VecDeque<String>, _>>()?;
                 let from_file = if from_file.len() > self.capacity {
                     from_file.split_off(from_file.len() - self.capacity)
                 } else {
@@ -257,7 +260,7 @@ impl FileBackedHistory {
         };
         let mut writer = BufWriter::new(file);
         for line in self.entries.range(self.len_on_disk..) {
-            writer.write_all(line.as_bytes())?;
+            writer.write_all(encode_entry(line).as_bytes())?;
             writer.write_all("\n".as_bytes())?;
         }
         writer.flush()?;
