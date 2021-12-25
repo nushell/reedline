@@ -27,12 +27,12 @@ impl ParseResult {
     }
 
     pub fn enter_insert_mode(&self) -> bool {
-        match (&self.command, &self.motion) {
-            (Some(Command::EnterViInsert), None) => true,
-            (Some(Command::AppendToEnd), None) => true,
-            (Some(Command::Change), Some(_)) => true,
-            _ => false,
-        }
+        matches!(
+            (&self.command, &self.motion),
+            (Some(Command::EnterViInsert), None)
+                | (Some(Command::AppendToEnd), None)
+                | (Some(Command::Change), Some(_))
+        )
     }
 
     pub fn to_reedline_event(&self) -> ReedlineEvent {
@@ -90,7 +90,7 @@ where
     I: Iterator<Item = &'iter char>,
 {
     match input.peek() {
-        Some('0') => return None,
+        Some('0') => None,
         Some(x) if x.is_ascii_digit() => {
             let mut count: usize = 0;
             while let Some(&c) = input.peek() {

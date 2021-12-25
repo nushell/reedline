@@ -638,9 +638,9 @@ impl Reedline {
             }
             ReedlineEvent::Multiple(events) => {
                 // Making sure that only InsertChars are handled during a paste event
-                let latest_signal = events.clone().into_iter().try_fold(None, |_, event| {
-                    self.handle_editor_event(prompt, event).map(|signal| signal)
-                })?;
+                let latest_signal = events
+                    .into_iter()
+                    .try_fold(None, |_, event| self.handle_editor_event(prompt, event))?;
 
                 self.painter.adjust_prompt_position(&self.editor)?;
                 self.full_repaint(prompt)?;
