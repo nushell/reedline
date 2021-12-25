@@ -92,6 +92,18 @@ pub enum EditCommand {
 
     /// Redo an edit command from the undo history
     Redo,
+
+    /// CutUntil right until char
+    CutRightUntil(char),
+
+    /// CutUntil right before char
+    CutRightBefore(char),
+
+    /// CutUntil right until char
+    MoveRightUntil(char),
+
+    /// CutUntil right before char
+    MoveRightBefore(char),
 }
 
 impl EditCommand {
@@ -105,7 +117,9 @@ impl EditCommand {
             | EditCommand::MoveLeft
             | EditCommand::MoveRight
             | EditCommand::MoveWordLeft
-            | EditCommand::MoveWordRight => UndoBehavior::Full,
+            | EditCommand::MoveWordRight
+            | EditCommand::MoveRightUntil(_)
+            | EditCommand::MoveRightBefore(_) => UndoBehavior::Full,
 
             // Coalesceable insert
             EditCommand::InsertChar(_) => UndoBehavior::Coalesce,
@@ -126,7 +140,9 @@ impl EditCommand {
             | EditCommand::LowercaseWord
             | EditCommand::CapitalizeChar
             | EditCommand::SwapWords
-            | EditCommand::SwapGraphemes => UndoBehavior::Full,
+            | EditCommand::SwapGraphemes
+            | EditCommand::CutRightUntil(_)
+            | EditCommand::CutRightBefore(_) => UndoBehavior::Full,
 
             EditCommand::Undo | EditCommand::Redo => UndoBehavior::Ignore,
         }
@@ -209,4 +225,8 @@ pub enum ReedlineEvent {
 
     /// Paste event
     Paste(Vec<ReedlineEvent>),
+
+    /// In vi mode multiple reedline events can be chained while parsing the
+    /// command or movement characters
+    Multiple(Vec<ReedlineEvent>),
 }

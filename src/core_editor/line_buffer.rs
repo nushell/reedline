@@ -454,6 +454,48 @@ impl LineBuffer {
     pub fn is_cursor_at_last_line(&self) -> bool {
         !self.get_buffer()[self.offset()..].contains('\n')
     }
+
+    /// Finds index for the first occurrence of a char
+    pub fn find_char_right(&self, c: &char) -> Option<usize> {
+        if self.offset() + 1 > self.lines.len() {
+            return None;
+        }
+
+        let search_str = &self.lines[self.offset() + 1..self.lines.len()];
+        search_str.find(*c).map(|index| index + self.offset() + 1)
+    }
+
+    /// Moves the insertion point until the next char to the right
+    pub fn move_right_until(&mut self, c: &char) -> usize {
+        if let Some(index) = self.find_char_right(c) {
+            self.insertion_point.offset = index
+        }
+
+        self.insertion_point.offset
+    }
+
+    /// Moves the insertion point before the next char to the right
+    pub fn move_right_before(&mut self, c: &char) -> usize {
+        if let Some(index) = self.find_char_right(c) {
+            self.insertion_point.offset = index - 1
+        }
+
+        self.insertion_point.offset
+    }
+
+    /// Deletes until character right
+    pub fn delete_right_until_char(&mut self, c: &char) {
+        if let Some(index) = self.find_char_right(c) {
+            self.clear_range(self.offset()..index + 1);
+        }
+    }
+
+    /// Deletes before character right
+    pub fn delete_right_before_char(&mut self, c: &char) {
+        if let Some(index) = self.find_char_right(c) {
+            self.clear_range(self.offset()..index);
+        }
+    }
 }
 
 /// Match any sequence of characters that are considered a word boundary
@@ -771,5 +813,47 @@ mod test {
         line_buffer.set_insertion_point(in_location);
 
         assert_eq!(line_buffer.is_cursor_at_last_line(), expected);
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0, 'd', "ef ghi")]
+    #[case("abc def ghi", 0, 'i', "")]
+    #[case("abc def ghi", 0, 'z', "abc def ghi")]
+    #[case("abc def ghi", 2, 'd', "abef ghi")]
+    #[case("abc def chi", 2, 'c', "abhi")]
+    #[case("abc def chi", 8, 'i', "abc def ")]
+    fn test_delete_until(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] c: char,
+        #[case] expected: &str,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        line_buffer.delete_right_until_char(&c);
+
+        assert_eq!(line_buffer.lines, expected)
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0, 'd', "def ghi")]
+    #[case("abc def ghi", 0, 'i', "i")]
+    #[case("abc def ghi", 0, 'z', "abc def ghi")]
+    #[case("abc def ghi", 2, 'd', "abdef ghi")]
+    #[case("abc def chi", 2, 'c', "abchi")]
+    #[case("abc def chi", 8, 'i', "abc def i")]
+    fn test_delete_before(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] c: char,
+        #[case] expected: &str,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        line_buffer.delete_right_before_char(&c);
+
+        assert_eq!(line_buffer.lines, expected)
     }
 }

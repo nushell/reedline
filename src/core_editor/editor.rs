@@ -266,6 +266,29 @@ impl Editor {
         let cut_buffer = self.cut_buffer.get();
         self.line_buffer.insert_str(&cut_buffer);
     }
+
+    pub fn move_right_until_char(&mut self, c: &char, before_char: bool) {
+        if before_char {
+            self.line_buffer.move_right_before(c);
+        } else {
+            self.line_buffer.move_right_until(c);
+        }
+    }
+
+    pub fn cut_right_until_char(&mut self, c: &char, before_char: bool) {
+        if let Some(index) = self.line_buffer.find_char_right(c) {
+            let cut_slice = &self.line_buffer.get_buffer()[self.line_buffer.offset()..index];
+            if !cut_slice.is_empty() {
+                self.cut_buffer.set(cut_slice);
+
+                if before_char {
+                    self.line_buffer.delete_right_before_char(c);
+                } else {
+                    self.line_buffer.delete_right_until_char(c);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

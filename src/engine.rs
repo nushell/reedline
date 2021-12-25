@@ -494,6 +494,10 @@ impl Reedline {
                 // No history search if a paste event is handled
                 Ok(None)
             }
+            ReedlineEvent::Multiple(_) => {
+                // No history search if a paste event is handled
+                Ok(None)
+            }
             ReedlineEvent::None => {
                 // Default no operation
                 Ok(None)
@@ -627,6 +631,16 @@ impl Reedline {
                         latest_signal = self.handle_editor_event(prompt, event)?;
                     }
                 }
+
+                self.painter.adjust_prompt_position(&self.editor)?;
+                self.full_repaint(prompt)?;
+                Ok(latest_signal)
+            }
+            ReedlineEvent::Multiple(events) => {
+                // Making sure that only InsertChars are handled during a paste event
+                let latest_signal = events.clone().into_iter().try_fold(None, |_, event| {
+                    self.handle_editor_event(prompt, event).map(|signal| signal)
+                })?;
 
                 self.painter.adjust_prompt_position(&self.editor)?;
                 self.full_repaint(prompt)?;
@@ -827,6 +841,10 @@ impl Reedline {
                 EditCommand::SwapGraphemes => self.editor.swap_graphemes(),
                 EditCommand::Undo => self.editor.undo(),
                 EditCommand::Redo => self.editor.redo(),
+                EditCommand::CutRightUntil(c) => self.editor.cut_right_until_char(c, false),
+                EditCommand::CutRightBefore(c) => self.editor.cut_right_until_char(c, true),
+                EditCommand::MoveRightUntil(c) => self.editor.move_right_until_char(c, false),
+                EditCommand::MoveRightBefore(c) => self.editor.move_right_until_char(c, true),
             }
 
             match command.undo_behavior() {
