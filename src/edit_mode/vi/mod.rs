@@ -59,8 +59,7 @@ impl EditMode for Vi {
                     };
                     self.cache.push(char);
 
-                    let cmd = self.cache.iter().collect::<String>();
-                    let res = parse(&mut cmd.bytes().peekable());
+                    let res = parse(&mut self.cache.iter().peekable());
 
                     if res.enter_insert_mode() {
                         self.mode = Mode::Insert

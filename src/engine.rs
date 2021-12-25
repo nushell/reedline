@@ -845,6 +845,10 @@ impl Reedline {
                 EditCommand::CutRightBefore(c) => self.editor.cut_right_until_char(c, true),
                 EditCommand::MoveRightUntil(c) => self.editor.move_right_until_char(c, false),
                 EditCommand::MoveRightBefore(c) => self.editor.move_right_until_char(c, true),
+                EditCommand::CutLeftUntil(c) => self.editor.cut_left_until_char(c, false),
+                EditCommand::CutLeftBefore(c) => self.editor.cut_left_until_char(c, true),
+                EditCommand::MoveLeftUntil(c) => self.editor.move_left_until_char(c, false),
+                EditCommand::MoveLeftBefore(c) => self.editor.move_left_until_char(c, true),
             }
 
             match command.undo_behavior() {

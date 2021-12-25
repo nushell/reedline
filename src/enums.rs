@@ -104,6 +104,18 @@ pub enum EditCommand {
 
     /// CutUntil right before char
     MoveRightBefore(char),
+
+    /// CutUntil left until char
+    CutLeftUntil(char),
+
+    /// CutUntil left before char
+    CutLeftBefore(char),
+
+    /// CutUntil left until char
+    MoveLeftUntil(char),
+
+    /// CutUntil left before char
+    MoveLeftBefore(char),
 }
 
 impl EditCommand {
@@ -119,7 +131,9 @@ impl EditCommand {
             | EditCommand::MoveWordLeft
             | EditCommand::MoveWordRight
             | EditCommand::MoveRightUntil(_)
-            | EditCommand::MoveRightBefore(_) => UndoBehavior::Full,
+            | EditCommand::MoveRightBefore(_)
+            | EditCommand::MoveLeftUntil(_)
+            | EditCommand::MoveLeftBefore(_) => UndoBehavior::Full,
 
             // Coalesceable insert
             EditCommand::InsertChar(_) => UndoBehavior::Coalesce,
@@ -142,7 +156,9 @@ impl EditCommand {
             | EditCommand::SwapWords
             | EditCommand::SwapGraphemes
             | EditCommand::CutRightUntil(_)
-            | EditCommand::CutRightBefore(_) => UndoBehavior::Full,
+            | EditCommand::CutRightBefore(_)
+            | EditCommand::CutLeftUntil(_)
+            | EditCommand::CutLeftBefore(_) => UndoBehavior::Full,
 
             EditCommand::Undo | EditCommand::Redo => UndoBehavior::Ignore,
         }

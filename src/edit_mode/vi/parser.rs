@@ -1,5 +1,5 @@
 use crate::{EditCommand, ReedlineEvent};
-use std::{iter::Peekable, str::Bytes};
+use std::iter::Peekable;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Motion {
@@ -7,14 +7,17 @@ enum Motion {
     Line,
     Start,
     End,
-    Until(char),
-    Before(char),
+    RightUntil(char),
+    RightBefore(char),
+    LeftUntil(char),
+    LeftBefore(char),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
     Incomplete,
     Delete,
+    DeleteChar,
     Paste,
     MoveLeft,
     MoveRight,
@@ -31,6 +34,8 @@ enum Command {
     Change,
     MoveRightUntil(char),
     MoveRightBefore(char),
+    MoveLeftUntil(char),
+    MoveLeftBefore(char),
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +63,9 @@ impl Command {
             Self::AppendToEnd => ReedlineOption::Edit(EditCommand::MoveToEnd),
             Self::MoveRightUntil(c) => ReedlineOption::Edit(EditCommand::MoveRightUntil(*c)),
             Self::MoveRightBefore(c) => ReedlineOption::Edit(EditCommand::MoveRightBefore(*c)),
+            Self::MoveLeftUntil(c) => ReedlineOption::Edit(EditCommand::MoveLeftUntil(*c)),
+            Self::MoveLeftBefore(c) => ReedlineOption::Edit(EditCommand::MoveLeftBefore(*c)),
+            Self::DeleteChar => ReedlineOption::Edit(EditCommand::Delete),
             Self::Delete | Self::Change | Self::Incomplete => ReedlineOption::Incomplete,
         }
     }
@@ -75,11 +83,17 @@ impl Command {
                     ReedlineOption::Edit(EditCommand::CutToEnd),
                 ]),
                 Motion::Word => Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)]),
-                Motion::Until(c) => {
+                Motion::RightUntil(c) => {
                     Some(vec![ReedlineOption::Edit(EditCommand::CutRightUntil(*c))])
                 }
-                Motion::Before(c) => {
+                Motion::RightBefore(c) => {
                     Some(vec![ReedlineOption::Edit(EditCommand::CutRightBefore(*c))])
+                }
+                Motion::LeftUntil(c) => {
+                    Some(vec![ReedlineOption::Edit(EditCommand::CutLeftUntil(*c))])
+                }
+                Motion::LeftBefore(c) => {
+                    Some(vec![ReedlineOption::Edit(EditCommand::CutLeftBefore(*c))])
                 }
                 _ => None,
             },
@@ -97,12 +111,20 @@ impl Command {
                     ReedlineOption::Edit(EditCommand::CutWordRight),
                     ReedlineOption::Event(ReedlineEvent::Repaint),
                 ]),
-                Motion::Until(c) => Some(vec![
+                Motion::RightUntil(c) => Some(vec![
                     ReedlineOption::Edit(EditCommand::CutRightUntil(*c)),
                     ReedlineOption::Event(ReedlineEvent::Repaint),
                 ]),
-                Motion::Before(c) => Some(vec![
+                Motion::RightBefore(c) => Some(vec![
                     ReedlineOption::Edit(EditCommand::CutRightBefore(*c)),
+                    ReedlineOption::Event(ReedlineEvent::Repaint),
+                ]),
+                Motion::LeftUntil(c) => Some(vec![
+                    ReedlineOption::Edit(EditCommand::CutLeftUntil(*c)),
+                    ReedlineOption::Event(ReedlineEvent::Repaint),
+                ]),
+                Motion::LeftBefore(c) => Some(vec![
+                    ReedlineOption::Edit(EditCommand::CutLeftBefore(*c)),
                     ReedlineOption::Event(ReedlineEvent::Repaint),
                 ]),
                 _ => None,
@@ -197,37 +219,52 @@ impl ParseResult {
     }
 }
 
-type InputIterator<'a> = Peekable<Bytes<'a>>;
-
-fn parse_motion(input: &mut InputIterator) -> Option<Motion> {
+fn parse_motion<'iter, I>(input: &mut Peekable<I>) -> Option<Motion>
+where
+    I: Iterator<Item = &'iter char>,
+{
     match input.peek() {
-        Some(b'w') => {
+        Some('w') => {
             let _ = input.next();
             Some(Motion::Word)
         }
-        Some(b'd') => {
+        Some('d') => {
             let _ = input.next();
             Some(Motion::Line)
         }
-        Some(b'0') => {
+        Some('0') => {
             let _ = input.next();
             Some(Motion::Start)
         }
-        Some(b'$') => {
+        Some('$') => {
             let _ = input.next();
             Some(Motion::End)
         }
-        Some(b'f') => {
+        Some('f') => {
             let _ = input.next();
             match input.peek() {
-                Some(c) => Some(Motion::Until(*c as char)),
+                Some(c) => Some(Motion::RightUntil(**c)),
                 None => None,
             }
         }
-        Some(b't') => {
+        Some('t') => {
             let _ = input.next();
             match input.peek() {
-                Some(c) => Some(Motion::Before(*c as char)),
+                Some(c) => Some(Motion::RightBefore(**c)),
+                None => None,
+            }
+        }
+        Some('F') => {
+            let _ = input.next();
+            match input.peek() {
+                Some(c) => Some(Motion::LeftUntil(**c)),
+                None => None,
+            }
+        }
+        Some('T') => {
+            let _ = input.next();
+            match input.peek() {
+                Some(c) => Some(Motion::LeftBefore(**c)),
                 None => None,
             }
         }
@@ -235,79 +272,100 @@ fn parse_motion(input: &mut InputIterator) -> Option<Motion> {
     }
 }
 
-fn parse_command(input: &mut InputIterator) -> Option<Command> {
+fn parse_command<'iter, I>(input: &mut Peekable<I>) -> Option<Command>
+where
+    I: Iterator<Item = &'iter char>,
+{
     match input.peek() {
-        Some(b'd') => {
+        Some('d') => {
             let _ = input.next();
             Some(Command::Delete)
         }
-        Some(b'p') => {
+        Some('p') => {
             let _ = input.next();
             Some(Command::Paste)
         }
-        Some(b'h') => {
+        Some('h') => {
             let _ = input.next();
             Some(Command::MoveLeft)
         }
-        Some(b'l') => {
+        Some('l') => {
             let _ = input.next();
             Some(Command::MoveRight)
         }
-        Some(b'j') => {
+        Some('j') => {
             let _ = input.next();
             Some(Command::MoveDown)
         }
-        Some(b'k') => {
+        Some('k') => {
             let _ = input.next();
             Some(Command::MoveUp)
         }
-        Some(b'w') => {
+        Some('w') => {
             let _ = input.next();
             Some(Command::MoveWordRight)
         }
-        Some(b'b') => {
+        Some('b') => {
             let _ = input.next();
             Some(Command::MoveWordLeft)
         }
-        Some(b'i') => {
+        Some('i') => {
             let _ = input.next();
             Some(Command::EnterViInsert)
         }
-        Some(b'0') => {
+        Some('0') => {
             let _ = input.next();
             Some(Command::MoveToStart)
         }
-        Some(b'$') => {
+        Some('$') => {
             let _ = input.next();
             Some(Command::MoveToEnd)
         }
-        Some(b'u') => {
+        Some('u') => {
             let _ = input.next();
             Some(Command::Undo)
         }
-        Some(b'c') => {
+        Some('c') => {
             let _ = input.next();
             Some(Command::Change)
         }
-        Some(b'D') => {
+        Some('x') => {
+            let _ = input.next();
+            Some(Command::DeleteChar)
+        }
+        Some('D') => {
             let _ = input.next();
             Some(Command::DeleteToEnd)
         }
-        Some(b'A') => {
+        Some('A') => {
             let _ = input.next();
             Some(Command::AppendToEnd)
         }
-        Some(b'f') => {
+        Some('f') => {
             let _ = input.next();
             match input.peek() {
-                Some(c) => Some(Command::MoveRightUntil(*c as char)),
+                Some(c) => Some(Command::MoveRightUntil(**c)),
                 None => Some(Command::Incomplete),
             }
         }
-        Some(b't') => {
+        Some('t') => {
             let _ = input.next();
             match input.peek() {
-                Some(c) => Some(Command::MoveRightBefore(*c as char)),
+                Some(c) => Some(Command::MoveRightBefore(**c)),
+                None => Some(Command::Incomplete),
+            }
+        }
+        Some('F') => {
+            let _ = input.next();
+            match input.peek() {
+                Some(c) => Some(Command::MoveLeftUntil(**c)),
+                None => Some(Command::Incomplete),
+            }
+        }
+        Some('T') => {
+            let _ = input.next();
+            match input.peek() {
+                Some(c) => Some(Command::MoveLeftBefore(**c)),
                 None => Some(Command::Incomplete),
             }
         }
@@ -315,16 +373,20 @@ fn parse_command(input: &mut InputIterator) -> Option<Command> {
     }
 }
 
-fn parse_number(input: &mut InputIterator) -> Option<usize> {
+fn parse_number<'iter, I>(input: &mut Peekable<I>) -> Option<usize>
+where
+    I: Iterator<Item = &'iter char>,
+{
     match input.peek() {
-        Some(b'0') => return None,
+        Some('0') => return None,
         Some(x) if x.is_ascii_digit() => {
             let mut count: usize = 0;
             while let Some(&c) = input.peek() {
                 if c.is_ascii_digit() {
+                    let c = c.to_digit(10).expect("already checked if is a digit");
                     let _ = input.next();
                     count *= 10;
-                    count += (c - b'0') as usize;
+                    count += c as usize;
                 } else {
                     return Some(count);
                 }
@@ -335,7 +397,10 @@ fn parse_number(input: &mut InputIterator) -> Option<usize> {
     }
 }
 
-pub fn parse(input: &mut InputIterator) -> ParseResult {
+pub fn parse<'iter, I>(input: &mut Peekable<I>) -> ParseResult
+where
+    I: Iterator<Item = &'iter char>,
+{
     let multiplier = parse_number(input);
     let command = parse_command(input);
     let count = parse_number(input);
@@ -357,15 +422,13 @@ mod tests {
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
-    fn vi_parse(input: &str) -> ParseResult {
-        let mut bytes = input.bytes().peekable();
-
-        parse(&mut bytes)
+    fn vi_parse(input: &[char]) -> ParseResult {
+        parse(&mut input.iter().peekable())
     }
 
     #[test]
     fn test_delete_word() {
-        let input = "dw";
+        let input = ['d', 'w'];
         let output = vi_parse(&input);
 
         assert_eq!(
@@ -381,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_two_delete_word() {
-        let input = "2dw";
+        let input = ['2', 'd', 'w'];
         let output = vi_parse(&input);
 
         assert_eq!(
@@ -397,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_two_delete_two_word() {
-        let input = "2d2w";
+        let input = ['2', 'd', '2', 'w'];
         let output = vi_parse(&input);
 
         assert_eq!(
@@ -412,8 +475,24 @@ mod tests {
     }
 
     #[test]
+    fn test_two_delete_twenty_word() {
+        let input = ['2', 'd', '2', '0', 'w'];
+        let output = vi_parse(&input);
+
+        assert_eq!(
+            output,
+            ParseResult {
+                multiplier: Some(2),
+                command: Some(Command::Delete),
+                count: Some(20),
+                motion: Some(Motion::Word)
+            }
+        );
+    }
+
+    #[test]
     fn test_two_delete_two_lines() {
-        let input = "2dd";
+        let input = ['2', 'd', 'd'];
         let output = vi_parse(&input);
 
         assert_eq!(
@@ -429,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_two_up() {
-        let input = "2k";
+        let input = ['2', 'k'];
         let output = vi_parse(&input);
 
         assert_eq!(
@@ -444,24 +523,24 @@ mod tests {
     }
 
     #[rstest]
-    #[case("2k", ReedlineEvent::Multiple(vec![ReedlineEvent::Up, ReedlineEvent::Up]))]
-    #[case("k", ReedlineEvent::Up)]
-    #[case("2j", ReedlineEvent::Multiple(vec![ReedlineEvent::Down, ReedlineEvent::Down]))]
-    #[case("j", ReedlineEvent::Down)]
-    #[case("2l", ReedlineEvent::Edit(vec![EditCommand::MoveRight, EditCommand::MoveRight]))]
-    #[case("l", ReedlineEvent::Edit(vec![EditCommand::MoveRight]))]
-    #[case("2h", ReedlineEvent::Edit(vec![EditCommand::MoveLeft, EditCommand::MoveLeft]))]
-    #[case("h", ReedlineEvent::Edit(vec![EditCommand::MoveLeft]))]
-    #[case("0", ReedlineEvent::Edit(vec![EditCommand::MoveToStart]))]
-    #[case("$", ReedlineEvent::Edit(vec![EditCommand::MoveToEnd]))]
-    #[case("i", ReedlineEvent::Repaint)]
-    #[case("p", ReedlineEvent::Edit(vec![EditCommand::PasteCutBuffer]))]
-    #[case("2p", ReedlineEvent::Edit(vec![EditCommand::PasteCutBuffer, EditCommand::PasteCutBuffer]))]
-    #[case("u", ReedlineEvent::Edit(vec![EditCommand::Undo]))]
-    #[case("2u", ReedlineEvent::Edit(vec![EditCommand::Undo, EditCommand::Undo]))]
-    #[case("dd", ReedlineEvent::Edit(vec![EditCommand::MoveToStart, EditCommand::CutToEnd]))]
-    #[case("dw", ReedlineEvent::Edit(vec![EditCommand::CutWordRight]))]
-    fn test_reedline_move(#[case] input: &str, #[case] expected: ReedlineEvent) {
+    #[case(&['2', 'k'], ReedlineEvent::Multiple(vec![ReedlineEvent::Up, ReedlineEvent::Up]))]
+    #[case(&['k'], ReedlineEvent::Up)]
+    #[case(&['2', 'j'], ReedlineEvent::Multiple(vec![ReedlineEvent::Down, ReedlineEvent::Down]))]
+    #[case(&['j'], ReedlineEvent::Down)]
+    #[case(&['2', 'l'], ReedlineEvent::Edit(vec![EditCommand::MoveRight, EditCommand::MoveRight]))]
+    #[case(&['l'], ReedlineEvent::Edit(vec![EditCommand::MoveRight]))]
+    #[case(&['2', 'h'], ReedlineEvent::Edit(vec![EditCommand::MoveLeft, EditCommand::MoveLeft]))]
+    #[case(&['h'], ReedlineEvent::Edit(vec![EditCommand::MoveLeft]))]
+    #[case(&['0'], ReedlineEvent::Edit(vec![EditCommand::MoveToStart]))]
+    #[case(&['$'], ReedlineEvent::Edit(vec![EditCommand::MoveToEnd]))]
+    #[case(&['i'], ReedlineEvent::Repaint)]
+    #[case(&['p'], ReedlineEvent::Edit(vec![EditCommand::PasteCutBuffer]))]
+    #[case(&['2', 'p'], ReedlineEvent::Edit(vec![EditCommand::PasteCutBuffer, EditCommand::PasteCutBuffer]))]
+    #[case(&['u'], ReedlineEvent::Edit(vec![EditCommand::Undo]))]
+    #[case(&['2', 'u'], ReedlineEvent::Edit(vec![EditCommand::Undo, EditCommand::Undo]))]
+    #[case(&['d', 'd'], ReedlineEvent::Multiple(vec![ ReedlineEvent::Edit(vec![EditCommand::MoveToStart]), ReedlineEvent::Edit(vec![EditCommand::CutToEnd]) ]))]
+    #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight])]))]
+    fn test_reedline_move(#[case] input: &[char], #[case] expected: ReedlineEvent) {
         let res = vi_parse(input);
         let output = res.to_reedline_event();
 
