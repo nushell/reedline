@@ -1,91 +1,103 @@
-use std::{iter::Peekable, str::Bytes};
+use super::command::{parse_command, Command};
+use super::motion::{parse_motion, Motion};
+use crate::{EditCommand, ReedlineEvent};
+use std::iter::Peekable;
 
-#[derive(Debug, PartialEq, Eq)]
-enum Motion {
-    Word,
+#[derive(Debug, Clone)]
+pub enum ReedlineOption {
+    Event(ReedlineEvent),
+    Edit(EditCommand),
+    Incomplete,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum Command {
-    Delete,
-    DeleteInner,
-    Paste,
-    MoveLeft,
-    MoveRight,
-    MoveUp,
-    MoveDown,
-    EnterViInsert,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct ParseResult {
-    multiplier: Option<u64>,
+pub struct ParseResult {
+    multiplier: Option<usize>,
     command: Option<Command>,
-    count: Option<u64>,
+    count: Option<usize>,
     motion: Option<Motion>,
+    valid: bool,
 }
 
-type InputIterator<'a> = Peekable<Bytes<'a>>;
-
-fn parse_motion(input: &mut InputIterator) -> Option<Motion> {
-    match input.peek() {
-        Some(b'w') => {
-            let _ = input.next();
-            Some(Motion::Word)
-        }
-        _ => None,
+impl ParseResult {
+    pub fn is_valid(&self) -> bool {
+        self.valid
     }
-}
 
-fn parse_command(input: &mut InputIterator) -> Option<Command> {
-    match input.peek() {
-        Some(b'd') => {
-            let _ = input.next();
-            match input.peek() {
-                Some(b'i') => {
-                    let _ = input.next();
-                    Some(Command::DeleteInner)
+    pub fn enter_insert_mode(&self) -> bool {
+        matches!(
+            (&self.command, &self.motion),
+            (Some(Command::EnterViInsert), None)
+                | (Some(Command::EnterViAppend), None)
+                | (Some(Command::AppendToEnd), None)
+                | (Some(Command::Change), Some(_))
+        )
+    }
+
+    pub fn to_reedline_event(&self) -> ReedlineEvent {
+        match (&self.multiplier, &self.command, &self.count, &self.motion) {
+            // Movements with h,j,k,l are always single char or a number followed
+            // by a single command (char)
+            (multiplier, Some(command), None, None) => {
+                let events = command.to_reedline().into_iter().map(|event| match event {
+                    ReedlineOption::Edit(e) => ReedlineEvent::Edit(vec![e]),
+                    ReedlineOption::Event(e) => e,
+                    ReedlineOption::Incomplete => ReedlineEvent::None,
+                });
+
+                let multiplier = multiplier.unwrap_or(1);
+                let events = std::iter::repeat(events)
+                    .take(multiplier)
+                    .flatten()
+                    .collect::<Vec<ReedlineEvent>>();
+
+                if events.contains(&ReedlineEvent::None) {
+                    ReedlineEvent::None
+                } else {
+                    ReedlineEvent::Multiple(events)
                 }
-                _ => Some(Command::Delete),
             }
+            // This case handles all combinations of commands and motions that could exist
+            // The option count is used to multiply the actions that should be done with the motion
+            // and the multiplier repeats the whole chain x number of time
+            (multiplier, Some(command), count, Some(motion)) => {
+                match command.to_reedline_with_motion(motion, count) {
+                    Some(events) => {
+                        let multiplier = multiplier.unwrap_or(1);
+                        let events = std::iter::repeat(events)
+                            .take(multiplier)
+                            .flatten()
+                            .map(|option| match option {
+                                ReedlineOption::Edit(edit) => ReedlineEvent::Edit(vec![edit]),
+                                ReedlineOption::Event(event) => event,
+                                ReedlineOption::Incomplete => ReedlineEvent::None,
+                            })
+                            .collect::<Vec<ReedlineEvent>>();
+
+                        ReedlineEvent::Multiple(events)
+                    }
+                    None => ReedlineEvent::None,
+                }
+            }
+            _ => ReedlineEvent::None,
         }
-        Some(b'p') => {
-            let _ = input.next();
-            Some(Command::Paste)
-        }
-        Some(b'h') => {
-            let _ = input.next();
-            Some(Command::MoveLeft)
-        }
-        Some(b'l') => {
-            let _ = input.next();
-            Some(Command::MoveRight)
-        }
-        Some(b'j') => {
-            let _ = input.next();
-            Some(Command::MoveDown)
-        }
-        Some(b'k') => {
-            let _ = input.next();
-            Some(Command::MoveUp)
-        }
-        Some(b'i') => {
-            let _ = input.next();
-            Some(Command::EnterViInsert)
-        }
-        _ => None,
     }
 }
 
-fn parse_number(input: &mut InputIterator) -> Option<u64> {
+fn parse_number<'iter, I>(input: &mut Peekable<I>) -> Option<usize>
+where
+    I: Iterator<Item = &'iter char>,
+{
     match input.peek() {
+        Some('0') => None,
         Some(x) if x.is_ascii_digit() => {
-            let mut count: u64 = 0;
+            let mut count: usize = 0;
             while let Some(&c) = input.peek() {
                 if c.is_ascii_digit() {
+                    let c = c.to_digit(10).expect("already checked if is a digit");
                     let _ = input.next();
                     count *= 10;
-                    count += (c - b'0') as u64;
+                    count += c as usize;
                 } else {
                     return Some(count);
                 }
@@ -96,36 +108,31 @@ fn parse_number(input: &mut InputIterator) -> Option<u64> {
     }
 }
 
-fn parse(input: &mut InputIterator) -> ParseResult {
+pub fn parse<'iter, I>(input: &mut Peekable<I>) -> ParseResult
+where
+    I: Iterator<Item = &'iter char>,
+{
     let multiplier = parse_number(input);
     let command = parse_command(input);
     let count = parse_number(input);
     let motion = parse_motion(input);
 
-    println!("multiplier: {:?}", multiplier);
-    println!("command: {:?}", command);
-    println!("count: {:?}", count);
-    println!("motion: {:?}", motion);
+    let valid =
+        { multiplier.is_some() || command.is_some() || count.is_some() || motion.is_some() };
 
-    // validate input here
+    // If after parsing all the input characters there is a remainder,
+    // then there is garbage in the input. Having unrecognized characters will get
+    // the user stuck in normal mode until the cache is clear, specially with
+    // commands that could be incomplete until a motion is introduced (e.g. delete or change)
+    // Better mark it as invalid for the cache to be cleared
+    let has_garbage = input.next().is_some();
 
     ParseResult {
         multiplier,
         command,
         count,
         motion,
-    }
-}
-
-fn vi_parse(input: &str) -> ParseResult {
-    let mut bytes = input.bytes().peekable();
-
-    parse(&mut bytes)
-}
-
-fn main() {
-    for arg in std::env::args().skip(1) {
-        println!("{:?}", vi_parse(&arg));
+        valid: valid && !has_garbage,
     }
 }
 
@@ -133,10 +140,15 @@ fn main() {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
+
+    fn vi_parse(input: &[char]) -> ParseResult {
+        parse(&mut input.iter().peekable())
+    }
 
     #[test]
     fn test_delete_word() {
-        let input = "dw";
+        let input = ['d', 'w'];
         let output = vi_parse(&input);
 
         assert_eq!(
@@ -145,14 +157,15 @@ mod tests {
                 multiplier: None,
                 command: Some(Command::Delete),
                 count: None,
-                motion: Some(Motion::Word)
+                motion: Some(Motion::Word),
+                valid: true
             }
         );
     }
 
     #[test]
     fn test_two_delete_word() {
-        let input = "2dw";
+        let input = ['2', 'd', 'w'];
         let output = vi_parse(&input);
 
         assert_eq!(
@@ -161,14 +174,15 @@ mod tests {
                 multiplier: Some(2),
                 command: Some(Command::Delete),
                 count: None,
-                motion: Some(Motion::Word)
+                motion: Some(Motion::Word),
+                valid: true
             }
         );
     }
 
     #[test]
     fn test_two_delete_two_word() {
-        let input = "2d2w";
+        let input = ['2', 'd', '2', 'w'];
         let output = vi_parse(&input);
 
         assert_eq!(
@@ -177,14 +191,66 @@ mod tests {
                 multiplier: Some(2),
                 command: Some(Command::Delete),
                 count: Some(2),
-                motion: Some(Motion::Word)
+                motion: Some(Motion::Word),
+                valid: true
+            }
+        );
+    }
+
+    #[test]
+    fn test_two_delete_twenty_word() {
+        let input = ['2', 'd', '2', '0', 'w'];
+        let output = vi_parse(&input);
+
+        assert_eq!(
+            output,
+            ParseResult {
+                multiplier: Some(2),
+                command: Some(Command::Delete),
+                count: Some(20),
+                motion: Some(Motion::Word),
+                valid: true
+            }
+        );
+    }
+
+    #[test]
+    fn test_two_delete_two_lines() {
+        let input = ['2', 'd', 'd'];
+        let output = vi_parse(&input);
+
+        assert_eq!(
+            output,
+            ParseResult {
+                multiplier: Some(2),
+                command: Some(Command::Delete),
+                count: None,
+                motion: Some(Motion::Line),
+                valid: true
+            }
+        );
+    }
+
+    #[test]
+    fn test_has_garbage() {
+        let input = ['2', 'd', 'm'];
+        let output = vi_parse(&input);
+
+        assert_eq!(
+            output,
+            ParseResult {
+                multiplier: Some(2),
+                command: Some(Command::Delete),
+                count: None,
+                motion: None,
+                valid: false
             }
         );
     }
 
     #[test]
     fn test_two_up() {
-        let input = "2k";
+        let input = ['2', 'k'];
         let output = vi_parse(&input);
 
         assert_eq!(
@@ -194,17 +260,47 @@ mod tests {
                 command: Some(Command::MoveUp),
                 count: None,
                 motion: None,
+                valid: true
             }
         );
     }
+
+    #[rstest]
+    #[case(&['2', 'k'], ReedlineEvent::Multiple(vec![ReedlineEvent::Up, ReedlineEvent::Up]))]
+    #[case(&['k'], ReedlineEvent::Multiple(vec![ReedlineEvent::Up]))]
+    #[case(&['2', 'j'], ReedlineEvent::Multiple(vec![ReedlineEvent::Down, ReedlineEvent::Down]))]
+    #[case(&['j'], ReedlineEvent::Multiple(vec![ReedlineEvent::Down]))]
+    #[case(&['2', 'l'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::MoveRight]),
+        ReedlineEvent::Edit(vec![EditCommand::MoveRight])
+        ]))]
+    #[case(&['l'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveRight])]))]
+    #[case(&['2', 'h'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::MoveLeft]),
+        ReedlineEvent::Edit(vec![EditCommand::MoveLeft]),
+        ]))]
+    #[case(&['h'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveLeft])]))]
+    #[case(&['0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToStart])]))]
+    #[case(&['$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToEnd])]))]
+    #[case(&['i'], ReedlineEvent::Multiple(vec![ReedlineEvent::Repaint]))]
+    #[case(&['p'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::PasteCutBuffer])]))]
+    #[case(&['2', 'p'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::PasteCutBuffer]),
+        ReedlineEvent::Edit(vec![EditCommand::PasteCutBuffer])
+        ]))]
+    #[case(&['u'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Undo])]))]
+    #[case(&['2', 'u'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::Undo]),
+        ReedlineEvent::Edit(vec![EditCommand::Undo])
+        ]))]
+    #[case(&['d', 'd'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::MoveToStart]),
+        ReedlineEvent::Edit(vec![EditCommand::CutToEnd])]))]
+    #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight])]))]
+    fn test_reedline_move(#[case] input: &[char], #[case] expected: ReedlineEvent) {
+        let res = vi_parse(input);
+        let output = res.to_reedline_event();
+
+        assert_eq!(output, expected);
+    }
 }
-
-/*
-2d2w
-
-2w = motion with optional count
-2(d2w) = command + motion with optional count
-
-any number multiplies with existing number, eg 2d2w this becomes the equiv 4dw (canonical for 4dw, d4w, etc)
-
-*/

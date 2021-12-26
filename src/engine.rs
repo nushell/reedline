@@ -371,7 +371,7 @@ impl Reedline {
                 // If the size of crossterm_event vector is larger than threshold, we could assume
                 // that a lot of events were pasted into the prompt, indicating a paste
                 if crossterm_events.len() > EVENTS_THRESHOLD {
-                    reedline_events.push(self.handle_paste(&mut crossterm_events))
+                    reedline_events.push(self.handle_paste(&mut crossterm_events));
                 } else {
                     for event in crossterm_events.drain(..) {
                         match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
@@ -492,6 +492,10 @@ impl Reedline {
             }
             ReedlineEvent::Paste(_) => {
                 // No history search if a paste event is handled
+                Ok(None)
+            }
+            ReedlineEvent::Multiple(_) => {
+                // VI multiplier operations currently not supported in the history search
                 Ok(None)
             }
             ReedlineEvent::None => {
@@ -627,6 +631,16 @@ impl Reedline {
                         latest_signal = self.handle_editor_event(prompt, event)?;
                     }
                 }
+
+                self.painter.adjust_prompt_position(&self.editor)?;
+                self.full_repaint(prompt)?;
+                Ok(latest_signal)
+            }
+            ReedlineEvent::Multiple(events) => {
+                // Making sure that only InsertChars are handled during a paste event
+                let latest_signal = events
+                    .into_iter()
+                    .try_fold(None, |_, event| self.handle_editor_event(prompt, event))?;
 
                 self.painter.adjust_prompt_position(&self.editor)?;
                 self.full_repaint(prompt)?;
@@ -827,6 +841,14 @@ impl Reedline {
                 EditCommand::SwapGraphemes => self.editor.swap_graphemes(),
                 EditCommand::Undo => self.editor.undo(),
                 EditCommand::Redo => self.editor.redo(),
+                EditCommand::CutRightUntil(c) => self.editor.cut_right_until_char(*c, false),
+                EditCommand::CutRightBefore(c) => self.editor.cut_right_until_char(*c, true),
+                EditCommand::MoveRightUntil(c) => self.editor.move_right_until_char(*c, false),
+                EditCommand::MoveRightBefore(c) => self.editor.move_right_until_char(*c, true),
+                EditCommand::CutLeftUntil(c) => self.editor.cut_left_until_char(*c, false),
+                EditCommand::CutLeftBefore(c) => self.editor.cut_left_until_char(*c, true),
+                EditCommand::MoveLeftUntil(c) => self.editor.move_left_until_char(*c, false),
+                EditCommand::MoveLeftBefore(c) => self.editor.move_left_until_char(*c, true),
             }
 
             match command.undo_behavior() {

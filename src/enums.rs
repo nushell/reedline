@@ -92,6 +92,30 @@ pub enum EditCommand {
 
     /// Redo an edit command from the undo history
     Redo,
+
+    /// CutUntil right until char
+    CutRightUntil(char),
+
+    /// CutUntil right before char
+    CutRightBefore(char),
+
+    /// CutUntil right until char
+    MoveRightUntil(char),
+
+    /// CutUntil right before char
+    MoveRightBefore(char),
+
+    /// CutUntil left until char
+    CutLeftUntil(char),
+
+    /// CutUntil left before char
+    CutLeftBefore(char),
+
+    /// CutUntil left until char
+    MoveLeftUntil(char),
+
+    /// CutUntil left before char
+    MoveLeftBefore(char),
 }
 
 impl EditCommand {
@@ -105,11 +129,15 @@ impl EditCommand {
             | EditCommand::MoveLeft
             | EditCommand::MoveRight
             | EditCommand::MoveWordLeft
-            | EditCommand::MoveWordRight => UndoBehavior::Full,
+            | EditCommand::MoveWordRight
+            | EditCommand::MoveRightUntil(_)
+            | EditCommand::MoveRightBefore(_)
+            | EditCommand::MoveLeftUntil(_)
+            | EditCommand::MoveLeftBefore(_) => UndoBehavior::Full,
 
             // Coalesceable insert
             EditCommand::InsertChar(_) => UndoBehavior::Coalesce,
-            EditCommand::InsertString(_) => UndoBehavior::Coalesce,
+            EditCommand::InsertString(_) => UndoBehavior::Full,
 
             // Full edits
             EditCommand::Backspace
@@ -126,7 +154,11 @@ impl EditCommand {
             | EditCommand::LowercaseWord
             | EditCommand::CapitalizeChar
             | EditCommand::SwapWords
-            | EditCommand::SwapGraphemes => UndoBehavior::Full,
+            | EditCommand::SwapGraphemes
+            | EditCommand::CutRightUntil(_)
+            | EditCommand::CutRightBefore(_)
+            | EditCommand::CutLeftUntil(_)
+            | EditCommand::CutLeftBefore(_) => UndoBehavior::Full,
 
             EditCommand::Undo | EditCommand::Redo => UndoBehavior::Ignore,
         }
@@ -209,4 +241,8 @@ pub enum ReedlineEvent {
 
     /// Paste event
     Paste(Vec<ReedlineEvent>),
+
+    /// In vi mode multiple reedline events can be chained while parsing the
+    /// command or movement characters
+    Multiple(Vec<ReedlineEvent>),
 }
