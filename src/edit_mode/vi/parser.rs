@@ -16,14 +16,12 @@ pub struct ParseResult {
     command: Option<Command>,
     count: Option<usize>,
     motion: Option<Motion>,
+    valid: bool,
 }
 
 impl ParseResult {
     pub fn is_valid(&self) -> bool {
-        self.multiplier.is_some()
-            || self.command.is_some()
-            || self.count.is_some()
-            || self.motion.is_some()
+        self.valid
     }
 
     pub fn enter_insert_mode(&self) -> bool {
@@ -61,6 +59,9 @@ impl ParseResult {
                 }
                 ReedlineOption::Incomplete => ReedlineEvent::None,
             },
+            // This case handles all combinations of commands and motions that could exist
+            // The option count is used to multiply the actions that should be done with the motion
+            // and the multiplier repeats the whole chain x number of time
             (multiplier, Some(command), count, Some(motion)) => {
                 match command.to_reedline_with_motion(motion, count) {
                     Some(events) => {
@@ -118,11 +119,22 @@ where
     let count = parse_number(input);
     let motion = parse_motion(input);
 
+    let valid =
+        { multiplier.is_some() || command.is_some() || count.is_some() || motion.is_some() };
+
+    // If after parsing all the input characters there is a remainder,
+    // then there is garbage in the input. Having unrecognized characters will get
+    // the user stuck in normal mode until the cache is clear, specially with
+    // commands that could be incomplete until a motion is introduced (e.g. delete or change)
+    // Better mark it as invalid for the cache to be cleared
+    let has_garbage = input.next().is_some();
+
     ParseResult {
         multiplier,
         command,
         count,
         motion,
+        valid: valid & !has_garbage,
     }
 }
 
@@ -147,7 +159,8 @@ mod tests {
                 multiplier: None,
                 command: Some(Command::Delete),
                 count: None,
-                motion: Some(Motion::Word)
+                motion: Some(Motion::Word),
+                valid: true
             }
         );
     }
@@ -163,7 +176,8 @@ mod tests {
                 multiplier: Some(2),
                 command: Some(Command::Delete),
                 count: None,
-                motion: Some(Motion::Word)
+                motion: Some(Motion::Word),
+                valid: true
             }
         );
     }
@@ -179,7 +193,8 @@ mod tests {
                 multiplier: Some(2),
                 command: Some(Command::Delete),
                 count: Some(2),
-                motion: Some(Motion::Word)
+                motion: Some(Motion::Word),
+                valid: true
             }
         );
     }
@@ -195,7 +210,8 @@ mod tests {
                 multiplier: Some(2),
                 command: Some(Command::Delete),
                 count: Some(20),
-                motion: Some(Motion::Word)
+                motion: Some(Motion::Word),
+                valid: true
             }
         );
     }
@@ -212,6 +228,7 @@ mod tests {
                 command: Some(Command::Delete),
                 count: None,
                 motion: Some(Motion::Line),
+                valid: true
             }
         );
     }
@@ -228,6 +245,7 @@ mod tests {
                 command: Some(Command::MoveUp),
                 count: None,
                 motion: None,
+                valid: true
             }
         );
     }
