@@ -462,7 +462,7 @@ impl LineBuffer {
         }
 
         let search_str = &self.lines[self.grapheme_right_index()..];
-        search_str.find(*c).map(|index| index + self.offset() + 1)
+        search_str.find(*c).map(|index| index + self.grapheme_right_index())
     }
 
     /// Finds index for the first occurrence of a char to the left of offset
