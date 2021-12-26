@@ -64,17 +64,19 @@ impl EditMode for Vi {
                     let res = parse(&mut self.cache.iter().peekable());
 
                     if res.enter_insert_mode() {
-                        self.mode = Mode::Insert
+                        self.mode = Mode::Insert;
                     }
 
                     let event = res.to_reedline_event();
                     match event {
                         ReedlineEvent::None => {
                             if !res.is_valid() {
-                                self.cache.clear()
+                                self.cache.clear();
                             }
                         }
-                        _ => self.cache.clear(),
+                        _ => {
+                            self.cache.clear();
+                        }
                     };
 
                     self.previous = Some(event.clone());

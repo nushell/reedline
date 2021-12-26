@@ -456,38 +456,38 @@ impl LineBuffer {
     }
 
     /// Finds index for the first occurrence of a char to the right of offset
-    pub fn find_char_right(&self, c: &char) -> Option<usize> {
+    pub fn find_char_right(&self, c: char) -> Option<usize> {
         if self.offset() + 1 > self.lines.len() {
             return None;
         }
 
         let search_str = &self.lines[self.grapheme_right_index()..];
         search_str
-            .find(*c)
+            .find(c)
             .map(|index| index + self.grapheme_right_index())
     }
 
     /// Finds index for the first occurrence of a char to the left of offset
-    pub fn find_char_left(&self, c: &char) -> Option<usize> {
+    pub fn find_char_left(&self, c: char) -> Option<usize> {
         if self.offset() + 1 > self.lines.len() {
             return None;
         }
 
         let search_str = &self.lines[..self.offset()];
-        search_str.rfind(*c)
+        search_str.rfind(c)
     }
 
     /// Moves the insertion point until the next char to the right
-    pub fn move_right_until(&mut self, c: &char) -> usize {
+    pub fn move_right_until(&mut self, c: char) -> usize {
         if let Some(index) = self.find_char_right(c) {
-            self.insertion_point.offset = index
+            self.insertion_point.offset = index;
         }
 
         self.insertion_point.offset
     }
 
     /// Moves the insertion point before the next char to the right
-    pub fn move_right_before(&mut self, c: &char) -> usize {
+    pub fn move_right_before(&mut self, c: char) -> usize {
         if let Some(index) = self.find_char_right(c) {
             self.insertion_point.offset = index;
             self.insertion_point.offset = self.grapheme_left_index();
@@ -497,50 +497,50 @@ impl LineBuffer {
     }
 
     /// Moves the insertion point until the next char to the left of offset
-    pub fn move_left_until(&mut self, c: &char) -> usize {
+    pub fn move_left_until(&mut self, c: char) -> usize {
         if let Some(index) = self.find_char_left(c) {
-            self.insertion_point.offset = index
+            self.insertion_point.offset = index;
         }
 
         self.insertion_point.offset
     }
 
     /// Moves the insertion point before the next char to the left of offset
-    pub fn move_left_before(&mut self, c: &char) -> usize {
+    pub fn move_left_before(&mut self, c: char) -> usize {
         if let Some(index) = self.find_char_left(c) {
-            self.insertion_point.offset = index + c.len_utf8()
+            self.insertion_point.offset = index + c.len_utf8();
         }
 
         self.insertion_point.offset
     }
 
     /// Deletes until first character to the right of offset
-    pub fn delete_right_until_char(&mut self, c: &char) {
+    pub fn delete_right_until_char(&mut self, c: char) {
         if let Some(index) = self.find_char_right(c) {
             self.clear_range(self.offset()..index + c.len_utf8());
         }
     }
 
     /// Deletes before first character to the right of offset
-    pub fn delete_right_before_char(&mut self, c: &char) {
+    pub fn delete_right_before_char(&mut self, c: char) {
         if let Some(index) = self.find_char_right(c) {
             self.clear_range(self.offset()..index);
         }
     }
 
     /// Deletes until first character to the left of offset
-    pub fn delete_left_until_char(&mut self, c: &char) {
+    pub fn delete_left_until_char(&mut self, c: char) {
         if let Some(index) = self.find_char_left(c) {
             self.clear_range(index..self.offset());
-            self.insertion_point.offset = index
+            self.insertion_point.offset = index;
         }
     }
 
     /// Deletes before first character to the left of offset
-    pub fn delete_left_before_char(&mut self, c: &char) {
+    pub fn delete_left_before_char(&mut self, c: char) {
         if let Some(index) = self.find_char_left(c) {
             self.clear_range(index + c.len_utf8()..self.offset());
-            self.insertion_point.offset = index + c.len_utf8()
+            self.insertion_point.offset = index + c.len_utf8();
         }
     }
 }
@@ -566,7 +566,7 @@ mod test {
     #[test]
     fn test_new_buffer_is_empty() {
         let line_buffer = LineBuffer::new();
-        assert!(line_buffer.is_empty())
+        assert!(line_buffer.is_empty());
     }
 
     #[test]
@@ -575,7 +575,7 @@ mod test {
         buffer.clear();
         let empty_buffer = LineBuffer::new();
 
-        assert_eq!(buffer, empty_buffer)
+        assert_eq!(buffer, empty_buffer);
     }
 
     #[test]
@@ -878,9 +878,9 @@ mod test {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        line_buffer.delete_right_until_char(&c);
+        line_buffer.delete_right_until_char(c);
 
-        assert_eq!(line_buffer.lines, expected)
+        assert_eq!(line_buffer.lines, expected);
     }
 
     #[rstest]
@@ -899,9 +899,9 @@ mod test {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        line_buffer.delete_right_before_char(&c);
+        line_buffer.delete_right_before_char(c);
 
-        assert_eq!(line_buffer.lines, expected)
+        assert_eq!(line_buffer.lines, expected);
     }
 
     #[rstest]
@@ -917,7 +917,7 @@ mod test {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        assert_eq!(line_buffer.find_char_left(&c), expected)
+        assert_eq!(line_buffer.find_char_left(c), expected);
     }
 
     #[rstest]
@@ -933,9 +933,9 @@ mod test {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        line_buffer.delete_left_until_char(&c);
+        line_buffer.delete_left_until_char(c);
 
-        assert_eq!(line_buffer.lines, expected)
+        assert_eq!(line_buffer.lines, expected);
     }
 
     #[rstest]
@@ -951,8 +951,8 @@ mod test {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        line_buffer.delete_left_before_char(&c);
+        line_buffer.delete_left_before_char(c);
 
-        assert_eq!(line_buffer.lines, expected)
+        assert_eq!(line_buffer.lines, expected);
     }
 }

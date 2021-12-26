@@ -132,7 +132,7 @@ where
         command,
         count,
         motion,
-        valid: valid & !has_garbage,
+        valid: valid && !has_garbage,
     }
 }
 

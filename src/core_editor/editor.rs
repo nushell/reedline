@@ -267,7 +267,7 @@ impl Editor {
         self.line_buffer.insert_str(&cut_buffer);
     }
 
-    pub fn move_right_until_char(&mut self, c: &char, before_char: bool) {
+    pub fn move_right_until_char(&mut self, c: char, before_char: bool) {
         if before_char {
             self.line_buffer.move_right_before(c);
         } else {
@@ -275,7 +275,7 @@ impl Editor {
         }
     }
 
-    pub fn move_left_until_char(&mut self, c: &char, before_char: bool) {
+    pub fn move_left_until_char(&mut self, c: char, before_char: bool) {
         if before_char {
             self.line_buffer.move_left_before(c);
         } else {
@@ -283,7 +283,7 @@ impl Editor {
         }
     }
 
-    pub fn cut_right_until_char(&mut self, c: &char, before_char: bool) {
+    pub fn cut_right_until_char(&mut self, c: char, before_char: bool) {
         if let Some(index) = self.line_buffer.find_char_right(c) {
             // Saving the section of the string that will be deleted to be
             // stored into the buffer
@@ -303,7 +303,7 @@ impl Editor {
         }
     }
 
-    pub fn cut_left_until_char(&mut self, c: &char, before_char: bool) {
+    pub fn cut_left_until_char(&mut self, c: char, before_char: bool) {
         if let Some(index) = self.line_buffer.find_char_left(c) {
             // Saving the section of the string that will be deleted to be
             // stored into the buffer

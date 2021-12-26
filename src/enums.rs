@@ -137,7 +137,7 @@ impl EditCommand {
 
             // Coalesceable insert
             EditCommand::InsertChar(_) => UndoBehavior::Coalesce,
-            EditCommand::InsertString(_) => UndoBehavior::Coalesce,
+            EditCommand::InsertString(_) => UndoBehavior::Full,
 
             // Full edits
             EditCommand::Backspace
