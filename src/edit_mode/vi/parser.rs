@@ -234,6 +234,23 @@ mod tests {
     }
 
     #[test]
+    fn test_has_garbage() {
+        let input = ['2', 'd', 'm'];
+        let output = vi_parse(&input);
+
+        assert_eq!(
+            output,
+            ParseResult {
+                multiplier: Some(2),
+                command: Some(Command::Delete),
+                count: None,
+                motion: None,
+                valid: false
+            }
+        );
+    }
+
+    #[test]
     fn test_two_up() {
         let input = ['2', 'k'];
         let output = vi_parse(&input);
