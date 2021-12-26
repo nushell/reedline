@@ -51,12 +51,12 @@ impl History for FileBackedHistory {
     /// Appends an entry if non-empty and not repetition of the previous entry.
     /// Resets the browsing cursor to the default state in front of the most recent entry.
     ///
-    fn append(&mut self, entry: String) {
+    fn append(&mut self, entry: &str) {
         // Don't append if the preceding value is identical or the string empty
         if self
             .entries
             .back()
-            .map_or(true, |previous| previous != &entry)
+            .map_or(true, |previous| previous != entry)
             && !entry.is_empty()
         {
             if self.entries.len() == self.capacity {
@@ -66,7 +66,7 @@ impl History for FileBackedHistory {
                 self.len_on_disk = self.len_on_disk.saturating_sub(1);
                 self.truncate_file = true;
             }
-            self.entries.push_back(entry);
+            self.entries.push_back(entry.to_string());
         }
         self.reset_cursor();
     }
@@ -312,8 +312,8 @@ mod tests {
     #[test]
     fn going_backwards_bottoms_out() {
         let mut hist = FileBackedHistory::default();
-        hist.append("command1".to_string());
-        hist.append("command2".to_string());
+        hist.append("command1");
+        hist.append("command2");
         hist.back();
         hist.back();
         hist.back();
@@ -325,8 +325,8 @@ mod tests {
     #[test]
     fn going_forwards_bottoms_out() {
         let mut hist = FileBackedHistory::default();
-        hist.append("command1".to_string());
-        hist.append("command2".to_string());
+        hist.append("command1");
+        hist.append("command2");
         hist.forward();
         hist.forward();
         hist.forward();
@@ -338,25 +338,25 @@ mod tests {
     #[test]
     fn appends_only_unique() {
         let mut hist = FileBackedHistory::default();
-        hist.append("unique_old".to_string());
-        hist.append("test".to_string());
-        hist.append("test".to_string());
-        hist.append("unique".to_string());
+        hist.append("unique_old");
+        hist.append("test");
+        hist.append("test");
+        hist.append("unique");
         assert_eq!(hist.entries.len(), 3);
     }
     #[test]
     fn appends_no_empties() {
         let mut hist = FileBackedHistory::default();
-        hist.append("".to_string());
+        hist.append("");
         assert_eq!(hist.entries.len(), 0);
     }
 
     #[test]
     fn prefix_search_works() {
         let mut hist = FileBackedHistory::default();
-        hist.append(String::from("find me as well"));
-        hist.append(String::from("test"));
-        hist.append(String::from("find me"));
+        hist.append("find me as well");
+        hist.append("test");
+        hist.append("find me");
 
         hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
 
@@ -369,9 +369,9 @@ mod tests {
     #[test]
     fn prefix_search_bottoms_out() {
         let mut hist = FileBackedHistory::default();
-        hist.append(String::from("find me as well"));
-        hist.append(String::from("test"));
-        hist.append(String::from("find me"));
+        hist.append("find me as well");
+        hist.append("test");
+        hist.append("find me");
 
         hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
         hist.back();
@@ -387,9 +387,9 @@ mod tests {
     #[test]
     fn prefix_search_returns_to_none() {
         let mut hist = FileBackedHistory::default();
-        hist.append(String::from("find me as well"));
-        hist.append(String::from("test"));
-        hist.append(String::from("find me"));
+        hist.append("find me as well");
+        hist.append("test");
+        hist.append("find me");
 
         hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
         hist.back();
@@ -407,10 +407,10 @@ mod tests {
     #[test]
     fn prefix_search_ignores_consecutive_equivalent_entries_going_backwards() {
         let mut hist = FileBackedHistory::default();
-        hist.append(String::from("find me as well"));
-        hist.append(String::from("find me once"));
-        hist.append(String::from("test"));
-        hist.append(String::from("find me once"));
+        hist.append("find me as well");
+        hist.append("find me once");
+        hist.append("test");
+        hist.append("find me once");
 
         hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
         hist.back();
@@ -422,10 +422,10 @@ mod tests {
     #[test]
     fn prefix_search_ignores_consecutive_equivalent_entries_going_forwards() {
         let mut hist = FileBackedHistory::default();
-        hist.append(String::from("find me once"));
-        hist.append(String::from("test"));
-        hist.append(String::from("find me once"));
-        hist.append(String::from("find me as well"));
+        hist.append("find me once");
+        hist.append("test");
+        hist.append("find me once");
+        hist.append("find me as well");
 
         hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
         hist.back();
@@ -440,11 +440,11 @@ mod tests {
     #[test]
     fn substring_search_works() {
         let mut hist = FileBackedHistory::default();
-        hist.append(String::from("substring"));
-        hist.append(String::from("don't find me either"));
-        hist.append(String::from("prefix substring"));
-        hist.append(String::from("don't find me"));
-        hist.append(String::from("prefix substring suffix"));
+        hist.append("substring");
+        hist.append("don't find me either");
+        hist.append("prefix substring");
+        hist.append("don't find me");
+        hist.append("prefix substring suffix");
 
         hist.set_navigation(HistoryNavigationQuery::SubstringSearch(
             "substring".to_string(),
@@ -466,7 +466,7 @@ mod tests {
     #[test]
     fn substring_search_with_empty_value_returns_none() {
         let mut hist = FileBackedHistory::default();
-        hist.append(String::from("substring"));
+        hist.append("substring");
 
         hist.set_navigation(HistoryNavigationQuery::SubstringSearch("".to_string()));
 
@@ -487,7 +487,7 @@ mod tests {
         {
             let mut hist = FileBackedHistory::with_file(5, histfile.clone()).unwrap();
 
-            entries.iter().for_each(|e| hist.append(e.to_string()));
+            entries.iter().for_each(|e| hist.append(e));
 
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }

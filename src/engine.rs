@@ -610,7 +610,7 @@ impl Reedline {
                 // Make sure we are able to undo the result of a reverse history search
                 self.editor.remember_undo_state(true);
 
-                self.search_history();
+                self.enter_history_search();
                 self.repaint(prompt)?;
                 Ok(None)
             }
@@ -651,7 +651,7 @@ impl Reedline {
     }
 
     fn append_to_history(&mut self) {
-        self.history.append(self.editor.get_buffer().to_string());
+        self.history.append(self.editor.get_buffer());
     }
 
     fn previous_history(&mut self) {
@@ -699,7 +699,7 @@ impl Reedline {
     /// Switch into reverse history search mode
     ///
     /// This mode uses a separate prompt and handles keybindings sligthly differently!
-    fn search_history(&mut self) {
+    fn enter_history_search(&mut self) {
         self.input_mode = InputMode::HistorySearch;
         self.history
             .set_navigation(HistoryNavigationQuery::SubstringSearch("".to_string()));

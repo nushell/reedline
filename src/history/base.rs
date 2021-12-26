@@ -18,7 +18,7 @@ pub enum HistoryNavigationQuery {
 /// Interface of a history datastructure that supports stateful navigation via [`HistoryNavigationQuery`].
 pub trait History {
     /// Append entry to the history, if capacity management is part of the implementation may perform that as well
-    fn append(&mut self, entry: String);
+    fn append(&mut self, entry: &str);
 
     /// Chronologic interation over all entries present in the history
     fn iter_chronologic(&self) -> Iter<'_, String>;
