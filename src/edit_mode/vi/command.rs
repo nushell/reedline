@@ -146,10 +146,7 @@ impl Command {
             Self::MoveWordLeft => vec![ReedlineOption::Edit(EditCommand::MoveWordLeft)],
             Self::MoveWordRight => vec![ReedlineOption::Edit(EditCommand::MoveWordRight)],
             Self::EnterViInsert => vec![ReedlineOption::Event(ReedlineEvent::Repaint)],
-            Self::EnterViAppend => vec![
-                ReedlineOption::Edit(EditCommand::MoveRight),
-                ReedlineOption::Event(ReedlineEvent::Repaint),
-            ],
+            Self::EnterViAppend => vec![ReedlineOption::Edit(EditCommand::MoveRight)],
             Self::Paste => vec![ReedlineOption::Edit(EditCommand::PasteCutBuffer)],
             Self::Undo => vec![ReedlineOption::Edit(EditCommand::Undo)],
             Self::DeleteToEnd => vec![ReedlineOption::Edit(EditCommand::CutToEnd)],
