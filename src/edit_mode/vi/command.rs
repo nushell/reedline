@@ -190,7 +190,7 @@ impl Command {
                 Motion::LeftBefore(c) => {
                     Some(vec![ReedlineOption::Edit(EditCommand::CutLeftBefore(*c))])
                 }
-                _ => None,
+                Motion::Start => None,
             },
             Self::Change => match motion {
                 Motion::End => Some(vec![
@@ -222,7 +222,7 @@ impl Command {
                     ReedlineOption::Edit(EditCommand::CutLeftBefore(*c)),
                     ReedlineOption::Event(ReedlineEvent::Repaint),
                 ]),
-                _ => None,
+                Motion::Start => None,
             },
             _ => None,
         };
