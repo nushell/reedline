@@ -461,7 +461,7 @@ impl LineBuffer {
             return None;
         }
 
-        let search_str = &self.lines[self.offset() + 1..self.lines.len()];
+        let search_str = &self.lines[self.grapheme_right_index()..];
         search_str.find(*c).map(|index| index + self.offset() + 1)
     }
 
@@ -487,7 +487,8 @@ impl LineBuffer {
     /// Moves the insertion point before the next char to the right
     pub fn move_right_before(&mut self, c: &char) -> usize {
         if let Some(index) = self.find_char_right(c) {
-            self.insertion_point.offset = index - 1
+            self.insertion_point.offset = index;
+            self.insertion_point.offset = self.grapheme_left_index();
         }
 
         self.insertion_point.offset
@@ -505,7 +506,7 @@ impl LineBuffer {
     /// Moves the insertion point before the next char to the left of offset
     pub fn move_left_before(&mut self, c: &char) -> usize {
         if let Some(index) = self.find_char_left(c) {
-            self.insertion_point.offset = index + 1
+            self.insertion_point.offset = index + c.len_utf8()
         }
 
         self.insertion_point.offset
@@ -514,7 +515,7 @@ impl LineBuffer {
     /// Deletes until first character to the right of offset
     pub fn delete_right_until_char(&mut self, c: &char) {
         if let Some(index) = self.find_char_right(c) {
-            self.clear_range(self.offset()..index + 1);
+            self.clear_range(self.offset()..index + c.len_utf8());
         }
     }
 
@@ -536,8 +537,8 @@ impl LineBuffer {
     /// Deletes before first character to the left of offset
     pub fn delete_left_before_char(&mut self, c: &char) {
         if let Some(index) = self.find_char_left(c) {
-            self.clear_range(index + 1..self.offset());
-            self.insertion_point.offset = index + 1
+            self.clear_range(index + c.len_utf8()..self.offset());
+            self.insertion_point.offset = index + c.len_utf8()
         }
     }
 }

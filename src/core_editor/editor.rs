@@ -287,7 +287,7 @@ impl Editor {
         if let Some(index) = self.line_buffer.find_char_right(c) {
             // Saving the section of the string that will be deleted to be
             // stored into the buffer
-            let extra = if before_char { 0 } else { 1 };
+            let extra = if before_char { 0 } else { c.len_utf8() };
             let cut_slice =
                 &self.line_buffer.get_buffer()[self.line_buffer.offset()..index + extra];
 
@@ -307,7 +307,7 @@ impl Editor {
         if let Some(index) = self.line_buffer.find_char_left(c) {
             // Saving the section of the string that will be deleted to be
             // stored into the buffer
-            let extra = if before_char { 1 } else { 0 };
+            let extra = if before_char { c.len_utf8() } else { 0 };
             let cut_slice =
                 &self.line_buffer.get_buffer()[index + extra..self.line_buffer.offset()];
 
