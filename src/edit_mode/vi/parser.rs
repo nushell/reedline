@@ -28,6 +28,7 @@ impl ParseResult {
         matches!(
             (&self.command, &self.motion),
             (Some(Command::EnterViInsert), None)
+                | (Some(Command::EnterViAppend), None)
                 | (Some(Command::AppendToEnd), None)
                 | (Some(Command::Change), Some(_))
         )
@@ -37,28 +38,25 @@ impl ParseResult {
         match (&self.multiplier, &self.command, &self.count, &self.motion) {
             // Movements with h,j,k,l are always single char or a number followed
             // by a single command (char)
-            (None, Some(command), None, None) => match command.to_reedline() {
-                ReedlineOption::Edit(e) => ReedlineEvent::Edit(vec![e]),
-                ReedlineOption::Event(e) => e,
-                ReedlineOption::Incomplete => ReedlineEvent::None,
-            },
-            (Some(multiplier), Some(command), None, None) => match command.to_reedline() {
-                ReedlineOption::Edit(e) => {
-                    let edits = std::iter::repeat(e)
-                        .take(*multiplier)
-                        .collect::<Vec<EditCommand>>();
+            (multiplier, Some(command), None, None) => {
+                let events = command.to_reedline().into_iter().map(|event| match event {
+                    ReedlineOption::Edit(e) => ReedlineEvent::Edit(vec![e]),
+                    ReedlineOption::Event(e) => e,
+                    ReedlineOption::Incomplete => ReedlineEvent::None,
+                });
 
-                    ReedlineEvent::Edit(edits)
-                }
-                ReedlineOption::Event(e) => {
-                    let moves = std::iter::repeat(e)
-                        .take(*multiplier)
-                        .collect::<Vec<ReedlineEvent>>();
+                let multiplier = multiplier.unwrap_or(1);
+                let events = std::iter::repeat(events)
+                    .take(multiplier)
+                    .flatten()
+                    .collect::<Vec<ReedlineEvent>>();
 
-                    ReedlineEvent::Multiple(moves)
+                if events.contains(&ReedlineEvent::None) {
+                    ReedlineEvent::None
+                } else {
+                    ReedlineEvent::Multiple(events)
                 }
-                ReedlineOption::Incomplete => ReedlineEvent::None,
-            },
+            }
             // This case handles all combinations of commands and motions that could exist
             // The option count is used to multiply the actions that should be done with the motion
             // and the multiplier repeats the whole chain x number of time

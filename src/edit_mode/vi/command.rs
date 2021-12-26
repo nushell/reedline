@@ -44,6 +44,10 @@ where
             let _ = input.next();
             Some(Command::EnterViInsert)
         }
+        Some('a') => {
+            let _ = input.next();
+            Some(Command::EnterViAppend)
+        }
         Some('0') => {
             let _ = input.next();
             Some(Command::MoveToStart)
@@ -118,6 +122,7 @@ pub enum Command {
     MoveWordLeft,
     MoveToStart,
     MoveToEnd,
+    EnterViAppend,
     EnterViInsert,
     Undo,
     DeleteToEnd,
@@ -130,27 +135,33 @@ pub enum Command {
 }
 
 impl Command {
-    pub fn to_reedline(&self) -> ReedlineOption {
+    pub fn to_reedline(&self) -> Vec<ReedlineOption> {
         match self {
-            Self::MoveUp => ReedlineOption::Event(ReedlineEvent::Up),
-            Self::MoveDown => ReedlineOption::Event(ReedlineEvent::Down),
-            Self::MoveLeft => ReedlineOption::Edit(EditCommand::MoveLeft),
-            Self::MoveRight => ReedlineOption::Edit(EditCommand::MoveRight),
-            Self::MoveToStart => ReedlineOption::Edit(EditCommand::MoveToStart),
-            Self::MoveToEnd => ReedlineOption::Edit(EditCommand::MoveToEnd),
-            Self::MoveWordLeft => ReedlineOption::Edit(EditCommand::MoveWordLeft),
-            Self::MoveWordRight => ReedlineOption::Edit(EditCommand::MoveWordRight),
-            Self::EnterViInsert => ReedlineOption::Event(ReedlineEvent::Repaint),
-            Self::Paste => ReedlineOption::Edit(EditCommand::PasteCutBuffer),
-            Self::Undo => ReedlineOption::Edit(EditCommand::Undo),
-            Self::DeleteToEnd => ReedlineOption::Edit(EditCommand::CutToEnd),
-            Self::AppendToEnd => ReedlineOption::Edit(EditCommand::MoveToEnd),
-            Self::MoveRightUntil(c) => ReedlineOption::Edit(EditCommand::MoveRightUntil(*c)),
-            Self::MoveRightBefore(c) => ReedlineOption::Edit(EditCommand::MoveRightBefore(*c)),
-            Self::MoveLeftUntil(c) => ReedlineOption::Edit(EditCommand::MoveLeftUntil(*c)),
-            Self::MoveLeftBefore(c) => ReedlineOption::Edit(EditCommand::MoveLeftBefore(*c)),
-            Self::DeleteChar => ReedlineOption::Edit(EditCommand::Delete),
-            Self::Delete | Self::Change | Self::Incomplete => ReedlineOption::Incomplete,
+            Self::MoveUp => vec![ReedlineOption::Event(ReedlineEvent::Up)],
+            Self::MoveDown => vec![ReedlineOption::Event(ReedlineEvent::Down)],
+            Self::MoveLeft => vec![ReedlineOption::Edit(EditCommand::MoveLeft)],
+            Self::MoveRight => vec![ReedlineOption::Edit(EditCommand::MoveRight)],
+            Self::MoveToStart => vec![ReedlineOption::Edit(EditCommand::MoveToStart)],
+            Self::MoveToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToEnd)],
+            Self::MoveWordLeft => vec![ReedlineOption::Edit(EditCommand::MoveWordLeft)],
+            Self::MoveWordRight => vec![ReedlineOption::Edit(EditCommand::MoveWordRight)],
+            Self::EnterViInsert => vec![ReedlineOption::Event(ReedlineEvent::Repaint)],
+            Self::EnterViAppend => vec![
+                ReedlineOption::Edit(EditCommand::MoveRight),
+                ReedlineOption::Event(ReedlineEvent::Repaint),
+            ],
+            Self::Paste => vec![ReedlineOption::Edit(EditCommand::PasteCutBuffer)],
+            Self::Undo => vec![ReedlineOption::Edit(EditCommand::Undo)],
+            Self::DeleteToEnd => vec![ReedlineOption::Edit(EditCommand::CutToEnd)],
+            Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToEnd)],
+            Self::MoveRightUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveRightUntil(*c))],
+            Self::MoveRightBefore(c) => {
+                vec![ReedlineOption::Edit(EditCommand::MoveRightBefore(*c))]
+            }
+            Self::MoveLeftUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftUntil(*c))],
+            Self::MoveLeftBefore(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftBefore(*c))],
+            Self::DeleteChar => vec![ReedlineOption::Edit(EditCommand::Delete)],
+            Self::Delete | Self::Change | Self::Incomplete => vec![ReedlineOption::Incomplete],
         }
     }
 
