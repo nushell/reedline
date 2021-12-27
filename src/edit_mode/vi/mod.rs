@@ -106,7 +106,10 @@ impl EditMode for Vi {
                     self.mode = Mode::Normal;
                     ReedlineEvent::Repaint
                 }
-                (_, KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
+                (_, KeyModifiers::NONE, KeyCode::Enter) => {
+                    self.mode = Mode::Insert;
+                    ReedlineEvent::Enter
+                }
                 (Mode::Normal, _, _) => self
                     .normal_keybindings
                     .find_binding(modifiers, code)
