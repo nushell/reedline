@@ -35,7 +35,7 @@ impl Default for Vi {
             insert_keybindings: default_vi_insert_keybindings(),
             normal_keybindings: default_vi_normal_keybindings(),
             cache: Vec::new(),
-            mode: Mode::Normal,
+            mode: Mode::Insert,
             previous: None,
         }
     }
