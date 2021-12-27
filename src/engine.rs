@@ -515,7 +515,7 @@ impl Reedline {
                 let line_buffer = self.editor.line_buffer();
 
                 let current_hint = self.hinter.current_hint();
-                if !current_hint.is_empty() {
+                if !current_hint.is_empty() && self.input_mode == InputMode::Regular {
                     self.editor.clear_to_end();
                     self.run_edit_commands(&[EditCommand::InsertString(current_hint)], prompt)?;
                 } else {
@@ -940,11 +940,11 @@ impl Reedline {
         Ok(())
     }
 
-    /// Repaint logic for the normal input prompt buffer
+    /// Based on the current buffer create the ansi styled content that shall be painted
     ///
-    /// Requires coordinates where the input buffer begins after the prompt.
-    /// Performs highlighting and hinting at the moment!
-    fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+    /// # Returns:
+    /// (highlighted_line, hint)
+    fn prepare_buffer_content(&mut self, prompt: &dyn Prompt) -> ((String, String), String) {
         let cursor_position_in_buffer = self.editor.offset();
         let buffer_to_paint = self.editor.get_buffer();
 
@@ -957,12 +957,26 @@ impl Reedline {
                 self.use_ansi_coloring,
             );
 
-        let hint: String = self.hinter.handle(
-            buffer_to_paint,
-            cursor_position_in_buffer,
-            self.history.as_ref(),
-            self.use_ansi_coloring,
-        );
+        let hint: String = if self.input_mode == InputMode::Regular {
+            self.hinter.handle(
+                buffer_to_paint,
+                cursor_position_in_buffer,
+                self.history.as_ref(),
+                self.use_ansi_coloring,
+            )
+        } else {
+            String::new()
+        };
+
+        (highlighted_line, hint)
+    }
+
+    /// Repaint logic for the normal input prompt buffer
+    ///
+    /// Requires coordinates where the input buffer begins after the prompt.
+    /// Performs highlighting and hinting at the moment!
+    fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+        let (highlighted_line, hint) = self.prepare_buffer_content(prompt);
 
         self.painter.queue_buffer(highlighted_line, hint)?;
         self.painter.flush()?;
@@ -975,23 +989,7 @@ impl Reedline {
     /// Includes the highlighting and hinting calls.
     fn full_repaint(&mut self, prompt: &dyn Prompt) -> Result<()> {
         let prompt_mode = self.prompt_edit_mode();
-        let buffer_to_paint = self.editor.get_buffer();
-        let cursor_position_in_buffer = self.editor.offset();
-
-        let highlighted_line = self
-            .highlighter
-            .highlight(buffer_to_paint)
-            .render_around_insertion_point(
-                cursor_position_in_buffer,
-                prompt.render_prompt_multiline_indicator().borrow(),
-                self.use_ansi_coloring,
-            );
-        let hint: String = self.hinter.handle(
-            buffer_to_paint,
-            cursor_position_in_buffer,
-            self.history.as_ref(),
-            self.use_ansi_coloring,
-        );
+        let (highlighted_line, hint) = self.prepare_buffer_content(prompt);
 
         self.painter.repaint_everything(
             prompt,
@@ -1005,23 +1003,7 @@ impl Reedline {
     }
 
     fn handle_wrap(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
-        let cursor_position_in_buffer = self.editor.offset();
-        let buffer_to_paint = self.editor.get_buffer();
-
-        let highlighted_line = self
-            .highlighter
-            .highlight(buffer_to_paint)
-            .render_around_insertion_point(
-                cursor_position_in_buffer,
-                prompt.render_prompt_multiline_indicator().borrow(),
-                self.use_ansi_coloring,
-            );
-        let hint: String = self.hinter.handle(
-            buffer_to_paint,
-            cursor_position_in_buffer,
-            self.history.as_ref(),
-            self.use_ansi_coloring,
-        );
+        let (highlighted_line, hint) = self.prepare_buffer_content(prompt);
 
         self.painter.wrap(highlighted_line, hint)
     }
