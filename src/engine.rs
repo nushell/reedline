@@ -515,7 +515,7 @@ impl Reedline {
                 let line_buffer = self.editor.line_buffer();
 
                 let current_hint = self.hinter.current_hint();
-                if !current_hint.is_empty() {
+                if !current_hint.is_empty() && self.input_mode == InputMode::Regular {
                     self.editor.clear_to_end();
                     self.run_edit_commands(&[EditCommand::InsertString(current_hint)], prompt)?;
                 } else {
@@ -957,12 +957,16 @@ impl Reedline {
                 self.use_ansi_coloring,
             );
 
-        let hint: String = self.hinter.handle(
-            buffer_to_paint,
-            cursor_position_in_buffer,
-            self.history.as_ref(),
-            self.use_ansi_coloring,
-        );
+        let hint: String = if self.input_mode == InputMode::Regular {
+            self.hinter.handle(
+                buffer_to_paint,
+                cursor_position_in_buffer,
+                self.history.as_ref(),
+                self.use_ansi_coloring,
+            )
+        } else {
+            String::new()
+        };
 
         self.painter.queue_buffer(highlighted_line, hint)?;
         self.painter.flush()?;
@@ -986,12 +990,16 @@ impl Reedline {
                 prompt.render_prompt_multiline_indicator().borrow(),
                 self.use_ansi_coloring,
             );
-        let hint: String = self.hinter.handle(
-            buffer_to_paint,
-            cursor_position_in_buffer,
-            self.history.as_ref(),
-            self.use_ansi_coloring,
-        );
+        let hint: String = if self.input_mode == InputMode::Regular {
+            self.hinter.handle(
+                buffer_to_paint,
+                cursor_position_in_buffer,
+                self.history.as_ref(),
+                self.use_ansi_coloring,
+            )
+        } else {
+            String::new()
+        };
 
         self.painter.repaint_everything(
             prompt,
@@ -1016,12 +1024,16 @@ impl Reedline {
                 prompt.render_prompt_multiline_indicator().borrow(),
                 self.use_ansi_coloring,
             );
-        let hint: String = self.hinter.handle(
-            buffer_to_paint,
-            cursor_position_in_buffer,
-            self.history.as_ref(),
-            self.use_ansi_coloring,
-        );
+        let hint: String = if self.input_mode == InputMode::Regular {
+            self.hinter.handle(
+                buffer_to_paint,
+                cursor_position_in_buffer,
+                self.history.as_ref(),
+                self.use_ansi_coloring,
+            )
+        } else {
+            String::new()
+        };
 
         self.painter.wrap(highlighted_line, hint)
     }
