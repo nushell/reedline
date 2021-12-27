@@ -90,7 +90,7 @@ pub struct Reedline {
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
 
-    // Showcase hints based on various stratiges (history, language-completion, spellcheck, etc)
+    // Showcase hints based on various strategies (history, language-completion, spellcheck, etc)
     hinter: Box<dyn Hinter>,
 
     // Is Some(n) read_line() should repaint prompt every `n` milliseconds
