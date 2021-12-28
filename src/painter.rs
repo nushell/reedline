@@ -249,7 +249,7 @@ impl Painter {
                 .checked_sub(lines.required_lines());
 
             if let Some(sub) = sub {
-                self.prompt_coords.prompt_start.1 = sub
+                self.prompt_coords.prompt_start.1 = sub;
             }
         };
 
