@@ -1,5 +1,7 @@
 use std::borrow::Borrow;
 
+use crate::painter::PromptLines;
+
 use {
     crate::{
         completion::{CircularCompletionHandler, CompletionActionHandler},
@@ -978,7 +980,25 @@ impl Reedline {
     fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
         let (highlighted_line, hint) = self.prepare_buffer_content(prompt);
 
-        self.painter.queue_buffer(highlighted_line, hint)?;
+        let lines = PromptLines::from_strings(&highlighted_line.0, &highlighted_line.1, &hint);
+
+        if lines.required_lines() > self.painter.remaining_lines() {
+            let prompt_mode = self.prompt_edit_mode();
+            self.painter.repaint_everything(
+                prompt,
+                prompt_mode,
+                highlighted_line,
+                hint,
+                self.use_ansi_coloring,
+            )?;
+        } else {
+            self.painter.queue_buffer(
+                &lines.before_cursor_lines,
+                &lines.after_cursor_lines,
+                &hint,
+            )?;
+        }
+
         self.painter.flush()?;
 
         Ok(())

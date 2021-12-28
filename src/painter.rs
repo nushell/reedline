@@ -35,6 +35,54 @@ impl PromptCoordinates {
     }
 }
 
+pub struct PromptLines<'prompt> {
+    pub before_cursor_lines: Vec<&'prompt str>,
+    pub after_cursor_lines: Vec<&'prompt str>,
+    pub hint_lines: Vec<&'prompt str>,
+}
+
+impl<'prompt> PromptLines<'prompt> {
+    /// Splits the strings before and after the cursor as well as the hint
+    /// This vector with the str are used to calculate how many lines are
+    /// required to print after the prompt
+    pub fn from_strings(
+        before_cursor: &'prompt str,
+        after_cursor: &'prompt str,
+        hint: &'prompt str,
+    ) -> Self {
+        let before_cursor_lines = if cfg!(windows) {
+            before_cursor.split("\r\n").collect::<Vec<&str>>()
+        } else {
+            #[allow(clippy::single_char_pattern)]
+            before_cursor.split("\n").collect::<Vec<&str>>()
+        };
+
+        let after_cursor_lines = if cfg!(windows) {
+            after_cursor.split("\r\n").collect::<Vec<&str>>()
+        } else {
+            #[allow(clippy::single_char_pattern)]
+            after_cursor.split("\n").collect::<Vec<&str>>()
+        };
+
+        let hint_lines = if cfg!(windows) {
+            hint.split("\r\n").collect::<Vec<&str>>()
+        } else {
+            #[allow(clippy::single_char_pattern)]
+            hint.split("\n").collect::<Vec<&str>>()
+        };
+
+        Self {
+            before_cursor_lines,
+            after_cursor_lines,
+            hint_lines,
+        }
+    }
+
+    pub fn required_lines(&self) -> u16 {
+        (self.before_cursor_lines.len() + self.hint_lines.len()) as u16
+    }
+}
+
 pub struct Painter {
     // Stdout
     stdout: Stdout,
@@ -65,6 +113,10 @@ impl Painter {
         self.terminal_size.1
     }
 
+    pub fn remaining_lines(&self) -> u16 {
+        self.terminal_size.1 - self.prompt_coords.prompt_start.1
+    }
+
     /// Move cursor, doesn't flush
     pub fn queue_move_to(&mut self, column: u16, row: u16) -> Result<()> {
         self.stdout.queue(cursor::MoveTo(column, row))?;
@@ -84,6 +136,7 @@ impl Painter {
         let (screen_width, _) = self.terminal_size;
 
         self.stdout.queue(MoveToColumn(0))?;
+        self.stdout.queue(Clear(ClearType::FromCursorDown))?;
         if use_ansi_coloring {
             // print our prompt with color
             self.stdout
@@ -102,47 +155,38 @@ impl Painter {
     /// Repaint logic for the normal input prompt buffer
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
-    pub fn queue_buffer(&mut self, highlighted_line: (String, String), hint: String) -> Result<()> {
-        let (before_cursor, after_cursor) = highlighted_line;
-
-        let before_cursor_lines = if cfg!(windows) {
-            before_cursor.split("\r\n")
-        } else {
-            #[allow(clippy::single_char_pattern)]
-            before_cursor.split("\n")
-        };
-
-        let after_cursor_lines = if cfg!(windows) {
-            after_cursor.split("\r\n")
-        } else {
-            #[allow(clippy::single_char_pattern)]
-            after_cursor.split("\n")
-        };
-
-        let mut commands = self.stdout.queue(MoveTo(
+    pub fn queue_buffer(
+        &mut self,
+        before_cursor_lines: &[&str],
+        after_cursor_lines: &[&str],
+        hint: &str,
+    ) -> Result<()> {
+        self.stdout.queue(MoveTo(
             self.prompt_coords.input_start.0,
             self.prompt_coords.input_start.1,
         ))?;
 
-        for (idx, before_cursor_line) in before_cursor_lines.enumerate() {
+        for (idx, before_cursor_line) in before_cursor_lines.iter().enumerate() {
             if idx != 0 {
-                commands = commands.queue(Clear(ClearType::UntilNewLine))?;
-                commands = commands.queue(Print("\r\n"))?;
+                self.stdout
+                    .queue(Clear(ClearType::UntilNewLine))?
+                    .queue(Print("\r\n"))?;
             }
-            commands = commands.queue(Print(before_cursor_line))?;
+            self.stdout.queue(Print(before_cursor_line))?;
         }
 
-        commands = commands.queue(SavePosition)?.queue(Print(hint))?;
+        self.stdout.queue(SavePosition)?;
+        self.stdout.queue(Print(hint))?;
 
-        for (idx, after_cursor_line) in after_cursor_lines.enumerate() {
+        for (idx, after_cursor_line) in after_cursor_lines.iter().enumerate() {
             if idx != 0 {
-                commands = commands.queue(Clear(ClearType::UntilNewLine))?;
-                commands = commands.queue(Print("\r\n"))?;
+                self.stdout.queue(Clear(ClearType::UntilNewLine))?;
+                self.stdout.queue(Print("\r\n"))?;
             }
-            commands = commands.queue(Print(after_cursor_line))?;
+            self.stdout.queue(Print(after_cursor_line))?;
         }
 
-        commands
+        self.stdout
             .queue(Clear(ClearType::FromCursorDown))?
             .queue(RestorePosition)?;
 
@@ -194,6 +238,12 @@ impl Painter {
         hint: String,
         use_ansi_coloring: bool,
     ) -> Result<()> {
+        let lines = PromptLines::from_strings(&highlighted_line.0, &highlighted_line.1, &hint);
+
+        if lines.required_lines() > self.remaining_lines() {
+            self.prompt_coords.prompt_start.1 -= lines.required_lines()
+        };
+
         self.stdout.queue(cursor::Hide)?;
         self.queue_move_to(
             self.prompt_coords.prompt_start.0,
@@ -203,7 +253,7 @@ impl Painter {
         self.flush()?;
         // set where the input begins
         self.prompt_coords.input_start = position()?;
-        self.queue_buffer(highlighted_line, hint)?;
+        self.queue_buffer(&lines.before_cursor_lines, &lines.after_cursor_lines, &hint)?;
         self.stdout.queue(cursor::Show)?;
         self.flush()?;
 
@@ -244,7 +294,9 @@ impl Painter {
     pub(crate) fn wrap(&mut self, highlighted_line: (String, String), hint: String) -> Result<()> {
         let (original_column, original_row) = cursor::position()?;
 
-        self.queue_buffer(highlighted_line, hint)?;
+        let lines = PromptLines::from_strings(&highlighted_line.0, &highlighted_line.1, &hint);
+
+        self.queue_buffer(&lines.before_cursor_lines, &lines.after_cursor_lines, &hint)?;
         self.flush()?;
 
         let (new_column, _new_row) = cursor::position()?;
