@@ -35,51 +35,32 @@ impl PromptCoordinates {
     }
 }
 
-pub struct PromptLines<'prompt> {
-    pub before_cursor_lines: Vec<&'prompt str>,
-    pub after_cursor_lines: Vec<&'prompt str>,
-    pub hint_lines: Vec<&'prompt str>,
+pub struct PromptLines {
+    before_cursor: String,
+    after_cursor: String,
+    hint: String,
 }
 
-impl<'prompt> PromptLines<'prompt> {
+impl PromptLines {
     /// Splits the strings before and after the cursor as well as the hint
     /// This vector with the str are used to calculate how many lines are
     /// required to print after the prompt
-    pub fn from_strings(
-        before_cursor: &'prompt str,
-        after_cursor: &'prompt str,
-        hint: &'prompt str,
-    ) -> Self {
-        let before_cursor_lines = if cfg!(windows) {
-            before_cursor.split("\r\n").collect::<Vec<&str>>()
-        } else {
-            #[allow(clippy::single_char_pattern)]
-            before_cursor.split("\n").collect::<Vec<&str>>()
-        };
-
-        let after_cursor_lines = if cfg!(windows) {
-            after_cursor.split("\r\n").collect::<Vec<&str>>()
-        } else {
-            #[allow(clippy::single_char_pattern)]
-            after_cursor.split("\n").collect::<Vec<&str>>()
-        };
-
-        let hint_lines = if cfg!(windows) {
-            hint.split("\r\n").collect::<Vec<&str>>()
-        } else {
-            #[allow(clippy::single_char_pattern)]
-            hint.split("\n").collect::<Vec<&str>>()
-        };
-
+    pub fn new(before_cursor: String, after_cursor: String, hint: String) -> Self {
         Self {
-            before_cursor_lines,
-            after_cursor_lines,
-            hint_lines,
+            before_cursor,
+            after_cursor,
+            hint,
         }
     }
 
     pub fn required_lines(&self) -> u16 {
-        (self.before_cursor_lines.len() + self.hint_lines.len()) as u16
+        let before_cursor_lines = self.before_cursor.lines().count();
+        let after_cursor_lines = self.after_cursor.lines().count();
+        let hint_lines = self.hint.lines().count();
+
+        let extra = after_cursor_lines.max(hint_lines);
+
+        (before_cursor_lines + extra) as u16
     }
 }
 
@@ -155,38 +136,16 @@ impl Painter {
     /// Repaint logic for the normal input prompt buffer
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
-    pub fn queue_buffer(
-        &mut self,
-        before_cursor_lines: &[&str],
-        after_cursor_lines: &[&str],
-        hint: &str,
-    ) -> Result<()> {
-        self.stdout.queue(MoveTo(
-            self.prompt_coords.input_start.0,
-            self.prompt_coords.input_start.1,
-        ))?;
-
-        for (idx, before_cursor_line) in before_cursor_lines.iter().enumerate() {
-            if idx != 0 {
-                self.stdout
-                    .queue(Clear(ClearType::UntilNewLine))?
-                    .queue(Print("\r\n"))?;
-            }
-            self.stdout.queue(Print(before_cursor_line))?;
-        }
-
-        self.stdout.queue(SavePosition)?;
-        self.stdout.queue(Print(hint))?;
-
-        for (idx, after_cursor_line) in after_cursor_lines.iter().enumerate() {
-            if idx != 0 {
-                self.stdout.queue(Clear(ClearType::UntilNewLine))?;
-                self.stdout.queue(Print("\r\n"))?;
-            }
-            self.stdout.queue(Print(after_cursor_line))?;
-        }
-
+    pub fn queue_buffer(&mut self, lines: PromptLines) -> Result<()> {
         self.stdout
+            .queue(MoveTo(
+                self.prompt_coords.input_start.0,
+                self.prompt_coords.input_start.1,
+            ))?
+            .queue(Print(lines.before_cursor))?
+            .queue(SavePosition)?
+            .queue(Print(lines.hint))?
+            .queue(Print(lines.after_cursor))?
             .queue(Clear(ClearType::FromCursorDown))?
             .queue(RestorePosition)?;
 
@@ -234,12 +193,9 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         prompt_mode: PromptEditMode,
-        highlighted_line: (String, String),
-        hint: String,
+        lines: PromptLines,
         use_ansi_coloring: bool,
     ) -> Result<()> {
-        let lines = PromptLines::from_strings(&highlighted_line.0, &highlighted_line.1, &hint);
-
         if lines.required_lines() > self.remaining_lines() {
             // Checked sub in case there is overflow
             let sub = self
@@ -262,7 +218,7 @@ impl Painter {
         self.flush()?;
         // set where the input begins
         self.prompt_coords.input_start = position()?;
-        self.queue_buffer(&lines.before_cursor_lines, &lines.after_cursor_lines, &hint)?;
+        self.queue_buffer(lines)?;
         self.stdout.queue(cursor::Show)?;
         self.flush()?;
 
@@ -300,12 +256,10 @@ impl Painter {
 
     /// TODO! FIX the naming and provide an accurate doccomment
     /// This function repaints and updates offsets but does not purely concern it self with wrapping
-    pub(crate) fn wrap(&mut self, highlighted_line: (String, String), hint: String) -> Result<()> {
+    pub(crate) fn wrap(&mut self, lines: PromptLines) -> Result<()> {
         let (original_column, original_row) = cursor::position()?;
 
-        let lines = PromptLines::from_strings(&highlighted_line.0, &highlighted_line.1, &hint);
-
-        self.queue_buffer(&lines.before_cursor_lines, &lines.after_cursor_lines, &hint)?;
+        self.queue_buffer(lines)?;
         self.flush()?;
 
         let (new_column, _new_row) = cursor::position()?;

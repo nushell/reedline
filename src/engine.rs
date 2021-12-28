@@ -946,11 +946,11 @@ impl Reedline {
     ///
     /// # Returns:
     /// (highlighted_line, hint)
-    fn prepare_buffer_content(&mut self, prompt: &dyn Prompt) -> ((String, String), String) {
+    fn prepare_buffer_content(&mut self, prompt: &dyn Prompt) -> PromptLines {
         let cursor_position_in_buffer = self.editor.offset();
         let buffer_to_paint = self.editor.get_buffer();
 
-        let highlighted_line = self
+        let (before_cursor, after_cursor) = self
             .highlighter
             .highlight(buffer_to_paint)
             .render_around_insertion_point(
@@ -970,7 +970,7 @@ impl Reedline {
             String::new()
         };
 
-        (highlighted_line, hint)
+        PromptLines::new(before_cursor, after_cursor, hint)
     }
 
     /// Repaint logic for the normal input prompt buffer
@@ -978,25 +978,14 @@ impl Reedline {
     /// Requires coordinates where the input buffer begins after the prompt.
     /// Performs highlighting and hinting at the moment!
     fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
-        let (highlighted_line, hint) = self.prepare_buffer_content(prompt);
-
-        let lines = PromptLines::from_strings(&highlighted_line.0, &highlighted_line.1, &hint);
+        let lines = self.prepare_buffer_content(prompt);
 
         if lines.required_lines() > self.painter.remaining_lines() {
             let prompt_mode = self.prompt_edit_mode();
-            self.painter.repaint_everything(
-                prompt,
-                prompt_mode,
-                highlighted_line,
-                hint,
-                self.use_ansi_coloring,
-            )?;
+            self.painter
+                .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)?;
         } else {
-            self.painter.queue_buffer(
-                &lines.before_cursor_lines,
-                &lines.after_cursor_lines,
-                &hint,
-            )?;
+            self.painter.queue_buffer(lines)?;
         }
 
         self.painter.flush()?;
@@ -1009,22 +998,17 @@ impl Reedline {
     /// Includes the highlighting and hinting calls.
     fn full_repaint(&mut self, prompt: &dyn Prompt) -> Result<()> {
         let prompt_mode = self.prompt_edit_mode();
-        let (highlighted_line, hint) = self.prepare_buffer_content(prompt);
+        let lines = self.prepare_buffer_content(prompt);
 
-        self.painter.repaint_everything(
-            prompt,
-            prompt_mode,
-            highlighted_line,
-            hint,
-            self.use_ansi_coloring,
-        )?;
+        self.painter
+            .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)?;
 
         Ok(())
     }
 
     fn handle_wrap(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
-        let (highlighted_line, hint) = self.prepare_buffer_content(prompt);
+        let lines = self.prepare_buffer_content(prompt);
 
-        self.painter.wrap(highlighted_line, hint)
+        self.painter.wrap(lines)
     }
 }
