@@ -986,9 +986,8 @@ impl Reedline {
                 .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)?;
         } else {
             self.painter.queue_buffer(lines)?;
+            self.painter.flush()?;
         }
-
-        self.painter.flush()?;
 
         Ok(())
     }

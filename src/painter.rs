@@ -216,6 +216,7 @@ impl Painter {
         )?;
         self.queue_prompt(prompt, prompt_mode, use_ansi_coloring)?;
         self.flush()?;
+
         // set where the input begins
         self.prompt_coords.input_start = position()?;
         self.queue_buffer(lines)?;
