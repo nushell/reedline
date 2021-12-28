@@ -241,7 +241,16 @@ impl Painter {
         let lines = PromptLines::from_strings(&highlighted_line.0, &highlighted_line.1, &hint);
 
         if lines.required_lines() > self.remaining_lines() {
-            self.prompt_coords.prompt_start.1 -= lines.required_lines()
+            // Checked sub in case there is overflow
+            let sub = self
+                .prompt_coords
+                .prompt_start
+                .1
+                .checked_sub(lines.required_lines());
+
+            if let Some(sub) = sub {
+                self.prompt_coords.prompt_start.1 = sub
+            }
         };
 
         self.stdout.queue(cursor::Hide)?;
