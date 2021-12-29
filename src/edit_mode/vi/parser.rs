@@ -280,13 +280,13 @@ mod tests {
         ReedlineEvent::Edit(vec![EditCommand::MoveLeft]),
         ]))]
     #[case(&['h'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveLeft])]))]
-    #[case(&['0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToStart])]))]
-    #[case(&['$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToEnd])]))]
+    #[case(&['0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart])]))]
+    #[case(&['$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd])]))]
     #[case(&['i'], ReedlineEvent::Multiple(vec![ReedlineEvent::Repaint]))]
-    #[case(&['p'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::PasteCutBuffer])]))]
+    #[case(&['p'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter])]))]
     #[case(&['2', 'p'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Edit(vec![EditCommand::PasteCutBuffer]),
-        ReedlineEvent::Edit(vec![EditCommand::PasteCutBuffer])
+        ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter]),
+        ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter])
         ]))]
     #[case(&['u'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Undo])]))]
     #[case(&['2', 'u'], ReedlineEvent::Multiple(vec![
@@ -294,8 +294,7 @@ mod tests {
         ReedlineEvent::Edit(vec![EditCommand::Undo])
         ]))]
     #[case(&['d', 'd'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Edit(vec![EditCommand::MoveToStart]),
-        ReedlineEvent::Edit(vec![EditCommand::CutToEnd])]))]
+        ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
     #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight])]))]
     fn test_reedline_move(#[case] input: &[char], #[case] expected: ReedlineEvent) {
         let res = vi_parse(input);

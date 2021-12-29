@@ -21,8 +21,14 @@ pub enum EditCommand {
     /// Move to the start of the buffer
     MoveToStart,
 
+    /// Move to the start of the current line
+    MoveToLineStart,
+
     /// Move to the end of the buffer
     MoveToEnd,
+
+    /// Move to the end of the current line
+    MoveToLineEnd,
 
     /// Move one character to the left
     MoveLeft,
@@ -57,11 +63,23 @@ pub enum EditCommand {
     /// Clear the current buffer
     Clear,
 
+    /// Clear the current buffer
+    ClearToLineEnd,
+
+    /// Cut the current line
+    CutCurrentLine,
+
     /// Cut from the start of the buffer to the insertion point
     CutFromStart,
 
+    /// Cut from the start of the current line to the insertion point
+    CutFromLineStart,
+
     /// Cut from the insertion point to the end of the buffer
     CutToEnd,
+
+    /// Cut from the insertion point to the end of the current line
+    CutToLineEnd,
 
     /// Cut the word left of the insertion point
     CutWordLeft,
@@ -69,8 +87,11 @@ pub enum EditCommand {
     /// Cut the word right of the insertion point
     CutWordRight,
 
-    /// Paste the cut buffer at the insertion point
-    PasteCutBuffer,
+    /// Paste the cut buffer in front of the insertion point (Emacs, vi `P`)
+    PasteCutBufferBefore,
+
+    /// Paste the cut buffer in front of the insertion point (vi `p`)
+    PasteCutBufferAfter,
 
     /// Upper case the current word
     UppercaseWord,
@@ -126,6 +147,8 @@ impl EditCommand {
             // Cursor moves
             EditCommand::MoveToStart
             | EditCommand::MoveToEnd
+            | EditCommand::MoveToLineStart
+            | EditCommand::MoveToLineEnd
             | EditCommand::MoveLeft
             | EditCommand::MoveRight
             | EditCommand::MoveWordLeft
@@ -137,19 +160,24 @@ impl EditCommand {
 
             // Coalesceable insert
             EditCommand::InsertChar(_) => UndoBehavior::Coalesce,
-            EditCommand::InsertString(_) => UndoBehavior::Full,
 
             // Full edits
             EditCommand::Backspace
             | EditCommand::Delete
+            | EditCommand::InsertString(_)
             | EditCommand::BackspaceWord
             | EditCommand::DeleteWord
             | EditCommand::Clear
+            | EditCommand::ClearToLineEnd
+            | EditCommand::CutCurrentLine
             | EditCommand::CutFromStart
+            | EditCommand::CutFromLineStart
+            | EditCommand::CutToLineEnd
             | EditCommand::CutToEnd
             | EditCommand::CutWordLeft
             | EditCommand::CutWordRight
-            | EditCommand::PasteCutBuffer
+            | EditCommand::PasteCutBufferBefore
+            | EditCommand::PasteCutBufferAfter
             | EditCommand::UppercaseWord
             | EditCommand::LowercaseWord
             | EditCommand::CapitalizeChar

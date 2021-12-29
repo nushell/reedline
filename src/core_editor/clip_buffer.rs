@@ -2,20 +2,35 @@
 ///
 /// Mutable reference requirements are stricter than always necessary, but the currently used system clipboard API demands them for exclusive access.
 pub trait Clipboard {
-    fn set(&mut self, content: &str);
+    fn set(&mut self, content: &str, mode: ClipboardMode);
 
-    fn get(&mut self) -> String;
+    fn get(&mut self) -> (String, ClipboardMode);
 
     fn clear(&mut self) {
-        self.set("");
+        self.set("", ClipboardMode::Normal);
     }
 
     fn len(&mut self) -> usize {
-        self.get().len()
+        self.get().0.len()
     }
 
     fn is_empty(&mut self) -> bool {
-        self.get().is_empty()
+        self.get().0.is_empty()
+    }
+}
+
+/// Determines how the content in the clipboard should be inserted
+#[derive(Copy, Clone, Debug)]
+pub enum ClipboardMode {
+    /// As direct content at the current cursor position
+    Normal,
+    /// As new lines below or above
+    Lines,
+}
+
+impl Default for ClipboardMode {
+    fn default() -> Self {
+        ClipboardMode::Normal
     }
 }
 
@@ -23,6 +38,7 @@ pub trait Clipboard {
 #[derive(Default)]
 pub struct LocalClipboard {
     content: String,
+    mode: ClipboardMode,
 }
 
 impl LocalClipboard {
@@ -33,12 +49,13 @@ impl LocalClipboard {
 }
 
 impl Clipboard for LocalClipboard {
-    fn set(&mut self, content: &str) {
+    fn set(&mut self, content: &str, mode: ClipboardMode) {
         self.content = content.to_owned();
+        self.mode = mode;
     }
 
-    fn get(&mut self) -> String {
-        self.content.clone()
+    fn get(&mut self) -> (String, ClipboardMode) {
+        (self.content.clone(), self.mode)
     }
 }
 
@@ -75,44 +92,59 @@ mod system_clipboard {
     /// Requires that the feature `system_clipboard` is enabled
     pub struct SystemClipboard {
         cb: ClipboardContext,
+        local_copy: String,
+        mode: ClipboardMode,
     }
 
     impl SystemClipboard {
         pub fn new() -> Self {
             let cb = ClipboardProvider::new().unwrap();
-            SystemClipboard { cb }
+            SystemClipboard {
+                cb,
+                local_copy: String::new(),
+                mode: ClipboardMode::Normal,
+            }
         }
     }
 
     impl Clipboard for SystemClipboard {
-        fn set(&mut self, content: &str) {
+        fn set(&mut self, content: &str, mode: ClipboardMode) {
+            self.local_copy = content.to_owned();
             let _ = self.cb.set_contents(content.to_owned());
+            self.mode = mode;
         }
 
-        fn get(&mut self) -> String {
-            self.cb.get_contents().unwrap_or_default()
+        fn get(&mut self) -> (String, ClipboardMode) {
+            let system_content = self.cb.get_contents().unwrap_or_default();
+            if system_content == self.local_copy {
+                // We assume the content was yanked inside the line editor and the last yank determined the mode.
+                (system_content, self.mode)
+            } else {
+                // Content has changed, default to direct insertion.
+                (system_content, ClipboardMode::Normal)
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{get_default_clipboard, Clipboard};
+    use super::{get_default_clipboard, Clipboard, ClipboardMode};
     #[test]
     fn reads_back() {
         let mut cb = get_default_clipboard();
         // If the system clipboard is used we want to persist it for the user
-        let previous_state = cb.get();
+        let previous_state = cb.get().0;
 
         // Actual test
-        cb.set("test");
+        cb.set("test", ClipboardMode::Normal);
         assert_eq!(cb.len(), 4);
-        assert_eq!(cb.get(), "test".to_owned());
+        assert_eq!(cb.get().0, "test".to_owned());
         cb.clear();
         assert!(cb.is_empty());
 
         // Restore!
 
-        cb.set(&previous_state);
+        cb.set(&previous_state, ClipboardMode::Normal);
     }
 }
