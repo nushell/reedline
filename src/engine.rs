@@ -905,7 +905,8 @@ impl Reedline {
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)?;
         } else {
-            self.buffer_paint(prompt)?;
+            // self.buffer_paint(prompt)?;
+            self.full_repaint(prompt)?;
         }
 
         Ok(())

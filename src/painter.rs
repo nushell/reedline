@@ -17,7 +17,7 @@ use {
     unicode_width::UnicodeWidthStr,
 };
 
-const END_LINE: &str = if cfg!(windows) { "\r\n" } else { "n" };
+const END_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
 
 #[derive(Default)]
 struct PromptCoordinates {
@@ -125,6 +125,7 @@ impl Painter {
         prompt: &dyn Prompt,
         prompt_mode: PromptEditMode,
         use_ansi_coloring: bool,
+        lines: PromptLines,
     ) -> Result<()> {
         let (screen_width, _) = self.terminal_size;
 
@@ -138,6 +139,25 @@ impl Painter {
         self.stdout
             .queue(Print(prompt.render_prompt(screen_width as usize)))?
             .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?;
+
+        self.stdout.queue(Print(&lines.before_cursor))?;
+
+        // for (_, before_cursor_line) in lines.before_cursor_lines().enumerate() {
+        //     self.stdout.queue(Print(before_cursor_line))?;
+        // }
+
+        self.stdout.queue(SavePosition)?.queue(Print(&lines.hint))?;
+
+        self.stdout.queue(Print(&lines.after_cursor))?;
+
+        // for (_, after_cursor_line) in lines.after_cursor_lines().enumerate() {
+        //     self.stdout.queue(Print(after_cursor_line))?;
+        // }
+
+        self.stdout
+            // .queue(Clear(ClearType::FromCursorDown))?
+            .queue(RestorePosition)?;
+
         if use_ansi_coloring {
             self.stdout.queue(ResetColor)?;
         }
@@ -241,14 +261,14 @@ impl Painter {
             self.prompt_coords.prompt_start.0,
             self.prompt_coords.prompt_start.1,
         )?;
-        self.queue_prompt(prompt, prompt_mode, use_ansi_coloring)?;
+        self.queue_prompt(prompt, prompt_mode, use_ansi_coloring, lines)?;
         self.flush()?;
 
         // set where the input begins
-        self.prompt_coords.input_start = position()?;
-        self.queue_buffer(lines)?;
+        // self.prompt_coords.input_start = position()?;
+        // self.queue_buffer(lines)?;
         self.stdout.queue(cursor::Show)?;
-        self.flush()?;
+        // self.flush()?;
 
         Ok(())
     }
