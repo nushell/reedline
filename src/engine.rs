@@ -811,9 +811,9 @@ impl Reedline {
                 EditCommand::InsertChar(c) => {
                     self.editor.insert_char(*c);
 
-                    if self.painter.require_wrapping(&self.editor) {
-                        self.handle_wrap(prompt)?;
-                    }
+                    // if self.painter.require_wrapping(&self.editor) {
+                    //     self.handle_wrap(prompt)?;
+                    // }
 
                     self.repaint(prompt)?;
                 }
@@ -822,9 +822,9 @@ impl Reedline {
                         self.editor.insert_char(c);
                     }
 
-                    if self.painter.require_wrapping(&self.editor) {
-                        self.handle_wrap(prompt)?;
-                    }
+                    // if self.painter.require_wrapping(&self.editor) {
+                    //     self.handle_wrap(prompt)?;
+                    // }
 
                     self.repaint(prompt)?;
                 }
@@ -905,7 +905,7 @@ impl Reedline {
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)
         } else {
-            // self.buffer_paint(prompt)?;
+            // self.buffer_paint(prompt)
             self.full_repaint(prompt)
         }
     }
@@ -936,7 +936,6 @@ impl Reedline {
                 Some(string) => {
                     self.painter
                         .queue_history_search_result(&string, string.len())?;
-                    self.painter.flush()?;
                 }
 
                 None => {
@@ -986,7 +985,7 @@ impl Reedline {
     // fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
     //     let lines = self.prepare_buffer_content(prompt);
 
-    //     if lines.required_lines() > self.painter.remaining_lines() {
+    //     if lines.required_lines()? > self.painter.remaining_lines() {
     //         let prompt_mode = self.prompt_edit_mode();
     //         self.painter
     //             .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)
@@ -1006,9 +1005,9 @@ impl Reedline {
             .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)
     }
 
-    fn handle_wrap(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
-        let lines = self.prepare_buffer_content(prompt);
+    // fn handle_wrap(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
+    //     let lines = self.prepare_buffer_content(prompt);
 
-        self.painter.wrap(lines)
-    }
+    //     self.painter.wrap(lines)
+    // }
 }

@@ -1,4 +1,5 @@
 use crate::core_editor::Editor;
+use crossterm::terminal::ScrollUp;
 
 use {
     crate::{
@@ -24,10 +25,6 @@ struct PromptCoordinates {
 }
 
 impl PromptCoordinates {
-    fn input_start_col(&self) -> u16 {
-        self.input_start.0
-    }
-
     fn set_prompt_start(&mut self, col: u16, row: u16) {
         self.prompt_start = (col, row);
     }
@@ -48,14 +45,6 @@ impl PromptLines {
     /// This vector with the str are used to calculate how many lines are
     /// required to print after the prompt
     pub fn new(before_cursor: String, after_cursor: String, hint: String) -> Self {
-        // let before_cursor = before_cursor.split(END_LINE).collect::<String>();
-        // let after_cursor = after_cursor.split(END_LINE).collect::<String>();
-        // let hint = hint.split(END_LINE).collect::<String>();
-
-        // println!("{}", before_cursor);
-        // println!("{}", after_cursor);
-        // println!("{}", hint);
-
         Self {
             before_cursor,
             after_cursor,
@@ -63,23 +52,17 @@ impl PromptLines {
         }
     }
 
-    pub fn required_lines(&self) -> u16 {
-        let before_cursor_lines = self.before_cursor.lines().count();
-        let after_cursor_lines = self.after_cursor.lines().count();
-        let hint_lines = self.hint.lines().count();
-
-        let extra = after_cursor_lines.max(hint_lines);
-
-        (before_cursor_lines + extra) as u16
+    fn before_cursor_lines(&self) -> u16 {
+        self.before_cursor.lines().count() as u16
     }
 
-    // fn before_cursor_lines(&self) -> Split<&str> {
-    //     self.before_cursor.split(END_LINE)
-    // }
+    fn after_cursor_lines(&self) -> u16 {
+        self.after_cursor.lines().count() as u16
+    }
 
-    // fn after_cursor_lines(&self) -> Split<&str> {
-    //     self.after_cursor.split(END_LINE)
-    // }
+    fn hint_lines(&self) -> u16 {
+        self.hint.lines().count() as u16
+    }
 }
 
 pub struct Painter {
@@ -96,6 +79,28 @@ impl Painter {
             prompt_coords: PromptCoordinates::default(),
             terminal_size: (0, 0),
         }
+    }
+
+    /// Calculates the how many lines are required to print all the prompt
+    /// lines including the hint
+    /// It also calculates the distance from the prompt which can be used
+    /// as another parameter to scroll the prompt
+    pub fn required_lines(&self, lines: &PromptLines) -> Result<(u16, u16)> {
+        let before_cursor_lines = lines.before_cursor_lines();
+        let after_cursor_lines = lines.after_cursor_lines();
+        let hint_lines = lines.hint_lines();
+        let delta = after_cursor_lines.max(hint_lines);
+
+        // The minus 1 is because the delta is sharing a line with the before
+        // cursor lines
+        let required_lines = (before_cursor_lines + delta - 1) as u16;
+        let required_lines = required_lines;
+
+        let (_, cursor_row) = cursor::position()?;
+        let distance_from_prompt = cursor_row - self.prompt_coords.prompt_start.1;
+        let required_lines = required_lines.saturating_sub(distance_from_prompt);
+
+        Ok((required_lines, distance_from_prompt))
     }
 
     /// Update the terminal size information by polling the system
@@ -121,25 +126,6 @@ impl Painter {
         self.stdout.queue(cursor::MoveTo(column, row))?;
 
         Ok(())
-    }
-
-    /// Repaint logic for the normal input prompt buffer
-    ///
-    /// Requires coordinates where the input buffer begins after the prompt.
-    pub fn queue_buffer(&mut self, lines: PromptLines) -> Result<()> {
-        self.stdout
-            .queue(MoveTo(
-                self.prompt_coords.input_start.0,
-                self.prompt_coords.input_start.1,
-            ))?
-            .queue(Print(&lines.before_cursor))?
-            .queue(SavePosition)?
-            .queue(Print(&lines.hint))?
-            .queue(Print(&lines.after_cursor))?
-            .queue(Clear(ClearType::FromCursorDown))?
-            .queue(RestorePosition)?;
-
-        self.flush()
     }
 
     /// Scroll by n rows
@@ -186,20 +172,27 @@ impl Painter {
         lines: PromptLines,
         use_ansi_coloring: bool,
     ) -> Result<()> {
-        if lines.required_lines() > self.remaining_lines() {
+        self.stdout.queue(cursor::Hide)?;
+        let (required_lines, distance) = self.required_lines(&lines)?;
+        let remaining_lines = self.remaining_lines();
+
+        if required_lines > remaining_lines {
             // Checked sub in case there is overflow
             let sub = self
                 .prompt_coords
                 .prompt_start
                 .1
-                .checked_sub(lines.required_lines());
+                .checked_sub(required_lines);
 
             if let Some(sub) = sub {
+                self.stdout.queue(ScrollUp(required_lines))?;
                 self.prompt_coords.prompt_start.1 = sub;
             }
+        } else if (remaining_lines - distance) == 1 {
+            self.stdout.queue(ScrollUp(1))?;
+            self.prompt_coords.prompt_start.1 = self.prompt_coords.prompt_start.1.saturating_sub(1);
         };
 
-        self.stdout.queue(cursor::Hide)?;
         self.queue_move_to(
             self.prompt_coords.prompt_start.0,
             self.prompt_coords.prompt_start.1,
@@ -207,8 +200,8 @@ impl Painter {
 
         let (screen_width, _) = self.terminal_size;
 
+        // print our prompt with color
         if use_ansi_coloring {
-            // print our prompt with color
             self.stdout
                 .queue(SetForegroundColor(prompt.get_prompt_color()))?;
         }
@@ -263,51 +256,51 @@ impl Painter {
 
     /// TODO! FIX the naming and provide an accurate doccomment
     /// This function repaints and updates offsets but does not purely concern it self with wrapping
-    pub(crate) fn wrap(&mut self, lines: PromptLines) -> Result<()> {
-        let (original_column, original_row) = cursor::position()?;
+    // pub(crate) fn wrap(&mut self, lines: PromptLines) -> Result<()> {
+    //     let (original_column, original_row) = cursor::position()?;
 
-        self.queue_buffer(lines)?;
+    //     self.queue_buffer(lines)?;
 
-        let (new_column, _new_row) = cursor::position()?;
+    //     let (new_column, _new_row) = cursor::position()?;
 
-        if new_column < original_column && original_row + 1 == self.terminal_rows() {
-            // We have wrapped off bottom of screen, and prompt is on new row
-            // We need to update the prompt location in this case
-            let (input_start_col, input_start_row) = self.prompt_coords.input_start;
-            let (prompt_start_col, prompt_start_row) = self.prompt_coords.prompt_start;
+    //     if new_column < original_column && original_row + 1 == self.terminal_rows() {
+    //         // We have wrapped off bottom of screen, and prompt is on new row
+    //         // We need to update the prompt location in this case
+    //         let (input_start_col, input_start_row) = self.prompt_coords.input_start;
+    //         let (prompt_start_col, prompt_start_row) = self.prompt_coords.prompt_start;
 
-            if input_start_row >= 1 {
-                self.prompt_coords
-                    .set_input_start(input_start_col, input_start_row - 1);
-            } else {
-                self.prompt_coords.set_input_start(0, 0);
-            }
+    //         if input_start_row >= 1 {
+    //             self.prompt_coords
+    //                 .set_input_start(input_start_col, input_start_row - 1);
+    //         } else {
+    //             self.prompt_coords.set_input_start(0, 0);
+    //         }
 
-            if prompt_start_row >= 1 {
-                self.prompt_coords
-                    .set_prompt_start(prompt_start_col, prompt_start_row - 1);
-            } else {
-                self.prompt_coords.set_prompt_start(0, 0);
-            }
-        }
+    //         if prompt_start_row >= 1 {
+    //             self.prompt_coords
+    //                 .set_prompt_start(prompt_start_col, prompt_start_row - 1);
+    //         } else {
+    //             self.prompt_coords.set_prompt_start(0, 0);
+    //         }
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     /// Heuristic to determine if we need to wrap text around.
-    pub(crate) fn require_wrapping(&self, editor: &Editor) -> bool {
-        let line_start = if editor.line() == 0 {
-            self.prompt_coords.input_start_col()
-        } else {
-            0
-        };
+    // pub(crate) fn require_wrapping(&self, editor: &Editor) -> bool {
+    //     let line_start = if editor.line() == 0 {
+    //         self.prompt_coords.input_start_col()
+    //     } else {
+    //         0
+    //     };
 
-        let terminal_width = self.terminal_columns();
+    //     let terminal_width = self.terminal_columns();
 
-        let display_width = UnicodeWidthStr::width(editor.get_buffer()) + line_start as usize;
+    //     let display_width = UnicodeWidthStr::width(editor.get_buffer()) + line_start as usize;
 
-        display_width >= terminal_width as usize
-    }
+    //     display_width >= terminal_width as usize
+    // }
 
     /// Repositions the prompt offset position, if the buffer content would overflow the bottom of the screen.
     /// Checks for content that might overflow in the core buffer.
@@ -402,7 +395,7 @@ impl Painter {
             .queue(Clear(ClearType::UntilNewLine))?
             .queue(RestorePosition)?;
 
-        Ok(())
+        self.flush()
     }
 
     /// Writes `line` to the terminal with a following carriage return and newline
@@ -411,6 +404,7 @@ impl Painter {
             .queue(Print(line))?
             .queue(Print("\n"))?
             .queue(MoveToColumn(1))?;
+
         self.stdout.flush()
     }
 
