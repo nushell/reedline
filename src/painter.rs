@@ -8,7 +8,7 @@ use {
         Prompt,
     },
     crossterm::{
-        cursor::{self, position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
+        cursor::{self, MoveTo, MoveToColumn, RestorePosition, SavePosition},
         style::{Print, ResetColor, SetForegroundColor},
         terminal::{self, Clear, ClearType},
         QueueableCommand, Result,
@@ -262,13 +262,11 @@ impl Painter {
             self.prompt_coords.prompt_start.1,
         )?;
         self.queue_prompt(prompt, prompt_mode, use_ansi_coloring, lines)?;
-        self.flush()?;
-
         // set where the input begins
         // self.prompt_coords.input_start = position()?;
         // self.queue_buffer(lines)?;
         self.stdout.queue(cursor::Show)?;
-        // self.flush()?;
+        self.flush()?;
 
         Ok(())
     }

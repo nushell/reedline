@@ -985,20 +985,20 @@ impl Reedline {
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     /// Performs highlighting and hinting at the moment!
-    fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
-        let lines = self.prepare_buffer_content(prompt);
+    // fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+    //     let lines = self.prepare_buffer_content(prompt);
 
-        if lines.required_lines() > self.painter.remaining_lines() {
-            let prompt_mode = self.prompt_edit_mode();
-            self.painter
-                .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)?;
-        } else {
-            self.painter.queue_buffer(lines)?;
-            self.painter.flush()?;
-        }
+    //     if lines.required_lines() > self.painter.remaining_lines() {
+    //         let prompt_mode = self.prompt_edit_mode();
+    //         self.painter
+    //             .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)?;
+    //     } else {
+    //         self.painter.queue_buffer(lines)?;
+    //         self.painter.flush()?;
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     /// Triggers a full repaint including the prompt parts
     ///
