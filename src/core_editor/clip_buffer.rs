@@ -1,7 +1,7 @@
 /// Defines an interface to interact with a Clipboard for cut and paste.
 ///
 /// Mutable reference requirements are stricter than always necessary, but the currently used system clipboard API demands them for exclusive access.
-pub trait Clipboard {
+pub trait Clipboard: Send + Sync {
     fn set(&mut self, content: &str, mode: ClipboardMode);
 
     fn get(&mut self) -> (String, ClipboardMode);

@@ -6,7 +6,7 @@ use crate::{enums::ReedlineEvent, PromptEditMode};
 /// Available default options:
 /// - Emacs
 /// - Vi
-pub trait EditMode {
+pub trait EditMode: Send + Sync {
     /// Translate the given user input event into what the `LineEditor` understands
     fn parse_event(&mut self, event: Event) -> ReedlineEvent;
 

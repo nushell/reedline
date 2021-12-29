@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    rc::Rc,
+    sync::Arc,
     str::Chars,
 };
 
@@ -73,7 +73,7 @@ pub struct DefaultCompleter {
 
 impl Default for DefaultCompleter {
     fn default() -> Self {
-        let inclusions = Rc::new(BTreeSet::new());
+        let inclusions = Arc::new(BTreeSet::new());
         Self {
             root: CompletionNode::new(inclusions),
             min_word_len: 2,
@@ -225,7 +225,7 @@ impl DefaultCompleter {
     pub fn with_inclusions(incl: &[char]) -> Self {
         let mut set = BTreeSet::new();
         set.extend(incl.iter());
-        let inclusions = Rc::new(set);
+        let inclusions = Arc::new(set);
         Self {
             root: CompletionNode::new(inclusions),
             ..Self::default()
@@ -310,11 +310,11 @@ impl DefaultCompleter {
 struct CompletionNode {
     subnodes: BTreeMap<char, CompletionNode>,
     leaf: bool,
-    inclusions: Rc<BTreeSet<char>>,
+    inclusions: Arc<BTreeSet<char>>,
 }
 
 impl CompletionNode {
-    fn new(incl: Rc<BTreeSet<char>>) -> Self {
+    fn new(incl: Arc<BTreeSet<char>>) -> Self {
         Self {
             subnodes: BTreeMap::new(),
             leaf: false,

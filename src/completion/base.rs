@@ -31,13 +31,13 @@ impl Span {
 /// The handler for when the user begins a completion action, often using the tab key
 /// This handler will then present the options to the user, allowing them to navigate the options
 /// and pick the completion they want
-pub trait CompletionActionHandler {
+pub trait CompletionActionHandler: Send + Sync {
     /// Handle the completion action from the given line buffer
     fn handle(&mut self, line: &mut LineBuffer);
 }
 
 /// A trait that defines how to convert a line and position to a list of potential completions in that position.
-pub trait Completer {
+pub trait Completer: Send + Sync {
     /// the action that will take the line and position and convert it to a vector of completions, which include the
     /// span to replace and the contents of that replacement
     fn complete(&self, line: &str, pos: usize) -> Vec<(Span, String)>;
