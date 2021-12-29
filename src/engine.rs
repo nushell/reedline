@@ -308,8 +308,6 @@ impl Reedline {
     /// to distinguish I/O errors and the `Ok` variant wraps a [`Signal`] which
     /// handles user inputs.
     pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        terminal::enable_raw_mode()?;
-
         let result = self.read_line_helper(prompt);
 
         terminal::disable_raw_mode()?;
@@ -346,6 +344,7 @@ impl Reedline {
         let mut crossterm_events: Vec<Event> = vec![];
         let mut reedline_events: Vec<ReedlineEvent> = vec![];
 
+        terminal::enable_raw_mode()?;
         loop {
             if event::poll(Duration::from_millis(1000))? {
                 let mut latest_resize = None;
@@ -399,11 +398,13 @@ impl Reedline {
                 reedline_events.push(ReedlineEvent::Repaint);
             };
 
+            terminal::disable_raw_mode()?;
             for event in reedline_events.drain(..) {
                 if let Some(signal) = self.handle_event(prompt, event)? {
                     return Ok(signal);
                 }
             }
+            terminal::enable_raw_mode()?;
         }
     }
 
