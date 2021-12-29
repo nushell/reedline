@@ -1,3 +1,5 @@
+use std::str::Split;
+
 use crate::core_editor::Editor;
 
 use {
@@ -14,6 +16,8 @@ use {
     std::io::{Stdout, Write},
     unicode_width::UnicodeWidthStr,
 };
+
+const END_LINE: &str = if cfg!(windows) { "\r\n" } else { "n" };
 
 #[derive(Default)]
 struct PromptCoordinates {
@@ -61,6 +65,14 @@ impl PromptLines {
         let extra = after_cursor_lines.max(hint_lines);
 
         (before_cursor_lines + extra) as u16
+    }
+
+    fn before_cursor_lines(&self) -> Split<&str> {
+        self.before_cursor.split(END_LINE)
+    }
+
+    fn after_cursor_lines(&self) -> Split<&str> {
+        self.after_cursor.split(END_LINE)
     }
 }
 
@@ -137,15 +149,30 @@ impl Painter {
     ///
     /// Requires coordinates where the input buffer begins after the prompt.
     pub fn queue_buffer(&mut self, lines: PromptLines) -> Result<()> {
+        self.stdout.queue(MoveTo(
+            self.prompt_coords.input_start.0,
+            self.prompt_coords.input_start.1,
+        ))?;
+
+        for (idx, before_cursor_line) in lines.before_cursor_lines().enumerate() {
+            if idx != 0 {
+                self.stdout.queue(Clear(ClearType::UntilNewLine))?;
+                self.stdout.queue(Print("\r\n"))?;
+            }
+            self.stdout.queue(Print(before_cursor_line))?;
+        }
+
+        self.stdout.queue(SavePosition)?.queue(Print(&lines.hint))?;
+
+        for (idx, after_cursor_line) in lines.after_cursor_lines().enumerate() {
+            if idx != 0 {
+                self.stdout.queue(Clear(ClearType::UntilNewLine))?;
+                self.stdout.queue(Print("\r\n"))?;
+            }
+            self.stdout.queue(Print(after_cursor_line))?;
+        }
+
         self.stdout
-            .queue(MoveTo(
-                self.prompt_coords.input_start.0,
-                self.prompt_coords.input_start.1,
-            ))?
-            .queue(Print(lines.before_cursor))?
-            .queue(SavePosition)?
-            .queue(Print(lines.hint))?
-            .queue(Print(lines.after_cursor))?
             .queue(Clear(ClearType::FromCursorDown))?
             .queue(RestorePosition)?;
 
