@@ -69,15 +69,21 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::CONTROL, KC::Right, edit_bind(EC::MoveWordRight));
     kb.add_binding(KM::CONTROL, KC::Delete, edit_bind(EC::DeleteWord));
     kb.add_binding(KM::CONTROL, KC::Backspace, edit_bind(EC::BackspaceWord));
+    kb.add_binding(KM::CONTROL, KC::End, edit_bind(EC::MoveToEnd));
+    kb.add_binding(KM::CONTROL, KC::Home, edit_bind(EC::MoveToStart));
     kb.add_binding(KM::CONTROL, KC::Char('d'), ReedlineEvent::CtrlD);
     kb.add_binding(KM::CONTROL, KC::Char('c'), ReedlineEvent::CtrlC);
     kb.add_binding(KM::CONTROL, KC::Char('g'), edit_bind(EC::Redo));
     kb.add_binding(KM::CONTROL, KC::Char('z'), edit_bind(EC::Undo));
-    kb.add_binding(KM::CONTROL, KC::Char('a'), edit_bind(EC::MoveToStart));
-    kb.add_binding(KM::CONTROL, KC::Char('e'), edit_bind(EC::MoveToEnd));
+    kb.add_binding(KM::CONTROL, KC::Char('a'), edit_bind(EC::MoveToLineStart));
+    kb.add_binding(KM::CONTROL, KC::Char('e'), edit_bind(EC::MoveToLineEnd));
     kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::CutToEnd));
     kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
-    kb.add_binding(KM::CONTROL, KC::Char('y'), edit_bind(EC::PasteCutBuffer));
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('y'),
+        edit_bind(EC::PasteCutBufferBefore),
+    );
     kb.add_binding(KM::CONTROL, KC::Char('b'), edit_bind(EC::MoveLeft));
     kb.add_binding(KM::CONTROL, KC::Char('f'), edit_bind(EC::MoveRight));
     kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
@@ -97,10 +103,10 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::ALT, KC::Right, edit_bind(EC::MoveWordRight));
     kb.add_binding(KM::ALT, KC::Delete, edit_bind(EC::DeleteWord));
     kb.add_binding(KM::ALT, KC::Backspace, edit_bind(EC::BackspaceWord));
-    kb.add_binding(KM::NONE, KC::Up, ReedlineEvent::Up);
-    kb.add_binding(KM::NONE, KC::End, edit_bind(EC::MoveToEnd));
+    kb.add_binding(KM::NONE, KC::End, edit_bind(EC::MoveToLineEnd));
+    kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
     kb.add_binding(KM::NONE, KC::Tab, ReedlineEvent::HandleTab);
-    kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToStart));
+    kb.add_binding(KM::NONE, KC::Up, ReedlineEvent::Up);
     kb.add_binding(KM::NONE, KC::Down, ReedlineEvent::Down);
     kb.add_binding(KM::NONE, KC::Left, edit_bind(EC::MoveLeft));
     kb.add_binding(KM::NONE, KC::Right, edit_bind(EC::MoveRight));
@@ -127,6 +133,8 @@ pub fn default_vi_insert_keybindings() -> Keybindings {
     keybindings.add_binding(KM::NONE, KC::Right, edit_bind(EC::MoveRight));
     keybindings.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
     keybindings.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
+    keybindings.add_binding(KM::NONE, KC::End, edit_bind(EC::MoveToLineEnd));
+    keybindings.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
 
     keybindings
 }

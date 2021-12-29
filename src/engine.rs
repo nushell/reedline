@@ -796,6 +796,8 @@ impl Reedline {
             match command {
                 EditCommand::MoveToStart => self.editor.move_to_start(),
                 EditCommand::MoveToEnd => self.editor.move_to_end(),
+                EditCommand::MoveToLineStart => self.editor.move_to_line_start(),
+                EditCommand::MoveToLineEnd => self.editor.move_to_line_end(),
                 EditCommand::MoveLeft => self.editor.move_left(),
                 EditCommand::MoveRight => self.editor.move_right(),
                 EditCommand::MoveWordLeft => self.editor.move_word_left(),
@@ -829,11 +831,14 @@ impl Reedline {
                 EditCommand::BackspaceWord => self.editor.backspace_word(),
                 EditCommand::DeleteWord => self.editor.delete_word(),
                 EditCommand::Clear => self.editor.clear(),
+                EditCommand::ClearToLineEnd => self.editor.clear_to_line_end(),
+                EditCommand::CutCurrentLine => self.editor.cut_current_line(),
                 EditCommand::CutFromStart => self.editor.cut_from_start(),
                 EditCommand::CutToEnd => self.editor.cut_from_end(),
                 EditCommand::CutWordLeft => self.editor.cut_word_left(),
                 EditCommand::CutWordRight => self.editor.cut_word_right(),
-                EditCommand::PasteCutBuffer => self.editor.insert_cut_buffer(),
+                EditCommand::PasteCutBufferBefore => self.editor.insert_cut_buffer_before(),
+                EditCommand::PasteCutBufferAfter => self.editor.insert_cut_buffer_after(),
                 EditCommand::UppercaseWord => self.editor.uppercase_word(),
                 EditCommand::LowercaseWord => self.editor.lowercase_word(),
                 EditCommand::CapitalizeChar => self.editor.capitalize_char(),
@@ -849,6 +854,8 @@ impl Reedline {
                 EditCommand::CutLeftBefore(c) => self.editor.cut_left_until_char(*c, true),
                 EditCommand::MoveLeftUntil(c) => self.editor.move_left_until_char(*c, false),
                 EditCommand::MoveLeftBefore(c) => self.editor.move_left_until_char(*c, true),
+                EditCommand::CutFromLineStart => self.editor.cut_from_line_start(),
+                EditCommand::CutToLineEnd => self.editor.cut_to_line_end(),
             }
 
             match command.undo_behavior() {
