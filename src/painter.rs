@@ -15,7 +15,7 @@ use {
     unicode_width::UnicodeWidthStr,
 };
 
-const END_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+// const END_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
 
 #[derive(Default)]
 struct PromptCoordinates {
@@ -48,9 +48,14 @@ impl PromptLines {
     /// This vector with the str are used to calculate how many lines are
     /// required to print after the prompt
     pub fn new(before_cursor: String, after_cursor: String, hint: String) -> Self {
-        let before_cursor = before_cursor.split(END_LINE).collect::<String>();
-        let after_cursor = after_cursor.split(END_LINE).collect::<String>();
-        let hint = hint.split(END_LINE).collect::<String>();
+        // let before_cursor = before_cursor.split(END_LINE).collect::<String>();
+        // let after_cursor = after_cursor.split(END_LINE).collect::<String>();
+        // let hint = hint.split(END_LINE).collect::<String>();
+
+        // println!("{}", before_cursor);
+        // println!("{}", after_cursor);
+        // println!("{}", hint);
+
         Self {
             before_cursor,
             after_cursor,
