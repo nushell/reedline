@@ -903,13 +903,11 @@ impl Reedline {
     fn repaint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
         // Repainting
         if self.input_mode == InputMode::HistorySearch {
-            self.history_search_paint(prompt)?;
+            self.history_search_paint(prompt)
         } else {
             // self.buffer_paint(prompt)?;
-            self.full_repaint(prompt)?;
+            self.full_repaint(prompt)
         }
-
-        Ok(())
     }
 
     /// Repaint logic for the history reverse search
@@ -991,13 +989,10 @@ impl Reedline {
     //     if lines.required_lines() > self.painter.remaining_lines() {
     //         let prompt_mode = self.prompt_edit_mode();
     //         self.painter
-    //             .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)?;
+    //             .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)
     //     } else {
-    //         self.painter.queue_buffer(lines)?;
-    //         self.painter.flush()?;
+    //         self.painter.queue_buffer(lines)
     //     }
-
-    //     Ok(())
     // }
 
     /// Triggers a full repaint including the prompt parts
@@ -1008,9 +1003,7 @@ impl Reedline {
         let lines = self.prepare_buffer_content(prompt);
 
         self.painter
-            .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)?;
-
-        Ok(())
+            .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)
     }
 
     fn handle_wrap(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
