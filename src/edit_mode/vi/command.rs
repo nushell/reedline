@@ -14,7 +14,11 @@ where
         }
         Some('p') => {
             let _ = input.next();
-            Some(Command::Paste)
+            Some(Command::PasteAfter)
+        }
+        Some('P') => {
+            let _ = input.next();
+            Some(Command::PasteBefore)
         }
         Some('h') => {
             let _ = input.next();
@@ -50,11 +54,11 @@ where
         }
         Some('0') => {
             let _ = input.next();
-            Some(Command::MoveToStart)
+            Some(Command::MoveToLineStart)
         }
         Some('$') => {
             let _ = input.next();
-            Some(Command::MoveToEnd)
+            Some(Command::MoveToLineEnd)
         }
         Some('u') => {
             let _ = input.next();
@@ -113,15 +117,16 @@ pub enum Command {
     Incomplete,
     Delete,
     DeleteChar,
-    Paste,
+    PasteAfter,
+    PasteBefore,
     MoveLeft,
     MoveRight,
     MoveUp,
     MoveDown,
     MoveWordRight,
     MoveWordLeft,
-    MoveToStart,
-    MoveToEnd,
+    MoveToLineStart,
+    MoveToLineEnd,
     EnterViAppend,
     EnterViInsert,
     Undo,
@@ -141,15 +146,16 @@ impl Command {
             Self::MoveDown => vec![ReedlineOption::Event(ReedlineEvent::Down)],
             Self::MoveLeft => vec![ReedlineOption::Edit(EditCommand::MoveLeft)],
             Self::MoveRight => vec![ReedlineOption::Edit(EditCommand::MoveRight)],
-            Self::MoveToStart => vec![ReedlineOption::Edit(EditCommand::MoveToStart)],
-            Self::MoveToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToEnd)],
+            Self::MoveToLineStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
+            Self::MoveToLineEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
             Self::MoveWordLeft => vec![ReedlineOption::Edit(EditCommand::MoveWordLeft)],
             Self::MoveWordRight => vec![ReedlineOption::Edit(EditCommand::MoveWordRight)],
             Self::EnterViInsert => vec![ReedlineOption::Event(ReedlineEvent::Repaint)],
             Self::EnterViAppend => vec![ReedlineOption::Edit(EditCommand::MoveRight)],
-            Self::Paste => vec![ReedlineOption::Edit(EditCommand::PasteCutBuffer)],
+            Self::PasteAfter => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferAfter)],
+            Self::PasteBefore => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferBefore)],
             Self::Undo => vec![ReedlineOption::Edit(EditCommand::Undo)],
-            Self::DeleteToEnd => vec![ReedlineOption::Edit(EditCommand::CutToEnd)],
+            Self::DeleteToEnd => vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)],
             Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToEnd)],
             Self::MoveRightUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveRightUntil(*c))],
             Self::MoveRightBefore(c) => {
@@ -170,10 +176,7 @@ impl Command {
         let edits = match self {
             Self::Delete => match motion {
                 Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CutToEnd)]),
-                Motion::Line => Some(vec![
-                    ReedlineOption::Edit(EditCommand::MoveToStart),
-                    ReedlineOption::Edit(EditCommand::CutToEnd),
-                ]),
+                Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)]),
                 Motion::Word => Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)]),
                 Motion::RightUntil(c) => {
                     Some(vec![ReedlineOption::Edit(EditCommand::CutRightUntil(*c))])
@@ -191,12 +194,12 @@ impl Command {
             },
             Self::Change => match motion {
                 Motion::End => Some(vec![
-                    ReedlineOption::Edit(EditCommand::CutToEnd),
+                    ReedlineOption::Edit(EditCommand::ClearToLineEnd),
                     ReedlineOption::Event(ReedlineEvent::Repaint),
                 ]),
                 Motion::Line => Some(vec![
                     ReedlineOption::Edit(EditCommand::MoveToStart),
-                    ReedlineOption::Edit(EditCommand::CutToEnd),
+                    ReedlineOption::Edit(EditCommand::ClearToLineEnd),
                     ReedlineOption::Event(ReedlineEvent::Repaint),
                 ]),
                 Motion::Word => Some(vec![

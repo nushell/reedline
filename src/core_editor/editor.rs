@@ -1,6 +1,6 @@
 use crate::core_editor::get_default_clipboard;
 
-use super::{Clipboard, LineBuffer};
+use super::{Clipboard, ClipboardMode, LineBuffer};
 
 pub struct Editor {
     line_buffer: LineBuffer,
@@ -38,6 +38,14 @@ impl Editor {
 
     pub fn move_to_end(&mut self) {
         self.line_buffer.move_to_end();
+    }
+
+    pub fn move_to_line_start(&mut self) {
+        self.line_buffer.move_to_line_start();
+    }
+
+    pub fn move_to_line_end(&mut self) {
+        self.line_buffer.move_to_line_end();
     }
 
     pub fn move_left(&mut self) {
@@ -122,6 +130,10 @@ impl Editor {
 
     pub fn clear_to_end(&mut self) {
         self.line_buffer.clear_to_end();
+    }
+
+    pub fn clear_to_line_end(&mut self) {
+        self.line_buffer.clear_to_line_end();
     }
 
     pub fn clear_to_insertion_point(&mut self) {
@@ -222,20 +234,53 @@ impl Editor {
         self.index_undo = 2;
     }
 
+    pub fn cut_current_line(&mut self) {
+        let deletion_range = self.line_buffer.current_line_range();
+
+        let cut_slice = &self.line_buffer.get_buffer()[deletion_range.clone()];
+        if !cut_slice.is_empty() {
+            self.cut_buffer.set(cut_slice, ClipboardMode::Lines);
+            self.set_insertion_point(deletion_range.start);
+            self.clear_range(deletion_range);
+        }
+    }
+
     pub fn cut_from_start(&mut self) {
         let insertion_offset = self.line_buffer.offset();
         if insertion_offset > 0 {
-            self.cut_buffer
-                .set(&self.line_buffer.get_buffer()[..insertion_offset]);
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[..insertion_offset],
+                ClipboardMode::Normal,
+            );
             self.clear_to_insertion_point();
+        }
+    }
+
+    pub fn cut_from_line_start(&mut self) {
+        let previous_offset = self.line_buffer.offset();
+        self.line_buffer.move_to_line_start();
+        let deletion_range = self.line_buffer.offset()..previous_offset;
+        let cut_slice = &self.line_buffer.get_buffer()[deletion_range.clone()];
+        if !cut_slice.is_empty() {
+            self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
+            self.line_buffer.clear_range(deletion_range);
         }
     }
 
     pub fn cut_from_end(&mut self) {
         let cut_slice = &self.line_buffer.get_buffer()[self.line_buffer.offset()..];
         if !cut_slice.is_empty() {
-            self.cut_buffer.set(cut_slice);
+            self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
             self.clear_to_end();
+        }
+    }
+
+    pub fn cut_to_line_end(&mut self) {
+        let cut_slice = &self.line_buffer.get_buffer()
+            [self.line_buffer.offset()..self.line_buffer.find_current_line_end()];
+        if !cut_slice.is_empty() {
+            self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
+            self.clear_to_line_end();
         }
     }
 
@@ -244,8 +289,10 @@ impl Editor {
         let left_index = self.line_buffer.word_left_index();
         if left_index < insertion_offset {
             let cut_range = left_index..insertion_offset;
-            self.cut_buffer
-                .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[cut_range.clone()],
+                ClipboardMode::Normal,
+            );
             self.clear_range(cut_range);
             self.line_buffer.set_insertion_point(left_index);
         }
@@ -256,15 +303,49 @@ impl Editor {
         let right_index = self.line_buffer.word_right_index();
         if right_index > insertion_offset {
             let cut_range = insertion_offset..right_index;
-            self.cut_buffer
-                .set(&self.line_buffer.get_buffer()[cut_range.clone()]);
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[cut_range.clone()],
+                ClipboardMode::Normal,
+            );
             self.clear_range(cut_range);
         }
     }
 
-    pub fn insert_cut_buffer(&mut self) {
-        let cut_buffer = self.cut_buffer.get();
-        self.line_buffer.insert_str(&cut_buffer);
+    pub fn insert_cut_buffer_before(&mut self) {
+        match self.cut_buffer.get() {
+            (content, ClipboardMode::Normal) => {
+                self.line_buffer.insert_str(&content);
+            }
+            (mut content, ClipboardMode::Lines) => {
+                // TODO: Simplify that?
+                self.line_buffer.move_to_line_start();
+                self.line_buffer.move_line_up();
+                if !content.ends_with('\n') {
+                    // TODO: Make sure platform requirements are met
+                    content.push('\n');
+                }
+                self.line_buffer.insert_str(&content);
+            }
+        }
+    }
+
+    pub fn insert_cut_buffer_after(&mut self) {
+        match self.cut_buffer.get() {
+            (content, ClipboardMode::Normal) => {
+                self.line_buffer.move_right();
+                self.line_buffer.insert_str(&content);
+            }
+            (mut content, ClipboardMode::Lines) => {
+                // TODO: Simplify that?
+                self.line_buffer.move_to_line_start();
+                self.line_buffer.move_line_down();
+                if !content.ends_with('\n') {
+                    // TODO: Make sure platform requirements are met
+                    content.push('\n');
+                }
+                self.line_buffer.insert_str(&content);
+            }
+        }
     }
 
     pub fn move_right_until_char(&mut self, c: char, before_char: bool) {
@@ -292,7 +373,7 @@ impl Editor {
                 &self.line_buffer.get_buffer()[self.line_buffer.offset()..index + extra];
 
             if !cut_slice.is_empty() {
-                self.cut_buffer.set(cut_slice);
+                self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
 
                 if before_char {
                     self.line_buffer.delete_right_before_char(c);
@@ -312,7 +393,7 @@ impl Editor {
                 &self.line_buffer.get_buffer()[index + extra..self.line_buffer.offset()];
 
             if !cut_slice.is_empty() {
-                self.cut_buffer.set(cut_slice);
+                self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
 
                 if before_char {
                     self.line_buffer.delete_left_before_char(c);

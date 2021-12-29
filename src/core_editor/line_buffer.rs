@@ -120,9 +120,43 @@ impl LineBuffer {
         self.insertion_point = InsertionPoint::new();
     }
 
+    /// Move the cursor before the first character of the line
+    pub fn move_to_line_start(&mut self) {
+        self.insertion_point.offset = self.lines[..self.insertion_point.offset]
+            .rfind('\n')
+            .map_or(0, |offset| offset + 1);
+        // str is guaranteed to be utf8, thus \n is safe to assume 1 byte long
+    }
+
     /// Set the insertion point *behind* the last character.
     pub fn move_to_end(&mut self) {
         self.insertion_point.offset = self.lines.len();
+    }
+
+    /// Returns where the current line terminates
+    ///
+    /// Either:
+    /// - end of buffer (`len()`)
+    /// - `\n` or `\r\n` (on the first byte)
+    pub fn find_current_line_end(&self) -> usize {
+        self.lines[self.insertion_point.offset..]
+            .find('\n')
+            .map_or(self.lines.len(), |i| {
+                let absolute_index = i + self.insertion_point.offset;
+                if self.lines.as_bytes()[absolute_index] == b'\r' {
+                    absolute_index - 1
+                } else {
+                    absolute_index
+                }
+            })
+    }
+
+    /// Move cursor position to the end of the line
+    ///
+    /// Insertion will append to the line.
+    /// Cursor on top of the potential `\n` or `\r` of `\r\n`
+    pub fn move_to_line_end(&mut self) {
+        self.insertion_point.offset = self.find_current_line_end();
     }
 
     /// Cursor position *behind* the next unicode grapheme to the right
@@ -212,6 +246,12 @@ impl LineBuffer {
         self.lines.truncate(self.insertion_point.offset);
     }
 
+    /// Clear everything beginning at the cursor up to the end of the line.
+    /// Newline character at the end remains.
+    pub fn clear_to_line_end(&mut self) {
+        self.clear_range(self.insertion_point.offset..self.find_current_line_end());
+    }
+
     /// Clear from the start of the line to the cursor.
     /// Keeps the cursor at the beginning of the line.
     pub fn clear_to_insertion_point(&mut self) {
@@ -221,8 +261,8 @@ impl LineBuffer {
 
     /// Clear text covered by `range` in the current line
     ///
-    /// TODO: Check unicode validation
-    pub fn clear_range<R>(&mut self, range: R)
+    /// Safety: Does not change the insertion point/offset and is thus not unicode safe!
+    pub(crate) fn clear_range<R>(&mut self, range: R)
     where
         R: std::ops::RangeBounds<usize>,
     {
@@ -231,8 +271,8 @@ impl LineBuffer {
 
     /// Substitute text covered by `range` in the current line
     ///
-    /// TODO: Check unicode validation
-    pub fn replace_range<R>(&mut self, range: R, replace_with: &str)
+    /// Safety: Does not change the insertion point/offset and is thus not unicode safe!
+    pub(crate) fn replace_range<R>(&mut self, range: R, replace_with: &str)
     where
         R: std::ops::RangeBounds<usize>,
     {
@@ -249,7 +289,7 @@ impl LineBuffer {
     }
 
     /// Gets the range of the word the current edit position is pointing to
-    pub fn current_word_range(&mut self) -> Range<usize> {
+    pub fn current_word_range(&self) -> Range<usize> {
         let right_index = self.word_right_index();
         let left_index = self.lines[..right_index]
             .split_word_bound_indices()
@@ -257,6 +297,22 @@ impl LineBuffer {
             .last()
             .map(|(i, _)| i)
             .unwrap_or(0);
+
+        left_index..right_index
+    }
+
+    /// Range over the current line
+    ///
+    /// Starts on the first non-newline character and is an exclusive range
+    /// extending beyond the potential carriage return and line feed characters
+    /// terminating the line
+    pub fn current_line_range(&self) -> Range<usize> {
+        let left_index = self.lines[..self.insertion_point.offset]
+            .rfind('\n')
+            .map_or(0, |offset| offset + 1);
+        let right_index = self.lines[self.insertion_point.offset..]
+            .find('\n')
+            .map_or(self.lines.len(), |i| i + self.insertion_point.offset + 1);
 
         left_index..right_index
     }
@@ -375,73 +431,77 @@ impl LineBuffer {
 
     /// Moves one line up
     pub fn move_line_up(&mut self) {
-        // If we're not at the top, move up a line in the multiline buffer
-        let mut position = self.offset();
-        let mut num_of_move_lefts = 0;
-        let buffer = self.get_buffer().to_string();
+        if !self.is_cursor_at_first_line() {
+            // If we're not at the top, move up a line in the multiline buffer
+            let mut position = self.offset();
+            let mut num_of_move_lefts = 0;
+            let buffer = self.get_buffer().to_string();
 
-        // Move left until we're looking at the newline
-        // Observe what column we were on
-        while position > 0 && &buffer[(position - 1)..position] != "\n" {
-            self.move_left();
-            num_of_move_lefts += 1;
-            position = self.offset();
-        }
+            // Move left until we're looking at the newline
+            // Observe what column we were on
+            while position > 0 && &buffer[(position - 1)..position] != "\n" {
+                self.move_left();
+                num_of_move_lefts += 1;
+                position = self.offset();
+            }
 
-        // Find start of previous line
-        let mut matches = buffer[0..(position - 1)].rmatch_indices('\n');
+            // Find start of previous line
+            let mut matches = buffer[0..(position - 1)].rmatch_indices('\n');
 
-        if let Some((pos, _)) = matches.next() {
-            position = pos + 1;
-        } else {
-            position = 0;
-        }
-        self.set_insertion_point(position);
+            if let Some((pos, _)) = matches.next() {
+                position = pos + 1;
+            } else {
+                position = 0;
+            }
+            self.set_insertion_point(position);
 
-        // Move right from this position to the column we were at
-        while &buffer[position..=position] != "\n" && num_of_move_lefts > 0 {
-            self.move_right();
-            position = self.offset();
-            num_of_move_lefts -= 1;
+            // Move right from this position to the column we were at
+            while &buffer[position..=position] != "\n" && num_of_move_lefts > 0 {
+                self.move_right();
+                position = self.offset();
+                num_of_move_lefts -= 1;
+            }
         }
     }
 
     /// Moves one line down
     pub fn move_line_down(&mut self) {
-        // If we're not at the top, move up a line in the multiline buffer
-        let mut position = self.offset();
-        let mut num_of_move_lefts = 0;
-        let buffer = self.get_buffer().to_string();
+        if !self.is_cursor_at_last_line() {
+            // If we're not at the top, move up a line in the multiline buffer
+            let mut position = self.offset();
+            let mut num_of_move_lefts = 0;
+            let buffer = self.get_buffer().to_string();
 
-        // Move left until we're looking at the newline
-        // Observe what column we were on
-        while position > 0 && &buffer[(position - 1)..position] != "\n" {
-            self.move_left();
-            num_of_move_lefts += 1;
-            position = self.offset();
-        }
+            // Move left until we're looking at the newline
+            // Observe what column we were on
+            while position > 0 && &buffer[(position - 1)..position] != "\n" {
+                self.move_left();
+                num_of_move_lefts += 1;
+                position = self.offset();
+            }
 
-        // Find start of next line
-        let mut matches = buffer[position..].match_indices('\n');
+            // Find start of next line
+            let mut matches = buffer[position..].match_indices('\n');
 
-        // Assume this always succeeds
+            // Assume this always succeeds
 
-        let (pos, _) = matches
-            .next()
-            .expect("internal error: should have found newline");
+            let (pos, _) = matches
+                .next()
+                .expect("internal error: should have found newline");
 
-        position += pos + 1;
+            position += pos + 1;
 
-        self.set_insertion_point(position);
+            self.set_insertion_point(position);
 
-        // Move right from this position to the column we were at
-        while position < buffer.len()
-            && &buffer[position..=position] != "\n"
-            && num_of_move_lefts > 0
-        {
-            self.move_right();
-            position = self.offset();
-            num_of_move_lefts -= 1;
+            // Move right from this position to the column we were at
+            while position < buffer.len()
+                && &buffer[position..=position] != "\n"
+                && num_of_move_lefts > 0
+            {
+                self.move_right();
+                position = self.offset();
+                num_of_move_lefts -= 1;
+            }
         }
     }
 
@@ -793,6 +853,7 @@ mod test {
 
     #[rstest]
     #[case("line 1\nline 2", 7, "line 1\nline 2", 0)]
+    #[case("line 1\nline 2", 0, "line 1\nline 2", 0)]
     fn moving_up_works(
         #[case] input: &str,
         #[case] in_location: usize,
@@ -812,6 +873,7 @@ mod test {
 
     #[rstest]
     #[case("line 1\nline 2", 0, "line 1\nline 2", 7)]
+    #[case("line 1\nline 2", 7, "line 1\nline 2", 7)]
     fn moving_down_works(
         #[case] input: &str,
         #[case] in_location: usize,
@@ -845,6 +907,8 @@ mod test {
     }
 
     #[rstest]
+    #[case("line", 4, true)]
+    #[case("line\nline", 9, true)]
     #[case("line 1\nline 2\nline 3", 8, false)]
     #[case("line 1\nline 2\nline 3", 13, false)]
     #[case("line 1\nline 2\nline 3", 14, true)]
