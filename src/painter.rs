@@ -53,25 +53,13 @@ impl<'prompt> PromptLines<'prompt> {
         }
     }
 
-    fn before_cursor_lines(&self) -> u16 {
-        self.before_cursor.lines().count() as u16
-    }
+    fn required_lines(&self, prompt_str: &str, prompt_indicator: &str) -> u16 {
+        let string = format!(
+            "{}{}{}{}{}",
+            prompt_str, prompt_indicator, self.before_cursor, self.hint, self.after_cursor
+        );
 
-    fn after_cursor_lines(&self) -> u16 {
-        self.after_cursor.lines().count() as u16
-    }
-
-    fn hint_lines(&self) -> u16 {
-        self.hint.lines().count() as u16
-    }
-
-    fn required_lines(&self) -> u16 {
-        let before_cursor_lines = self.before_cursor_lines();
-        let after_cursor_lines = self.after_cursor_lines();
-        let hint_lines = self.hint_lines();
-        let delta = after_cursor_lines.max(hint_lines);
-
-        (before_cursor_lines + delta) as u16
+        (string.lines().count()) as u16
     }
 }
 
@@ -93,18 +81,12 @@ impl Painter {
         }
     }
 
-    /// Calculates the how many lines are required to print all the prompt
-    /// lines including the hint
-    /// It also calculates the distance from the prompt which can be used
-    /// as another parameter to scroll the prompt
-    pub fn required_lines_and_distance(&self, lines: &PromptLines) -> Result<(u16, u16)> {
-        let required_lines = lines.required_lines();
-
+    /// Calculates the distance from the prompt
+    pub fn distance_from_prompt(&self) -> Result<u16> {
         let (_, cursor_row) = cursor::position()?;
-        let distance_from_prompt = cursor_row - self.prompt_coords.prompt_start.1;
-        let required_lines = required_lines.saturating_sub(distance_from_prompt);
+        let distance_from_prompt = cursor_row.saturating_sub(self.prompt_coords.prompt_start.1);
 
-        Ok((required_lines, distance_from_prompt))
+        Ok(distance_from_prompt)
     }
 
     /// Update the terminal size information by polling the system
@@ -175,10 +157,31 @@ impl Painter {
         use_ansi_coloring: bool,
     ) -> Result<()> {
         self.stdout.queue(cursor::Hide)?;
-        let (required_lines, distance) = self.required_lines_and_distance(&lines)?;
+
+        // String representation of the prompt
+        let (screen_width, _) = self.terminal_size;
+        let prompt_str = prompt.render_prompt(screen_width as usize);
+
+        // The prompt indicator could be normal one or the history indicator
+        let prompt_indicator = match history_indicator {
+            Some(prompt_search) => prompt.render_prompt_history_search_indicator(prompt_search),
+            None => prompt.render_prompt_indicator(prompt_mode),
+        };
+
+        // Lines and distance parameters
+        let required_lines = lines.required_lines(&prompt_str, &prompt_indicator);
         let remaining_lines = self.remaining_lines();
 
-        if required_lines > remaining_lines {
+        // Cursor distance from prompt
+        let cursor_distance = self.distance_from_prompt()?;
+
+        // Delta indicates how many row are required based on the distance
+        // from the prompt. The closer the cursor to the prompt (smaller distance)
+        // the larger the delta and the real required extra lines
+        //
+        // TODO. Case when delta is larger than terminal size
+        let delta = required_lines.saturating_sub(cursor_distance);
+        if delta >= remaining_lines {
             // Checked sub in case there is overflow
             let sub = self
                 .prompt_coords
@@ -187,10 +190,15 @@ impl Painter {
                 .checked_sub(required_lines);
 
             if let Some(sub) = sub {
-                self.stdout.queue(ScrollUp(required_lines))?;
+                self.stdout.queue(ScrollUp(delta))?;
                 self.prompt_coords.prompt_start.1 = sub;
             }
-        } else if (remaining_lines - distance) == 1 {
+        }
+
+        // If the required lined lines is larger than the cursor distance
+        // then it means that the cursor is at the bottom of the screen and
+        // we need to scroll one row up
+        if required_lines > cursor_distance && (remaining_lines - cursor_distance) <= 1 {
             self.stdout.queue(ScrollUp(1))?;
             self.prompt_coords.prompt_start.1 = self.prompt_coords.prompt_start.1.saturating_sub(1);
         };
@@ -208,15 +216,6 @@ impl Painter {
                 .queue(SetForegroundColor(prompt.get_prompt_color()))?;
         }
 
-        let (screen_width, _) = self.terminal_size;
-        let prompt_str = prompt.render_prompt(screen_width as usize);
-
-        // The prompt indicator could be normal one or the history indicator
-        let prompt_indicator = match history_indicator {
-            Some(prompt_search) => prompt.render_prompt_history_search_indicator(prompt_search),
-            None => prompt.render_prompt_indicator(prompt_mode),
-        };
-
         self.stdout
             .queue(MoveToColumn(0))?
             .queue(Clear(ClearType::FromCursorDown))?
@@ -231,9 +230,7 @@ impl Painter {
 
         // The last_required_lines is used to move the cursor at the end where stdout
         // can print without overwriting the things written during the paining
-        self.last_required_lines = lines.required_lines()
-            + prompt_str.lines().count() as u16
-            + prompt_indicator.lines().count() as u16;
+        self.last_required_lines = required_lines + 3;
 
         self.flush()
     }
