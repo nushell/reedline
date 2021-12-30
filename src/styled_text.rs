@@ -2,7 +2,8 @@ use nu_ansi_term::{Color, Style};
 
 /// A representation of a buffer with styling, used for doing syntax highlighting
 pub struct StyledText {
-    buffer: Vec<(Style, String)>,
+    /// The component, styled parts of the text
+    pub buffer: Vec<(Style, String)>,
 }
 
 impl Default for StyledText {

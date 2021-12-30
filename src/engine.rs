@@ -972,3 +972,9 @@ impl Reedline {
         )
     }
 }
+
+#[test]
+fn thread_safe() {
+    fn f<S: Send>(_: S) {}
+    f(Reedline::create().unwrap());
+}
