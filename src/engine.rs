@@ -519,7 +519,7 @@ impl Reedline {
                 let current_hint = self.hinter.current_hint();
                 if !current_hint.is_empty() && self.input_mode == InputMode::Regular {
                     self.editor.clear_to_end();
-                    self.run_edit_commands(&[EditCommand::InsertString(current_hint)], prompt)?;
+                    self.run_edit_commands(&[EditCommand::InsertString(current_hint)])?;
                 } else {
                     self.tab_handler.handle(line_buffer);
                 }
@@ -532,12 +532,12 @@ impl Reedline {
                     self.editor.reset_undo_stack();
                     Ok(Some(Signal::CtrlD))
                 } else {
-                    self.run_edit_commands(&[EditCommand::Delete], prompt)?;
+                    self.run_edit_commands(&[EditCommand::Delete])?;
                     Ok(None)
                 }
             }
             ReedlineEvent::CtrlC => {
-                self.run_edit_commands(&[EditCommand::Clear], prompt)?;
+                self.run_edit_commands(&[EditCommand::Clear])?;
                 self.editor.reset_undo_stack();
                 Ok(Some(Signal::CtrlC))
             }
@@ -546,7 +546,7 @@ impl Reedline {
                 let buffer = self.editor.get_buffer().to_string();
                 if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
                     self.append_to_history();
-                    self.run_edit_commands(&[EditCommand::Clear], prompt)?;
+                    self.run_edit_commands(&[EditCommand::Clear])?;
                     self.painter.print_crlf()?;
                     self.editor.reset_undo_stack();
 
@@ -554,9 +554,9 @@ impl Reedline {
                 } else {
                     #[cfg(windows)]
                     {
-                        self.run_edit_commands(&[EditCommand::InsertChar('\r')], prompt)?;
+                        self.run_edit_commands(&[EditCommand::InsertChar('\r')])?;
                     }
-                    self.run_edit_commands(&[EditCommand::InsertChar('\n')], prompt)?;
+                    self.run_edit_commands(&[EditCommand::InsertChar('\n')])?;
                     self.painter.adjust_prompt_position(&self.editor)?;
                     self.full_repaint(prompt)?;
 
@@ -564,7 +564,7 @@ impl Reedline {
                 }
             }
             ReedlineEvent::Edit(commands) => {
-                self.run_edit_commands(&commands, prompt)?;
+                self.run_edit_commands(&commands)?;
                 self.repaint(prompt)?;
                 Ok(None)
             }
@@ -625,7 +625,7 @@ impl Reedline {
                             match command {
                                 EditCommand::InsertChar(c) => self.editor.insert_char(c),
                                 x => {
-                                    self.run_edit_commands(&[x], prompt)?;
+                                    self.run_edit_commands(&[x])?;
                                 }
                             }
                         }
@@ -776,11 +776,7 @@ impl Reedline {
     }
 
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
-    fn run_edit_commands(
-        &mut self,
-        commands: &[EditCommand],
-        prompt: &dyn Prompt,
-    ) -> io::Result<()> {
+    fn run_edit_commands(&mut self, commands: &[EditCommand]) -> io::Result<()> {
         if self.input_mode == InputMode::HistoryTraversal {
             if matches!(
                 self.history.get_navigation(),
@@ -808,25 +804,11 @@ impl Reedline {
                 // we would like to do multiple inserts.
                 // A simple solution that we can do is to queue up these and perform the wrapping
                 // check after the loop finishes. Will need to sort out the details.
-                EditCommand::InsertChar(c) => {
-                    self.editor.insert_char(*c);
-
-                    // if self.painter.require_wrapping(&self.editor) {
-                    //     self.handle_wrap(prompt)?;
-                    // }
-
-                    self.repaint(prompt)?;
-                }
+                EditCommand::InsertChar(c) => self.editor.insert_char(*c),
                 EditCommand::InsertString(s) => {
                     for c in s.chars() {
                         self.editor.insert_char(c);
                     }
-
-                    // if self.painter.require_wrapping(&self.editor) {
-                    //     self.handle_wrap(prompt)?;
-                    // }
-
-                    self.repaint(prompt)?;
                 }
                 EditCommand::Backspace => self.editor.backspace(),
                 EditCommand::Delete => self.editor.delete(),
@@ -905,7 +887,6 @@ impl Reedline {
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)
         } else {
-            // self.buffer_paint(prompt)
             self.full_repaint(prompt)
         }
     }
@@ -975,24 +956,12 @@ impl Reedline {
             String::new()
         };
 
+        let before_cursor = before_cursor.replace("\n", "\r\n");
+        let after_cursor = after_cursor.replace("\n", "\r\n");
+        let hint = hint.replace("\n", "\r\n");
+
         PromptLines::new(before_cursor, after_cursor, hint)
     }
-
-    /// Repaint logic for the normal input prompt buffer
-    ///
-    /// Requires coordinates where the input buffer begins after the prompt.
-    /// Performs highlighting and hinting at the moment!
-    // fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
-    //     let lines = self.prepare_buffer_content(prompt);
-
-    //     if lines.required_lines()? > self.painter.remaining_lines() {
-    //         let prompt_mode = self.prompt_edit_mode();
-    //         self.painter
-    //             .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)
-    //     } else {
-    //         self.painter.queue_buffer(lines)
-    //     }
-    // }
 
     /// Triggers a full repaint including the prompt parts
     ///
@@ -1004,10 +973,4 @@ impl Reedline {
         self.painter
             .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)
     }
-
-    // fn handle_wrap(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
-    //     let lines = self.prepare_buffer_content(prompt);
-
-    //     self.painter.wrap(lines)
-    // }
 }

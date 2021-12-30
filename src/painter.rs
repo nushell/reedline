@@ -91,9 +91,7 @@ impl Painter {
         let hint_lines = lines.hint_lines();
         let delta = after_cursor_lines.max(hint_lines);
 
-        // The minus 1 is because the delta is sharing a line with the before
-        // cursor lines
-        let required_lines = (before_cursor_lines + delta - 1) as u16;
+        let required_lines = (before_cursor_lines + delta) as u16;
         let required_lines = required_lines;
 
         let (_, cursor_row) = cursor::position()?;
@@ -193,12 +191,12 @@ impl Painter {
             self.prompt_coords.prompt_start.1 = self.prompt_coords.prompt_start.1.saturating_sub(1);
         };
 
+        // Moving the cursor to the start of the prompt
+        // from this position everything will be printed
         self.queue_move_to(
             self.prompt_coords.prompt_start.0,
             self.prompt_coords.prompt_start.1,
         )?;
-
-        let (screen_width, _) = self.terminal_size;
 
         // print our prompt with color
         if use_ansi_coloring {
@@ -206,21 +204,21 @@ impl Painter {
                 .queue(SetForegroundColor(prompt.get_prompt_color()))?;
         }
 
+        let (screen_width, _) = self.terminal_size;
+
         self.stdout
             .queue(MoveToColumn(0))?
             .queue(Clear(ClearType::FromCursorDown))?
             .queue(Print(prompt.render_prompt(screen_width as usize)))?
-            .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?
+            .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?;
+
+        self.stdout
             .queue(Print(&lines.before_cursor))?
             .queue(SavePosition)?
             .queue(Print(&lines.hint))?
             .queue(Print(&lines.after_cursor))?
-            .queue(RestorePosition)?;
-
-        if use_ansi_coloring {
-            self.stdout.queue(ResetColor)?;
-        }
-        self.stdout.queue(cursor::Show)?;
+            .queue(RestorePosition)?
+            .queue(cursor::Show)?;
 
         self.flush()
     }
@@ -253,54 +251,6 @@ impl Painter {
             );
         }
     }
-
-    /// TODO! FIX the naming and provide an accurate doccomment
-    /// This function repaints and updates offsets but does not purely concern it self with wrapping
-    // pub(crate) fn wrap(&mut self, lines: PromptLines) -> Result<()> {
-    //     let (original_column, original_row) = cursor::position()?;
-
-    //     self.queue_buffer(lines)?;
-
-    //     let (new_column, _new_row) = cursor::position()?;
-
-    //     if new_column < original_column && original_row + 1 == self.terminal_rows() {
-    //         // We have wrapped off bottom of screen, and prompt is on new row
-    //         // We need to update the prompt location in this case
-    //         let (input_start_col, input_start_row) = self.prompt_coords.input_start;
-    //         let (prompt_start_col, prompt_start_row) = self.prompt_coords.prompt_start;
-
-    //         if input_start_row >= 1 {
-    //             self.prompt_coords
-    //                 .set_input_start(input_start_col, input_start_row - 1);
-    //         } else {
-    //             self.prompt_coords.set_input_start(0, 0);
-    //         }
-
-    //         if prompt_start_row >= 1 {
-    //             self.prompt_coords
-    //                 .set_prompt_start(prompt_start_col, prompt_start_row - 1);
-    //         } else {
-    //             self.prompt_coords.set_prompt_start(0, 0);
-    //         }
-    //     }
-
-    //     Ok(())
-    // }
-
-    /// Heuristic to determine if we need to wrap text around.
-    // pub(crate) fn require_wrapping(&self, editor: &Editor) -> bool {
-    //     let line_start = if editor.line() == 0 {
-    //         self.prompt_coords.input_start_col()
-    //     } else {
-    //         0
-    //     };
-
-    //     let terminal_width = self.terminal_columns();
-
-    //     let display_width = UnicodeWidthStr::width(editor.get_buffer()) + line_start as usize;
-
-    //     display_width >= terminal_width as usize
-    // }
 
     /// Repositions the prompt offset position, if the buffer content would overflow the bottom of the screen.
     /// Checks for content that might overflow in the core buffer.
