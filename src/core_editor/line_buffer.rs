@@ -91,12 +91,7 @@ impl LineBuffer {
     /// Calculates the current the user is on
     pub fn line(&self) -> usize {
         let offset = self.insertion_point.offset;
-        let count = self.lines[0..offset].lines().count();
-        if count == 0 {
-            0
-        } else {
-            count - 1
-        }
+        self.lines[..offset].matches('\n').count()
     }
 
     /// Counts the number of lines in the buffer
@@ -143,7 +138,7 @@ impl LineBuffer {
             .find('\n')
             .map_or(self.lines.len(), |i| {
                 let absolute_index = i + self.insertion_point.offset;
-                if self.lines.as_bytes()[absolute_index] == b'\r' {
+                if absolute_index > 0 && self.lines.as_bytes()[absolute_index - 1] == b'\r' {
                     absolute_index - 1
                 } else {
                     absolute_index
@@ -854,6 +849,8 @@ mod test {
     #[rstest]
     #[case("line 1\nline 2", 7, "line 1\nline 2", 0)]
     #[case("line 1\nline 2", 0, "line 1\nline 2", 0)]
+    #[case("line\nlong line", 14, "line\nlong line", 4)]
+    #[case("line\nlong line", 8, "line\nlong line", 3)]
     fn moving_up_works(
         #[case] input: &str,
         #[case] in_location: usize,
@@ -874,6 +871,9 @@ mod test {
     #[rstest]
     #[case("line 1\nline 2", 0, "line 1\nline 2", 7)]
     #[case("line 1\nline 2", 7, "line 1\nline 2", 7)]
+    #[case("long line\nline", 8, "long line\nline", 14)]
+    #[case("long line\nline", 4, "long line\nline", 14)]
+    #[case("long line\nline", 3, "long line\nline", 13)]
     fn moving_down_works(
         #[case] input: &str,
         #[case] in_location: usize,
@@ -1018,5 +1018,62 @@ mod test {
         line_buffer.delete_left_before_char(c);
 
         assert_eq!(line_buffer.lines, expected);
+    }
+
+    #[rstest]
+    #[case("line", 0, 4)]
+    #[case("line\nline", 1, 4)]
+    #[case("line\nline", 7, 9)]
+    // TODO: Check if this behavior is desired for full vi consistency
+    #[case("line\n", 4, 4)]
+    #[case("line\n", 5, 5)]
+    // Platform agnostic
+    #[case("\n", 0, 0)]
+    #[case("\r\n", 0, 0)]
+    #[case("line\r\nword", 1, 4)]
+    #[case("line\r\nword", 7, 10)]
+    fn test_find_current_line_end(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        assert_eq!(line_buffer.find_current_line_end(), expected);
+    }
+
+    #[rstest]
+    #[case("", 0, 0)]
+    #[case("\n", 0, 0)]
+    #[case("\n", 1, 1)]
+    #[case("a\nb", 0, 0)]
+    #[case("a\nb", 1, 0)]
+    #[case("a\nb", 2, 1)]
+    #[case("a\nbc", 3, 1)]
+    #[case("a\r\nb", 3, 1)]
+    #[case("a\r\nbc", 4, 1)]
+    fn test_current_line_num(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        assert_eq!(line_buffer.line(), expected);
+    }
+
+    #[rstest]
+    #[case("", 0, 1)]
+    #[case("line", 0, 1)]
+    #[case("\n", 0, 2)]
+    #[case("line\n", 0, 2)]
+    #[case("a\nb", 0, 2)]
+    fn test_num_lines(#[case] input: &str, #[case] in_location: usize, #[case] expected: usize) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        assert_eq!(line_buffer.num_lines(), expected);
     }
 }
