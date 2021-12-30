@@ -190,15 +190,14 @@ impl Painter {
                 .checked_sub(required_lines);
 
             if let Some(sub) = sub {
+                let prompt_size = prompt_str.lines().count() as u16;
                 self.stdout.queue(ScrollUp(delta))?;
-                self.prompt_coords.prompt_start.1 = sub;
+                self.prompt_coords.prompt_start.1 = sub + prompt_size;
             }
-        }
-
-        // If the required lined lines is larger than the cursor distance
-        // then it means that the cursor is at the bottom of the screen and
-        // we need to scroll one row up
-        if required_lines > cursor_distance && (remaining_lines - cursor_distance) <= 1 {
+        } else if required_lines > cursor_distance && (remaining_lines - cursor_distance) <= 1 {
+            // If the required lines is larger than the cursor distance
+            // then it means that the cursor is at the bottom of the screen and
+            // we need to scroll one row up
             self.stdout.queue(ScrollUp(1))?;
             self.prompt_coords.prompt_start.1 = self.prompt_coords.prompt_start.1.saturating_sub(1);
         };
@@ -230,6 +229,7 @@ impl Painter {
 
         // The last_required_lines is used to move the cursor at the end where stdout
         // can print without overwriting the things written during the paining
+        // The number 3 is to give enough space after the buffer lines
         self.last_required_lines = required_lines + 3;
 
         self.flush()
