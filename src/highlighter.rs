@@ -8,7 +8,7 @@ pub static DEFAULT_BUFFER_NOTMATCH_COLOR: Color = Color::Red;
 
 /// The syntax highlighting trait. Implementers of this trait will take in the current string and then
 /// return a `StyledText` object, which represents the contents of the original line as styled strings
-pub trait Highlighter: Send + Sync {
+pub trait Highlighter: Send {
     /// The action that will handle the current buffer as a line and return the corresponding `StyledText` for the buffer
     fn highlight(&self, line: &str) -> StyledText;
 }

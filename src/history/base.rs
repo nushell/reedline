@@ -16,7 +16,7 @@ pub enum HistoryNavigationQuery {
 }
 
 /// Interface of a history datastructure that supports stateful navigation via [`HistoryNavigationQuery`].
-pub trait History: Send + Sync {
+pub trait History: Send {
     /// Append entry to the history, if capacity management is part of the implementation may perform that as well
     fn append(&mut self, entry: &str);
 

@@ -72,7 +72,7 @@ pub enum PromptViMode {
 ///
 /// Implementors have to provide [`str`]-based content which will be
 /// displayed before the `LineBuffer` is drawn.
-pub trait Prompt: Send + Sync {
+pub trait Prompt: Send {
     /// Provide content off the full prompt. May use a line above the entry buffer that fits into `screen_width`.
     fn render_prompt(&self, screen_width: usize) -> Cow<str>;
     /// Render the default prompt indicator
