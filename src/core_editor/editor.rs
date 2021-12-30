@@ -151,9 +151,9 @@ impl Editor {
         self.line_buffer.offset()
     }
 
-    pub fn line(&self) -> usize {
-        self.line_buffer.line()
-    }
+    // pub fn line(&self) -> usize {
+    //     self.line_buffer.line()
+    // }
 
     pub fn num_lines(&self) -> usize {
         self.line_buffer.num_lines()

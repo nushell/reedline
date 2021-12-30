@@ -1,19 +1,19 @@
-use crate::core_editor::Editor;
+use crate::{core_editor::Editor, PromptHistorySearch};
+use crossterm::{cursor::MoveToRow, terminal::ScrollUp};
 
 use {
-    crate::{
-        prompt::{PromptEditMode, PromptHistorySearch},
-        Prompt,
-    },
+    crate::{prompt::PromptEditMode, Prompt},
     crossterm::{
-        cursor::{self, position, MoveTo, MoveToColumn, RestorePosition, SavePosition},
-        style::{Print, ResetColor, SetForegroundColor},
+        cursor::{self, MoveTo, MoveToColumn, RestorePosition, SavePosition},
+        style::{Print, SetForegroundColor},
         terminal::{self, Clear, ClearType},
         QueueableCommand, Result,
     },
     std::io::{Stdout, Write},
     unicode_width::UnicodeWidthStr,
 };
+
+// const END_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
 
 #[derive(Default)]
 struct PromptCoordinates {
@@ -22,10 +22,6 @@ struct PromptCoordinates {
 }
 
 impl PromptCoordinates {
-    fn input_start_col(&self) -> u16 {
-        self.input_start.0
-    }
-
     fn set_prompt_start(&mut self, col: u16, row: u16) {
         self.prompt_start = (col, row);
     }
@@ -35,11 +31,44 @@ impl PromptCoordinates {
     }
 }
 
+pub struct PromptLines<'prompt> {
+    before_cursor: &'prompt str,
+    after_cursor: &'prompt str,
+    hint: &'prompt str,
+}
+
+impl<'prompt> PromptLines<'prompt> {
+    /// Splits the strings before and after the cursor as well as the hint
+    /// This vector with the str are used to calculate how many lines are
+    /// required to print after the prompt
+    pub fn new(
+        before_cursor: &'prompt str,
+        after_cursor: &'prompt str,
+        hint: &'prompt str,
+    ) -> Self {
+        Self {
+            before_cursor,
+            after_cursor,
+            hint,
+        }
+    }
+
+    fn required_lines(&self, prompt_str: &str, prompt_indicator: &str) -> u16 {
+        let string = format!(
+            "{}{}{}{}{}",
+            prompt_str, prompt_indicator, self.before_cursor, self.hint, self.after_cursor
+        );
+
+        (string.lines().count()) as u16
+    }
+}
+
 pub struct Painter {
     // Stdout
     stdout: Stdout,
     prompt_coords: PromptCoordinates,
     terminal_size: (u16, u16),
+    last_required_lines: u16,
 }
 
 impl Painter {
@@ -48,7 +77,16 @@ impl Painter {
             stdout,
             prompt_coords: PromptCoordinates::default(),
             terminal_size: (0, 0),
+            last_required_lines: 0,
         }
+    }
+
+    /// Calculates the distance from the prompt
+    pub fn distance_from_prompt(&self) -> Result<u16> {
+        let (_, cursor_row) = cursor::position()?;
+        let distance_from_prompt = cursor_row.saturating_sub(self.prompt_coords.prompt_start.1);
+
+        Ok(distance_from_prompt)
     }
 
     /// Update the terminal size information by polling the system
@@ -65,97 +103,15 @@ impl Painter {
         self.terminal_size.1
     }
 
-    /// Move cursor, doesn't flush
-    pub fn queue_move_to(&mut self, column: u16, row: u16) -> Result<()> {
-        self.stdout.queue(cursor::MoveTo(column, row))?;
-
-        Ok(())
-    }
-
-    /// Queue the complete prompt to display including status indicators (e.g. pwd, time)
-    ///
-    /// Used at the beginning of each [`Reedline::read_line()`] call.
-    pub fn queue_prompt(
-        &mut self,
-        prompt: &dyn Prompt,
-        prompt_mode: PromptEditMode,
-        use_ansi_coloring: bool,
-    ) -> Result<()> {
-        let (screen_width, _) = self.terminal_size;
-
-        self.stdout.queue(MoveToColumn(0))?;
-        if use_ansi_coloring {
-            // print our prompt with color
-            self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_color()))?;
-        }
-        self.stdout
-            .queue(Print(prompt.render_prompt(screen_width as usize)))?
-            .queue(Print(prompt.render_prompt_indicator(prompt_mode)))?;
-        if use_ansi_coloring {
-            self.stdout.queue(ResetColor)?;
-        }
-
-        Ok(())
-    }
-
-    /// Repaint logic for the normal input prompt buffer
-    ///
-    /// Requires coordinates where the input buffer begins after the prompt.
-    pub fn queue_buffer(&mut self, highlighted_line: (String, String), hint: String) -> Result<()> {
-        let (before_cursor, after_cursor) = highlighted_line;
-
-        let before_cursor_lines = if cfg!(windows) {
-            before_cursor.split("\r\n")
-        } else {
-            #[allow(clippy::single_char_pattern)]
-            before_cursor.split("\n")
-        };
-
-        let after_cursor_lines = if cfg!(windows) {
-            after_cursor.split("\r\n")
-        } else {
-            #[allow(clippy::single_char_pattern)]
-            after_cursor.split("\n")
-        };
-
-        let mut commands = self.stdout.queue(MoveTo(
-            self.prompt_coords.input_start.0,
-            self.prompt_coords.input_start.1,
-        ))?;
-
-        for (idx, before_cursor_line) in before_cursor_lines.enumerate() {
-            if idx != 0 {
-                commands = commands.queue(Clear(ClearType::UntilNewLine))?;
-                commands = commands.queue(Print("\r\n"))?;
-            }
-            commands = commands.queue(Print(before_cursor_line))?;
-        }
-
-        commands = commands.queue(SavePosition)?.queue(Print(hint))?;
-
-        for (idx, after_cursor_line) in after_cursor_lines.enumerate() {
-            if idx != 0 {
-                commands = commands.queue(Clear(ClearType::UntilNewLine))?;
-                commands = commands.queue(Print("\r\n"))?;
-            }
-            commands = commands.queue(Print(after_cursor_line))?;
-        }
-
-        commands
-            .queue(Clear(ClearType::FromCursorDown))?
-            .queue(RestorePosition)?;
-
-        Ok(())
+    pub fn remaining_lines(&self) -> u16 {
+        self.terminal_size.1 - self.prompt_coords.prompt_start.1
     }
 
     /// Scroll by n rows
     pub fn scroll_rows(&mut self, num_rows: u16) -> Result<()> {
-        self.stdout
-            .queue(crossterm::terminal::ScrollUp(num_rows))?
-            .flush()?;
+        self.stdout.queue(crossterm::terminal::ScrollUp(num_rows))?;
 
-        Ok(())
+        self.stdout.flush()
     }
 
     /// Sets the prompt origin position.
@@ -186,28 +142,97 @@ impl Painter {
         Ok(())
     }
 
-    pub fn repaint_everything(
+    /// Main pain painter for the prompt and buffer
+    /// It queues all the actions required to print the prompt together with
+    /// lines that make the buffer.
+    /// Using the prompt lines object in this function it is estimated how the
+    /// prompt should scroll up and how much space is required to print all the
+    /// lines for the buffer
+    pub fn repaint_buffer(
         &mut self,
         prompt: &dyn Prompt,
         prompt_mode: PromptEditMode,
-        highlighted_line: (String, String),
-        hint: String,
+        lines: PromptLines,
+        history_indicator: Option<PromptHistorySearch>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
         self.stdout.queue(cursor::Hide)?;
-        self.queue_move_to(
+
+        // String representation of the prompt
+        let (screen_width, _) = self.terminal_size;
+        let prompt_str = prompt.render_prompt(screen_width as usize);
+
+        // The prompt indicator could be normal one or the history indicator
+        let prompt_indicator = match history_indicator {
+            Some(prompt_search) => prompt.render_prompt_history_search_indicator(prompt_search),
+            None => prompt.render_prompt_indicator(prompt_mode),
+        };
+
+        // Lines and distance parameters
+        let required_lines = lines.required_lines(&prompt_str, &prompt_indicator);
+        let remaining_lines = self.remaining_lines();
+
+        // Cursor distance from prompt
+        let cursor_distance = self.distance_from_prompt()?;
+
+        // Delta indicates how many row are required based on the distance
+        // from the prompt. The closer the cursor to the prompt (smaller distance)
+        // the larger the delta and the real required extra lines
+        //
+        // TODO. Case when delta is larger than terminal size
+        let delta = required_lines.saturating_sub(cursor_distance);
+        if delta >= remaining_lines {
+            // Checked sub in case there is overflow
+            let sub = self
+                .prompt_coords
+                .prompt_start
+                .1
+                .checked_sub(required_lines);
+
+            if let Some(sub) = sub {
+                let prompt_size = prompt_str.lines().count() as u16;
+                self.stdout.queue(ScrollUp(delta))?;
+                self.prompt_coords.prompt_start.1 = sub + prompt_size;
+            }
+        } else if required_lines > cursor_distance && (remaining_lines - cursor_distance) <= 1 {
+            // If the required lines is larger than the cursor distance
+            // then it means that the cursor is at the bottom of the screen and
+            // we need to scroll one row up
+            self.stdout.queue(ScrollUp(1))?;
+            self.prompt_coords.prompt_start.1 = self.prompt_coords.prompt_start.1.saturating_sub(1);
+        };
+
+        // Moving the cursor to the start of the prompt
+        // from this position everything will be printed
+        self.stdout.queue(cursor::MoveTo(
             self.prompt_coords.prompt_start.0,
             self.prompt_coords.prompt_start.1,
-        )?;
-        self.queue_prompt(prompt, prompt_mode, use_ansi_coloring)?;
-        self.flush()?;
-        // set where the input begins
-        self.prompt_coords.input_start = position()?;
-        self.queue_buffer(highlighted_line, hint)?;
-        self.stdout.queue(cursor::Show)?;
-        self.flush()?;
+        ))?;
 
-        Ok(())
+        // print our prompt with color
+        if use_ansi_coloring {
+            self.stdout
+                .queue(SetForegroundColor(prompt.get_prompt_color()))?;
+        }
+
+        self.stdout
+            .queue(MoveToColumn(0))?
+            .queue(Clear(ClearType::FromCursorDown))?
+            .queue(Print(&prompt_str))?
+            .queue(Print(&prompt_indicator))?
+            .queue(Print(&lines.before_cursor))?
+            .queue(SavePosition)?
+            .queue(Print(&lines.hint))?
+            .queue(Print(&lines.after_cursor))?
+            .queue(RestorePosition)?
+            .queue(cursor::Show)?;
+
+        // The last_required_lines is used to move the cursor at the end where stdout
+        // can print without overwriting the things written during the paining
+        // The number 3 is to give enough space after the buffer lines
+        self.last_required_lines = required_lines + 3;
+
+        self.flush()
     }
 
     /// Updates prompt origin and offset to handle a screen resize event
@@ -237,55 +262,6 @@ impl Painter {
                 current_origin.1 + (height - prev_terminal_size.1),
             );
         }
-    }
-
-    /// TODO! FIX the naming and provide an accurate doccomment
-    /// This function repaints and updates offsets but does not purely concern it self with wrapping
-    pub(crate) fn wrap(&mut self, highlighted_line: (String, String), hint: String) -> Result<()> {
-        let (original_column, original_row) = cursor::position()?;
-
-        self.queue_buffer(highlighted_line, hint)?;
-        self.flush()?;
-
-        let (new_column, _new_row) = cursor::position()?;
-
-        if new_column < original_column && original_row + 1 == self.terminal_rows() {
-            // We have wrapped off bottom of screen, and prompt is on new row
-            // We need to update the prompt location in this case
-            let (input_start_col, input_start_row) = self.prompt_coords.input_start;
-            let (prompt_start_col, prompt_start_row) = self.prompt_coords.prompt_start;
-
-            if input_start_row >= 1 {
-                self.prompt_coords
-                    .set_input_start(input_start_col, input_start_row - 1);
-            } else {
-                self.prompt_coords.set_input_start(0, 0);
-            }
-
-            if prompt_start_row >= 1 {
-                self.prompt_coords
-                    .set_prompt_start(prompt_start_col, prompt_start_row - 1);
-            } else {
-                self.prompt_coords.set_prompt_start(0, 0);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Heuristic to determine if we need to wrap text around.
-    pub(crate) fn require_wrapping(&self, editor: &Editor) -> bool {
-        let line_start = if editor.line() == 0 {
-            self.prompt_coords.input_start_col()
-        } else {
-            0
-        };
-
-        let terminal_width = self.terminal_columns();
-
-        let display_width = UnicodeWidthStr::width(editor.get_buffer()) + line_start as usize;
-
-        display_width >= terminal_width as usize
     }
 
     /// Repositions the prompt offset position, if the buffer content would overflow the bottom of the screen.
@@ -348,51 +324,14 @@ impl Painter {
         Ok(())
     }
 
-    pub fn queue_history_search_indicator(
-        &mut self,
-        prompt: &dyn Prompt,
-        prompt_search: PromptHistorySearch,
-        use_ansi_coloring: bool,
-    ) -> Result<()> {
-        // print search prompt
-        self.stdout.queue(MoveToColumn(0))?;
-        if use_ansi_coloring {
-            self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_color()))?;
-        }
-        self.stdout.queue(Print(
-            prompt.render_prompt_history_search_indicator(prompt_search),
-        ))?;
-        if use_ansi_coloring {
-            self.stdout.queue(ResetColor)?;
-        }
-        Ok(())
-    }
-
-    pub fn queue_history_search_result(
-        &mut self,
-        history_result: &str,
-        offset: usize,
-    ) -> Result<()> {
-        self.stdout
-            .queue(Print(&history_result[..offset]))?
-            .queue(SavePosition)?
-            .queue(Print(&history_result[offset..]))?
-            .queue(Clear(ClearType::UntilNewLine))?
-            .queue(RestorePosition)?;
-
-        Ok(())
-    }
-
     /// Writes `line` to the terminal with a following carriage return and newline
     pub fn paint_line(&mut self, line: &str) -> Result<()> {
         self.stdout
             .queue(Print(line))?
             .queue(Print("\n"))?
             .queue(MoveToColumn(1))?;
-        self.stdout.flush()?;
 
-        Ok(())
+        self.stdout.flush()
     }
 
     /// Goes to the beginning of the next line
@@ -400,9 +339,8 @@ impl Painter {
     /// Also works in raw mode
     pub(crate) fn print_crlf(&mut self) -> Result<()> {
         self.stdout.queue(Print("\r\n"))?;
-        self.stdout.flush()?;
 
-        Ok(())
+        self.stdout.flush()
     }
 
     /// Clear the screen by printing enough whitespace to start the prompt or
@@ -413,16 +351,24 @@ impl Painter {
             self.stdout.queue(Print("\n"))?;
         }
         self.stdout.queue(MoveTo(0, 0))?;
-        self.stdout.flush()?;
 
-        Ok(())
+        self.stdout.flush()
     }
 
     pub(crate) fn clear_until_newline(&mut self) -> Result<()> {
         self.stdout.queue(Clear(ClearType::UntilNewLine))?;
-        self.stdout.flush()?;
 
-        Ok(())
+        self.stdout.flush()
+    }
+
+    // The prompt is moved to the end of the buffer after the event was handled
+    // If the prompt is in the middle of a multiline buffer, then the output to stdout
+    // could overwrite the buffer writing
+    pub fn move_cursor_to_end(&mut self) -> Result<()> {
+        let final_row = self.prompt_coords.prompt_start.1 + self.last_required_lines;
+        self.stdout.queue(MoveToRow(final_row))?;
+
+        self.stdout.flush()
     }
 
     pub fn flush(&mut self) -> Result<()> {
