@@ -1015,3 +1015,9 @@ impl Reedline {
         self.painter.wrap(highlighted_line, hint)
     }
 }
+
+#[test]
+fn thread_safe() {
+    fn f<S: Send>(_: S) {}
+    f(Reedline::create().unwrap());
+}
