@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
     str::Chars,
+    sync::Arc,
 };
 
 use crate::{Completer, Span};
