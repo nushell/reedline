@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 
-use crate::painter::PromptLines;
+use crate::{painter::PromptLines, PromptHistorySearch};
 
 use {
     crate::{
@@ -11,7 +11,7 @@ use {
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         painter::Painter,
-        prompt::{PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus},
+        prompt::{PromptEditMode, PromptHistorySearchStatus},
         text_manipulation, DefaultHighlighter, DefaultValidator, EditCommand, Highlighter, Prompt,
         Signal, ValidationResult, Validator,
     },
@@ -342,7 +342,7 @@ impl Reedline {
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)?;
         } else {
-            self.full_repaint(prompt)?;
+            self.buffer_paint(prompt)?;
         }
 
         let mut crossterm_events: Vec<Event> = vec![];
@@ -403,6 +403,7 @@ impl Reedline {
 
             for event in reedline_events.drain(..) {
                 if let Some(signal) = self.handle_event(prompt, event)? {
+                    let _ = self.painter.move_cursor_to_end();
                     return Ok(signal);
                 }
             }
@@ -458,7 +459,7 @@ impl Reedline {
                 }
 
                 self.input_mode = InputMode::Regular;
-                self.full_repaint(prompt)?;
+                self.buffer_paint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Edit(commands) => {
@@ -469,12 +470,12 @@ impl Reedline {
             ReedlineEvent::Mouse => Ok(None),
             ReedlineEvent::Resize(width, height) => {
                 self.painter.handle_resize(width, height);
-                self.full_repaint(prompt)?;
+                self.buffer_paint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Repaint => {
                 if self.input_mode != InputMode::HistorySearch {
-                    self.full_repaint(prompt)?;
+                    self.buffer_paint(prompt)?;
                 }
                 Ok(None)
             }
@@ -524,7 +525,7 @@ impl Reedline {
                     self.tab_handler.handle(line_buffer);
                 }
 
-                self.full_repaint(prompt)?;
+                self.buffer_paint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::CtrlD => {
@@ -558,7 +559,7 @@ impl Reedline {
                     }
                     self.run_edit_commands(&[EditCommand::InsertChar('\n')])?;
                     self.painter.adjust_prompt_position(&self.editor)?;
-                    self.full_repaint(prompt)?;
+                    self.buffer_paint(prompt)?;
 
                     Ok(None)
                 }
@@ -571,12 +572,12 @@ impl Reedline {
             ReedlineEvent::Mouse => Ok(None),
             ReedlineEvent::Resize(width, height) => {
                 self.painter.handle_resize(width, height);
-                self.full_repaint(prompt)?;
+                self.buffer_paint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Repaint => {
                 if self.input_mode != InputMode::HistorySearch {
-                    self.full_repaint(prompt)?;
+                    self.buffer_paint(prompt)?;
                 }
                 Ok(None)
             }
@@ -584,28 +585,28 @@ impl Reedline {
                 self.previous_history();
 
                 self.painter.adjust_prompt_position(&self.editor)?;
-                self.full_repaint(prompt)?;
+                self.buffer_paint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::NextHistory => {
                 self.next_history();
 
                 self.painter.adjust_prompt_position(&self.editor)?;
-                self.full_repaint(prompt)?;
+                self.buffer_paint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Up => {
                 self.up_command();
 
                 self.painter.adjust_prompt_position(&self.editor)?;
-                self.full_repaint(prompt)?;
+                self.buffer_paint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Down => {
                 self.down_command();
 
                 self.painter.adjust_prompt_position(&self.editor)?;
-                self.full_repaint(prompt)?;
+                self.buffer_paint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::SearchHistory => {
@@ -635,7 +636,7 @@ impl Reedline {
                 }
 
                 self.painter.adjust_prompt_position(&self.editor)?;
-                self.full_repaint(prompt)?;
+                self.buffer_paint(prompt)?;
                 Ok(latest_signal)
             }
             ReedlineEvent::Multiple(events) => {
@@ -645,7 +646,7 @@ impl Reedline {
                     .try_fold(None, |_, event| self.handle_editor_event(prompt, event))?;
 
                 self.painter.adjust_prompt_position(&self.editor)?;
-                self.full_repaint(prompt)?;
+                self.buffer_paint(prompt)?;
                 Ok(latest_signal)
             }
             ReedlineEvent::None => Ok(None),
@@ -700,7 +701,7 @@ impl Reedline {
 
     /// Switch into reverse history search mode
     ///
-    /// This mode uses a separate prompt and handles keybindings sligthly differently!
+    /// This mode uses a separate prompt and handles keybindings slightly differently!
     fn enter_history_search(&mut self) {
         self.input_mode = InputMode::HistorySearch;
         self.history
@@ -887,7 +888,7 @@ impl Reedline {
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)
         } else {
-            self.full_repaint(prompt)
+            self.buffer_paint(prompt)
         }
     }
 
@@ -907,16 +908,17 @@ impl Reedline {
 
             let prompt_history_search = PromptHistorySearch::new(status, substring);
 
-            self.painter.queue_history_search_indicator(
-                prompt,
-                prompt_history_search,
-                self.use_ansi_coloring,
-            )?;
-
             match self.history.string_at_cursor() {
                 Some(string) => {
-                    self.painter
-                        .queue_history_search_result(&string, string.len())?;
+                    let offset = string.len();
+
+                    self.painter.repaint_buffer(
+                        prompt,
+                        self.prompt_edit_mode(),
+                        PromptLines::new(&string[..offset], &string[offset..], ""),
+                        Some(prompt_history_search),
+                        self.use_ansi_coloring,
+                    )?;
                 }
 
                 None => {
@@ -928,11 +930,10 @@ impl Reedline {
         Ok(())
     }
 
-    /// Based on the current buffer create the ansi styled content that shall be painted
+    /// Triggers a full repaint including the prompt parts
     ///
-    /// # Returns:
-    /// (highlighted_line, hint)
-    fn prepare_buffer_content(&mut self, prompt: &dyn Prompt) -> PromptLines {
+    /// Includes the highlighting and hinting calls.
+    fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
         let cursor_position_in_buffer = self.editor.offset();
         let buffer_to_paint = self.editor.get_buffer();
 
@@ -956,21 +957,18 @@ impl Reedline {
             String::new()
         };
 
+        // Needs to add return carriage to newlines because when not in raw mode
+        // some OS don't fully return the carriage
         let before_cursor = before_cursor.replace("\n", "\r\n");
         let after_cursor = after_cursor.replace("\n", "\r\n");
         let hint = hint.replace("\n", "\r\n");
 
-        PromptLines::new(before_cursor, after_cursor, hint)
-    }
-
-    /// Triggers a full repaint including the prompt parts
-    ///
-    /// Includes the highlighting and hinting calls.
-    fn full_repaint(&mut self, prompt: &dyn Prompt) -> Result<()> {
-        let prompt_mode = self.prompt_edit_mode();
-        let lines = self.prepare_buffer_content(prompt);
-
-        self.painter
-            .repaint_everything(prompt, prompt_mode, lines, self.use_ansi_coloring)
+        self.painter.repaint_buffer(
+            prompt,
+            self.prompt_edit_mode(),
+            PromptLines::new(&before_cursor, &after_cursor, &hint),
+            None,
+            self.use_ansi_coloring,
+        )
     }
 }

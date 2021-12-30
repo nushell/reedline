@@ -72,6 +72,10 @@ where
             let _ = input.next();
             Some(Command::DeleteChar)
         }
+        Some('s') => {
+            let _ = input.next();
+            Some(Command::HistorySearch)
+        }
         Some('D') => {
             let _ = input.next();
             Some(Command::DeleteToEnd)
@@ -137,6 +141,7 @@ pub enum Command {
     MoveRightBefore(char),
     MoveLeftUntil(char),
     MoveLeftBefore(char),
+    HistorySearch,
 }
 
 impl Command {
@@ -164,6 +169,8 @@ impl Command {
             Self::MoveLeftUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftUntil(*c))],
             Self::MoveLeftBefore(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftBefore(*c))],
             Self::DeleteChar => vec![ReedlineOption::Edit(EditCommand::Delete)],
+            Self::HistorySearch => vec![ReedlineOption::Event(ReedlineEvent::SearchHistory)],
+            // Mark a command as incomplete whenever a motion is required to finish the command
             Self::Delete | Self::Change | Self::Incomplete => vec![ReedlineOption::Incomplete],
         }
     }
