@@ -7,7 +7,7 @@ use {
 
 /// A trait that's responsible for returning the hint for the current line and position
 /// Hints are often shown in-line as part of the buffer, showing the user text they can accept or ignore
-pub trait Hinter {
+pub trait Hinter: Send {
     /// Handle the hinting duty by using the line, position, and current history
     fn handle(
         &mut self,
