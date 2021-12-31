@@ -56,15 +56,41 @@ impl<'prompt> PromptLines<'prompt> {
     /// The required lines to paint the buffer are calculated by counting the
     /// number of newlines in all the strings that form the prompt and buffer.
     /// The plus 1 is to indicate that there should be at least one line.
-    fn required_lines(&self, prompt_str: &str, prompt_indicator: &str) -> u16 {
-        let lines = prompt_str.matches('\n').count()
+    fn required_lines(
+        &self,
+        prompt_str: &str,
+        prompt_indicator: &str,
+        terminal_columns: u16,
+    ) -> u16 {
+        let mut lines = prompt_str.matches('\n').count()
             + prompt_indicator.matches('\n').count()
             + self.before_cursor.matches('\n').count()
             + self.hint.matches('\n').count()
             + self.after_cursor.matches('\n').count()
             + 1;
 
+        // adjust lines by the numnber of wrapped additional lines we have
+        let input =
+            prompt_indicator.to_string() + self.before_cursor + self.after_cursor + self.hint;
+        for line in input.split('\n') {
+            lines += estimated_wrapped_line_count(line, terminal_columns)
+        }
+
         lines as u16
+    }
+}
+
+fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
+    let estimated_width = UnicodeWidthStr::width(line);
+
+    let estimated_line_count = estimated_width as f64 / terminal_columns as f64;
+    let estimated_line_count = estimated_line_count.ceil() as u64;
+
+    // Any wrapping will add to our overall line count
+    if estimated_line_count >= 1 {
+        estimated_line_count as usize - 1
+    } else {
+        0 // no wrapping
     }
 }
 
@@ -174,7 +200,7 @@ impl Painter {
         };
 
         // Lines and distance parameters
-        let required_lines = lines.required_lines(&prompt_str, &prompt_indicator);
+        let required_lines = lines.required_lines(&prompt_str, &prompt_indicator, screen_width);
         let remaining_lines = self.remaining_lines();
 
         // Cursor distance from prompt
