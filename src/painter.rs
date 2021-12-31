@@ -53,13 +53,18 @@ impl<'prompt> PromptLines<'prompt> {
         }
     }
 
+    /// The required lines to paint the buffer are calculated by counting the
+    /// number of newlines in all the strings that form the prompt and buffer.
+    /// The plus 1 is to indicate that there should be at least one line.
     fn required_lines(&self, prompt_str: &str, prompt_indicator: &str) -> u16 {
-        let string = format!(
-            "{}{}{}{}{}",
-            prompt_str, prompt_indicator, self.before_cursor, self.hint, self.after_cursor
-        );
+        let lines = prompt_str.matches('\n').count()
+            + prompt_indicator.matches('\n').count()
+            + self.before_cursor.matches('\n').count()
+            + self.hint.matches('\n').count()
+            + self.after_cursor.matches('\n').count()
+            + 1;
 
-        (string.lines().count()) as u16
+        lines as u16
     }
 }
 
@@ -181,23 +186,29 @@ impl Painter {
         //
         // TODO. Case when delta is larger than terminal size
         let delta = required_lines.saturating_sub(cursor_distance);
-        if delta >= remaining_lines {
+        if delta > remaining_lines {
             // Checked sub in case there is overflow
             let sub = self
                 .prompt_coords
                 .prompt_start
                 .1
-                .checked_sub(required_lines);
+                .saturating_sub(required_lines);
 
-            if let Some(sub) = sub {
-                let prompt_size = prompt_str.lines().count() as u16;
-                self.stdout.queue(ScrollUp(delta))?;
-                self.prompt_coords.prompt_start.1 = sub + prompt_size;
-            }
-        } else if required_lines > cursor_distance && (remaining_lines - cursor_distance) <= 1 {
-            // If the required lines is larger than the cursor distance
-            // then it means that the cursor is at the bottom of the screen and
-            // we need to scroll one row up
+            let prompt_size = prompt_str.lines().count() as u16;
+            self.stdout.queue(ScrollUp(delta))?;
+            self.prompt_coords.prompt_start.1 = sub + prompt_size;
+        } else if (required_lines > cursor_distance
+            && remaining_lines.saturating_sub(cursor_distance) <= 1)
+            || required_lines == remaining_lines
+        {
+            // Conditions to scroll one row up and update prompt position:
+            // - If the required lines is larger than the cursor distance
+            //      then it means that the cursor is at the bottom of the screen and
+            //      we need to scroll one row up (this condition applies when
+            //      at the bottom of a multi line buffer)
+            // - If the number of required lines is equal to the number of
+            //      remaining lines (this condition applies when inserting text
+            //      in the middle of a multi line buffer)
             self.stdout.queue(ScrollUp(1))?;
             self.prompt_coords.prompt_start.1 = self.prompt_coords.prompt_start.1.saturating_sub(1);
         };
