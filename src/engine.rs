@@ -398,7 +398,9 @@ impl Reedline {
                     reedline_events.push(ReedlineEvent::Edit(ec));
                 }
             } else if self.animate {
-                reedline_events.push(ReedlineEvent::Repaint);
+                if !self.painter.large_buffer {
+                    reedline_events.push(ReedlineEvent::Repaint);
+                }
             };
 
             for event in reedline_events.drain(..) {
