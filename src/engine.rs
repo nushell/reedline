@@ -284,6 +284,13 @@ impl Reedline {
         self
     }
 
+    /// A builder which configures the painter for debug mode
+    pub fn with_debug_mode(mut self) -> Reedline {
+        self.painter = Painter::new_with_debug(io::stdout());
+
+        self
+    }
+
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
         self.edit_mode.edit_mode()

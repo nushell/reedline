@@ -115,6 +115,7 @@ pub struct Painter {
     terminal_size: (u16, u16),
     last_required_lines: u16,
     pub large_buffer: bool,
+    debug_mode: bool,
 }
 
 impl Painter {
@@ -125,6 +126,18 @@ impl Painter {
             terminal_size: (0, 0),
             last_required_lines: 0,
             large_buffer: false,
+            debug_mode: false,
+        }
+    }
+
+    pub fn new_with_debug(stdout: Stdout) -> Self {
+        Painter {
+            stdout,
+            prompt_coords: PromptCoordinates::default(),
+            terminal_size: (0, 0),
+            last_required_lines: 0,
+            large_buffer: false,
+            debug_mode: true,
         }
     }
 
@@ -285,20 +298,22 @@ impl Painter {
         let prompt_length = prompt_str.len() + prompt_indicator.len();
         let estimated_prompt = estimated_wrapped_line_count(&prompt_str, screen_width);
 
-        self.stdout
-            .queue(Print(format!(" [h{}:", screen_height)))?
-            .queue(Print(format!("w{}] ", screen_width)))?
-            .queue(Print(format!("[x{}:", self.prompt_coords.prompt_start.0)))?
-            .queue(Print(format!("y{}] ", self.prompt_coords.prompt_start.1)))?
-            .queue(Print(format!("re:{} ", required_lines)))?
-            .queue(Print(format!("de:{} ", delta)))?
-            .queue(Print(format!("di:{} ", cursor_distance)))?
-            .queue(Print(format!("pr:{} ", prompt_length)))?
-            .queue(Print(format!("wr:{} ", estimated_prompt)))?
-            .queue(Print(format!("rm:{} ", remaining_lines)))?
-            .queue(Print(format!("ex:{:?} ", extra_rows)))?
-            .queue(RestorePosition)?
-            .queue(cursor::Show)?;
+        if self.debug_mode {
+            self.stdout
+                .queue(Print(format!(" [h{}:", screen_height)))?
+                .queue(Print(format!("w{}] ", screen_width)))?
+                .queue(Print(format!("[x{}:", self.prompt_coords.prompt_start.0)))?
+                .queue(Print(format!("y{}] ", self.prompt_coords.prompt_start.1)))?
+                .queue(Print(format!("re:{} ", required_lines)))?
+                .queue(Print(format!("de:{} ", delta)))?
+                .queue(Print(format!("di:{} ", cursor_distance)))?
+                .queue(Print(format!("pr:{} ", prompt_length)))?
+                .queue(Print(format!("wr:{} ", estimated_prompt)))?
+                .queue(Print(format!("rm:{} ", remaining_lines)))?
+                .queue(Print(format!("ex:{:?} ", extra_rows)))?;
+        }
+
+        self.stdout.queue(RestorePosition)?.queue(cursor::Show)?;
 
         // The last_required_lines is used to move the cursor at the end where stdout
         // can print without overwriting the things written during the paining
