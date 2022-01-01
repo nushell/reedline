@@ -94,14 +94,13 @@ fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
     }
 }
 
-fn skip_buffer_lines<'string>(string: &'string str, skip: usize) -> &'string str {
-    let matches = string.match_indices('\n');
+fn skip_buffer_lines(string: &str, skip: usize) -> &str {
+    let mut matches = string.match_indices('\n');
     let index = if skip == 0 {
         0
     } else {
         matches
-            .skip(skip - 1)
-            .next()
+            .nth(skip - 1)
             .map(|(index, _)| index + 1)
             .unwrap_or(string.len())
     };
@@ -258,8 +257,7 @@ impl Painter {
         match extra_rows {
             Some(extra_rows) => self.print_large_buffer(
                 prompt,
-                &prompt_str,
-                &prompt_indicator,
+                (&prompt_str, &prompt_indicator),
                 lines,
                 extra_rows,
                 screen_width,
@@ -345,13 +343,14 @@ impl Painter {
     fn print_large_buffer(
         &mut self,
         prompt: &dyn Prompt,
-        prompt_str: &str,
-        prompt_indicator: &str,
+        prompt_str: (&str, &str),
         lines: PromptLines,
         extra_rows: u16,
         screen_width: u16,
         use_ansi_coloring: bool,
     ) -> Result<()> {
+        let (prompt_str, prompt_indicator) = prompt_str;
+
         // Moving the cursor to the start of the prompt
         // from this position everything will be printed
         self.stdout.queue(cursor::MoveTo(0, 0))?;
@@ -363,7 +362,7 @@ impl Painter {
                 .queue(SetForegroundColor(prompt.get_prompt_color()))?;
         }
 
-        let prompt_lines = estimated_wrapped_line_count(&prompt_str, screen_width) as u16;
+        let prompt_lines = estimated_wrapped_line_count(prompt_str, screen_width) as u16;
         if extra_rows > 0 {
             let prompt_line = skip_buffer_lines(prompt_str, extra_rows as usize);
             self.stdout.queue(Print(&prompt_line))?;
@@ -380,7 +379,7 @@ impl Painter {
             self.stdout.queue(ResetColor)?;
         }
 
-        let before_cursor = skip_buffer_lines(&lines.before_cursor, extra_rows as usize);
+        let before_cursor = skip_buffer_lines(lines.before_cursor, extra_rows as usize);
         self.stdout.queue(Print(before_cursor))?;
 
         self.stdout
