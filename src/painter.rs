@@ -295,10 +295,11 @@ impl Painter {
             )?,
         }
 
-        let prompt_length = prompt_str.len() + prompt_indicator.len();
-        let estimated_prompt = estimated_wrapped_line_count(&prompt_str, screen_width);
-
+        // In debug mode a string with position information is printed at the end of the buffer
         if self.debug_mode {
+            let prompt_length = prompt_str.len() + prompt_indicator.len();
+            let estimated_prompt = estimated_wrapped_line_count(&prompt_str, screen_width);
+
             self.stdout
                 .queue(Print(format!(" [h{}:", screen_height)))?
                 .queue(Print(format!("w{}] ", screen_width)))?
