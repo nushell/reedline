@@ -557,7 +557,6 @@ impl Reedline {
                         self.run_edit_commands(&[EditCommand::InsertChar('\r')])?;
                     }
                     self.run_edit_commands(&[EditCommand::InsertChar('\n')])?;
-                    self.painter.adjust_prompt_position(&self.editor)?;
                     self.buffer_paint(prompt)?;
 
                     Ok(None)
@@ -582,28 +581,24 @@ impl Reedline {
             ReedlineEvent::PreviousHistory => {
                 self.previous_history();
 
-                self.painter.adjust_prompt_position(&self.editor)?;
                 self.buffer_paint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::NextHistory => {
                 self.next_history();
 
-                self.painter.adjust_prompt_position(&self.editor)?;
                 self.buffer_paint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Up => {
                 self.up_command();
 
-                self.painter.adjust_prompt_position(&self.editor)?;
                 self.buffer_paint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Down => {
                 self.down_command();
 
-                self.painter.adjust_prompt_position(&self.editor)?;
                 self.buffer_paint(prompt)?;
                 Ok(None)
             }
@@ -633,7 +628,6 @@ impl Reedline {
                     }
                 }
 
-                self.painter.adjust_prompt_position(&self.editor)?;
                 self.buffer_paint(prompt)?;
                 Ok(latest_signal)
             }
@@ -643,7 +637,6 @@ impl Reedline {
                     .into_iter()
                     .try_fold(None, |_, event| self.handle_editor_event(prompt, event))?;
 
-                self.painter.adjust_prompt_position(&self.editor)?;
                 self.buffer_paint(prompt)?;
                 Ok(latest_signal)
             }

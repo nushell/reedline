@@ -1,4 +1,4 @@
-use crate::{core_editor::Editor, PromptHistorySearch};
+use crate::PromptHistorySearch;
 use crossterm::{cursor::MoveToRow, terminal::ScrollUp};
 
 use {
@@ -18,16 +18,11 @@ use {
 #[derive(Default)]
 struct PromptCoordinates {
     prompt_start: (u16, u16),
-    input_start: (u16, u16),
 }
 
 impl PromptCoordinates {
     fn set_prompt_start(&mut self, col: u16, row: u16) {
         self.prompt_start = (col, row);
-    }
-
-    fn set_input_start(&mut self, col: u16, row: u16) {
-        self.input_start = (col, row);
     }
 }
 
@@ -56,15 +51,41 @@ impl<'prompt> PromptLines<'prompt> {
     /// The required lines to paint the buffer are calculated by counting the
     /// number of newlines in all the strings that form the prompt and buffer.
     /// The plus 1 is to indicate that there should be at least one line.
-    fn required_lines(&self, prompt_str: &str, prompt_indicator: &str) -> u16 {
-        let lines = prompt_str.matches('\n').count()
+    fn required_lines(
+        &self,
+        prompt_str: &str,
+        prompt_indicator: &str,
+        terminal_columns: u16,
+    ) -> u16 {
+        let mut lines = prompt_str.matches('\n').count()
             + prompt_indicator.matches('\n').count()
             + self.before_cursor.matches('\n').count()
             + self.hint.matches('\n').count()
             + self.after_cursor.matches('\n').count()
             + 1;
 
+        // adjust lines by the numnber of wrapped additional lines we have
+        let input =
+            prompt_indicator.to_string() + self.before_cursor + self.after_cursor + self.hint;
+        for line in input.split('\n') {
+            lines += estimated_wrapped_line_count(line, terminal_columns)
+        }
+
         lines as u16
+    }
+}
+
+fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
+    let estimated_width = UnicodeWidthStr::width(line);
+
+    let estimated_line_count = estimated_width as f64 / terminal_columns as f64;
+    let estimated_line_count = estimated_line_count.ceil() as u64;
+
+    // Any wrapping will add to our overall line count
+    if estimated_line_count >= 1 {
+        estimated_line_count as usize - 1
+    } else {
+        0 // no wrapping
     }
 }
 
@@ -100,23 +121,12 @@ impl Painter {
         Ok(())
     }
 
-    fn terminal_columns(&self) -> u16 {
-        self.terminal_size.0
-    }
-
     fn terminal_rows(&self) -> u16 {
         self.terminal_size.1
     }
 
     pub fn remaining_lines(&self) -> u16 {
         self.terminal_size.1 - self.prompt_coords.prompt_start.1
-    }
-
-    /// Scroll by n rows
-    pub fn scroll_rows(&mut self, num_rows: u16) -> Result<()> {
-        self.stdout.queue(crossterm::terminal::ScrollUp(num_rows))?;
-
-        self.stdout.flush()
     }
 
     /// Sets the prompt origin position.
@@ -174,7 +184,7 @@ impl Painter {
         };
 
         // Lines and distance parameters
-        let required_lines = lines.required_lines(&prompt_str, &prompt_indicator);
+        let required_lines = lines.required_lines(&prompt_str, &prompt_indicator, screen_width);
         let remaining_lines = self.remaining_lines();
 
         // Cursor distance from prompt
@@ -273,66 +283,6 @@ impl Painter {
                 current_origin.1 + (height - prev_terminal_size.1),
             );
         }
-    }
-
-    /// Repositions the prompt offset position, if the buffer content would overflow the bottom of the screen.
-    /// Checks for content that might overflow in the core buffer.
-    /// Performs scrolling and updates prompt and input position.
-    /// Does not trigger a full repaint!
-    pub(crate) fn adjust_prompt_position(&mut self, editor: &Editor) -> Result<()> {
-        let (prompt_start_col, prompt_start_row) = self.prompt_coords.prompt_start;
-        let (input_start_col, input_start_row) = self.prompt_coords.input_start;
-
-        let mut buffer_line_count = editor.num_lines() as u16;
-
-        let terminal_columns = self.terminal_columns();
-
-        // Estimate where we're going to wrap around the edge of the terminal
-        for line in editor.get_buffer().lines() {
-            let estimated_width = UnicodeWidthStr::width(line);
-
-            let estimated_line_count = estimated_width as f64 / terminal_columns as f64;
-            let estimated_line_count = estimated_line_count.ceil() as u64;
-
-            // Any wrapping we estimate we might have, go ahead and add it to our line count
-            if estimated_line_count >= 1 {
-                buffer_line_count += (estimated_line_count - 1) as u16;
-            }
-        }
-
-        let ends_in_newline = editor.ends_with('\n');
-
-        let terminal_rows = self.terminal_rows();
-
-        if input_start_row + buffer_line_count > terminal_rows {
-            let spill = input_start_row + buffer_line_count - terminal_rows;
-
-            // FIXME: see if we want this as the permanent home
-            if ends_in_newline {
-                self.scroll_rows(spill - 1)?;
-            } else {
-                self.scroll_rows(spill)?;
-            }
-
-            // We have wrapped off bottom of screen, and prompt is on new row
-            // We need to update the prompt location in this case
-
-            if spill <= input_start_row {
-                self.prompt_coords
-                    .set_input_start(input_start_col, input_start_row - spill);
-            } else {
-                self.prompt_coords.set_input_start(0, 0);
-            }
-
-            if spill <= prompt_start_row {
-                self.prompt_coords
-                    .set_prompt_start(prompt_start_col, prompt_start_row - spill);
-            } else {
-                self.prompt_coords.set_prompt_start(0, 0);
-            }
-        }
-
-        Ok(())
     }
 
     /// Writes `line` to the terminal with a following carriage return and newline

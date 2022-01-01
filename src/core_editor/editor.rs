@@ -155,17 +155,17 @@ impl Editor {
     //     self.line_buffer.line()
     // }
 
-    pub fn num_lines(&self) -> usize {
-        self.line_buffer.num_lines()
-    }
+    // pub fn num_lines(&self) -> usize {
+    //     self.line_buffer.num_lines()
+    // }
 
     pub fn is_empty(&self) -> bool {
         self.line_buffer.is_empty()
     }
 
-    pub fn ends_with(&self, c: char) -> bool {
-        self.line_buffer.ends_with(c)
-    }
+    // pub fn ends_with(&self, c: char) -> bool {
+    //     self.line_buffer.ends_with(c)
+    // }
 
     pub fn is_cursor_at_first_line(&self) -> bool {
         self.line_buffer.is_cursor_at_first_line()
