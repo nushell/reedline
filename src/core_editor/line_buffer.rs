@@ -247,13 +247,15 @@ impl LineBuffer {
         self.move_right();
     }
 
-    /// Insert `&str` at the `idx` position in the current line.
+    /// Insert `&str` at the cursor position in the current line.
     ///
-    /// Cursor is placed after the inserted string.
+    /// Sets cursor to end of inserted string
+    ///
+    /// ## Unicode safety:
+    /// Does not validate the incoming string or the current cursor position
     pub fn insert_str(&mut self, string: &str) {
-        let pos = self.insertion_point();
-        self.lines.insert_str(pos.offset, string);
-        self.insertion_point.offset = pos.offset + string.len();
+        self.lines.insert_str(self.offset(), string);
+        self.insertion_point.offset = self.offset() + string.len();
     }
 
     /// Empty buffer and reset cursor

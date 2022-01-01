@@ -792,16 +792,10 @@ impl Reedline {
                 EditCommand::MoveRight => self.editor.move_right(),
                 EditCommand::MoveWordLeft => self.editor.move_word_left(),
                 EditCommand::MoveWordRight => self.editor.move_word_right(),
-                // Performing mutation here might incur a perf hit down this line when
-                // we would like to do multiple inserts.
-                // A simple solution that we can do is to queue up these and perform the wrapping
-                // check after the loop finishes. Will need to sort out the details.
+
                 EditCommand::InsertChar(c) => self.editor.insert_char(*c),
-                EditCommand::InsertString(s) => {
-                    for c in s.chars() {
-                        self.editor.insert_char(c);
-                    }
-                }
+                EditCommand::InsertString(s) => self.editor.insert_str(s),
+
                 EditCommand::Backspace => self.editor.backspace(),
                 EditCommand::Delete => self.editor.delete(),
                 EditCommand::BackspaceWord => self.editor.backspace_word(),
