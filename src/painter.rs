@@ -68,7 +68,12 @@ impl<'prompt> PromptLines<'prompt> {
         let input =
             prompt_indicator.to_string() + self.before_cursor + self.after_cursor + self.hint;
         for line in input.split('\n') {
-            lines += estimated_wrapped_line_count(line, terminal_columns)
+            if let Ok(line) = strip_ansi_escapes::strip(line) {
+                lines +=
+                    estimated_wrapped_line_count(&String::from_utf8_lossy(&line), terminal_columns)
+            } else {
+                lines += estimated_wrapped_line_count(line, terminal_columns)
+            }
         }
 
         lines as u16
