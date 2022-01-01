@@ -217,38 +217,48 @@ impl Painter {
         // Delta indicates how many row are required based on the distance
         // from the prompt. The closer the cursor to the prompt (smaller distance)
         // the larger the delta and the real required extra lines
-        //
-        // TODO. Case when delta is larger than terminal size
         let delta = required_lines.saturating_sub(cursor_distance);
-        if required_lines < screen_height {
-            if delta > remaining_lines {
-                // Checked sub in case there is overflow
-                let sub = self
-                    .prompt_coords
-                    .prompt_start
-                    .1
-                    .saturating_sub(required_lines);
 
-                let prompt_size = prompt_str.lines().count() as u16;
-                self.stdout.queue(ScrollUp(delta))?;
-                self.prompt_coords.prompt_start.1 = sub + prompt_size;
-            } else if (required_lines > cursor_distance
-                && remaining_lines.saturating_sub(cursor_distance) <= 1)
-                || required_lines == remaining_lines
-            {
-                // Conditions to scroll one row up and update prompt position:
-                // - If the required lines is larger than the cursor distance
-                //      then it means that the cursor is at the bottom of the screen and
-                //      we need to scroll one row up (this condition applies when
-                //      at the bottom of a multi line buffer)
-                // - If the number of required lines is equal to the number of
-                //      remaining lines (this condition applies when inserting text
-                //      in the middle of a multi line buffer)
-                self.stdout.queue(ScrollUp(1))?;
-                self.prompt_coords.prompt_start.1 =
-                    self.prompt_coords.prompt_start.1.saturating_sub(1);
-            }
+        // Moving the start position of the cursor based on the size of the required lines
+        if self.large_buffer {
+            self.prompt_coords.prompt_start.1 = 0;
+        } else if delta > remaining_lines {
+            // Checked sub in case there is overflow
+            let sub = self
+                .prompt_coords
+                .prompt_start
+                .1
+                .saturating_sub(required_lines);
+
+            let prompt_size = prompt_str.lines().count() as u16;
+            self.stdout.queue(ScrollUp(delta))?;
+            self.prompt_coords.prompt_start.1 = sub + prompt_size;
+        } else if (required_lines > cursor_distance
+            && remaining_lines.saturating_sub(cursor_distance) <= 1)
+            || required_lines == remaining_lines
+        {
+            // Conditions to scroll one row up and update prompt position:
+            // - If the required lines is larger than the cursor distance
+            //      then it means that the cursor is at the bottom of the screen and
+            //      we need to scroll one row up (this condition applies when
+            //      at the bottom of a multi line buffer)
+            // - If the number of required lines is equal to the number of
+            //      remaining lines (this condition applies when inserting text
+            //      in the middle of a multi line buffer)
+            self.stdout.queue(ScrollUp(1))?;
+            self.prompt_coords.prompt_start.1 = self.prompt_coords.prompt_start.1.saturating_sub(1);
         }
+
+        // Moving the cursor to the start of the prompt
+        // from this position everything will be printed
+        self.stdout.queue(cursor::MoveTo(
+            self.prompt_coords.prompt_start.0,
+            self.prompt_coords.prompt_start.1,
+        ))?;
+
+        self.stdout
+            .queue(MoveToColumn(0))?
+            .queue(Clear(ClearType::FromCursorDown))?;
 
         // extra_rows is used to measure how many rows the buffer needs outside
         // the terminal height
@@ -273,7 +283,7 @@ impl Painter {
         }
 
         let prompt_length = prompt_str.len() + prompt_indicator.len();
-        let estimated_prompt = estimated_wrapped_line_count(&prompt_str, screen_height);
+        let estimated_prompt = estimated_wrapped_line_count(&prompt_str, screen_width);
 
         self.stdout
             .queue(Print(format!(" [h{}:", screen_height)))?
@@ -306,17 +316,6 @@ impl Painter {
         lines: PromptLines,
         use_ansi_coloring: bool,
     ) -> Result<()> {
-        // Moving the cursor to the start of the prompt
-        // from this position everything will be printed
-        self.stdout.queue(cursor::MoveTo(
-            self.prompt_coords.prompt_start.0,
-            self.prompt_coords.prompt_start.1,
-        ))?;
-
-        self.stdout
-            .queue(MoveToColumn(0))?
-            .queue(Clear(ClearType::FromCursorDown))?;
-
         // print our prompt with color
         if use_ansi_coloring {
             self.stdout
@@ -350,11 +349,6 @@ impl Painter {
         use_ansi_coloring: bool,
     ) -> Result<()> {
         let (prompt_str, prompt_indicator) = prompt_str;
-
-        // Moving the cursor to the start of the prompt
-        // from this position everything will be printed
-        self.stdout.queue(cursor::MoveTo(0, 0))?;
-        self.stdout.queue(Clear(ClearType::FromCursorDown))?;
 
         // print our prompt with color
         if use_ansi_coloring {
