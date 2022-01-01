@@ -897,25 +897,35 @@ impl Reedline {
                 PromptHistorySearchStatus::Passing
             };
 
-            let prompt_history_search = PromptHistorySearch::new(status, substring);
+            let prompt_history_search = PromptHistorySearch::new(status, substring.clone());
 
-            match self.history.string_at_cursor() {
-                Some(string) => {
-                    let offset = string.len();
+            let res_string = self
+                .history
+                .string_at_cursor()
+                .unwrap_or_default()
+                .replace("\n", "\r\n");
 
-                    self.painter.repaint_buffer(
-                        prompt,
-                        self.prompt_edit_mode(),
-                        PromptLines::new(&string[..offset], &string[offset..], ""),
-                        Some(prompt_history_search),
-                        self.use_ansi_coloring,
-                    )?;
-                }
+            // Highlight matches
+            let res_string = if self.use_ansi_coloring {
+                let match_highlighter = DefaultHighlighter::new(vec![substring]);
+                let styled = match_highlighter.highlight(&res_string);
+                let styled_str: String = styled
+                    .buffer
+                    .into_iter()
+                    .map(|(style, text)| style.paint(text).to_string())
+                    .collect();
+                styled_str
+            } else {
+                res_string
+            };
 
-                None => {
-                    self.painter.clear_until_newline()?;
-                }
-            }
+            self.painter.repaint_buffer(
+                prompt,
+                self.prompt_edit_mode(),
+                PromptLines::new(&res_string, "", ""),
+                Some(prompt_history_search),
+                self.use_ansi_coloring,
+            )?;
         }
 
         Ok(())

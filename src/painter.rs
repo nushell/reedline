@@ -1,5 +1,5 @@
 use crate::PromptHistorySearch;
-use crossterm::{cursor::MoveToRow, terminal::ScrollUp};
+use crossterm::{cursor::MoveToRow, style::ResetColor, terminal::ScrollUp};
 
 use {
     crate::{prompt::PromptEditMode, Prompt},
@@ -245,7 +245,11 @@ impl Painter {
             .queue(MoveToColumn(0))?
             .queue(Clear(ClearType::FromCursorDown))?
             .queue(Print(&prompt_str))?
-            .queue(Print(&prompt_indicator))?
+            .queue(Print(&prompt_indicator))?;
+        if use_ansi_coloring {
+            self.stdout.queue(ResetColor)?;
+        }
+        self.stdout
             .queue(Print(&lines.before_cursor))?
             .queue(SavePosition)?
             .queue(Print(&lines.hint))?
@@ -317,12 +321,6 @@ impl Painter {
             self.stdout.queue(Print("\n"))?;
         }
         self.stdout.queue(MoveTo(0, 0))?;
-
-        self.stdout.flush()
-    }
-
-    pub(crate) fn clear_until_newline(&mut self) -> Result<()> {
-        self.stdout.queue(Clear(ClearType::UntilNewLine))?;
 
         self.stdout.flush()
     }
