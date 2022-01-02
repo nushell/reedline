@@ -121,7 +121,7 @@ fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
 
     let line = &string[index..limit];
 
-    line.trim_end()
+    line.trim_end_matches('\n')
 }
 
 pub struct Painter {
@@ -378,13 +378,16 @@ impl Painter {
         use_ansi_coloring: bool,
     ) -> Result<()> {
         let (prompt_str, prompt_indicator) = prompt_str;
-        let (_, screen_height) = self.terminal_size;
+        let (screen_width, screen_height) = self.terminal_size;
         let remaining_lines = screen_height.saturating_sub(cursor_distance);
 
         // Calculating the total lines before the cursor
-        // The -1 is there because the at least one line of the prompt indicator is printed in
-        // the same line as the first line of the buffer
-        let prompt_lines = prompt_str.lines().count();
+        // The -1 in the total_lines_before is there because the at least one line of the prompt
+        // indicator is printed in the same line as the first line of the buffer
+        let complete_prompt = prompt_str.to_string() + prompt_indicator;
+        let prompt_wrap = estimated_wrapped_line_count(&complete_prompt, screen_width);
+        let prompt_lines = prompt_str.matches('\n').count() + prompt_wrap;
+
         let prompt_indicator_lines = prompt_indicator.lines().count();
         let before_cursor_lines = lines.before_cursor.lines().count();
         let total_lines_before = prompt_lines + prompt_indicator_lines + before_cursor_lines - 1;
