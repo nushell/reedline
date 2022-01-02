@@ -61,6 +61,36 @@ impl LineBuffer {
         self.lines.is_empty()
     }
 
+    /// Check if the line buffer is valid utf-8 and the cursor sits on a valid grapheme boundary
+    pub fn is_valid(&self) -> bool {
+        self.lines.is_char_boundary(self.offset())
+            && (self
+                .lines
+                .grapheme_indices(true)
+                .any(|(i, _)| i == self.offset())
+                || self.offset() == self.lines.len())
+            && std::str::from_utf8(self.lines.as_bytes()).is_ok()
+    }
+
+    #[cfg(test)]
+    fn assert_valid(&self) {
+        assert!(
+            self.lines.is_char_boundary(self.offset()),
+            "Not on valid char boundary"
+        );
+        assert!(
+            self.lines
+                .grapheme_indices(true)
+                .any(|(i, _)| i == self.offset())
+                || self.offset() == self.lines.len(),
+            "Not on valid grapheme"
+        );
+        assert!(
+            std::str::from_utf8(self.lines.as_bytes()).is_ok(),
+            "Not valid utf-8"
+        );
+    }
+
     /// Gets the current edit position
     pub fn offset(&self) -> usize {
         self.insertion_point.offset
@@ -96,13 +126,7 @@ impl LineBuffer {
 
     /// Counts the number of lines in the buffer
     pub fn num_lines(&self) -> usize {
-        let count = self.lines.split('\n').count();
-
-        if count == 0 {
-            1
-        } else {
-            count
-        }
+        self.lines.split('\n').count()
     }
 
     /// Checks to see if the buffer ends with a given character
@@ -136,14 +160,17 @@ impl LineBuffer {
     pub fn find_current_line_end(&self) -> usize {
         self.lines[self.insertion_point.offset..]
             .find('\n')
-            .map_or(self.lines.len(), |i| {
-                let absolute_index = i + self.insertion_point.offset;
-                if absolute_index > 0 && self.lines.as_bytes()[absolute_index - 1] == b'\r' {
-                    absolute_index - 1
-                } else {
-                    absolute_index
-                }
-            })
+            .map_or_else(
+                || self.lines.len(),
+                |i| {
+                    let absolute_index = i + self.insertion_point.offset;
+                    if absolute_index > 0 && self.lines.as_bytes()[absolute_index - 1] == b'\r' {
+                        absolute_index - 1
+                    } else {
+                        absolute_index
+                    }
+                },
+            )
     }
 
     /// Move cursor position to the end of the line
@@ -222,7 +249,7 @@ impl LineBuffer {
 
     /// Insert `&str` at the `idx` position in the current line.
     ///
-    /// TODO: Check unicode validation
+    /// Cursor is placed after the inserted string.
     pub fn insert_str(&mut self, string: &str) {
         let pos = self.insertion_point();
         self.lines.insert_str(pos.offset, string);
@@ -241,14 +268,14 @@ impl LineBuffer {
         self.lines.truncate(self.insertion_point.offset);
     }
 
-    /// Clear everything beginning at the cursor up to the end of the line.
+    /// Clear beginning at the cursor up to the end of the line.
     /// Newline character at the end remains.
     pub fn clear_to_line_end(&mut self) {
         self.clear_range(self.insertion_point.offset..self.find_current_line_end());
     }
 
-    /// Clear from the start of the line to the cursor.
-    /// Keeps the cursor at the beginning of the line.
+    /// Clear from the start of the buffer to the cursor.
+    /// Keeps the cursor at the beginning of the line/buffer.
     pub fn clear_to_insertion_point(&mut self) {
         self.clear_range(..self.insertion_point.offset);
         self.insertion_point.offset = 0;
@@ -307,7 +334,7 @@ impl LineBuffer {
             .map_or(0, |offset| offset + 1);
         let right_index = self.lines[self.insertion_point.offset..]
             .find('\n')
-            .map_or(self.lines.len(), |i| i + self.insertion_point.offset + 1);
+            .map_or_else(|| self.lines.len(), |i| i + self.insertion_point.offset + 1);
 
         left_index..right_index
     }
@@ -333,8 +360,9 @@ impl LineBuffer {
         self.lines.trim().split_whitespace().count()
     }
 
-    /// Capitallize the character at insertion point and move the insertion point right one
-    /// grapheme.
+    /// Capitalize the character at insertion point (or the first character
+    /// following the whitespace at the insertion point) and move the insertion
+    /// point right one grapheme.
     pub fn capitalize_char(&mut self) {
         if self.on_whitespace() {
             self.move_word_right();
@@ -427,76 +455,54 @@ impl LineBuffer {
     /// Moves one line up
     pub fn move_line_up(&mut self) {
         if !self.is_cursor_at_first_line() {
-            // If we're not at the top, move up a line in the multiline buffer
-            let mut position = self.offset();
-            let mut num_of_move_lefts = 0;
-            let buffer = self.get_buffer().to_string();
+            let old_range = self.current_line_range();
 
-            // Move left until we're looking at the newline
-            // Observe what column we were on
-            while position > 0 && &buffer[(position - 1)..position] != "\n" {
-                self.move_left();
-                num_of_move_lefts += 1;
-                position = self.offset();
-            }
+            let grapheme_col = self.lines[old_range.start..self.offset()]
+                .graphemes(true)
+                .count();
 
-            // Find start of previous line
-            let mut matches = buffer[0..(position - 1)].rmatch_indices('\n');
+            // Platform independent way to jump to the previous line.
+            // Doesn't matter if `\n` or `\r\n` terminated line.
+            // Maybe replace with more explicit implementation.
+            self.set_insertion_point(old_range.start);
+            self.move_left();
 
-            if let Some((pos, _)) = matches.next() {
-                position = pos + 1;
-            } else {
-                position = 0;
-            }
-            self.set_insertion_point(position);
+            let new_range = self.current_line_range();
+            let new_line = &self.lines[new_range.clone()];
 
-            // Move right from this position to the column we were at
-            while &buffer[position..=position] != "\n" && num_of_move_lefts > 0 {
-                self.move_right();
-                position = self.offset();
-                num_of_move_lefts -= 1;
-            }
+            self.insertion_point.offset = new_line
+                .grapheme_indices(true)
+                .take(grapheme_col + 1)
+                .last()
+                .map_or(new_range.start, |(i, _)| i + new_range.start);
         }
     }
 
     /// Moves one line down
     pub fn move_line_down(&mut self) {
         if !self.is_cursor_at_last_line() {
-            // If we're not at the top, move up a line in the multiline buffer
-            let mut position = self.offset();
-            let mut num_of_move_lefts = 0;
-            let buffer = self.get_buffer().to_string();
+            let old_range = self.current_line_range();
 
-            // Move left until we're looking at the newline
-            // Observe what column we were on
-            while position > 0 && &buffer[(position - 1)..position] != "\n" {
-                self.move_left();
-                num_of_move_lefts += 1;
-                position = self.offset();
-            }
+            let grapheme_col = self.lines[old_range.start..self.offset()]
+                .graphemes(true)
+                .count();
 
-            // Find start of next line
-            let mut matches = buffer[position..].match_indices('\n');
+            // Exclusive range, thus guaranteed to be in the next line
+            self.set_insertion_point(old_range.end);
 
-            // Assume this always succeeds
+            let new_range = self.current_line_range();
+            let new_line = &self.lines[new_range.clone()];
 
-            let (pos, _) = matches
-                .next()
-                .expect("internal error: should have found newline");
-
-            position += pos + 1;
-
-            self.set_insertion_point(position);
-
-            // Move right from this position to the column we were at
-            while position < buffer.len()
-                && &buffer[position..=position] != "\n"
-                && num_of_move_lefts > 0
-            {
-                self.move_right();
-                position = self.offset();
-                num_of_move_lefts -= 1;
-            }
+            // Slightly different to move_line_up to account for the special
+            // case of the last line without newline char at the end.
+            // -> use `self.find_current_line_end()`
+            self.insertion_point.offset = new_line
+                .grapheme_indices(true)
+                .nth(grapheme_col)
+                .map_or_else(
+                    || self.find_current_line_end(),
+                    |(i, _)| i + new_range.start,
+                );
         }
     }
 
@@ -511,30 +517,30 @@ impl LineBuffer {
     }
 
     /// Finds index for the first occurrence of a char to the right of offset
-    pub fn find_char_right(&self, c: char) -> Option<usize> {
-        if self.offset() + 1 > self.lines.len() {
-            return None;
-        }
-
-        let search_str = &self.lines[self.grapheme_right_index()..];
-        search_str
-            .find(c)
-            .map(|index| index + self.grapheme_right_index())
+    pub fn find_char_right(&self, c: char, current_line: bool) -> Option<usize> {
+        // Skip current grapheme
+        let char_offset = self.grapheme_right_index();
+        let range = if current_line {
+            char_offset..self.current_line_range().end
+        } else {
+            char_offset..self.lines.len()
+        };
+        self.lines[range].find(c).map(|index| index + char_offset)
     }
 
     /// Finds index for the first occurrence of a char to the left of offset
-    pub fn find_char_left(&self, c: char) -> Option<usize> {
-        if self.offset() + 1 > self.lines.len() {
-            return None;
-        }
-
-        let search_str = &self.lines[..self.offset()];
-        search_str.rfind(c)
+    pub fn find_char_left(&self, c: char, current_line: bool) -> Option<usize> {
+        let range = if current_line {
+            self.current_line_range().start..self.offset()
+        } else {
+            0..self.offset()
+        };
+        self.lines[range.clone()].rfind(c).map(|i| i + range.start)
     }
 
     /// Moves the insertion point until the next char to the right
-    pub fn move_right_until(&mut self, c: char) -> usize {
-        if let Some(index) = self.find_char_right(c) {
+    pub fn move_right_until(&mut self, c: char, current_line: bool) -> usize {
+        if let Some(index) = self.find_char_right(c, current_line) {
             self.insertion_point.offset = index;
         }
 
@@ -542,8 +548,8 @@ impl LineBuffer {
     }
 
     /// Moves the insertion point before the next char to the right
-    pub fn move_right_before(&mut self, c: char) -> usize {
-        if let Some(index) = self.find_char_right(c) {
+    pub fn move_right_before(&mut self, c: char, current_line: bool) -> usize {
+        if let Some(index) = self.find_char_right(c, current_line) {
             self.insertion_point.offset = index;
             self.insertion_point.offset = self.grapheme_left_index();
         }
@@ -552,8 +558,8 @@ impl LineBuffer {
     }
 
     /// Moves the insertion point until the next char to the left of offset
-    pub fn move_left_until(&mut self, c: char) -> usize {
-        if let Some(index) = self.find_char_left(c) {
+    pub fn move_left_until(&mut self, c: char, current_line: bool) -> usize {
+        if let Some(index) = self.find_char_left(c, current_line) {
             self.insertion_point.offset = index;
         }
 
@@ -561,8 +567,8 @@ impl LineBuffer {
     }
 
     /// Moves the insertion point before the next char to the left of offset
-    pub fn move_left_before(&mut self, c: char) -> usize {
-        if let Some(index) = self.find_char_left(c) {
+    pub fn move_left_before(&mut self, c: char, current_line: bool) -> usize {
+        if let Some(index) = self.find_char_left(c, current_line) {
             self.insertion_point.offset = index + c.len_utf8();
         }
 
@@ -570,30 +576,30 @@ impl LineBuffer {
     }
 
     /// Deletes until first character to the right of offset
-    pub fn delete_right_until_char(&mut self, c: char) {
-        if let Some(index) = self.find_char_right(c) {
+    pub fn delete_right_until_char(&mut self, c: char, current_line: bool) {
+        if let Some(index) = self.find_char_right(c, current_line) {
             self.clear_range(self.offset()..index + c.len_utf8());
         }
     }
 
     /// Deletes before first character to the right of offset
-    pub fn delete_right_before_char(&mut self, c: char) {
-        if let Some(index) = self.find_char_right(c) {
+    pub fn delete_right_before_char(&mut self, c: char, current_line: bool) {
+        if let Some(index) = self.find_char_right(c, current_line) {
             self.clear_range(self.offset()..index);
         }
     }
 
     /// Deletes until first character to the left of offset
-    pub fn delete_left_until_char(&mut self, c: char) {
-        if let Some(index) = self.find_char_left(c) {
+    pub fn delete_left_until_char(&mut self, c: char, current_line: bool) {
+        if let Some(index) = self.find_char_left(c, current_line) {
             self.clear_range(index..self.offset());
             self.insertion_point.offset = index;
         }
     }
 
     /// Deletes before first character to the left of offset
-    pub fn delete_left_before_char(&mut self, c: char) {
-        if let Some(index) = self.find_char_left(c) {
+    pub fn delete_left_before_char(&mut self, c: char, current_line: bool) {
+        if let Some(index) = self.find_char_left(c, current_line) {
             self.clear_range(index + c.len_utf8()..self.offset());
             self.insertion_point.offset = index + c.len_utf8();
         }
@@ -622,15 +628,17 @@ mod test {
     fn test_new_buffer_is_empty() {
         let line_buffer = LineBuffer::new();
         assert!(line_buffer.is_empty());
+        line_buffer.assert_valid();
     }
 
     #[test]
     fn test_clearing_line_buffer_resets_buffer_and_insertion_point() {
-        let mut buffer = buffer_with("this is a command");
-        buffer.clear();
+        let mut line_buffer = buffer_with("this is a command");
+        line_buffer.clear();
         let empty_buffer = LineBuffer::new();
 
-        assert_eq!(buffer, empty_buffer);
+        assert_eq!(line_buffer, empty_buffer);
+        line_buffer.assert_valid();
     }
 
     #[test]
@@ -644,6 +652,7 @@ mod test {
             expected_updated_insertion_point,
             line_buffer.insertion_point()
         );
+        line_buffer.assert_valid();
     }
 
     #[test]
@@ -657,6 +666,7 @@ mod test {
             expected_updated_insertion_point,
             line_buffer.insertion_point()
         );
+        line_buffer.assert_valid();
     }
 
     #[rstest]
@@ -673,6 +683,7 @@ mod test {
         line_buffer.set_buffer(string_to_set.to_string());
 
         assert_eq!(expected_insertion_point, line_buffer.insertion_point());
+        line_buffer.assert_valid();
     }
 
     #[rstest]
@@ -686,6 +697,7 @@ mod test {
         let expected_line_buffer = buffer_with(expected);
 
         assert_eq!(expected_line_buffer, line_buffer);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
@@ -700,6 +712,7 @@ mod test {
         let expected_line_buffer = buffer_with(expected);
 
         assert_eq!(expected_line_buffer, line_buffer);
+        line_buffer.assert_valid();
     }
 
     #[test]
@@ -710,6 +723,7 @@ mod test {
         let expected_line_buffer = buffer_with("This is a ");
 
         assert_eq!(expected_line_buffer, line_buffer);
+        line_buffer.assert_valid();
     }
 
     #[test]
@@ -721,6 +735,7 @@ mod test {
         let expected_line_buffer = buffer_with("This is a ");
 
         assert_eq!(expected_line_buffer, line_buffer);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
@@ -728,21 +743,16 @@ mod test {
     #[case("This is a test", 4)]
     #[case("This      is a test", 4)]
     fn word_count_works(#[case] input: &str, #[case] expected_count: usize) {
-        let line_buffer1 = buffer_with(input);
+        let line_buffer = buffer_with(input);
 
-        assert_eq!(expected_count, line_buffer1.word_count());
-    }
-
-    #[test]
-    fn word_count_works_with_multiple_spaces() {
-        let line_buffer = buffer_with("This   is a test");
-
-        assert_eq!(4, line_buffer.word_count());
+        assert_eq!(expected_count, line_buffer.word_count());
+        line_buffer.assert_valid();
     }
 
     #[rstest]
     #[case("This is a test", 13, "This is a tesT", 14)]
     #[case("This is a test", 10, "This is a Test", 11)]
+    #[case("This is a test", 9, "This is a Test", 11)]
     fn capitalize_char_works(
         #[case] input: &str,
         #[case] in_location: usize,
@@ -757,6 +767,7 @@ mod test {
         expected.set_insertion_point(out_location);
 
         assert_eq!(expected, line_buffer);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
@@ -779,6 +790,7 @@ mod test {
         expected.set_insertion_point(out_location);
 
         assert_eq!(expected, line_buffer);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
@@ -801,6 +813,7 @@ mod test {
         expected.set_insertion_point(out_location);
 
         assert_eq!(expected, line_buffer);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
@@ -823,6 +836,7 @@ mod test {
         expected.set_insertion_point(out_location);
 
         assert_eq!(line_buffer, expected);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
@@ -844,17 +858,20 @@ mod test {
         expected.set_insertion_point(out_location);
 
         assert_eq!(line_buffer, expected);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
-    #[case("line 1\nline 2", 7, "line 1\nline 2", 0)]
-    #[case("line 1\nline 2", 0, "line 1\nline 2", 0)]
-    #[case("line\nlong line", 14, "line\nlong line", 4)]
-    #[case("line\nlong line", 8, "line\nlong line", 3)]
+    #[case("line 1\nline 2", 7, 0)]
+    #[case("line 1\nline 2", 8, 1)]
+    #[case("line 1\nline 2", 0, 0)]
+    #[case("line\nlong line", 14, 4)]
+    #[case("line\nlong line", 8, 3)]
+    #[case("line 1\n😇line 2", 11, 1)]
+    #[case("line\n\nline", 8, 5)]
     fn moving_up_works(
         #[case] input: &str,
         #[case] in_location: usize,
-        #[case] output: &str,
         #[case] out_location: usize,
     ) {
         let mut line_buffer = buffer_with(input);
@@ -862,22 +879,27 @@ mod test {
 
         line_buffer.move_line_up();
 
-        let mut expected = buffer_with(output);
+        let mut expected = buffer_with(input);
         expected.set_insertion_point(out_location);
 
         assert_eq!(line_buffer, expected);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
-    #[case("line 1\nline 2", 0, "line 1\nline 2", 7)]
-    #[case("line 1\nline 2", 7, "line 1\nline 2", 7)]
-    #[case("long line\nline", 8, "long line\nline", 14)]
-    #[case("long line\nline", 4, "long line\nline", 14)]
-    #[case("long line\nline", 3, "long line\nline", 13)]
+    #[case("line 1", 0, 0)]
+    #[case("line 1\nline 2", 0, 7)]
+    #[case("line 1\n😇line 2", 1, 11)]
+    #[case("line 😇 1\nline 2 long", 9, 18)]
+    #[case("line 1\nline 2", 7, 7)]
+    #[case("long line\nline", 8, 14)]
+    #[case("long line\nline", 4, 14)]
+    #[case("long line\nline", 3, 13)]
+    #[case("long line\nline\nline", 8, 14)]
+    #[case("line\n\nline", 3, 5)]
     fn moving_down_works(
         #[case] input: &str,
         #[case] in_location: usize,
-        #[case] output: &str,
         #[case] out_location: usize,
     ) {
         let mut line_buffer = buffer_with(input);
@@ -885,13 +907,15 @@ mod test {
 
         line_buffer.move_line_down();
 
-        let mut expected = buffer_with(output);
+        let mut expected = buffer_with(input);
         expected.set_insertion_point(out_location);
 
         assert_eq!(line_buffer, expected);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
+    #[case("line", 4, true)]
     #[case("line 1\nline 2\nline 3", 0, true)]
     #[case("line 1\nline 2\nline 3", 6, true)]
     #[case("line 1\nline 2\nline 3", 8, false)]
@@ -902,6 +926,7 @@ mod test {
     ) {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(in_location);
+        line_buffer.assert_valid();
 
         assert_eq!(line_buffer.is_cursor_at_first_line(), expected);
     }
@@ -922,102 +947,179 @@ mod test {
     ) {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(in_location);
+        line_buffer.assert_valid();
 
         assert_eq!(line_buffer.is_cursor_at_last_line(), expected);
     }
 
     #[rstest]
-    #[case("abc def ghi", 0, 'd', "ef ghi")]
-    #[case("abc def ghi", 0, 'i', "")]
-    #[case("abc def ghi", 0, 'z', "abc def ghi")]
-    #[case("abc def ghi", 2, 'd', "abef ghi")]
-    #[case("abc def chi", 2, 'c', "abhi")]
-    #[case("abc def chi", 8, 'i', "abc def ")]
+    #[case("abc def ghi", 0, 'c', true, 2)]
+    #[case("abc def ghi", 0, 'a', true, 0)]
+    #[case("abc def ghi", 0, 'z', true, 0)]
+    #[case("a😇c", 0, 'c', true, 5)]
+    #[case("😇bc", 0, 'c', true, 5)]
+    #[case("abc\ndef", 0, 'f', true, 0)]
+    #[case("abc\ndef", 3, 'f', true, 3)]
+    #[case("abc\ndef", 0, 'f', false, 6)]
+    #[case("abc\ndef", 3, 'f', false, 6)]
+    fn test_move_right_until(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] c: char,
+        #[case] current_line: bool,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        line_buffer.move_right_until(c, current_line);
+
+        assert_eq!(line_buffer.offset(), expected);
+        line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0, 'd', true, 3)]
+    #[case("abc def ghi", 3, 'd', true, 3)]
+    #[case("a😇c", 0, 'c', true, 1)]
+    #[case("😇bc", 0, 'c', true, 4)]
+    fn test_move_right_before(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] c: char,
+        #[case] current_line: bool,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        line_buffer.move_right_before(c, current_line);
+
+        assert_eq!(line_buffer.offset(), expected);
+        line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0, 'd', true, "ef ghi")]
+    #[case("abc def ghi", 0, 'i', true, "")]
+    #[case("abc def ghi", 0, 'z', true, "abc def ghi")]
+    #[case("abc def ghi", 0, 'a', true, "abc def ghi")]
     fn test_delete_until(
         #[case] input: &str,
         #[case] position: usize,
         #[case] c: char,
+        #[case] current_line: bool,
         #[case] expected: &str,
     ) {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        line_buffer.delete_right_until_char(c);
+        line_buffer.delete_right_until_char(c, current_line);
 
         assert_eq!(line_buffer.lines, expected);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
-    #[case("abc def ghi", 0, 'd', "def ghi")]
-    #[case("abc def ghi", 0, 'i', "i")]
-    #[case("abc def ghi", 0, 'z', "abc def ghi")]
-    #[case("abc def ghi", 2, 'd', "abdef ghi")]
-    #[case("abc def chi", 2, 'c', "abchi")]
-    #[case("abc def chi", 8, 'i', "abc def i")]
+    #[case("abc def ghi", 0, 'b', true, "bc def ghi")]
+    #[case("abc def ghi", 0, 'i', true, "i")]
+    #[case("abc def ghi", 0, 'z', true, "abc def ghi")]
     fn test_delete_before(
         #[case] input: &str,
         #[case] position: usize,
         #[case] c: char,
+        #[case] current_line: bool,
         #[case] expected: &str,
     ) {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        line_buffer.delete_right_before_char(c);
+        line_buffer.delete_right_before_char(c, current_line);
 
         assert_eq!(line_buffer.lines, expected);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
-    #[case("abc def ghi", 4, 'c', Some(2))]
-    #[case("abc def ghi", 0, 'a', None)]
-    #[case("abc def ghi", 6, 'a', Some(0))]
-    fn find_char_left(
+    #[case("abc def ghi", 4, 'c', true, 2)]
+    #[case("abc def ghi", 0, 'a', true, 0)]
+    #[case("abc def ghi", 6, 'a', true, 0)]
+    fn test_move_left_until(
         #[case] input: &str,
         #[case] position: usize,
         #[case] c: char,
-        #[case] expected: Option<usize>,
+        #[case] current_line: bool,
+        #[case] expected: usize,
     ) {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        assert_eq!(line_buffer.find_char_left(c), expected);
+        line_buffer.move_left_until(c, current_line);
+
+        assert_eq!(line_buffer.offset(), expected);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
-    #[case("abc def ghi", 5, 'b', "aef ghi")]
-    #[case("abc def ghi", 5, 'e', "abc def ghi")]
-    #[case("abc def ghi", 10, 'a', "i")]
+    #[case("abc def ghi", 4, 'c', true, 3)]
+    #[case("abc def ghi", 0, 'a', true, 0)]
+    #[case("abc def ghi", 6, 'a', true, 1)]
+    fn test_move_left_before(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] c: char,
+        #[case] current_line: bool,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        line_buffer.move_left_before(c, current_line);
+
+        assert_eq!(line_buffer.offset(), expected);
+        line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 5, 'b', true, "aef ghi")]
+    #[case("abc def ghi", 5, 'e', true, "abc def ghi")]
+    #[case("abc def ghi", 10, 'a', true, "i")]
+    #[case("z\nabc def ghi", 10, 'z', true, "z\nabc def ghi")]
+    #[case("z\nabc def ghi", 12, 'z', false, "i")]
     fn test_delete_until_left(
         #[case] input: &str,
         #[case] position: usize,
         #[case] c: char,
+        #[case] current_line: bool,
         #[case] expected: &str,
     ) {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        line_buffer.delete_left_until_char(c);
+        line_buffer.delete_left_until_char(c, current_line);
 
         assert_eq!(line_buffer.lines, expected);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
-    #[case("abc def ghi", 5, 'b', "abef ghi")]
-    #[case("abc def ghi", 5, 'e', "abc def ghi")]
-    #[case("abc def ghi", 10, 'a', "ai")]
+    #[case("abc def ghi", 5, 'b', true, "abef ghi")]
+    #[case("abc def ghi", 5, 'e', true, "abc def ghi")]
+    #[case("abc def ghi", 10, 'a', true, "ai")]
     fn test_delete_before_left(
         #[case] input: &str,
         #[case] position: usize,
         #[case] c: char,
+        #[case] current_line: bool,
         #[case] expected: &str,
     ) {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        line_buffer.delete_left_before_char(c);
+        line_buffer.delete_left_before_char(c, current_line);
 
         assert_eq!(line_buffer.lines, expected);
+        line_buffer.assert_valid();
     }
 
     #[rstest]
@@ -1039,6 +1141,7 @@ mod test {
     ) {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(in_location);
+        line_buffer.assert_valid();
 
         assert_eq!(line_buffer.find_current_line_end(), expected);
     }
@@ -1060,6 +1163,7 @@ mod test {
     ) {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(in_location);
+        line_buffer.assert_valid();
 
         assert_eq!(line_buffer.line(), expected);
     }
@@ -1073,7 +1177,96 @@ mod test {
     fn test_num_lines(#[case] input: &str, #[case] in_location: usize, #[case] expected: usize) {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(in_location);
+        line_buffer.assert_valid();
 
         assert_eq!(line_buffer.num_lines(), expected);
+    }
+
+    #[rstest]
+    #[case("", 0, 0)]
+    #[case("line", 0, 4)]
+    #[case("\n", 0, 0)]
+    #[case("line\n", 0, 4)]
+    #[case("a\nb", 2, 3)]
+    #[case("a\nb", 0, 1)]
+    #[case("a\r\nb", 0, 1)]
+    fn test_move_to_line_end(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        line_buffer.move_to_line_end();
+
+        assert_eq!(line_buffer.offset(), expected);
+        line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("", 0, 0)]
+    #[case("line", 3, 0)]
+    #[case("\n", 1, 1)]
+    #[case("\n", 0, 0)]
+    #[case("\nline", 3, 1)]
+    #[case("a\nb", 2, 2)]
+    #[case("a\nb", 3, 2)]
+    #[case("a\r\nb", 3, 3)]
+    fn test_move_to_line_start(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        line_buffer.move_to_line_start();
+
+        assert_eq!(line_buffer.offset(), expected);
+        line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("", 0, 0..0)]
+    #[case("line", 0, 0..4)]
+    #[case("line\n", 0, 0..5)]
+    #[case("line\n", 4, 0..5)]
+    #[case("line\r\n", 0, 0..6)]
+    #[case("line\r\n", 4, 0..6)] // Position 5 would be invalid from a grapheme perspective
+    #[case("line\nsecond", 5, 5..11)]
+    #[case("line\r\nsecond", 7, 6..12)]
+    fn test_current_line_range(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] expected: Range<usize>,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+        line_buffer.assert_valid();
+
+        assert_eq!(line_buffer.current_line_range(), expected);
+    }
+
+    #[rstest]
+    #[case("This is a test", 7, "This is", 7)]
+    #[case("This is a test\nunrelated", 7, "This is\nunrelated", 7)]
+    #[case("This is a test\r\nunrelated", 7, "This is\r\nunrelated", 7)]
+    fn test_clear_to_line_end(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] output: &str,
+        #[case] out_location: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        line_buffer.clear_to_line_end();
+
+        let mut expected = buffer_with(output);
+        expected.set_insertion_point(out_location);
+
+        assert_eq!(expected, line_buffer);
+        line_buffer.assert_valid();
     }
 }

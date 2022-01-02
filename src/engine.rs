@@ -822,14 +822,18 @@ impl Reedline {
                 EditCommand::SwapGraphemes => self.editor.swap_graphemes(),
                 EditCommand::Undo => self.editor.undo(),
                 EditCommand::Redo => self.editor.redo(),
-                EditCommand::CutRightUntil(c) => self.editor.cut_right_until_char(*c, false),
-                EditCommand::CutRightBefore(c) => self.editor.cut_right_until_char(*c, true),
-                EditCommand::MoveRightUntil(c) => self.editor.move_right_until_char(*c, false),
-                EditCommand::MoveRightBefore(c) => self.editor.move_right_until_char(*c, true),
-                EditCommand::CutLeftUntil(c) => self.editor.cut_left_until_char(*c, false),
-                EditCommand::CutLeftBefore(c) => self.editor.cut_left_until_char(*c, true),
-                EditCommand::MoveLeftUntil(c) => self.editor.move_left_until_char(*c, false),
-                EditCommand::MoveLeftBefore(c) => self.editor.move_left_until_char(*c, true),
+                EditCommand::CutRightUntil(c) => self.editor.cut_right_until_char(*c, false, true),
+                EditCommand::CutRightBefore(c) => self.editor.cut_right_until_char(*c, true, true),
+                EditCommand::MoveRightUntil(c) => {
+                    self.editor.move_right_until_char(*c, false, true)
+                }
+                EditCommand::MoveRightBefore(c) => {
+                    self.editor.move_right_until_char(*c, true, true)
+                }
+                EditCommand::CutLeftUntil(c) => self.editor.cut_left_until_char(*c, false, true),
+                EditCommand::CutLeftBefore(c) => self.editor.cut_left_until_char(*c, true, true),
+                EditCommand::MoveLeftUntil(c) => self.editor.move_left_until_char(*c, false, true),
+                EditCommand::MoveLeftBefore(c) => self.editor.move_left_until_char(*c, true, true),
                 EditCommand::CutFromLineStart => self.editor.cut_from_line_start(),
                 EditCommand::CutToLineEnd => self.editor.cut_to_line_end(),
             }
