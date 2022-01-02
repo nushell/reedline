@@ -87,7 +87,7 @@ let mut line_editor = Reedline::create()?
 ```rust,no_run
 // Create a reedline object with highlighter support
 
-use reedline::{DefaultHighlighter, Reedline};
+use reedline::{ExampleHighlighter, Reedline};
 
 let commands = vec![
   "test".into(),
@@ -96,7 +96,7 @@ let commands = vec![
   "this is the reedline crate".into(),
 ];
 let mut line_editor =
-Reedline::create()?.with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+Reedline::create()?.with_highlighter(Box::new(ExampleHighlighter::new(commands)));
 ```
 
 ### Integrate with custom Tab-Handler

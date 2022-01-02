@@ -1,22 +1,19 @@
-use std::borrow::Borrow;
-
-use crate::{painter::PromptLines, PromptHistorySearch};
-
 use {
     crate::{
         completion::{CircularCompletionHandler, CompletionActionHandler},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
         enums::{ReedlineEvent, UndoBehavior},
+        highlighter::SimpleMatchHighlighter,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
-        painter::Painter,
+        painter::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
-        text_manipulation, DefaultHighlighter, DefaultValidator, EditCommand, Highlighter, Prompt,
-        Signal, ValidationResult, Validator,
+        text_manipulation, DefaultValidator, EditCommand, ExampleHighlighter, Highlighter, Prompt,
+        PromptHistorySearch, Signal, ValidationResult, Validator,
     },
     crossterm::{event, event::Event, terminal, Result},
-    std::{io, time::Duration},
+    std::{borrow::Borrow, io, time::Duration},
 };
 
 // These two parameters define when an event is a Paste Event. The POLL_WAIT is used
@@ -115,7 +112,7 @@ impl Reedline {
     pub fn create() -> io::Result<Reedline> {
         let history = Box::new(FileBackedHistory::default());
         let painter = Painter::new(io::stdout());
-        let buffer_highlighter = Box::new(DefaultHighlighter::default());
+        let buffer_highlighter = Box::new(ExampleHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
         let validator = Box::new(DefaultValidator);
 
@@ -220,7 +217,7 @@ impl Reedline {
     /// // Create a reedline object with highlighter support
     ///
     /// use std::io;
-    /// use reedline::{DefaultHighlighter, Reedline};
+    /// use reedline::{ExampleHighlighter, Reedline};
     ///
     /// let commands = vec![
     ///   "test".into(),
@@ -229,7 +226,7 @@ impl Reedline {
     ///   "this is the reedline crate".into(),
     /// ];
     /// let mut line_editor =
-    /// Reedline::create()?.with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+    /// Reedline::create()?.with_highlighter(Box::new(ExampleHighlighter::new(commands)));
     /// # Ok::<(), io::Error>(())
     /// ```
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Reedline {
@@ -895,25 +892,30 @@ impl Reedline {
                 PromptHistorySearchStatus::Passing
             };
 
-            let prompt_history_search = PromptHistorySearch::new(status, substring);
+            let prompt_history_search = PromptHistorySearch::new(status, substring.clone());
 
-            match self.history.string_at_cursor() {
-                Some(string) => {
-                    let offset = string.len();
+            let res_string = self
+                .history
+                .string_at_cursor()
+                .unwrap_or_default()
+                .replace("\n", "\r\n");
 
-                    self.painter.repaint_buffer(
-                        prompt,
-                        self.prompt_edit_mode(),
-                        PromptLines::new(&string[..offset], &string[offset..], ""),
-                        Some(prompt_history_search),
-                        self.use_ansi_coloring,
-                    )?;
-                }
+            // Highlight matches
+            let res_string = if self.use_ansi_coloring {
+                let match_highlighter = SimpleMatchHighlighter::new(substring);
+                let styled = match_highlighter.highlight(&res_string);
+                styled.render_simple()
+            } else {
+                res_string
+            };
 
-                None => {
-                    self.painter.clear_until_newline()?;
-                }
-            }
+            self.painter.repaint_buffer(
+                prompt,
+                self.prompt_edit_mode(),
+                PromptLines::new(&res_string, "", ""),
+                Some(prompt_history_search),
+                self.use_ansi_coloring,
+            )?;
         }
 
         Ok(())
