@@ -1,27 +1,20 @@
-use nu_ansi_term::Style;
-
-use {crate::styled_text::StyledText, nu_ansi_term::Color};
+use crate::highlighter::Highlighter;
+use crate::StyledText;
+use nu_ansi_term::{Color, Style};
 
 pub static DEFAULT_BUFFER_MATCH_COLOR: Color = Color::Green;
 pub static DEFAULT_BUFFER_NEUTRAL_COLOR: Color = Color::White;
 pub static DEFAULT_BUFFER_NOTMATCH_COLOR: Color = Color::Red;
 
-/// The syntax highlighting trait. Implementers of this trait will take in the current string and then
-/// return a `StyledText` object, which represents the contents of the original line as styled strings
-pub trait Highlighter: Send {
-    /// The action that will handle the current buffer as a line and return the corresponding `StyledText` for the buffer
-    fn highlight(&self, line: &str) -> StyledText;
-}
-
 /// A simple, example highlighter that shows how to highlight keywords
-pub struct DefaultHighlighter {
+pub struct ExampleHighlighter {
     external_commands: Vec<String>,
     match_color: Color,
     notmatch_color: Color,
     neutral_color: Color,
 }
 
-impl Highlighter for DefaultHighlighter {
+impl Highlighter for ExampleHighlighter {
     fn highlight(&self, line: &str) -> StyledText {
         let mut styled_text = StyledText::new();
 
@@ -64,10 +57,10 @@ impl Highlighter for DefaultHighlighter {
         styled_text
     }
 }
-impl DefaultHighlighter {
+impl ExampleHighlighter {
     /// Construct the default highlighter with a given set of extern commands/keywords to detect and highlight
-    pub fn new(external_commands: Vec<String>) -> DefaultHighlighter {
-        DefaultHighlighter {
+    pub fn new(external_commands: Vec<String>) -> ExampleHighlighter {
+        ExampleHighlighter {
             external_commands,
             match_color: DEFAULT_BUFFER_MATCH_COLOR,
             notmatch_color: DEFAULT_BUFFER_NOTMATCH_COLOR,
@@ -87,8 +80,8 @@ impl DefaultHighlighter {
         self.neutral_color = neutral_color;
     }
 }
-impl Default for DefaultHighlighter {
+impl Default for ExampleHighlighter {
     fn default() -> Self {
-        DefaultHighlighter::new(vec![])
+        ExampleHighlighter::new(vec![])
     }
 }

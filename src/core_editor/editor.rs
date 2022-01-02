@@ -76,6 +76,10 @@ impl Editor {
         self.line_buffer.insert_char(c);
     }
 
+    pub fn insert_str(&mut self, string: &str) {
+        self.line_buffer.insert_str(string);
+    }
+
     pub fn backspace(&mut self) {
         self.line_buffer.delete_left_grapheme();
     }
@@ -116,7 +120,11 @@ impl Editor {
         self.line_buffer.swap_graphemes();
     }
 
-    pub fn set_insertion_point(&mut self, pos: usize) {
+    /// Directly change the cursor position measured in bytes in the buffer
+    ///
+    /// ## Unicode safety:
+    /// Not checked, inproper use may cause panics in following operations
+    pub(crate) fn set_insertion_point(&mut self, pos: usize) {
         self.line_buffer.set_insertion_point(pos);
     }
 
@@ -348,24 +356,24 @@ impl Editor {
         }
     }
 
-    pub fn move_right_until_char(&mut self, c: char, before_char: bool) {
+    pub fn move_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
         if before_char {
-            self.line_buffer.move_right_before(c);
+            self.line_buffer.move_right_before(c, current_line);
         } else {
-            self.line_buffer.move_right_until(c);
+            self.line_buffer.move_right_until(c, current_line);
         }
     }
 
-    pub fn move_left_until_char(&mut self, c: char, before_char: bool) {
+    pub fn move_left_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
         if before_char {
-            self.line_buffer.move_left_before(c);
+            self.line_buffer.move_left_before(c, current_line);
         } else {
-            self.line_buffer.move_left_until(c);
+            self.line_buffer.move_left_until(c, current_line);
         }
     }
 
-    pub fn cut_right_until_char(&mut self, c: char, before_char: bool) {
-        if let Some(index) = self.line_buffer.find_char_right(c) {
+    pub fn cut_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
+        if let Some(index) = self.line_buffer.find_char_right(c, current_line) {
             // Saving the section of the string that will be deleted to be
             // stored into the buffer
             let extra = if before_char { 0 } else { c.len_utf8() };
@@ -376,16 +384,16 @@ impl Editor {
                 self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
 
                 if before_char {
-                    self.line_buffer.delete_right_before_char(c);
+                    self.line_buffer.delete_right_before_char(c, current_line);
                 } else {
-                    self.line_buffer.delete_right_until_char(c);
+                    self.line_buffer.delete_right_until_char(c, current_line);
                 }
             }
         }
     }
 
-    pub fn cut_left_until_char(&mut self, c: char, before_char: bool) {
-        if let Some(index) = self.line_buffer.find_char_left(c) {
+    pub fn cut_left_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
+        if let Some(index) = self.line_buffer.find_char_left(c, current_line) {
             // Saving the section of the string that will be deleted to be
             // stored into the buffer
             let extra = if before_char { c.len_utf8() } else { 0 };
@@ -396,9 +404,9 @@ impl Editor {
                 self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
 
                 if before_char {
-                    self.line_buffer.delete_left_before_char(c);
+                    self.line_buffer.delete_left_before_char(c, current_line);
                 } else {
-                    self.line_buffer.delete_left_until_char(c);
+                    self.line_buffer.delete_left_until_char(c, current_line);
                 }
             }
         }

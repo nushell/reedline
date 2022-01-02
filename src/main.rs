@@ -7,8 +7,8 @@ use {
     },
     nu_ansi_term::{Color, Style},
     reedline::{
-        default_emacs_keybindings, DefaultCompleter, DefaultHighlighter, DefaultHinter,
-        DefaultPrompt, EditCommand, FileBackedHistory, Reedline, ReedlineEvent, Signal,
+        default_emacs_keybindings, DefaultCompleter, DefaultHinter, DefaultPrompt, EditCommand,
+        ExampleHighlighter, FileBackedHistory, Reedline, ReedlineEvent, Signal,
     },
     std::{
         io::{stdout, Write},
@@ -58,7 +58,7 @@ fn main() -> Result<()> {
     let mut line_editor = Reedline::create()?
         .with_history(history)?
         .with_edit_mode(edit_mode)
-        .with_highlighter(Box::new(DefaultHighlighter::new(commands)))
+        .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
         .with_completion_action_handler(Box::new(
             ListCompletionHandler::default().with_completer(completer),
         ))

@@ -496,12 +496,6 @@ impl Painter {
         self.stdout.flush()
     }
 
-    pub(crate) fn clear_until_newline(&mut self) -> Result<()> {
-        self.stdout.queue(Clear(ClearType::UntilNewLine))?;
-
-        self.stdout.flush()
-    }
-
     // The prompt is moved to the end of the buffer after the event was handled
     // If the prompt is in the middle of a multiline buffer, then the output to stdout
     // could overwrite the buffer writing
