@@ -28,6 +28,8 @@ impl StyledText {
     /// place to put the cursor. This assumes a logic that prints the first part of the
     /// string, saves the cursor position, prints the second half, and then restores
     /// the cursor position
+    ///
+    /// Also inserts the multiline continuation prompt
     pub fn render_around_insertion_point(
         &self,
         insertion_point: usize,
@@ -68,6 +70,19 @@ impl StyledText {
         } else {
             (strip_ansi(&left_string), strip_ansi(&right_string))
         }
+    }
+
+    /// Apply the ANSI style formatting to the full string.
+    pub fn render_simple(&self) -> String {
+        self.buffer
+            .iter()
+            .map(|(style, text)| style.paint(text).to_string())
+            .collect()
+    }
+
+    /// Get the unformatted text as a single continuous string.
+    pub fn raw_string(&self) -> String {
+        self.buffer.iter().map(|(_, str)| str.as_str()).collect()
     }
 }
 

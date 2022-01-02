@@ -88,7 +88,7 @@
 //! // Create a reedline object with highlighter support
 //!
 //! use std::io;
-//! use reedline::{DefaultHighlighter, Reedline};
+//! use reedline::{ExampleHighlighter, Reedline};
 //!
 //! let commands = vec![
 //!   "test".into(),
@@ -97,7 +97,7 @@
 //!   "this is the reedline crate".into(),
 //! ];
 //! let mut line_editor =
-//! Reedline::create()?.with_highlighter(Box::new(DefaultHighlighter::new(commands)));
+//! Reedline::create()?.with_highlighter(Box::new(ExampleHighlighter::new(commands)));
 //! # Ok::<(), io::Error>(())
 //! ```
 //!
@@ -212,7 +212,7 @@ mod edit_mode;
 pub use edit_mode::{default_emacs_keybindings, EditMode, Emacs, Vi};
 
 mod highlighter;
-pub use highlighter::{DefaultHighlighter, Highlighter};
+pub use highlighter::{ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
 
 mod styled_text;
 pub use styled_text::StyledText;
