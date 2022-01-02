@@ -76,6 +76,10 @@ impl Editor {
         self.line_buffer.insert_char(c);
     }
 
+    pub fn insert_str(&mut self, string: &str) {
+        self.line_buffer.insert_str(string);
+    }
+
     pub fn backspace(&mut self) {
         self.line_buffer.delete_left_grapheme();
     }
@@ -116,7 +120,11 @@ impl Editor {
         self.line_buffer.swap_graphemes();
     }
 
-    pub fn set_insertion_point(&mut self, pos: usize) {
+    /// Directly change the cursor position measured in bytes in the buffer
+    ///
+    /// ## Unicode safety:
+    /// Not checked, inproper use may cause panics in following operations
+    pub(crate) fn set_insertion_point(&mut self, pos: usize) {
         self.line_buffer.set_insertion_point(pos);
     }
 
