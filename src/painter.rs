@@ -57,24 +57,21 @@ impl<'prompt> PromptLines<'prompt> {
         prompt_indicator: &str,
         terminal_columns: u16,
     ) -> u16 {
-        let mut lines = prompt_str.matches('\n').count()
-            + prompt_indicator.matches('\n').count()
-            + self.before_cursor.matches('\n').count()
-            + self.hint.matches('\n').count()
-            + self.after_cursor.matches('\n').count()
-            + 1;
+        let input = prompt_str.to_string()
+            + prompt_indicator
+            + self.before_cursor
+            + self.hint
+            + self.after_cursor;
 
-        // adjust lines by the number of wrapped additional lines we have
-        let input =
-            prompt_indicator.to_string() + self.before_cursor + self.after_cursor + self.hint;
-        for line in input.split('\n') {
-            if let Ok(line) = strip_ansi_escapes::strip(line) {
-                lines +=
-                    estimated_wrapped_line_count(&String::from_utf8_lossy(&line), terminal_columns)
+        let lines = input.lines().fold(0, |acc, line| {
+            let wrap = if let Ok(line) = strip_ansi_escapes::strip(line) {
+                estimated_wrapped_line_count(&String::from_utf8_lossy(&line), terminal_columns)
             } else {
-                lines += estimated_wrapped_line_count(line, terminal_columns)
-            }
-        }
+                estimated_wrapped_line_count(line, terminal_columns)
+            };
+
+            acc + 1 + wrap
+        });
 
         lines as u16
     }
@@ -251,42 +248,14 @@ impl Painter {
         // Marking the painter state as larger buffer to avoid animations
         self.large_buffer = required_lines >= screen_height;
 
-        // Cursor distance from prompt
-        let cursor_distance = self.distance_from_prompt()?;
-
-        // Delta indicates how many row are required based on the distance
-        // from the prompt. The closer the cursor to the prompt (smaller distance)
-        // the larger the delta and the real required extra lines
-        let delta = required_lines.saturating_sub(cursor_distance);
-
         // Moving the start position of the cursor based on the size of the required lines
         if self.large_buffer {
             self.prompt_coords.prompt_start.1 = 0;
-        } else if delta > remaining_lines {
-            // Checked sub in case there is overflow
-            let sub = self
-                .prompt_coords
-                .prompt_start
-                .1
-                .saturating_sub(required_lines);
-
-            let prompt_size = prompt_str.lines().count() as u16;
-            self.stdout.queue(ScrollUp(delta))?;
-            self.prompt_coords.prompt_start.1 = sub + prompt_size;
-        } else if (required_lines > cursor_distance
-            && remaining_lines.saturating_sub(cursor_distance) <= 1)
-            || required_lines == remaining_lines
-        {
-            // Conditions to scroll one row up and update prompt position:
-            // - If the required lines is larger than the cursor distance
-            //      then it means that the cursor is at the bottom of the screen and
-            //      we need to scroll one row up (this condition applies when
-            //      at the bottom of a multi line buffer)
-            // - If the number of required lines is equal to the number of
-            //      remaining lines (this condition applies when inserting text
-            //      in the middle of a multi line buffer)
-            self.stdout.queue(ScrollUp(1))?;
-            self.prompt_coords.prompt_start.1 = self.prompt_coords.prompt_start.1.saturating_sub(1);
+        } else if required_lines >= remaining_lines {
+            let extra = required_lines.saturating_sub(remaining_lines);
+            self.stdout.queue(ScrollUp(extra))?;
+            self.prompt_coords.prompt_start.1 =
+                self.prompt_coords.prompt_start.1.saturating_sub(extra);
         }
 
         // Moving the cursor to the start of the prompt
@@ -305,7 +274,6 @@ impl Painter {
                 prompt,
                 (&prompt_str, &prompt_indicator),
                 lines,
-                cursor_distance,
                 use_ansi_coloring,
             )?
         } else {
@@ -320,11 +288,12 @@ impl Painter {
 
         // The last_required_lines is used to move the cursor at the end where stdout
         // can print without overwriting the things written during the paining
-        let prompt_lines = prompt_lines_with_wrap(&prompt_str, &prompt_indicator, screen_width);
-        self.last_required_lines = required_lines + prompt_lines + 1;
+        self.last_required_lines = required_lines + 1;
 
         // In debug mode a string with position information is printed at the end of the buffer
         if self.debug_mode {
+            let cursor_distance = self.distance_from_prompt()?;
+            let prompt_lines = prompt_lines_with_wrap(&prompt_str, &prompt_indicator, screen_width);
             let prompt_length = prompt_str.len() + prompt_indicator.len();
             let estimated_prompt = estimated_wrapped_line_count(&prompt_str, screen_width);
 
@@ -333,14 +302,13 @@ impl Painter {
                 .queue(Print(format!("w{}] ", screen_width)))?
                 .queue(Print(format!("[x{}:", self.prompt_coords.prompt_start.0)))?
                 .queue(Print(format!("y{}] ", self.prompt_coords.prompt_start.1)))?
+                .queue(Print(format!("rm:{} ", remaining_lines)))?
                 .queue(Print(format!("re:{} ", required_lines)))?
-                .queue(Print(format!("de:{} ", delta)))?
                 .queue(Print(format!("di:{} ", cursor_distance)))?
+                .queue(Print(format!("pl:{} ", prompt_lines)))?
                 .queue(Print(format!("pr:{} ", prompt_length)))?
                 .queue(Print(format!("wr:{} ", estimated_prompt)))?
-                .queue(Print(format!("rm:{} ", remaining_lines)))?
-                .queue(Print(format!("ls:{} ", self.last_required_lines)))?
-                .queue(Print(format!("pl:{} ", prompt_lines)))?;
+                .queue(Print(format!("ls:{} ", self.last_required_lines)))?;
         }
 
         self.stdout.queue(RestorePosition)?.queue(cursor::Show)?;
@@ -384,9 +352,9 @@ impl Painter {
         prompt: &dyn Prompt,
         prompt_str: (&str, &str),
         lines: PromptLines,
-        cursor_distance: u16,
         use_ansi_coloring: bool,
     ) -> Result<()> {
+        let cursor_distance = self.distance_from_prompt()?;
         let (prompt_str, prompt_indicator) = prompt_str;
         let (screen_width, screen_height) = self.terminal_size;
         let remaining_lines = screen_height.saturating_sub(cursor_distance);
@@ -496,11 +464,13 @@ impl Painter {
     /// Clear the screen by printing enough whitespace to start the prompt or
     /// other output back at the first line of the terminal.
     pub fn clear_screen(&mut self) -> Result<()> {
+        self.stdout.queue(cursor::Hide)?;
         let (_, num_lines) = terminal::size()?;
         for _ in 0..2 * num_lines {
             self.stdout.queue(Print("\n"))?;
         }
         self.stdout.queue(MoveTo(0, 0))?;
+        self.stdout.queue(cursor::Show)?;
 
         self.stdout.flush()
     }
