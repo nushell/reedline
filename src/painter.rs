@@ -124,6 +124,13 @@ fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
     line.trim_end_matches('\n')
 }
 
+fn prompt_lines(prompt_str: &str, prompt_indicator: &str, screen_width: u16) -> u16 {
+    let complete_prompt = prompt_str.to_string() + &prompt_indicator;
+    let prompt_wrap = estimated_wrapped_line_count(&complete_prompt, screen_width);
+
+    (prompt_str.matches('\n').count() + prompt_wrap) as u16
+}
+
 pub struct Painter {
     // Stdout
     stdout: Stdout,
@@ -312,7 +319,8 @@ impl Painter {
 
         // The last_required_lines is used to move the cursor at the end where stdout
         // can print without overwriting the things written during the paining
-        self.last_required_lines = required_lines + prompt_str.lines().count() as u16 + 1;
+        let prompt_lines = prompt_lines(&prompt_str, &prompt_indicator, screen_width);
+        self.last_required_lines = required_lines + prompt_lines + 1;
 
         // In debug mode a string with position information is printed at the end of the buffer
         if self.debug_mode {
@@ -384,9 +392,7 @@ impl Painter {
         // Calculating the total lines before the cursor
         // The -1 in the total_lines_before is there because the at least one line of the prompt
         // indicator is printed in the same line as the first line of the buffer
-        let complete_prompt = prompt_str.to_string() + prompt_indicator;
-        let prompt_wrap = estimated_wrapped_line_count(&complete_prompt, screen_width);
-        let prompt_lines = prompt_str.matches('\n').count() + prompt_wrap;
+        let prompt_lines = prompt_lines(&prompt_str, &prompt_indicator, screen_width) as usize;
 
         let prompt_indicator_lines = prompt_indicator.lines().count();
         let before_cursor_lines = lines.before_cursor.lines().count();
