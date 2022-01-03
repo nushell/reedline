@@ -312,7 +312,7 @@ impl Painter {
 
         // The last_required_lines is used to move the cursor at the end where stdout
         // can print without overwriting the things written during the paining
-        self.last_required_lines = required_lines + prompt_str.lines().count() as u16;
+        self.last_required_lines = required_lines + prompt_str.lines().count() as u16 + 1;
 
         // In debug mode a string with position information is printed at the end of the buffer
         if self.debug_mode {
