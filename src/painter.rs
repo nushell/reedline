@@ -310,6 +310,10 @@ impl Painter {
             )?
         }
 
+        // The last_required_lines is used to move the cursor at the end where stdout
+        // can print without overwriting the things written during the paining
+        self.last_required_lines = required_lines + prompt_str.lines().count() as u16;
+
         // In debug mode a string with position information is printed at the end of the buffer
         if self.debug_mode {
             let prompt_length = prompt_str.len() + prompt_indicator.len();
@@ -325,15 +329,11 @@ impl Painter {
                 .queue(Print(format!("di:{} ", cursor_distance)))?
                 .queue(Print(format!("pr:{} ", prompt_length)))?
                 .queue(Print(format!("wr:{} ", estimated_prompt)))?
-                .queue(Print(format!("rm:{} ", remaining_lines)))?;
+                .queue(Print(format!("rm:{} ", remaining_lines)))?
+                .queue(Print(format!("ls:{} ", self.last_required_lines)))?;
         }
 
         self.stdout.queue(RestorePosition)?.queue(cursor::Show)?;
-
-        // The last_required_lines is used to move the cursor at the end where stdout
-        // can print without overwriting the things written during the paining
-        // The number 3 is to give enough space after the buffer lines
-        self.last_required_lines = required_lines + 3;
 
         self.flush()
     }
