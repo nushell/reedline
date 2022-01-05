@@ -77,10 +77,7 @@ impl<'prompt> PromptLines<'prompt> {
     }
 
     fn before_cursor_line_size(&self, line: usize) -> Option<usize> {
-        self.before_cursor
-            .lines()
-            .nth(line)
-            .map(|line| line_size(line))
+        self.before_cursor.lines().nth(line).map(line_size)
     }
 }
 

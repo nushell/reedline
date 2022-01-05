@@ -160,9 +160,7 @@ impl DefaultPrompt {
     }
 
     fn render_prompt_right(&self) -> Cow<str> {
-        let right_prompt = format!("{:>}", get_now());
-
-        Cow::Owned(right_prompt)
+        Cow::Owned(get_now())
     }
 
     fn default_wrapped_custom_string(str: &str) -> String {
@@ -177,5 +175,5 @@ fn get_working_dir() -> Result<String, std::io::Error> {
 
 fn get_now() -> String {
     let now = Local::now();
-    format!("{}", now.format("%m/%d/%Y %I:%M:%S %p"))
+    format!("{:>}", now.format("%m/%d/%Y %I:%M:%S %p"))
 }
