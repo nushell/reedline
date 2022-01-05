@@ -75,10 +75,6 @@ impl<'prompt> PromptLines<'prompt> {
 
         lines as u16
     }
-
-    fn before_cursor_line_size(&self, line: usize) -> Option<usize> {
-        self.before_cursor.lines().nth(line).map(line_size)
-    }
 }
 
 fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
@@ -273,13 +269,8 @@ impl Painter {
 
         // Moving the cursor to the start of the prompt
         // from this position everything will be printed
-        self.stdout.queue(cursor::MoveTo(
-            self.prompt_coords.prompt_start.0,
-            self.prompt_coords.prompt_start.1,
-        ))?;
-
         self.stdout
-            .queue(MoveToColumn(0))?
+            .queue(cursor::MoveTo(0, self.prompt_coords.prompt_start.1))?
             .queue(Clear(ClearType::FromCursorDown))?;
 
         if self.large_buffer {
@@ -329,34 +320,21 @@ impl Painter {
         self.flush()
     }
 
-    fn print_right_prompt(
-        &mut self,
-        prompt_str: (&str, &str, &str),
-        lines: &PromptLines,
-    ) -> Result<()> {
-        let (prompt_str_left, prompt_str_right, prompt_indicator) = prompt_str;
-        let prompt_size = line_size(prompt_str_left) + line_size(prompt_indicator);
-
-        // The +1 is used to mark the space the cursor is using
-        let used_space = match lines.before_cursor_line_size(0) {
-            Some(size) => prompt_size + size + 1,
-            None => prompt_size + 1,
-        } as u16;
-
+    fn print_right_prompt(&mut self, prompt_str_right: &str) -> Result<()> {
         let (screen_width, _) = self.terminal_size;
         let prompt_length_right = line_size(prompt_str_right);
         let start_position = screen_width.saturating_sub(prompt_length_right as u16);
 
-        let (_, row) = cursor::position()?;
+        let (col, row) = cursor::position()?;
         let same_row = row == self.prompt_coords.prompt_start.1;
 
-        if used_space <= start_position || !same_row {
-            self.stdout.queue(SavePosition)?.queue(cursor::MoveTo(
-                start_position,
-                self.prompt_coords.prompt_start.1,
-            ))?;
-
+        if col < start_position || !same_row {
             self.stdout
+                .queue(SavePosition)?
+                .queue(cursor::MoveTo(
+                    start_position,
+                    self.prompt_coords.prompt_start.1,
+                ))?
                 .queue(Print(&prompt_str_right))?
                 .queue(RestorePosition)?;
         }
@@ -371,7 +349,7 @@ impl Painter {
         lines: PromptLines,
         use_ansi_coloring: bool,
     ) -> Result<()> {
-        let (prompt_str_left, _, prompt_indicator) = prompt_str;
+        let (prompt_str_left, prompt_str_right, prompt_indicator) = prompt_str;
 
         // print our prompt with color
         if use_ansi_coloring {
@@ -383,7 +361,7 @@ impl Painter {
             .queue(Print(&prompt_str_left))?
             .queue(Print(&prompt_indicator))?;
 
-        self.print_right_prompt(prompt_str, &lines)?;
+        self.print_right_prompt(prompt_str_right)?;
 
         if use_ansi_coloring {
             self.stdout.queue(ResetColor)?;
@@ -406,7 +384,7 @@ impl Painter {
         use_ansi_coloring: bool,
     ) -> Result<()> {
         let cursor_distance = self.distance_from_prompt()?;
-        let (prompt_str_left, _, prompt_indicator) = prompt_str;
+        let (prompt_str_left, prompt_str_right, prompt_indicator) = prompt_str;
         let (screen_width, screen_height) = self.terminal_size;
         let remaining_lines = screen_height.saturating_sub(cursor_distance);
 
@@ -435,7 +413,7 @@ impl Painter {
         self.stdout.queue(Print(prompt_skipped))?;
 
         if extra_rows == 0 {
-            self.print_right_prompt(prompt_str, &lines)?;
+            self.print_right_prompt(prompt_str_right)?;
         }
 
         // Adjusting extra_rows base on the calculated prompt line size
