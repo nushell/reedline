@@ -91,9 +91,11 @@ fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
     }
 }
 
-fn line_size(line: &str) -> usize {
+fn line_width(line: &str) -> usize {
     match strip_ansi_escapes::strip(line) {
-        Ok(stripped_line) => String::from_utf8_lossy(&stripped_line).len(),
+        Ok(stripped_line) => unicode_width::UnicodeWidthStr::width(
+            String::from_utf8_lossy(&stripped_line).to_string().as_str(),
+        ),
         Err(_) => line.len(),
     }
 }
@@ -322,7 +324,7 @@ impl Painter {
 
     fn print_right_prompt(&mut self, prompt_str_right: &str, input_width: u16) -> Result<()> {
         let (screen_width, _) = self.terminal_size;
-        let prompt_length_right = line_size(prompt_str_right);
+        let prompt_length_right = line_width(prompt_str_right);
         let start_position = screen_width.saturating_sub(prompt_length_right as u16);
 
         //if col < start_position || !same_row {
@@ -541,32 +543,13 @@ fn estimate_first_input_line_width(
     let mut estimate = 0; // space in front of the input
 
     if let Some(last_line_left_prompt) = last_line_left_prompt {
-        let last_line_left_prompt = strip_ansi_escapes::strip(last_line_left_prompt);
-        if let Ok(last_line_left_prompt) = last_line_left_prompt {
-            estimate += unicode_width::UnicodeWidthStr::width(
-                String::from_utf8_lossy(&last_line_left_prompt)
-                    .to_string()
-                    .as_str(),
-            );
-        }
+        estimate += line_width(last_line_left_prompt);
     }
 
-    let indicator = strip_ansi_escapes::strip(indicator);
-    if let Ok(indicator) = indicator {
-        estimate += unicode_width::UnicodeWidthStr::width(
-            String::from_utf8_lossy(&indicator).to_string().as_str(),
-        );
-    }
+    estimate += line_width(indicator);
 
     if let Some(prompt_lines_first) = prompt_lines_first {
-        let prompt_lines_first = strip_ansi_escapes::strip(prompt_lines_first);
-        if let Ok(prompt_lines_first) = prompt_lines_first {
-            estimate += unicode_width::UnicodeWidthStr::width(
-                String::from_utf8_lossy(&prompt_lines_first)
-                    .to_string()
-                    .as_str(),
-            );
-        }
+        estimate += line_width(prompt_lines_first);
     }
 
     if estimate > u16::MAX as usize {
