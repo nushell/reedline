@@ -91,6 +91,15 @@ fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
     }
 }
 
+fn line_width(line: &str) -> usize {
+    match strip_ansi_escapes::strip(line) {
+        Ok(stripped_line) => unicode_width::UnicodeWidthStr::width(
+            String::from_utf8_lossy(&stripped_line).to_string().as_str(),
+        ),
+        Err(_) => line.len(),
+    }
+}
+
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
 fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
@@ -233,7 +242,8 @@ impl Painter {
 
         // String representation of the prompt
         let (screen_width, screen_height) = self.terminal_size;
-        let prompt_str = prompt.render_prompt(screen_width as usize);
+        let prompt_str_left = prompt.render_prompt_left();
+        let prompt_str_right = prompt.render_prompt_right();
 
         // The prompt indicator could be normal one or the history indicator
         let prompt_indicator = match history_indicator {
@@ -242,7 +252,8 @@ impl Painter {
         };
 
         // Lines and distance parameters
-        let required_lines = lines.required_lines(&prompt_str, &prompt_indicator, screen_width);
+        let required_lines =
+            lines.required_lines(&prompt_str_left, &prompt_indicator, screen_width);
         let remaining_lines = self.remaining_lines();
 
         // Marking the painter state as larger buffer to avoid animations
@@ -260,27 +271,21 @@ impl Painter {
 
         // Moving the cursor to the start of the prompt
         // from this position everything will be printed
-        self.stdout.queue(cursor::MoveTo(
-            self.prompt_coords.prompt_start.0,
-            self.prompt_coords.prompt_start.1,
-        ))?;
-
         self.stdout
-            .queue(MoveToColumn(0))?
+            .queue(cursor::MoveTo(0, self.prompt_coords.prompt_start.1))?
             .queue(Clear(ClearType::FromCursorDown))?;
 
         if self.large_buffer {
             self.print_large_buffer(
                 prompt,
-                (&prompt_str, &prompt_indicator),
+                (&prompt_str_left, &prompt_str_right, &prompt_indicator),
                 lines,
                 use_ansi_coloring,
             )?
         } else {
             self.print_small_buffer(
                 prompt,
-                &prompt_str,
-                &prompt_indicator,
+                (&prompt_str_left, &prompt_str_right, &prompt_indicator),
                 lines,
                 use_ansi_coloring,
             )?
@@ -293,9 +298,10 @@ impl Painter {
         // In debug mode a string with position information is printed at the end of the buffer
         if self.debug_mode {
             let cursor_distance = self.distance_from_prompt()?;
-            let prompt_lines = prompt_lines_with_wrap(&prompt_str, &prompt_indicator, screen_width);
-            let prompt_length = prompt_str.len() + prompt_indicator.len();
-            let estimated_prompt = estimated_wrapped_line_count(&prompt_str, screen_width);
+            let prompt_lines =
+                prompt_lines_with_wrap(&prompt_str_left, &prompt_indicator, screen_width);
+            let prompt_length = prompt_str_left.len() + prompt_indicator.len();
+            let estimated_prompt = estimated_wrapped_line_count(&prompt_str_left, screen_width);
 
             self.stdout
                 .queue(Print(format!(" [h{}:", screen_height)))?
@@ -316,14 +322,34 @@ impl Painter {
         self.flush()
     }
 
+    fn print_right_prompt(&mut self, prompt_str_right: &str, input_width: u16) -> Result<()> {
+        let (screen_width, _) = self.terminal_size;
+        let prompt_length_right = line_width(prompt_str_right);
+        let start_position = screen_width.saturating_sub(prompt_length_right as u16);
+
+        if input_width <= start_position {
+            self.stdout
+                .queue(SavePosition)?
+                .queue(cursor::MoveTo(
+                    start_position,
+                    self.prompt_coords.prompt_start.1,
+                ))?
+                .queue(Print(&prompt_str_right))?
+                .queue(RestorePosition)?;
+        }
+
+        Ok(())
+    }
+
     fn print_small_buffer(
         &mut self,
         prompt: &dyn Prompt,
-        prompt_str: &str,
-        prompt_indicator: &str,
+        prompt_str: (&str, &str, &str),
         lines: PromptLines,
         use_ansi_coloring: bool,
     ) -> Result<()> {
+        let (prompt_str_left, prompt_str_right, prompt_indicator) = prompt_str;
+
         // print our prompt with color
         if use_ansi_coloring {
             self.stdout
@@ -331,8 +357,13 @@ impl Painter {
         }
 
         self.stdout
-            .queue(Print(&prompt_str))?
+            .queue(Print(&prompt_str_left))?
             .queue(Print(&prompt_indicator))?;
+
+        let estimate_input_total_width =
+            estimate_first_input_line_width(prompt_str_left, prompt_indicator, &lines);
+
+        self.print_right_prompt(prompt_str_right, estimate_input_total_width)?;
 
         if use_ansi_coloring {
             self.stdout.queue(ResetColor)?;
@@ -350,12 +381,12 @@ impl Painter {
     fn print_large_buffer(
         &mut self,
         prompt: &dyn Prompt,
-        prompt_str: (&str, &str),
+        prompt_str: (&str, &str, &str),
         lines: PromptLines,
         use_ansi_coloring: bool,
     ) -> Result<()> {
         let cursor_distance = self.distance_from_prompt()?;
-        let (prompt_str, prompt_indicator) = prompt_str;
+        let (prompt_str_left, prompt_str_right, prompt_indicator) = prompt_str;
         let (screen_width, screen_height) = self.terminal_size;
         let remaining_lines = screen_height.saturating_sub(cursor_distance);
 
@@ -363,7 +394,7 @@ impl Painter {
         // The -1 in the total_lines_before is there because the at least one line of the prompt
         // indicator is printed in the same line as the first line of the buffer
         let prompt_lines =
-            prompt_lines_with_wrap(prompt_str, prompt_indicator, screen_width) as usize;
+            prompt_lines_with_wrap(prompt_str_left, prompt_indicator, screen_width) as usize;
 
         let prompt_indicator_lines = prompt_indicator.lines().count();
         let before_cursor_lines = lines.before_cursor.lines().count();
@@ -380,8 +411,15 @@ impl Painter {
 
         // In case the prompt is made out of multiple lines, the prompt is split by
         // lines and only the required ones are printed
-        let prompt_skipped = skip_buffer_lines(prompt_str, extra_rows, None);
+        let prompt_skipped = skip_buffer_lines(prompt_str_left, extra_rows, None);
         self.stdout.queue(Print(prompt_skipped))?;
+
+        let estimate_input_total_width =
+            estimate_first_input_line_width(prompt_str_left, prompt_indicator, &lines);
+
+        if extra_rows == 0 {
+            self.print_right_prompt(prompt_str_right, estimate_input_total_width)?;
+        }
 
         // Adjusting extra_rows base on the calculated prompt line size
         let extra_rows = extra_rows.saturating_sub(prompt_lines);
@@ -487,6 +525,36 @@ impl Painter {
 
     pub fn flush(&mut self) -> Result<()> {
         self.stdout.flush()
+    }
+}
+
+fn estimate_first_input_line_width(
+    left_prompt: &str,
+    indicator: &str,
+    prompt_lines: &PromptLines,
+) -> u16 {
+    let last_line_left_prompt = left_prompt.lines().last();
+
+    let prompt_lines_total =
+        prompt_lines.before_cursor.to_string() + prompt_lines.after_cursor + prompt_lines.hint;
+    let prompt_lines_first = prompt_lines_total.lines().next();
+
+    let mut estimate = 0; // space in front of the input
+
+    if let Some(last_line_left_prompt) = last_line_left_prompt {
+        estimate += line_width(last_line_left_prompt);
+    }
+
+    estimate += line_width(indicator);
+
+    if let Some(prompt_lines_first) = prompt_lines_first {
+        estimate += line_width(prompt_lines_first);
+    }
+
+    if estimate > u16::MAX as usize {
+        u16::MAX
+    } else {
+        estimate as u16
     }
 }
 

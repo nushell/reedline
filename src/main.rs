@@ -75,7 +75,7 @@ fn main() -> Result<()> {
         line_editor = line_editor.with_debug_mode();
     }
 
-    let prompt = DefaultPrompt::new(1);
+    let prompt = DefaultPrompt::new();
 
     loop {
         let sig = line_editor.read_line(&prompt);
