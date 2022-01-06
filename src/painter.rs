@@ -327,7 +327,6 @@ impl Painter {
         let prompt_length_right = line_width(prompt_str_right);
         let start_position = screen_width.saturating_sub(prompt_length_right as u16);
 
-        //if col < start_position || !same_row {
         if input_width <= start_position {
             self.stdout
                 .queue(SavePosition)?
