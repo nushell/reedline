@@ -320,15 +320,13 @@ impl Painter {
         self.flush()
     }
 
-    fn print_right_prompt(&mut self, prompt_str_right: &str) -> Result<()> {
+    fn print_right_prompt(&mut self, prompt_str_right: &str, input_width: u16) -> Result<()> {
         let (screen_width, _) = self.terminal_size;
         let prompt_length_right = line_size(prompt_str_right);
         let start_position = screen_width.saturating_sub(prompt_length_right as u16);
 
-        let (col, row) = cursor::position()?;
-        let same_row = row == self.prompt_coords.prompt_start.1;
-
-        if col < start_position || !same_row {
+        //if col < start_position || !same_row {
+        if input_width <= start_position {
             self.stdout
                 .queue(SavePosition)?
                 .queue(cursor::MoveTo(
@@ -361,7 +359,10 @@ impl Painter {
             .queue(Print(&prompt_str_left))?
             .queue(Print(&prompt_indicator))?;
 
-        self.print_right_prompt(prompt_str_right)?;
+        let estimate_input_total_width =
+            estimate_first_input_line_width(prompt_str_left, prompt_indicator, &lines);
+
+        self.print_right_prompt(prompt_str_right, estimate_input_total_width)?;
 
         if use_ansi_coloring {
             self.stdout.queue(ResetColor)?;
@@ -412,8 +413,11 @@ impl Painter {
         let prompt_skipped = skip_buffer_lines(prompt_str_left, extra_rows, None);
         self.stdout.queue(Print(prompt_skipped))?;
 
+        let estimate_input_total_width =
+            estimate_first_input_line_width(prompt_str_left, prompt_indicator, &lines);
+
         if extra_rows == 0 {
-            self.print_right_prompt(prompt_str_right)?;
+            self.print_right_prompt(prompt_str_right, estimate_input_total_width)?;
         }
 
         // Adjusting extra_rows base on the calculated prompt line size
@@ -520,6 +524,55 @@ impl Painter {
 
     pub fn flush(&mut self) -> Result<()> {
         self.stdout.flush()
+    }
+}
+
+fn estimate_first_input_line_width(
+    left_prompt: &str,
+    indicator: &str,
+    prompt_lines: &PromptLines,
+) -> u16 {
+    let last_line_left_prompt = left_prompt.lines().last();
+
+    let prompt_lines_total =
+        prompt_lines.before_cursor.to_string() + prompt_lines.after_cursor + prompt_lines.hint;
+    let prompt_lines_first = prompt_lines_total.lines().next();
+
+    let mut estimate = 0; // space in front of the input
+
+    if let Some(last_line_left_prompt) = last_line_left_prompt {
+        let last_line_left_prompt = strip_ansi_escapes::strip(last_line_left_prompt);
+        if let Ok(last_line_left_prompt) = last_line_left_prompt {
+            estimate += unicode_width::UnicodeWidthStr::width(
+                String::from_utf8_lossy(&last_line_left_prompt)
+                    .to_string()
+                    .as_str(),
+            );
+        }
+    }
+
+    let indicator = strip_ansi_escapes::strip(indicator);
+    if let Ok(indicator) = indicator {
+        estimate += unicode_width::UnicodeWidthStr::width(
+            String::from_utf8_lossy(&indicator).to_string().as_str(),
+        );
+    }
+
+    if let Some(prompt_lines_first) = prompt_lines_first {
+        let prompt_lines_first = strip_ansi_escapes::strip(prompt_lines_first);
+        if let Ok(prompt_lines_first) = prompt_lines_first {
+            estimate += unicode_width::UnicodeWidthStr::width(
+                String::from_utf8_lossy(&prompt_lines_first)
+                    .to_string()
+                    .as_str(),
+            );
+        }
+    }
+
+    if estimate > u16::MAX as usize {
+        u16::MAX
+    } else {
+        estimate as u16
     }
 }
 
