@@ -13,8 +13,6 @@ use {
     unicode_width::UnicodeWidthStr,
 };
 
-// const END_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
-
 #[derive(Default)]
 struct PromptCoordinates {
     prompt_start: (u16, u16),
@@ -74,6 +72,31 @@ impl<'prompt> PromptLines<'prompt> {
         });
 
         lines as u16
+    }
+
+    fn distance_from_prompt(
+        &self,
+        prompt_str: &str,
+        prompt_indicator: &str,
+        terminal_columns: u16,
+    ) -> u16 {
+        let input = prompt_str.to_string() + prompt_indicator + self.before_cursor;
+
+        let lines = input.lines().fold(0, |acc, line| {
+            let wrap = if let Ok(line) = strip_ansi_escapes::strip(line) {
+                estimated_wrapped_line_count(&String::from_utf8_lossy(&line), terminal_columns)
+            } else {
+                estimated_wrapped_line_count(line, terminal_columns)
+            };
+
+            acc + 1 + wrap
+        });
+
+        lines.saturating_sub(1) as u16
+    }
+
+    fn concatenate_lines(&self) -> String {
+        self.before_cursor.to_string() + self.after_cursor + self.hint
     }
 }
 
@@ -169,14 +192,6 @@ impl Painter {
             large_buffer: false,
             debug_mode: true,
         }
-    }
-
-    /// Calculates the distance from the prompt
-    pub fn distance_from_prompt(&self) -> Result<u16> {
-        let (_, cursor_row) = cursor::position()?;
-        let distance_from_prompt = cursor_row.saturating_sub(self.prompt_coords.prompt_start.1);
-
-        Ok(distance_from_prompt)
     }
 
     /// Update the terminal size information by polling the system
@@ -279,14 +294,14 @@ impl Painter {
             self.print_large_buffer(
                 prompt,
                 (&prompt_str_left, &prompt_str_right, &prompt_indicator),
-                lines,
+                &lines,
                 use_ansi_coloring,
             )?
         } else {
             self.print_small_buffer(
                 prompt,
                 (&prompt_str_left, &prompt_str_right, &prompt_indicator),
-                lines,
+                &lines,
                 use_ansi_coloring,
             )?
         }
@@ -297,7 +312,8 @@ impl Painter {
 
         // In debug mode a string with position information is printed at the end of the buffer
         if self.debug_mode {
-            let cursor_distance = self.distance_from_prompt()?;
+            let cursor_distance =
+                lines.distance_from_prompt(&prompt_str_left, &prompt_indicator, screen_width);
             let prompt_lines =
                 prompt_lines_with_wrap(&prompt_str_left, &prompt_indicator, screen_width);
             let prompt_length = prompt_str_left.len() + prompt_indicator.len();
@@ -345,7 +361,7 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         prompt_str: (&str, &str, &str),
-        lines: PromptLines,
+        lines: &PromptLines,
         use_ansi_coloring: bool,
     ) -> Result<()> {
         let (prompt_str_left, prompt_str_right, prompt_indicator) = prompt_str;
@@ -361,7 +377,7 @@ impl Painter {
             .queue(Print(&prompt_indicator))?;
 
         let estimate_input_total_width =
-            estimate_first_input_line_width(prompt_str_left, prompt_indicator, &lines);
+            estimate_first_input_line_width(prompt_str_left, prompt_indicator, lines);
 
         self.print_right_prompt(prompt_str_right, estimate_input_total_width)?;
 
@@ -382,12 +398,13 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         prompt_str: (&str, &str, &str),
-        lines: PromptLines,
+        lines: &PromptLines,
         use_ansi_coloring: bool,
     ) -> Result<()> {
-        let cursor_distance = self.distance_from_prompt()?;
         let (prompt_str_left, prompt_str_right, prompt_indicator) = prompt_str;
         let (screen_width, screen_height) = self.terminal_size;
+        let cursor_distance =
+            lines.distance_from_prompt(prompt_str_left, prompt_indicator, screen_width);
         let remaining_lines = screen_height.saturating_sub(cursor_distance);
 
         // Calculating the total lines before the cursor
@@ -415,7 +432,7 @@ impl Painter {
         self.stdout.queue(Print(prompt_skipped))?;
 
         let estimate_input_total_width =
-            estimate_first_input_line_width(prompt_str_left, prompt_indicator, &lines);
+            estimate_first_input_line_width(prompt_str_left, prompt_indicator, lines);
 
         if extra_rows == 0 {
             self.print_right_prompt(prompt_str_right, estimate_input_total_width)?;
@@ -535,8 +552,7 @@ fn estimate_first_input_line_width(
 ) -> u16 {
     let last_line_left_prompt = left_prompt.lines().last();
 
-    let prompt_lines_total =
-        prompt_lines.before_cursor.to_string() + prompt_lines.after_cursor + prompt_lines.hint;
+    let prompt_lines_total = prompt_lines.concatenate_lines();
     let prompt_lines_first = prompt_lines_total.lines().next();
 
     let mut estimate = 0; // space in front of the input
