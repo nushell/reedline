@@ -169,6 +169,7 @@ pub struct Painter {
     last_required_lines: u16,
     pub large_buffer: bool,
     debug_mode: bool,
+    context_menu_mode: bool,
 }
 
 impl Painter {
@@ -180,6 +181,7 @@ impl Painter {
             last_required_lines: 0,
             large_buffer: false,
             debug_mode: false,
+            context_menu_mode: false,
         }
     }
 
@@ -191,6 +193,7 @@ impl Painter {
             last_required_lines: 0,
             large_buffer: false,
             debug_mode: true,
+            context_menu_mode: false,
         }
     }
 

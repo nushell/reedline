@@ -228,3 +228,6 @@ pub use hinter::{DefaultHinter, Hinter};
 
 mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
+
+mod context_menu;
+pub use context_menu::ExampleMenu;

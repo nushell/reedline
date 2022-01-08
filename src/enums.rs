@@ -216,6 +216,9 @@ pub enum ReedlineEvent {
     /// Trigger Tab
     HandleTab,
 
+    /// Completes hint
+    Complete,
+
     /// Handle EndOfLine event
     ///
     /// Expected Behavior:

@@ -1,6 +1,7 @@
 use {
     crate::{
         completion::{CircularCompletionHandler, CompletionActionHandler},
+        context_menu::{ContextMenu, ExampleMenu},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
         enums::{ReedlineEvent, UndoBehavior},
@@ -97,6 +98,9 @@ pub struct Reedline {
 
     // Use ansi coloring or not
     use_ansi_coloring: bool,
+
+    // Context Menu
+    context_menu: Box<dyn ContextMenu>,
 }
 
 impl Drop for Reedline {
@@ -115,6 +119,7 @@ impl Reedline {
         let buffer_highlighter = Box::new(ExampleHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
         let validator = Box::new(DefaultValidator);
+        let context_menu = Box::new(ExampleMenu::new());
 
         let edit_mode = Box::new(Emacs::default());
 
@@ -130,6 +135,7 @@ impl Reedline {
             validator,
             animate: true,
             use_ansi_coloring: true,
+            context_menu,
         };
 
         Ok(reedline)
@@ -456,7 +462,7 @@ impl Reedline {
                 Ok(Some(Signal::CtrlC))
             }
             ReedlineEvent::ClearScreen => Ok(Some(Signal::CtrlL)),
-            ReedlineEvent::Enter | ReedlineEvent::HandleTab => {
+            ReedlineEvent::Enter | ReedlineEvent::Complete => {
                 if let Some(string) = self.history.string_at_cursor() {
                     self.editor.set_buffer(string);
                     self.editor.remember_undo_state(true);
@@ -508,6 +514,10 @@ impl Reedline {
                 // Default no operation
                 Ok(None)
             }
+            ReedlineEvent::HandleTab => {
+                // No handle action when pressing Tab
+                Ok(None)
+            }
         }
     }
 
@@ -518,6 +528,9 @@ impl Reedline {
     ) -> io::Result<Option<Signal>> {
         match event {
             ReedlineEvent::HandleTab => {
+                unimplemented!()
+            }
+            ReedlineEvent::Complete => {
                 let line_buffer = self.editor.line_buffer();
 
                 let current_hint = self.hinter.current_hint();

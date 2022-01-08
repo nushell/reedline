@@ -52,7 +52,7 @@ impl Keybindings {
     }
 }
 
-fn edit_bind(command: EditCommand) -> ReedlineEvent {
+pub fn edit_bind(command: EditCommand) -> ReedlineEvent {
     ReedlineEvent::Edit(vec![command])
 }
 
@@ -105,7 +105,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::ALT, KC::Backspace, edit_bind(EC::BackspaceWord));
     kb.add_binding(KM::NONE, KC::End, edit_bind(EC::MoveToLineEnd));
     kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
-    kb.add_binding(KM::NONE, KC::Tab, ReedlineEvent::HandleTab);
+    kb.add_binding(KM::CONTROL | KM::ALT, KC::Right, ReedlineEvent::Complete);
     kb.add_binding(KM::NONE, KC::Up, ReedlineEvent::Up);
     kb.add_binding(KM::NONE, KC::Down, ReedlineEvent::Down);
     kb.add_binding(KM::NONE, KC::Left, edit_bind(EC::MoveLeft));
@@ -114,27 +114,4 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
 
     kb
-}
-
-pub fn default_vi_normal_keybindings() -> Keybindings {
-    Keybindings::new()
-}
-
-pub fn default_vi_insert_keybindings() -> Keybindings {
-    use EditCommand as EC;
-    use KeyCode as KC;
-    use KeyModifiers as KM;
-
-    let mut keybindings = Keybindings::new();
-
-    keybindings.add_binding(KM::NONE, KC::Up, ReedlineEvent::Up);
-    keybindings.add_binding(KM::NONE, KC::Down, ReedlineEvent::Down);
-    keybindings.add_binding(KM::NONE, KC::Left, edit_bind(EC::MoveLeft));
-    keybindings.add_binding(KM::NONE, KC::Right, edit_bind(EC::MoveRight));
-    keybindings.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
-    keybindings.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
-    keybindings.add_binding(KM::NONE, KC::End, edit_bind(EC::MoveToLineEnd));
-    keybindings.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
-
-    keybindings
 }
