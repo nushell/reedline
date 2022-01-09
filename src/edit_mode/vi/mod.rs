@@ -53,7 +53,7 @@ impl EditMode for Vi {
                         }
                     }
 
-                    if modifier == KeyModifiers::NONE || modifier == KeyModifiers::NONE {
+                    if modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT {
                         let char = if let KeyModifiers::SHIFT = modifier {
                             c.to_ascii_uppercase()
                         } else {
@@ -115,7 +115,7 @@ impl EditMode for Vi {
                 (_, KeyModifiers::NONE, KeyCode::Esc) => {
                     self.cache.clear();
                     self.mode = Mode::Normal;
-                    ReedlineEvent::Repaint
+                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
                 }
                 (_, KeyModifiers::NONE, KeyCode::Enter) => {
                     self.mode = Mode::Insert;

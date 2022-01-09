@@ -28,7 +28,8 @@ pub fn default_vi_insert_keybindings() -> Keybindings {
     kb.add_binding(KM::NONE, KC::End, edit_bind(EC::MoveToLineEnd));
     kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
     kb.add_binding(KM::CONTROL, KC::Char('c'), ReedlineEvent::CtrlC);
-    kb.add_binding(KM::CONTROL | KM::ALT, KC::Right, ReedlineEvent::Complete);
+    kb.add_binding(KM::NONE, KC::Tab, ReedlineEvent::Complete);
+    kb.add_binding(KM::ALT, KC::Char('1'), ReedlineEvent::ContextMenu);
 
     kb
 }

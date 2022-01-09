@@ -1,7 +1,7 @@
 use {
     crate::{
         completion::{CircularCompletionHandler, CompletionActionHandler},
-        context_menu::{ContextMenu, ExampleMenu},
+        context_menu::ContextMenu,
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
         enums::{ReedlineEvent, UndoBehavior},
@@ -100,7 +100,7 @@ pub struct Reedline {
     use_ansi_coloring: bool,
 
     // Context Menu
-    context_menu: Box<dyn ContextMenu>,
+    context_menu: ContextMenu,
 }
 
 impl Drop for Reedline {
@@ -119,7 +119,7 @@ impl Reedline {
         let buffer_highlighter = Box::new(ExampleHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
         let validator = Box::new(DefaultValidator);
-        let context_menu = Box::new(ExampleMenu::new());
+        let context_menu = ContextMenu::default();
 
         let edit_mode = Box::new(Emacs::default());
 
@@ -514,8 +514,8 @@ impl Reedline {
                 // Default no operation
                 Ok(None)
             }
-            ReedlineEvent::HandleTab => {
-                // No handle action when pressing Tab
+            ReedlineEvent::ContextMenu | ReedlineEvent::Esc => {
+                // No context menu action when pressing Tab in history mode
                 Ok(None)
             }
         }
@@ -527,8 +527,12 @@ impl Reedline {
         event: ReedlineEvent,
     ) -> io::Result<Option<Signal>> {
         match event {
-            ReedlineEvent::HandleTab => {
-                unimplemented!()
+            ReedlineEvent::ContextMenu => {
+                self.context_menu.activate();
+                self.context_menu.reset_position();
+
+                self.buffer_paint(prompt)?;
+                Ok(None)
             }
             ReedlineEvent::Complete => {
                 let line_buffer = self.editor.line_buffer();
@@ -541,6 +545,11 @@ impl Reedline {
                     self.tab_handler.handle(line_buffer);
                 }
 
+                self.buffer_paint(prompt)?;
+                Ok(None)
+            }
+            ReedlineEvent::Esc => {
+                self.context_menu.deactivate();
                 self.buffer_paint(prompt)?;
                 Ok(None)
             }
@@ -560,23 +569,36 @@ impl Reedline {
             }
             ReedlineEvent::ClearScreen => Ok(Some(Signal::CtrlL)),
             ReedlineEvent::Enter => {
-                let buffer = self.editor.get_buffer().to_string();
-                if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
-                    self.append_to_history();
-                    self.run_edit_commands(&[EditCommand::Clear])?;
-                    self.painter.print_crlf()?;
-                    self.editor.reset_undo_stack();
-
-                    Ok(Some(Signal::Success(buffer)))
-                } else {
-                    #[cfg(windows)]
-                    {
-                        self.run_edit_commands(&[EditCommand::InsertChar('\r')])?;
+                if self.context_menu.is_active() {
+                    let value = self.context_menu.get_value();
+                    if let Some(value) = value {
+                        let value = value.to_string();
+                        self.run_edit_commands(&[EditCommand::InsertString(value)])?;
                     }
-                    self.run_edit_commands(&[EditCommand::InsertChar('\n')])?;
+
+                    self.context_menu.deactivate();
                     self.buffer_paint(prompt)?;
 
                     Ok(None)
+                } else {
+                    let buffer = self.editor.get_buffer().to_string();
+                    if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
+                        self.append_to_history();
+                        self.run_edit_commands(&[EditCommand::Clear])?;
+                        self.painter.print_crlf()?;
+                        self.editor.reset_undo_stack();
+
+                        Ok(Some(Signal::Success(buffer)))
+                    } else {
+                        #[cfg(windows)]
+                        {
+                            self.run_edit_commands(&[EditCommand::InsertChar('\r')])?;
+                        }
+                        self.run_edit_commands(&[EditCommand::InsertChar('\n')])?;
+                        self.buffer_paint(prompt)?;
+
+                        Ok(None)
+                    }
                 }
             }
             ReedlineEvent::Edit(commands) => {
@@ -608,13 +630,21 @@ impl Reedline {
                 Ok(None)
             }
             ReedlineEvent::Up => {
-                self.up_command();
+                if self.context_menu.is_active() {
+                    self.context_menu.move_up()
+                } else {
+                    self.up_command();
+                }
 
                 self.buffer_paint(prompt)?;
                 Ok(None)
             }
             ReedlineEvent::Down => {
-                self.down_command();
+                if self.context_menu.is_active() {
+                    self.context_menu.move_down()
+                } else {
+                    self.down_command();
+                }
 
                 self.buffer_paint(prompt)?;
                 Ok(None)
@@ -805,8 +835,20 @@ impl Reedline {
                 EditCommand::MoveToEnd => self.editor.move_to_end(),
                 EditCommand::MoveToLineStart => self.editor.move_to_line_start(),
                 EditCommand::MoveToLineEnd => self.editor.move_to_line_end(),
-                EditCommand::MoveLeft => self.editor.move_left(),
-                EditCommand::MoveRight => self.editor.move_right(),
+                EditCommand::MoveLeft => {
+                    if self.context_menu.is_active() {
+                        self.context_menu.move_left()
+                    } else {
+                        self.editor.move_left()
+                    }
+                }
+                EditCommand::MoveRight => {
+                    if self.context_menu.is_active() {
+                        self.context_menu.move_right()
+                    } else {
+                        self.editor.move_right()
+                    }
+                }
                 EditCommand::MoveWordLeft => self.editor.move_word_left(),
                 EditCommand::MoveWordRight => self.editor.move_word_right(),
 
@@ -929,13 +971,17 @@ impl Reedline {
                 res_string
             };
 
-            self.painter.repaint_buffer(
+            let lines = PromptLines::new(
                 prompt,
                 self.prompt_edit_mode(),
-                PromptLines::new(&res_string, "", ""),
                 Some(prompt_history_search),
-                self.use_ansi_coloring,
-            )?;
+                &res_string,
+                "",
+                "",
+            );
+
+            self.painter
+                .repaint_buffer(prompt, lines, None, self.use_ansi_coloring)?;
         }
 
         Ok(())
@@ -974,13 +1020,23 @@ impl Reedline {
         let after_cursor = after_cursor.replace("\n", "\r\n");
         let hint = hint.replace("\n", "\r\n");
 
-        self.painter.repaint_buffer(
+        let context_menu = if self.context_menu.is_active() {
+            Some(&self.context_menu)
+        } else {
+            None
+        };
+
+        let lines = PromptLines::new(
             prompt,
             self.prompt_edit_mode(),
-            PromptLines::new(&before_cursor, &after_cursor, &hint),
             None,
-            self.use_ansi_coloring,
-        )
+            &before_cursor,
+            &after_cursor,
+            &hint,
+        );
+
+        self.painter
+            .repaint_buffer(prompt, lines, context_menu, self.use_ansi_coloring)
     }
 }
 
