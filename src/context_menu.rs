@@ -112,7 +112,7 @@ impl ContextMenu {
 
 /// The MenuFiller is a trait that defines how the data for the context menu
 /// will be collected.
-pub trait MenuFiller {
+pub trait MenuFiller: Send {
     /// Collects menu values
     fn context_values(&self) -> Vec<&str>;
 }

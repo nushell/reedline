@@ -96,7 +96,7 @@ mod test {
         keybindings.add_binding(
             KeyModifiers::CONTROL,
             KeyCode::Char('l'),
-            ReedlineEvent::HandleTab,
+            ReedlineEvent::Complete,
         );
 
         let mut emacs = Emacs::new(keybindings);
@@ -106,7 +106,7 @@ mod test {
         });
         let result = emacs.parse_event(ctrl_l);
 
-        assert_eq!(result, ReedlineEvent::HandleTab);
+        assert_eq!(result, ReedlineEvent::Complete);
     }
 
     #[test]
