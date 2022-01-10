@@ -267,6 +267,9 @@ pub enum ReedlineEvent {
     /// Move down to the next line, if multiline, or down through the historic buffers
     Down,
 
+    /// Move down to the next column, or complete hint
+    Right,
+
     /// Navigate to the next historic buffer
     NextHistory,
 
