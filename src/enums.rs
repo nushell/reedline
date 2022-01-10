@@ -213,8 +213,11 @@ pub enum ReedlineEvent {
     /// No op event
     None,
 
-    /// Trigger Tab
-    HandleTab,
+    /// Trigger context menu
+    ContextMenu,
+
+    /// Completes hint
+    Complete,
 
     /// Handle EndOfLine event
     ///
@@ -239,6 +242,9 @@ pub enum ReedlineEvent {
 
     /// Handle enter event
     Enter,
+
+    /// Esc event
+    Esc,
 
     /// Mouse
     Mouse, // Fill in details later

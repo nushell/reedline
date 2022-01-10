@@ -1,15 +1,14 @@
 mod command;
 mod motion;
 mod parser;
+mod vi_keybindings;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
 use super::EditMode;
 use crate::{
-    edit_mode::{
-        keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings, Keybindings},
-        vi::parser::parse,
-    },
+    edit_mode::{keybindings::Keybindings, vi::parser::parse},
     enums::{EditCommand, ReedlineEvent},
     PromptEditMode, PromptViMode,
 };
@@ -54,34 +53,40 @@ impl EditMode for Vi {
                         }
                     }
 
-                    let char = if let KeyModifiers::SHIFT = modifier {
-                        c.to_ascii_uppercase()
-                    } else {
-                        c
-                    };
-                    self.cache.push(char);
+                    if modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT {
+                        let char = if let KeyModifiers::SHIFT = modifier {
+                            c.to_ascii_uppercase()
+                        } else {
+                            c
+                        };
+                        self.cache.push(char);
 
-                    let res = parse(&mut self.cache.iter().peekable());
+                        let res = parse(&mut self.cache.iter().peekable());
 
-                    if res.enter_insert_mode() {
-                        self.mode = Mode::Insert;
-                    }
+                        if res.enter_insert_mode() {
+                            self.mode = Mode::Insert;
+                        }
 
-                    let event = res.to_reedline_event();
-                    match event {
-                        ReedlineEvent::None => {
-                            if !res.is_valid() {
+                        let event = res.to_reedline_event();
+                        match event {
+                            ReedlineEvent::None => {
+                                if !res.is_valid() {
+                                    self.cache.clear();
+                                }
+                            }
+                            _ => {
                                 self.cache.clear();
                             }
-                        }
-                        _ => {
-                            self.cache.clear();
-                        }
-                    };
+                        };
 
-                    self.previous = Some(event.clone());
+                        self.previous = Some(event.clone());
 
-                    event
+                        event
+                    } else {
+                        self.normal_keybindings
+                            .find_binding(modifiers, code)
+                            .unwrap_or(ReedlineEvent::None)
+                    }
                 }
                 (Mode::Insert, modifier, KeyCode::Char(c)) => {
                     // Note. The modifier can also be a combination of modifiers, for
@@ -92,19 +97,25 @@ impl EditMode for Vi {
                     // Mixed modifiers are used by non american keyboards that have extra
                     // keys like 'alt gr'. Keep this in mind if in the future there are
                     // cases where an event is not being captured
-                    let char = if let KeyModifiers::SHIFT = modifier {
-                        c.to_ascii_uppercase()
+                    if modifier == KeyModifiers::SHIFT {
+                        let char = c.to_ascii_uppercase();
+                        ReedlineEvent::Edit(vec![EditCommand::InsertChar(char)])
+                    } else if modifier == KeyModifiers::NONE
+                        || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
+                        || modifier
+                            == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
+                    {
+                        ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
                     } else {
-                        c
-                    };
-
-                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(char)])
+                        self.insert_keybindings
+                            .find_binding(modifier, code)
+                            .unwrap_or(ReedlineEvent::None)
+                    }
                 }
-                (_, KeyModifiers::NONE, KeyCode::Tab) => ReedlineEvent::HandleTab,
                 (_, KeyModifiers::NONE, KeyCode::Esc) => {
                     self.cache.clear();
                     self.mode = Mode::Normal;
-                    ReedlineEvent::Repaint
+                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
                 }
                 (_, KeyModifiers::NONE, KeyCode::Enter) => {
                     self.mode = Mode::Insert;

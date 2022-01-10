@@ -1,5 +1,8 @@
-use crate::PromptHistorySearch;
+use std::borrow::Cow;
+
+use crate::{context_menu::ContextMenu, PromptHistorySearch};
 use crossterm::{cursor::MoveToRow, style::ResetColor, terminal::ScrollUp};
+use nu_ansi_term::ansi::RESET;
 
 use {
     crate::{prompt::PromptEditMode, Prompt},
@@ -25,6 +28,9 @@ impl PromptCoordinates {
 }
 
 pub struct PromptLines<'prompt> {
+    prompt_str_left: Cow<'prompt, str>,
+    prompt_str_right: Cow<'prompt, str>,
+    prompt_indicator: Cow<'prompt, str>,
     before_cursor: &'prompt str,
     after_cursor: &'prompt str,
     hint: &'prompt str,
@@ -35,11 +41,25 @@ impl<'prompt> PromptLines<'prompt> {
     /// This vector with the str are used to calculate how many lines are
     /// required to print after the prompt
     pub fn new(
+        prompt: &'prompt dyn Prompt,
+        prompt_mode: PromptEditMode,
+        history_indicator: Option<PromptHistorySearch>,
         before_cursor: &'prompt str,
         after_cursor: &'prompt str,
         hint: &'prompt str,
     ) -> Self {
+        let prompt_str_left = prompt.render_prompt_left();
+        let prompt_str_right = prompt.render_prompt_right();
+
+        let prompt_indicator = match history_indicator {
+            Some(prompt_search) => prompt.render_prompt_history_search_indicator(prompt_search),
+            None => prompt.render_prompt_indicator(prompt_mode),
+        };
+
         Self {
+            prompt_str_left,
+            prompt_str_right,
+            prompt_indicator,
             before_cursor,
             after_cursor,
             hint,
@@ -49,17 +69,16 @@ impl<'prompt> PromptLines<'prompt> {
     /// The required lines to paint the buffer are calculated by counting the
     /// number of newlines in all the strings that form the prompt and buffer.
     /// The plus 1 is to indicate that there should be at least one line.
-    fn required_lines(
-        &self,
-        prompt_str: &str,
-        prompt_indicator: &str,
-        terminal_columns: u16,
-    ) -> u16 {
-        let input = prompt_str.to_string()
-            + prompt_indicator
-            + self.before_cursor
-            + self.hint
-            + self.after_cursor;
+    fn required_lines(&self, terminal_columns: u16, context_menu: Option<&ContextMenu>) -> u16 {
+        let input = if context_menu.is_none() {
+            self.prompt_str_left.to_string()
+                + &self.prompt_indicator
+                + self.before_cursor
+                + self.hint
+                + self.after_cursor
+        } else {
+            self.prompt_str_left.to_string() + &self.prompt_indicator + self.before_cursor
+        };
 
         let lines = input.lines().fold(0, |acc, line| {
             let wrap = if let Ok(line) = strip_ansi_escapes::strip(line) {
@@ -71,16 +90,17 @@ impl<'prompt> PromptLines<'prompt> {
             acc + 1 + wrap
         });
 
-        lines as u16
+        if let Some(context_menu) = context_menu {
+            lines as u16 + context_menu.get_rows()
+        } else {
+            lines as u16
+        }
     }
 
-    fn distance_from_prompt(
-        &self,
-        prompt_str: &str,
-        prompt_indicator: &str,
-        terminal_columns: u16,
-    ) -> u16 {
-        let input = prompt_str.to_string() + prompt_indicator + self.before_cursor;
+    /// Estimated distance of the cursor to the prompt.
+    /// This considers line wrapping
+    fn distance_from_prompt(&self, terminal_columns: u16) -> u16 {
+        let input = self.prompt_str_left.to_string() + &self.prompt_indicator + self.before_cursor;
 
         let lines = input.lines().fold(0, |acc, line| {
             let wrap = if let Ok(line) = strip_ansi_escapes::strip(line) {
@@ -97,6 +117,40 @@ impl<'prompt> PromptLines<'prompt> {
 
     fn concatenate_lines(&self) -> String {
         self.before_cursor.to_string() + self.after_cursor + self.hint
+    }
+
+    /// Total lines that the prompt uses considering that it may wrap the screen
+    fn prompt_lines_with_wrap(&self, screen_width: u16) -> u16 {
+        let complete_prompt = self.prompt_str_left.to_string() + &self.prompt_indicator;
+        let prompt_wrap = estimated_wrapped_line_count(&complete_prompt, screen_width);
+
+        (self.prompt_str_left.matches('\n').count() + prompt_wrap) as u16
+    }
+
+    /// Estimated width of the actual input
+    fn estimate_first_input_line_width(&self) -> u16 {
+        let last_line_left_prompt = self.prompt_str_left.lines().last();
+
+        let prompt_lines_total = self.concatenate_lines();
+        let prompt_lines_first = prompt_lines_total.lines().next();
+
+        let mut estimate = 0; // space in front of the input
+
+        if let Some(last_line_left_prompt) = last_line_left_prompt {
+            estimate += line_width(last_line_left_prompt);
+        }
+
+        estimate += line_width(&self.prompt_indicator);
+
+        if let Some(prompt_lines_first) = prompt_lines_first {
+            estimate += line_width(prompt_lines_first);
+        }
+
+        if estimate > u16::MAX as usize {
+            u16::MAX
+        } else {
+            estimate as u16
+        }
     }
 }
 
@@ -148,17 +202,7 @@ fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
         None => string.len(),
     };
 
-    let line = &string[index..limit];
-
-    line.trim_end_matches('\n')
-}
-
-/// Total lines that the prompt uses considering that it may wrap the screen
-fn prompt_lines_with_wrap(prompt_str: &str, prompt_indicator: &str, screen_width: u16) -> u16 {
-    let complete_prompt = prompt_str.to_string() + prompt_indicator;
-    let prompt_wrap = estimated_wrapped_line_count(&complete_prompt, screen_width);
-
-    (prompt_str.matches('\n').count() + prompt_wrap) as u16
+    string[index..limit].trim_end_matches('\n')
 }
 
 pub struct Painter {
@@ -248,27 +292,17 @@ impl Painter {
     pub fn repaint_buffer(
         &mut self,
         prompt: &dyn Prompt,
-        prompt_mode: PromptEditMode,
         lines: PromptLines,
-        history_indicator: Option<PromptHistorySearch>,
+        context_menu: Option<&ContextMenu>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
         self.stdout.queue(cursor::Hide)?;
 
         // String representation of the prompt
         let (screen_width, screen_height) = self.terminal_size;
-        let prompt_str_left = prompt.render_prompt_left();
-        let prompt_str_right = prompt.render_prompt_right();
-
-        // The prompt indicator could be normal one or the history indicator
-        let prompt_indicator = match history_indicator {
-            Some(prompt_search) => prompt.render_prompt_history_search_indicator(prompt_search),
-            None => prompt.render_prompt_indicator(prompt_mode),
-        };
 
         // Lines and distance parameters
-        let required_lines =
-            lines.required_lines(&prompt_str_left, &prompt_indicator, screen_width);
+        let required_lines = lines.required_lines(screen_width, context_menu);
         let remaining_lines = self.remaining_lines();
 
         // Marking the painter state as larger buffer to avoid animations
@@ -291,19 +325,9 @@ impl Painter {
             .queue(Clear(ClearType::FromCursorDown))?;
 
         if self.large_buffer {
-            self.print_large_buffer(
-                prompt,
-                (&prompt_str_left, &prompt_str_right, &prompt_indicator),
-                &lines,
-                use_ansi_coloring,
-            )?
+            self.print_large_buffer(prompt, &lines, context_menu, use_ansi_coloring)?
         } else {
-            self.print_small_buffer(
-                prompt,
-                (&prompt_str_left, &prompt_str_right, &prompt_indicator),
-                &lines,
-                use_ansi_coloring,
-            )?
+            self.print_small_buffer(prompt, &lines, context_menu, use_ansi_coloring)?
         }
 
         // The last_required_lines is used to move the cursor at the end where stdout
@@ -312,12 +336,11 @@ impl Painter {
 
         // In debug mode a string with position information is printed at the end of the buffer
         if self.debug_mode {
-            let cursor_distance =
-                lines.distance_from_prompt(&prompt_str_left, &prompt_indicator, screen_width);
-            let prompt_lines =
-                prompt_lines_with_wrap(&prompt_str_left, &prompt_indicator, screen_width);
-            let prompt_length = prompt_str_left.len() + prompt_indicator.len();
-            let estimated_prompt = estimated_wrapped_line_count(&prompt_str_left, screen_width);
+            let cursor_distance = lines.distance_from_prompt(screen_width);
+            let prompt_lines = lines.prompt_lines_with_wrap(screen_width);
+            let prompt_length = lines.prompt_str_left.len() + lines.prompt_indicator.len();
+            let estimated_prompt =
+                estimated_wrapped_line_count(&lines.prompt_str_left, screen_width);
 
             self.stdout
                 .queue(Print(format!(" [h{}:", screen_height)))?
@@ -338,10 +361,11 @@ impl Painter {
         self.flush()
     }
 
-    fn print_right_prompt(&mut self, prompt_str_right: &str, input_width: u16) -> Result<()> {
+    fn print_right_prompt(&mut self, lines: &PromptLines) -> Result<()> {
         let (screen_width, _) = self.terminal_size;
-        let prompt_length_right = line_width(prompt_str_right);
+        let prompt_length_right = line_width(&lines.prompt_str_right);
         let start_position = screen_width.saturating_sub(prompt_length_right as u16);
+        let input_width = lines.estimate_first_input_line_width();
 
         if input_width <= start_position {
             self.stdout
@@ -350,9 +374,71 @@ impl Painter {
                     start_position,
                     self.prompt_coords.prompt_start.1,
                 ))?
-                .queue(Print(&prompt_str_right))?
+                .queue(Print(&lines.prompt_str_right))?
                 .queue(RestorePosition)?;
         }
+
+        Ok(())
+    }
+
+    fn print_context_menu(
+        &mut self,
+        context_menu: &ContextMenu,
+        lines: &PromptLines,
+    ) -> Result<()> {
+        let (screen_width, screen_height) = self.terminal_size;
+        let cursor_distance = lines.distance_from_prompt(screen_width);
+
+        // If there is not enough space to print the menu, then the starting
+        // drawing point for the menu will overwrite the last rows in the buffer
+        let starting_row = if cursor_distance >= screen_height.saturating_sub(1) {
+            screen_height.saturating_sub(context_menu.min_rows())
+        } else {
+            self.prompt_coords.prompt_start.1 + cursor_distance + 1
+        };
+
+        // The skip values represent the number of lines that should be skipped
+        // while printing the menu
+        let remaining_lines = screen_height.saturating_sub(starting_row);
+        let skip_values = if context_menu.row_pos >= remaining_lines {
+            let skip_lines = context_menu.row_pos.saturating_sub(remaining_lines) + 1;
+            (skip_lines * context_menu.cols) as usize
+        } else {
+            0
+        };
+
+        // It seems that crossterm prefers to have a complete string ready to be printed
+        // rather than looping through the values and printing multiple things
+        // This reduces the flickering when printing the menu
+        let available_values = (remaining_lines * context_menu.cols) as usize;
+        let values = context_menu
+            .get_values()
+            .iter()
+            .skip(skip_values)
+            .take(available_values)
+            .enumerate()
+            .map(|(index, line)| {
+                // Correcting the enumerate index based on the number of skipped values
+                let index = index + skip_values;
+                let column = index as u16 % context_menu.cols;
+                let printable_width = context_menu.printable_width(line);
+
+                // Final string with colors
+                format!(
+                    "{}{:width$}{}{}",
+                    context_menu.text_style(index),
+                    &line[..printable_width],
+                    RESET,
+                    context_menu.end_of_line(column),
+                    width = context_menu.col_width
+                )
+            })
+            .collect::<String>();
+
+        self.stdout
+            .queue(cursor::MoveTo(0, starting_row))?
+            .queue(Clear(ClearType::FromCursorDown))?
+            .queue(Print(values.trim_end_matches('\n')))?;
 
         Ok(())
     }
@@ -360,12 +446,10 @@ impl Painter {
     fn print_small_buffer(
         &mut self,
         prompt: &dyn Prompt,
-        prompt_str: (&str, &str, &str),
         lines: &PromptLines,
+        context_menu: Option<&ContextMenu>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
-        let (prompt_str_left, prompt_str_right, prompt_indicator) = prompt_str;
-
         // print our prompt with color
         if use_ansi_coloring {
             self.stdout
@@ -373,13 +457,10 @@ impl Painter {
         }
 
         self.stdout
-            .queue(Print(&prompt_str_left))?
-            .queue(Print(&prompt_indicator))?;
+            .queue(Print(&lines.prompt_str_left))?
+            .queue(Print(&lines.prompt_indicator))?;
 
-        let estimate_input_total_width =
-            estimate_first_input_line_width(prompt_str_left, prompt_indicator, lines);
-
-        self.print_right_prompt(prompt_str_right, estimate_input_total_width)?;
+        self.print_right_prompt(lines)?;
 
         if use_ansi_coloring {
             self.stdout.queue(ResetColor)?;
@@ -387,9 +468,14 @@ impl Painter {
 
         self.stdout
             .queue(Print(&lines.before_cursor))?
-            .queue(SavePosition)?
-            .queue(Print(&lines.hint))?
-            .queue(Print(&lines.after_cursor))?;
+            .queue(SavePosition)?;
+
+        if let Some(context_menu) = context_menu {
+            self.print_context_menu(context_menu, lines)?;
+        } else {
+            self.stdout
+                .queue(Print(format!("{}{}", &lines.hint, &lines.after_cursor)))?;
+        }
 
         Ok(())
     }
@@ -397,23 +483,20 @@ impl Painter {
     fn print_large_buffer(
         &mut self,
         prompt: &dyn Prompt,
-        prompt_str: (&str, &str, &str),
         lines: &PromptLines,
+        context_menu: Option<&ContextMenu>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
-        let (prompt_str_left, prompt_str_right, prompt_indicator) = prompt_str;
         let (screen_width, screen_height) = self.terminal_size;
-        let cursor_distance =
-            lines.distance_from_prompt(prompt_str_left, prompt_indicator, screen_width);
+        let cursor_distance = lines.distance_from_prompt(screen_width);
         let remaining_lines = screen_height.saturating_sub(cursor_distance);
 
         // Calculating the total lines before the cursor
         // The -1 in the total_lines_before is there because the at least one line of the prompt
         // indicator is printed in the same line as the first line of the buffer
-        let prompt_lines =
-            prompt_lines_with_wrap(prompt_str_left, prompt_indicator, screen_width) as usize;
+        let prompt_lines = lines.prompt_lines_with_wrap(screen_width) as usize;
 
-        let prompt_indicator_lines = prompt_indicator.lines().count();
+        let prompt_indicator_lines = lines.prompt_indicator.lines().count();
         let before_cursor_lines = lines.before_cursor.lines().count();
         let total_lines_before = prompt_lines + prompt_indicator_lines + before_cursor_lines - 1;
 
@@ -428,42 +511,60 @@ impl Painter {
 
         // In case the prompt is made out of multiple lines, the prompt is split by
         // lines and only the required ones are printed
-        let prompt_skipped = skip_buffer_lines(prompt_str_left, extra_rows, None);
+        let prompt_skipped = skip_buffer_lines(&lines.prompt_str_left, extra_rows, None);
         self.stdout.queue(Print(prompt_skipped))?;
 
-        let estimate_input_total_width =
-            estimate_first_input_line_width(prompt_str_left, prompt_indicator, lines);
-
         if extra_rows == 0 {
-            self.print_right_prompt(prompt_str_right, estimate_input_total_width)?;
+            self.print_right_prompt(lines)?;
         }
 
         // Adjusting extra_rows base on the calculated prompt line size
         let extra_rows = extra_rows.saturating_sub(prompt_lines);
 
-        let indicator_skipped = skip_buffer_lines(prompt_indicator, extra_rows, None);
+        let indicator_skipped = skip_buffer_lines(&lines.prompt_indicator, extra_rows, None);
         self.stdout.queue(Print(indicator_skipped))?;
 
         if use_ansi_coloring {
             self.stdout.queue(ResetColor)?;
         }
 
+        // The minimum number of lines from the menu are removed from the buffer if there is no more
+        // space to print the menu. This will only happen if the cursor is at the last line and
+        // it is a large buffer
+        let offset = context_menu.and_then(|context_menu| {
+            if cursor_distance >= screen_height.saturating_sub(1) {
+                let rows = lines
+                    .before_cursor
+                    .lines()
+                    .count()
+                    .saturating_sub(extra_rows)
+                    .saturating_sub(context_menu.min_rows() as usize);
+                Some(rows)
+            } else {
+                None
+            }
+        });
+
         // Selecting the lines before the cursor that will be printed
-        let before_cursor_skipped = skip_buffer_lines(lines.before_cursor, extra_rows, None);
+        let before_cursor_skipped = skip_buffer_lines(lines.before_cursor, extra_rows, offset);
         self.stdout.queue(Print(before_cursor_skipped))?;
         self.stdout.queue(SavePosition)?;
 
-        // Selecting lines for the hint
-        // The -1 subtraction is done because the remaining lines consider the line where the
-        // cursor is located as a remaining line. That has to be removed to get the correct offset
-        // for the hint and after cursor lines
-        let offset = remaining_lines.saturating_sub(1) as usize;
-        let hint_skipped = skip_buffer_lines(lines.hint, 0, Some(offset));
-        self.stdout.queue(Print(hint_skipped))?;
+        if let Some(context_menu) = context_menu {
+            self.print_context_menu(context_menu, lines)?;
+        } else {
+            // Selecting lines for the hint
+            // The -1 subtraction is done because the remaining lines consider the line where the
+            // cursor is located as a remaining line. That has to be removed to get the correct offset
+            // for the hint and after cursor lines
+            let offset = remaining_lines.saturating_sub(1) as usize;
+            let hint_skipped = skip_buffer_lines(lines.hint, 0, Some(offset));
+            self.stdout.queue(Print(hint_skipped))?;
 
-        // Selecting lines after the cursor
-        let after_cursor_skipped = skip_buffer_lines(lines.after_cursor, 0, Some(offset));
-        self.stdout.queue(Print(after_cursor_skipped))?;
+            // Selecting lines after the cursor
+            let after_cursor_skipped = skip_buffer_lines(lines.after_cursor, 0, Some(offset));
+            self.stdout.queue(Print(after_cursor_skipped))?;
+        }
 
         Ok(())
     }
@@ -542,35 +643,6 @@ impl Painter {
 
     pub fn flush(&mut self) -> Result<()> {
         self.stdout.flush()
-    }
-}
-
-fn estimate_first_input_line_width(
-    left_prompt: &str,
-    indicator: &str,
-    prompt_lines: &PromptLines,
-) -> u16 {
-    let last_line_left_prompt = left_prompt.lines().last();
-
-    let prompt_lines_total = prompt_lines.concatenate_lines();
-    let prompt_lines_first = prompt_lines_total.lines().next();
-
-    let mut estimate = 0; // space in front of the input
-
-    if let Some(last_line_left_prompt) = last_line_left_prompt {
-        estimate += line_width(last_line_left_prompt);
-    }
-
-    estimate += line_width(indicator);
-
-    if let Some(prompt_lines_first) = prompt_lines_first {
-        estimate += line_width(prompt_lines_first);
-    }
-
-    if estimate > u16::MAX as usize {
-        u16::MAX
-    } else {
-        estimate as u16
     }
 }
 

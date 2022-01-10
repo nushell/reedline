@@ -25,26 +25,30 @@ impl EditMode for Emacs {
     fn parse_event(&mut self, event: Event) -> ReedlineEvent {
         match event {
             Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
-                (KeyModifiers::NONE, KeyCode::Char(c)) => {
-                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
+                (modifier, KeyCode::Char(c)) => {
+                    // Note. The modifier can also be a combination of modifiers, for
+                    // example:
+                    //     KeyModifiers::CONTROL | KeyModifiers::ALT
+                    //     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
+                    //
+                    // Mixed modifiers are used by non american keyboards that have extra
+                    // keys like 'alt gr'. Keep this in mind if in the future there are
+                    // cases where an event is not being captured
+                    if modifier == KeyModifiers::SHIFT {
+                        let char = c.to_ascii_uppercase();
+                        ReedlineEvent::Edit(vec![EditCommand::InsertChar(char)])
+                    } else if modifier == KeyModifiers::NONE
+                        || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
+                        || modifier
+                            == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
+                    {
+                        ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
+                    } else {
+                        self.keybindings
+                            .find_binding(modifier, code)
+                            .unwrap_or(ReedlineEvent::None)
+                    }
                 }
-                // This combination of modifiers (CONTROL | ALT) is needed for non american keyboards.
-                // There is a special key called 'alt gr' that is captured with the combination
-                // of those two modifiers
-                (m, KeyCode::Char(c)) if m == KeyModifiers::CONTROL | KeyModifiers::ALT => {
-                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
-                }
-
-                (m, KeyCode::Char(c))
-                    if m == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT =>
-                {
-                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
-                }
-
-                (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
-                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c.to_ascii_uppercase())])
-                }
-
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                 _ => self
                     .keybindings
@@ -92,7 +96,7 @@ mod test {
         keybindings.add_binding(
             KeyModifiers::CONTROL,
             KeyCode::Char('l'),
-            ReedlineEvent::HandleTab,
+            ReedlineEvent::Complete,
         );
 
         let mut emacs = Emacs::new(keybindings);
@@ -102,7 +106,7 @@ mod test {
         });
         let result = emacs.parse_event(ctrl_l);
 
-        assert_eq!(result, ReedlineEvent::HandleTab);
+        assert_eq!(result, ReedlineEvent::Complete);
     }
 
     #[test]
