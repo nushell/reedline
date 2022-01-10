@@ -1,3 +1,5 @@
+use crate::MenuFiller;
+
 use {
     crate::{
         completion::{CircularCompletionHandler, CompletionActionHandler},
@@ -290,6 +292,13 @@ impl Reedline {
     /// A builder which configures the painter for debug mode
     pub fn with_debug_mode(mut self) -> Reedline {
         self.painter = Painter::new_with_debug(io::stdout());
+
+        self
+    }
+
+    /// A builder which configures the filler for the context menu
+    pub fn with_menu_filler(mut self, filler: Box<dyn MenuFiller>) -> Reedline {
+        self.context_menu = ContextMenu::new_with(filler);
 
         self
     }
