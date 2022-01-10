@@ -1,12 +1,29 @@
+use nu_ansi_term::Color;
+
+/// Struct to store coloring for the menu
+struct MenuTextColor {
+    selection_style: String,
+    text_style: String,
+}
+
+impl Default for MenuTextColor {
+    fn default() -> Self {
+        Self {
+            selection_style: Color::Red.bold().prefix().to_string(),
+            text_style: Color::DarkGray.prefix().to_string(),
+        }
+    }
+}
+
 /// Context menu definition
 pub struct ContextMenu {
     filler: Box<dyn MenuFiller>,
     active: bool,
+    /// Context menu coloring
+    color: MenuTextColor,
     /// Number of minimum rows that are displayed when
     /// the required lines is larger than the available lines
     min_rows: u16,
-    /// Marker for selected value
-    pub marker: &'static str,
     /// column position of the cursor. Starts from 0
     pub col_pos: u16,
     /// row position in the menu. Starts from 0
@@ -30,18 +47,19 @@ impl ContextMenu {
         Self {
             filler,
             active: false,
+            color: MenuTextColor::default(),
             min_rows: 3,
-            marker: "*",
             col_pos: 0,
             row_pos: 0,
             cols: 4,
-            col_width: 10,
+            col_width: 15,
         }
     }
 
     /// Activates context menu
     pub fn activate(&mut self) {
-        self.active = true
+        self.active = true;
+        self.reset_position();
     }
 
     /// Deactivates context menu
@@ -84,29 +102,65 @@ impl ContextMenu {
 
     /// Move menu cursor up
     pub fn move_up(&mut self) {
-        self.row_pos = self.row_pos.saturating_sub(1);
+        self.row_pos = if let Some(row) = self.row_pos.checked_sub(1) {
+            row
+        } else {
+            self.get_rows().saturating_sub(1)
+        }
     }
 
     /// Move menu cursor left
     pub fn move_down(&mut self) {
         let new_row = self.row_pos + 1;
-        self.row_pos = new_row.min(self.get_rows().saturating_sub(1))
+        self.row_pos = if new_row >= self.get_rows() {
+            0
+        } else {
+            new_row
+        }
     }
 
     /// Move menu cursor left
     pub fn move_left(&mut self) {
-        self.col_pos = self.col_pos.saturating_sub(1);
+        self.col_pos = if let Some(row) = self.col_pos.checked_sub(1) {
+            row
+        } else {
+            self.cols.saturating_sub(1)
+        }
     }
 
     /// Move menu cursor right
     pub fn move_right(&mut self) {
         let new_col = self.col_pos + 1;
-        self.col_pos = new_col.min(self.cols.saturating_sub(1))
+        self.col_pos = if new_col >= self.cols { 0 } else { new_col }
     }
 
     /// Get selected value from filler
     pub fn get_value(&self) -> Option<&str> {
         self.get_values().get(self.position()).copied()
+    }
+
+    /// Text style for menu
+    pub fn text_style(&self, index: usize) -> &str {
+        if index == self.position() {
+            &self.color.selection_style
+        } else {
+            &self.color.text_style
+        }
+    }
+
+    /// End of line for menu
+    pub fn end_of_line(&self, column: u16) -> &str {
+        if column == self.cols.saturating_sub(1) {
+            "\r\n"
+        } else {
+            ""
+        }
+    }
+
+    /// Printable width for a line
+    pub fn printable_width(&self, line: &str) -> usize {
+        let printable_width = (self.col_width - 2) as usize;
+        printable_width.min(line.len())
     }
 }
 
@@ -123,11 +177,6 @@ struct ExampleData {}
 impl MenuFiller for ExampleData {
     fn context_values(&self) -> Vec<&str> {
         vec![
-            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
             "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
             "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
         ]

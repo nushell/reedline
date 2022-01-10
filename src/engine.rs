@@ -530,7 +530,6 @@ impl Reedline {
         match event {
             ReedlineEvent::ContextMenu => {
                 self.context_menu.activate();
-                self.context_menu.reset_position();
 
                 self.buffer_paint(prompt)?;
                 Ok(None)

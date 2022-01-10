@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use crate::{context_menu::ContextMenu, PromptHistorySearch};
 use crossterm::{cursor::MoveToRow, style::ResetColor, terminal::ScrollUp};
+use nu_ansi_term::ansi::RESET;
 
 use {
     crate::{prompt::PromptEditMode, Prompt},
@@ -419,28 +420,17 @@ impl Painter {
             .map(|(index, line)| {
                 // Correcting the enumerate index based on the number of skipped values
                 let index = index + skip_values;
-                let marker = if index == context_menu.position() {
-                    context_menu.marker
-                } else {
-                    ""
-                };
-
                 let column = index as u16 % context_menu.cols;
-                let end_of_line = if column == context_menu.cols.saturating_sub(1) {
-                    "\r\n"
-                } else {
-                    ""
-                };
+                let printable_width = context_menu.printable_width(line);
 
-                let text_width = context_menu.col_width - marker.len();
-                let printable_width = (text_width - 2) as usize;
-                let printable_width = printable_width.min(line.len());
+                // Final string with colors
                 format!(
-                    "{}{:width$}{}",
-                    marker,
+                    "{}{:width$}{}{}",
+                    context_menu.text_style(index),
                     &line[..printable_width],
-                    end_of_line,
-                    width = text_width
+                    RESET,
+                    context_menu.end_of_line(column),
+                    width = context_menu.col_width
                 )
             })
             .collect::<String>();
