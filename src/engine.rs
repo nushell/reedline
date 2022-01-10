@@ -482,6 +482,7 @@ impl Reedline {
                 }
                 Ok(None)
             }
+            ReedlineEvent::Right => Ok(None),
             ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
                 self.history.back();
                 self.repaint(prompt)?;
@@ -520,13 +521,7 @@ impl Reedline {
             ReedlineEvent::HandleTab => {
                 let line_buffer = self.editor.line_buffer();
 
-                let current_hint = self.hinter.current_hint();
-                if !current_hint.is_empty() && self.input_mode == InputMode::Regular {
-                    self.editor.clear_to_end();
-                    self.run_edit_commands(&[EditCommand::InsertString(current_hint)])?;
-                } else {
-                    self.tab_handler.handle(line_buffer);
-                }
+                self.tab_handler.handle(line_buffer);
 
                 self.buffer_paint(prompt)?;
                 Ok(None)
@@ -603,6 +598,22 @@ impl Reedline {
             ReedlineEvent::Down => {
                 self.down_command();
 
+                self.buffer_paint(prompt)?;
+                Ok(None)
+            }
+            ReedlineEvent::Right => {
+                let line_buffer = self.editor.line_buffer();
+
+                let current_hint = self.hinter.current_hint();
+                if !current_hint.is_empty()
+                    && self.input_mode == InputMode::Regular
+                    && line_buffer.get_insertion_point() == line_buffer.len()
+                {
+                    self.editor.clear_to_end();
+                    self.run_edit_commands(&[EditCommand::InsertString(current_hint)])?;
+                } else {
+                    self.run_edit_commands(&[EditCommand::MoveRight])?;
+                }
                 self.buffer_paint(prompt)?;
                 Ok(None)
             }
