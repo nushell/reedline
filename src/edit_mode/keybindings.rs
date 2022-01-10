@@ -109,7 +109,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::NONE, KC::Up, ReedlineEvent::Up);
     kb.add_binding(KM::NONE, KC::Down, ReedlineEvent::Down);
     kb.add_binding(KM::NONE, KC::Left, edit_bind(EC::MoveLeft));
-    kb.add_binding(KM::NONE, KC::Right, edit_bind(EC::MoveRight));
+    kb.add_binding(KM::NONE, KC::Right, ReedlineEvent::Right);
     kb.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
     kb.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
 

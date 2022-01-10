@@ -106,6 +106,11 @@ impl LineBuffer {
         self.insertion_point = InsertionPoint { offset };
     }
 
+    /// Gets the offset of the current insertion point
+    pub fn get_insertion_point(&self) -> usize {
+        self.insertion_point.offset
+    }
+
     /// Output the current line in the multiline buffer
     pub fn get_buffer(&self) -> &str {
         &self.lines
@@ -150,6 +155,11 @@ impl LineBuffer {
     /// Set the insertion point *behind* the last character.
     pub fn move_to_end(&mut self) {
         self.insertion_point.offset = self.lines.len();
+    }
+
+    /// Get the length of the buffer
+    pub fn len(&self) -> usize {
+        self.lines.len()
     }
 
     /// Returns where the current line terminates
