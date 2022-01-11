@@ -1,5 +1,3 @@
-use reedline::{EditMode, Emacs, ListCompletionHandler, Vi};
-
 use {
     crossterm::{
         event::{poll, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -8,7 +6,8 @@ use {
     nu_ansi_term::{Color, Style},
     reedline::{
         default_emacs_keybindings, DefaultCompleter, DefaultHinter, DefaultPrompt, EditCommand,
-        ExampleHighlighter, FileBackedHistory, Reedline, ReedlineEvent, Signal,
+        EditMode, Emacs, ExampleHighlighter, FileBackedHistory, ListCompletionHandler, Reedline,
+        ReedlineEvent, Signal, Vi,
     },
     std::{
         io::{stdout, Write},
@@ -60,7 +59,7 @@ fn main() -> Result<()> {
         .with_edit_mode(edit_mode)
         .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
         .with_completion_action_handler(Box::new(
-            ListCompletionHandler::default().with_completer(completer),
+            ListCompletionHandler::default().with_completer(completer.clone()),
         ))
         .with_hinter(Box::new(
             DefaultHinter::default()
@@ -69,7 +68,8 @@ fn main() -> Result<()> {
                 // .with_inside_line()
                 .with_style(Style::new().fg(Color::DarkGray)),
         ))
-        .with_ansi_colors(true);
+        .with_ansi_colors(true)
+        .with_menu_completer(completer);
 
     if debug_mode {
         line_editor = line_editor.with_debug_mode();

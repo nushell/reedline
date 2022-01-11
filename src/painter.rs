@@ -1,17 +1,15 @@
-use std::borrow::Cow;
-
-use crate::{context_menu::ContextMenu, PromptHistorySearch};
-use crossterm::{cursor::MoveToRow, style::ResetColor, terminal::ScrollUp};
-use nu_ansi_term::ansi::RESET;
-
 use {
-    crate::{prompt::PromptEditMode, Prompt},
+    crate::{
+        context_menu::ContextMenu, prompt::PromptEditMode, LineBuffer, Prompt, PromptHistorySearch,
+    },
     crossterm::{
-        cursor::{self, MoveTo, MoveToColumn, RestorePosition, SavePosition},
-        style::{Print, SetForegroundColor},
-        terminal::{self, Clear, ClearType},
+        cursor::{self, MoveTo, MoveToColumn, MoveToRow, RestorePosition, SavePosition},
+        style::{Print, ResetColor, SetForegroundColor},
+        terminal::{self, Clear, ClearType, ScrollUp},
         QueueableCommand, Result,
     },
+    nu_ansi_term::ansi::RESET,
+    std::borrow::Cow,
     std::io::{Stdout, Write},
     unicode_width::UnicodeWidthStr,
 };
@@ -34,6 +32,7 @@ pub struct PromptLines<'prompt> {
     before_cursor: &'prompt str,
     after_cursor: &'prompt str,
     hint: &'prompt str,
+    line_buffer: &'prompt LineBuffer,
 }
 
 impl<'prompt> PromptLines<'prompt> {
@@ -47,6 +46,7 @@ impl<'prompt> PromptLines<'prompt> {
         before_cursor: &'prompt str,
         after_cursor: &'prompt str,
         hint: &'prompt str,
+        line_buffer: &'prompt LineBuffer,
     ) -> Self {
         let prompt_str_left = prompt.render_prompt_left();
         let prompt_str_right = prompt.render_prompt_right();
@@ -63,6 +63,7 @@ impl<'prompt> PromptLines<'prompt> {
             before_cursor,
             after_cursor,
             hint,
+            line_buffer,
         }
     }
 
@@ -91,7 +92,7 @@ impl<'prompt> PromptLines<'prompt> {
         });
 
         if let Some(context_menu) = context_menu {
-            lines as u16 + context_menu.get_rows()
+            lines as u16 + context_menu.get_rows(self.line_buffer)
         } else {
             lines as u16
         }
@@ -385,6 +386,7 @@ impl Painter {
         &mut self,
         context_menu: &ContextMenu,
         lines: &PromptLines,
+        use_ansi_coloring: bool,
     ) -> Result<()> {
         let (screen_width, screen_height) = self.terminal_size;
         let cursor_distance = lines.distance_from_prompt(screen_width);
@@ -392,7 +394,7 @@ impl Painter {
         // If there is not enough space to print the menu, then the starting
         // drawing point for the menu will overwrite the last rows in the buffer
         let starting_row = if cursor_distance >= screen_height.saturating_sub(1) {
-            screen_height.saturating_sub(context_menu.min_rows())
+            screen_height.saturating_sub(context_menu.min_rows(lines.line_buffer))
         } else {
             self.prompt_coords.prompt_start.1 + cursor_distance + 1
         };
@@ -412,7 +414,7 @@ impl Painter {
         // This reduces the flickering when printing the menu
         let available_values = (remaining_lines * context_menu.cols) as usize;
         let values = context_menu
-            .get_values()
+            .get_values(lines.line_buffer)
             .iter()
             .skip(skip_values)
             .take(available_values)
@@ -421,17 +423,29 @@ impl Painter {
                 // Correcting the enumerate index based on the number of skipped values
                 let index = index + skip_values;
                 let column = index as u16 % context_menu.cols;
-                let printable_width = context_menu.printable_width(line);
+                let printable_width = context_menu.printable_width(&line.1);
 
                 // Final string with colors
-                format!(
-                    "{}{:width$}{}{}",
-                    context_menu.text_style(index),
-                    &line[..printable_width],
-                    RESET,
-                    context_menu.end_of_line(column),
-                    width = context_menu.col_width
-                )
+                if use_ansi_coloring {
+                    format!(
+                        "{}{:width$}{}{}",
+                        context_menu.text_style(index),
+                        &line.1[..printable_width],
+                        RESET,
+                        context_menu.end_of_line(column),
+                        width = context_menu.col_width
+                    )
+                } else {
+                    // If no ansi coloring is found, then the selection word is
+                    // the line in uppercase
+                    let line_str = if index == context_menu.position() {
+                        let line_selection = &line.1[..printable_width];
+                        line_selection.to_uppercase()
+                    } else {
+                        line.1[..printable_width].to_string()
+                    };
+                    format!("{:width$}", line_str, width = context_menu.col_width)
+                }
             })
             .collect::<String>();
 
@@ -471,7 +485,7 @@ impl Painter {
             .queue(SavePosition)?;
 
         if let Some(context_menu) = context_menu {
-            self.print_context_menu(context_menu, lines)?;
+            self.print_context_menu(context_menu, lines, use_ansi_coloring)?;
         } else {
             self.stdout
                 .queue(Print(format!("{}{}", &lines.hint, &lines.after_cursor)))?;
@@ -538,7 +552,7 @@ impl Painter {
                     .lines()
                     .count()
                     .saturating_sub(extra_rows)
-                    .saturating_sub(context_menu.min_rows() as usize);
+                    .saturating_sub(context_menu.min_rows(lines.line_buffer) as usize);
                 Some(rows)
             } else {
                 None
@@ -551,7 +565,7 @@ impl Painter {
         self.stdout.queue(SavePosition)?;
 
         if let Some(context_menu) = context_menu {
-            self.print_context_menu(context_menu, lines)?;
+            self.print_context_menu(context_menu, lines, use_ansi_coloring)?;
         } else {
             // Selecting lines for the hint
             // The -1 subtraction is done because the remaining lines consider the line where the
