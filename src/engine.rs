@@ -1,5 +1,3 @@
-use crate::MenuFiller;
-
 use {
     crate::{
         completion::{CircularCompletionHandler, CompletionActionHandler},
@@ -12,8 +10,8 @@ use {
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         painter::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
-        text_manipulation, DefaultValidator, EditCommand, ExampleHighlighter, Highlighter, Prompt,
-        PromptHistorySearch, Signal, ValidationResult, Validator,
+        text_manipulation, Completer, DefaultValidator, EditCommand, ExampleHighlighter,
+        Highlighter, Prompt, PromptHistorySearch, Signal, ValidationResult, Validator,
     },
     crossterm::{event, event::Event, terminal, Result},
     std::{borrow::Borrow, io, time::Duration},
@@ -296,9 +294,9 @@ impl Reedline {
         self
     }
 
-    /// A builder which configures the filler for the context menu
-    pub fn with_menu_filler(mut self, filler: Box<dyn MenuFiller>) -> Reedline {
-        self.context_menu = ContextMenu::new_with(filler);
+    /// A builder which configures the completer for the context menu
+    pub fn with_menu_completer(mut self, completer: Box<dyn Completer>) -> Reedline {
+        self.context_menu = ContextMenu::new_with(completer);
 
         self
     }
@@ -573,10 +571,14 @@ impl Reedline {
             ReedlineEvent::ClearScreen => Ok(Some(Signal::CtrlL)),
             ReedlineEvent::Enter => {
                 if self.context_menu.is_active() {
-                    let value = self.context_menu.get_value();
-                    if let Some(value) = value {
-                        let value = value.to_string();
-                        self.run_edit_commands(&[EditCommand::InsertString(value)])?;
+                    let line_buffer = self.editor.line_buffer();
+                    let value = self.context_menu.get_value(line_buffer);
+                    if let Some((span, value)) = value {
+                        let mut offset = line_buffer.offset();
+                        offset += value.len() - (span.end - span.start);
+
+                        line_buffer.replace(span.start..span.end, &value);
+                        line_buffer.set_insertion_point(offset);
                     }
 
                     self.context_menu.deactivate();
@@ -634,7 +636,8 @@ impl Reedline {
             }
             ReedlineEvent::Up => {
                 if self.context_menu.is_active() {
-                    self.context_menu.move_up()
+                    let line_buffer = self.editor.line_buffer();
+                    self.context_menu.move_up(line_buffer)
                 } else {
                     self.up_command();
                 }
@@ -644,7 +647,8 @@ impl Reedline {
             }
             ReedlineEvent::Down => {
                 if self.context_menu.is_active() {
-                    self.context_menu.move_down()
+                    let line_buffer = self.editor.line_buffer();
+                    self.context_menu.move_down(line_buffer)
                 } else {
                     self.down_command();
                 }
@@ -659,6 +663,7 @@ impl Reedline {
                 if !current_hint.is_empty()
                     && self.input_mode == InputMode::Regular
                     && line_buffer.get_insertion_point() == line_buffer.len()
+                    && !self.context_menu.is_active()
                 {
                     self.editor.clear_to_end();
                     self.run_edit_commands(&[EditCommand::InsertString(current_hint)])?;
@@ -997,6 +1002,7 @@ impl Reedline {
                 &res_string,
                 "",
                 "",
+                self.editor.line_buffer(),
             );
 
             self.painter
@@ -1052,6 +1058,7 @@ impl Reedline {
             &before_cursor,
             &after_cursor,
             &hint,
+            self.editor.line_buffer(),
         );
 
         self.painter

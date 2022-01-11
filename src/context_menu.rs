@@ -1,5 +1,7 @@
 use nu_ansi_term::Color;
 
+use crate::{Completer, DefaultCompleter, LineBuffer, Span};
+
 /// Struct to store coloring for the menu
 struct MenuTextColor {
     selection_style: String,
@@ -17,7 +19,7 @@ impl Default for MenuTextColor {
 
 /// Context menu definition
 pub struct ContextMenu {
-    filler: Box<dyn MenuFiller>,
+    completer: Box<dyn Completer>,
     active: bool,
     /// Context menu coloring
     color: MenuTextColor,
@@ -36,23 +38,23 @@ pub struct ContextMenu {
 
 impl Default for ContextMenu {
     fn default() -> Self {
-        let filler = Box::new(ExampleData::new());
-        Self::new_with(filler)
+        let completer = Box::new(DefaultCompleter::default());
+        Self::new_with(completer)
     }
 }
 
 impl ContextMenu {
     /// Creates a context menu with a filler
-    pub fn new_with(filler: Box<dyn MenuFiller>) -> Self {
+    pub fn new_with(completer: Box<dyn Completer>) -> Self {
         Self {
-            filler,
+            completer,
             active: false,
             color: MenuTextColor::default(),
             min_rows: 3,
             col_pos: 0,
             row_pos: 0,
             cols: 4,
-            col_width: 15,
+            col_width: 20,
         }
     }
 
@@ -73,19 +75,20 @@ impl ContextMenu {
     }
 
     /// Gets values from filler that will be displayed in the menu
-    pub fn get_values(&self) -> Vec<&str> {
-        self.filler.context_values()
+    pub fn get_values(&self, line_buffer: &LineBuffer) -> Vec<(Span, String)> {
+        self.completer
+            .complete(line_buffer.get_buffer(), line_buffer.offset())
     }
 
     /// Calculates how many rows the Menu will use
-    pub fn get_rows(&self) -> u16 {
-        let rows = self.get_values().len() as f64 / self.cols as f64;
+    pub fn get_rows(&self, line_buffer: &LineBuffer) -> u16 {
+        let rows = self.get_values(line_buffer).len() as f64 / self.cols as f64;
         rows.ceil() as u16
     }
 
     /// Minimum rows that should be displayed by the menu
-    pub fn min_rows(&self) -> u16 {
-        self.get_rows().min(self.min_rows)
+    pub fn min_rows(&self, line_buffer: &LineBuffer) -> u16 {
+        self.get_rows(line_buffer).min(self.min_rows)
     }
 
     /// Reset menu position
@@ -101,18 +104,18 @@ impl ContextMenu {
     }
 
     /// Move menu cursor up
-    pub fn move_up(&mut self) {
+    pub fn move_up(&mut self, line_buffer: &LineBuffer) {
         self.row_pos = if let Some(row) = self.row_pos.checked_sub(1) {
             row
         } else {
-            self.get_rows().saturating_sub(1)
+            self.get_rows(line_buffer).saturating_sub(1)
         }
     }
 
     /// Move menu cursor left
-    pub fn move_down(&mut self) {
+    pub fn move_down(&mut self, line_buffer: &LineBuffer) {
         let new_row = self.row_pos + 1;
-        self.row_pos = if new_row >= self.get_rows() {
+        self.row_pos = if new_row >= self.get_rows(line_buffer) {
             0
         } else {
             new_row
@@ -135,8 +138,8 @@ impl ContextMenu {
     }
 
     /// Get selected value from filler
-    pub fn get_value(&self) -> Option<&str> {
-        self.get_values().get(self.position()).copied()
+    pub fn get_value(&self, line_buffer: &LineBuffer) -> Option<(Span, String)> {
+        self.get_values(line_buffer).get(self.position()).cloned()
     }
 
     /// Text style for menu
@@ -161,31 +164,5 @@ impl ContextMenu {
     pub fn printable_width(&self, line: &str) -> usize {
         let printable_width = (self.col_width - 2) as usize;
         printable_width.min(line.len())
-    }
-}
-
-/// The MenuFiller is a trait that defines how the data for the context menu
-/// will be collected.
-pub trait MenuFiller: Send {
-    /// Collects menu values
-    fn context_values(&self) -> Vec<&str>;
-}
-
-/// Data example for Reedline ContextMenu
-struct ExampleData {}
-
-impl MenuFiller for ExampleData {
-    fn context_values(&self) -> Vec<&str> {
-        vec![
-            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-        ]
-    }
-}
-
-impl ExampleData {
-    /// Creates new instance of Example Menu
-    pub fn new() -> Self {
-        ExampleData {}
     }
 }
