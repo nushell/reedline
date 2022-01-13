@@ -92,6 +92,7 @@ pub struct Reedline {
 
     // Showcase hints based on various strategies (history, language-completion, spellcheck, etc)
     hinter: Box<dyn Hinter>,
+    hide_hints: bool,
 
     // Is Some(n) read_line() should repaint prompt every `n` milliseconds
     animate: bool,
@@ -132,6 +133,7 @@ impl Reedline {
             tab_handler: Box::new(CircularCompletionHandler::default()),
             highlighter: buffer_highlighter,
             hinter,
+            hide_hints: false,
             validator,
             animate: true,
             use_ansi_coloring: true,
@@ -354,6 +356,7 @@ impl Reedline {
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
         self.painter.init_terminal_size()?;
         self.painter.initialize_prompt_position()?;
+        self.hide_hints = false;
 
         // Redraw if Ctrl-L was used
         if self.input_mode == InputMode::HistorySearch {
@@ -601,6 +604,8 @@ impl Reedline {
                 } else {
                     let buffer = self.editor.get_buffer().to_string();
                     if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
+                        self.hide_hints = true;
+                        self.buffer_paint(prompt)?;
                         self.append_to_history();
                         self.run_edit_commands(&[EditCommand::Clear])?;
                         self.painter.print_crlf()?;
@@ -670,19 +675,22 @@ impl Reedline {
                 Ok(None)
             }
             ReedlineEvent::Right => {
-                let line_buffer = self.editor.line_buffer();
+                if self.hints_active() && !self.context_menu.is_active() {
+                    let line_buffer = self.editor.line_buffer();
 
-                let current_hint = self.hinter.current_hint();
-                if !current_hint.is_empty()
-                    && self.input_mode == InputMode::Regular
-                    && line_buffer.get_insertion_point() == line_buffer.len()
-                    && !self.context_menu.is_active()
-                {
-                    self.editor.clear_to_end();
-                    self.run_edit_commands(&[EditCommand::InsertString(current_hint)])?;
+                    let current_hint = self.hinter.current_hint();
+                    if line_buffer.get_insertion_point() == line_buffer.len()
+                        && !current_hint.is_empty()
+                    {
+                        self.editor.clear_to_end();
+                        self.run_edit_commands(&[EditCommand::InsertString(current_hint)])?;
+                    } else {
+                        self.run_edit_commands(&[EditCommand::MoveRight])?;
+                    }
                 } else {
                     self.run_edit_commands(&[EditCommand::MoveRight])?;
                 }
+
                 self.buffer_paint(prompt)?;
                 Ok(None)
             }
@@ -967,6 +975,11 @@ impl Reedline {
         }
     }
 
+    /// Checks if hints should be displayed and are able to be completed
+    fn hints_active(&self) -> bool {
+        !self.hide_hints && self.input_mode == InputMode::Regular
+    }
+
     /// *Partial* repaint of either the buffer or the parts for reverse history search
     fn repaint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
         // Repainting
@@ -1041,7 +1054,7 @@ impl Reedline {
                 self.use_ansi_coloring,
             );
 
-        let hint: String = if self.input_mode == InputMode::Regular {
+        let hint: String = if self.hints_active() {
             self.hinter.handle(
                 buffer_to_paint,
                 cursor_position_in_buffer,
