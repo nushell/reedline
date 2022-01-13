@@ -11,8 +11,27 @@ struct MenuTextColor {
 impl Default for MenuTextColor {
     fn default() -> Self {
         Self {
-            selection_style: Color::Red.bold().prefix().to_string(),
+            selection_style: Color::Green.bold().reverse().prefix().to_string(),
             text_style: Color::DarkGray.prefix().to_string(),
+        }
+    }
+}
+
+pub struct ColumnDetails {
+    /// Number of columns that the menu will have
+    pub cols: u16,
+    /// Column width
+    pub col_width: usize,
+    /// Column padding
+    pub col_padding: usize,
+}
+
+impl ColumnDetails {
+    fn new(cols: u16, col_width: usize, col_padding: usize) -> Self {
+        Self {
+            cols,
+            col_width,
+            col_padding,
         }
     }
 }
@@ -30,10 +49,10 @@ pub struct ContextMenu {
     pub col_pos: u16,
     /// row position in the menu. Starts from 0
     pub row_pos: u16,
-    /// Number of columns that the menu will have
-    pub cols: u16,
-    /// Column width
-    pub col_width: usize,
+    /// Default column details that are set when creating the menu
+    default_details: ColumnDetails,
+    /// Working column details keep changing based on the collected values
+    working_details: ColumnDetails,
 }
 
 impl Default for ContextMenu {
@@ -53,15 +72,44 @@ impl ContextMenu {
             min_rows: 3,
             col_pos: 0,
             row_pos: 0,
-            cols: 4,
-            col_width: 20,
+            default_details: ColumnDetails::new(4, 20, 2),
+            working_details: ColumnDetails::new(4, 20, 2),
         }
     }
 
     /// Activates context menu
-    pub fn activate(&mut self) {
+    pub fn activate(&mut self, line_buffer: &LineBuffer, screen_width: u16) {
         self.active = true;
         self.reset_position();
+
+        let max_width = self
+            .get_values(line_buffer)
+            .iter()
+            .fold(0, |acc, (_, string)| {
+                let str_len = string.len() + self.working_details.col_padding;
+                if str_len > acc {
+                    str_len
+                } else {
+                    acc
+                }
+            });
+
+        // Adjusting the working width of the column based the max line width found
+        // in the menu values
+        if max_width > self.default_details.col_width {
+            self.working_details.col_width = max_width;
+        } else {
+            self.working_details.col_width = self.default_details.col_width;
+        }
+
+        // The working columns is adjusted based on possible number of columns
+        // that could be fitted in the screen with the calculated column width
+        let possible_cols = screen_width / self.working_details.col_width as u16;
+        if possible_cols > self.default_details.cols {
+            self.working_details.cols = self.default_details.cols;
+        } else {
+            self.working_details.cols = possible_cols;
+        }
     }
 
     /// Deactivates context menu
@@ -80,9 +128,19 @@ impl ContextMenu {
             .complete(line_buffer.get_buffer(), line_buffer.offset())
     }
 
+    /// Returns working details cols
+    pub fn get_cols(&self) -> u16 {
+        self.working_details.cols
+    }
+
+    /// Returns working details col width
+    pub fn get_width(&self) -> usize {
+        self.working_details.col_width
+    }
+
     /// Calculates how many rows the Menu will use
     pub fn get_rows(&self, line_buffer: &LineBuffer) -> u16 {
-        let rows = self.get_values(line_buffer).len() as f64 / self.cols as f64;
+        let rows = self.get_values(line_buffer).len() as f64 / self.working_details.cols as f64;
         rows.ceil() as u16
     }
 
@@ -99,7 +157,7 @@ impl ContextMenu {
 
     /// Menu index based on column and row position
     pub fn position(&self) -> usize {
-        let position = self.row_pos * self.cols + self.col_pos;
+        let position = self.row_pos * self.working_details.cols + self.col_pos;
         position as usize
     }
 
@@ -127,14 +185,37 @@ impl ContextMenu {
         self.col_pos = if let Some(row) = self.col_pos.checked_sub(1) {
             row
         } else {
-            self.cols.saturating_sub(1)
+            self.working_details.cols.saturating_sub(1)
         }
     }
 
-    /// Move menu cursor right
+    /// Move menu cursor to the next element
+    pub fn move_next(&mut self, line_buffer: &LineBuffer) {
+        let mut new_col = self.col_pos + 1;
+        let mut new_row = self.row_pos;
+
+        if self.col_pos + 1 >= self.working_details.cols {
+            new_row += 1;
+            new_col = 0;
+        }
+
+        if new_row >= self.get_rows(line_buffer) {
+            new_row = 0;
+            new_col = 0;
+        }
+
+        self.col_pos = new_col;
+        self.row_pos = new_row;
+    }
+
+    /// Move menu cursor element
     pub fn move_right(&mut self) {
         let new_col = self.col_pos + 1;
-        self.col_pos = if new_col >= self.cols { 0 } else { new_col }
+        self.col_pos = if new_col >= self.working_details.cols {
+            0
+        } else {
+            new_col
+        }
     }
 
     /// Get selected value from filler
@@ -153,7 +234,7 @@ impl ContextMenu {
 
     /// End of line for menu
     pub fn end_of_line(&self, column: u16) -> &str {
-        if column == self.cols.saturating_sub(1) {
+        if column == self.working_details.cols.saturating_sub(1) {
             "\r\n"
         } else {
             ""
@@ -162,7 +243,7 @@ impl ContextMenu {
 
     /// Printable width for a line
     pub fn printable_width(&self, line: &str) -> usize {
-        let printable_width = (self.col_width - 2) as usize;
+        let printable_width = self.working_details.col_width - self.working_details.col_padding;
         printable_width.min(line.len())
     }
 }
