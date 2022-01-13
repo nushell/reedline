@@ -10,7 +10,7 @@ use {
     },
     nu_ansi_term::ansi::RESET,
     std::borrow::Cow,
-    std::io::{Stdout, Write},
+    std::io::Write,
     unicode_width::UnicodeWidthStr,
 };
 
@@ -206,9 +206,12 @@ fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
     string[index..limit].trim_end_matches('\n')
 }
 
+/// the type used by crossterm operations
+pub type W = std::io::BufWriter<std::io::Stderr>;
+
 pub struct Painter {
     // Stdout
-    stdout: Stdout,
+    stdout: W,
     prompt_coords: PromptCoordinates,
     terminal_size: (u16, u16),
     last_required_lines: u16,
@@ -217,7 +220,7 @@ pub struct Painter {
 }
 
 impl Painter {
-    pub fn new(stdout: Stdout) -> Self {
+    pub fn new(stdout: W) -> Self {
         Painter {
             stdout,
             prompt_coords: PromptCoordinates::default(),
@@ -228,7 +231,7 @@ impl Painter {
         }
     }
 
-    pub fn new_with_debug(stdout: Stdout) -> Self {
+    pub fn new_with_debug(stdout: W) -> Self {
         Painter {
             stdout,
             prompt_coords: PromptCoordinates::default(),
@@ -247,6 +250,10 @@ impl Painter {
 
     fn terminal_rows(&self) -> u16 {
         self.terminal_size.1
+    }
+
+    pub fn terminal_cols(&self) -> u16 {
+        self.terminal_size.0
     }
 
     pub fn remaining_lines(&self) -> u16 {
@@ -404,7 +411,7 @@ impl Painter {
         let remaining_lines = screen_height.saturating_sub(starting_row);
         let skip_values = if context_menu.row_pos >= remaining_lines {
             let skip_lines = context_menu.row_pos.saturating_sub(remaining_lines) + 1;
-            (skip_lines * context_menu.cols) as usize
+            (skip_lines * context_menu.get_cols()) as usize
         } else {
             0
         };
@@ -412,7 +419,7 @@ impl Painter {
         // It seems that crossterm prefers to have a complete string ready to be printed
         // rather than looping through the values and printing multiple things
         // This reduces the flickering when printing the menu
-        let available_values = (remaining_lines * context_menu.cols) as usize;
+        let available_values = (remaining_lines * context_menu.get_cols()) as usize;
         let values = context_menu
             .get_values(lines.line_buffer)
             .iter()
@@ -422,7 +429,7 @@ impl Painter {
             .map(|(index, line)| {
                 // Correcting the enumerate index based on the number of skipped values
                 let index = index + skip_values;
-                let column = index as u16 % context_menu.cols;
+                let column = index as u16 % context_menu.get_cols();
                 let printable_width = context_menu.printable_width(&line.1);
 
                 // Final string with colors
@@ -433,7 +440,7 @@ impl Painter {
                         &line.1[..printable_width],
                         RESET,
                         context_menu.end_of_line(column),
-                        width = context_menu.col_width
+                        width = context_menu.get_width()
                     )
                 } else {
                     // If no ansi coloring is found, then the selection word is
@@ -444,7 +451,7 @@ impl Painter {
                     } else {
                         line.1[..printable_width].to_string()
                     };
-                    format!("{:width$}", line_str, width = context_menu.col_width)
+                    format!("{:width$}", line_str, width = context_menu.get_width())
                 }
             })
             .collect::<String>();

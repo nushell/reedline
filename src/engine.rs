@@ -115,7 +115,7 @@ impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     pub fn create() -> io::Result<Reedline> {
         let history = Box::new(FileBackedHistory::default());
-        let painter = Painter::new(io::stdout());
+        let painter = Painter::new(std::io::BufWriter::new(std::io::stderr()));
         let buffer_highlighter = Box::new(ExampleHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
         let validator = Box::new(DefaultValidator);
@@ -289,7 +289,7 @@ impl Reedline {
 
     /// A builder which configures the painter for debug mode
     pub fn with_debug_mode(mut self) -> Reedline {
-        self.painter = Painter::new_with_debug(io::stdout());
+        self.painter = Painter::new_with_debug(std::io::BufWriter::new(std::io::stderr()));
 
         self
     }
@@ -536,10 +536,23 @@ impl Reedline {
     ) -> io::Result<Option<Signal>> {
         match event {
             ReedlineEvent::ContextMenu => {
-                self.context_menu.activate();
+                let line_buffer = self.editor.line_buffer();
+                if self.context_menu.is_active() {
+                    self.context_menu.move_next(line_buffer);
+                    self.buffer_paint(prompt)?;
+                    Ok(None)
+                } else {
+                    self.context_menu
+                        .activate(line_buffer, self.painter.terminal_cols());
 
-                self.buffer_paint(prompt)?;
-                Ok(None)
+                    // If there is only one value in the menu, it can select be selected immediately
+                    if self.context_menu.get_values(line_buffer).len() == 1 {
+                        self.handle_event(prompt, ReedlineEvent::Enter)
+                    } else {
+                        self.buffer_paint(prompt)?;
+                        Ok(None)
+                    }
+                }
             }
             ReedlineEvent::Complete => {
                 let line_buffer = self.editor.line_buffer();
