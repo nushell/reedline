@@ -272,15 +272,15 @@ mod tests {
     #[case(&['2', 'j'], ReedlineEvent::Multiple(vec![ReedlineEvent::Down, ReedlineEvent::Down]))]
     #[case(&['j'], ReedlineEvent::Multiple(vec![ReedlineEvent::Down]))]
     #[case(&['2', 'l'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Edit(vec![EditCommand::MoveRight]),
-        ReedlineEvent::Edit(vec![EditCommand::MoveRight])
+        ReedlineEvent::Right,
+        ReedlineEvent::Right
         ]))]
-    #[case(&['l'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveRight])]))]
+    #[case(&['l'], ReedlineEvent::Multiple(vec![ReedlineEvent::Right]))]
     #[case(&['2', 'h'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Edit(vec![EditCommand::MoveLeft]),
-        ReedlineEvent::Edit(vec![EditCommand::MoveLeft]),
+        ReedlineEvent::Left,
+        ReedlineEvent::Left,
         ]))]
-    #[case(&['h'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveLeft])]))]
+    #[case(&['h'], ReedlineEvent::Multiple(vec![ReedlineEvent::Left]))]
     #[case(&['0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart])]))]
     #[case(&['$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd])]))]
     #[case(&['i'], ReedlineEvent::Multiple(vec![ReedlineEvent::Repaint]))]

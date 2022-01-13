@@ -84,8 +84,8 @@ pub fn default_emacs_keybindings() -> Keybindings {
         KC::Char('y'),
         edit_bind(EC::PasteCutBufferBefore),
     );
-    kb.add_binding(KM::CONTROL, KC::Char('b'), edit_bind(EC::MoveLeft));
-    kb.add_binding(KM::CONTROL, KC::Char('f'), edit_bind(EC::MoveRight));
+    kb.add_binding(KM::CONTROL, KC::Char('b'), ReedlineEvent::Left);
+    kb.add_binding(KM::CONTROL, KC::Char('f'), ReedlineEvent::Right);
     kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
     kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
     kb.add_binding(KM::CONTROL, KC::Char('p'), ReedlineEvent::PreviousHistory);
@@ -108,7 +108,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::NONE, KC::Tab, ReedlineEvent::Complete);
     kb.add_binding(KM::NONE, KC::Up, ReedlineEvent::Up);
     kb.add_binding(KM::NONE, KC::Down, ReedlineEvent::Down);
-    kb.add_binding(KM::NONE, KC::Left, edit_bind(EC::MoveLeft));
+    kb.add_binding(KM::NONE, KC::Left, ReedlineEvent::Left);
     kb.add_binding(KM::NONE, KC::Right, ReedlineEvent::Right);
     kb.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
     kb.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));

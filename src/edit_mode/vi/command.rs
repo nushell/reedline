@@ -149,8 +149,8 @@ impl Command {
         match self {
             Self::MoveUp => vec![ReedlineOption::Event(ReedlineEvent::Up)],
             Self::MoveDown => vec![ReedlineOption::Event(ReedlineEvent::Down)],
-            Self::MoveLeft => vec![ReedlineOption::Edit(EditCommand::MoveLeft)],
-            Self::MoveRight => vec![ReedlineOption::Edit(EditCommand::MoveRight)],
+            Self::MoveLeft => vec![ReedlineOption::Event(ReedlineEvent::Left)],
+            Self::MoveRight => vec![ReedlineOption::Event(ReedlineEvent::Right)],
             Self::MoveToLineStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
             Self::MoveToLineEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
             Self::MoveWordLeft => vec![ReedlineOption::Edit(EditCommand::MoveWordLeft)],
