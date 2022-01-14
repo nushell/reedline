@@ -239,15 +239,13 @@ impl LineBuffer {
     }
 
     /// Move cursor position *in front of* the next word to the left
-    pub fn move_word_left(&mut self) -> usize {
+    pub fn move_word_left(&mut self) {
         self.insertion_point.offset = self.word_left_index();
-        self.insertion_point.offset
     }
 
     /// Move cursor position *behind* the next word to the right
-    pub fn move_word_right(&mut self) -> usize {
+    pub fn move_word_right(&mut self) {
         self.insertion_point.offset = self.word_right_index();
-        self.insertion_point.offset
     }
 
     ///Insert a single character at the insertion point and move right

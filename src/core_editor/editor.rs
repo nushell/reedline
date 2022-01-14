@@ -1,4 +1,4 @@
-use crate::core_editor::get_default_clipboard;
+use crate::{core_editor::get_default_clipboard, EditCommand, UndoBehavior};
 
 use super::{Clipboard, ClipboardMode, LineBuffer};
 
@@ -32,36 +32,58 @@ impl Editor {
         self.line_buffer = line_buffer;
     }
 
-    pub fn move_to_start(&mut self) {
-        self.line_buffer.move_to_start();
-    }
-
-    pub fn move_to_end(&mut self) {
-        self.line_buffer.move_to_end();
-    }
-
-    pub fn move_to_line_start(&mut self) {
-        self.line_buffer.move_to_line_start();
-    }
-
-    pub fn move_to_line_end(&mut self) {
-        self.line_buffer.move_to_line_end();
-    }
-
-    pub fn move_left(&mut self) {
-        self.line_buffer.move_left();
-    }
-
-    pub fn move_right(&mut self) {
-        self.line_buffer.move_right();
-    }
-
-    pub fn move_word_left(&mut self) {
-        self.line_buffer.move_word_left();
-    }
-
-    pub fn move_word_right(&mut self) {
-        self.line_buffer.move_word_right();
+    pub fn run_edit_command(&mut self, command: &EditCommand) {
+        match command {
+            EditCommand::MoveToStart => self.line_buffer.move_to_start(),
+            EditCommand::MoveToLineStart => self.line_buffer.move_to_line_start(),
+            EditCommand::MoveToEnd => self.line_buffer.move_to_end(),
+            EditCommand::MoveToLineEnd => self.line_buffer.move_to_line_end(),
+            EditCommand::MoveLeft => self.line_buffer.move_left(),
+            EditCommand::MoveRight => self.line_buffer.move_right(),
+            EditCommand::MoveWordLeft => self.line_buffer.move_word_left(),
+            EditCommand::MoveWordRight => self.line_buffer.move_word_right(),
+            EditCommand::InsertChar(c) => self.insert_char(*c),
+            EditCommand::InsertString(str) => self.line_buffer.insert_str(str),
+            EditCommand::Backspace => self.line_buffer.delete_left_grapheme(),
+            EditCommand::Delete => self.line_buffer.delete_right_grapheme(),
+            EditCommand::BackspaceWord => self.line_buffer.delete_word_left(),
+            EditCommand::DeleteWord => self.line_buffer.delete_word_right(),
+            EditCommand::Clear => self.line_buffer.clear(),
+            EditCommand::ClearToLineEnd => self.line_buffer.clear_to_line_end(),
+            EditCommand::CutCurrentLine => self.cut_current_line(),
+            EditCommand::CutFromStart => self.cut_from_start(),
+            EditCommand::CutFromLineStart => self.cut_from_line_start(),
+            EditCommand::CutToEnd => self.cut_from_end(),
+            EditCommand::CutToLineEnd => self.cut_to_line_end(),
+            EditCommand::CutWordLeft => self.cut_word_left(),
+            EditCommand::CutWordRight => self.cut_word_right(),
+            EditCommand::PasteCutBufferBefore => self.insert_cut_buffer_before(),
+            EditCommand::PasteCutBufferAfter => self.insert_cut_buffer_after(),
+            EditCommand::UppercaseWord => self.line_buffer.uppercase_word(),
+            EditCommand::LowercaseWord => self.line_buffer.lowercase_word(),
+            EditCommand::CapitalizeChar => self.line_buffer.capitalize_char(),
+            EditCommand::SwapWords => self.line_buffer.swap_words(),
+            EditCommand::SwapGraphemes => self.line_buffer.swap_graphemes(),
+            EditCommand::Undo => self.undo(),
+            EditCommand::Redo => self.redo(),
+            EditCommand::CutRightUntil(c) => self.cut_right_until_char(*c, false, true),
+            EditCommand::CutRightBefore(c) => self.cut_right_until_char(*c, true, true),
+            EditCommand::MoveRightUntil(c) => self.move_right_until_char(*c, false, true),
+            EditCommand::MoveRightBefore(c) => self.move_right_until_char(*c, true, true),
+            EditCommand::CutLeftUntil(c) => self.cut_left_until_char(*c, false, true),
+            EditCommand::CutLeftBefore(c) => self.cut_left_until_char(*c, true, true),
+            EditCommand::MoveLeftUntil(c) => self.move_left_until_char(*c, false, true),
+            EditCommand::MoveLeftBefore(c) => self.move_left_until_char(*c, true, true),
+        }
+        match command.undo_behavior() {
+            UndoBehavior::Ignore => {}
+            UndoBehavior::Full => {
+                self.remember_undo_state(true);
+            }
+            UndoBehavior::Coalesce => {
+                self.remember_undo_state(false);
+            }
+        }
     }
 
     pub fn move_line_up(&mut self) {
@@ -74,50 +96,6 @@ impl Editor {
 
     pub fn insert_char(&mut self, c: char) {
         self.line_buffer.insert_char(c);
-    }
-
-    pub fn insert_str(&mut self, string: &str) {
-        self.line_buffer.insert_str(string);
-    }
-
-    pub fn backspace(&mut self) {
-        self.line_buffer.delete_left_grapheme();
-    }
-
-    pub fn delete(&mut self) {
-        self.line_buffer.delete_right_grapheme();
-    }
-
-    pub fn backspace_word(&mut self) {
-        self.line_buffer.delete_word_left();
-    }
-
-    pub fn delete_word(&mut self) {
-        self.line_buffer.delete_word_right();
-    }
-
-    pub fn clear(&mut self) {
-        self.line_buffer.clear();
-    }
-
-    pub fn uppercase_word(&mut self) {
-        self.line_buffer.uppercase_word();
-    }
-
-    pub fn lowercase_word(&mut self) {
-        self.line_buffer.lowercase_word();
-    }
-
-    pub fn capitalize_char(&mut self) {
-        self.line_buffer.capitalize_char();
-    }
-
-    pub fn swap_words(&mut self) {
-        self.line_buffer.swap_words();
-    }
-
-    pub fn swap_graphemes(&mut self) {
-        self.line_buffer.swap_graphemes();
     }
 
     /// Directly change the cursor position measured in bytes in the buffer
@@ -140,15 +118,11 @@ impl Editor {
         self.line_buffer.clear_to_end();
     }
 
-    pub fn clear_to_line_end(&mut self) {
-        self.line_buffer.clear_to_line_end();
-    }
-
-    pub fn clear_to_insertion_point(&mut self) {
+    fn clear_to_insertion_point(&mut self) {
         self.line_buffer.clear_to_insertion_point();
     }
 
-    pub fn clear_range<R>(&mut self, range: R)
+    fn clear_range<R>(&mut self, range: R)
     where
         R: std::ops::RangeBounds<usize>,
     {
@@ -159,21 +133,9 @@ impl Editor {
         self.line_buffer.offset()
     }
 
-    // pub fn line(&self) -> usize {
-    //     self.line_buffer.line()
-    // }
-
-    // pub fn num_lines(&self) -> usize {
-    //     self.line_buffer.num_lines()
-    // }
-
     pub fn is_empty(&self) -> bool {
         self.line_buffer.is_empty()
     }
-
-    // pub fn ends_with(&self, c: char) -> bool {
-    //     self.line_buffer.ends_with(c)
-    // }
 
     pub fn is_cursor_at_first_line(&self) -> bool {
         self.line_buffer.is_cursor_at_first_line()
@@ -196,12 +158,12 @@ impl Editor {
         }
     }
 
-    pub fn undo(&mut self) {
+    fn undo(&mut self) {
         // NOTE: Try-blocks should help us get rid of this indirection too
         self.undo_internal();
     }
 
-    pub fn redo(&mut self) {
+    fn redo(&mut self) {
         // NOTE: Try-blocks should help us get rid of this indirection too
         self.redo_internal();
     }
@@ -242,7 +204,7 @@ impl Editor {
         self.index_undo = 2;
     }
 
-    pub fn cut_current_line(&mut self) {
+    fn cut_current_line(&mut self) {
         let deletion_range = self.line_buffer.current_line_range();
 
         let cut_slice = &self.line_buffer.get_buffer()[deletion_range.clone()];
@@ -253,7 +215,7 @@ impl Editor {
         }
     }
 
-    pub fn cut_from_start(&mut self) {
+    fn cut_from_start(&mut self) {
         let insertion_offset = self.line_buffer.offset();
         if insertion_offset > 0 {
             self.cut_buffer.set(
@@ -264,7 +226,7 @@ impl Editor {
         }
     }
 
-    pub fn cut_from_line_start(&mut self) {
+    fn cut_from_line_start(&mut self) {
         let previous_offset = self.line_buffer.offset();
         self.line_buffer.move_to_line_start();
         let deletion_range = self.line_buffer.offset()..previous_offset;
@@ -283,16 +245,16 @@ impl Editor {
         }
     }
 
-    pub fn cut_to_line_end(&mut self) {
+    fn cut_to_line_end(&mut self) {
         let cut_slice = &self.line_buffer.get_buffer()
             [self.line_buffer.offset()..self.line_buffer.find_current_line_end()];
         if !cut_slice.is_empty() {
             self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
-            self.clear_to_line_end();
+            self.line_buffer.clear_to_line_end();
         }
     }
 
-    pub fn cut_word_left(&mut self) {
+    fn cut_word_left(&mut self) {
         let insertion_offset = self.line_buffer.offset();
         let left_index = self.line_buffer.word_left_index();
         if left_index < insertion_offset {
@@ -306,7 +268,7 @@ impl Editor {
         }
     }
 
-    pub fn cut_word_right(&mut self) {
+    fn cut_word_right(&mut self) {
         let insertion_offset = self.line_buffer.offset();
         let right_index = self.line_buffer.word_right_index();
         if right_index > insertion_offset {
@@ -319,7 +281,7 @@ impl Editor {
         }
     }
 
-    pub fn insert_cut_buffer_before(&mut self) {
+    fn insert_cut_buffer_before(&mut self) {
         match self.cut_buffer.get() {
             (content, ClipboardMode::Normal) => {
                 self.line_buffer.insert_str(&content);
@@ -337,7 +299,7 @@ impl Editor {
         }
     }
 
-    pub fn insert_cut_buffer_after(&mut self) {
+    fn insert_cut_buffer_after(&mut self) {
         match self.cut_buffer.get() {
             (content, ClipboardMode::Normal) => {
                 self.line_buffer.move_right();
@@ -356,7 +318,7 @@ impl Editor {
         }
     }
 
-    pub fn move_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
+    fn move_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
         if before_char {
             self.line_buffer.move_right_before(c, current_line);
         } else {
@@ -364,7 +326,7 @@ impl Editor {
         }
     }
 
-    pub fn move_left_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
+    fn move_left_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
         if before_char {
             self.line_buffer.move_left_before(c, current_line);
         } else {
@@ -372,7 +334,7 @@ impl Editor {
         }
     }
 
-    pub fn cut_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
+    fn cut_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
         if let Some(index) = self.line_buffer.find_char_right(c, current_line) {
             // Saving the section of the string that will be deleted to be
             // stored into the buffer
@@ -392,7 +354,7 @@ impl Editor {
         }
     }
 
-    pub fn cut_left_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
+    fn cut_left_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
         if let Some(index) = self.line_buffer.find_char_left(c, current_line) {
             // Saving the section of the string that will be deleted to be
             // stored into the buffer

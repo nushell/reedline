@@ -4,7 +4,7 @@ use {
         context_menu::ContextMenu,
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
-        enums::{ReedlineEvent, UndoBehavior},
+        enums::ReedlineEvent,
         highlighter::SimpleMatchHighlighter,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
@@ -499,6 +499,7 @@ impl Reedline {
                 Ok(None)
             }
             ReedlineEvent::Right => Ok(None),
+            ReedlineEvent::Left => Ok(None),
             ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
                 self.history.back();
                 self.repaint(prompt)?;
@@ -575,12 +576,12 @@ impl Reedline {
                     self.editor.reset_undo_stack();
                     Ok(Some(Signal::CtrlD))
                 } else {
-                    self.run_edit_commands(&[EditCommand::Delete])?;
+                    self.run_edit_commands(&[EditCommand::Delete]);
                     Ok(None)
                 }
             }
             ReedlineEvent::CtrlC => {
-                self.run_edit_commands(&[EditCommand::Clear])?;
+                self.run_edit_commands(&[EditCommand::Clear]);
                 self.editor.reset_undo_stack();
                 Ok(Some(Signal::CtrlC))
             }
@@ -607,7 +608,7 @@ impl Reedline {
                         self.hide_hints = true;
                         self.buffer_paint(prompt)?;
                         self.append_to_history();
-                        self.run_edit_commands(&[EditCommand::Clear])?;
+                        self.run_edit_commands(&[EditCommand::Clear]);
                         self.painter.print_crlf()?;
                         self.editor.reset_undo_stack();
 
@@ -617,7 +618,7 @@ impl Reedline {
                         {
                             self.run_edit_commands(&[EditCommand::InsertChar('\r')])?;
                         }
-                        self.run_edit_commands(&[EditCommand::InsertChar('\n')])?;
+                        self.run_edit_commands(&[EditCommand::InsertChar('\n')]);
                         self.buffer_paint(prompt)?;
 
                         Ok(None)
@@ -625,7 +626,7 @@ impl Reedline {
                 }
             }
             ReedlineEvent::Edit(commands) => {
-                self.run_edit_commands(&commands)?;
+                self.run_edit_commands(&commands);
                 self.repaint(prompt)?;
                 Ok(None)
             }
@@ -674,21 +675,29 @@ impl Reedline {
                 self.buffer_paint(prompt)?;
                 Ok(None)
             }
-            ReedlineEvent::Right => {
-                if self.hints_active() && !self.context_menu.is_active() {
-                    let line_buffer = self.editor.line_buffer();
-
-                    let current_hint = self.hinter.current_hint();
-                    if line_buffer.get_insertion_point() == line_buffer.len()
-                        && !current_hint.is_empty()
-                    {
-                        self.editor.clear_to_end();
-                        self.run_edit_commands(&[EditCommand::InsertString(current_hint)])?;
-                    } else {
-                        self.run_edit_commands(&[EditCommand::MoveRight])?;
-                    }
+            ReedlineEvent::Left => {
+                if self.context_menu.is_active() {
+                    self.context_menu.move_left()
                 } else {
-                    self.run_edit_commands(&[EditCommand::MoveRight])?;
+                    self.run_edit_commands(&[EditCommand::MoveLeft])
+                }
+
+                self.buffer_paint(prompt)?;
+                Ok(None)
+            }
+            ReedlineEvent::Right => {
+                let current_hint = self.hinter.current_hint();
+                if self.hints_active()
+                    && !self.context_menu.is_active()
+                    && self.editor.offset() == self.editor.get_buffer().len()
+                    && !current_hint.is_empty()
+                {
+                    self.editor.clear_to_end();
+                    self.run_edit_commands(&[EditCommand::InsertString(current_hint)]);
+                } else if self.context_menu.is_active() {
+                    self.context_menu.move_right()
+                } else {
+                    self.run_edit_commands(&[EditCommand::MoveRight]);
                 }
 
                 self.buffer_paint(prompt)?;
@@ -711,7 +720,7 @@ impl Reedline {
                             match command {
                                 EditCommand::InsertChar(c) => self.editor.insert_char(c),
                                 x => {
-                                    self.run_edit_commands(&[x])?;
+                                    self.run_edit_commands(&[x]);
                                 }
                             }
                         }
@@ -860,7 +869,7 @@ impl Reedline {
     }
 
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
-    fn run_edit_commands(&mut self, commands: &[EditCommand]) -> io::Result<()> {
+    fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         if self.input_mode == InputMode::HistoryTraversal {
             if matches!(
                 self.history.get_navigation(),
@@ -875,79 +884,8 @@ impl Reedline {
 
         // Run the commands over the edit buffer
         for command in commands {
-            match command {
-                EditCommand::MoveToStart => self.editor.move_to_start(),
-                EditCommand::MoveToEnd => self.editor.move_to_end(),
-                EditCommand::MoveToLineStart => self.editor.move_to_line_start(),
-                EditCommand::MoveToLineEnd => self.editor.move_to_line_end(),
-                EditCommand::MoveLeft => {
-                    if self.context_menu.is_active() {
-                        self.context_menu.move_left()
-                    } else {
-                        self.editor.move_left()
-                    }
-                }
-                EditCommand::MoveRight => {
-                    if self.context_menu.is_active() {
-                        self.context_menu.move_right()
-                    } else {
-                        self.editor.move_right()
-                    }
-                }
-                EditCommand::MoveWordLeft => self.editor.move_word_left(),
-                EditCommand::MoveWordRight => self.editor.move_word_right(),
-
-                EditCommand::InsertChar(c) => self.editor.insert_char(*c),
-                EditCommand::InsertString(s) => self.editor.insert_str(s),
-
-                EditCommand::Backspace => self.editor.backspace(),
-                EditCommand::Delete => self.editor.delete(),
-                EditCommand::BackspaceWord => self.editor.backspace_word(),
-                EditCommand::DeleteWord => self.editor.delete_word(),
-                EditCommand::Clear => self.editor.clear(),
-                EditCommand::ClearToLineEnd => self.editor.clear_to_line_end(),
-                EditCommand::CutCurrentLine => self.editor.cut_current_line(),
-                EditCommand::CutFromStart => self.editor.cut_from_start(),
-                EditCommand::CutToEnd => self.editor.cut_from_end(),
-                EditCommand::CutWordLeft => self.editor.cut_word_left(),
-                EditCommand::CutWordRight => self.editor.cut_word_right(),
-                EditCommand::PasteCutBufferBefore => self.editor.insert_cut_buffer_before(),
-                EditCommand::PasteCutBufferAfter => self.editor.insert_cut_buffer_after(),
-                EditCommand::UppercaseWord => self.editor.uppercase_word(),
-                EditCommand::LowercaseWord => self.editor.lowercase_word(),
-                EditCommand::CapitalizeChar => self.editor.capitalize_char(),
-                EditCommand::SwapWords => self.editor.swap_words(),
-                EditCommand::SwapGraphemes => self.editor.swap_graphemes(),
-                EditCommand::Undo => self.editor.undo(),
-                EditCommand::Redo => self.editor.redo(),
-                EditCommand::CutRightUntil(c) => self.editor.cut_right_until_char(*c, false, true),
-                EditCommand::CutRightBefore(c) => self.editor.cut_right_until_char(*c, true, true),
-                EditCommand::MoveRightUntil(c) => {
-                    self.editor.move_right_until_char(*c, false, true)
-                }
-                EditCommand::MoveRightBefore(c) => {
-                    self.editor.move_right_until_char(*c, true, true)
-                }
-                EditCommand::CutLeftUntil(c) => self.editor.cut_left_until_char(*c, false, true),
-                EditCommand::CutLeftBefore(c) => self.editor.cut_left_until_char(*c, true, true),
-                EditCommand::MoveLeftUntil(c) => self.editor.move_left_until_char(*c, false, true),
-                EditCommand::MoveLeftBefore(c) => self.editor.move_left_until_char(*c, true, true),
-                EditCommand::CutFromLineStart => self.editor.cut_from_line_start(),
-                EditCommand::CutToLineEnd => self.editor.cut_to_line_end(),
-            }
-
-            match command.undo_behavior() {
-                UndoBehavior::Ignore => {}
-                UndoBehavior::Full => {
-                    self.editor.remember_undo_state(true);
-                }
-                UndoBehavior::Coalesce => {
-                    self.editor.remember_undo_state(false);
-                }
-            }
+            self.editor.run_edit_command(command);
         }
-
-        Ok(())
     }
 
     /// Set the cursor position as understood by the underlying [`LineBuffer`] for the current line

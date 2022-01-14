@@ -21,7 +21,7 @@ pub fn default_vi_insert_keybindings() -> Keybindings {
 
     kb.add_binding(KM::NONE, KC::Up, ReedlineEvent::Up);
     kb.add_binding(KM::NONE, KC::Down, ReedlineEvent::Down);
-    kb.add_binding(KM::NONE, KC::Left, edit_bind(EC::MoveLeft));
+    kb.add_binding(KM::NONE, KC::Left, ReedlineEvent::Left);
     kb.add_binding(KM::NONE, KC::Right, ReedlineEvent::Right);
     kb.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
     kb.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
