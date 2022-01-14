@@ -616,7 +616,7 @@ impl Reedline {
                     } else {
                         #[cfg(windows)]
                         {
-                            self.run_edit_commands(&[EditCommand::InsertChar('\r')])?;
+                            self.run_edit_commands(&[EditCommand::InsertChar('\r')]);
                         }
                         self.run_edit_commands(&[EditCommand::InsertChar('\n')]);
                         self.buffer_paint(prompt)?;
