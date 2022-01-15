@@ -8,7 +8,6 @@ use {
         terminal::{self, Clear, ClearType, ScrollUp},
         QueueableCommand, Result,
     },
-    nu_ansi_term::ansi::RESET,
     std::borrow::Cow,
     std::io::Write,
     unicode_width::UnicodeWidthStr,
@@ -409,57 +408,14 @@ impl Painter {
         // The skip values represent the number of lines that should be skipped
         // while printing the menu
         let remaining_lines = screen_height.saturating_sub(starting_row);
-        let skip_values = if context_menu.row_pos >= remaining_lines {
-            let skip_lines = context_menu.row_pos.saturating_sub(remaining_lines) + 1;
-            (skip_lines * context_menu.get_cols()) as usize
-        } else {
-            0
-        };
 
-        // It seems that crossterm prefers to have a complete string ready to be printed
-        // rather than looping through the values and printing multiple things
-        // This reduces the flickering when printing the menu
-        let available_values = (remaining_lines * context_menu.get_cols()) as usize;
-        let values = context_menu
-            .get_values(lines.line_buffer)
-            .iter()
-            .skip(skip_values)
-            .take(available_values)
-            .enumerate()
-            .map(|(index, line)| {
-                // Correcting the enumerate index based on the number of skipped values
-                let index = index + skip_values;
-                let column = index as u16 % context_menu.get_cols();
-                let printable_width = context_menu.printable_width(&line.1);
-
-                // Final string with colors
-                if use_ansi_coloring {
-                    format!(
-                        "{}{:width$}{}{}",
-                        context_menu.text_style(index),
-                        &line.1[..printable_width],
-                        RESET,
-                        context_menu.end_of_line(column),
-                        width = context_menu.get_width()
-                    )
-                } else {
-                    // If no ansi coloring is found, then the selection word is
-                    // the line in uppercase
-                    let line_str = if index == context_menu.position() {
-                        let line_selection = &line.1[..printable_width];
-                        line_selection.to_uppercase()
-                    } else {
-                        line.1[..printable_width].to_string()
-                    };
-                    format!("{:width$}", line_str, width = context_menu.get_width())
-                }
-            })
-            .collect::<String>();
+        let menu_string =
+            context_menu.menu_string(remaining_lines, lines.line_buffer, use_ansi_coloring);
 
         self.stdout
             .queue(cursor::MoveTo(0, starting_row))?
             .queue(Clear(ClearType::FromCursorDown))?
-            .queue(Print(values.trim_end_matches('\n')))?;
+            .queue(Print(menu_string.trim_end_matches('\n')))?;
 
         Ok(())
     }
