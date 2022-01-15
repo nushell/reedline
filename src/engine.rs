@@ -1,7 +1,7 @@
 use {
     crate::{
         completion::{CircularCompletionHandler, CompletionActionHandler},
-        context_menu::ContextMenu,
+        context_menu::{ContextMenu, ContextMenuInput},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
         enums::ReedlineEvent,
@@ -297,8 +297,12 @@ impl Reedline {
     }
 
     /// A builder which configures the completer for the context menu
-    pub fn with_menu_completer(mut self, completer: Box<dyn Completer>) -> Reedline {
-        self.context_menu = ContextMenu::new_with(completer);
+    pub fn with_menu_completer(
+        mut self,
+        completer: Box<dyn Completer>,
+        input: ContextMenuInput,
+    ) -> Reedline {
+        self.context_menu = ContextMenu::new_with(completer, input);
 
         self
     }
@@ -546,11 +550,12 @@ impl Reedline {
                     self.buffer_paint(prompt)?;
                     Ok(None)
                 } else {
+                    self.context_menu.activate();
                     self.context_menu
-                        .activate(line_buffer, self.painter.terminal_cols());
+                        .update_working_details(line_buffer, self.painter.terminal_cols());
 
                     // If there is only one value in the menu, it can select be selected immediately
-                    if self.context_menu.get_values(line_buffer).len() == 1 {
+                    if self.context_menu.get_num_values(line_buffer) == 1 {
                         self.handle_event(prompt, ReedlineEvent::Enter)
                     } else {
                         self.buffer_paint(prompt)?;
@@ -626,6 +631,12 @@ impl Reedline {
                 }
             }
             ReedlineEvent::Edit(commands) => {
+                if self.context_menu.is_active() {
+                    let line_buffer = self.editor.line_buffer();
+                    self.context_menu
+                        .update_working_details(line_buffer, self.painter.terminal_cols());
+                }
+
                 self.run_edit_commands(&commands);
                 self.repaint(prompt)?;
                 Ok(None)
