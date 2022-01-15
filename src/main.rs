@@ -5,9 +5,9 @@ use {
     },
     nu_ansi_term::{Color, Style},
     reedline::{
-        default_emacs_keybindings, DefaultCompleter, DefaultHinter, DefaultPrompt, EditCommand,
-        EditMode, Emacs, ExampleHighlighter, FileBackedHistory, ListCompletionHandler, Reedline,
-        ReedlineEvent, Signal, Vi,
+        default_emacs_keybindings, ContextMenuInput, DefaultCompleter, DefaultHinter,
+        DefaultPrompt, EditCommand, EditMode, Emacs, ExampleHighlighter, FileBackedHistory,
+        ListCompletionHandler, Reedline, ReedlineEvent, Signal, Vi,
     },
     std::{
         io::{stdout, Write},
@@ -80,7 +80,7 @@ fn main() -> Result<()> {
                 .with_style(Style::new().fg(Color::DarkGray)),
         ))
         .with_ansi_colors(true)
-        .with_menu_completer(completer);
+        .with_menu_completer(completer, ContextMenuInput::default());
 
     if debug_mode {
         line_editor = line_editor.with_debug_mode();

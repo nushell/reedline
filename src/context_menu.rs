@@ -1,18 +1,37 @@
-use nu_ansi_term::{ansi::RESET, Color};
+use nu_ansi_term::{ansi::RESET, Color, Style};
 
 use crate::{Completer, DefaultCompleter, LineBuffer, Span};
 
-/// Struct to store coloring for the menu
-struct MenuTextColor {
-    selection_style: String,
-    text_style: String,
+/// Struct to store the menu style
+pub struct MenuTextStyle {
+    selection_style: Style,
+    text_style: Style,
 }
 
-impl Default for MenuTextColor {
+impl Default for MenuTextStyle {
     fn default() -> Self {
         Self {
-            selection_style: Color::Green.bold().reverse().prefix().to_string(),
-            text_style: Color::DarkGray.prefix().to_string(),
+            selection_style: Color::Green.bold().reverse(),
+            text_style: Color::DarkGray.normal(),
+        }
+    }
+}
+
+pub struct DefaultColumnDetails {
+    /// Number of columns that the menu will have
+    pub cols: u16,
+    /// Column width
+    pub col_width: Option<usize>,
+    /// Column padding
+    pub col_padding: usize,
+}
+
+impl Default for DefaultColumnDetails {
+    fn default() -> Self {
+        Self {
+            cols: 4,
+            col_width: Some(20),
+            col_padding: 2,
         }
     }
 }
@@ -36,12 +55,21 @@ impl ColumnDetails {
     }
 }
 
+/// This is a struct used to set default values for the context menu.
+/// The default values, such as style or column details are used to calculate
+/// the working values for the menu
+#[derive(Default)]
+pub struct ContextMenuInput {
+    default_details: DefaultColumnDetails,
+    menu_style: MenuTextStyle,
+}
+
 /// Context menu definition
 pub struct ContextMenu {
     completer: Box<dyn Completer>,
     active: bool,
     /// Context menu coloring
-    color: MenuTextColor,
+    color: MenuTextStyle,
     /// Number of minimum rows that are displayed when
     /// the required lines is larger than the available lines
     min_rows: u16,
@@ -50,7 +78,8 @@ pub struct ContextMenu {
     /// row position in the menu. Starts from 0
     pub row_pos: u16,
     /// Default column details that are set when creating the menu
-    default_details: ColumnDetails,
+    /// These values are the reference for the working details
+    default_details: DefaultColumnDetails,
     /// Working column details keep changing based on the collected values
     working_details: ColumnDetails,
 }
@@ -58,30 +87,41 @@ pub struct ContextMenu {
 impl Default for ContextMenu {
     fn default() -> Self {
         let completer = Box::new(DefaultCompleter::default());
-        Self::new_with(completer)
+        let default_input = ContextMenuInput::default();
+        Self::new_with(completer, default_input)
     }
 }
 
 impl ContextMenu {
     /// Creates a context menu with a filler
-    pub fn new_with(completer: Box<dyn Completer>) -> Self {
+    pub fn new_with(completer: Box<dyn Completer>, input: ContextMenuInput) -> Self {
+        let working_details = ColumnDetails::new(
+            input.default_details.cols,
+            input.default_details.col_width.unwrap_or(0),
+            input.default_details.col_padding,
+        );
         Self {
             completer,
             active: false,
-            color: MenuTextColor::default(),
+            color: input.menu_style,
             min_rows: 3,
             col_pos: 0,
             row_pos: 0,
-            default_details: ColumnDetails::new(4, 20, 2),
-            working_details: ColumnDetails::new(4, 20, 2),
+            // default_details: DefaultColumnDetails::new(4, Some(20), 2),
+            default_details: input.default_details,
+            working_details,
         }
     }
 
     /// Activates context menu
-    pub fn activate(&mut self, line_buffer: &LineBuffer, screen_width: u16) {
+    pub fn activate(&mut self) {
         self.active = true;
         self.reset_position();
+    }
 
+    /// The working details for the menu changes based on the size of the lines
+    /// collected from the completer
+    pub fn update_working_details(&mut self, line_buffer: &LineBuffer, screen_width: u16) {
         let max_width = self
             .get_values(line_buffer)
             .iter()
@@ -94,13 +134,23 @@ impl ContextMenu {
                 }
             });
 
+        // If no default width if found, then the total screen width is used to estimate
+        // the column width based on the default number of columns
+        let default_width = match self.default_details.col_width {
+            Some(col_width) => col_width,
+            None => {
+                let col_width = screen_width / self.default_details.cols;
+                col_width as usize
+            }
+        };
+
         // Adjusting the working width of the column based the max line width found
         // in the menu values
-        if max_width > self.default_details.col_width {
+        if max_width > default_width {
             self.working_details.col_width = max_width;
         } else {
-            self.working_details.col_width = self.default_details.col_width;
-        }
+            self.working_details.col_width = default_width;
+        };
 
         // The working columns is adjusted based on possible number of columns
         // that could be fitted in the screen with the calculated column width
@@ -229,11 +279,11 @@ impl ContextMenu {
     }
 
     /// Text style for menu
-    fn text_style(&self, index: usize) -> &str {
+    fn text_style(&self, index: usize) -> String {
         if index == self.position() {
-            &self.color.selection_style
+            self.color.selection_style.prefix().to_string()
         } else {
-            &self.color.text_style
+            self.color.text_style.prefix().to_string()
         }
     }
 
