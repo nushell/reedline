@@ -550,7 +550,7 @@ impl Reedline {
                         .activate(line_buffer, self.painter.terminal_cols());
 
                     // If there is only one value in the menu, it can select be selected immediately
-                    if self.context_menu.get_values(line_buffer).len() == 1 {
+                    if self.context_menu.get_num_values(line_buffer) == 1 {
                         self.handle_event(prompt, ReedlineEvent::Enter)
                     } else {
                         self.buffer_paint(prompt)?;

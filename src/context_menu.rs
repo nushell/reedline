@@ -1,4 +1,4 @@
-use nu_ansi_term::Color;
+use nu_ansi_term::{ansi::RESET, Color};
 
 use crate::{Completer, DefaultCompleter, LineBuffer, Span};
 
@@ -122,20 +122,9 @@ impl ContextMenu {
         self.active
     }
 
-    /// Gets values from filler that will be displayed in the menu
-    pub fn get_values(&self, line_buffer: &LineBuffer) -> Vec<(Span, String)> {
-        self.completer
-            .complete(line_buffer.get_buffer(), line_buffer.offset())
-    }
-
-    /// Returns working details cols
-    pub fn get_cols(&self) -> u16 {
-        self.working_details.cols
-    }
-
-    /// Returns working details col width
-    pub fn get_width(&self) -> usize {
-        self.working_details.col_width
+    /// Get number of values
+    pub fn get_num_values(&self, line_buffer: &LineBuffer) -> usize {
+        self.get_values(line_buffer).len()
     }
 
     /// Calculates how many rows the Menu will use
@@ -149,14 +138,30 @@ impl ContextMenu {
         self.get_rows(line_buffer).min(self.min_rows)
     }
 
+    /// Gets values from filler that will be displayed in the menu
+    fn get_values(&self, line_buffer: &LineBuffer) -> Vec<(Span, String)> {
+        self.completer
+            .complete(line_buffer.get_buffer(), line_buffer.offset())
+    }
+
+    /// Returns working details cols
+    fn get_cols(&self) -> u16 {
+        self.working_details.cols
+    }
+
+    /// Returns working details col width
+    fn get_width(&self) -> usize {
+        self.working_details.col_width
+    }
+
     /// Reset menu position
-    pub fn reset_position(&mut self) {
+    fn reset_position(&mut self) {
         self.col_pos = 0;
         self.row_pos = 0;
     }
 
     /// Menu index based on column and row position
-    pub fn position(&self) -> usize {
+    fn position(&self) -> usize {
         let position = self.row_pos * self.working_details.cols + self.col_pos;
         position as usize
     }
@@ -224,7 +229,7 @@ impl ContextMenu {
     }
 
     /// Text style for menu
-    pub fn text_style(&self, index: usize) -> &str {
+    fn text_style(&self, index: usize) -> &str {
         if index == self.position() {
             &self.color.selection_style
         } else {
@@ -233,7 +238,7 @@ impl ContextMenu {
     }
 
     /// End of line for menu
-    pub fn end_of_line(&self, column: u16) -> &str {
+    fn end_of_line(&self, column: u16) -> &str {
         if column == self.working_details.cols.saturating_sub(1) {
             "\r\n"
         } else {
@@ -241,9 +246,65 @@ impl ContextMenu {
         }
     }
 
-    /// Printable width for a line
-    pub fn printable_width(&self, line: &str) -> usize {
-        let printable_width = self.working_details.col_width - self.working_details.col_padding;
-        printable_width.min(line.len())
+    /// Creates the menu representation as a string which will be painted by the painter
+    pub fn menu_string(
+        &self,
+        remaining_lines: u16,
+        line_buffer: &LineBuffer,
+        use_ansi_coloring: bool,
+    ) -> String {
+        let skip_values = if self.row_pos >= remaining_lines {
+            let skip_lines = self.row_pos.saturating_sub(remaining_lines) + 1;
+            (skip_lines * self.get_cols()) as usize
+        } else {
+            0
+        };
+
+        // It seems that crossterm prefers to have a complete string ready to be printed
+        // rather than looping through the values and printing multiple things
+        // This reduces the flickering when printing the menu
+        let available_values = (remaining_lines * self.get_cols()) as usize;
+
+        self.get_values(line_buffer)
+            .iter()
+            .skip(skip_values)
+            .take(available_values)
+            .enumerate()
+            .map(|(index, (_, line))| {
+                // Correcting the enumerate index based on the number of skipped values
+                let index = index + skip_values;
+                let column = index as u16 % self.get_cols();
+                let empty_space = self.working_details.col_width.saturating_sub(line.len());
+
+                // Final string with colors
+                if use_ansi_coloring {
+                    format!(
+                        "{}{}{}{:empty$}{}",
+                        self.text_style(index),
+                        &line,
+                        RESET,
+                        "",
+                        self.end_of_line(column),
+                        empty = empty_space
+                    )
+                } else {
+                    // If no ansi coloring is found, then the selection word is
+                    // the line in uppercase
+                    let line_str = if index == self.position() {
+                        format!(">{}", line.to_uppercase())
+                    } else {
+                        line.to_lowercase()
+                    };
+
+                    // Final string with formatting
+                    format!(
+                        "{:width$}{}",
+                        line_str,
+                        self.end_of_line(column),
+                        width = self.get_width()
+                    )
+                }
+            })
+            .collect()
     }
 }
