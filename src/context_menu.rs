@@ -263,8 +263,13 @@ impl ContextMenu {
             new_col = 0;
         }
 
-        self.col_pos = new_col;
-        self.row_pos = new_row;
+        let position = new_row * self.get_cols() + new_col;
+        if position >= self.get_values(line_buffer).len() as u16 {
+            self.reset_position();
+        } else {
+            self.col_pos = new_col;
+            self.row_pos = new_row;
+        }
     }
 
     /// Move menu cursor element
