@@ -3,7 +3,7 @@ use nu_ansi_term::{ansi::RESET, Color, Style};
 use crate::{Completer, DefaultCompleter, LineBuffer, Span};
 
 /// Struct to store the menu style
-pub struct MenuTextStyle {
+struct MenuTextStyle {
     selected_text_style: Style,
     text_style: Style,
 }
@@ -20,7 +20,7 @@ impl Default for MenuTextStyle {
 /// Default values used as reference for the menu. These values are set during
 /// the initial declaration of the menu and are always kept as reference for the
 /// changeable ColumnDetail
-pub struct DefaultColumnDetails {
+struct DefaultColumnDetails {
     /// Number of columns that the menu will have
     pub columns: u16,
     /// Column width
@@ -41,7 +41,7 @@ impl Default for DefaultColumnDetails {
 
 /// Represents the actual column conditions of the menu. These conditions change
 /// since they need to accommodate possible different line sizes for the column values
-pub struct ColumnDetails {
+struct ColumnDetails {
     /// Number of columns that the menu will have
     pub columns: u16,
     /// Column width
