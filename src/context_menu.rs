@@ -181,8 +181,6 @@ impl ContextMenu {
 
     /// Calculates how many rows the Menu will use
     pub fn get_rows(&self, line_buffer: &LineBuffer) -> u16 {
-        // TODO. Consider case where the lines may wrap the screen. This happens
-        // when the working details don't get updated
         let rows = self.get_values(line_buffer).len() as f64 / self.working_details.columns as f64;
         rows.ceil() as u16
     }
@@ -248,12 +246,22 @@ impl ContextMenu {
         }
     }
 
+    /// Move menu cursor element
+    pub fn move_right(&mut self) {
+        let new_col = self.col_pos + 1;
+        self.col_pos = if new_col >= self.working_details.columns {
+            0
+        } else {
+            new_col
+        }
+    }
+
     /// Move menu cursor to the next element
     pub fn move_next(&mut self, line_buffer: &LineBuffer) {
         let mut new_col = self.col_pos + 1;
         let mut new_row = self.row_pos;
 
-        if self.col_pos + 1 >= self.working_details.columns {
+        if new_col >= self.working_details.columns {
             new_row += 1;
             new_col = 0;
         }
@@ -272,13 +280,29 @@ impl ContextMenu {
         }
     }
 
-    /// Move menu cursor element
-    pub fn move_right(&mut self) {
-        let new_col = self.col_pos + 1;
-        self.col_pos = if new_col >= self.working_details.columns {
-            0
+    /// Move menu cursor to the previous element
+    pub fn move_previous(&mut self, line_buffer: &LineBuffer) {
+        let new_col = self.col_pos.checked_sub(1);
+
+        let (new_col, new_row) = match new_col {
+            Some(col) => (col, self.row_pos),
+            None => match self.row_pos.checked_sub(1) {
+                Some(row) => (self.get_cols().saturating_sub(1), row),
+                None => (
+                    self.get_cols().saturating_sub(1),
+                    self.get_rows(line_buffer).saturating_sub(1),
+                ),
+            },
+        };
+
+        let position = new_row * self.get_cols() + new_col;
+        if position >= self.get_values(line_buffer).len() as u16 {
+            self.col_pos =
+                (self.get_values(line_buffer).len() as u16 % self.get_cols()).saturating_sub(1);
+            self.row_pos = self.get_rows(line_buffer).saturating_sub(1);
         } else {
-            new_col
+            self.col_pos = new_col;
+            self.row_pos = new_row;
         }
     }
 
