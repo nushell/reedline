@@ -27,8 +27,12 @@ pub fn default_vi_insert_keybindings() -> Keybindings {
     kb.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
     kb.add_binding(KM::NONE, KC::End, edit_bind(EC::MoveToLineEnd));
     kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
+
     kb.add_binding(KM::CONTROL, KC::Char('c'), ReedlineEvent::CtrlC);
+    kb.add_binding(KM::CONTROL, KC::Char('r'), ReedlineEvent::SearchHistory);
+
     kb.add_binding(KM::NONE, KC::Tab, ReedlineEvent::ContextMenu);
+    kb.add_binding(KM::SHIFT, KC::BackTab, ReedlineEvent::PreviousElement);
 
     kb
 }

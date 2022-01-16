@@ -285,4 +285,10 @@ pub enum ReedlineEvent {
     /// In vi mode multiple reedline events can be chained while parsing the
     /// command or movement characters
     Multiple(Vec<ReedlineEvent>),
+
+    /// Next element in the menu
+    NextElement,
+
+    /// Previous element in the menu
+    PreviousElement,
 }

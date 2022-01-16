@@ -355,7 +355,7 @@ impl Reedline {
         Ok(())
     }
 
-    /// Helper implemting the logic for [`Reedline::read_line()`] to be wrapped
+    /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
         self.painter.init_terminal_size()?;
@@ -518,22 +518,13 @@ impl Reedline {
                 self.repaint(prompt)?;
                 Ok(None)
             }
-            ReedlineEvent::Paste(_) => {
-                // No history search if a paste event is handled
-                Ok(None)
-            }
-            ReedlineEvent::Multiple(_) => {
-                // VI multiplier operations currently not supported in the history search
-                Ok(None)
-            }
-            ReedlineEvent::None => {
-                // Default no operation
-                Ok(None)
-            }
-            ReedlineEvent::ContextMenu | ReedlineEvent::Esc => {
-                // No context menu action when pressing Tab in history mode
-                Ok(None)
-            }
+            ReedlineEvent::ContextMenu
+            | ReedlineEvent::Paste(_)
+            | ReedlineEvent::Multiple(_)
+            | ReedlineEvent::None
+            | ReedlineEvent::Esc
+            | ReedlineEvent::NextElement
+            | ReedlineEvent::PreviousElement => Ok(None),
         }
     }
 
@@ -551,23 +542,35 @@ impl Reedline {
                     Ok(None)
                 } else {
                     self.context_menu.activate();
-                    self.context_menu
-                        .update_working_details(line_buffer, self.painter.terminal_cols());
 
                     // If there is only one value in the menu, it can select be selected immediately
                     if self.context_menu.get_num_values(line_buffer) == 1 {
-                        self.handle_event(prompt, ReedlineEvent::Enter)
+                        self.handle_editor_event(prompt, ReedlineEvent::Enter)
                     } else {
                         self.buffer_paint(prompt)?;
                         Ok(None)
                     }
                 }
             }
+            ReedlineEvent::NextElement => {
+                if self.context_menu.is_active() {
+                    let line_buffer = self.editor.line_buffer();
+                    self.context_menu.move_next(line_buffer);
+                    self.buffer_paint(prompt)?;
+                }
+                Ok(None)
+            }
+            ReedlineEvent::PreviousElement => {
+                if self.context_menu.is_active() {
+                    let line_buffer = self.editor.line_buffer();
+                    self.context_menu.move_previous(line_buffer);
+                    self.buffer_paint(prompt)?;
+                }
+                Ok(None)
+            }
             ReedlineEvent::Complete => {
                 let line_buffer = self.editor.line_buffer();
-
                 self.tab_handler.handle(line_buffer);
-
                 self.buffer_paint(prompt)?;
                 Ok(None)
             }
@@ -631,12 +634,6 @@ impl Reedline {
                 }
             }
             ReedlineEvent::Edit(commands) => {
-                if self.context_menu.is_active() {
-                    let line_buffer = self.editor.line_buffer();
-                    self.context_menu
-                        .update_working_details(line_buffer, self.painter.terminal_cols());
-                }
-
                 self.run_edit_commands(&commands);
                 self.repaint(prompt)?;
                 Ok(None)
@@ -1021,6 +1018,10 @@ impl Reedline {
         let hint = hint.replace("\n", "\r\n");
 
         let context_menu = if self.context_menu.is_active() {
+            let line_buffer = self.editor.line_buffer();
+            self.context_menu
+                .update_working_details(line_buffer, self.painter.terminal_cols());
+
             Some(&self.context_menu)
         } else {
             None
