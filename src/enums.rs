@@ -289,6 +289,6 @@ pub enum ReedlineEvent {
     /// Next element in the menu
     NextElement,
 
-    /// Previus element in the menu
+    /// Previous element in the menu
     PreviousElement,
 }
