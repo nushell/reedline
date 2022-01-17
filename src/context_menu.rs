@@ -318,6 +318,8 @@ impl ContextMenu {
         line_buffer: &LineBuffer,
         use_ansi_coloring: bool,
     ) -> String {
+        // The skip values represent the number of lines that should be skipped
+        // while printing the menu
         let skip_values = if self.row_pos >= remaining_lines {
             let skip_lines = self.row_pos.saturating_sub(remaining_lines) + 1;
             (skip_lines * self.get_cols()) as usize

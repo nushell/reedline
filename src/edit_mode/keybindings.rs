@@ -14,8 +14,10 @@ pub struct KeyCombination {
     key_code: KeyCode,
 }
 
+/// Main definition of editor keybindings
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Keybindings {
+    /// Defines a keybinding for a reedline event
     pub bindings: HashMap<KeyCombination, ReedlineEvent>,
 }
 
@@ -26,16 +28,19 @@ impl Default for Keybindings {
 }
 
 impl Keybindings {
+    /// New keybining
     pub fn new() -> Self {
         Self {
             bindings: HashMap::new(),
         }
     }
 
+    /// Defines an empty keybinding object
     pub fn empty() -> Self {
         Self::new()
     }
 
+    /// Adds a keybinding
     pub fn add_binding(
         &mut self,
         modifier: KeyModifiers,
@@ -46,6 +51,7 @@ impl Keybindings {
         self.bindings.insert(key_combo, command);
     }
 
+    /// Find a keybinding based on the modifier and keycode
     pub fn find_binding(&self, modifier: KeyModifiers, key_code: KeyCode) -> Option<ReedlineEvent> {
         let key_combo = KeyCombination { modifier, key_code };
         self.bindings.get(&key_combo).cloned()
