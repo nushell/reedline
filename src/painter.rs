@@ -405,10 +405,7 @@ impl Painter {
             self.prompt_coords.prompt_start.1 + cursor_distance + 1
         };
 
-        // The skip values represent the number of lines that should be skipped
-        // while printing the menu
         let remaining_lines = screen_height.saturating_sub(starting_row);
-
         let menu_string =
             context_menu.menu_string(remaining_lines, lines.line_buffer, use_ansi_coloring);
 
