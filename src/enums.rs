@@ -219,6 +219,9 @@ pub enum ReedlineEvent {
     /// Completes hint
     Complete,
 
+    /// Trigger an action handler event
+    ActionHandler,
+
     /// Handle EndOfLine event
     ///
     /// Expected Behavior:

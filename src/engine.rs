@@ -85,7 +85,7 @@ pub struct Reedline {
     edit_mode: Box<dyn EditMode>,
 
     // Perform action when user hits tab
-    tab_handler: Box<dyn CompletionActionHandler>,
+    action_handler: Box<dyn CompletionActionHandler>,
 
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
@@ -130,7 +130,7 @@ impl Reedline {
             input_mode: InputMode::Regular,
             painter,
             edit_mode,
-            tab_handler: Box::new(CircularCompletionHandler::default()),
+            action_handler: Box::new(CircularCompletionHandler::default()),
             highlighter: buffer_highlighter,
             hinter,
             hide_hints: false,
@@ -199,9 +199,9 @@ impl Reedline {
     /// ```
     pub fn with_completion_action_handler(
         mut self,
-        tab_handler: Box<dyn CompletionActionHandler>,
+        action_handler: Box<dyn CompletionActionHandler>,
     ) -> Reedline {
-        self.tab_handler = tab_handler;
+        self.action_handler = action_handler;
         self
     }
 
@@ -519,6 +519,7 @@ impl Reedline {
                 Ok(None)
             }
             ReedlineEvent::ContextMenu
+            | ReedlineEvent::ActionHandler
             | ReedlineEvent::Paste(_)
             | ReedlineEvent::Multiple(_)
             | ReedlineEvent::None
@@ -568,9 +569,23 @@ impl Reedline {
                 }
                 Ok(None)
             }
-            ReedlineEvent::Complete => {
+            ReedlineEvent::ActionHandler => {
                 let line_buffer = self.editor.line_buffer();
-                self.tab_handler.handle(line_buffer);
+                self.action_handler.handle(line_buffer);
+                self.buffer_paint(prompt)?;
+                Ok(None)
+            }
+            ReedlineEvent::Complete => {
+                let current_hint = self.hinter.current_hint();
+                if self.hints_active()
+                    && !self.context_menu.is_active()
+                    && self.editor.offset() == self.editor.get_buffer().len()
+                    && !current_hint.is_empty()
+                {
+                    self.editor.clear_to_end();
+                    self.run_edit_commands(&[EditCommand::InsertString(current_hint)]);
+                }
+
                 self.buffer_paint(prompt)?;
                 Ok(None)
             }
