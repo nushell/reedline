@@ -8,6 +8,7 @@ use {
     crossterm::event::{KeyCode as KC, KeyModifiers as KM},
 };
 
+/// Default normal vi keybindings
 pub fn default_vi_normal_keybindings() -> Keybindings {
     let mut kb = Keybindings::new();
 
@@ -16,6 +17,7 @@ pub fn default_vi_normal_keybindings() -> Keybindings {
     kb
 }
 
+/// Default insert vi keybindings
 pub fn default_vi_insert_keybindings() -> Keybindings {
     let mut kb = Keybindings::new();
 
