@@ -4,7 +4,7 @@ mod parser;
 mod vi_keybindings;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
+pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
 use super::EditMode;
 use crate::{
@@ -33,6 +33,19 @@ impl Default for Vi {
         Vi {
             insert_keybindings: default_vi_insert_keybindings(),
             normal_keybindings: default_vi_normal_keybindings(),
+            cache: Vec::new(),
+            mode: Mode::Insert,
+            previous: None,
+        }
+    }
+}
+
+impl Vi {
+    /// Creates Vi editor using defined keybindings
+    pub fn new(insert_keybindings: Keybindings, normal_keybindings: Keybindings) -> Self {
+        Self {
+            insert_keybindings,
+            normal_keybindings,
             cache: Vec::new(),
             mode: Mode::Insert,
             previous: None,

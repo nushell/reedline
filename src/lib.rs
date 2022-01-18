@@ -209,7 +209,10 @@ pub use prompt::{
 };
 
 mod edit_mode;
-pub use edit_mode::{default_emacs_keybindings, EditMode, Emacs, Keybindings, Vi};
+pub use edit_mode::{
+    default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
+    EditMode, Emacs, Keybindings, Vi,
+};
 
 mod highlighter;
 pub use highlighter::{ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
