@@ -634,6 +634,12 @@ impl Reedline {
                 }
             }
             ReedlineEvent::Edit(commands) => {
+                if self.context_menu.is_active() {
+                    let line_buffer = self.editor.line_buffer();
+                    self.context_menu
+                        .update_working_details(line_buffer, self.painter.terminal_cols());
+                }
+
                 self.run_edit_commands(&commands);
                 self.repaint(prompt)?;
                 Ok(None)
