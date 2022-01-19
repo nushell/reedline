@@ -180,12 +180,12 @@ fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
     estimated_line_count.saturating_sub(1)
 }
 
+/// Compute the line width for ANSI escaped text
 fn line_width(line: &str) -> usize {
     match strip_ansi_escapes::strip(line) {
-        Ok(stripped_line) => unicode_width::UnicodeWidthStr::width(
-            String::from_utf8_lossy(&stripped_line).to_string().as_str(),
-        ),
-        Err(_) => line.len(),
+        Ok(stripped_line) => String::from_utf8_lossy(&stripped_line).width(),
+
+        Err(_) => line.width(),
     }
 }
 
