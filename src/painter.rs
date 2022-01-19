@@ -164,18 +164,20 @@ impl<'prompt> PromptLines<'prompt> {
     }
 }
 
+/// Reports the additional lines needed due to wrapping for the given line.
+///
+/// Does account for any potential linebreaks in `line`
+///
+/// If `line` fits in `terminal_columns` returns 0
 fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
     let estimated_width = UnicodeWidthStr::width(line);
+    let terminal_columns: usize = terminal_columns.into();
 
-    let estimated_line_count = estimated_width as f64 / terminal_columns as f64;
-    let estimated_line_count = estimated_line_count.ceil() as u64;
+    // integer ceiling rounding division for positive divisors
+    let estimated_line_count = (estimated_width + terminal_columns - 1) / terminal_columns;
 
     // Any wrapping will add to our overall line count
-    if estimated_line_count >= 1 {
-        estimated_line_count as usize - 1
-    } else {
-        0 // no wrapping
-    }
+    estimated_line_count.saturating_sub(1)
 }
 
 fn line_width(line: &str) -> usize {
