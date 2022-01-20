@@ -56,7 +56,7 @@
 //! keybindings.add_binding(
 //!     KeyModifiers::ALT,
 //!     KeyCode::Char('m'),
-//!     ReedlineEvent::Edit(vec![EditCommand::BackspaceWord]),
+//!     vec![ReedlineEvent::Edit(vec![EditCommand::BackspaceWord])],
 //! );
 //! let edit_mode = Box::new(Emacs::new(keybindings));
 //!

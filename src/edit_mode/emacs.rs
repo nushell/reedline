@@ -96,7 +96,7 @@ mod test {
         keybindings.add_binding(
             KeyModifiers::CONTROL,
             KeyCode::Char('l'),
-            ReedlineEvent::Complete,
+            vec![ReedlineEvent::Complete],
         );
 
         let mut emacs = Emacs::new(keybindings);

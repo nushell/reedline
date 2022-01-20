@@ -169,9 +169,9 @@ pub fn default_emacs_keybindings() -> Keybindings {
         KM::NONE,
         KC::Right,
         vec![
-            ReedlineEvent::Right,
-            ReedlineEvent::MenuRight,
             ReedlineEvent::Complete,
+            ReedlineEvent::MenuRight,
+            ReedlineEvent::Right,
         ],
     );
 
