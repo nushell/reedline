@@ -45,8 +45,17 @@ impl Keybindings {
         &mut self,
         modifier: KeyModifiers,
         key_code: KeyCode,
-        command: ReedlineEvent,
+        commands: Vec<ReedlineEvent>,
     ) {
+        let command = if commands.len() == 1 {
+            commands
+                .into_iter()
+                .next()
+                .expect("already checked that has one element")
+        } else {
+            ReedlineEvent::UntilFound(commands)
+        };
+
         let key_combo = KeyCombination { modifier, key_code };
         self.bindings.insert(key_combo, command);
     }
@@ -71,57 +80,111 @@ pub fn default_emacs_keybindings() -> Keybindings {
     let mut kb = Keybindings::new();
 
     // CTRL
-    kb.add_binding(KM::CONTROL, KC::Left, edit_bind(EC::MoveWordLeft));
-    kb.add_binding(KM::CONTROL, KC::Right, edit_bind(EC::MoveWordRight));
-    kb.add_binding(KM::CONTROL, KC::Delete, edit_bind(EC::DeleteWord));
-    kb.add_binding(KM::CONTROL, KC::Backspace, edit_bind(EC::BackspaceWord));
-    kb.add_binding(KM::CONTROL, KC::End, edit_bind(EC::MoveToEnd));
-    kb.add_binding(KM::CONTROL, KC::Home, edit_bind(EC::MoveToStart));
-    kb.add_binding(KM::CONTROL, KC::Char('d'), ReedlineEvent::CtrlD);
-    kb.add_binding(KM::CONTROL, KC::Char('c'), ReedlineEvent::CtrlC);
-    kb.add_binding(KM::CONTROL, KC::Char('g'), edit_bind(EC::Redo));
-    kb.add_binding(KM::CONTROL, KC::Char('z'), edit_bind(EC::Undo));
-    kb.add_binding(KM::CONTROL, KC::Char('a'), edit_bind(EC::MoveToLineStart));
-    kb.add_binding(KM::CONTROL, KC::Char('e'), edit_bind(EC::MoveToLineEnd));
-    kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::CutToEnd));
-    kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
+    kb.add_binding(KM::CONTROL, KC::Left, vec![edit_bind(EC::MoveWordLeft)]);
+    kb.add_binding(KM::CONTROL, KC::Right, vec![edit_bind(EC::MoveWordRight)]);
+    kb.add_binding(KM::CONTROL, KC::Delete, vec![edit_bind(EC::DeleteWord)]);
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Backspace,
+        vec![edit_bind(EC::BackspaceWord)],
+    );
+    kb.add_binding(KM::CONTROL, KC::End, vec![edit_bind(EC::MoveToEnd)]);
+    kb.add_binding(KM::CONTROL, KC::Home, vec![edit_bind(EC::MoveToStart)]);
+    kb.add_binding(KM::CONTROL, KC::Char('d'), vec![ReedlineEvent::CtrlD]);
+    kb.add_binding(KM::CONTROL, KC::Char('c'), vec![ReedlineEvent::CtrlC]);
+    kb.add_binding(KM::CONTROL, KC::Char('g'), vec![edit_bind(EC::Redo)]);
+    kb.add_binding(KM::CONTROL, KC::Char('z'), vec![edit_bind(EC::Undo)]);
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('a'),
+        vec![edit_bind(EC::MoveToLineStart)],
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('e'),
+        vec![edit_bind(EC::MoveToLineEnd)],
+    );
+    kb.add_binding(KM::CONTROL, KC::Char('k'), vec![edit_bind(EC::CutToEnd)]);
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('u'),
+        vec![edit_bind(EC::CutFromStart)],
+    );
     kb.add_binding(
         KM::CONTROL,
         KC::Char('y'),
-        edit_bind(EC::PasteCutBufferBefore),
+        vec![edit_bind(EC::PasteCutBufferBefore)],
     );
-    kb.add_binding(KM::CONTROL, KC::Char('b'), ReedlineEvent::Left);
-    kb.add_binding(KM::CONTROL, KC::Char('f'), ReedlineEvent::Right);
-    kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
-    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
-    kb.add_binding(KM::CONTROL, KC::Char('p'), ReedlineEvent::PreviousHistory);
-    kb.add_binding(KM::CONTROL, KC::Char('n'), ReedlineEvent::NextHistory);
-    kb.add_binding(KM::CONTROL, KC::Char('r'), ReedlineEvent::SearchHistory);
-    kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
-    kb.add_binding(KM::CONTROL, KC::Char('l'), ReedlineEvent::ClearScreen);
-    kb.add_binding(KM::ALT, KC::Char('b'), edit_bind(EC::MoveWordLeft));
-    kb.add_binding(KM::ALT, KC::Char('f'), edit_bind(EC::MoveWordRight));
-    kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
-    kb.add_binding(KM::ALT, KC::Char('u'), edit_bind(EC::UppercaseWord));
-    kb.add_binding(KM::ALT, KC::Char('l'), edit_bind(EC::LowercaseWord));
-    kb.add_binding(KM::ALT, KC::Char('c'), edit_bind(EC::CapitalizeChar));
-    kb.add_binding(KM::ALT, KC::Left, edit_bind(EC::MoveWordLeft));
-    kb.add_binding(KM::ALT, KC::Right, edit_bind(EC::MoveWordRight));
-    kb.add_binding(KM::ALT, KC::Delete, edit_bind(EC::DeleteWord));
-    kb.add_binding(KM::ALT, KC::Backspace, edit_bind(EC::BackspaceWord));
-    kb.add_binding(KM::NONE, KC::End, edit_bind(EC::MoveToLineEnd));
-    kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
-    kb.add_binding(KM::NONE, KC::Tab, ReedlineEvent::Complete);
-    kb.add_binding(KM::NONE, KC::Up, ReedlineEvent::Up);
-    kb.add_binding(KM::NONE, KC::Down, ReedlineEvent::Down);
-    kb.add_binding(KM::NONE, KC::Left, ReedlineEvent::Left);
-    kb.add_binding(KM::NONE, KC::Right, ReedlineEvent::Right);
-    kb.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
-    kb.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
+    kb.add_binding(KM::CONTROL, KC::Char('b'), vec![ReedlineEvent::Left]);
+    kb.add_binding(KM::CONTROL, KC::Char('f'), vec![ReedlineEvent::Right]);
+    kb.add_binding(KM::CONTROL, KC::Char('h'), vec![edit_bind(EC::Backspace)]);
+    kb.add_binding(KM::CONTROL, KC::Char('w'), vec![edit_bind(EC::CutWordLeft)]);
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('p'),
+        vec![ReedlineEvent::PreviousHistory],
+    );
+    kb.add_binding(KM::CONTROL, KC::Char('n'), vec![ReedlineEvent::NextHistory]);
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('r'),
+        vec![ReedlineEvent::SearchHistory],
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('t'),
+        vec![edit_bind(EC::SwapGraphemes)],
+    );
+    kb.add_binding(KM::CONTROL, KC::Char('l'), vec![ReedlineEvent::ClearScreen]);
+    kb.add_binding(KM::ALT, KC::Char('b'), vec![edit_bind(EC::MoveWordLeft)]);
+    kb.add_binding(KM::ALT, KC::Char('f'), vec![edit_bind(EC::MoveWordRight)]);
+    kb.add_binding(KM::ALT, KC::Char('d'), vec![edit_bind(EC::CutWordRight)]);
+    kb.add_binding(KM::ALT, KC::Char('u'), vec![edit_bind(EC::UppercaseWord)]);
+    kb.add_binding(KM::ALT, KC::Char('l'), vec![edit_bind(EC::LowercaseWord)]);
+    kb.add_binding(KM::ALT, KC::Char('c'), vec![edit_bind(EC::CapitalizeChar)]);
+    kb.add_binding(KM::ALT, KC::Left, vec![edit_bind(EC::MoveWordLeft)]);
+    kb.add_binding(KM::ALT, KC::Right, vec![edit_bind(EC::MoveWordRight)]);
+    kb.add_binding(KM::ALT, KC::Delete, vec![edit_bind(EC::DeleteWord)]);
+    kb.add_binding(KM::ALT, KC::Backspace, vec![edit_bind(EC::BackspaceWord)]);
 
-    kb.add_binding(KM::NONE, KC::Tab, ReedlineEvent::ContextMenu);
-    kb.add_binding(KM::SHIFT, KC::BackTab, ReedlineEvent::PreviousElement);
-    kb.add_binding(KM::NONE, KC::Esc, ReedlineEvent::Esc);
+    kb.add_binding(KM::NONE, KC::End, vec![edit_bind(EC::MoveToLineEnd)]);
+    kb.add_binding(KM::NONE, KC::Home, vec![edit_bind(EC::MoveToLineStart)]);
+
+    kb.add_binding(
+        KM::NONE,
+        KC::Up,
+        vec![ReedlineEvent::Up, ReedlineEvent::MenuUp],
+    );
+    kb.add_binding(
+        KM::NONE,
+        KC::Down,
+        vec![ReedlineEvent::Down, ReedlineEvent::MenuDown],
+    );
+    kb.add_binding(
+        KM::NONE,
+        KC::Left,
+        vec![ReedlineEvent::Left, ReedlineEvent::MenuLeft],
+    );
+    kb.add_binding(
+        KM::NONE,
+        KC::Right,
+        vec![
+            ReedlineEvent::Right,
+            ReedlineEvent::MenuRight,
+            ReedlineEvent::Complete,
+        ],
+    );
+
+    kb.add_binding(KM::NONE, KC::Delete, vec![edit_bind(EC::Delete)]);
+    kb.add_binding(KM::NONE, KC::Backspace, vec![edit_bind(EC::Backspace)]);
+
+    kb.add_binding(
+        KM::NONE,
+        KC::Tab,
+        vec![ReedlineEvent::ContextMenu, ReedlineEvent::MenuNext],
+    );
+    kb.add_binding(KM::SHIFT, KC::BackTab, vec![ReedlineEvent::MenuPrevious]);
+    kb.add_binding(KM::NONE, KC::Esc, vec![ReedlineEvent::Esc]);
 
     kb
 }

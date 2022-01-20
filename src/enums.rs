@@ -11,6 +11,9 @@ pub enum Signal {
     CtrlD, // End terminal session
     /// Signal to clear the current screen. Buffer content remains untouched.
     CtrlL, // FormFeed/Clear current screen
+    /// ReedlineEvent::OnlyOne depends of finding a successful
+    /// to stop iterating over all the possible events
+    EventFound,
 }
 
 /// Editing actions which can be mapped to key bindings.
@@ -289,9 +292,24 @@ pub enum ReedlineEvent {
     /// command or movement characters
     Multiple(Vec<ReedlineEvent>),
 
+    /// Test
+    UntilFound(Vec<ReedlineEvent>),
+
     /// Next element in the menu
-    NextElement,
+    MenuNext,
 
     /// Previous element in the menu
-    PreviousElement,
+    MenuPrevious,
+
+    /// Moves up in the menu
+    MenuUp,
+
+    /// Moves down in the menu
+    MenuDown,
+
+    /// Moves left in the menu
+    MenuLeft,
+
+    /// Moves right in the menu
+    MenuRight,
 }

@@ -427,8 +427,13 @@ impl Reedline {
 
             for event in reedline_events.drain(..) {
                 if let Some(signal) = self.handle_event(prompt, event)? {
-                    let _ = self.painter.move_cursor_to_end();
-                    return Ok(signal);
+                    match signal {
+                        Signal::Success(_) | Signal::CtrlC | Signal::CtrlD | Signal::CtrlL => {
+                            let _ = self.painter.move_cursor_to_end();
+                            return Ok(signal);
+                        }
+                        Signal::EventFound => {}
+                    }
                 }
             }
         }
@@ -522,10 +527,15 @@ impl Reedline {
             | ReedlineEvent::ActionHandler
             | ReedlineEvent::Paste(_)
             | ReedlineEvent::Multiple(_)
+            | ReedlineEvent::UntilFound(_)
             | ReedlineEvent::None
             | ReedlineEvent::Esc
-            | ReedlineEvent::NextElement
-            | ReedlineEvent::PreviousElement => Ok(None),
+            | ReedlineEvent::MenuNext
+            | ReedlineEvent::MenuPrevious
+            | ReedlineEvent::MenuUp
+            | ReedlineEvent::MenuDown
+            | ReedlineEvent::MenuLeft
+            | ReedlineEvent::MenuRight => Ok(None),
         }
     }
 
@@ -536,44 +546,85 @@ impl Reedline {
     ) -> io::Result<Option<Signal>> {
         match event {
             ReedlineEvent::ContextMenu => {
-                let line_buffer = self.editor.line_buffer();
-                if self.context_menu.is_active() {
-                    self.context_menu.move_next(line_buffer);
-                    self.buffer_paint(prompt)?;
-                    Ok(None)
-                } else {
+                if !self.context_menu.is_active() {
                     self.context_menu.activate();
+                    let line_buffer = self.editor.line_buffer();
 
                     // If there is only one value in the menu, it can select be selected immediately
                     if self.context_menu.get_num_values(line_buffer) == 1 {
                         self.handle_editor_event(prompt, ReedlineEvent::Enter)
                     } else {
                         self.buffer_paint(prompt)?;
-                        Ok(None)
+                        Ok(Some(Signal::EventFound))
                     }
+                } else {
+                    self.buffer_paint(prompt)?;
+                    Ok(None)
                 }
             }
-            ReedlineEvent::NextElement => {
+            ReedlineEvent::MenuNext => {
                 if self.context_menu.is_active() {
                     let line_buffer = self.editor.line_buffer();
                     self.context_menu.move_next(line_buffer);
                     self.buffer_paint(prompt)?;
+                    Ok(Some(Signal::EventFound))
+                } else {
+                    self.buffer_paint(prompt)?;
+                    Ok(None)
                 }
-                Ok(None)
             }
-            ReedlineEvent::PreviousElement => {
+            ReedlineEvent::MenuPrevious => {
                 if self.context_menu.is_active() {
                     let line_buffer = self.editor.line_buffer();
                     self.context_menu.move_previous(line_buffer);
                     self.buffer_paint(prompt)?;
+                    Ok(Some(Signal::EventFound))
+                } else {
+                    self.buffer_paint(prompt)?;
+                    Ok(None)
                 }
-                Ok(None)
             }
-            ReedlineEvent::ActionHandler => {
-                let line_buffer = self.editor.line_buffer();
-                self.tab_handler.handle(line_buffer);
-                self.buffer_paint(prompt)?;
-                Ok(None)
+            ReedlineEvent::MenuUp => {
+                if self.context_menu.is_active() {
+                    let line_buffer = self.editor.line_buffer();
+                    self.context_menu.move_up(line_buffer);
+                    self.buffer_paint(prompt)?;
+                    Ok(Some(Signal::EventFound))
+                } else {
+                    self.buffer_paint(prompt)?;
+                    Ok(None)
+                }
+            }
+            ReedlineEvent::MenuDown => {
+                if self.context_menu.is_active() {
+                    let line_buffer = self.editor.line_buffer();
+                    self.context_menu.move_down(line_buffer);
+                    self.buffer_paint(prompt)?;
+                    Ok(Some(Signal::EventFound))
+                } else {
+                    self.buffer_paint(prompt)?;
+                    Ok(None)
+                }
+            }
+            ReedlineEvent::MenuLeft => {
+                if self.context_menu.is_active() {
+                    self.context_menu.move_left();
+                    self.buffer_paint(prompt)?;
+                    Ok(Some(Signal::EventFound))
+                } else {
+                    self.buffer_paint(prompt)?;
+                    Ok(None)
+                }
+            }
+            ReedlineEvent::MenuRight => {
+                if self.context_menu.is_active() {
+                    self.context_menu.move_right();
+                    self.buffer_paint(prompt)?;
+                    Ok(Some(Signal::EventFound))
+                } else {
+                    self.buffer_paint(prompt)?;
+                    Ok(None)
+                }
             }
             ReedlineEvent::Complete => {
                 let current_hint = self.hinter.current_hint();
@@ -584,15 +635,23 @@ impl Reedline {
                 {
                     self.editor.clear_to_end();
                     self.run_edit_commands(&[EditCommand::InsertString(current_hint)]);
+                    self.buffer_paint(prompt)?;
+                    Ok(Some(Signal::EventFound))
+                } else {
+                    self.buffer_paint(prompt)?;
+                    Ok(None)
                 }
-
+            }
+            ReedlineEvent::ActionHandler => {
+                let line_buffer = self.editor.line_buffer();
+                self.tab_handler.handle(line_buffer);
                 self.buffer_paint(prompt)?;
-                Ok(None)
+                Ok(Some(Signal::EventFound))
             }
             ReedlineEvent::Esc => {
                 self.context_menu.deactivate();
                 self.buffer_paint(prompt)?;
-                Ok(None)
+                Ok(Some(Signal::EventFound))
             }
             ReedlineEvent::CtrlD => {
                 if self.editor.is_empty() {
@@ -600,7 +659,7 @@ impl Reedline {
                     Ok(Some(Signal::CtrlD))
                 } else {
                     self.run_edit_commands(&[EditCommand::Delete]);
-                    Ok(None)
+                    Ok(Some(Signal::EventFound))
                 }
             }
             ReedlineEvent::CtrlC => {
@@ -624,7 +683,7 @@ impl Reedline {
                     self.context_menu.deactivate();
                     self.buffer_paint(prompt)?;
 
-                    Ok(None)
+                    Ok(Some(Signal::EventFound))
                 } else {
                     let buffer = self.editor.get_buffer().to_string();
                     if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
@@ -644,87 +703,57 @@ impl Reedline {
                         self.run_edit_commands(&[EditCommand::InsertChar('\n')]);
                         self.buffer_paint(prompt)?;
 
-                        Ok(None)
+                        Ok(Some(Signal::EventFound))
                     }
                 }
             }
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands);
                 self.repaint(prompt)?;
-                Ok(None)
+                Ok(Some(Signal::EventFound))
             }
             ReedlineEvent::Mouse => Ok(None),
             ReedlineEvent::Resize(width, height) => {
                 self.painter.handle_resize(width, height);
-                Ok(None)
+                Ok(Some(Signal::EventFound))
             }
             ReedlineEvent::Repaint => {
                 if self.input_mode != InputMode::HistorySearch {
                     self.buffer_paint(prompt)?;
+                    Ok(Some(Signal::EventFound))
+                } else {
+                    Ok(None)
                 }
-                Ok(None)
             }
             ReedlineEvent::PreviousHistory => {
                 self.previous_history();
-
                 self.buffer_paint(prompt)?;
-                Ok(None)
+                Ok(Some(Signal::EventFound))
             }
             ReedlineEvent::NextHistory => {
                 self.next_history();
-
                 self.buffer_paint(prompt)?;
-                Ok(None)
+                Ok(Some(Signal::EventFound))
             }
             ReedlineEvent::Up => {
-                if self.context_menu.is_active() {
-                    let line_buffer = self.editor.line_buffer();
-                    self.context_menu.move_up(line_buffer)
-                } else {
-                    self.up_command();
-                }
-
+                self.up_command();
                 self.buffer_paint(prompt)?;
-                Ok(None)
+                Ok(Some(Signal::EventFound))
             }
             ReedlineEvent::Down => {
-                if self.context_menu.is_active() {
-                    let line_buffer = self.editor.line_buffer();
-                    self.context_menu.move_down(line_buffer)
-                } else {
-                    self.down_command();
-                }
-
+                self.down_command();
                 self.buffer_paint(prompt)?;
-                Ok(None)
+                Ok(Some(Signal::EventFound))
             }
             ReedlineEvent::Left => {
-                if self.context_menu.is_active() {
-                    self.context_menu.move_left()
-                } else {
-                    self.run_edit_commands(&[EditCommand::MoveLeft])
-                }
-
+                self.run_edit_commands(&[EditCommand::MoveLeft]);
                 self.buffer_paint(prompt)?;
-                Ok(None)
+                Ok(Some(Signal::EventFound))
             }
             ReedlineEvent::Right => {
-                let current_hint = self.hinter.current_hint();
-                if self.hints_active()
-                    && !self.context_menu.is_active()
-                    && self.editor.offset() == self.editor.get_buffer().len()
-                    && !current_hint.is_empty()
-                {
-                    self.editor.clear_to_end();
-                    self.run_edit_commands(&[EditCommand::InsertString(current_hint)]);
-                } else if self.context_menu.is_active() {
-                    self.context_menu.move_right()
-                } else {
-                    self.run_edit_commands(&[EditCommand::MoveRight]);
-                }
-
+                self.run_edit_commands(&[EditCommand::MoveRight]);
                 self.buffer_paint(prompt)?;
-                Ok(None)
+                Ok(Some(Signal::EventFound))
             }
             ReedlineEvent::SearchHistory => {
                 // Make sure we are able to undo the result of a reverse history search
@@ -732,7 +761,7 @@ impl Reedline {
 
                 self.enter_history_search();
                 self.repaint(prompt)?;
-                Ok(None)
+                Ok(Some(Signal::EventFound))
             }
             ReedlineEvent::Paste(events) => {
                 let mut latest_signal = None;
@@ -763,6 +792,16 @@ impl Reedline {
 
                 self.buffer_paint(prompt)?;
                 Ok(latest_signal)
+            }
+            ReedlineEvent::UntilFound(events) => {
+                for event in events {
+                    let signal = self.handle_editor_event(prompt, event)?;
+
+                    if let Some(Signal::EventFound) = signal {
+                        return Ok(signal);
+                    }
+                }
+                Ok(None)
             }
             ReedlineEvent::None => Ok(None),
         }

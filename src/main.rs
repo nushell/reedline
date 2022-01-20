@@ -60,7 +60,7 @@ fn main() -> Result<()> {
         keybindings.add_binding(
             KeyModifiers::ALT,
             KeyCode::Char('m'),
-            ReedlineEvent::Edit(vec![EditCommand::BackspaceWord]),
+            vec![ReedlineEvent::Edit(vec![EditCommand::BackspaceWord])],
         );
         Box::new(Emacs::new(keybindings))
     };
@@ -115,6 +115,7 @@ fn main() -> Result<()> {
             Ok(Signal::CtrlL) => {
                 line_editor.clear_screen()?;
             }
+            Ok(_) => {}
             Err(err) => {
                 println!("Error: {:?}", err);
             }
