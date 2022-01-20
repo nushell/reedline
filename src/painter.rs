@@ -77,7 +77,10 @@ impl<'prompt> PromptLines<'prompt> {
                 + self.hint
                 + self.after_cursor
         } else {
-            self.prompt_str_left.to_string() + &self.prompt_indicator + self.before_cursor
+            self.prompt_str_left.to_string()
+                + &self.prompt_indicator
+                + self.before_cursor
+                + self.after_cursor
         };
 
         let lines = input.lines().fold(0, |acc, line| {
@@ -442,13 +445,13 @@ impl Painter {
 
         self.stdout
             .queue(Print(&lines.before_cursor))?
-            .queue(SavePosition)?;
+            .queue(SavePosition)?
+            .queue(Print(&lines.after_cursor))?;
 
         if let Some(context_menu) = context_menu {
             self.print_context_menu(context_menu, lines, use_ansi_coloring)?;
         } else {
-            self.stdout
-                .queue(Print(format!("{}{}", &lines.hint, &lines.after_cursor)))?;
+            self.stdout.queue(Print(&lines.hint))?;
         }
 
         Ok(())
@@ -525,6 +528,8 @@ impl Painter {
         self.stdout.queue(SavePosition)?;
 
         if let Some(context_menu) = context_menu {
+            // TODO: Also solve the dificult problem of displaying (parts of)
+            // the content after the cursor with the completion menu
             self.print_context_menu(context_menu, lines, use_ansi_coloring)?;
         } else {
             // Selecting lines for the hint
