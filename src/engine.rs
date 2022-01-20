@@ -554,7 +554,6 @@ impl Reedline {
                         Ok((None, true))
                     }
                 } else {
-                    self.buffer_paint(prompt)?;
                     Ok((None, false))
                 }
             }
@@ -565,7 +564,6 @@ impl Reedline {
                     self.buffer_paint(prompt)?;
                     Ok((None, true))
                 } else {
-                    self.buffer_paint(prompt)?;
                     Ok((None, false))
                 }
             }
@@ -576,7 +574,6 @@ impl Reedline {
                     self.buffer_paint(prompt)?;
                     Ok((None, true))
                 } else {
-                    self.buffer_paint(prompt)?;
                     Ok((None, false))
                 }
             }
@@ -587,7 +584,6 @@ impl Reedline {
                     self.buffer_paint(prompt)?;
                     Ok((None, true))
                 } else {
-                    self.buffer_paint(prompt)?;
                     Ok((None, false))
                 }
             }
@@ -598,7 +594,6 @@ impl Reedline {
                     self.buffer_paint(prompt)?;
                     Ok((None, true))
                 } else {
-                    self.buffer_paint(prompt)?;
                     Ok((None, false))
                 }
             }
@@ -608,7 +603,6 @@ impl Reedline {
                     self.buffer_paint(prompt)?;
                     Ok((None, true))
                 } else {
-                    self.buffer_paint(prompt)?;
                     Ok((None, false))
                 }
             }
@@ -618,7 +612,6 @@ impl Reedline {
                     self.buffer_paint(prompt)?;
                     Ok((None, true))
                 } else {
-                    self.buffer_paint(prompt)?;
                     Ok((None, false))
                 }
             }
@@ -634,7 +627,6 @@ impl Reedline {
                     self.buffer_paint(prompt)?;
                     Ok((None, true))
                 } else {
-                    self.buffer_paint(prompt)?;
                     Ok((None, false))
                 }
             }
@@ -656,6 +648,7 @@ impl Reedline {
                 } else {
                     self.run_edit_commands(&[EditCommand::Delete]);
                     Ok((None, true))
+                    self.buffer_paint(prompt)?;
                 }
             }
             ReedlineEvent::CtrlC => {
@@ -779,7 +772,6 @@ impl Reedline {
                 Ok(latest_signal)
             }
             ReedlineEvent::Multiple(events) => {
-                // Making sure that only InsertChars are handled during a paste event
                 let latest_signal = events.into_iter().try_fold((None, true), |_, event| {
                     self.handle_editor_event(prompt, event)
                 })?;
