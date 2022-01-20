@@ -97,12 +97,32 @@ pub fn default_emacs_keybindings() -> Keybindings {
         KC::Char('y'),
         edit_bind(EC::PasteCutBufferBefore),
     );
-    kb.add_binding(KM::CONTROL, KC::Char('b'), ReedlineEvent::Left);
-    kb.add_binding(KM::CONTROL, KC::Char('f'), ReedlineEvent::Right);
     kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
     kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
-    kb.add_binding(KM::CONTROL, KC::Char('p'), ReedlineEvent::PreviousHistory);
-    kb.add_binding(KM::CONTROL, KC::Char('n'), ReedlineEvent::NextHistory);
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('b'),
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left]),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('f'),
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Complete,
+            ReedlineEvent::MenuRight,
+            ReedlineEvent::Right,
+        ]),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('p'),
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuUp, ReedlineEvent::Up]),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('n'),
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuDown, ReedlineEvent::Down]),
+    );
     kb.add_binding(KM::CONTROL, KC::Char('r'), ReedlineEvent::SearchHistory);
     kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
     kb.add_binding(KM::CONTROL, KC::Char('l'), ReedlineEvent::ClearScreen);
