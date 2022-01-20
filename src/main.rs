@@ -73,11 +73,7 @@ fn main() -> Result<()> {
             ListCompletionHandler::default().with_completer(completer.clone()),
         ))
         .with_hinter(Box::new(
-            DefaultHinter::default()
-                .with_history()
-                // .with_completer(completer) // or .with_history()
-                // .with_inside_line()
-                .with_style(Style::new().fg(Color::DarkGray)),
+            DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)),
         ))
         .with_ansi_colors(true)
         .with_menu_completer(completer, ContextMenuInput::default());

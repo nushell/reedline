@@ -135,21 +135,12 @@
 //! use std::io;
 //! use {
 //!   nu_ansi_term::{Color, Style},
-//!   reedline::{DefaultCompleter, DefaultHinter, Reedline},
+//!   reedline::{DefaultHinter, Reedline},
 //! };
 //!
-//! let commands = vec![
-//!   "test".into(),
-//!   "hello world".into(),
-//!   "hello world reedline".into(),
-//!   "this is the reedline crate".into(),
-//! ];
-//! let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 //!
 //! let mut line_editor = Reedline::create()?.with_hinter(Box::new(
 //!   DefaultHinter::default()
-//!   .with_completer(completer) // or .with_history()
-//!   // .with_inside_line()
 //!   .with_style(Style::new().italic().fg(Color::LightGray)),
 //! ));
 //! # Ok::<(), io::Error>(())
