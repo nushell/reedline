@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+/// When handling an event, it could be in a state where
+/// no action could be performed, thus making it not handled
+pub enum EventState {
+    Handled(Option<Signal>),
+    NotHandled,
+}
+
 /// Valid ways how `Reedline::read_line()` can return
 #[derive(Debug)]
 pub enum Signal {
@@ -290,7 +297,7 @@ pub enum ReedlineEvent {
     Multiple(Vec<ReedlineEvent>),
 
     /// Test
-    UntilFound(Vec<ReedlineEvent>),
+    UntilHandled(Vec<ReedlineEvent>),
 
     /// Next element in the menu
     MenuNext,

@@ -53,7 +53,7 @@ impl Keybindings {
                 .next()
                 .expect("already checked that has one element")
         } else {
-            ReedlineEvent::UntilFound(commands)
+            ReedlineEvent::UntilHandled(commands)
         };
 
         let key_combo = KeyCombination { modifier, key_code };
