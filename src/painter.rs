@@ -74,8 +74,8 @@ impl<'prompt> PromptLines<'prompt> {
             self.prompt_str_left.to_string()
                 + &self.prompt_indicator
                 + self.before_cursor
-                + self.hint
                 + self.after_cursor
+                + self.hint
         } else {
             self.prompt_str_left.to_string()
                 + &self.prompt_indicator
@@ -535,14 +535,14 @@ impl Painter {
             // Selecting lines for the hint
             // The -1 subtraction is done because the remaining lines consider the line where the
             // cursor is located as a remaining line. That has to be removed to get the correct offset
-            // for the hint and after cursor lines
+            // for the after-cursor and hint lines
             let offset = remaining_lines.saturating_sub(1) as usize;
-            let hint_skipped = skip_buffer_lines(lines.hint, 0, Some(offset));
-            self.stdout.queue(Print(hint_skipped))?;
-
             // Selecting lines after the cursor
             let after_cursor_skipped = skip_buffer_lines(lines.after_cursor, 0, Some(offset));
             self.stdout.queue(Print(after_cursor_skipped))?;
+            // Hint lines
+            let hint_skipped = skip_buffer_lines(lines.hint, 0, Some(offset));
+            self.stdout.queue(Print(hint_skipped))?;
         }
 
         Ok(())
