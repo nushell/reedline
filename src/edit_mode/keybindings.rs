@@ -123,17 +123,17 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(
         KM::NONE,
         KC::Up,
-        ReedlineEvent::UntilFound(vec![ReedlineEvent::Up, ReedlineEvent::MenuUp]),
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuUp, ReedlineEvent::Up]),
     );
     kb.add_binding(
         KM::NONE,
         KC::Down,
-        ReedlineEvent::UntilFound(vec![ReedlineEvent::Down, ReedlineEvent::MenuDown]),
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuDown, ReedlineEvent::Down]),
     );
     kb.add_binding(
         KM::NONE,
         KC::Left,
-        ReedlineEvent::UntilFound(vec![ReedlineEvent::Left, ReedlineEvent::MenuLeft]),
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left]),
     );
     kb.add_binding(
         KM::NONE,
