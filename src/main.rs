@@ -107,7 +107,7 @@ fn main() -> Result<()> {
                     line_editor.print_history()?;
                     continue;
                 }
-                line_editor.print_line(&format!("Our buffer: {}", buffer))?;
+                println!("Our buffer: {}", buffer);
             }
             Ok(Signal::CtrlC) => {
                 // Prompt has been cleared and should start on the next line

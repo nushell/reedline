@@ -343,7 +343,7 @@ impl Reedline {
     }
 
     /// Writes `msg` to the terminal with a following carriage return and newline
-    pub fn print_line(&mut self, msg: &str) -> Result<()> {
+    fn print_line(&mut self, msg: &str) -> Result<()> {
         self.painter.paint_line(msg)
     }
 
