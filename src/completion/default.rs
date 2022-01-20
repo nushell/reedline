@@ -6,45 +6,6 @@ use std::{
 
 use crate::{Completer, Span};
 
-/// A history-specific completer with a focus on completing whole lines of history
-pub struct HistoryCompleter {
-    history: Vec<String>,
-}
-
-impl HistoryCompleter {
-    pub fn new(history: Vec<String>) -> Self {
-        Self { history }
-    }
-}
-
-impl Completer for HistoryCompleter {
-    fn complete(&self, line: &str, pos: usize) -> Vec<(Span, String)> {
-        let mut completions = vec![];
-
-        if line.is_empty() {
-            return vec![];
-        }
-
-        for hist in &self.history {
-            if hist.starts_with(&line[0..pos]) {
-                completions.push((
-                    Span {
-                        start: pos,
-                        end: line.len(),
-                    },
-                    hist[pos..].to_string(),
-                ));
-            }
-        }
-
-        if let Some(last) = completions.last() {
-            vec![last.clone()]
-        } else {
-            completions
-        }
-    }
-}
-
 /// A default completer that can detect keywords
 ///
 /// # Example
