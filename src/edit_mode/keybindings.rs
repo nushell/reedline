@@ -47,6 +47,13 @@ impl Keybindings {
         key_code: KeyCode,
         command: ReedlineEvent,
     ) {
+        if let ReedlineEvent::UntilFound(subcommands) = &command {
+            assert!(
+                !subcommands.is_empty(),
+                "UntilFound should contain a series of potential events to handle"
+            );
+        }
+
         let key_combo = KeyCombination { modifier, key_code };
         self.bindings.insert(key_combo, command);
     }
@@ -90,12 +97,32 @@ pub fn default_emacs_keybindings() -> Keybindings {
         KC::Char('y'),
         edit_bind(EC::PasteCutBufferBefore),
     );
-    kb.add_binding(KM::CONTROL, KC::Char('b'), ReedlineEvent::Left);
-    kb.add_binding(KM::CONTROL, KC::Char('f'), ReedlineEvent::Right);
     kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
     kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
-    kb.add_binding(KM::CONTROL, KC::Char('p'), ReedlineEvent::PreviousHistory);
-    kb.add_binding(KM::CONTROL, KC::Char('n'), ReedlineEvent::NextHistory);
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('b'),
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left]),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('f'),
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Complete,
+            ReedlineEvent::MenuRight,
+            ReedlineEvent::Right,
+        ]),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('p'),
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuUp, ReedlineEvent::Up]),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('n'),
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuDown, ReedlineEvent::Down]),
+    );
     kb.add_binding(KM::CONTROL, KC::Char('r'), ReedlineEvent::SearchHistory);
     kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
     kb.add_binding(KM::CONTROL, KC::Char('l'), ReedlineEvent::ClearScreen);
@@ -109,18 +136,44 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::ALT, KC::Right, edit_bind(EC::MoveWordRight));
     kb.add_binding(KM::ALT, KC::Delete, edit_bind(EC::DeleteWord));
     kb.add_binding(KM::ALT, KC::Backspace, edit_bind(EC::BackspaceWord));
+
     kb.add_binding(KM::NONE, KC::End, edit_bind(EC::MoveToLineEnd));
     kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
-    kb.add_binding(KM::NONE, KC::Tab, ReedlineEvent::Complete);
-    kb.add_binding(KM::NONE, KC::Up, ReedlineEvent::Up);
-    kb.add_binding(KM::NONE, KC::Down, ReedlineEvent::Down);
-    kb.add_binding(KM::NONE, KC::Left, ReedlineEvent::Left);
-    kb.add_binding(KM::NONE, KC::Right, ReedlineEvent::Right);
+
+    kb.add_binding(
+        KM::NONE,
+        KC::Up,
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuUp, ReedlineEvent::Up]),
+    );
+    kb.add_binding(
+        KM::NONE,
+        KC::Down,
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuDown, ReedlineEvent::Down]),
+    );
+    kb.add_binding(
+        KM::NONE,
+        KC::Left,
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left]),
+    );
+    kb.add_binding(
+        KM::NONE,
+        KC::Right,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Complete,
+            ReedlineEvent::MenuRight,
+            ReedlineEvent::Right,
+        ]),
+    );
+
     kb.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
     kb.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
 
-    kb.add_binding(KM::NONE, KC::Tab, ReedlineEvent::ContextMenu);
-    kb.add_binding(KM::SHIFT, KC::BackTab, ReedlineEvent::PreviousElement);
+    kb.add_binding(
+        KM::NONE,
+        KC::Tab,
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::ContextMenu, ReedlineEvent::MenuNext]),
+    );
+    kb.add_binding(KM::SHIFT, KC::BackTab, ReedlineEvent::MenuPrevious);
     kb.add_binding(KM::NONE, KC::Esc, ReedlineEvent::Esc);
 
     kb

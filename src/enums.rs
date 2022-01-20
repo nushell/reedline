@@ -289,9 +289,30 @@ pub enum ReedlineEvent {
     /// command or movement characters
     Multiple(Vec<ReedlineEvent>),
 
+    /// Test
+    UntilFound(Vec<ReedlineEvent>),
+
     /// Next element in the menu
-    NextElement,
+    MenuNext,
 
     /// Previous element in the menu
-    PreviousElement,
+    MenuPrevious,
+
+    /// Moves up in the menu
+    MenuUp,
+
+    /// Moves down in the menu
+    MenuDown,
+
+    /// Moves left in the menu
+    MenuLeft,
+
+    /// Moves right in the menu
+    MenuRight,
+}
+
+pub(crate) enum EventStatus {
+    Handled,
+    Inapplicable,
+    Exits(Signal),
 }
