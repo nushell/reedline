@@ -310,3 +310,9 @@ pub enum ReedlineEvent {
     /// Moves right in the menu
     MenuRight,
 }
+
+pub(crate) enum EventStatus {
+    Handled,
+    Inapplicable,
+    Exits(Signal),
+}
