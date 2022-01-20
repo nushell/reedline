@@ -115,7 +115,6 @@ fn main() -> Result<()> {
             Ok(Signal::CtrlL) => {
                 line_editor.clear_screen()?;
             }
-            Ok(_) => {}
             Err(err) => {
                 println!("Error: {:?}", err);
             }
