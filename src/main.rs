@@ -1,18 +1,14 @@
-use crossterm::event::KeyModifiers;
-use reedline::{
-    default_vi_insert_keybindings, default_vi_normal_keybindings, ContextMenu, HistoryMenu,
-    Keybindings, ReedlineEvent,
-};
-
 use {
     crossterm::{
-        event::{poll, Event, KeyCode, KeyEvent},
+        event::{poll, Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, Result,
     },
     nu_ansi_term::{Color, Style},
     reedline::{
-        default_emacs_keybindings, DefaultCompleter, DefaultHinter, DefaultPrompt, EditMode, Emacs,
-        ExampleHighlighter, FileBackedHistory, ListCompletionHandler, Reedline, Signal, Vi,
+        default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
+        ContextMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, EditMode, Emacs,
+        ExampleHighlighter, FileBackedHistory, HistoryMenu, Keybindings, Reedline, ReedlineEvent,
+        Signal, Vi,
     },
     std::{
         io::{stdout, Write},
@@ -61,9 +57,6 @@ fn main() -> Result<()> {
     let mut line_editor = Reedline::create()?
         .with_history(history)?
         .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
-        .with_completion_action_handler(Box::new(
-            ListCompletionHandler::default().with_completer(completer.clone()),
-        ))
         .with_hinter(Box::new(
             DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)),
         ))
