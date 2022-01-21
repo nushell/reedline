@@ -56,6 +56,7 @@ fn main() -> Result<()> {
 
     let mut line_editor = Reedline::create()?
         .with_history(history)?
+        .with_completer(completer)
         .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
         .with_hinter(Box::new(
             DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)),
@@ -63,7 +64,7 @@ fn main() -> Result<()> {
         .with_ansi_colors(true);
 
     // Adding default menus for the compiled reedline
-    let context_menu = Box::new(ContextMenu::default().with_completer(completer));
+    let context_menu = Box::new(ContextMenu::default());
     let history_menu = Box::new(HistoryMenu::default());
     line_editor = line_editor.with_menu(context_menu).with_menu(history_menu);
 

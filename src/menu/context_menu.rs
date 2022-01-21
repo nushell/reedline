@@ -1,7 +1,7 @@
 use nu_ansi_term::Style;
 
 use super::{Menu, MenuTextStyle};
-use crate::{Completer, DefaultCompleter, History, LineBuffer, Span};
+use crate::{Completer, History, LineBuffer, Span};
 
 /// Default values used as reference for the menu. These values are set during
 /// the initial declaration of the menu and are always kept as reference for the
@@ -39,7 +39,6 @@ struct ColumnDetails {
 
 /// Context menu definition
 pub struct ContextMenu {
-    completer: Box<dyn Completer>,
     active: bool,
     /// Context menu coloring
     color: MenuTextStyle,
@@ -63,10 +62,7 @@ pub struct ContextMenu {
 
 impl Default for ContextMenu {
     fn default() -> Self {
-        let completer = Box::new(DefaultCompleter::default());
-
         Self {
-            completer,
             active: false,
             color: MenuTextStyle::default(),
             default_details: DefaultColumnDetails::default(),
@@ -81,12 +77,6 @@ impl Default for ContextMenu {
 }
 
 impl ContextMenu {
-    /// Builder to assign Completer
-    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
-        self.completer = completer;
-        self
-    }
-
     /// Menu builder with new value for text style
     pub fn with_text_style(mut self, text_style: Style) -> Self {
         self.color.text_style = text_style;
@@ -158,16 +148,19 @@ impl Menu for ContextMenu {
     }
 
     /// Updates menu values
-    fn update_values(&mut self, line_buffer: &mut LineBuffer, _history: &dyn History) {
+    fn update_values(
+        &mut self,
+        line_buffer: &mut LineBuffer,
+        _history: &dyn History,
+        completer: &dyn Completer,
+    ) {
         // If there is a new line character in the line buffer, the completer
         // doesn't calculate the suggested values correctly. This happens when
         // editing a multiline buffer.
         // Also, by replacing the new line character with a space, the insert
         // position is maintain in the line buffer.
         let trimmed_buffer = line_buffer.get_buffer().replace("\n", " ");
-        self.values = self
-            .completer
-            .complete(trimmed_buffer.as_str(), line_buffer.offset());
+        self.values = completer.complete(trimmed_buffer.as_str(), line_buffer.offset());
         self.reset_position();
     }
 

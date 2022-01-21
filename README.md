@@ -1,6 +1,6 @@
 # A readline replacement written in Rust
 
-![GitHub](https://img.shields.io/github/license/nushell/reedline) 
+![GitHub](https://img.shields.io/github/license/nushell/reedline)
 [![Crates.io](https://img.shields.io/crates/v/reedline)](https://crates.io/crates/reedline)
 [![docs.rs](https://img.shields.io/docsrs/reedline)](https://docs.rs/reedline/)
 [![CI status](https://github.com/nushell/reedline/actions/workflows/ci.yml/badge.svg)](https://github.com/nushell/reedline/actions)
@@ -48,8 +48,8 @@ fn main() {
 // Configure reedline with custom keybindings
 
 //Cargo.toml
-//	[dependencies]
-//	crossterm = "*"
+//  [dependencies]
+//  crossterm = "*"
 
 use {
   crossterm::event::{KeyCode, KeyModifiers},
@@ -58,7 +58,7 @@ use {
 
 let mut keybindings = default_emacs_keybindings();
 keybindings.add_binding(
-	KeyModifiers::ALT,
+  KeyModifiers::ALT,
   KeyCode::Char('m'),
   vec![EditCommand::BackspaceWord],
 );
@@ -75,11 +75,11 @@ use reedline::{FileBackedHistory, Reedline};
 
 let history = Box::new(
   FileBackedHistory::with_file(5, "history.txt".into())
-  	.expect("Error configuring history with file"),
+    .expect("Error configuring history with file"),
 );
 let mut line_editor = Reedline::create()?
-	.with_history(history)
-	.expect("Error configuring reedline with history");
+  .with_history(history)
+  .expect("Error configuring reedline with history");
 ```
 
 ### Integrate with custom Highlighter
@@ -99,12 +99,12 @@ let mut line_editor =
 Reedline::create()?.with_highlighter(Box::new(ExampleHighlighter::new(commands)));
 ```
 
-### Integrate with custom Tab-Handler
+### Integrate with custom tab completion
 
 ```rust,no_run
 // Create a reedline object with tab completions support
 
-use reedline::{DefaultCompleter, CircularCompletionHandler, Reedline};
+use reedline::{DefaultCompleter, Reedline};
 
 let commands = vec![
   "test".into(),
@@ -114,9 +114,7 @@ let commands = vec![
 ];
 let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
-let mut line_editor = Reedline::create()?.with_completion_action_handler(Box::new(
-  CircularCompletionHandler::default().with_completer(completer),
-));
+let mut line_editor = Reedline::create()?.with_completer(completer);
 ```
 
 ### Integrate with custom Hinter
@@ -125,8 +123,8 @@ let mut line_editor = Reedline::create()?.with_completion_action_handler(Box::ne
 // Create a reedline object with in-line hint support
 
 //Cargo.toml
-//	[dependencies]
-//	nu-ansi-term = "*"
+//  [dependencies]
+//  nu-ansi-term = "*"
 
 use {
   nu_ansi_term::{Color, Style},

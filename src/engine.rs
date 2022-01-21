@@ -1,14 +1,13 @@
-use crate::{enums::EventStatus, menu::Menu};
-
 use {
     crate::{
-        completion::{CircularCompletionHandler, CompletionActionHandler},
+        completion::{CircularCompletionHandler, Completer, DefaultCompleter},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
-        enums::ReedlineEvent,
+        enums::{EventStatus, ReedlineEvent},
         highlighter::SimpleMatchHighlighter,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
+        menu::Menu,
         painter::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         text_manipulation, DefaultValidator, EditCommand, ExampleHighlighter, Highlighter, Prompt,
@@ -85,8 +84,11 @@ pub struct Reedline {
     // Edit Mode: Vi, Emacs
     edit_mode: Box<dyn EditMode>,
 
-    // Perform action when user hits tab
-    tab_handler: Box<dyn CompletionActionHandler>,
+    // Provides the tab completions
+    completer: Box<dyn Completer>,
+
+    // Performs bash style circular rotation through the available completions
+    circular_completion_handler: CircularCompletionHandler,
 
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
@@ -119,6 +121,7 @@ impl Reedline {
         let history = Box::new(FileBackedHistory::default());
         let painter = Painter::new(std::io::BufWriter::new(std::io::stderr()));
         let buffer_highlighter = Box::new(ExampleHighlighter::default());
+        let completer = Box::new(DefaultCompleter::default());
         let hinter = Box::new(DefaultHinter::default());
         let validator = Box::new(DefaultValidator);
         let edit_mode = Box::new(Emacs::default());
@@ -129,7 +132,8 @@ impl Reedline {
             input_mode: InputMode::Regular,
             painter,
             edit_mode,
-            tab_handler: Box::new(CircularCompletionHandler::default()),
+            completer,
+            circular_completion_handler: CircularCompletionHandler::default(),
             highlighter: buffer_highlighter,
             hinter,
             hide_hints: false,
@@ -165,13 +169,13 @@ impl Reedline {
         self
     }
 
-    /// A builder to configure the completion action handler to use in your instance of the reedline engine
+    /// A builder to configure the tab completion
     /// # Example
     /// ```rust,no_run
     /// // Create a reedline object with tab completions support
     ///
     /// use std::io;
-    /// use reedline::{DefaultCompleter, CircularCompletionHandler, Reedline};
+    /// use reedline::{DefaultCompleter, Reedline};
     ///
     /// let commands = vec![
     ///   "test".into(),
@@ -181,16 +185,11 @@ impl Reedline {
     /// ];
     /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
     ///
-    /// let mut line_editor = Reedline::create()?.with_completion_action_handler(Box::new(
-    ///   CircularCompletionHandler::default().with_completer(completer),
-    /// ));
+    /// let mut line_editor = Reedline::create()?.with_completer(completer);
     /// # Ok::<(), io::Error>(())
     /// ```
-    pub fn with_completion_action_handler(
-        mut self,
-        tab_handler: Box<dyn CompletionActionHandler>,
-    ) -> Reedline {
-        self.tab_handler = tab_handler;
+    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Reedline {
+        self.completer = completer;
         self
     }
 
@@ -286,6 +285,7 @@ impl Reedline {
     /// A builder which configures the painter for debug mode
     pub fn with_debug_mode(mut self) -> Reedline {
         self.painter = Painter::new_with_debug(std::io::BufWriter::new(std::io::stderr()));
+
         self
     }
 
@@ -539,7 +539,11 @@ impl Reedline {
                 for menu in self.menus.iter_mut() {
                     if menu.name() == name.as_str() && all_inactive {
                         menu.activate();
-                        menu.update_values(self.editor.line_buffer(), self.history.as_ref());
+                        menu.update_values(
+                            self.editor.line_buffer(),
+                            self.history.as_ref(),
+                            self.completer.as_ref(),
+                        );
 
                         if menu.get_num_values() == 1 {
                             return self.handle_editor_event(prompt, ReedlineEvent::Enter);
@@ -621,7 +625,11 @@ impl Reedline {
                 for menu in self.menus.iter_mut() {
                     if menu.is_active() {
                         menu.next_page();
-                        menu.update_values(self.editor.line_buffer(), self.history.as_ref());
+                        menu.update_values(
+                            self.editor.line_buffer(),
+                            self.history.as_ref(),
+                            self.completer.as_ref(),
+                        );
                         self.buffer_paint(prompt)?;
 
                         return Ok(EventStatus::Handled);
@@ -633,7 +641,11 @@ impl Reedline {
                 for menu in self.menus.iter_mut() {
                     if menu.is_active() {
                         menu.previous_page();
-                        menu.update_values(self.editor.line_buffer(), self.history.as_ref());
+                        menu.update_values(
+                            self.editor.line_buffer(),
+                            self.history.as_ref(),
+                            self.completer.as_ref(),
+                        );
                         self.buffer_paint(prompt)?;
 
                         return Ok(EventStatus::Handled);
@@ -669,7 +681,8 @@ impl Reedline {
             }
             ReedlineEvent::ActionHandler => {
                 let line_buffer = self.editor.line_buffer();
-                self.tab_handler.handle(line_buffer);
+                self.circular_completion_handler
+                    .handle(self.completer.as_ref(), line_buffer);
                 self.buffer_paint(prompt)?;
                 Ok(EventStatus::Handled)
             }
@@ -729,7 +742,11 @@ impl Reedline {
                 self.run_edit_commands(&commands);
                 for menu in self.menus.iter_mut() {
                     if menu.is_active() {
-                        menu.update_values(self.editor.line_buffer(), self.history.as_ref());
+                        menu.update_values(
+                            self.editor.line_buffer(),
+                            self.history.as_ref(),
+                            self.completer.as_ref(),
+                        );
                     }
                 }
 

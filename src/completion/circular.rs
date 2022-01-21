@@ -1,42 +1,16 @@
-use crate::{core_editor::LineBuffer, Completer, CompletionActionHandler, DefaultCompleter};
+use crate::{core_editor::LineBuffer, Completer};
 
 /// A simple handler that will do a cycle-based rotation through the options given by the Completer
 pub struct CircularCompletionHandler {
-    completer: Box<dyn Completer>,
     initial_line: LineBuffer,
     index: usize,
 
     last_buffer: Option<LineBuffer>,
 }
 
-impl CircularCompletionHandler {
-    /// Build a `CircularCompletionHandler` configured to use a specific completer
-    ///
-    /// # Arguments
-    ///
-    /// * `completer`    The completion logic to use
-    ///
-    /// # Example
-    /// ```
-    /// use reedline::{CircularCompletionHandler, DefaultCompleter, Completer, Span};
-    ///
-    /// let mut completer = DefaultCompleter::default();
-    /// completer.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
-    /// assert_eq!(
-    ///     completer.complete("te",2),
-    ///     vec![(Span { start: 0, end: 2 }, "test".into())]);
-    ///
-    /// let mut completions = CircularCompletionHandler::default().with_completer(Box::new(completer));
-    /// ```
-    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> CircularCompletionHandler {
-        self.completer = completer;
-        self
-    }
-}
 impl Default for CircularCompletionHandler {
     fn default() -> Self {
         CircularCompletionHandler {
-            completer: Box::new(DefaultCompleter::default()),
             initial_line: LineBuffer::new(),
             index: 0,
             last_buffer: None,
@@ -48,16 +22,13 @@ impl CircularCompletionHandler {
     fn reset_index(&mut self) {
         self.index = 0;
     }
-}
-
-impl CompletionActionHandler for CircularCompletionHandler {
     // With this function we handle the tab events.
     //
     // If completions vector is not empty we proceed to replace
     //  in the line_buffer only the specified range of characters.
     // If internal index is 0 it means that is the first tab event pressed.
     // If internal index is greater than completions vector, we bring it back to 0.
-    fn handle(&mut self, present_buffer: &mut LineBuffer) {
+    pub(crate) fn handle(&mut self, completer: &dyn Completer, present_buffer: &mut LineBuffer) {
         if let Some(last_buffer) = &self.last_buffer {
             if last_buffer != present_buffer {
                 self.reset_index();
@@ -72,9 +43,7 @@ impl CompletionActionHandler for CircularCompletionHandler {
             *present_buffer = self.initial_line.clone();
         }
 
-        let completions = self
-            .completer
-            .complete(present_buffer.get_buffer(), present_buffer.offset());
+        let completions = completer.complete(present_buffer.get_buffer(), present_buffer.offset());
 
         if !completions.is_empty() {
             match self.index {
@@ -101,13 +70,14 @@ impl CompletionActionHandler for CircularCompletionHandler {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::DefaultCompleter;
     use pretty_assertions::assert_eq;
 
-    fn get_tab_handler_with(values: Vec<&'_ str>) -> CircularCompletionHandler {
+    fn get_completer(values: Vec<&'_ str>) -> DefaultCompleter {
         let mut completer = DefaultCompleter::default();
         completer.insert(values.iter().map(|s| s.to_string()).collect());
 
-        CircularCompletionHandler::default().with_completer(Box::new(completer))
+        completer
     }
 
     fn buffer_with(content: &str) -> LineBuffer {
@@ -119,55 +89,59 @@ mod test {
 
     #[test]
     fn repetitive_calls_to_handle_works() {
-        let mut tab = get_tab_handler_with(vec!["login", "logout"]);
+        let mut tab = CircularCompletionHandler::default();
+        let comp = get_completer(vec!["login", "logout"]);
         let mut buf = buffer_with("lo");
-        tab.handle(&mut buf);
+        tab.handle(&comp, &mut buf);
 
         assert_eq!(buf, buffer_with("login"));
-        tab.handle(&mut buf);
+        tab.handle(&comp, &mut buf);
         assert_eq!(buf, buffer_with("logout"));
-        tab.handle(&mut buf);
+        tab.handle(&comp, &mut buf);
         assert_eq!(buf, buffer_with("lo"));
     }
 
     #[test]
     fn behaviour_with_hyphens_and_underscores() {
-        let mut tab = get_tab_handler_with(vec!["test-hyphen", "test_underscore"]);
+        let mut tab = CircularCompletionHandler::default();
+        let comp = get_completer(vec!["test-hyphen", "test_underscore"]);
         let mut buf = buffer_with("te");
-        tab.handle(&mut buf);
+        tab.handle(&comp, &mut buf);
 
         assert_eq!(buf, buffer_with("test"));
-        tab.handle(&mut buf);
+        tab.handle(&comp, &mut buf);
         assert_eq!(buf, buffer_with("te"));
     }
 
     #[test]
     fn auto_resets_on_new_query() {
-        let mut tab = get_tab_handler_with(vec!["login", "logout", "exit"]);
+        let mut tab = CircularCompletionHandler::default();
+        let comp = get_completer(vec!["login", "logout", "exit"]);
         let mut buf = buffer_with("log");
-        tab.handle(&mut buf);
+        tab.handle(&comp, &mut buf);
 
         assert_eq!(buf, buffer_with("login"));
         let mut new_buf = buffer_with("ex");
-        tab.handle(&mut new_buf);
+        tab.handle(&comp, &mut new_buf);
         assert_eq!(new_buf, buffer_with("exit"));
     }
 
     #[test]
     fn same_string_different_places() {
-        let mut tab = get_tab_handler_with(vec!["that", "this"]);
+        let mut tab = CircularCompletionHandler::default();
+        let comp = get_completer(vec!["that", "this"]);
         let mut buf = buffer_with("th is my test th");
 
         // Hitting tab after `th` fills the first completion `that`
         buf.set_insertion_point(2);
-        tab.handle(&mut buf);
+        tab.handle(&comp, &mut buf);
         let mut expected_buffer = buffer_with("that is my test th");
         expected_buffer.set_insertion_point(4);
         assert_eq!(buf, expected_buffer);
 
         // updating the cursor to end should reset the completions
         buf.set_insertion_point(18);
-        tab.handle(&mut buf);
+        tab.handle(&comp, &mut buf);
         assert_eq!(buf, buffer_with("that is my test that"));
     }
 }

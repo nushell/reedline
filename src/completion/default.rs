@@ -11,7 +11,7 @@ use crate::{Completer, Span};
 /// # Example
 ///
 /// ```rust, no_run
-/// use reedline::{DefaultCompleter, CircularCompletionHandler, Reedline};
+/// use reedline::{DefaultCompleter, Reedline};
 ///
 /// let commands = vec![
 ///  "test".into(),
@@ -21,10 +21,7 @@ use crate::{Completer, Span};
 /// ];
 /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 ///
-/// let mut line_editor = Reedline::create().unwrap()
-///         .with_completion_action_handler(Box::new(
-///   CircularCompletionHandler::default().with_completer(completer),
-/// ));
+/// let mut line_editor = Reedline::create().unwrap().with_completer(completer);
 /// ```
 #[derive(Debug, Clone)]
 pub struct DefaultCompleter {

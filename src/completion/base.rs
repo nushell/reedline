@@ -1,5 +1,3 @@
-use crate::core_editor::LineBuffer;
-
 /// A span of source code, with positions in bytes
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub struct Span {
@@ -26,14 +24,6 @@ impl Span {
 
         Span { start, end }
     }
-}
-
-/// The handler for when the user begins a completion action, often using the tab key
-/// This handler will then present the options to the user, allowing them to navigate the options
-/// and pick the completion they want
-pub trait CompletionActionHandler: Send {
-    /// Handle the completion action from the given line buffer
-    fn handle(&mut self, line: &mut LineBuffer);
 }
 
 /// A trait that defines how to convert a line and position to a list of potential completions in that position.
