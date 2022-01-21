@@ -2,6 +2,8 @@ use nu_ansi_term::{ansi::RESET, Color, Style};
 
 use crate::{Completer, DefaultCompleter, LineBuffer, Span};
 
+use std::convert::TryFrom;
+
 /// Struct to store the menu style
 struct MenuTextStyle {
     selected_text_style: Style,
@@ -202,8 +204,10 @@ impl ContextMenu {
         let possible_cols = screen_width / self.working_details.col_width as u16;
         if possible_cols > self.default_details.columns {
             self.working_details.columns = self.default_details.columns;
-        } else {
+        } else if possible_cols > 0 {
             self.working_details.columns = possible_cols;
+        } else {
+            self.working_details.columns = 1;
         }
     }
 
@@ -224,8 +228,9 @@ impl ContextMenu {
 
     /// Calculates how many rows the Menu will use
     pub fn get_rows(&self) -> u16 {
-        let rows = self.get_values().len() as f64 / self.working_details.columns as f64;
-        rows.ceil() as u16
+        // TODO: Let's fail early for now
+        (u16::try_from(self.get_values().len()).unwrap() + self.working_details.columns - 1)
+            / self.working_details.columns
     }
 
     /// Minimum rows that should be displayed by the menu
