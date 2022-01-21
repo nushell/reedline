@@ -468,7 +468,7 @@ impl Reedline {
                 Ok(EventStatus::Exits(Signal::CtrlC))
             }
             ReedlineEvent::ClearScreen => Ok(EventStatus::Exits(Signal::CtrlL)),
-            ReedlineEvent::Enter | ReedlineEvent::Complete => {
+            ReedlineEvent::Enter | ReedlineEvent::HistoryHintComplete => {
                 if let Some(string) = self.history.string_at_cursor() {
                     self.editor.set_buffer(string);
                     self.editor.remember_undo_state(true);
@@ -602,8 +602,8 @@ impl Reedline {
                     Ok(EventStatus::Inapplicable)
                 }
             }
-            ReedlineEvent::Complete => {
-                let current_hint = self.hinter.current_hint();
+            ReedlineEvent::HistoryHintComplete => {
+                let current_hint = self.hinter.complete_hint();
                 if self.hints_active()
                     && !self.context_menu.is_active()
                     && self.editor.offset() == self.editor.get_buffer().len()

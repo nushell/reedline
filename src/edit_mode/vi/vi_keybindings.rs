@@ -40,7 +40,7 @@ pub fn default_vi_insert_keybindings() -> Keybindings {
         KM::NONE,
         KC::Right,
         ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::Complete,
+            ReedlineEvent::HistoryHintComplete,
             ReedlineEvent::MenuRight,
             ReedlineEvent::Right,
         ]),
