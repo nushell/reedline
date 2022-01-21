@@ -453,6 +453,20 @@ impl Reedline {
         event: ReedlineEvent,
     ) -> io::Result<EventStatus> {
         match event {
+            ReedlineEvent::UntilFound(events) => {
+                for event in events {
+                    match self.handle_history_search_event(prompt, event)? {
+                        EventStatus::Inapplicable => {
+                            // Try again with the next event handler
+                        }
+                        success => {
+                            return Ok(success);
+                        }
+                    }
+                }
+                // Exhausting the event handlers is still considered handled
+                Ok(EventStatus::Handled)
+            }
             ReedlineEvent::CtrlD => {
                 if self.editor.is_empty() {
                     self.input_mode = InputMode::Regular;
@@ -460,6 +474,7 @@ impl Reedline {
                     Ok(EventStatus::Exits(Signal::CtrlD))
                 } else {
                     self.run_history_commands(&[EditCommand::Delete]);
+                    self.repaint(prompt)?;
                     Ok(EventStatus::Handled)
                 }
             }
@@ -489,9 +504,7 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Repaint => {
-                if self.input_mode != InputMode::HistorySearch {
-                    self.buffer_paint(prompt)?;
-                }
+                self.repaint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Right => Ok(EventStatus::Handled),
@@ -510,11 +523,11 @@ impl Reedline {
                 self.repaint(prompt)?;
                 Ok(EventStatus::Handled)
             }
+            // TODO: Check if events should be handled
             ReedlineEvent::ContextMenu
             | ReedlineEvent::ActionHandler
             | ReedlineEvent::Paste(_)
             | ReedlineEvent::Multiple(_)
-            | ReedlineEvent::UntilFound(_)
             | ReedlineEvent::None
             | ReedlineEvent::Esc
             | ReedlineEvent::HistoryHintWordComplete
