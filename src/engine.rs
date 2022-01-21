@@ -301,7 +301,11 @@ impl Reedline {
 
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
-        self.edit_mode.edit_mode()
+        if self.context_menu.is_active() {
+            PromptEditMode::Menu
+        } else {
+            self.edit_mode.edit_mode()
+        }
     }
 
     /// Output the complete [`History`] chronologically with numbering to the terminal
@@ -531,10 +535,10 @@ impl Reedline {
             ReedlineEvent::ContextMenu => {
                 if !self.context_menu.is_active() {
                     self.context_menu.activate();
-                    let line_buffer = self.editor.line_buffer();
+                    self.context_menu.update_values(self.editor.line_buffer());
 
                     // If there is only one value in the menu, it can select be selected immediately
-                    if self.context_menu.get_num_values(line_buffer) == 1 {
+                    if self.context_menu.get_num_values() == 1 {
                         self.handle_editor_event(prompt, ReedlineEvent::Enter)
                     } else {
                         self.buffer_paint(prompt)?;
@@ -546,8 +550,7 @@ impl Reedline {
             }
             ReedlineEvent::MenuNext => {
                 if self.context_menu.is_active() {
-                    let line_buffer = self.editor.line_buffer();
-                    self.context_menu.move_next(line_buffer);
+                    self.context_menu.move_next();
                     self.buffer_paint(prompt)?;
                     Ok(EventStatus::Handled)
                 } else {
@@ -556,8 +559,7 @@ impl Reedline {
             }
             ReedlineEvent::MenuPrevious => {
                 if self.context_menu.is_active() {
-                    let line_buffer = self.editor.line_buffer();
-                    self.context_menu.move_previous(line_buffer);
+                    self.context_menu.move_previous();
                     self.buffer_paint(prompt)?;
                     Ok(EventStatus::Handled)
                 } else {
@@ -566,8 +568,7 @@ impl Reedline {
             }
             ReedlineEvent::MenuUp => {
                 if self.context_menu.is_active() {
-                    let line_buffer = self.editor.line_buffer();
-                    self.context_menu.move_up(line_buffer);
+                    self.context_menu.move_up();
                     self.buffer_paint(prompt)?;
                     Ok(EventStatus::Handled)
                 } else {
@@ -576,8 +577,7 @@ impl Reedline {
             }
             ReedlineEvent::MenuDown => {
                 if self.context_menu.is_active() {
-                    let line_buffer = self.editor.line_buffer();
-                    self.context_menu.move_down(line_buffer);
+                    self.context_menu.move_down();
                     self.buffer_paint(prompt)?;
                     Ok(EventStatus::Handled)
                 } else {
@@ -647,7 +647,7 @@ impl Reedline {
             ReedlineEvent::Enter => {
                 if self.context_menu.is_active() {
                     let line_buffer = self.editor.line_buffer();
-                    let value = self.context_menu.get_value(line_buffer);
+                    let value = self.context_menu.get_value();
                     if let Some((span, value)) = value {
                         let mut offset = line_buffer.offset();
                         offset += value.len() - (span.end - span.start);
@@ -685,6 +685,9 @@ impl Reedline {
             }
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands);
+                if self.context_menu.is_active() {
+                    self.context_menu.update_values(self.editor.line_buffer());
+                }
                 self.repaint(prompt)?;
                 Ok(EventStatus::Handled)
             }
@@ -1007,7 +1010,6 @@ impl Reedline {
                 &res_string,
                 "",
                 "",
-                self.editor.line_buffer(),
             );
 
             self.painter
@@ -1051,9 +1053,8 @@ impl Reedline {
         let hint = hint.replace("\n", "\r\n");
 
         let context_menu = if self.context_menu.is_active() {
-            let line_buffer = self.editor.line_buffer();
             self.context_menu
-                .update_working_details(line_buffer, self.painter.terminal_cols());
+                .update_working_details(self.painter.terminal_cols());
 
             Some(&self.context_menu)
         } else {
@@ -1067,7 +1068,6 @@ impl Reedline {
             &before_cursor,
             &after_cursor,
             &hint,
-            self.editor.line_buffer(),
         );
 
         self.painter

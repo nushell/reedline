@@ -1,7 +1,5 @@
 use {
-    crate::{
-        context_menu::ContextMenu, prompt::PromptEditMode, LineBuffer, Prompt, PromptHistorySearch,
-    },
+    crate::{context_menu::ContextMenu, prompt::PromptEditMode, Prompt, PromptHistorySearch},
     crossterm::{
         cursor::{self, MoveTo, MoveToColumn, MoveToRow, RestorePosition, SavePosition},
         style::{Print, ResetColor, SetForegroundColor},
@@ -31,7 +29,6 @@ pub struct PromptLines<'prompt> {
     before_cursor: &'prompt str,
     after_cursor: &'prompt str,
     hint: &'prompt str,
-    line_buffer: &'prompt LineBuffer,
 }
 
 impl<'prompt> PromptLines<'prompt> {
@@ -45,7 +42,6 @@ impl<'prompt> PromptLines<'prompt> {
         before_cursor: &'prompt str,
         after_cursor: &'prompt str,
         hint: &'prompt str,
-        line_buffer: &'prompt LineBuffer,
     ) -> Self {
         let prompt_str_left = prompt.render_prompt_left();
         let prompt_str_right = prompt.render_prompt_right();
@@ -62,7 +58,6 @@ impl<'prompt> PromptLines<'prompt> {
             before_cursor,
             after_cursor,
             hint,
-            line_buffer,
         }
     }
 
@@ -94,7 +89,7 @@ impl<'prompt> PromptLines<'prompt> {
         });
 
         if let Some(context_menu) = context_menu {
-            lines as u16 + context_menu.get_rows(self.line_buffer)
+            lines as u16 + context_menu.get_rows()
         } else {
             lines as u16
         }
@@ -403,14 +398,13 @@ impl Painter {
         // If there is not enough space to print the menu, then the starting
         // drawing point for the menu will overwrite the last rows in the buffer
         let starting_row = if cursor_distance >= screen_height.saturating_sub(1) {
-            screen_height.saturating_sub(context_menu.min_rows(lines.line_buffer))
+            screen_height.saturating_sub(context_menu.min_rows())
         } else {
             self.prompt_coords.prompt_start.1 + cursor_distance + 1
         };
 
         let remaining_lines = screen_height.saturating_sub(starting_row);
-        let menu_string =
-            context_menu.menu_string(remaining_lines, lines.line_buffer, use_ansi_coloring);
+        let menu_string = context_menu.menu_string(remaining_lines, use_ansi_coloring);
 
         self.stdout
             .queue(cursor::MoveTo(0, starting_row))?
@@ -515,7 +509,7 @@ impl Painter {
                     .lines()
                     .count()
                     .saturating_sub(extra_rows)
-                    .saturating_sub(context_menu.min_rows(lines.line_buffer) as usize);
+                    .saturating_sub(context_menu.min_rows() as usize);
                 Some(rows)
             } else {
                 None

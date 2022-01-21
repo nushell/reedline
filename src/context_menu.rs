@@ -115,6 +115,8 @@ pub struct ContextMenu {
     min_rows: u16,
     /// Working column details keep changing based on the collected values
     working_details: ColumnDetails,
+    /// Menu cached values
+    values: Vec<(Span, String)>,
     /// column position of the cursor. Starts from 0
     pub col_pos: u16,
     /// row position in the menu. Starts from 0
@@ -141,6 +143,7 @@ impl ContextMenu {
             completer,
             active: false,
             color: input.menu_style,
+            values: Vec::new(),
             min_rows: 3,
             col_pos: 0,
             row_pos: 0,
@@ -156,20 +159,25 @@ impl ContextMenu {
         self.reset_position();
     }
 
+    /// Updates menu values
+    pub fn update_values(&mut self, line_buffer: &mut LineBuffer) {
+        self.values = self
+            .completer
+            .complete(line_buffer.get_buffer(), line_buffer.offset());
+        self.reset_position();
+    }
+
     /// The working details for the menu changes based on the size of the lines
     /// collected from the completer
-    pub fn update_working_details(&mut self, line_buffer: &LineBuffer, screen_width: u16) {
-        let max_width = self
-            .get_values(line_buffer)
-            .iter()
-            .fold(0, |acc, (_, string)| {
-                let str_len = string.len() + self.working_details.col_padding;
-                if str_len > acc {
-                    str_len
-                } else {
-                    acc
-                }
-            });
+    pub fn update_working_details(&mut self, screen_width: u16) {
+        let max_width = self.get_values().iter().fold(0, |acc, (_, string)| {
+            let str_len = string.len() + self.working_details.col_padding;
+            if str_len > acc {
+                str_len
+            } else {
+                acc
+            }
+        });
 
         // If no default width if found, then the total screen width is used to estimate
         // the column width based on the default number of columns
@@ -205,39 +213,39 @@ impl ContextMenu {
     }
 
     /// Deactivates context menu
-    pub fn is_active(&mut self) -> bool {
+    pub fn is_active(&self) -> bool {
         self.active
     }
 
     /// Get number of values
-    pub fn get_num_values(&self, line_buffer: &LineBuffer) -> usize {
-        self.get_values(line_buffer).len()
+    pub fn get_num_values(&self) -> usize {
+        self.get_values().len()
     }
 
     /// Calculates how many rows the Menu will use
-    pub fn get_rows(&self, line_buffer: &LineBuffer) -> u16 {
-        let rows = self.get_values(line_buffer).len() as f64 / self.working_details.columns as f64;
+    pub fn get_rows(&self) -> u16 {
+        let rows = self.get_values().len() as f64 / self.working_details.columns as f64;
         rows.ceil() as u16
     }
 
     /// Minimum rows that should be displayed by the menu
-    pub fn min_rows(&self, line_buffer: &LineBuffer) -> u16 {
-        self.get_rows(line_buffer).min(self.min_rows)
+    pub fn min_rows(&self) -> u16 {
+        self.get_rows().min(self.min_rows)
     }
 
     /// Move menu cursor up
-    pub fn move_up(&mut self, line_buffer: &LineBuffer) {
+    pub fn move_up(&mut self) {
         self.row_pos = if let Some(row) = self.row_pos.checked_sub(1) {
             row
         } else {
-            self.get_rows(line_buffer).saturating_sub(1)
+            self.get_rows().saturating_sub(1)
         }
     }
 
     /// Move menu cursor left
-    pub fn move_down(&mut self, line_buffer: &LineBuffer) {
+    pub fn move_down(&mut self) {
         let new_row = self.row_pos + 1;
-        self.row_pos = if new_row >= self.get_rows(line_buffer) {
+        self.row_pos = if new_row >= self.get_rows() {
             0
         } else {
             new_row
@@ -264,7 +272,7 @@ impl ContextMenu {
     }
 
     /// Move menu cursor to the next element
-    pub fn move_next(&mut self, line_buffer: &LineBuffer) {
+    pub fn move_next(&mut self) {
         let mut new_col = self.col_pos + 1;
         let mut new_row = self.row_pos;
 
@@ -273,13 +281,13 @@ impl ContextMenu {
             new_col = 0;
         }
 
-        if new_row >= self.get_rows(line_buffer) {
+        if new_row >= self.get_rows() {
             new_row = 0;
             new_col = 0;
         }
 
         let position = new_row * self.get_cols() + new_col;
-        if position >= self.get_values(line_buffer).len() as u16 {
+        if position >= self.get_values().len() as u16 {
             self.reset_position();
         } else {
             self.col_pos = new_col;
@@ -288,7 +296,7 @@ impl ContextMenu {
     }
 
     /// Move menu cursor to the previous element
-    pub fn move_previous(&mut self, line_buffer: &LineBuffer) {
+    pub fn move_previous(&mut self) {
         let new_col = self.col_pos.checked_sub(1);
 
         let (new_col, new_row) = match new_col {
@@ -297,16 +305,15 @@ impl ContextMenu {
                 Some(row) => (self.get_cols().saturating_sub(1), row),
                 None => (
                     self.get_cols().saturating_sub(1),
-                    self.get_rows(line_buffer).saturating_sub(1),
+                    self.get_rows().saturating_sub(1),
                 ),
             },
         };
 
         let position = new_row * self.get_cols() + new_col;
-        if position >= self.get_values(line_buffer).len() as u16 {
-            self.col_pos =
-                (self.get_values(line_buffer).len() as u16 % self.get_cols()).saturating_sub(1);
-            self.row_pos = self.get_rows(line_buffer).saturating_sub(1);
+        if position >= self.get_values().len() as u16 {
+            self.col_pos = (self.get_values().len() as u16 % self.get_cols()).saturating_sub(1);
+            self.row_pos = self.get_rows().saturating_sub(1);
         } else {
             self.col_pos = new_col;
             self.row_pos = new_row;
@@ -314,17 +321,12 @@ impl ContextMenu {
     }
 
     /// Get selected value from filler
-    pub fn get_value(&self, line_buffer: &LineBuffer) -> Option<(Span, String)> {
-        self.get_values(line_buffer).get(self.position()).cloned()
+    pub fn get_value(&self) -> Option<(Span, String)> {
+        self.get_values().get(self.position()).cloned()
     }
 
     /// Creates the menu representation as a string which will be painted by the painter
-    pub fn menu_string(
-        &self,
-        remaining_lines: u16,
-        line_buffer: &LineBuffer,
-        use_ansi_coloring: bool,
-    ) -> String {
+    pub fn menu_string(&self, remaining_lines: u16, use_ansi_coloring: bool) -> String {
         // The skip values represent the number of lines that should be skipped
         // while printing the menu
         let skip_values = if self.row_pos >= remaining_lines {
@@ -339,7 +341,7 @@ impl ContextMenu {
         // This reduces the flickering when printing the menu
         let available_values = (remaining_lines * self.get_cols()) as usize;
 
-        self.get_values(line_buffer)
+        self.get_values()
             .iter()
             .skip(skip_values)
             .take(available_values)
@@ -383,9 +385,8 @@ impl ContextMenu {
     }
 
     /// Gets values from filler that will be displayed in the menu
-    fn get_values(&self, line_buffer: &LineBuffer) -> Vec<(Span, String)> {
-        self.completer
-            .complete(line_buffer.get_buffer(), line_buffer.offset())
+    fn get_values(&self) -> &Vec<(Span, String)> {
+        &self.values
     }
 
     /// Returns working details columns
