@@ -40,7 +40,7 @@ pub fn default_vi_insert_keybindings() -> Keybindings {
         KM::NONE,
         KC::Right,
         ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::Complete,
+            ReedlineEvent::HistoryHintComplete,
             ReedlineEvent::MenuRight,
             ReedlineEvent::Right,
         ]),
@@ -53,6 +53,15 @@ pub fn default_vi_insert_keybindings() -> Keybindings {
 
     kb.add_binding(KM::CONTROL, KC::Char('c'), ReedlineEvent::CtrlC);
     kb.add_binding(KM::CONTROL, KC::Char('r'), ReedlineEvent::SearchHistory);
+    kb.add_binding(KM::CONTROL, KC::Left, edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Right,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::HistoryHintWordComplete,
+            edit_bind(EC::MoveWordRight),
+        ]),
+    );
 
     kb.add_binding(
         KM::NONE,

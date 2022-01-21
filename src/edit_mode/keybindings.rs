@@ -79,7 +79,14 @@ pub fn default_emacs_keybindings() -> Keybindings {
 
     // CTRL
     kb.add_binding(KM::CONTROL, KC::Left, edit_bind(EC::MoveWordLeft));
-    kb.add_binding(KM::CONTROL, KC::Right, edit_bind(EC::MoveWordRight));
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Right,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::HistoryHintWordComplete,
+            edit_bind(EC::MoveWordRight),
+        ]),
+    );
     kb.add_binding(KM::CONTROL, KC::Delete, edit_bind(EC::DeleteWord));
     kb.add_binding(KM::CONTROL, KC::Backspace, edit_bind(EC::BackspaceWord));
     kb.add_binding(KM::CONTROL, KC::End, edit_bind(EC::MoveToEnd));
@@ -108,7 +115,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
         KM::CONTROL,
         KC::Char('f'),
         ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::Complete,
+            ReedlineEvent::HistoryHintComplete,
             ReedlineEvent::MenuRight,
             ReedlineEvent::Right,
         ]),
@@ -127,13 +134,27 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
     kb.add_binding(KM::CONTROL, KC::Char('l'), ReedlineEvent::ClearScreen);
     kb.add_binding(KM::ALT, KC::Char('b'), edit_bind(EC::MoveWordLeft));
-    kb.add_binding(KM::ALT, KC::Char('f'), edit_bind(EC::MoveWordRight));
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('f'),
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::HistoryHintWordComplete,
+            edit_bind(EC::MoveWordRight),
+        ]),
+    );
     kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
     kb.add_binding(KM::ALT, KC::Char('u'), edit_bind(EC::UppercaseWord));
     kb.add_binding(KM::ALT, KC::Char('l'), edit_bind(EC::LowercaseWord));
     kb.add_binding(KM::ALT, KC::Char('c'), edit_bind(EC::CapitalizeChar));
     kb.add_binding(KM::ALT, KC::Left, edit_bind(EC::MoveWordLeft));
-    kb.add_binding(KM::ALT, KC::Right, edit_bind(EC::MoveWordRight));
+    kb.add_binding(
+        KM::ALT,
+        KC::Right,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::HistoryHintWordComplete,
+            edit_bind(EC::MoveWordRight),
+        ]),
+    );
     kb.add_binding(KM::ALT, KC::Delete, edit_bind(EC::DeleteWord));
     kb.add_binding(KM::ALT, KC::Backspace, edit_bind(EC::BackspaceWord));
 
@@ -159,7 +180,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
         KM::NONE,
         KC::Right,
         ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::Complete,
+            ReedlineEvent::HistoryHintComplete,
             ReedlineEvent::MenuRight,
             ReedlineEvent::Right,
         ]),

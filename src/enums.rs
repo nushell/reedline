@@ -216,8 +216,11 @@ pub enum ReedlineEvent {
     /// Trigger context menu
     ContextMenu,
 
-    /// Completes hint
-    Complete,
+    /// Complete history hint (default in full)
+    HistoryHintComplete,
+
+    /// Complete a single token/word of the history hint
+    HistoryHintWordComplete,
 
     /// Action event
     ActionHandler,

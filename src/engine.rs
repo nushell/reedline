@@ -453,6 +453,20 @@ impl Reedline {
         event: ReedlineEvent,
     ) -> io::Result<EventStatus> {
         match event {
+            ReedlineEvent::UntilFound(events) => {
+                for event in events {
+                    match self.handle_history_search_event(prompt, event)? {
+                        EventStatus::Inapplicable => {
+                            // Try again with the next event handler
+                        }
+                        success => {
+                            return Ok(success);
+                        }
+                    }
+                }
+                // Exhausting the event handlers is still considered handled
+                Ok(EventStatus::Handled)
+            }
             ReedlineEvent::CtrlD => {
                 if self.editor.is_empty() {
                     self.input_mode = InputMode::Regular;
@@ -460,6 +474,7 @@ impl Reedline {
                     Ok(EventStatus::Exits(Signal::CtrlD))
                 } else {
                     self.run_history_commands(&[EditCommand::Delete]);
+                    self.repaint(prompt)?;
                     Ok(EventStatus::Handled)
                 }
             }
@@ -468,7 +483,7 @@ impl Reedline {
                 Ok(EventStatus::Exits(Signal::CtrlC))
             }
             ReedlineEvent::ClearScreen => Ok(EventStatus::Exits(Signal::CtrlL)),
-            ReedlineEvent::Enter | ReedlineEvent::Complete => {
+            ReedlineEvent::Enter | ReedlineEvent::HistoryHintComplete => {
                 if let Some(string) = self.history.string_at_cursor() {
                     self.editor.set_buffer(string);
                     self.editor.remember_undo_state(true);
@@ -489,9 +504,7 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Repaint => {
-                if self.input_mode != InputMode::HistorySearch {
-                    self.buffer_paint(prompt)?;
-                }
+                self.repaint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Right => Ok(EventStatus::Handled),
@@ -510,13 +523,14 @@ impl Reedline {
                 self.repaint(prompt)?;
                 Ok(EventStatus::Handled)
             }
+            // TODO: Check if events should be handled
             ReedlineEvent::ContextMenu
             | ReedlineEvent::ActionHandler
             | ReedlineEvent::Paste(_)
             | ReedlineEvent::Multiple(_)
-            | ReedlineEvent::UntilFound(_)
             | ReedlineEvent::None
             | ReedlineEvent::Esc
+            | ReedlineEvent::HistoryHintWordComplete
             | ReedlineEvent::MenuNext
             | ReedlineEvent::MenuPrevious
             | ReedlineEvent::MenuUp
@@ -602,15 +616,28 @@ impl Reedline {
                     Ok(EventStatus::Inapplicable)
                 }
             }
-            ReedlineEvent::Complete => {
-                let current_hint = self.hinter.current_hint();
+            ReedlineEvent::HistoryHintComplete => {
+                let current_hint = self.hinter.complete_hint();
                 if self.hints_active()
                     && !self.context_menu.is_active()
                     && self.editor.offset() == self.editor.get_buffer().len()
                     && !current_hint.is_empty()
                 {
-                    self.editor.clear_to_end();
                     self.run_edit_commands(&[EditCommand::InsertString(current_hint)]);
+                    self.buffer_paint(prompt)?;
+                    Ok(EventStatus::Handled)
+                } else {
+                    Ok(EventStatus::Inapplicable)
+                }
+            }
+            ReedlineEvent::HistoryHintWordComplete => {
+                let current_hint_part = self.hinter.next_hint_token();
+                if self.hints_active()
+                    && !self.context_menu.is_active()
+                    && self.editor.offset() == self.editor.get_buffer().len()
+                    && !current_hint_part.is_empty()
+                {
+                    self.run_edit_commands(&[EditCommand::InsertString(current_hint_part)]);
                     self.buffer_paint(prompt)?;
                     Ok(EventStatus::Handled)
                 } else {

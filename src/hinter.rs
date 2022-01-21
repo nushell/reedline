@@ -7,6 +7,8 @@ use {
 /// Hints are often shown in-line as part of the buffer, showing the user text they can accept or ignore
 pub trait Hinter: Send {
     /// Handle the hinting duty by using the line, position, and current history
+    ///
+    /// Returns the formatted output to show the user
     fn handle(
         &mut self,
         line: &str,
@@ -15,8 +17,12 @@ pub trait Hinter: Send {
         use_ansi_coloring: bool,
     ) -> String;
 
-    /// Return the current hint being shown to the user
-    fn current_hint(&self) -> String;
+    /// Return the current hint unformatted to perform the completion of the full hint
+    fn complete_hint(&self) -> String;
+
+    /// Return the first semantic token of the hint
+    /// for incremental completion
+    fn next_hint_token(&self) -> String;
 }
 
 /// A default example hinter that use the completions or the history to show a hint to the user
@@ -51,8 +57,26 @@ impl Hinter for DefaultHinter {
         }
     }
 
-    fn current_hint(&self) -> String {
+    fn complete_hint(&self) -> String {
         self.current_hint.clone()
+    }
+
+    fn next_hint_token(&self) -> String {
+        let mut reached_content = false;
+        let result: String = self
+            .current_hint
+            .chars()
+            .take_while(|c| match (c.is_whitespace(), reached_content) {
+                (true, true) => false,
+                (true, false) => true,
+                (false, true) => true,
+                (false, false) => {
+                    reached_content = true;
+                    true
+                }
+            })
+            .collect();
+        result
     }
 }
 
