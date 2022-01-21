@@ -517,6 +517,7 @@ impl Reedline {
             | ReedlineEvent::UntilFound(_)
             | ReedlineEvent::None
             | ReedlineEvent::Esc
+            | ReedlineEvent::HistoryHintWordComplete
             | ReedlineEvent::MenuNext
             | ReedlineEvent::MenuPrevious
             | ReedlineEvent::MenuUp
@@ -610,6 +611,20 @@ impl Reedline {
                     && !current_hint.is_empty()
                 {
                     self.run_edit_commands(&[EditCommand::InsertString(current_hint)]);
+                    self.buffer_paint(prompt)?;
+                    Ok(EventStatus::Handled)
+                } else {
+                    Ok(EventStatus::Inapplicable)
+                }
+            }
+            ReedlineEvent::HistoryHintWordComplete => {
+                let current_hint_part = self.hinter.next_hint_token();
+                if self.hints_active()
+                    && !self.context_menu.is_active()
+                    && self.editor.offset() == self.editor.get_buffer().len()
+                    && !current_hint_part.is_empty()
+                {
+                    self.run_edit_commands(&[EditCommand::InsertString(current_hint_part)]);
                     self.buffer_paint(prompt)?;
                     Ok(EventStatus::Handled)
                 } else {

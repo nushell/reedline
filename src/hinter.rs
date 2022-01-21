@@ -19,6 +19,10 @@ pub trait Hinter: Send {
 
     /// Return the current hint unformatted to perform the completion of the full hint
     fn complete_hint(&self) -> String;
+
+    /// Return the first semantic token of the hint
+    /// for incremental completion
+    fn next_hint_token(&self) -> String;
 }
 
 /// A default example hinter that use the completions or the history to show a hint to the user
@@ -55,6 +59,24 @@ impl Hinter for DefaultHinter {
 
     fn complete_hint(&self) -> String {
         self.current_hint.clone()
+    }
+
+    fn next_hint_token(&self) -> String {
+        let mut reached_content = false;
+        let result: String = self
+            .current_hint
+            .chars()
+            .take_while(|c| match (c.is_whitespace(), reached_content) {
+                (true, true) => false,
+                (true, false) => true,
+                (false, true) => true,
+                (false, false) => {
+                    reached_content = true;
+                    true
+                }
+            })
+            .collect();
+        result
     }
 }
 
