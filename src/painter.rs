@@ -522,7 +522,7 @@ impl Painter {
         self.stdout.queue(SavePosition)?;
 
         if let Some(context_menu) = context_menu {
-            // TODO: Also solve the dificult problem of displaying (parts of)
+            // TODO: Also solve the difficult problem of displaying (parts of)
             // the content after the cursor with the completion menu
             self.print_context_menu(context_menu, lines, use_ansi_coloring)?;
         } else {
