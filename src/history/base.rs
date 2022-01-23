@@ -44,4 +44,7 @@ pub trait History: Send {
 
     /// Query the values in the history entries
     fn query_entries(&self, search: &str) -> Vec<String>;
+
+    /// Max number of values that can be queried from the history
+    fn max_values(&self) -> usize;
 }

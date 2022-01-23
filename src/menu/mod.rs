@@ -80,6 +80,10 @@ pub trait Menu {
         false
     }
 
+    fn multiline_marker(&self) -> &str {
+        ":::"
+    }
+
     /// Creates the menu representation as a string which will be painted by the painter
     fn menu_string(&self, remaining_lines: u16, use_ansi_coloring: bool) -> String {
         // The skip values represent the number of lines that should be skipped
@@ -107,7 +111,7 @@ pub trait Menu {
                 let empty_space = self.get_width().saturating_sub(line.len());
 
                 // Final string with colors
-                let line = line.replace("\n", "\n:::");
+                let line = line.replace("\n", format!("\n{}", self.multiline_marker()).as_str());
                 let row_number = if self.print_enumerate() {
                     format!("{}: ", index)
                 } else {
@@ -129,9 +133,9 @@ pub trait Menu {
                     // If no ansi coloring is found, then the selection word is
                     // the line in uppercase
                     let line_str = if index == self.position() {
-                        format!(">{}", line.to_uppercase())
+                        format!("{}>{}", row_number, line.to_uppercase())
                     } else {
-                        line.to_lowercase()
+                        format!("{}{}", row_number, line)
                     };
 
                     // Final string with formatting

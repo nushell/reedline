@@ -5,28 +5,32 @@ use crate::{History, LineBuffer, Span};
 
 /// Context menu definition
 pub struct HistoryMenu {
-    active: bool,
     /// Context menu coloring
     color: MenuTextStyle,
+    /// Number of history records presented per page
+    page_size: usize,
+    /// History menu active status
+    active: bool,
     /// Menu cached values collected when querying the history
     values: Vec<(Span, String)>,
     /// row position in the menu. Starts from 0
     row_pos: u16,
     /// The collected values from the history are split in pages
     page: usize,
-    /// Number of history records presented per page
-    page_size: usize,
+    /// Max size of the history when querying without a search buffer
+    history_size: Option<usize>,
 }
 
 impl Default for HistoryMenu {
     fn default() -> Self {
         Self {
-            active: false,
             color: MenuTextStyle::default(),
+            page_size: 5,
+            active: false,
             values: Vec::new(),
             row_pos: 0,
             page: 0,
-            page_size: 3,
+            history_size: None,
         }
     }
 }
@@ -35,24 +39,32 @@ impl HistoryMenu {
     /// Creates a context menu with a filler
     pub fn new_with() -> Self {
         Self {
-            active: false,
             color: MenuTextStyle::default(),
+            page_size: 5,
+            active: false,
             values: Vec::new(),
             row_pos: 0,
             page: 0,
-            page_size: 3,
+            history_size: None,
         }
     }
 
     /// Collecting the value from the history to be shown in the menu
     pub fn update_values(&mut self, history: &dyn History, line_buffer: &LineBuffer) {
         let values = if line_buffer.is_empty() {
+            // When there is no line buffer it is better to get a partial list of all
+            // the values that can be queried from the history. There is no point to
+            // replicate the whole entries list in the history menu
+            self.history_size = Some(history.max_values());
             history
                 .iter_chronologic()
                 .rev()
+                .skip(self.page * self.page_size)
+                .take(self.page_size)
                 .cloned()
                 .collect::<Vec<String>>()
         } else {
+            self.history_size = None;
             history.query_entries(line_buffer.get_buffer())
         };
 
@@ -110,7 +122,12 @@ impl HistoryMenu {
 
     /// Moves to the next history page
     pub fn next_page(&mut self) {
-        let pages = (self.values.len() / self.page_size) + 1;
+        let values = match self.history_size {
+            Some(size) => size,
+            None => self.values.len(),
+        };
+
+        let pages = (values / self.page_size) + 1;
         if self.page + 1 < pages {
             self.page += 1;
         }
@@ -124,7 +141,6 @@ impl HistoryMenu {
     /// Reset menu position
     fn reset_position(&mut self) {
         self.row_pos = 0;
-        self.page = 0;
     }
 }
 
@@ -171,17 +187,21 @@ impl Menu for HistoryMenu {
 
     /// Gets values from filler that will be displayed in the menu
     fn get_values(&self) -> &[(Span, String)] {
-        let start = self.page * self.page_size;
-
-        // The end of the slice of values is limited by the total number of
-        // values in the queried values
-        let end = start + self.page_size;
-        let end = end.min(self.values.len());
-
-        if end >= start {
-            &self.values[start..end]
+        if self.history_size.is_some() {
+            &self.values
         } else {
-            &self.values[end.saturating_sub(self.page_size)..end]
+            let start = self.page * self.page_size;
+
+            // The end of the slice of values is limited by the total number of
+            // values in the queried values
+            let end = start + self.page_size;
+            let end = end.min(self.values.len());
+
+            if end >= start {
+                &self.values[start..end]
+            } else {
+                &self.values[end.saturating_sub(self.page_size)..end]
+            }
         }
     }
 

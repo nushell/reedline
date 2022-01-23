@@ -660,6 +660,8 @@ impl Reedline {
             ReedlineEvent::HistoryPageNext => {
                 if self.history_menu.is_active() {
                     self.history_menu.next_page();
+                    self.history_menu
+                        .update_values(self.history.as_ref(), self.editor.line_buffer());
                     self.buffer_paint(prompt)?;
                     Ok(EventStatus::Handled)
                 } else {
@@ -669,6 +671,8 @@ impl Reedline {
             ReedlineEvent::HistoryPagePrevious => {
                 if self.history_menu.is_active() {
                     self.history_menu.previous_page();
+                    self.history_menu
+                        .update_values(self.history.as_ref(), self.editor.line_buffer());
                     self.buffer_paint(prompt)?;
                     Ok(EventStatus::Handled)
                 } else {
