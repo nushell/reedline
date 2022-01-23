@@ -161,9 +161,15 @@ impl ContextMenu {
 
     /// Updates menu values
     pub fn update_values(&mut self, line_buffer: &mut LineBuffer) {
+        // If there is an new line character in the line buffer, the completer
+        // doesn't calculate the suggested values correctly. This happens when
+        // editing a multiline buffer.
+        // Also, by replacing the new line character with a space, the insert
+        // position is maintain in the line buffer.
+        let trimmed_buffer = line_buffer.get_buffer().replace("\n", " ");
         self.values = self
             .completer
-            .complete(line_buffer.get_buffer(), line_buffer.offset());
+            .complete(trimmed_buffer.as_str(), line_buffer.offset());
         self.reset_position();
     }
 
@@ -201,7 +207,7 @@ impl ContextMenu {
         // that could be fitted in the screen with the calculated column width
         let possible_cols = screen_width / self.working_details.col_width as u16;
         if possible_cols > self.default_details.columns {
-            self.working_details.columns = self.default_details.columns;
+            self.working_details.columns = self.default_details.columns.max(1);
         } else {
             self.working_details.columns = possible_cols;
         }
@@ -224,8 +230,8 @@ impl ContextMenu {
 
     /// Calculates how many rows the Menu will use
     pub fn get_rows(&self) -> u16 {
-        let rows = self.get_values().len() as f64 / self.working_details.columns as f64;
-        rows.ceil() as u16
+        let rows = self.get_values().len() as u16 / self.get_cols();
+        rows + 1
     }
 
     /// Minimum rows that should be displayed by the menu
@@ -257,14 +263,14 @@ impl ContextMenu {
         self.col_pos = if let Some(row) = self.col_pos.checked_sub(1) {
             row
         } else {
-            self.working_details.columns.saturating_sub(1)
+            self.get_cols().saturating_sub(1)
         }
     }
 
     /// Move menu cursor element
     pub fn move_right(&mut self) {
         let new_col = self.col_pos + 1;
-        self.col_pos = if new_col >= self.working_details.columns {
+        self.col_pos = if new_col >= self.get_cols() {
             0
         } else {
             new_col
@@ -276,7 +282,7 @@ impl ContextMenu {
         let mut new_col = self.col_pos + 1;
         let mut new_row = self.row_pos;
 
-        if new_col >= self.working_details.columns {
+        if new_col >= self.get_cols() {
             new_row += 1;
             new_col = 0;
         }
@@ -340,7 +346,6 @@ impl ContextMenu {
         // rather than looping through the values and printing multiple things
         // This reduces the flickering when printing the menu
         let available_values = (remaining_lines * self.get_cols()) as usize;
-
         self.get_values()
             .iter()
             .skip(skip_values)
@@ -391,7 +396,7 @@ impl ContextMenu {
 
     /// Returns working details columns
     fn get_cols(&self) -> u16 {
-        self.working_details.columns
+        self.working_details.columns.max(1)
     }
 
     /// Returns working details col width
@@ -407,7 +412,7 @@ impl ContextMenu {
 
     /// Menu index based on column and row position
     fn position(&self) -> usize {
-        let position = self.row_pos * self.working_details.columns + self.col_pos;
+        let position = self.row_pos * self.get_cols() + self.col_pos;
         position as usize
     }
 
@@ -422,7 +427,7 @@ impl ContextMenu {
 
     /// End of line for menu
     fn end_of_line(&self, column: u16) -> &str {
-        if column == self.working_details.columns.saturating_sub(1) {
+        if column == self.get_cols().saturating_sub(1) {
             "\r\n"
         } else {
             ""
