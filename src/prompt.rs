@@ -12,6 +12,7 @@ pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
 pub static DEFAULT_VI_INSERT_PROMPT_INDICATOR: &str = ": ";
 pub static DEFAULT_VI_VISUAL_PROMPT_INDICATOR: &str = "v ";
 pub static DEFAULT_MENU_INDICATOR: &str = "| ";
+pub static DEFAULT_HISTORY_INDICATOR: &str = "? ";
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 
 /// The current success/failure of the history search
@@ -58,6 +59,9 @@ pub enum PromptEditMode {
 
     /// Menu edit mode
     Menu,
+
+    /// History menu edit mode
+    HistoryMenu,
 }
 
 /// The vi-specific modes that the prompt can be in
@@ -118,6 +122,7 @@ impl Prompt for DefaultPrompt {
                 DefaultPrompt::default_wrapped_custom_string(&str).into()
             }
             PromptEditMode::Menu => DEFAULT_MENU_INDICATOR.into(),
+            PromptEditMode::HistoryMenu => DEFAULT_HISTORY_INDICATOR.into(),
         }
     }
 
@@ -133,7 +138,7 @@ impl Prompt for DefaultPrompt {
             PromptHistorySearchStatus::Passing => "",
             PromptHistorySearchStatus::Failing => "failing ",
         };
-        // NOTE: magic strings, givent there is logic on how these compose I am not sure if it
+        // NOTE: magic strings, given there is logic on how these compose I am not sure if it
         // is worth extracting in to static constant
         Cow::Owned(format!(
             "({}reverse-search: {}) ",

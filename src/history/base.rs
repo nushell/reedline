@@ -20,7 +20,7 @@ pub trait History: Send {
     /// Append entry to the history, if capacity management is part of the implementation may perform that as well
     fn append(&mut self, entry: &str);
 
-    /// Chronologic interation over all entries present in the history
+    /// Chronologic interaction over all entries present in the history
     fn iter_chronologic(&self) -> Iter<'_, String>;
 
     /// This moves the cursor backwards respecting the navigation query that is set
@@ -41,4 +41,7 @@ pub trait History: Send {
 
     /// Poll the current [`HistoryNavigationQuery`] mode
     fn get_navigation(&self) -> HistoryNavigationQuery;
+
+    /// Query the values in the history entries
+    fn query_entries(&self, search: &str) -> Vec<String>;
 }

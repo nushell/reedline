@@ -119,6 +119,14 @@ impl History for FileBackedHistory {
     fn get_navigation(&self) -> HistoryNavigationQuery {
         self.query.clone()
     }
+
+    fn query_entries(&self, search: &str) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.contains(search))
+            .cloned()
+            .collect::<Vec<String>>()
+    }
 }
 
 impl FileBackedHistory {
