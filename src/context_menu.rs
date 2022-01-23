@@ -161,7 +161,7 @@ impl ContextMenu {
 
     /// Updates menu values
     pub fn update_values(&mut self, line_buffer: &mut LineBuffer) {
-        // If there is an new line character in the line buffer, the completer
+        // If there is a new line character in the line buffer, the completer
         // doesn't calculate the suggested values correctly. This happens when
         // editing a multiline buffer.
         // Also, by replacing the new line character with a space, the insert
