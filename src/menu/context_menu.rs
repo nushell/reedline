@@ -46,7 +46,7 @@ impl ColumnDetails {
     }
 }
 
-/// This is a struct used to set default values for the context menu.
+/// Struct used to set default values for the context menu.
 /// The default values, such as style or column details are used to calculate
 /// the working values for the menu
 #[derive(Default)]
@@ -133,7 +133,6 @@ impl ContextMenu {
             min_rows: 3,
             col_pos: 0,
             row_pos: 0,
-            // default_details: DefaultColumnDetails::new(4, Some(20), 2),
             default_details: input.default_details,
             working_details,
         }

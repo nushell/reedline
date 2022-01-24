@@ -121,13 +121,18 @@ impl History for FileBackedHistory {
     }
 
     fn query_entries(&self, search: &str) -> Vec<String> {
-        self.entries
+        let mut values = self
+            .entries
             .iter()
             .filter(|entry| entry.contains(search))
             .cloned()
             .collect::<HashSet<_>>()
             .into_iter()
-            .collect()
+            .collect::<Vec<String>>();
+
+        values.sort();
+
+        values
     }
 
     fn max_values(&self) -> usize {
