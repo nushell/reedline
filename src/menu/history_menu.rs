@@ -1,6 +1,6 @@
 use nu_ansi_term::Style;
 
-use super::{Menu, MenuTextStyle};
+use super::{parse_row_selector, Menu, MenuTextStyle};
 use crate::{History, LineBuffer, Span};
 
 /// Struct to store the menu style
@@ -85,7 +85,7 @@ impl HistoryMenu {
             self.reset_position();
             self.create_values_no_query(history)
         } else {
-            let (query, row) = self.parse_row_selector(line_buffer.get_buffer());
+            let (query, row) = parse_row_selector(line_buffer.get_buffer(), &self.row_char);
 
             self.update_row_pos(row);
             if query.is_empty() {
@@ -117,42 +117,6 @@ impl HistoryMenu {
                 self.row_pos = row as u16
             }
         }
-    }
-
-    fn parse_row_selector<'buffer>(&self, buffer: &'buffer str) -> (&'buffer str, Option<usize>) {
-        let mut input = buffer.chars().peekable();
-
-        let mut index = 0;
-        while let Some(char) = input.next() {
-            if char == self.row_char {
-                match input.peek() {
-                    Some(x) if x.is_ascii_digit() => {
-                        let mut count: usize = 0;
-                        while let Some(&c) = input.peek() {
-                            if c.is_ascii_digit() {
-                                let c = c.to_digit(10).expect("already checked if is a digit");
-                                let _ = input.next();
-                                count *= 10;
-                                count += c as usize;
-                            } else {
-                                return (&buffer[0..index], Some(count));
-                            }
-                        }
-                        return (&buffer[0..index], Some(count));
-                    }
-                    None => {
-                        return (&buffer[0..index], None);
-                    }
-                    _ => {
-                        index += 1;
-                        continue;
-                    }
-                }
-            }
-            index += 1
-        }
-
-        (buffer, None)
     }
 
     fn create_values_no_query(&mut self, history: &dyn History) -> Vec<String> {
@@ -298,71 +262,5 @@ impl Menu for HistoryMenu {
     /// Returns working details col width
     fn get_width(&self) -> usize {
         50
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_row_test() {
-        let history_menu = HistoryMenu::default();
-        let input = "search:6";
-        let (res, row) = history_menu.parse_row_selector(input);
-
-        assert_eq!(res, "search");
-        assert_eq!(row, Some(6))
-    }
-
-    #[test]
-    fn parse_row_other_marker_test() {
-        let menu_input = HistoryMenuInput::default().with_row_char('?');
-        let history_menu = HistoryMenu::new_with(menu_input);
-        let input = "search?9";
-        let (res, row) = history_menu.parse_row_selector(input);
-
-        assert_eq!(res, "search");
-        assert_eq!(row, Some(9))
-    }
-
-    #[test]
-    fn parse_row_double_test() {
-        let history_menu = HistoryMenu::default();
-        let input = "ls | where:16";
-        let (res, row) = history_menu.parse_row_selector(input);
-
-        assert_eq!(res, "ls | where");
-        assert_eq!(row, Some(16))
-    }
-
-    #[test]
-    fn parse_row_empty_test() {
-        let history_menu = HistoryMenu::default();
-        let input = ":10";
-        let (res, row) = history_menu.parse_row_selector(input);
-
-        assert_eq!(res, "");
-        assert_eq!(row, Some(10))
-    }
-
-    #[test]
-    fn parse_row_fake_indicator_test() {
-        let history_menu = HistoryMenu::default();
-        let input = "let a: another :10";
-        let (res, row) = history_menu.parse_row_selector(input);
-
-        assert_eq!(res, "let a: another ");
-        assert_eq!(row, Some(10))
-    }
-
-    #[test]
-    fn parse_row_no_number_test() {
-        let history_menu = HistoryMenu::default();
-        let input = "let a: another:";
-        let (res, row) = history_menu.parse_row_selector(input);
-
-        assert_eq!(res, "let a: another");
-        assert_eq!(row, None)
     }
 }

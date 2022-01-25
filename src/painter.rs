@@ -89,7 +89,19 @@ impl<'prompt> PromptLines<'prompt> {
         });
 
         if let Some(menu) = menu {
-            lines as u16 + menu.get_rows()
+            let wrap_lines = menu.get_values().iter().fold(0, |acc, (_, line)| {
+                let wrap = match strip_ansi_escapes::strip(line) {
+                    Ok(line) => estimated_wrapped_line_count(
+                        &String::from_utf8_lossy(&line),
+                        terminal_columns,
+                    ),
+                    Err(_) => estimated_wrapped_line_count(line, terminal_columns),
+                };
+
+                acc + wrap
+            });
+
+            lines as u16 + menu.get_rows() + wrap_lines as u16
         } else {
             lines as u16
         }

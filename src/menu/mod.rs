@@ -150,3 +150,101 @@ pub trait Menu {
             .collect()
     }
 }
+
+fn parse_row_selector<'buffer>(
+    buffer: &'buffer str,
+    marker: &char,
+) -> (&'buffer str, Option<usize>) {
+    let mut input = buffer.chars().peekable();
+
+    let mut index = 0;
+    while let Some(char) = input.next() {
+        if &char == marker {
+            match input.peek() {
+                Some(x) if x.is_ascii_digit() => {
+                    let mut count: usize = 0;
+                    while let Some(&c) = input.peek() {
+                        if c.is_ascii_digit() {
+                            let c = c.to_digit(10).expect("already checked if is a digit");
+                            let _ = input.next();
+                            count *= 10;
+                            count += c as usize;
+                        } else {
+                            return (&buffer[0..index], Some(count));
+                        }
+                    }
+                    return (&buffer[0..index], Some(count));
+                }
+                None => {
+                    return (&buffer[0..index], None);
+                }
+                _ => {
+                    index += 1;
+                    continue;
+                }
+            }
+        }
+        index += 1
+    }
+
+    (buffer, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_row_test() {
+        let input = "search:6";
+        let (res, row) = parse_row_selector(input, &':');
+
+        assert_eq!(res, "search");
+        assert_eq!(row, Some(6))
+    }
+
+    #[test]
+    fn parse_row_other_marker_test() {
+        let input = "search?9";
+        let (res, row) = parse_row_selector(input, &'?');
+
+        assert_eq!(res, "search");
+        assert_eq!(row, Some(9))
+    }
+
+    #[test]
+    fn parse_row_double_test() {
+        let input = "ls | where:16";
+        let (res, row) = parse_row_selector(input, &':');
+
+        assert_eq!(res, "ls | where");
+        assert_eq!(row, Some(16))
+    }
+
+    #[test]
+    fn parse_row_empty_test() {
+        let input = ":10";
+        let (res, row) = parse_row_selector(input, &':');
+
+        assert_eq!(res, "");
+        assert_eq!(row, Some(10))
+    }
+
+    #[test]
+    fn parse_row_fake_indicator_test() {
+        let input = "let a: another :10";
+        let (res, row) = parse_row_selector(input, &':');
+
+        assert_eq!(res, "let a: another ");
+        assert_eq!(row, Some(10))
+    }
+
+    #[test]
+    fn parse_row_no_number_test() {
+        let input = "let a: another:";
+        let (res, row) = parse_row_selector(input, &':');
+
+        assert_eq!(res, "let a: another");
+        assert_eq!(row, None)
+    }
+}
