@@ -1,21 +1,7 @@
-use nu_ansi_term::{ansi::RESET, Color, Style};
+use nu_ansi_term::Style;
 
+use super::{Menu, MenuTextStyle};
 use crate::{Completer, DefaultCompleter, LineBuffer, Span};
-
-/// Struct to store the menu style
-struct MenuTextStyle {
-    selected_text_style: Style,
-    text_style: Style,
-}
-
-impl Default for MenuTextStyle {
-    fn default() -> Self {
-        Self {
-            selected_text_style: Color::Green.bold().reverse(),
-            text_style: Color::DarkGray.normal(),
-        }
-    }
-}
 
 /// Default values used as reference for the menu. These values are set during
 /// the initial declaration of the menu and are always kept as reference for the
@@ -60,7 +46,7 @@ impl ColumnDetails {
     }
 }
 
-/// This is a struct used to set default values for the context menu.
+/// Struct used to set default values for the context menu.
 /// The default values, such as style or column details are used to calculate
 /// the working values for the menu
 #[derive(Default)]
@@ -118,9 +104,9 @@ pub struct ContextMenu {
     /// Menu cached values
     values: Vec<(Span, String)>,
     /// column position of the cursor. Starts from 0
-    pub col_pos: u16,
+    col_pos: u16,
     /// row position in the menu. Starts from 0
-    pub row_pos: u16,
+    row_pos: u16,
 }
 
 impl Default for ContextMenu {
@@ -147,16 +133,9 @@ impl ContextMenu {
             min_rows: 3,
             col_pos: 0,
             row_pos: 0,
-            // default_details: DefaultColumnDetails::new(4, Some(20), 2),
             default_details: input.default_details,
             working_details,
         }
-    }
-
-    /// Activates context menu
-    pub fn activate(&mut self) {
-        self.active = true;
-        self.reset_position();
     }
 
     /// Updates menu values
@@ -213,6 +192,12 @@ impl ContextMenu {
         }
     }
 
+    /// Activates context menu
+    pub fn activate(&mut self) {
+        self.active = true;
+        self.reset_position();
+    }
+
     /// Deactivates context menu
     pub fn deactivate(&mut self) {
         self.active = false
@@ -221,22 +206,6 @@ impl ContextMenu {
     /// Deactivates context menu
     pub fn is_active(&self) -> bool {
         self.active
-    }
-
-    /// Get number of values
-    pub fn get_num_values(&self) -> usize {
-        self.get_values().len()
-    }
-
-    /// Calculates how many rows the Menu will use
-    pub fn get_rows(&self) -> u16 {
-        let rows = self.get_values().len() as u16 / self.get_cols();
-        rows + 1
-    }
-
-    /// Minimum rows that should be displayed by the menu
-    pub fn min_rows(&self) -> u16 {
-        self.get_rows().min(self.min_rows)
     }
 
     /// Move menu cursor up
@@ -326,71 +295,40 @@ impl ContextMenu {
         }
     }
 
-    /// Get selected value from filler
-    pub fn get_value(&self) -> Option<(Span, String)> {
-        self.get_values().get(self.position()).cloned()
+    /// Reset menu position
+    fn reset_position(&mut self) {
+        self.col_pos = 0;
+        self.row_pos = 0;
+    }
+}
+
+impl Menu for ContextMenu {
+    /// Text style for menu
+    fn text_style(&self, index: usize) -> String {
+        if index == self.position() {
+            self.color.selected_text_style.prefix().to_string()
+        } else {
+            self.color.text_style.prefix().to_string()
+        }
     }
 
-    /// Creates the menu representation as a string which will be painted by the painter
-    pub fn menu_string(&self, remaining_lines: u16, use_ansi_coloring: bool) -> String {
-        // The skip values represent the number of lines that should be skipped
-        // while printing the menu
-        let skip_values = if self.row_pos >= remaining_lines {
-            let skip_lines = self.row_pos.saturating_sub(remaining_lines) + 1;
-            (skip_lines * self.get_cols()) as usize
-        } else {
-            0
-        };
+    /// Minimum rows that should be displayed by the menu
+    fn min_rows(&self) -> u16 {
+        self.get_rows().min(self.min_rows)
+    }
 
-        // It seems that crossterm prefers to have a complete string ready to be printed
-        // rather than looping through the values and printing multiple things
-        // This reduces the flickering when printing the menu
-        let available_values = (remaining_lines * self.get_cols()) as usize;
-        self.get_values()
-            .iter()
-            .skip(skip_values)
-            .take(available_values)
-            .enumerate()
-            .map(|(index, (_, line))| {
-                // Correcting the enumerate index based on the number of skipped values
-                let index = index + skip_values;
-                let column = index as u16 % self.get_cols();
-                let empty_space = self.working_details.col_width.saturating_sub(line.len());
+    /// Row position
+    fn row_pos(&self) -> u16 {
+        self.row_pos
+    }
 
-                // Final string with colors
-                if use_ansi_coloring {
-                    format!(
-                        "{}{}{}{:empty$}{}",
-                        self.text_style(index),
-                        &line,
-                        RESET,
-                        "",
-                        self.end_of_line(column),
-                        empty = empty_space
-                    )
-                } else {
-                    // If no ansi coloring is found, then the selection word is
-                    // the line in uppercase
-                    let line_str = if index == self.position() {
-                        format!(">{}", line.to_uppercase())
-                    } else {
-                        line.to_lowercase()
-                    };
-
-                    // Final string with formatting
-                    format!(
-                        "{:width$}{}",
-                        line_str,
-                        self.end_of_line(column),
-                        width = self.get_width()
-                    )
-                }
-            })
-            .collect()
+    /// Column position
+    fn col_pos(&self) -> u16 {
+        self.col_pos
     }
 
     /// Gets values from filler that will be displayed in the menu
-    fn get_values(&self) -> &Vec<(Span, String)> {
+    fn get_values(&self) -> &[(Span, String)] {
         &self.values
     }
 
@@ -402,35 +340,5 @@ impl ContextMenu {
     /// Returns working details col width
     fn get_width(&self) -> usize {
         self.working_details.col_width
-    }
-
-    /// Reset menu position
-    fn reset_position(&mut self) {
-        self.col_pos = 0;
-        self.row_pos = 0;
-    }
-
-    /// Menu index based on column and row position
-    fn position(&self) -> usize {
-        let position = self.row_pos * self.get_cols() + self.col_pos;
-        position as usize
-    }
-
-    /// Text style for menu
-    fn text_style(&self, index: usize) -> String {
-        if index == self.position() {
-            self.color.selected_text_style.prefix().to_string()
-        } else {
-            self.color.text_style.prefix().to_string()
-        }
-    }
-
-    /// End of line for menu
-    fn end_of_line(&self, column: u16) -> &str {
-        if column == self.get_cols().saturating_sub(1) {
-            "\r\n"
-        } else {
-            ""
-        }
     }
 }

@@ -1,5 +1,5 @@
 use {
-    crate::{context_menu::ContextMenu, prompt::PromptEditMode, Prompt, PromptHistorySearch},
+    crate::{menu::Menu, prompt::PromptEditMode, Prompt, PromptHistorySearch},
     crossterm::{
         cursor::{self, MoveTo, MoveToColumn, MoveToRow, RestorePosition, SavePosition},
         style::{Print, ResetColor, SetForegroundColor},
@@ -64,8 +64,8 @@ impl<'prompt> PromptLines<'prompt> {
     /// The required lines to paint the buffer are calculated by counting the
     /// number of newlines in all the strings that form the prompt and buffer.
     /// The plus 1 is to indicate that there should be at least one line.
-    fn required_lines(&self, terminal_columns: u16, context_menu: Option<&ContextMenu>) -> u16 {
-        let input = if context_menu.is_none() {
+    fn required_lines(&self, terminal_columns: u16, menu: Option<&dyn Menu>) -> u16 {
+        let input = if menu.is_none() {
             self.prompt_str_left.to_string()
                 + &self.prompt_indicator
                 + self.before_cursor
@@ -88,8 +88,20 @@ impl<'prompt> PromptLines<'prompt> {
             acc + 1 + wrap
         });
 
-        if let Some(context_menu) = context_menu {
-            lines as u16 + context_menu.get_rows()
+        if let Some(menu) = menu {
+            let wrap_lines = menu.get_values().iter().fold(0, |acc, (_, line)| {
+                let wrap = match strip_ansi_escapes::strip(line) {
+                    Ok(line) => estimated_wrapped_line_count(
+                        &String::from_utf8_lossy(&line),
+                        terminal_columns,
+                    ),
+                    Err(_) => estimated_wrapped_line_count(line, terminal_columns),
+                };
+
+                acc + wrap
+            });
+
+            lines as u16 + menu.get_rows() + wrap_lines as u16
         } else {
             lines as u16
         }
@@ -298,7 +310,7 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         lines: PromptLines,
-        context_menu: Option<&ContextMenu>,
+        menu: Option<&dyn Menu>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
         self.stdout.queue(cursor::Hide)?;
@@ -307,7 +319,7 @@ impl Painter {
         let (screen_width, screen_height) = self.terminal_size;
 
         // Lines and distance parameters
-        let required_lines = lines.required_lines(screen_width, context_menu);
+        let required_lines = lines.required_lines(screen_width, menu);
         let remaining_lines = self.remaining_lines();
 
         // Marking the painter state as larger buffer to avoid animations
@@ -330,9 +342,9 @@ impl Painter {
             .queue(Clear(ClearType::FromCursorDown))?;
 
         if self.large_buffer {
-            self.print_large_buffer(prompt, &lines, context_menu, use_ansi_coloring)?
+            self.print_large_buffer(prompt, &lines, menu, use_ansi_coloring)?
         } else {
-            self.print_small_buffer(prompt, &lines, context_menu, use_ansi_coloring)?
+            self.print_small_buffer(prompt, &lines, menu, use_ansi_coloring)?
         }
 
         // The last_required_lines is used to move the cursor at the end where stdout
@@ -386,9 +398,9 @@ impl Painter {
         Ok(())
     }
 
-    fn print_context_menu(
+    fn print_menu(
         &mut self,
-        context_menu: &ContextMenu,
+        menu: &dyn Menu,
         lines: &PromptLines,
         use_ansi_coloring: bool,
     ) -> Result<()> {
@@ -398,13 +410,13 @@ impl Painter {
         // If there is not enough space to print the menu, then the starting
         // drawing point for the menu will overwrite the last rows in the buffer
         let starting_row = if cursor_distance >= screen_height.saturating_sub(1) {
-            screen_height.saturating_sub(context_menu.min_rows())
+            screen_height.saturating_sub(menu.min_rows())
         } else {
             self.prompt_coords.prompt_start.1 + cursor_distance + 1
         };
 
         let remaining_lines = screen_height.saturating_sub(starting_row);
-        let menu_string = context_menu.menu_string(remaining_lines, use_ansi_coloring);
+        let menu_string = menu.menu_string(remaining_lines, use_ansi_coloring);
 
         self.stdout
             .queue(cursor::MoveTo(0, starting_row))?
@@ -418,7 +430,7 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         lines: &PromptLines,
-        context_menu: Option<&ContextMenu>,
+        menu: Option<&dyn Menu>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
         // print our prompt with color
@@ -442,8 +454,8 @@ impl Painter {
             .queue(SavePosition)?
             .queue(Print(&lines.after_cursor))?;
 
-        if let Some(context_menu) = context_menu {
-            self.print_context_menu(context_menu, lines, use_ansi_coloring)?;
+        if let Some(menu) = menu {
+            self.print_menu(menu, lines, use_ansi_coloring)?;
         } else {
             self.stdout.queue(Print(&lines.hint))?;
         }
@@ -455,7 +467,7 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         lines: &PromptLines,
-        context_menu: Option<&ContextMenu>,
+        menu: Option<&dyn Menu>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
         let (screen_width, screen_height) = self.terminal_size;
@@ -502,14 +514,14 @@ impl Painter {
         // The minimum number of lines from the menu are removed from the buffer if there is no more
         // space to print the menu. This will only happen if the cursor is at the last line and
         // it is a large buffer
-        let offset = context_menu.and_then(|context_menu| {
+        let offset = menu.and_then(|menu| {
             if cursor_distance >= screen_height.saturating_sub(1) {
                 let rows = lines
                     .before_cursor
                     .lines()
                     .count()
                     .saturating_sub(extra_rows)
-                    .saturating_sub(context_menu.min_rows() as usize);
+                    .saturating_sub(menu.min_rows() as usize);
                 Some(rows)
             } else {
                 None
@@ -521,10 +533,10 @@ impl Painter {
         self.stdout.queue(Print(before_cursor_skipped))?;
         self.stdout.queue(SavePosition)?;
 
-        if let Some(context_menu) = context_menu {
+        if let Some(menu) = menu {
             // TODO: Also solve the difficult problem of displaying (parts of)
             // the content after the cursor with the completion menu
-            self.print_context_menu(context_menu, lines, use_ansi_coloring)?;
+            self.print_menu(menu, lines, use_ansi_coloring)?;
         } else {
             // Selecting lines for the hint
             // The -1 subtraction is done because the remaining lines consider the line where the

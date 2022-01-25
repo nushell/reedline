@@ -223,5 +223,5 @@ pub use hinter::{DefaultHinter, Hinter};
 mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
 
-mod context_menu;
-pub use context_menu::{ContextMenu, ContextMenuInput};
+mod menu;
+pub use menu::{ContextMenu, ContextMenuInput, HistoryMenu, HistoryMenuInput};

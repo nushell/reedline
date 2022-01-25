@@ -1,15 +1,15 @@
-use crate::enums::EventStatus;
+use crate::{enums::EventStatus, menu::Menu, HistoryMenu, HistoryMenuInput};
 
 use {
     crate::{
         completion::{CircularCompletionHandler, CompletionActionHandler},
-        context_menu::{ContextMenu, ContextMenuInput},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
         enums::ReedlineEvent,
         highlighter::SimpleMatchHighlighter,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
+        menu::{ContextMenu, ContextMenuInput},
         painter::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         text_manipulation, Completer, DefaultValidator, EditCommand, ExampleHighlighter,
@@ -104,6 +104,9 @@ pub struct Reedline {
 
     // Context Menu
     context_menu: ContextMenu,
+
+    // History Menu
+    history_menu: HistoryMenu,
 }
 
 impl Drop for Reedline {
@@ -122,9 +125,9 @@ impl Reedline {
         let buffer_highlighter = Box::new(ExampleHighlighter::default());
         let hinter = Box::new(DefaultHinter::default());
         let validator = Box::new(DefaultValidator);
-        let context_menu = ContextMenu::default();
-
         let edit_mode = Box::new(Emacs::default());
+        let context_menu = ContextMenu::default();
+        let history_menu = HistoryMenu::default();
 
         let reedline = Reedline {
             editor: Editor::default(),
@@ -140,6 +143,7 @@ impl Reedline {
             animate: true,
             use_ansi_coloring: true,
             context_menu,
+            history_menu,
         };
 
         Ok(reedline)
@@ -299,10 +303,19 @@ impl Reedline {
         self
     }
 
+    /// A builder which configures the history menu
+    pub fn with_history_menu(mut self, input: HistoryMenuInput) -> Reedline {
+        self.history_menu = HistoryMenu::new_with(input);
+
+        self
+    }
+
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
         if self.context_menu.is_active() {
             PromptEditMode::Menu
+        } else if self.history_menu.is_active() {
+            PromptEditMode::HistoryMenu
         } else {
             self.edit_mode.edit_mode()
         }
@@ -531,6 +544,11 @@ impl Reedline {
             | ReedlineEvent::None
             | ReedlineEvent::Esc
             | ReedlineEvent::HistoryHintWordComplete
+            | ReedlineEvent::HistoryMenu
+            | ReedlineEvent::HistoryMenuNext
+            | ReedlineEvent::HistoryMenuPrevious
+            | ReedlineEvent::HistoryPageNext
+            | ReedlineEvent::HistoryPagePrevious
             | ReedlineEvent::MenuNext
             | ReedlineEvent::MenuPrevious
             | ReedlineEvent::MenuUp
@@ -547,7 +565,7 @@ impl Reedline {
     ) -> io::Result<EventStatus> {
         match event {
             ReedlineEvent::ContextMenu => {
-                if !self.context_menu.is_active() {
+                if !self.context_menu.is_active() && !self.history_menu.is_active() {
                     self.context_menu.activate();
                     self.context_menu.update_values(self.editor.line_buffer());
 
@@ -616,6 +634,58 @@ impl Reedline {
                     Ok(EventStatus::Inapplicable)
                 }
             }
+            ReedlineEvent::HistoryMenu => {
+                if !self.history_menu.is_active() && !self.context_menu.is_active() {
+                    self.history_menu.activate();
+
+                    self.history_menu
+                        .update_values(self.history.as_ref(), self.editor.line_buffer());
+                    self.buffer_paint(prompt)?;
+                    Ok(EventStatus::Handled)
+                } else {
+                    Ok(EventStatus::Inapplicable)
+                }
+            }
+            ReedlineEvent::HistoryMenuNext => {
+                if self.history_menu.is_active() {
+                    self.history_menu.move_next();
+                    self.buffer_paint(prompt)?;
+                    Ok(EventStatus::Handled)
+                } else {
+                    Ok(EventStatus::Inapplicable)
+                }
+            }
+            ReedlineEvent::HistoryMenuPrevious => {
+                if self.history_menu.is_active() {
+                    self.history_menu.move_previous();
+                    self.buffer_paint(prompt)?;
+                    Ok(EventStatus::Handled)
+                } else {
+                    Ok(EventStatus::Inapplicable)
+                }
+            }
+            ReedlineEvent::HistoryPageNext => {
+                if self.history_menu.is_active() {
+                    self.history_menu.next_page();
+                    self.history_menu
+                        .update_values(self.history.as_ref(), self.editor.line_buffer());
+                    self.buffer_paint(prompt)?;
+                    Ok(EventStatus::Handled)
+                } else {
+                    Ok(EventStatus::Inapplicable)
+                }
+            }
+            ReedlineEvent::HistoryPagePrevious => {
+                if self.history_menu.is_active() {
+                    self.history_menu.previous_page();
+                    self.history_menu
+                        .update_values(self.history.as_ref(), self.editor.line_buffer());
+                    self.buffer_paint(prompt)?;
+                    Ok(EventStatus::Handled)
+                } else {
+                    Ok(EventStatus::Inapplicable)
+                }
+            }
             ReedlineEvent::HistoryHintComplete => {
                 let current_hint = self.hinter.complete_hint();
                 if self.hints_active()
@@ -652,6 +722,7 @@ impl Reedline {
             }
             ReedlineEvent::Esc => {
                 self.context_menu.deactivate();
+                self.history_menu.deactivate();
                 self.buffer_paint(prompt)?;
                 Ok(EventStatus::Handled)
             }
@@ -673,9 +744,8 @@ impl Reedline {
             ReedlineEvent::ClearScreen => Ok(EventStatus::Exits(Signal::CtrlL)),
             ReedlineEvent::Enter => {
                 if self.context_menu.is_active() {
-                    let line_buffer = self.editor.line_buffer();
-                    let value = self.context_menu.get_value();
-                    if let Some((span, value)) = value {
+                    if let Some((span, value)) = self.context_menu.get_value() {
+                        let line_buffer = self.editor.line_buffer();
                         let mut offset = line_buffer.offset();
                         offset += value.len() - (span.end - span.start);
 
@@ -684,6 +754,16 @@ impl Reedline {
                     }
 
                     self.context_menu.deactivate();
+                    self.buffer_paint(prompt)?;
+
+                    Ok(EventStatus::Handled)
+                } else if self.history_menu.is_active() {
+                    if let Some((_, value)) = self.history_menu.get_value() {
+                        let line_buffer = self.editor.line_buffer();
+                        line_buffer.set_buffer(value)
+                    }
+
+                    self.history_menu.deactivate();
                     self.buffer_paint(prompt)?;
 
                     Ok(EventStatus::Handled)
@@ -714,6 +794,9 @@ impl Reedline {
                 self.run_edit_commands(&commands);
                 if self.context_menu.is_active() {
                     self.context_menu.update_values(self.editor.line_buffer());
+                } else if self.history_menu.is_active() {
+                    self.history_menu
+                        .update_values(self.history.as_ref(), self.editor.line_buffer());
                 }
                 self.repaint(prompt)?;
                 Ok(EventStatus::Handled)
@@ -1079,11 +1162,13 @@ impl Reedline {
         let after_cursor = after_cursor.replace("\n", "\r\n");
         let hint = hint.replace("\n", "\r\n");
 
-        let context_menu = if self.context_menu.is_active() {
+        let menu = if self.context_menu.is_active() {
             self.context_menu
                 .update_working_details(self.painter.terminal_cols());
 
-            Some(&self.context_menu)
+            Some(&self.context_menu as &dyn Menu)
+        } else if self.history_menu.is_active() {
+            Some(&self.history_menu as &dyn Menu)
         } else {
             None
         };
@@ -1098,7 +1183,7 @@ impl Reedline {
         );
 
         self.painter
-            .repaint_buffer(prompt, lines, context_menu, self.use_ansi_coloring)
+            .repaint_buffer(prompt, lines, menu, self.use_ansi_coloring)
     }
 }
 

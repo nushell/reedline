@@ -213,9 +213,6 @@ pub enum ReedlineEvent {
     /// No op event
     None,
 
-    /// Trigger context menu
-    ContextMenu,
-
     /// Complete history hint (default in full)
     HistoryHintComplete,
 
@@ -295,6 +292,9 @@ pub enum ReedlineEvent {
     /// Test
     UntilFound(Vec<ReedlineEvent>),
 
+    /// Trigger context menu
+    ContextMenu,
+
     /// Next element in the menu
     MenuNext,
 
@@ -312,6 +312,21 @@ pub enum ReedlineEvent {
 
     /// Moves right in the menu
     MenuRight,
+
+    /// Trigger history menu
+    HistoryMenu,
+
+    /// Moves to next history menu
+    HistoryMenuNext,
+
+    /// Moves to previous history menu
+    HistoryMenuPrevious,
+
+    /// Move to the next history page
+    HistoryPageNext,
+
+    /// Move to the previous history page
+    HistoryPagePrevious,
 }
 
 pub(crate) enum EventStatus {
