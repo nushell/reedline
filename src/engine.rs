@@ -1,4 +1,4 @@
-use crate::{enums::EventStatus, menu::Menu, HistoryMenu};
+use crate::{enums::EventStatus, menu::Menu, HistoryMenu, HistoryMenuInput};
 
 use {
     crate::{
@@ -299,6 +299,13 @@ impl Reedline {
         input: ContextMenuInput,
     ) -> Reedline {
         self.context_menu = ContextMenu::new_with(completer, input);
+
+        self
+    }
+
+    /// A builder which configures the history menu
+    pub fn with_history_menu(mut self, input: HistoryMenuInput) -> Reedline {
+        self.history_menu = HistoryMenu::new_with(input);
 
         self
     }

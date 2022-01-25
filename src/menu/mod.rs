@@ -3,7 +3,7 @@ mod history_menu;
 
 use crate::Span;
 pub use context_menu::{ContextMenu, ContextMenuInput};
-pub use history_menu::HistoryMenu;
+pub use history_menu::{HistoryMenu, HistoryMenuInput};
 use nu_ansi_term::{ansi::RESET, Color, Style};
 
 /// Struct to store the menu style

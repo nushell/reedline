@@ -57,11 +57,19 @@ impl HistoryMenuInput {
         self
     }
 
+    /// Context Menu builder with new value for text style
+    pub fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
+        self.menu_style.selected_text_style = selected_text_style;
+        self
+    }
+
+    /// Menu input with page size
     pub fn with_page_size(mut self, page_size: usize) -> Self {
         self.page_size = page_size;
         self
     }
 
+    /// Menu input with row char
     pub fn with_row_char(mut self, row_char: char) -> Self {
         self.row_char = row_char;
         self
