@@ -439,9 +439,13 @@ impl Painter {
                 .queue(SetForegroundColor(prompt.get_prompt_color()))?;
         }
 
-        self.stdout
-            .queue(Print(&lines.prompt_str_left))?
-            .queue(Print(&lines.prompt_indicator))?;
+        self.stdout.queue(Print(&lines.prompt_str_left))?;
+
+        let prompt_indicator = match menu {
+            Some(menu) => menu.indicator(),
+            None => &lines.prompt_indicator,
+        };
+        self.stdout.queue(Print(prompt_indicator))?;
 
         self.print_right_prompt(lines)?;
 
@@ -479,7 +483,12 @@ impl Painter {
         // indicator is printed in the same line as the first line of the buffer
         let prompt_lines = lines.prompt_lines_with_wrap(screen_width) as usize;
 
-        let prompt_indicator_lines = lines.prompt_indicator.lines().count();
+        let prompt_indicator = match menu {
+            Some(menu) => menu.indicator(),
+            None => &lines.prompt_indicator,
+        };
+
+        let prompt_indicator_lines = prompt_indicator.lines().count();
         let before_cursor_lines = lines.before_cursor.lines().count();
         let total_lines_before = prompt_lines + prompt_indicator_lines + before_cursor_lines - 1;
 
@@ -504,7 +513,7 @@ impl Painter {
         // Adjusting extra_rows base on the calculated prompt line size
         let extra_rows = extra_rows.saturating_sub(prompt_lines);
 
-        let indicator_skipped = skip_buffer_lines(&lines.prompt_indicator, extra_rows, None);
+        let indicator_skipped = skip_buffer_lines(prompt_indicator, extra_rows, None);
         self.stdout.queue(Print(indicator_skipped))?;
 
         if use_ansi_coloring {

@@ -11,8 +11,6 @@ pub static DEFAULT_PROMPT_COLOR: Color = Color::Blue;
 pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
 pub static DEFAULT_VI_INSERT_PROMPT_INDICATOR: &str = ": ";
 pub static DEFAULT_VI_VISUAL_PROMPT_INDICATOR: &str = "v ";
-pub static DEFAULT_MENU_INDICATOR: &str = "| ";
-pub static DEFAULT_HISTORY_INDICATOR: &str = "? ";
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 
 /// The current success/failure of the history search
@@ -56,12 +54,6 @@ pub enum PromptEditMode {
 
     /// A custom mode
     Custom(String),
-
-    /// Menu edit mode
-    Menu,
-
-    /// History menu edit mode
-    HistoryMenu,
 }
 
 /// The vi-specific modes that the prompt can be in
@@ -121,8 +113,6 @@ impl Prompt for DefaultPrompt {
             PromptEditMode::Custom(str) => {
                 DefaultPrompt::default_wrapped_custom_string(&str).into()
             }
-            PromptEditMode::Menu => DEFAULT_MENU_INDICATOR.into(),
-            PromptEditMode::HistoryMenu => DEFAULT_HISTORY_INDICATOR.into(),
         }
     }
 
