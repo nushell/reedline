@@ -409,7 +409,8 @@ impl Reedline {
 
             for event in reedline_events.drain(..) {
                 if let EventStatus::Exits(signal) = self.handle_event(prompt, event)? {
-                    let _ = self.painter.move_cursor_to_end();
+                    // Move the cursor below the input area, for external commands or new read_line call
+                    self.painter.move_cursor_to_end()?;
                     return Ok(signal);
                 }
             }
@@ -723,7 +724,6 @@ impl Reedline {
                     self.buffer_paint(prompt)?;
                     self.append_to_history();
                     self.run_edit_commands(&[EditCommand::Clear]);
-                    self.painter.print_crlf()?;
                     self.editor.reset_undo_stack();
 
                     Ok(EventStatus::Exits(Signal::Success(buffer)))
