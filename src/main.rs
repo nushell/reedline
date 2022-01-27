@@ -1,18 +1,14 @@
-use crossterm::event::KeyModifiers;
-use reedline::{
-    default_vi_insert_keybindings, default_vi_normal_keybindings, ContextMenu, HistoryMenu,
-    Keybindings, ReedlineEvent,
-};
-
 use {
     crossterm::{
-        event::{poll, Event, KeyCode, KeyEvent},
+        event::{poll, Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, Result,
     },
     nu_ansi_term::{Color, Style},
     reedline::{
-        default_emacs_keybindings, DefaultCompleter, DefaultHinter, DefaultPrompt, EditMode, Emacs,
-        ExampleHighlighter, FileBackedHistory, ListCompletionHandler, Reedline, Signal, Vi,
+        default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
+        CompletionMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, EditMode, Emacs,
+        ExampleHighlighter, FileBackedHistory, HistoryMenu, Keybindings, Reedline, ReedlineEvent,
+        Signal, Vi,
     },
     std::{
         io::{stdout, Write},
@@ -60,19 +56,19 @@ fn main() -> Result<()> {
 
     let mut line_editor = Reedline::create()?
         .with_history(history)?
+        .with_completer(completer)
         .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
-        .with_completion_action_handler(Box::new(
-            ListCompletionHandler::default().with_completer(completer.clone()),
-        ))
         .with_hinter(Box::new(
             DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)),
         ))
         .with_ansi_colors(true);
 
     // Adding default menus for the compiled reedline
-    let context_menu = Box::new(ContextMenu::default().with_completer(completer));
+    let completion_menu = Box::new(CompletionMenu::default());
     let history_menu = Box::new(HistoryMenu::default());
-    line_editor = line_editor.with_menu(context_menu).with_menu(history_menu);
+    line_editor = line_editor
+        .with_menu(completion_menu)
+        .with_menu(history_menu);
 
     let edit_mode: Box<dyn EditMode> = if vi_mode {
         let mut normal_keybindings = default_vi_normal_keybindings();
@@ -211,7 +207,7 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
         KeyModifiers::NONE,
         KeyCode::Tab,
         ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::Menu("context_menu".to_string()),
+            ReedlineEvent::Menu("completion_menu".to_string()),
             ReedlineEvent::MenuNext,
         ]),
     );

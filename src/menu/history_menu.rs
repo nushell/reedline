@@ -1,13 +1,13 @@
 use nu_ansi_term::Style;
 
 use super::{parse_row_selector, Menu, MenuTextStyle};
-use crate::{History, LineBuffer, Span};
+use crate::{Completer, History, LineBuffer, Span};
 
 /// Struct to store the menu style
 
 /// Context menu definition
 pub struct HistoryMenu {
-    /// Context menu coloring
+    /// Menu coloring
     color: MenuTextStyle,
     /// Number of history records presented per page
     page_size: usize,
@@ -130,7 +130,12 @@ impl Menu for HistoryMenu {
     }
 
     /// Collecting the value from the history to be shown in the menu
-    fn update_values(&mut self, line_buffer: &mut LineBuffer, history: &dyn History) {
+    fn update_values(
+        &mut self,
+        line_buffer: &mut LineBuffer,
+        history: &dyn History,
+        _completer: &dyn Completer,
+    ) {
         let values = if line_buffer.is_empty() {
             self.create_values_no_query(history)
         } else {

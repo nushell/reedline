@@ -101,13 +101,13 @@
 //! # Ok::<(), io::Error>(())
 //! ```
 //!
-//! ## Integrate with custom Tab-Handler
+//! ## Integrate with custom tab completion
 //!
 //! ```rust,no_run
 //! // Create a reedline object with tab completions support
 //!
 //! use std::io;
-//! use reedline::{DefaultCompleter, CircularCompletionHandler, Reedline};
+//! use reedline::{DefaultCompleter, Reedline};
 //!
 //! let commands = vec![
 //!   "test".into(),
@@ -117,9 +117,7 @@
 //! ];
 //! let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 //!
-//! let mut line_editor = Reedline::create()?.with_completion_action_handler(Box::new(
-//!   CircularCompletionHandler::default().with_completer(completer),
-//! ));
+//! let mut line_editor = Reedline::create()?.with_completer(completer);
 //! # Ok::<(), io::Error>(())
 //! ```
 //!
@@ -212,10 +210,7 @@ mod styled_text;
 pub use styled_text::StyledText;
 
 mod completion;
-pub use completion::{
-    CircularCompletionHandler, Completer, CompletionActionHandler, DefaultCompleter,
-    ListCompletionHandler, Span,
-};
+pub use completion::{Completer, DefaultCompleter, Span};
 
 mod hinter;
 pub use hinter::{DefaultHinter, Hinter};
@@ -224,4 +219,4 @@ mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
-pub use menu::{ContextMenu, HistoryMenu, Menu};
+pub use menu::{CompletionMenu, HistoryMenu, Menu};

@@ -1,8 +1,8 @@
-mod context_menu;
+mod completion_menu;
 mod history_menu;
 
-use crate::{History, LineBuffer, Span};
-pub use context_menu::ContextMenu;
+use crate::{Completer, History, LineBuffer, Span};
+pub use completion_menu::CompletionMenu;
 pub use history_menu::HistoryMenu;
 use nu_ansi_term::{ansi::RESET, Color, Style};
 
@@ -41,7 +41,12 @@ pub trait Menu: Send {
     fn deactivate(&mut self);
 
     /// Updates the values presented in the menu
-    fn update_values(&mut self, line_buffer: &mut LineBuffer, history: &dyn History);
+    fn update_values(
+        &mut self,
+        line_buffer: &mut LineBuffer,
+        history: &dyn History,
+        completer: &dyn Completer,
+    );
 
     /// Updates working details of the menu
     fn update_working_details(&mut self, _screen_width: u16) {}
