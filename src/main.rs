@@ -190,7 +190,7 @@ fn print_events_helper() -> Result<()> {
 fn add_menu_keybindings(keybindings: &mut Keybindings) {
     keybindings.add_binding(
         KeyModifiers::CONTROL,
-        KeyCode::Char('i'),
+        KeyCode::Char('x'),
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::Menu("history_menu".to_string()),
             ReedlineEvent::MenuPageNext,
@@ -199,7 +199,7 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
 
     keybindings.add_binding(
         KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        KeyCode::Char('i'),
+        KeyCode::Char('x'),
         ReedlineEvent::MenuPagePrevious,
     );
 
