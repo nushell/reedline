@@ -1,5 +1,5 @@
 use std::{
-    collections::{vec_deque::Iter, HashSet, VecDeque},
+    collections::{vec_deque::Iter, VecDeque},
     fs::{File, OpenOptions},
     io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
@@ -121,18 +121,11 @@ impl History for FileBackedHistory {
     }
 
     fn query_entries(&self, search: &str) -> Vec<String> {
-        let mut values = self
-            .entries
-            .iter()
+        self.iter_chronologic()
+            .rev()
             .filter(|entry| entry.contains(search))
             .cloned()
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect::<Vec<String>>();
-
-        values.sort();
-
-        values
+            .collect::<Vec<String>>()
     }
 
     fn max_values(&self) -> usize {
