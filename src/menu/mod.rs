@@ -162,7 +162,7 @@ pub trait Menu: Send {
                 let empty_space = self.get_width().saturating_sub(line.len());
 
                 // Final string with colors
-                let line = line.replace("\n", format!("\n{}", self.multiline_marker()).as_str());
+                let line = line.replace("\n", format!("\r\n{}", self.multiline_marker()).as_str());
                 let row_number = if self.print_enumerate() {
                     format!("{}: ", index)
                 } else {
