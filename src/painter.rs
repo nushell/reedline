@@ -3,7 +3,7 @@ use {
         menu::Menu, prompt::PromptEditMode, styled_text::strip_ansi, Prompt, PromptHistorySearch,
     },
     crossterm::{
-        cursor::{self, MoveTo, MoveToColumn, MoveToRow, RestorePosition, SavePosition},
+        cursor::{self, MoveTo, MoveToRow, RestorePosition, SavePosition},
         style::{Print, ResetColor, SetForegroundColor},
         terminal::{self, Clear, ClearType, ScrollUp},
         QueueableCommand, Result,
@@ -361,7 +361,7 @@ impl Painter {
 
         self.stdout.queue(RestorePosition)?.queue(cursor::Show)?;
 
-        self.flush()
+        self.stdout.flush()
     }
 
     fn print_right_prompt(&mut self, lines: &PromptLines) -> Result<()> {
@@ -579,11 +579,8 @@ impl Painter {
     }
 
     /// Writes `line` to the terminal with a following carriage return and newline
-    pub fn paint_line(&mut self, line: &str) -> Result<()> {
-        self.stdout
-            .queue(Print(line))?
-            .queue(Print("\n"))?
-            .queue(MoveToColumn(1))?;
+    pub(crate) fn paint_line(&mut self, line: &str) -> Result<()> {
+        self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
 
         self.stdout.flush()
     }
@@ -618,10 +615,6 @@ impl Painter {
         let final_row = self.prompt_coords.prompt_start.1 + self.last_required_lines;
         self.stdout.queue(MoveToRow(final_row))?;
 
-        self.stdout.flush()
-    }
-
-    pub fn flush(&mut self) -> Result<()> {
         self.stdout.flush()
     }
 }
