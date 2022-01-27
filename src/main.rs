@@ -1,13 +1,18 @@
+use crossterm::event::KeyModifiers;
+use reedline::{
+    default_vi_insert_keybindings, default_vi_normal_keybindings, ContextMenu, HistoryMenu,
+    Keybindings, ReedlineEvent,
+};
+
 use {
     crossterm::{
-        event::{poll, Event, KeyCode, KeyEvent, KeyModifiers},
+        event::{poll, Event, KeyCode, KeyEvent},
         terminal, Result,
     },
     nu_ansi_term::{Color, Style},
     reedline::{
-        default_emacs_keybindings, ContextMenuInput, DefaultCompleter, DefaultHinter,
-        DefaultPrompt, EditCommand, EditMode, Emacs, ExampleHighlighter, FileBackedHistory,
-        ListCompletionHandler, Reedline, ReedlineEvent, Signal, Vi,
+        default_emacs_keybindings, DefaultCompleter, DefaultHinter, DefaultPrompt, EditMode, Emacs,
+        ExampleHighlighter, FileBackedHistory, ListCompletionHandler, Reedline, Signal, Vi,
     },
     std::{
         io::{stdout, Write},
@@ -47,27 +52,14 @@ fn main() -> Result<()> {
         "hello world 2".into(),
         "hello world 3".into(),
         "hello world 4".into(),
-        "hello world 5 a very large option for hello word that will force one column".into(),
+        "hello another very large option for hello word that will force one column".into(),
         "this is the reedline crate".into(),
     ];
 
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
-    let edit_mode: Box<dyn EditMode> = if vi_mode {
-        Box::new(Vi::default())
-    } else {
-        let mut keybindings = default_emacs_keybindings();
-        keybindings.add_binding(
-            KeyModifiers::ALT,
-            KeyCode::Char('m'),
-            ReedlineEvent::Edit(vec![EditCommand::BackspaceWord]),
-        );
-        Box::new(Emacs::new(keybindings))
-    };
-
     let mut line_editor = Reedline::create()?
         .with_history(history)?
-        .with_edit_mode(edit_mode)
         .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
         .with_completion_action_handler(Box::new(
             ListCompletionHandler::default().with_completer(completer.clone()),
@@ -75,8 +67,29 @@ fn main() -> Result<()> {
         .with_hinter(Box::new(
             DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)),
         ))
-        .with_ansi_colors(true)
-        .with_menu_completer(completer, ContextMenuInput::default());
+        .with_ansi_colors(true);
+
+    // Adding default menus for the compiled reedline
+    let context_menu = Box::new(ContextMenu::default().with_completer(completer));
+    let history_menu = Box::new(HistoryMenu::default());
+    line_editor = line_editor.with_menu(context_menu).with_menu(history_menu);
+
+    let edit_mode: Box<dyn EditMode> = if vi_mode {
+        let mut normal_keybindings = default_vi_normal_keybindings();
+        let mut insert_keybindings = default_vi_insert_keybindings();
+
+        add_menu_keybindings(&mut normal_keybindings);
+        add_menu_keybindings(&mut insert_keybindings);
+
+        Box::new(Vi::new(insert_keybindings, normal_keybindings))
+    } else {
+        let mut keybindings = default_emacs_keybindings();
+        add_menu_keybindings(&mut keybindings);
+
+        Box::new(Emacs::new(keybindings))
+    };
+
+    line_editor = line_editor.with_edit_mode(edit_mode);
 
     if debug_mode {
         line_editor = line_editor.with_debug_mode();
@@ -176,4 +189,36 @@ fn print_events_helper() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn add_menu_keybindings(keybindings: &mut Keybindings) {
+    keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('i'),
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Menu("history_menu".to_string()),
+            ReedlineEvent::MenuPageNext,
+        ]),
+    );
+
+    keybindings.add_binding(
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        KeyCode::Char('i'),
+        ReedlineEvent::MenuPagePrevious,
+    );
+
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Tab,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Menu("context_menu".to_string()),
+            ReedlineEvent::MenuNext,
+        ]),
+    );
+
+    keybindings.add_binding(
+        KeyModifiers::SHIFT,
+        KeyCode::BackTab,
+        ReedlineEvent::MenuPrevious,
+    );
 }

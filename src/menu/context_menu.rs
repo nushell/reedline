@@ -1,7 +1,7 @@
 use nu_ansi_term::Style;
 
 use super::{Menu, MenuTextStyle};
-use crate::{Completer, DefaultCompleter, LineBuffer, Span};
+use crate::{Completer, DefaultCompleter, History, LineBuffer, Span};
 
 /// Default values used as reference for the menu. These values are set during
 /// the initial declaration of the menu and are always kept as reference for the
@@ -27,6 +27,7 @@ impl Default for DefaultColumnDetails {
 
 /// Represents the actual column conditions of the menu. These conditions change
 /// since they need to accommodate possible different line sizes for the column values
+#[derive(Default)]
 struct ColumnDetails {
     /// Number of columns that the menu will have
     pub columns: u16,
@@ -34,57 +35,6 @@ struct ColumnDetails {
     pub col_width: usize,
     /// Column padding
     pub col_padding: usize,
-}
-
-impl ColumnDetails {
-    fn new(columns: u16, col_width: usize, col_padding: usize) -> Self {
-        Self {
-            columns,
-            col_width,
-            col_padding,
-        }
-    }
-}
-
-/// Struct used to set default values for the context menu.
-/// The default values, such as style or column details are used to calculate
-/// the working values for the menu
-#[derive(Default)]
-pub struct ContextMenuInput {
-    default_details: DefaultColumnDetails,
-    menu_style: MenuTextStyle,
-}
-
-impl ContextMenuInput {
-    /// Context Menu builder with new value for columns
-    pub fn with_columns(mut self, columns: u16) -> Self {
-        self.default_details.columns = columns;
-        self
-    }
-
-    /// Context Menu builder with new value for col with
-    pub fn with_col_width(mut self, col_width: Option<usize>) -> Self {
-        self.default_details.col_width = col_width;
-        self
-    }
-
-    /// Context Menu builder with new value for col with
-    pub fn with_col_padding(mut self, col_padding: usize) -> Self {
-        self.default_details.col_padding = col_padding;
-        self
-    }
-
-    /// Context Menu builder with new value for text style
-    pub fn with_text_style(mut self, text_style: Style) -> Self {
-        self.menu_style.text_style = text_style;
-        self
-    }
-
-    /// Context Menu builder with new value for selected text style
-    pub fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
-        self.menu_style.selected_text_style = selected_text_style;
-        self
-    }
 }
 
 /// Context menu definition
@@ -107,39 +57,108 @@ pub struct ContextMenu {
     col_pos: u16,
     /// row position in the menu. Starts from 0
     row_pos: u16,
+    /// Menu marker when active
+    marker: String,
 }
 
 impl Default for ContextMenu {
     fn default() -> Self {
         let completer = Box::new(DefaultCompleter::default());
-        let default_input = ContextMenuInput::default();
-        Self::new_with(completer, default_input)
+
+        Self {
+            completer,
+            active: false,
+            color: MenuTextStyle::default(),
+            default_details: DefaultColumnDetails::default(),
+            min_rows: 3,
+            working_details: ColumnDetails::default(),
+            values: Vec::new(),
+            col_pos: 0,
+            row_pos: 0,
+            marker: "| ".to_string(),
+        }
     }
 }
 
 impl ContextMenu {
-    /// Creates a context menu with a filler
-    pub fn new_with(completer: Box<dyn Completer>, input: ContextMenuInput) -> Self {
-        let working_details = ColumnDetails::new(
-            input.default_details.columns,
-            input.default_details.col_width.unwrap_or(0),
-            input.default_details.col_padding,
-        );
-        Self {
-            completer,
-            active: false,
-            color: input.menu_style,
-            values: Vec::new(),
-            min_rows: 3,
-            col_pos: 0,
-            row_pos: 0,
-            default_details: input.default_details,
-            working_details,
-        }
+    /// Builder to assign Completer
+    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
+        self.completer = completer;
+        self
+    }
+
+    /// Menu builder with new value for text style
+    pub fn with_text_style(mut self, text_style: Style) -> Self {
+        self.color.text_style = text_style;
+        self
+    }
+
+    /// Menu builder with new value for text style
+    pub fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
+        self.color.selected_text_style = selected_text_style;
+        self
+    }
+
+    /// Menu builder with new columns value
+    pub fn with_columns(mut self, columns: u16) -> Self {
+        self.default_details.columns = columns;
+        self
+    }
+
+    /// Menu builder with new column width value
+    pub fn with_column_width(mut self, col_width: Option<usize>) -> Self {
+        self.default_details.col_width = col_width;
+        self
+    }
+
+    /// Menu builder with new column width value
+    pub fn with_column_padding(mut self, col_padding: usize) -> Self {
+        self.default_details.col_padding = col_padding;
+        self
+    }
+
+    /// Menu builder with marker
+    pub fn with_marker(mut self, marker: String) -> Self {
+        self.marker = marker;
+        self
+    }
+
+    /// Reset menu position
+    fn reset_position(&mut self) {
+        self.col_pos = 0;
+        self.row_pos = 0;
+    }
+}
+
+impl Menu for ContextMenu {
+    /// Menu name
+    fn name(&self) -> &str {
+        "context_menu"
+    }
+
+    /// Menu indicator
+    fn indicator(&self) -> &str {
+        self.marker.as_str()
+    }
+
+    /// Deactivates context menu
+    fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// Activates context menu
+    fn activate(&mut self) {
+        self.active = true;
+        self.reset_position();
+    }
+
+    /// Deactivates context menu
+    fn deactivate(&mut self) {
+        self.active = false
     }
 
     /// Updates menu values
-    pub fn update_values(&mut self, line_buffer: &mut LineBuffer) {
+    fn update_values(&mut self, line_buffer: &mut LineBuffer, _history: &dyn History) {
         // If there is a new line character in the line buffer, the completer
         // doesn't calculate the suggested values correctly. This happens when
         // editing a multiline buffer.
@@ -154,7 +173,7 @@ impl ContextMenu {
 
     /// The working details for the menu changes based on the size of the lines
     /// collected from the completer
-    pub fn update_working_details(&mut self, screen_width: u16) {
+    fn update_working_details(&mut self, screen_width: u16) {
         let max_width = self.get_values().iter().fold(0, |acc, (_, string)| {
             let str_len = string.len() + self.working_details.col_padding;
             if str_len > acc {
@@ -192,62 +211,8 @@ impl ContextMenu {
         }
     }
 
-    /// Activates context menu
-    pub fn activate(&mut self) {
-        self.active = true;
-        self.reset_position();
-    }
-
-    /// Deactivates context menu
-    pub fn deactivate(&mut self) {
-        self.active = false
-    }
-
-    /// Deactivates context menu
-    pub fn is_active(&self) -> bool {
-        self.active
-    }
-
-    /// Move menu cursor up
-    pub fn move_up(&mut self) {
-        self.row_pos = if let Some(row) = self.row_pos.checked_sub(1) {
-            row
-        } else {
-            self.get_rows().saturating_sub(1)
-        }
-    }
-
-    /// Move menu cursor left
-    pub fn move_down(&mut self) {
-        let new_row = self.row_pos + 1;
-        self.row_pos = if new_row >= self.get_rows() {
-            0
-        } else {
-            new_row
-        }
-    }
-
-    /// Move menu cursor left
-    pub fn move_left(&mut self) {
-        self.col_pos = if let Some(row) = self.col_pos.checked_sub(1) {
-            row
-        } else {
-            self.get_cols().saturating_sub(1)
-        }
-    }
-
-    /// Move menu cursor element
-    pub fn move_right(&mut self) {
-        let new_col = self.col_pos + 1;
-        self.col_pos = if new_col >= self.get_cols() {
-            0
-        } else {
-            new_col
-        }
-    }
-
     /// Move menu cursor to the next element
-    pub fn move_next(&mut self) {
+    fn move_next(&mut self) {
         let mut new_col = self.col_pos + 1;
         let mut new_row = self.row_pos;
 
@@ -271,7 +236,7 @@ impl ContextMenu {
     }
 
     /// Move menu cursor to the previous element
-    pub fn move_previous(&mut self) {
+    fn move_previous(&mut self) {
         let new_col = self.col_pos.checked_sub(1);
 
         let (new_col, new_row) = match new_col {
@@ -295,14 +260,55 @@ impl ContextMenu {
         }
     }
 
-    /// Reset menu position
-    fn reset_position(&mut self) {
-        self.col_pos = 0;
-        self.row_pos = 0;
-    }
-}
+    /// The buffer gets replaced in the Span location
+    fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
+        if let Some((span, value)) = self.get_value() {
+            let mut offset = line_buffer.offset();
+            offset += value.len() - (span.end - span.start);
 
-impl Menu for ContextMenu {
+            line_buffer.replace(span.start..span.end, &value);
+            line_buffer.set_insertion_point(offset);
+        }
+    }
+
+    /// Move menu cursor up
+    fn move_up(&mut self) {
+        self.row_pos = if let Some(row) = self.row_pos.checked_sub(1) {
+            row
+        } else {
+            self.get_rows().saturating_sub(1)
+        }
+    }
+
+    /// Move menu cursor left
+    fn move_down(&mut self) {
+        let new_row = self.row_pos + 1;
+        self.row_pos = if new_row >= self.get_rows() {
+            0
+        } else {
+            new_row
+        }
+    }
+
+    /// Move menu cursor left
+    fn move_left(&mut self) {
+        self.col_pos = if let Some(row) = self.col_pos.checked_sub(1) {
+            row
+        } else {
+            self.get_cols().saturating_sub(1)
+        }
+    }
+
+    /// Move menu cursor element
+    fn move_right(&mut self) {
+        let new_col = self.col_pos + 1;
+        self.col_pos = if new_col >= self.get_cols() {
+            0
+        } else {
+            new_col
+        }
+    }
+
     /// Text style for menu
     fn text_style(&self, index: usize) -> String {
         if index == self.position() {

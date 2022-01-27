@@ -224,4 +224,4 @@ mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
-pub use menu::{ContextMenu, ContextMenuInput, HistoryMenu, HistoryMenuInput};
+pub use menu::{ContextMenu, HistoryMenu, Menu};

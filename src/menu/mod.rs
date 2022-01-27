@@ -1,9 +1,9 @@
 mod context_menu;
 mod history_menu;
 
-use crate::Span;
-pub use context_menu::{ContextMenu, ContextMenuInput};
-pub use history_menu::{HistoryMenu, HistoryMenuInput};
+use crate::{History, LineBuffer, Span};
+pub use context_menu::ContextMenu;
+pub use history_menu::HistoryMenu;
 use nu_ansi_term::{ansi::RESET, Color, Style};
 
 /// Struct to store the menu style
@@ -22,7 +22,57 @@ impl Default for MenuTextStyle {
 }
 
 /// Trait that defines how a menu will be printed by the painter
-pub trait Menu {
+pub trait Menu: Send {
+    /// Menu name
+    fn name(&self) -> &str;
+
+    /// Menu indicator
+    fn indicator(&self) -> &str {
+        "% "
+    }
+
+    /// Checks if the menu is active
+    fn is_active(&self) -> bool;
+
+    /// Activates the menu
+    fn activate(&mut self);
+
+    /// Deactivates the menu
+    fn deactivate(&mut self);
+
+    /// Updates the values presented in the menu
+    fn update_values(&mut self, line_buffer: &mut LineBuffer, history: &dyn History);
+
+    /// Updates working details of the menu
+    fn update_working_details(&mut self, _screen_width: u16) {}
+
+    /// Moves the selected value to the next element
+    fn move_next(&mut self);
+
+    /// Moves the selected value to the previous element
+    fn move_previous(&mut self);
+
+    /// Moves the selected value up
+    fn move_up(&mut self) {}
+
+    /// Moves the selected value down
+    fn move_down(&mut self) {}
+
+    /// Moves the selected value left
+    fn move_left(&mut self) {}
+
+    /// Moves the selected value right
+    fn move_right(&mut self) {}
+
+    /// If the menu is paginated then it shows the next page
+    fn next_page(&mut self) {}
+
+    /// If the menu is paginated then it shows the previous page
+    fn previous_page(&mut self) {}
+
+    /// Replace in buffer
+    fn replace_in_buffer(&self, line_buffer: &mut LineBuffer);
+
     /// Text style for menu
     fn text_style(&self, index: usize) -> String;
 
@@ -80,6 +130,7 @@ pub trait Menu {
         false
     }
 
+    /// Characters that will be shown when an element of the menu has multiple lines
     fn multiline_marker(&self) -> &str {
         ":::"
     }

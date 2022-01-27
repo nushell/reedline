@@ -23,6 +23,8 @@ pub struct HistoryMenu {
     page: usize,
     /// Max size of the history when querying without a search buffer
     history_size: Option<usize>,
+    /// Menu marker when active
+    marker: String,
 }
 
 impl Default for HistoryMenu {
@@ -36,87 +38,40 @@ impl Default for HistoryMenu {
             row_pos: 0,
             page: 0,
             history_size: None,
+            marker: "? ".to_string(),
         }
     }
 }
 
-/// Struct used to set default values for the history menu.
-/// The default values, such as style or column details are used to calculate
-/// the working values for the menu
-#[derive(Default)]
-pub struct HistoryMenuInput {
-    menu_style: MenuTextStyle,
-    page_size: usize,
-    row_char: char,
-}
-
-impl HistoryMenuInput {
-    /// Context Menu builder with new value for text style
+impl HistoryMenu {
+    /// Menu builder with new value for text style
     pub fn with_text_style(mut self, text_style: Style) -> Self {
-        self.menu_style.text_style = text_style;
+        self.color.text_style = text_style;
         self
     }
 
-    /// Context Menu builder with new value for text style
+    /// Menu builder with new value for text style
     pub fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
-        self.menu_style.selected_text_style = selected_text_style;
+        self.color.selected_text_style = selected_text_style;
         self
     }
 
-    /// Menu input with page size
+    /// Menu builder with page size
     pub fn with_page_size(mut self, page_size: usize) -> Self {
         self.page_size = page_size;
         self
     }
 
-    /// Menu input with row char
+    /// Menu builder with row char
     pub fn with_row_char(mut self, row_char: char) -> Self {
         self.row_char = row_char;
         self
     }
-}
 
-impl HistoryMenu {
-    /// Creates a context menu with a filler
-    pub fn new_with(input: HistoryMenuInput) -> Self {
-        Self {
-            color: input.menu_style,
-            page_size: input.page_size,
-            row_char: input.row_char,
-            ..Default::default()
-        }
-    }
-
-    /// Collecting the value from the history to be shown in the menu
-    pub fn update_values(&mut self, history: &dyn History, line_buffer: &LineBuffer) {
-        let values = if line_buffer.is_empty() {
-            self.reset_position();
-            self.create_values_no_query(history)
-        } else {
-            let (query, row) = parse_row_selector(line_buffer.get_buffer(), &self.row_char);
-
-            self.update_row_pos(row);
-            if query.is_empty() {
-                self.create_values_no_query(history)
-            } else {
-                self.page = 0;
-                self.history_size = None;
-                history.query_entries(query)
-            }
-        };
-
-        self.values = values
-            .into_iter()
-            .map(|s| {
-                (
-                    Span {
-                        start: 0,
-                        end: s.len(),
-                    },
-                    s,
-                )
-            })
-            .collect();
+    /// Menu builder with marker
+    pub fn with_marker(mut self, marker: String) -> Self {
+        self.marker = marker;
+        self
     }
 
     fn update_row_pos(&mut self, new_pos: Option<usize>) {
@@ -141,24 +96,91 @@ impl HistoryMenu {
             .collect::<Vec<String>>()
     }
 
+    /// Reset menu position
+    fn reset_position(&mut self) {
+        self.page = 0;
+        self.row_pos = 0;
+    }
+}
+
+impl Menu for HistoryMenu {
+    fn name(&self) -> &str {
+        "history_menu"
+    }
+
+    /// Menu indicator
+    fn indicator(&self) -> &str {
+        self.marker.as_str()
+    }
+
+    /// Deactivates context menu
+    fn is_active(&self) -> bool {
+        self.active
+    }
+
     /// Activates context menu
-    pub fn activate(&mut self) {
+    fn activate(&mut self) {
         self.active = true;
         self.reset_position();
     }
 
     /// Deactivates context menu
-    pub fn deactivate(&mut self) {
+    fn deactivate(&mut self) {
         self.active = false
     }
 
-    /// Deactivates context menu
-    pub fn is_active(&self) -> bool {
-        self.active
+    /// Collecting the value from the history to be shown in the menu
+    fn update_values(&mut self, line_buffer: &mut LineBuffer, history: &dyn History) {
+        let values = if line_buffer.is_empty() {
+            self.create_values_no_query(history)
+        } else {
+            let (query, row) = parse_row_selector(line_buffer.get_buffer(), &self.row_char);
+
+            self.update_row_pos(row);
+            if query.is_empty() {
+                self.create_values_no_query(history)
+            } else {
+                self.history_size = None;
+                history.query_entries(query)
+            }
+        };
+
+        self.values = values
+            .into_iter()
+            .map(|s| {
+                (
+                    Span {
+                        start: 0,
+                        end: s.len(),
+                    },
+                    s,
+                )
+            })
+            .collect();
+    }
+
+    /// Move menu cursor up
+    fn move_up(&mut self) {
+        self.move_previous()
+    }
+
+    /// Move menu cursor down
+    fn move_down(&mut self) {
+        self.move_next()
+    }
+
+    /// Move menu cursor left
+    fn move_left(&mut self) {
+        self.move_previous()
+    }
+
+    /// Move menu cursor right
+    fn move_right(&mut self) {
+        self.move_next()
     }
 
     /// Move menu cursor to the next element
-    pub fn move_next(&mut self) {
+    fn move_next(&mut self) {
         let new_pos = self.row_pos + 1;
 
         if new_pos >= self.get_num_values() as u16 {
@@ -169,7 +191,7 @@ impl HistoryMenu {
     }
 
     /// Move menu cursor to the previous element
-    pub fn move_previous(&mut self) {
+    fn move_previous(&mut self) {
         if let Some(new_pos) = self.row_pos.checked_sub(1) {
             self.row_pos = new_pos
         } else {
@@ -178,30 +200,34 @@ impl HistoryMenu {
     }
 
     /// Moves to the next history page
-    pub fn next_page(&mut self) {
+    fn next_page(&mut self) {
         let values = match self.history_size {
             Some(size) => size,
             None => self.values.len(),
         };
 
-        let pages = (values / self.page_size) + 1;
+        let pages = if values % self.page_size != 0 {
+            (values / self.page_size) + 1
+        } else {
+            values / self.page_size
+        };
         if self.page + 1 < pages {
             self.page += 1;
         }
     }
 
     /// Moves to the previous history page
-    pub fn previous_page(&mut self) {
+    fn previous_page(&mut self) {
         self.page = self.page.saturating_sub(1)
     }
 
-    /// Reset menu position
-    fn reset_position(&mut self) {
-        self.row_pos = 0;
+    /// The buffer gets cleared with the actual value
+    fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
+        if let Some((_, value)) = self.get_value() {
+            line_buffer.set_buffer(value)
+        }
     }
-}
 
-impl Menu for HistoryMenu {
     /// Text style for menu
     fn text_style(&self, index: usize) -> String {
         if index == self.position() {

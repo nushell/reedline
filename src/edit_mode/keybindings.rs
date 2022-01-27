@@ -99,20 +99,12 @@ pub fn add_common_keybindings(kb: &mut Keybindings) {
     kb.add_binding(
         KM::NONE,
         KC::Up,
-        ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::HistoryMenuPrevious,
-            ReedlineEvent::MenuUp,
-            ReedlineEvent::Up,
-        ]),
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuUp, ReedlineEvent::Up]),
     );
     kb.add_binding(
         KM::NONE,
         KC::Down,
-        ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::HistoryMenuNext,
-            ReedlineEvent::MenuDown,
-            ReedlineEvent::Down,
-        ]),
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuDown, ReedlineEvent::Down]),
     );
     kb.add_binding(
         KM::NONE,
@@ -146,54 +138,12 @@ pub fn add_common_keybindings(kb: &mut Keybindings) {
     kb.add_binding(
         KM::CONTROL,
         KC::Char('p'),
-        ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::HistoryMenuPrevious,
-            ReedlineEvent::MenuUp,
-            ReedlineEvent::Up,
-        ]),
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuUp, ReedlineEvent::Up]),
     );
     kb.add_binding(
         KM::CONTROL,
         KC::Char('n'),
-        ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::HistoryMenuNext,
-            ReedlineEvent::MenuDown,
-            ReedlineEvent::Down,
-        ]),
-    );
-
-    // Context menu events
-    kb.add_binding(
-        KM::NONE,
-        KC::Tab,
-        ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::ContextMenu,
-            ReedlineEvent::MenuNext,
-            ReedlineEvent::HistoryMenuNext,
-        ]),
-    );
-    kb.add_binding(
-        KM::SHIFT,
-        KC::BackTab,
-        ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::MenuPrevious,
-            ReedlineEvent::HistoryMenuPrevious,
-        ]),
-    );
-
-    // History menu events
-    kb.add_binding(
-        KM::CONTROL,
-        KC::Char('a'),
-        ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::HistoryPageNext,
-            ReedlineEvent::HistoryMenu,
-        ]),
-    );
-    kb.add_binding(
-        KM::CONTROL | KM::SHIFT,
-        KC::Char('a'),
-        ReedlineEvent::HistoryPagePrevious,
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuDown, ReedlineEvent::Down]),
     );
 }
 
@@ -229,6 +179,11 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
     kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
     kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('m'),
+        ReedlineEvent::Edit(vec![EditCommand::BackspaceWord]),
+    );
 
     // ALT
     kb.add_binding(KM::ALT, KC::Char('b'), edit_bind(EC::MoveWordLeft));

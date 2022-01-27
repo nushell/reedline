@@ -292,8 +292,8 @@ pub enum ReedlineEvent {
     /// Test
     UntilFound(Vec<ReedlineEvent>),
 
-    /// Trigger context menu
-    ContextMenu,
+    /// Trigger a menu event. It activates a menu with the event name
+    Menu(String),
 
     /// Next element in the menu
     MenuNext,
@@ -313,20 +313,11 @@ pub enum ReedlineEvent {
     /// Moves right in the menu
     MenuRight,
 
-    /// Trigger history menu
-    HistoryMenu,
-
-    /// Moves to next history menu
-    HistoryMenuNext,
-
-    /// Moves to previous history menu
-    HistoryMenuPrevious,
-
     /// Move to the next history page
-    HistoryPageNext,
+    MenuPageNext,
 
     /// Move to the previous history page
-    HistoryPagePrevious,
+    MenuPagePrevious,
 }
 
 pub(crate) enum EventStatus {

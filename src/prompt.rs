@@ -10,9 +10,7 @@ pub static DEFAULT_PROMPT_COLOR: Color = Color::Blue;
 /// The default prompt indicator
 pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
 pub static DEFAULT_VI_INSERT_PROMPT_INDICATOR: &str = ": ";
-pub static DEFAULT_VI_VISUAL_PROMPT_INDICATOR: &str = "v ";
-pub static DEFAULT_MENU_INDICATOR: &str = "| ";
-pub static DEFAULT_HISTORY_INDICATOR: &str = "? ";
+pub static DEFAULT_VI_NORMAL_PROMPT_INDICATOR: &str = "〉";
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 
 /// The current success/failure of the history search
@@ -56,12 +54,6 @@ pub enum PromptEditMode {
 
     /// A custom mode
     Custom(String),
-
-    /// Menu edit mode
-    Menu,
-
-    /// History menu edit mode
-    HistoryMenu,
 }
 
 /// The vi-specific modes that the prompt can be in
@@ -71,9 +63,6 @@ pub enum PromptViMode {
 
     /// Insertion mode
     Insert,
-
-    /// Visual mode
-    Visual,
 }
 
 /// API to provide a custom prompt.
@@ -114,15 +103,12 @@ impl Prompt for DefaultPrompt {
         match edit_mode {
             PromptEditMode::Default | PromptEditMode::Emacs => DEFAULT_PROMPT_INDICATOR.into(),
             PromptEditMode::Vi(vi_mode) => match vi_mode {
-                PromptViMode::Normal => DEFAULT_PROMPT_INDICATOR.into(),
+                PromptViMode::Normal => DEFAULT_VI_NORMAL_PROMPT_INDICATOR.into(),
                 PromptViMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
-                PromptViMode::Visual => DEFAULT_VI_VISUAL_PROMPT_INDICATOR.into(),
             },
             PromptEditMode::Custom(str) => {
                 DefaultPrompt::default_wrapped_custom_string(&str).into()
             }
-            PromptEditMode::Menu => DEFAULT_MENU_INDICATOR.into(),
-            PromptEditMode::HistoryMenu => DEFAULT_HISTORY_INDICATOR.into(),
         }
     }
 
