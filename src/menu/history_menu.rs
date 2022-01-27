@@ -23,6 +23,8 @@ pub struct HistoryMenu {
     page: usize,
     /// Max size of the history when querying without a search buffer
     history_size: Option<usize>,
+    /// Menu marker when active
+    marker: String,
 }
 
 impl Default for HistoryMenu {
@@ -36,32 +38,39 @@ impl Default for HistoryMenu {
             row_pos: 0,
             page: 0,
             history_size: None,
+            marker: "? ".to_string(),
         }
     }
 }
 
 impl HistoryMenu {
-    /// Context Menu builder with new value for text style
+    /// Menu builder with new value for text style
     pub fn with_text_style(mut self, text_style: Style) -> Self {
         self.color.text_style = text_style;
         self
     }
 
-    /// Context Menu builder with new value for text style
+    /// Menu builder with new value for text style
     pub fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
         self.color.selected_text_style = selected_text_style;
         self
     }
 
-    /// Menu input with page size
+    /// Menu builder with page size
     pub fn with_page_size(mut self, page_size: usize) -> Self {
         self.page_size = page_size;
         self
     }
 
-    /// Menu input with row char
+    /// Menu builder with row char
     pub fn with_row_char(mut self, row_char: char) -> Self {
         self.row_char = row_char;
+        self
+    }
+
+    /// Menu builder with marker
+    pub fn with_marker(mut self, marker: String) -> Self {
+        self.marker = marker;
         self
     }
 
@@ -101,7 +110,7 @@ impl Menu for HistoryMenu {
 
     /// Menu indicator
     fn indicator(&self) -> &str {
-        "? "
+        self.marker.as_str()
     }
 
     /// Deactivates context menu
@@ -157,6 +166,16 @@ impl Menu for HistoryMenu {
 
     /// Move menu cursor down
     fn move_down(&mut self) {
+        self.move_next()
+    }
+
+    /// Move menu cursor left
+    fn move_left(&mut self) {
+        self.move_previous()
+    }
+
+    /// Move menu cursor right
+    fn move_right(&mut self) {
         self.move_next()
     }
 

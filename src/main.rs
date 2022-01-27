@@ -1,7 +1,7 @@
 use crossterm::event::KeyModifiers;
 use reedline::{
     default_vi_insert_keybindings, default_vi_normal_keybindings, ContextMenu, HistoryMenu,
-    ReedlineEvent,
+    Keybindings, ReedlineEvent,
 };
 
 use {
@@ -52,7 +52,7 @@ fn main() -> Result<()> {
         "hello world 2".into(),
         "hello world 3".into(),
         "hello world 4".into(),
-        "hello world 5 a very large option for hello word that will force one column".into(),
+        "hello another very large option for hello word that will force one column".into(),
         "this is the reedline crate".into(),
     ];
 
@@ -78,84 +78,13 @@ fn main() -> Result<()> {
         let mut normal_keybindings = default_vi_normal_keybindings();
         let mut insert_keybindings = default_vi_insert_keybindings();
 
-        normal_keybindings.add_binding(
-            KeyModifiers::CONTROL,
-            KeyCode::Char('i'),
-            ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::Menu("history_menu".to_string()),
-                ReedlineEvent::MenuPageNext,
-            ]),
-        );
-
-        normal_keybindings.add_binding(
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-            KeyCode::Char('i'),
-            ReedlineEvent::MenuPagePrevious,
-        );
-
-        insert_keybindings.add_binding(
-            KeyModifiers::CONTROL,
-            KeyCode::Char('i'),
-            ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::Menu("history_menu".to_string()),
-                ReedlineEvent::MenuPageNext,
-            ]),
-        );
-
-        insert_keybindings.add_binding(
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-            KeyCode::Char('i'),
-            ReedlineEvent::MenuPagePrevious,
-        );
-
-        insert_keybindings.add_binding(
-            KeyModifiers::NONE,
-            KeyCode::Tab,
-            ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::Menu("context_menu".to_string()),
-                ReedlineEvent::MenuNext,
-            ]),
-        );
-
-        insert_keybindings.add_binding(
-            KeyModifiers::SHIFT,
-            KeyCode::BackTab,
-            ReedlineEvent::MenuPrevious,
-        );
+        add_menu_keybindings(&mut normal_keybindings);
+        add_menu_keybindings(&mut insert_keybindings);
 
         Box::new(Vi::new(insert_keybindings, normal_keybindings))
     } else {
         let mut keybindings = default_emacs_keybindings();
-
-        keybindings.add_binding(
-            KeyModifiers::CONTROL,
-            KeyCode::Char('i'),
-            ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::Menu("history_menu".to_string()),
-                ReedlineEvent::MenuPageNext,
-            ]),
-        );
-
-        keybindings.add_binding(
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-            KeyCode::Char('i'),
-            ReedlineEvent::MenuPagePrevious,
-        );
-
-        keybindings.add_binding(
-            KeyModifiers::NONE,
-            KeyCode::Tab,
-            ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::Menu("context_menu".to_string()),
-                ReedlineEvent::MenuNext,
-            ]),
-        );
-
-        keybindings.add_binding(
-            KeyModifiers::SHIFT,
-            KeyCode::BackTab,
-            ReedlineEvent::MenuPrevious,
-        );
+        add_menu_keybindings(&mut keybindings);
 
         Box::new(Emacs::new(keybindings))
     };
@@ -260,4 +189,36 @@ fn print_events_helper() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn add_menu_keybindings(keybindings: &mut Keybindings) {
+    keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('i'),
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Menu("history_menu".to_string()),
+            ReedlineEvent::MenuPageNext,
+        ]),
+    );
+
+    keybindings.add_binding(
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        KeyCode::Char('i'),
+        ReedlineEvent::MenuPagePrevious,
+    );
+
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Tab,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Menu("context_menu".to_string()),
+            ReedlineEvent::MenuNext,
+        ]),
+    );
+
+    keybindings.add_binding(
+        KeyModifiers::SHIFT,
+        KeyCode::BackTab,
+        ReedlineEvent::MenuPrevious,
+    );
 }

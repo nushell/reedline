@@ -57,6 +57,8 @@ pub struct ContextMenu {
     col_pos: u16,
     /// row position in the menu. Starts from 0
     row_pos: u16,
+    /// Menu marker when active
+    marker: String,
 }
 
 impl Default for ContextMenu {
@@ -73,6 +75,7 @@ impl Default for ContextMenu {
             values: Vec::new(),
             col_pos: 0,
             row_pos: 0,
+            marker: "| ".to_string(),
         }
     }
 }
@@ -114,6 +117,12 @@ impl ContextMenu {
         self
     }
 
+    /// Menu builder with marker
+    pub fn with_marker(mut self, marker: String) -> Self {
+        self.marker = marker;
+        self
+    }
+
     /// Reset menu position
     fn reset_position(&mut self) {
         self.col_pos = 0;
@@ -129,7 +138,7 @@ impl Menu for ContextMenu {
 
     /// Menu indicator
     fn indicator(&self) -> &str {
-        "| "
+        self.marker.as_str()
     }
 
     /// Deactivates context menu

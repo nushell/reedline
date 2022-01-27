@@ -28,7 +28,7 @@ pub trait Menu {
 
     /// Menu indicator
     fn indicator(&self) -> &str {
-        " % "
+        "% "
     }
 
     /// Checks if the menu is active
