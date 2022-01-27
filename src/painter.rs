@@ -3,7 +3,7 @@ use {
         menu::Menu, prompt::PromptEditMode, styled_text::strip_ansi, Prompt, PromptHistorySearch,
     },
     crossterm::{
-        cursor::{self, MoveTo, MoveToRow, RestorePosition, SavePosition},
+        cursor::{self, MoveTo, RestorePosition, SavePosition},
         style::{Print, ResetColor, SetForegroundColor},
         terminal::{self, Clear, ClearType, ScrollUp},
         QueueableCommand, Result,
@@ -334,8 +334,8 @@ impl Painter {
         }
 
         // The last_required_lines is used to move the cursor at the end where stdout
-        // can print without overwriting the things written during the paining
-        self.last_required_lines = required_lines + 1;
+        // can print without overwriting the things written during the painting
+        self.last_required_lines = required_lines;
 
         // In debug mode a string with position information is printed at the end of the buffer
         if self.debug_mode {
@@ -613,7 +613,12 @@ impl Painter {
     // could overwrite the buffer writing
     pub fn move_cursor_to_end(&mut self) -> Result<()> {
         let final_row = self.prompt_coords.prompt_start.1 + self.last_required_lines;
-        self.stdout.queue(MoveToRow(final_row))?;
+        let scroll = final_row.saturating_sub(self.terminal_rows() - 1);
+        if scroll != 0 {
+            self.stdout.queue(ScrollUp(scroll))?;
+        }
+        self.stdout
+            .queue(MoveTo(0, final_row.min(self.terminal_rows() - 1)))?;
 
         self.stdout.flush()
     }
