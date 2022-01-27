@@ -1,7 +1,9 @@
 use {
-    crate::{menu::Menu, prompt::PromptEditMode, Prompt, PromptHistorySearch},
+    crate::{
+        menu::Menu, prompt::PromptEditMode, styled_text::strip_ansi, Prompt, PromptHistorySearch,
+    },
     crossterm::{
-        cursor::{self, MoveTo, MoveToColumn, MoveToRow, RestorePosition, SavePosition},
+        cursor::{self, MoveTo, MoveToRow, RestorePosition, SavePosition},
         style::{Print, ResetColor, SetForegroundColor},
         terminal::{self, Clear, ClearType, ScrollUp},
         QueueableCommand, Result,
@@ -79,24 +81,14 @@ impl<'prompt> PromptLines<'prompt> {
         };
 
         let lines = input.lines().fold(0, |acc, line| {
-            let wrap = if let Ok(line) = strip_ansi_escapes::strip(line) {
-                estimated_wrapped_line_count(&String::from_utf8_lossy(&line), terminal_columns)
-            } else {
-                estimated_wrapped_line_count(line, terminal_columns)
-            };
+            let wrap = estimated_wrapped_line_count(line, terminal_columns);
 
             acc + 1 + wrap
         });
 
         if let Some(menu) = menu {
             let wrap_lines = menu.get_values().iter().fold(0, |acc, (_, line)| {
-                let wrap = match strip_ansi_escapes::strip(line) {
-                    Ok(line) => estimated_wrapped_line_count(
-                        &String::from_utf8_lossy(&line),
-                        terminal_columns,
-                    ),
-                    Err(_) => estimated_wrapped_line_count(line, terminal_columns),
-                };
+                let wrap = estimated_wrapped_line_count(line, terminal_columns);
 
                 acc + wrap
             });
@@ -113,11 +105,7 @@ impl<'prompt> PromptLines<'prompt> {
         let input = self.prompt_str_left.to_string() + &self.prompt_indicator + self.before_cursor;
 
         let lines = input.lines().fold(0, |acc, line| {
-            let wrap = if let Ok(line) = strip_ansi_escapes::strip(line) {
-                estimated_wrapped_line_count(&String::from_utf8_lossy(&line), terminal_columns)
-            } else {
-                estimated_wrapped_line_count(line, terminal_columns)
-            };
+            let wrap = estimated_wrapped_line_count(line, terminal_columns);
 
             acc + 1 + wrap
         });
@@ -164,27 +152,25 @@ impl<'prompt> PromptLines<'prompt> {
     }
 }
 
+/// Reports the additional lines needed due to wrapping for the given line.
+///
+/// Does not account for any potential linebreaks in `line`
+///
+/// If `line` fits in `terminal_columns` returns 0
 fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
-    let estimated_width = UnicodeWidthStr::width(line);
+    let estimated_width = line_width(line);
+    let terminal_columns: usize = terminal_columns.into();
 
-    let estimated_line_count = estimated_width as f64 / terminal_columns as f64;
-    let estimated_line_count = estimated_line_count.ceil() as u64;
+    // integer ceiling rounding division for positive divisors
+    let estimated_line_count = (estimated_width + terminal_columns - 1) / terminal_columns;
 
     // Any wrapping will add to our overall line count
-    if estimated_line_count >= 1 {
-        estimated_line_count as usize - 1
-    } else {
-        0 // no wrapping
-    }
+    estimated_line_count.saturating_sub(1)
 }
 
+/// Compute the line width for ANSI escaped text
 fn line_width(line: &str) -> usize {
-    match strip_ansi_escapes::strip(line) {
-        Ok(stripped_line) => unicode_width::UnicodeWidthStr::width(
-            String::from_utf8_lossy(&stripped_line).to_string().as_str(),
-        ),
-        Err(_) => line.len(),
-    }
+    strip_ansi(line).width()
 }
 
 // Returns a string that skips N number of lines with the next offset of lines
@@ -375,7 +361,7 @@ impl Painter {
 
         self.stdout.queue(RestorePosition)?.queue(cursor::Show)?;
 
-        self.flush()
+        self.stdout.flush()
     }
 
     fn print_right_prompt(&mut self, lines: &PromptLines) -> Result<()> {
@@ -593,11 +579,8 @@ impl Painter {
     }
 
     /// Writes `line` to the terminal with a following carriage return and newline
-    pub fn paint_line(&mut self, line: &str) -> Result<()> {
-        self.stdout
-            .queue(Print(line))?
-            .queue(Print("\n"))?
-            .queue(MoveToColumn(1))?;
+    pub(crate) fn paint_line(&mut self, line: &str) -> Result<()> {
+        self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
 
         self.stdout.flush()
     }
@@ -632,10 +615,6 @@ impl Painter {
         let final_row = self.prompt_coords.prompt_start.1 + self.last_required_lines;
         self.stdout.queue(MoveToRow(final_row))?;
 
-        self.stdout.flush()
-    }
-
-    pub fn flush(&mut self) -> Result<()> {
         self.stdout.flush()
     }
 }

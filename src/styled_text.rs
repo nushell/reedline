@@ -86,12 +86,14 @@ impl StyledText {
     }
 }
 
-fn strip_ansi(astring: &str) -> String {
-    if let Ok(bytes) = strip_ansi_escapes::strip(astring) {
-        String::from_utf8_lossy(&bytes).to_string()
-    } else {
-        astring.to_string()
-    }
+/// Returns string with the ANSI escape codes removed
+///
+/// If parsing fails silently returns the input string
+pub(crate) fn strip_ansi(string: &str) -> String {
+    strip_ansi_escapes::strip(string)
+        .map_err(|_| ())
+        .and_then(|x| String::from_utf8(x).map_err(|_| ()))
+        .unwrap_or_else(|_| string.to_owned())
 }
 
 fn render_as_string(
