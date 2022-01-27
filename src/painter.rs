@@ -1,5 +1,7 @@
 use {
-    crate::{menu::Menu, prompt::PromptEditMode, Prompt, PromptHistorySearch},
+    crate::{
+        menu::Menu, prompt::PromptEditMode, styled_text::strip_ansi, Prompt, PromptHistorySearch,
+    },
     crossterm::{
         cursor::{self, MoveTo, MoveToColumn, MoveToRow, RestorePosition, SavePosition},
         style::{Print, ResetColor, SetForegroundColor},
@@ -79,24 +81,14 @@ impl<'prompt> PromptLines<'prompt> {
         };
 
         let lines = input.lines().fold(0, |acc, line| {
-            let wrap = if let Ok(line) = strip_ansi_escapes::strip(line) {
-                estimated_wrapped_line_count(&String::from_utf8_lossy(&line), terminal_columns)
-            } else {
-                estimated_wrapped_line_count(line, terminal_columns)
-            };
+            let wrap = estimated_wrapped_line_count(line, terminal_columns);
 
             acc + 1 + wrap
         });
 
         if let Some(menu) = menu {
             let wrap_lines = menu.get_values().iter().fold(0, |acc, (_, line)| {
-                let wrap = match strip_ansi_escapes::strip(line) {
-                    Ok(line) => estimated_wrapped_line_count(
-                        &String::from_utf8_lossy(&line),
-                        terminal_columns,
-                    ),
-                    Err(_) => estimated_wrapped_line_count(line, terminal_columns),
-                };
+                let wrap = estimated_wrapped_line_count(line, terminal_columns);
 
                 acc + wrap
             });
@@ -113,11 +105,7 @@ impl<'prompt> PromptLines<'prompt> {
         let input = self.prompt_str_left.to_string() + &self.prompt_indicator + self.before_cursor;
 
         let lines = input.lines().fold(0, |acc, line| {
-            let wrap = if let Ok(line) = strip_ansi_escapes::strip(line) {
-                estimated_wrapped_line_count(&String::from_utf8_lossy(&line), terminal_columns)
-            } else {
-                estimated_wrapped_line_count(line, terminal_columns)
-            };
+            let wrap = estimated_wrapped_line_count(line, terminal_columns);
 
             acc + 1 + wrap
         });
@@ -166,11 +154,11 @@ impl<'prompt> PromptLines<'prompt> {
 
 /// Reports the additional lines needed due to wrapping for the given line.
 ///
-/// Does account for any potential linebreaks in `line`
+/// Does not account for any potential linebreaks in `line`
 ///
 /// If `line` fits in `terminal_columns` returns 0
 fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
-    let estimated_width = UnicodeWidthStr::width(line);
+    let estimated_width = line_width(line);
     let terminal_columns: usize = terminal_columns.into();
 
     // integer ceiling rounding division for positive divisors
@@ -182,11 +170,7 @@ fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
 
 /// Compute the line width for ANSI escaped text
 fn line_width(line: &str) -> usize {
-    match strip_ansi_escapes::strip(line) {
-        Ok(stripped_line) => String::from_utf8_lossy(&stripped_line).width(),
-
-        Err(_) => line.width(),
-    }
+    strip_ansi(line).width()
 }
 
 // Returns a string that skips N number of lines with the next offset of lines
