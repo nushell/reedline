@@ -219,4 +219,4 @@ mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
-pub use menu::{ContextMenu, HistoryMenu, Menu};
+pub use menu::{CompletionMenu, HistoryMenu, Menu};

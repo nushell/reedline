@@ -1,8 +1,8 @@
-mod context_menu;
+mod completion_menu;
 mod history_menu;
 
 use crate::{Completer, History, LineBuffer, Span};
-pub use context_menu::ContextMenu;
+pub use completion_menu::CompletionMenu;
 pub use history_menu::HistoryMenu;
 use nu_ansi_term::{ansi::RESET, Color, Style};
 

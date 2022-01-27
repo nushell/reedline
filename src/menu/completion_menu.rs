@@ -37,10 +37,10 @@ struct ColumnDetails {
     pub col_padding: usize,
 }
 
-/// Context menu definition
-pub struct ContextMenu {
+/// Completion menu definition
+pub struct CompletionMenu {
     active: bool,
-    /// Context menu coloring
+    /// Menu coloring
     color: MenuTextStyle,
     /// Default column details that are set when creating the menu
     /// These values are the reference for the working details
@@ -60,7 +60,7 @@ pub struct ContextMenu {
     marker: String,
 }
 
-impl Default for ContextMenu {
+impl Default for CompletionMenu {
     fn default() -> Self {
         Self {
             active: false,
@@ -76,7 +76,7 @@ impl Default for ContextMenu {
     }
 }
 
-impl ContextMenu {
+impl CompletionMenu {
     /// Menu builder with new value for text style
     pub fn with_text_style(mut self, text_style: Style) -> Self {
         self.color.text_style = text_style;
@@ -120,10 +120,10 @@ impl ContextMenu {
     }
 }
 
-impl Menu for ContextMenu {
+impl Menu for CompletionMenu {
     /// Menu name
     fn name(&self) -> &str {
-        "context_menu"
+        "completion_menu"
     }
 
     /// Menu indicator

@@ -6,7 +6,7 @@ use {
     nu_ansi_term::{Color, Style},
     reedline::{
         default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-        ContextMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, EditMode, Emacs,
+        CompletionMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, EditMode, Emacs,
         ExampleHighlighter, FileBackedHistory, HistoryMenu, Keybindings, Reedline, ReedlineEvent,
         Signal, Vi,
     },
@@ -64,9 +64,11 @@ fn main() -> Result<()> {
         .with_ansi_colors(true);
 
     // Adding default menus for the compiled reedline
-    let context_menu = Box::new(ContextMenu::default());
+    let completion_menu = Box::new(CompletionMenu::default());
     let history_menu = Box::new(HistoryMenu::default());
-    line_editor = line_editor.with_menu(context_menu).with_menu(history_menu);
+    line_editor = line_editor
+        .with_menu(completion_menu)
+        .with_menu(history_menu);
 
     let edit_mode: Box<dyn EditMode> = if vi_mode {
         let mut normal_keybindings = default_vi_normal_keybindings();
@@ -205,7 +207,7 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
         KeyModifiers::NONE,
         KeyCode::Tab,
         ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::Menu("context_menu".to_string()),
+            ReedlineEvent::Menu("completion_menu".to_string()),
             ReedlineEvent::MenuNext,
         ]),
     );

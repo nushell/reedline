@@ -7,7 +7,7 @@ use crate::{Completer, History, LineBuffer, Span};
 
 /// Context menu definition
 pub struct HistoryMenu {
-    /// Context menu coloring
+    /// Menu coloring
     color: MenuTextStyle,
     /// Number of history records presented per page
     page_size: usize,
