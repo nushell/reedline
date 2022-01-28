@@ -402,7 +402,7 @@ impl Painter {
                     start_position,
                     self.prompt_coords.prompt_start.1,
                 ))?
-                .queue(Print(&lines.prompt_str_right))?
+                .queue(Print(&coerce_crlf(&lines.prompt_str_right)))?
                 .queue(RestorePosition)?;
         }
 
@@ -450,13 +450,14 @@ impl Painter {
                 .queue(SetForegroundColor(prompt.get_prompt_color()))?;
         }
 
-        self.stdout.queue(Print(&lines.prompt_str_left))?;
+        self.stdout
+            .queue(Print(&coerce_crlf(&lines.prompt_str_left)))?;
 
         let prompt_indicator = match menu {
             Some(menu) => menu.indicator(),
             None => &lines.prompt_indicator,
         };
-        self.stdout.queue(Print(prompt_indicator))?;
+        self.stdout.queue(Print(&coerce_crlf(prompt_indicator)))?;
 
         self.print_right_prompt(lines)?;
 
@@ -515,7 +516,7 @@ impl Painter {
         // In case the prompt is made out of multiple lines, the prompt is split by
         // lines and only the required ones are printed
         let prompt_skipped = skip_buffer_lines(&lines.prompt_str_left, extra_rows, None);
-        self.stdout.queue(Print(prompt_skipped))?;
+        self.stdout.queue(Print(&coerce_crlf(prompt_skipped)))?;
 
         if extra_rows == 0 {
             self.print_right_prompt(lines)?;
@@ -525,7 +526,7 @@ impl Painter {
         let extra_rows = extra_rows.saturating_sub(prompt_lines);
 
         let indicator_skipped = skip_buffer_lines(prompt_indicator, extra_rows, None);
-        self.stdout.queue(Print(indicator_skipped))?;
+        self.stdout.queue(Print(&coerce_crlf(indicator_skipped)))?;
 
         if use_ansi_coloring {
             self.stdout.queue(ResetColor)?;
