@@ -1050,11 +1050,7 @@ impl Reedline {
 
             let prompt_history_search = PromptHistorySearch::new(status, substring.clone());
 
-            let res_string = self
-                .history
-                .string_at_cursor()
-                .unwrap_or_default()
-                .replace("\n", "\r\n");
+            let res_string = self.history.string_at_cursor().unwrap_or_default();
 
             // Highlight matches
             let res_string = if self.use_ansi_coloring {
@@ -1110,9 +1106,6 @@ impl Reedline {
 
         // Needs to add return carriage to newlines because when not in raw mode
         // some OS don't fully return the carriage
-        let before_cursor = before_cursor.replace("\n", "\r\n");
-        let after_cursor = after_cursor.replace("\n", "\r\n");
-        let hint = hint.replace("\n", "\r\n");
 
         // Updating the working details of the active menu
         for menu in self.menus.iter_mut() {
