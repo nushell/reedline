@@ -28,9 +28,9 @@ pub struct PromptLines<'prompt> {
     prompt_str_left: Cow<'prompt, str>,
     prompt_str_right: Cow<'prompt, str>,
     prompt_indicator: Cow<'prompt, str>,
-    before_cursor: &'prompt str,
-    after_cursor: &'prompt str,
-    hint: &'prompt str,
+    before_cursor: Cow<'prompt, str>,
+    after_cursor: Cow<'prompt, str>,
+    hint: Cow<'prompt, str>,
 }
 
 impl<'prompt> PromptLines<'prompt> {
@@ -53,6 +53,10 @@ impl<'prompt> PromptLines<'prompt> {
             None => prompt.render_prompt_indicator(prompt_mode),
         };
 
+        let before_cursor = coerce_crlf(before_cursor);
+        let after_cursor = coerce_crlf(after_cursor);
+        let hint = coerce_crlf(hint);
+
         Self {
             prompt_str_left,
             prompt_str_right,
@@ -70,14 +74,14 @@ impl<'prompt> PromptLines<'prompt> {
         let input = if menu.is_none() {
             self.prompt_str_left.to_string()
                 + &self.prompt_indicator
-                + self.before_cursor
-                + self.after_cursor
-                + self.hint
+                + &self.before_cursor
+                + &self.after_cursor
+                + &self.hint
         } else {
             self.prompt_str_left.to_string()
                 + &self.prompt_indicator
-                + self.before_cursor
-                + self.after_cursor
+                + &self.before_cursor
+                + &self.after_cursor
         };
 
         let lines = input.lines().fold(0, |acc, line| {
@@ -102,7 +106,7 @@ impl<'prompt> PromptLines<'prompt> {
     /// Estimated distance of the cursor to the prompt.
     /// This considers line wrapping
     fn distance_from_prompt(&self, terminal_columns: u16) -> u16 {
-        let input = self.prompt_str_left.to_string() + &self.prompt_indicator + self.before_cursor;
+        let input = self.prompt_str_left.to_string() + &self.prompt_indicator + &self.before_cursor;
 
         let lines = input.lines().fold(0, |acc, line| {
             let wrap = estimated_wrapped_line_count(line, terminal_columns);
@@ -114,7 +118,7 @@ impl<'prompt> PromptLines<'prompt> {
     }
 
     fn concatenate_lines(&self) -> String {
-        self.before_cursor.to_string() + self.after_cursor + self.hint
+        self.before_cursor.to_string() + &self.after_cursor + &self.hint
     }
 
     /// Total lines that the prompt uses considering that it may wrap the screen
@@ -199,6 +203,27 @@ fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
     };
 
     string[index..limit].trim_end_matches('\n')
+}
+
+fn coerce_crlf(input: &str) -> Cow<str> {
+    let mut result = Cow::Borrowed(input);
+    let mut cursor: usize = 0;
+    for (idx, _) in input.match_indices('\n') {
+        if idx > 0 && input.as_bytes()[idx - 1] == b'\r' {
+            // Already CRLF: Don't advance cursor as a pure LF could follow
+        } else {
+            if let Cow::Borrowed(_) = result {
+                result = Cow::Owned(String::with_capacity(input.len()));
+            }
+            result += &input[cursor..idx];
+            result += "\r\n";
+            cursor = idx + 1;
+        }
+    }
+    if let Cow::Owned(_) = result {
+        result += &input[cursor..input.len()]
+    }
+    result
 }
 
 /// the type used by crossterm operations
@@ -524,7 +549,7 @@ impl Painter {
         });
 
         // Selecting the lines before the cursor that will be printed
-        let before_cursor_skipped = skip_buffer_lines(lines.before_cursor, extra_rows, offset);
+        let before_cursor_skipped = skip_buffer_lines(&lines.before_cursor, extra_rows, offset);
         self.stdout.queue(Print(before_cursor_skipped))?;
         self.stdout.queue(SavePosition)?;
 
@@ -539,10 +564,10 @@ impl Painter {
             // for the after-cursor and hint lines
             let offset = remaining_lines.saturating_sub(1) as usize;
             // Selecting lines after the cursor
-            let after_cursor_skipped = skip_buffer_lines(lines.after_cursor, 0, Some(offset));
+            let after_cursor_skipped = skip_buffer_lines(&lines.after_cursor, 0, Some(offset));
             self.stdout.queue(Print(after_cursor_skipped))?;
             // Hint lines
-            let hint_skipped = skip_buffer_lines(lines.hint, 0, Some(offset));
+            let hint_skipped = skip_buffer_lines(&lines.hint, 0, Some(offset));
             self.stdout.queue(Print(hint_skipped))?;
         }
 
@@ -627,6 +652,8 @@ impl Painter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     #[test]
     fn test_skip_lines() {
@@ -677,5 +704,24 @@ mod tests {
 
         assert_eq!(skip_buffer_lines(string, 0, Some(0)), "sentence1",);
         assert_eq!(skip_buffer_lines(string, 1, Some(0)), "sentence2",);
+    }
+
+    #[rstest]
+    #[case("sentence\nsentence", "sentence\r\nsentence")]
+    #[case("sentence\r\nsentence", "sentence\r\nsentence")]
+    #[case("sentence\nsentence\n", "sentence\r\nsentence\r\n")]
+    #[case("😇\nsentence", "😇\r\nsentence")]
+    #[case("sentence\n😇", "sentence\r\n😇")]
+    #[case("\n", "\r\n")]
+    #[case("", "")]
+    fn test_coerce_crlf(#[case] input: &str, #[case] expected: &str) {
+        let result = coerce_crlf(input);
+
+        assert_eq!(result, expected);
+
+        assert!(
+            input != expected || matches!(result, Cow::Borrowed(_)),
+            "Unnecessary allocation"
+        )
     }
 }
