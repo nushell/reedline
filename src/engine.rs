@@ -655,10 +655,12 @@ impl Reedline {
                 Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::HistoryHintComplete => {
+                let any_menu_active = self.menus.iter().any(|menu| menu.is_active());
                 let current_hint = self.hinter.complete_hint();
                 if self.hints_active()
                     && self.editor.offset() == self.editor.get_buffer().len()
                     && !current_hint.is_empty()
+                    && !any_menu_active
                 {
                     self.run_edit_commands(&[EditCommand::InsertString(current_hint)]);
                     self.buffer_paint(prompt)?;
@@ -668,10 +670,12 @@ impl Reedline {
                 }
             }
             ReedlineEvent::HistoryHintWordComplete => {
+                let any_menu_active = self.menus.iter().any(|menu| menu.is_active());
                 let current_hint_part = self.hinter.next_hint_token();
                 if self.hints_active()
                     && self.editor.offset() == self.editor.get_buffer().len()
                     && !current_hint_part.is_empty()
+                    && !any_menu_active
                 {
                     self.run_edit_commands(&[EditCommand::InsertString(current_hint_part)]);
                     self.buffer_paint(prompt)?;
