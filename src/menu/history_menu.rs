@@ -409,7 +409,7 @@ impl Menu for HistoryMenu {
         let status_bar = if use_ansi_coloring {
             format!(
                 "{}records {} - {}    total: {}{}",
-                self.color.selected_text_style.prefix().to_string(),
+                self.color.selected_text_style.prefix(),
                 value_before,
                 values_until,
                 self.total_values(),
