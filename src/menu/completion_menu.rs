@@ -130,7 +130,7 @@ impl CompletionMenu {
     ) -> String {
         if use_ansi_coloring {
             format!(
-                "{}{}{}{}{:empty$}{}",
+                "{}{}{}{:empty$}{}",
                 self.text_style(index),
                 &line,
                 RESET,
