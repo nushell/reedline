@@ -405,7 +405,12 @@ impl Menu for HistoryMenu {
             .collect::<String>();
 
         let values_until = self.values_until_current_page();
-        let value_before = values_until - self.pages_size.get(self.page).unwrap_or(&0) + 1;
+        let value_before = if self.values.is_empty() {
+            0
+        } else {
+            values_until.saturating_sub(*self.pages_size.get(self.page).unwrap_or(&0)) + 1
+        };
+
         let status_bar = if use_ansi_coloring {
             format!(
                 "{}records {} - {}    total: {}{}",
