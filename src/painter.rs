@@ -87,13 +87,7 @@ impl<'prompt> PromptLines<'prompt> {
         });
 
         if let Some(menu) = menu {
-            let wrap_lines = menu.get_values().iter().fold(0, |acc, (_, line)| {
-                let wrap = estimated_wrapped_line_count(line, terminal_columns);
-
-                acc + wrap
-            });
-
-            lines as u16 + menu.get_rows() + wrap_lines as u16
+            lines as u16 + menu.menu_required_lines(terminal_columns)
         } else {
             lines as u16
         }
@@ -157,7 +151,7 @@ impl<'prompt> PromptLines<'prompt> {
 /// Does not account for any potential linebreaks in `line`
 ///
 /// If `line` fits in `terminal_columns` returns 0
-fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
+pub(crate) fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
     let estimated_width = line_width(line);
     let terminal_columns: usize = terminal_columns.into();
 
@@ -243,11 +237,11 @@ impl Painter {
         Ok(())
     }
 
-    fn terminal_rows(&self) -> u16 {
+    pub(crate) fn terminal_rows(&self) -> u16 {
         self.terminal_size.1
     }
 
-    pub fn terminal_cols(&self) -> u16 {
+    pub(crate) fn terminal_cols(&self) -> u16 {
         self.terminal_size.0
     }
 
@@ -305,8 +299,8 @@ impl Painter {
         let (screen_width, screen_height) = self.terminal_size;
 
         // Lines and distance parameters
-        let required_lines = lines.required_lines(screen_width, menu);
         let remaining_lines = self.remaining_lines();
+        let required_lines = lines.required_lines(screen_width, menu);
 
         // Marking the painter state as larger buffer to avoid animations
         self.large_buffer = required_lines >= screen_height;
@@ -403,7 +397,6 @@ impl Painter {
 
         let remaining_lines = screen_height.saturating_sub(starting_row);
         let menu_string = menu.menu_string(remaining_lines, use_ansi_coloring);
-
         self.stdout
             .queue(cursor::MoveTo(0, starting_row))?
             .queue(Clear(ClearType::FromCursorDown))?

@@ -546,7 +546,7 @@ impl Reedline {
                             self.completer.as_ref(),
                         );
 
-                        if menu.get_num_values() == 1 {
+                        if menu.get_values().len() == 1 {
                             return self.handle_editor_event(prompt, ReedlineEvent::Enter);
                         } else {
                             self.buffer_paint(prompt)?;
@@ -742,6 +742,7 @@ impl Reedline {
                 self.run_edit_commands(&commands);
                 for menu in self.menus.iter_mut() {
                     if menu.is_active() {
+                        menu.reset_position();
                         menu.update_values(
                             self.editor.line_buffer(),
                             self.history.as_ref(),
@@ -1114,21 +1115,6 @@ impl Reedline {
         let after_cursor = after_cursor.replace("\n", "\r\n");
         let hint = hint.replace("\n", "\r\n");
 
-        // Updating the working details of the active menu
-        for menu in self.menus.iter_mut() {
-            if menu.is_active() {
-                menu.update_working_details(self.painter.terminal_cols());
-            }
-        }
-
-        let menu = self.menus.iter().fold(None, |acc, menu| {
-            if menu.is_active() {
-                Some(menu.as_ref())
-            } else {
-                acc
-            }
-        });
-
         let lines = PromptLines::new(
             prompt,
             self.prompt_edit_mode(),
@@ -1137,6 +1123,19 @@ impl Reedline {
             &after_cursor,
             &hint,
         );
+
+        // Updating the working details of the active menu
+        for menu in self.menus.iter_mut() {
+            if menu.is_active() {
+                menu.update_working_details(&self.painter);
+            }
+        }
+
+        let menu = self
+            .menus
+            .iter()
+            .find(|menu| menu.is_active())
+            .map(|menu| menu.as_ref());
 
         self.painter
             .repaint_buffer(prompt, lines, menu, self.use_ansi_coloring)

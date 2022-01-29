@@ -1,7 +1,7 @@
-use nu_ansi_term::Style;
+use nu_ansi_term::{ansi::RESET, Style};
 
 use super::{Menu, MenuTextStyle};
-use crate::{Completer, History, LineBuffer, Span};
+use crate::{painter::Painter, Completer, History, LineBuffer, Span};
 
 /// Default values used as reference for the menu. These values are set during
 /// the initial declaration of the menu and are always kept as reference for the
@@ -113,10 +113,48 @@ impl CompletionMenu {
         self
     }
 
-    /// Reset menu position
-    fn reset_position(&mut self) {
-        self.col_pos = 0;
-        self.row_pos = 0;
+    /// Calculates how many rows the Menu will use
+    fn get_rows(&self) -> u16 {
+        let rows = self.get_values().len() as u16 / self.get_cols();
+        rows + 1
+    }
+
+    /// Creates default string that represents one line from a menu
+    fn create_string(
+        &self,
+        line: &str,
+        index: usize,
+        column: u16,
+        empty_space: usize,
+        use_ansi_coloring: bool,
+    ) -> String {
+        if use_ansi_coloring {
+            format!(
+                "{}{}{}{}{:empty$}{}",
+                self.text_style(index),
+                &line,
+                RESET,
+                "",
+                self.end_of_line(column),
+                empty = empty_space
+            )
+        } else {
+            // If no ansi coloring is found, then the selection word is
+            // the line in uppercase
+            let line_str = if index == self.position() {
+                format!(">{}", line.to_uppercase())
+            } else {
+                line.to_string()
+            };
+
+            // Final string with formatting
+            format!(
+                "{:width$}{}",
+                line_str,
+                self.end_of_line(column),
+                width = self.get_width()
+            )
+        }
     }
 }
 
@@ -147,6 +185,12 @@ impl Menu for CompletionMenu {
         self.active = false
     }
 
+    /// Reset menu position
+    fn reset_position(&mut self) {
+        self.col_pos = 0;
+        self.row_pos = 0;
+    }
+
     /// Updates menu values
     fn update_values(
         &mut self,
@@ -166,7 +210,7 @@ impl Menu for CompletionMenu {
 
     /// The working details for the menu changes based on the size of the lines
     /// collected from the completer
-    fn update_working_details(&mut self, screen_width: u16) {
+    fn update_working_details(&mut self, painter: &Painter) {
         let max_width = self.get_values().iter().fold(0, |acc, (_, string)| {
             let str_len = string.len() + self.working_details.col_padding;
             if str_len > acc {
@@ -181,7 +225,7 @@ impl Menu for CompletionMenu {
         let default_width = match self.default_details.col_width {
             Some(col_width) => col_width,
             None => {
-                let col_width = screen_width / self.default_details.columns;
+                let col_width = painter.terminal_cols() / self.default_details.columns;
                 col_width as usize
             }
         };
@@ -196,7 +240,7 @@ impl Menu for CompletionMenu {
 
         // The working columns is adjusted based on possible number of columns
         // that could be fitted in the screen with the calculated column width
-        let possible_cols = screen_width / self.working_details.col_width as u16;
+        let possible_cols = painter.terminal_cols() / self.working_details.col_width as u16;
         if possible_cols > self.default_details.columns {
             self.working_details.columns = self.default_details.columns.max(1);
         } else {
@@ -276,7 +320,7 @@ impl Menu for CompletionMenu {
     /// Move menu cursor left
     fn move_down(&mut self) {
         let new_row = self.row_pos + 1;
-        self.row_pos = if new_row >= self.get_rows() {
+        self.row_pos = if new_row >= self.get_rows().saturating_sub(1) {
             0
         } else {
             new_row
@@ -339,5 +383,39 @@ impl Menu for CompletionMenu {
     /// Returns working details col width
     fn get_width(&self) -> usize {
         self.working_details.col_width
+    }
+
+    fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
+        self.get_rows()
+    }
+
+    fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String {
+        // The skip values represent the number of lines that should be skipped
+        // while printing the menu
+        let skip_values = if self.row_pos() >= available_lines {
+            let skip_lines = self.row_pos().saturating_sub(available_lines) + 1;
+            (skip_lines * self.get_cols()) as usize
+        } else {
+            0
+        };
+
+        // It seems that crossterm prefers to have a complete string ready to be printed
+        // rather than looping through the values and printing multiple things
+        // This reduces the flickering when printing the menu
+        let available_values = (available_lines * self.get_cols()) as usize;
+        self.get_values()
+            .iter()
+            .skip(skip_values)
+            .take(available_values)
+            .enumerate()
+            .map(|(index, (_, line))| {
+                // Correcting the enumerate index based on the number of skipped values
+                let index = index + skip_values;
+                let column = index as u16 % self.get_cols();
+                let empty_space = self.get_width().saturating_sub(line.len());
+
+                self.create_string(line, index, column, empty_space, use_ansi_coloring)
+            })
+            .collect()
     }
 }
