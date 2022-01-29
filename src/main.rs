@@ -1,3 +1,5 @@
+use reedline::EditCommand;
+use strum::IntoEnumIterator;
 use {
     crossterm::{
         event::{poll, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -28,6 +30,11 @@ fn main() -> Result<()> {
         println!();
         return Ok(());
     };
+    if args.len() > 1 && args[1] == "--list" {
+        list_stuff()?;
+        println!();
+        return Ok(());
+    }
 
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
     let commands = vec![
@@ -217,4 +224,54 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
         KeyCode::BackTab,
         ReedlineEvent::MenuPrevious,
     );
+}
+
+#[derive(Debug)]
+struct KeyCodes;
+impl KeyCodes {
+    pub fn iterator() -> std::slice::Iter<'static, KeyCode> {
+        static KEYCODE: [KeyCode; 18] = [
+            crossterm::event::KeyCode::Backspace,
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyCode::Left,
+            crossterm::event::KeyCode::Right,
+            crossterm::event::KeyCode::Up,
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyCode::Home,
+            crossterm::event::KeyCode::End,
+            crossterm::event::KeyCode::PageUp,
+            crossterm::event::KeyCode::PageDown,
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyCode::BackTab,
+            crossterm::event::KeyCode::Delete,
+            crossterm::event::KeyCode::Insert,
+            crossterm::event::KeyCode::F(1),
+            crossterm::event::KeyCode::Char('a'),
+            crossterm::event::KeyCode::Null,
+            crossterm::event::KeyCode::Esc,
+        ];
+        KEYCODE.iter()
+    }
+}
+
+fn list_stuff() -> Result<()> {
+    println!("--Key Modifiers--");
+    println!("alt\ncontrol\nshift\nnone");
+
+    println!("\n--Modes--");
+    println!("emacs\nvi_insert\nvi_normal");
+
+    println!("\n--Key Codes--");
+    for kc in KeyCodes::iterator() {
+        println!("{:?}", kc);
+    }
+    println!("\n--Reedline Events--");
+    for rle in ReedlineEvent::iter() {
+        println!("{:?}", rle);
+    }
+    println!("\n--Edit Commands--");
+    for edit in EditCommand::iter() {
+        println!("{:?}", edit);
+    }
+    Ok(())
 }
