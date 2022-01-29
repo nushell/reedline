@@ -406,13 +406,25 @@ impl Menu for HistoryMenu {
 
         let values_until = self.values_until_current_page();
         let value_before = values_until - self.pages_size.get(self.page).unwrap_or(&0) + 1;
-        format!(
-            "{}records {} - {}    total: {}",
-            lines_string,
-            value_before,
-            values_until,
-            self.total_values()
-        )
+        let status_bar = if use_ansi_coloring {
+            format!(
+                "{}records {} - {}    total: {}{}",
+                self.color.selected_text_style.prefix().to_string(),
+                value_before,
+                values_until,
+                self.total_values(),
+                RESET
+            )
+        } else {
+            format!(
+                "records {} - {}    total: {}",
+                value_before,
+                values_until,
+                self.total_values()
+            )
+        };
+
+        format!("{}{}", lines_string, status_bar)
     }
 
     /// Minimum rows that should be displayed by the menu
