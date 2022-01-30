@@ -281,18 +281,11 @@ impl Painter {
         // Assumption: if the cursor is not on the zeroth column,
         // there is content we want to leave intact, thus advance to the next row
         let new_row = if column > 0 { row + 1 } else { row };
-        // TODO: support more than just two line prompts!
-        //  If we are on the last line or would move beyond the last line due to
-        //  the condition above, we need to make room for the multiline prompt.
+        //  If we are on the last line and would move beyond the last line due to
+        //  the condition above, we need to make room for the prompt.
         //  Otherwise printing the prompt would scroll of the stored prompt
         //  origin, causing issues after repaints.
         let new_row = if new_row == self.terminal_rows() {
-            // Would exceed the terminal height, we need space for two lines
-            self.print_crlf()?;
-            self.print_crlf()?;
-            new_row.saturating_sub(2)
-        } else if new_row == self.terminal_rows() - 1 {
-            // Safe on the last line make space for the 2 line prompt
             self.print_crlf()?;
             new_row.saturating_sub(1)
         } else {
