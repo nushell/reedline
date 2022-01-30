@@ -88,7 +88,7 @@ impl Display for PromptEditMode {
             //     PromptViMode::Insert => write!(f, "vi_insert"),
             // },
             PromptEditMode::Vi(_) => write!(f, "vi_normal\nvi_insert"),
-            PromptEditMode::Custom(s) => write!(f, "{}", format!("custom_{}", s)),
+            PromptEditMode::Custom(s) => write!(f, "custom_{}", s),
         }
     }
 }
