@@ -1,5 +1,3 @@
-use reedline::{EditCommand, PromptEditMode};
-use strum::IntoEnumIterator;
 use {
     crossterm::{
         event::{poll, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -8,14 +6,15 @@ use {
     nu_ansi_term::{Color, Style},
     reedline::{
         default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-        CompletionMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, EditMode, Emacs,
-        ExampleHighlighter, FileBackedHistory, HistoryMenu, Keybindings, Reedline, ReedlineEvent,
-        Signal, Vi,
+        CompletionMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, EditCommand, EditMode,
+        Emacs, ExampleHighlighter, FileBackedHistory, HistoryMenu, Keybindings, PromptEditMode,
+        Reedline, ReedlineEvent, Signal, Vi,
     },
     std::{
         io::{stdout, Write},
         time::Duration,
     },
+    strum::IntoEnumIterator,
 };
 
 fn main() -> Result<()> {

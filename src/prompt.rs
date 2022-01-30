@@ -1,12 +1,13 @@
-use std::fmt::{Display, Formatter};
-
-use serde::{Deserialize, Serialize};
-use strum_macros::EnumIter;
-
 use {
     chrono::Local,
     crossterm::style::Color,
-    std::{borrow::Cow, env},
+    serde::{Deserialize, Serialize},
+    std::{
+        borrow::Cow,
+        env,
+        fmt::{Display, Formatter},
+    },
+    strum_macros::EnumIter,
 };
 
 /// The default color for the prompt
