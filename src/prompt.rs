@@ -81,14 +81,10 @@ impl Default for PromptViMode {
 impl Display for PromptEditMode {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            PromptEditMode::Default => write!(f, "default"),
-            PromptEditMode::Emacs => write!(f, "emacs"),
-            // PromptEditMode::Vi(mode) => match mode {
-            //     PromptViMode::Normal => write!(f, "vi_normal"),
-            //     PromptViMode::Insert => write!(f, "vi_insert"),
-            // },
-            PromptEditMode::Vi(_) => write!(f, "vi_normal\nvi_insert"),
-            PromptEditMode::Custom(s) => write!(f, "custom_{}", s),
+            PromptEditMode::Default => write!(f, "Default"),
+            PromptEditMode::Emacs => write!(f, "Emacs"),
+            PromptEditMode::Vi(_) => write!(f, "Vi_Normal\nVi_Insert"),
+            PromptEditMode::Custom(s) => write!(f, "Custom_{}", s),
         }
     }
 }
