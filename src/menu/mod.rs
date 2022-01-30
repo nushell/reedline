@@ -40,10 +40,10 @@ pub trait Menu: Send {
     /// Deactivates the menu
     fn deactivate(&mut self);
 
-    /// Resets menu position
-    fn reset_position(&mut self);
-
     /// Updates the values presented in the menu
+    /// This function needs to be defined in the trait because when the menu is
+    /// activated the len of the values is calculated to know if there is only one
+    /// value so it can be selected immediately
     fn update_values(
         &mut self,
         line_buffer: &mut LineBuffer,
@@ -54,7 +54,13 @@ pub trait Menu: Send {
     /// The working details of a menu are values that could change based on
     /// the menu conditions before it being printed, such as the number or size
     /// of columns, etc.
-    fn update_working_details(&mut self, painter: &Painter);
+    fn update_working_details(
+        &mut self,
+        line_buffer: &mut LineBuffer,
+        history: &dyn History,
+        completer: &dyn Completer,
+        painter: &Painter,
+    );
 
     /// Indicates how to replace in the buffer the selected value from the menu
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer);
@@ -62,6 +68,9 @@ pub trait Menu: Send {
     /// Text style for the values printed in the menu. The index represents the
     /// selected values in the menu
     fn text_style(&self, index: usize) -> String;
+
+    /// Moves the selected value to the next element
+    fn edit_line_buffer(&mut self);
 
     /// Moves the selected value to the next element
     fn move_next(&mut self);

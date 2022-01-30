@@ -4,6 +4,38 @@ use crate::{
     Completer, History, LineBuffer, Span,
 };
 use nu_ansi_term::{ansi::RESET, Style};
+use std::iter::Sum;
+
+enum MenuEvent {
+    Edit,
+    NextElement,
+    PreviousElement,
+    NextPage,
+    PreviousPage,
+}
+
+struct Page {
+    size: usize,
+    full: bool,
+}
+
+impl<'a> Sum<&'a Page> for Page {
+    fn sum<I>(iter: I) -> Page
+    where
+        I: Iterator<Item = &'a Page>,
+    {
+        iter.fold(
+            Page {
+                size: 0,
+                full: false,
+            },
+            |acc, menu| Page {
+                size: acc.size + menu.size,
+                full: acc.full || menu.full,
+            },
+        )
+    }
+}
 
 /// Struct to store the menu style
 
@@ -11,41 +43,42 @@ use nu_ansi_term::{ansi::RESET, Style};
 pub struct HistoryMenu {
     /// Menu coloring
     color: MenuTextStyle,
-    /// Number of history records presented per page
-    /// Based on the size of the terminal, the history menu will try to present
-    /// these many entries in the screen
+    /// Number of history records pulled until page is full
     page_size: usize,
+    /// Menu marker displayed when the menu is active
+    marker: String,
     /// Character that will start a selection via a number. E.g let:5 will select
     /// the fifth entry in the current page
     row_char: char,
     /// History menu active status
     active: bool,
     /// Cached values collected when querying the history.
-    /// When collecting chronological values, the menu only caches at least the
-    /// page size. When performing a query to the history object, the values will
+    /// When collecting chronological values, the menu only caches at least
+    /// page_size records.
+    /// When performing a query to the history object, the cached values will
     /// be the result from such query
     values: Vec<(Span, String)>,
     /// row position in the menu. Starts from 0
     row_position: u16,
     /// Max size of the history when querying without a search buffer
     history_size: Option<usize>,
-    /// Menu marker displayed when the menu is active
-    marker: String,
     /// Max number of lines that are shown with large history entries
     max_lines: u16,
     /// Multiline marker
     multiline_marker: String,
-    /// Track of the pages that have been printed by the menu
+    /// Registry of the number of entries per page that have been displayed
+    pages: Vec<Page>,
+    /// Page index
     page: usize,
-    /// Registry of the number of entries per page that were displayed
-    pages_size: Vec<usize>,
+    /// Event sent to the menu
+    event: Option<MenuEvent>,
 }
 
 impl Default for HistoryMenu {
     fn default() -> Self {
         Self {
             color: MenuTextStyle::default(),
-            page_size: 20,
+            page_size: 10,
             row_char: ':',
             active: false,
             values: Vec::new(),
@@ -55,7 +88,8 @@ impl Default for HistoryMenu {
             marker: "? ".to_string(),
             max_lines: 5,
             multiline_marker: ":::".to_string(),
-            pages_size: Vec::new(),
+            pages: Vec::new(),
+            event: None,
         }
     }
 }
@@ -91,9 +125,15 @@ impl HistoryMenu {
         self
     }
 
+    /// Menu builder with max entry lines
+    pub fn with_max_entry_lines(mut self, max_lines: u16) -> Self {
+        self.max_lines = max_lines;
+        self
+    }
+
     fn update_row_pos(&mut self, new_pos: Option<usize>) {
-        if let Some(row) = new_pos {
-            if row < self.page_size {
+        if let (Some(row), Some(page)) = (new_pos, self.pages.get(self.page)) {
+            if row < page.size {
                 self.row_position = row as u16
             }
         }
@@ -103,13 +143,18 @@ impl HistoryMenu {
         // When there is no line buffer it is better to get a partial list of all
         // the values that can be queried from the history. There is no point to
         // replicate the whole entries list in the history menu
-        let skip = self.pages_size.iter().take(self.page).sum();
+        let skip = self.pages.iter().take(self.page).sum::<Page>().size;
+        let take = self
+            .pages
+            .get(self.page)
+            .map(|page| page.size)
+            .unwrap_or(self.page_size);
 
         history
             .iter_chronologic()
             .rev()
             .skip(skip)
-            .take(self.page_size)
+            .take(take)
             .cloned()
             .collect::<Vec<String>>()
     }
@@ -124,7 +169,22 @@ impl HistoryMenu {
     }
 
     fn values_until_current_page(&self) -> usize {
-        self.pages_size.iter().take(self.page + 1).sum()
+        self.pages.iter().take(self.page + 1).sum::<Page>().size
+    }
+
+    fn set_actual_page_size(&mut self, printable_entries: usize) {
+        if let Some(page) = self.pages.get_mut(self.page) {
+            page.full = page.size > printable_entries;
+            page.size = printable_entries;
+        }
+    }
+
+    /// Reset menu position
+    fn reset_position(&mut self) {
+        self.page = 0;
+        self.row_position = 0;
+        self.pages = Vec::new();
+        self.event = None;
     }
 
     fn printable_entries(&self, painter: &Painter) -> usize {
@@ -150,6 +210,50 @@ impl HistoryMenu {
                 );
 
         printable_entries
+    }
+
+    fn no_page_msg(&self, use_ansi_coloring: bool) -> String {
+        let msg = "PAGE NOT FOUND";
+        if use_ansi_coloring {
+            format!(
+                "{}{}{}",
+                self.color.selected_text_style.prefix(),
+                msg,
+                RESET
+            )
+        } else {
+            msg.to_string()
+        }
+    }
+
+    fn banner_message(&self, page: &Page, use_ansi_coloring: bool) -> String {
+        let values_until = self.values_until_current_page();
+        let value_before = if self.values.is_empty() {
+            0
+        } else {
+            let page_size = self.pages.get(self.page).map(|page| page.size).unwrap_or(0);
+            values_until.saturating_sub(page_size) + 1
+        };
+
+        let full_page = if page.full { "[FULL]" } else { "" };
+        let status_bar = format!(
+            "records {} - {}  total: {}  {}",
+            value_before,
+            values_until,
+            self.total_values(),
+            full_page,
+        );
+
+        if use_ansi_coloring {
+            format!(
+                "{}{}{}",
+                self.color.selected_text_style.prefix(),
+                status_bar,
+                RESET,
+            )
+        } else {
+            status_bar
+        }
     }
 
     /// Creates default string that represents one line from a menu
@@ -219,13 +323,6 @@ impl Menu for HistoryMenu {
         self.active = false
     }
 
-    /// Reset menu position
-    fn reset_position(&mut self) {
-        self.page = 0;
-        self.row_position = 0;
-        self.pages_size = Vec::new();
-    }
-
     /// Collecting the value from the history to be shown in the menu
     fn update_values(
         &mut self,
@@ -234,8 +331,13 @@ impl Menu for HistoryMenu {
         _completer: &dyn Completer,
     ) {
         let (query, row) = parse_row_selector(line_buffer.get_buffer(), &self.row_char);
-
         self.update_row_pos(row);
+        if let Some(MenuEvent::Edit) = self.event {
+            if row.is_none() {
+                self.reset_position()
+            }
+        }
+
         let values = if query.is_empty() {
             self.history_size = Some(history.max_values());
             self.create_values_no_query(history)
@@ -272,17 +374,22 @@ impl Menu for HistoryMenu {
                 return &self.values;
             }
 
-            let start = self.pages_size.iter().take(self.page).sum();
+            let start = self.pages.iter().take(self.page).sum::<Page>().size;
 
-            let end: usize = if self.page >= self.pages_size.len() {
+            let end: usize = if self.page >= self.pages.len() {
                 self.page_size + start
             } else {
-                self.pages_size.iter().take(self.page + 1).sum()
+                self.pages.iter().take(self.page + 1).sum::<Page>().size
             };
 
             let end = end.min(self.total_values());
             &self.values[start..end]
         }
+    }
+
+    /// Move menu cursor up
+    fn edit_line_buffer(&mut self) {
+        self.event = Some(MenuEvent::Edit);
     }
 
     /// Move menu cursor up
@@ -307,38 +414,22 @@ impl Menu for HistoryMenu {
 
     /// Move menu cursor to the next element
     fn move_next(&mut self) {
-        let new_pos = self.row_position + 1;
-
-        if let Some(page_size) = self.pages_size.get(self.page) {
-            if new_pos >= *page_size as u16 {
-                self.row_position = 0
-            } else {
-                self.row_position = new_pos
-            }
-        }
+        self.event = Some(MenuEvent::NextElement);
     }
 
     /// Move menu cursor to the previous element
     fn move_previous(&mut self) {
-        if let Some(page_size) = self.pages_size.get(self.page) {
-            if let Some(new_pos) = self.row_position.checked_sub(1) {
-                self.row_position = new_pos
-            } else {
-                self.row_position = page_size.saturating_sub(1) as u16
-            }
-        }
+        self.event = Some(MenuEvent::PreviousElement);
     }
 
     /// Moves to the next history page
     fn next_page(&mut self) {
-        if self.values_until_current_page() <= self.total_values().saturating_sub(1) {
-            self.page += 1;
-        }
+        self.event = Some(MenuEvent::NextPage);
     }
 
     /// Moves to the previous history page
     fn previous_page(&mut self) {
-        self.page = self.page.saturating_sub(1)
+        self.event = Some(MenuEvent::PreviousPage);
     }
 
     /// The buffer gets cleared with the actual value
@@ -357,14 +448,83 @@ impl Menu for HistoryMenu {
         }
     }
 
-    fn update_working_details(&mut self, painter: &Painter) {
-        // The printable entries are calculating by checking how many lines an entry uses
-        // and comparing it with the number of available lines
-        let printable_entries = self.printable_entries(painter);
+    fn update_working_details(
+        &mut self,
+        line_buffer: &mut LineBuffer,
+        history: &dyn History,
+        completer: &dyn Completer,
+        painter: &Painter,
+    ) {
+        match &self.event {
+            Some(event) => match event {
+                MenuEvent::NextElement => {
+                    let new_pos = self.row_position + 1;
 
-        if self.pages_size.len() <= self.page {
-            self.pages_size.push(printable_entries);
+                    if let Some(page) = self.pages.get(self.page) {
+                        if new_pos >= page.size as u16 {
+                            self.row_position = 0
+                        } else {
+                            self.row_position = new_pos
+                        }
+                    }
+                }
+                MenuEvent::PreviousElement => {
+                    if let Some(page) = self.pages.get(self.page) {
+                        if let Some(new_pos) = self.row_position.checked_sub(1) {
+                            self.row_position = new_pos
+                        } else {
+                            self.row_position = page.size.saturating_sub(1) as u16
+                        }
+                    }
+                }
+                MenuEvent::NextPage => {
+                    if self.values_until_current_page() <= self.total_values().saturating_sub(1) {
+                        match self.pages.get_mut(self.page) {
+                            Some(page) => {
+                                if !page.full {
+                                    page.size += self.page_size;
+                                } else {
+                                    self.page += 1;
+                                    self.pages.push(Page {
+                                        size: self.page_size,
+                                        full: false,
+                                    })
+                                }
+                            }
+                            None => self.pages.push(Page {
+                                size: self.page_size,
+                                full: false,
+                            }),
+                        }
+
+                        self.update_values(line_buffer, history, completer);
+                        self.set_actual_page_size(self.printable_entries(painter));
+                    } else {
+                        self.page = 0;
+                        self.update_values(line_buffer, history, completer);
+                    }
+                }
+                MenuEvent::PreviousPage => {
+                    self.page = self.page.saturating_sub(1);
+                    self.update_values(line_buffer, history, completer);
+                }
+                MenuEvent::Edit => {
+                    self.update_values(line_buffer, history, completer);
+                    self.pages.push(Page {
+                        size: self.printable_entries(painter),
+                        full: false,
+                    });
+                }
+            },
+            None => {
+                self.pages.push(Page {
+                    size: self.printable_entries(painter),
+                    full: false,
+                });
+            }
         }
+
+        self.event = None
     }
 
     /// Calculates the real required lines for the menu considering how many lines
@@ -372,64 +532,55 @@ impl Menu for HistoryMenu {
     fn menu_required_lines(&self, terminal_columns: u16) -> u16 {
         self.get_values().iter().fold(0, |acc, (_, entry)| {
             acc + self.number_of_lines(entry, terminal_columns)
-        })
+        }) + 1
     }
 
     /// Creates the menu representation as a string which will be painted by the painter
     fn menu_string(&self, _available_lines: u16, use_ansi_coloring: bool) -> String {
-        let lines_string = self
-            .get_values()
-            .iter()
-            .take(self.pages_size[self.page])
-            .enumerate()
-            .map(|(index, (_, line))| {
-                let empty_space = self.get_width().saturating_sub(line.len());
+        match self.pages.get(self.page) {
+            Some(page) => {
+                let lines_string = self
+                    .get_values()
+                    .iter()
+                    .take(page.size)
+                    .enumerate()
+                    .map(|(index, (_, line))| {
+                        let empty_space = self.get_width().saturating_sub(line.len());
 
-                // Final string with colors
-                let line = if line.lines().count() > self.max_lines as usize {
-                    let lines = line
-                        .lines()
-                        .take(self.max_lines as usize)
-                        .map(|string| format!("{}\r\n{}", string, self.multiline_marker))
-                        .collect::<String>();
+                        // Final string with colors
+                        let line = if line.lines().count() > self.max_lines as usize {
+                            let lines = line
+                                .lines()
+                                .take(self.max_lines as usize)
+                                .map(|string| format!("{}\r\n{}", string, self.multiline_marker))
+                                .collect::<String>();
 
-                    lines + "..."
-                } else {
-                    line.replace("\n", &format!("\r\n{}", self.multiline_marker))
-                };
+                            lines + "..."
+                        } else {
+                            line.replace("\n", &format!("\r\n{}", self.multiline_marker))
+                        };
 
-                let row_number = format!("{}: ", index);
+                        let row_number = format!("{}: ", index);
 
-                self.create_string(&line, index, &row_number, 0, empty_space, use_ansi_coloring)
-            })
-            .collect::<String>();
+                        self.create_string(
+                            &line,
+                            index,
+                            &row_number,
+                            0,
+                            empty_space,
+                            use_ansi_coloring,
+                        )
+                    })
+                    .collect::<String>();
 
-        let values_until = self.values_until_current_page();
-        let value_before = if self.values.is_empty() {
-            0
-        } else {
-            values_until.saturating_sub(*self.pages_size.get(self.page).unwrap_or(&0)) + 1
-        };
-
-        let status_bar = if use_ansi_coloring {
-            format!(
-                "{}records {} - {}    total: {}{}",
-                self.color.selected_text_style.prefix(),
-                value_before,
-                values_until,
-                self.total_values(),
-                RESET
-            )
-        } else {
-            format!(
-                "records {} - {}    total: {}",
-                value_before,
-                values_until,
-                self.total_values()
-            )
-        };
-
-        format!("{}{}", lines_string, status_bar)
+                format!(
+                    "{}{}",
+                    lines_string,
+                    self.banner_message(page, use_ansi_coloring)
+                )
+            }
+            None => self.no_page_msg(use_ansi_coloring),
+        }
     }
 
     /// Minimum rows that should be displayed by the menu
@@ -487,7 +638,7 @@ fn parse_row_selector<'buffer>(
                     return (&buffer[0..index], Some(count));
                 }
                 None => {
-                    return (&buffer[0..index], None);
+                    return (&buffer[0..index], Some(0));
                 }
                 _ => {
                     index += 1;
@@ -503,20 +654,25 @@ fn parse_row_selector<'buffer>(
 
 fn number_of_lines(entry: &str, max_lines: usize, terminal_columns: u16) -> u16 {
     let lines = if entry.contains('\n') {
-        let printable_lines = entry.lines().take(max_lines);
+        let total_lines = entry.lines().count();
+        let printable_lines = if total_lines > max_lines {
+            // The extra one is there because when printing a large entry and extra line
+            // is added with ...
+            max_lines + 1
+        } else {
+            total_lines
+        };
 
-        // The extra one is there because when printing a large entry and extra line
-        // is added with ...
-        (printable_lines.count() + 1) as u16
+        let wrap_lines = entry.lines().take(max_lines).fold(0, |acc, line| {
+            acc + estimated_wrapped_line_count(line, terminal_columns)
+        });
+
+        (printable_lines + wrap_lines) as u16
     } else {
-        1
+        1 + estimated_wrapped_line_count(entry, terminal_columns) as u16
     };
 
-    let wrap_lines = entry.lines().take(max_lines).fold(0, |acc, line| {
-        acc + estimated_wrapped_line_count(line, terminal_columns)
-    });
-
-    lines + wrap_lines as u16
+    lines
 }
 
 #[cfg(test)]
@@ -574,7 +730,7 @@ mod tests {
         let (res, row) = parse_row_selector(input, &':');
 
         assert_eq!(res, "let a: another");
-        assert_eq!(row, None)
+        assert_eq!(row, Some(0))
     }
 
     #[test]
@@ -592,7 +748,7 @@ mod tests {
         let res = number_of_lines(input, 5, 30);
 
         // There is an extra line showing ...
-        assert_eq!(res, 4);
+        assert_eq!(res, 3);
     }
 
     #[test]
@@ -614,9 +770,9 @@ mod tests {
     #[test]
     fn number_of_max_lines_test() {
         let input = "let a\n: ano\nther:\nsomething\nanother\nmore\nanother\nasdf\nasdfa\n3123";
-        let res = number_of_lines(input, 5, 30);
+        let res = number_of_lines(input, 3, 30);
 
         // There is an extra line showing ...
-        assert_eq!(res, 6);
+        assert_eq!(res, 4);
     }
 }

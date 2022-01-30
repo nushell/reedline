@@ -626,11 +626,6 @@ impl Reedline {
                 for menu in self.menus.iter_mut() {
                     if menu.is_active() {
                         menu.next_page();
-                        menu.update_values(
-                            self.editor.line_buffer(),
-                            self.history.as_ref(),
-                            self.completer.as_ref(),
-                        );
                         self.buffer_paint(prompt)?;
 
                         return Ok(EventStatus::Handled);
@@ -642,11 +637,6 @@ impl Reedline {
                 for menu in self.menus.iter_mut() {
                     if menu.is_active() {
                         menu.previous_page();
-                        menu.update_values(
-                            self.editor.line_buffer(),
-                            self.history.as_ref(),
-                            self.completer.as_ref(),
-                        );
                         self.buffer_paint(prompt)?;
 
                         return Ok(EventStatus::Handled);
@@ -707,6 +697,7 @@ impl Reedline {
                 }
             }
             ReedlineEvent::CtrlC => {
+                self.menus.iter_mut().for_each(|menu| menu.deactivate());
                 self.run_edit_commands(&[EditCommand::Clear]);
                 self.editor.reset_undo_stack();
                 Ok(EventStatus::Exits(Signal::CtrlC))
@@ -746,12 +737,7 @@ impl Reedline {
                 self.run_edit_commands(&commands);
                 for menu in self.menus.iter_mut() {
                     if menu.is_active() {
-                        menu.reset_position();
-                        menu.update_values(
-                            self.editor.line_buffer(),
-                            self.history.as_ref(),
-                            self.completer.as_ref(),
-                        );
+                        menu.edit_line_buffer();
                     }
                 }
 
@@ -1124,7 +1110,12 @@ impl Reedline {
         // Updating the working details of the active menu
         for menu in self.menus.iter_mut() {
             if menu.is_active() {
-                menu.update_working_details(&self.painter);
+                menu.update_working_details(
+                    self.editor.line_buffer(),
+                    self.history.as_ref(),
+                    self.completer.as_ref(),
+                    &self.painter,
+                );
             }
         }
 

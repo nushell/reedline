@@ -58,6 +58,8 @@ pub struct CompletionMenu {
     row_pos: u16,
     /// Menu marker when active
     marker: String,
+    /// When edit true the values need to be updated
+    edit: bool,
 }
 
 impl Default for CompletionMenu {
@@ -72,6 +74,7 @@ impl Default for CompletionMenu {
             col_pos: 0,
             row_pos: 0,
             marker: "| ".to_string(),
+            edit: false,
         }
     }
 }
@@ -117,6 +120,27 @@ impl CompletionMenu {
     fn get_rows(&self) -> u16 {
         let rows = self.get_values().len() as u16 / self.get_cols();
         rows + 1
+    }
+
+    /// Reset menu position
+    fn reset_position(&mut self) {
+        self.col_pos = 0;
+        self.row_pos = 0;
+        self.edit = false;
+    }
+
+    fn no_records_msg(&self, use_ansi_coloring: bool) -> String {
+        let msg = "NO RECORDS FOUND";
+        if use_ansi_coloring {
+            format!(
+                "{}{}{}",
+                self.color.selected_text_style.prefix(),
+                msg,
+                RESET
+            )
+        } else {
+            msg.to_string()
+        }
     }
 
     /// Creates default string that represents one line from a menu
@@ -185,12 +209,6 @@ impl Menu for CompletionMenu {
         self.active = false
     }
 
-    /// Reset menu position
-    fn reset_position(&mut self) {
-        self.col_pos = 0;
-        self.row_pos = 0;
-    }
-
     /// Updates menu values
     fn update_values(
         &mut self,
@@ -210,7 +228,19 @@ impl Menu for CompletionMenu {
 
     /// The working details for the menu changes based on the size of the lines
     /// collected from the completer
-    fn update_working_details(&mut self, painter: &Painter) {
+    fn update_working_details(
+        &mut self,
+        line_buffer: &mut LineBuffer,
+        history: &dyn History,
+        completer: &dyn Completer,
+        painter: &Painter,
+    ) {
+        if self.edit {
+            self.reset_position();
+            self.update_values(line_buffer, history, completer);
+            self.edit = false;
+        }
+
         let max_width = self.get_values().iter().fold(0, |acc, (_, string)| {
             let str_len = string.len() + self.working_details.col_padding;
             if str_len > acc {
@@ -246,6 +276,10 @@ impl Menu for CompletionMenu {
         } else {
             self.working_details.columns = possible_cols;
         }
+    }
+
+    fn edit_line_buffer(&mut self) {
+        self.edit = true
     }
 
     /// Move menu cursor to the next element
@@ -390,32 +424,36 @@ impl Menu for CompletionMenu {
     }
 
     fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String {
-        // The skip values represent the number of lines that should be skipped
-        // while printing the menu
-        let skip_values = if self.row_pos() >= available_lines {
-            let skip_lines = self.row_pos().saturating_sub(available_lines) + 1;
-            (skip_lines * self.get_cols()) as usize
+        if self.get_values().is_empty() {
+            self.no_records_msg(use_ansi_coloring)
         } else {
-            0
-        };
+            // The skip values represent the number of lines that should be skipped
+            // while printing the menu
+            let skip_values = if self.row_pos() >= available_lines {
+                let skip_lines = self.row_pos().saturating_sub(available_lines) + 1;
+                (skip_lines * self.get_cols()) as usize
+            } else {
+                0
+            };
 
-        // It seems that crossterm prefers to have a complete string ready to be printed
-        // rather than looping through the values and printing multiple things
-        // This reduces the flickering when printing the menu
-        let available_values = (available_lines * self.get_cols()) as usize;
-        self.get_values()
-            .iter()
-            .skip(skip_values)
-            .take(available_values)
-            .enumerate()
-            .map(|(index, (_, line))| {
-                // Correcting the enumerate index based on the number of skipped values
-                let index = index + skip_values;
-                let column = index as u16 % self.get_cols();
-                let empty_space = self.get_width().saturating_sub(line.len());
+            // It seems that crossterm prefers to have a complete string ready to be printed
+            // rather than looping through the values and printing multiple things
+            // This reduces the flickering when printing the menu
+            let available_values = (available_lines * self.get_cols()) as usize;
+            self.get_values()
+                .iter()
+                .skip(skip_values)
+                .take(available_values)
+                .enumerate()
+                .map(|(index, (_, line))| {
+                    // Correcting the enumerate index based on the number of skipped values
+                    let index = index + skip_values;
+                    let column = index as u16 % self.get_cols();
+                    let empty_space = self.get_width().saturating_sub(line.len());
 
-                self.create_string(line, index, column, empty_space, use_ansi_coloring)
-            })
-            .collect()
+                    self.create_string(line, index, column, empty_space, use_ansi_coloring)
+                })
+                .collect()
+        }
     }
 }
