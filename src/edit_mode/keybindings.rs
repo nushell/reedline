@@ -1,11 +1,8 @@
-use std::collections::HashMap;
-
-use crate::enums::ReedlineEvent;
-
 use {
-    crate::EditCommand,
+    crate::{enums::ReedlineEvent, EditCommand},
     crossterm::event::{KeyCode, KeyModifiers},
     serde::{Deserialize, Serialize},
+    std::collections::HashMap,
 };
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Debug)]
