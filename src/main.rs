@@ -268,12 +268,12 @@ impl KeyCodes {
 fn list_stuff() -> Result<()> {
     println!("--Key Modifiers--");
     for mods in get_reedline_keybinding_modifiers().iter() {
-        print!("{}\n", mods);
+        println!("{}", mods);
     }
 
     println!("\n--Modes--");
     for modes in get_reedline_prompt_edit_modes().iter() {
-        print!("{}\n", modes);
+        println!("{}", modes);
     }
 
     println!("\n--Key Codes--");
@@ -296,12 +296,12 @@ fn list_stuff() -> Result<()> {
 
 /// Return a Vec of the Reedline Keybinding Modifiers
 pub fn get_reedline_keybinding_modifiers() -> Vec<String> {
-    let mut modifiers = vec![];
-    modifiers.push("Alt".to_string());
-    modifiers.push("Control".to_string());
-    modifiers.push("Shift".to_string());
-    modifiers.push("None".to_string());
-    modifiers
+    vec![
+        "Alt".to_string(),
+        "Control".to_string(),
+        "Shift".to_string(),
+        "None".to_string(),
+    ]
 }
 
 /// Return a Vec<String> of the Reedline PromptEditModes
