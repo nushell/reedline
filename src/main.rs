@@ -1,4 +1,4 @@
-use reedline::EditCommand;
+use reedline::{EditCommand, PromptEditMode};
 use strum::IntoEnumIterator;
 use {
     crossterm::{
@@ -259,7 +259,10 @@ fn list_stuff() -> Result<()> {
     println!("alt\ncontrol\nshift\nnone");
 
     println!("\n--Modes--");
-    println!("emacs\nvi_insert\nvi_normal");
+    // println!("emacs\nvi_insert\nvi_normal");
+    for em in PromptEditMode::iter() {
+        println!("{}", em);
+    }
 
     println!("\n--Key Codes--");
     for kc in KeyCodes::iterator() {

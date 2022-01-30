@@ -1,3 +1,8 @@
+use std::fmt::{Display, Formatter};
+
+use serde::{Deserialize, Serialize};
+use strum_macros::EnumIter;
+
 use {
     chrono::Local,
     crossterm::style::Color,
@@ -42,6 +47,7 @@ impl PromptHistorySearch {
 }
 
 /// Modes that the prompt can be in
+#[derive(Serialize, Deserialize, Clone, Debug, EnumIter)]
 pub enum PromptEditMode {
     /// The default mode
     Default,
@@ -57,6 +63,7 @@ pub enum PromptEditMode {
 }
 
 /// The vi-specific modes that the prompt can be in
+#[derive(Serialize, Deserialize, Clone, Debug, EnumIter)]
 pub enum PromptViMode {
     /// The default mode
     Normal,
@@ -65,6 +72,26 @@ pub enum PromptViMode {
     Insert,
 }
 
+impl Default for PromptViMode {
+    fn default() -> Self {
+        PromptViMode::Normal
+    }
+}
+
+impl Display for PromptEditMode {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            PromptEditMode::Default => write!(f, "default"),
+            PromptEditMode::Emacs => write!(f, "emacs"),
+            // PromptEditMode::Vi(mode) => match mode {
+            //     PromptViMode::Normal => write!(f, "vi_normal"),
+            //     PromptViMode::Insert => write!(f, "vi_insert"),
+            // },
+            PromptEditMode::Vi(_) => write!(f, "vi_normal\nvi_insert"),
+            PromptEditMode::Custom(s) => write!(f, "{}", format!("custom_{}", s)),
+        }
+    }
+}
 /// API to provide a custom prompt.
 ///
 /// Implementors have to provide [`str`]-based content which will be
