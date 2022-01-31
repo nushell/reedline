@@ -78,7 +78,7 @@ impl Default for HistoryMenu {
     fn default() -> Self {
         Self {
             color: MenuTextStyle::default(),
-            page_size: 2,
+            page_size: 10,
             row_char: ':',
             active: false,
             values: Vec::new(),
