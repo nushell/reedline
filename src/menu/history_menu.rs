@@ -78,7 +78,7 @@ impl Default for HistoryMenu {
     fn default() -> Self {
         Self {
             color: MenuTextStyle::default(),
-            page_size: 2,
+            page_size: 10,
             row_char: ':',
             active: false,
             values: Vec::new(),
@@ -174,7 +174,7 @@ impl HistoryMenu {
 
     fn set_actual_page_size(&mut self, printable_entries: usize) {
         if let Some(page) = self.pages.get_mut(self.page) {
-            page.full = page.size > printable_entries;
+            page.full = page.size > printable_entries || page.full;
             page.size = printable_entries;
         }
     }
