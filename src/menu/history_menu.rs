@@ -78,7 +78,7 @@ impl Default for HistoryMenu {
     fn default() -> Self {
         Self {
             color: MenuTextStyle::default(),
-            page_size: 10,
+            page_size: 2,
             row_char: ':',
             active: false,
             values: Vec::new(),
@@ -237,7 +237,8 @@ impl HistoryMenu {
 
         let full_page = if page.full { "[FULL]" } else { "" };
         let status_bar = format!(
-            "records {} - {}  total: {}  {}",
+            "Page {}: records {} - {}  total: {}  {}",
+            self.page + 1,
             value_before,
             values_until,
             self.total_values(),
@@ -332,6 +333,9 @@ impl Menu for HistoryMenu {
     ) {
         let (query, row) = parse_row_selector(line_buffer.get_buffer(), &self.row_char);
         self.update_row_pos(row);
+
+        // If there are no row selector and the menu has an Edit event, this clears
+        // the position together with the pages vector
         if let Some(MenuEvent::Edit) = self.event {
             if row.is_none() {
                 self.reset_position()
@@ -462,50 +466,59 @@ impl Menu for HistoryMenu {
 
                     if let Some(page) = self.pages.get(self.page) {
                         if new_pos >= page.size as u16 {
-                            self.row_position = 0
+                            self.event = Some(MenuEvent::NextPage);
+                            self.update_working_details(line_buffer, history, completer, painter)
                         } else {
                             self.row_position = new_pos
                         }
                     }
                 }
-                MenuEvent::PreviousElement => {
-                    if let Some(page) = self.pages.get(self.page) {
-                        if let Some(new_pos) = self.row_position.checked_sub(1) {
-                            self.row_position = new_pos
-                        } else {
+                MenuEvent::PreviousElement => match self.row_position.checked_sub(1) {
+                    Some(new_pos) => self.row_position = new_pos,
+                    None => {
+                        let page = match self.page.checked_sub(1) {
+                            Some(page) => self.pages.get(page),
+                            None => self.pages.get(self.pages.len().saturating_sub(1)),
+                        };
+
+                        if let Some(page) = page {
                             self.row_position = page.size.saturating_sub(1) as u16
                         }
+
+                        self.event = Some(MenuEvent::PreviousPage);
+                        self.update_working_details(line_buffer, history, completer, painter)
                     }
-                }
+                },
                 MenuEvent::NextPage => {
                     if self.values_until_current_page() <= self.total_values().saturating_sub(1) {
-                        match self.pages.get_mut(self.page) {
-                            Some(page) => {
-                                if !page.full {
-                                    page.size += self.page_size;
-                                } else {
-                                    self.page += 1;
+                        if let Some(page) = self.pages.get_mut(self.page) {
+                            if !page.full {
+                                page.size += self.page_size;
+                            } else {
+                                self.row_position = 0;
+                                self.page += 1;
+                                if self.page >= self.pages.len() {
                                     self.pages.push(Page {
                                         size: self.page_size,
                                         full: false,
                                     })
                                 }
                             }
-                            None => self.pages.push(Page {
-                                size: self.page_size,
-                                full: false,
-                            }),
                         }
 
                         self.update_values(line_buffer, history, completer);
                         self.set_actual_page_size(self.printable_entries(painter));
                     } else {
+                        self.row_position = 0;
                         self.page = 0;
                         self.update_values(line_buffer, history, completer);
                     }
                 }
                 MenuEvent::PreviousPage => {
-                    self.page = self.page.saturating_sub(1);
+                    match self.page.checked_sub(1) {
+                        Some(page_num) => self.page = page_num,
+                        None => self.page = self.pages.len().saturating_sub(1),
+                    }
                     self.update_values(line_buffer, history, completer);
                 }
                 MenuEvent::Edit => {
@@ -517,10 +530,12 @@ impl Menu for HistoryMenu {
                 }
             },
             None => {
-                self.pages.push(Page {
-                    size: self.printable_entries(painter),
-                    full: false,
-                });
+                if self.pages.is_empty() {
+                    self.pages.push(Page {
+                        size: self.printable_entries(painter),
+                        full: false,
+                    });
+                }
             }
         }
 
