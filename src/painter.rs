@@ -224,7 +224,7 @@ pub struct Painter {
     prompt_start_row: u16,
     terminal_size: (u16, u16),
     last_required_lines: u16,
-    pub large_buffer: bool,
+    large_buffer: bool,
     debug_mode: bool,
 }
 
@@ -265,8 +265,15 @@ impl Painter {
         self.terminal_size.0
     }
 
-    pub fn remaining_lines(&self) -> u16 {
+    fn remaining_lines(&self) -> u16 {
         self.screen_height() - self.prompt_start_row
+    }
+
+    /// Check if the currently painted content exceeds the size of the screen
+    /// and thus should not be repainted without reason (disable animation
+    /// repaint)
+    pub(crate) fn exceeds_screen_size(&self) -> bool {
+        self.large_buffer
     }
 
     /// Sets the prompt origin position.
