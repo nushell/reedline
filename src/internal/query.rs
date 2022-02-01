@@ -133,13 +133,34 @@ pub fn get_reedline_default_keybindings() -> Vec<String> {
     let vi_normal = default_vi_insert_keybindings();
     let vi_insert = default_vi_insert_keybindings();
     for emacs_kb in emacs.get_keybindings() {
-        keybindings.push(format!("emacs {:?}", emacs_kb));
+        let mode = "emacs";
+        let key_modifiers = emacs_kb.0.modifier;
+        let key_code = emacs_kb.0.key_code;
+        let event = emacs_kb.1;
+        keybindings.push(format!(
+            "mode: {}, key_modifier(s): {:?}, key_code: {:?}, event: {:?}",
+            mode, key_modifiers, key_code, event
+        ));
     }
     for vi_n_kb in vi_normal.get_keybindings() {
-        keybindings.push(format!("vi_normal {:?}", vi_n_kb));
+        let mode = "vi_normal";
+        let key_modifiers = vi_n_kb.0.modifier;
+        let key_code = vi_n_kb.0.key_code;
+        let event = vi_n_kb.1;
+        keybindings.push(format!(
+            "mode: {}, key_modifier(s): {:?}, key_code: {:?}, event: {:?}",
+            mode, key_modifiers, key_code, event
+        ));
     }
     for vi_i_kb in vi_insert.get_keybindings() {
-        keybindings.push(format!("vi insert {:?}", vi_i_kb))
+        let mode = "vi_insert";
+        let key_modifiers = vi_i_kb.0.modifier;
+        let key_code = vi_i_kb.0.key_code;
+        let event = vi_i_kb.1;
+        keybindings.push(format!(
+            "mode: {}, key_modifier(s): {:?}, key_code: {:?}, event: {:?}",
+            mode, key_modifiers, key_code, event
+        ));
     }
     keybindings
 }

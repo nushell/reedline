@@ -7,8 +7,8 @@ use {
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct KeyCombination {
-    modifier: KeyModifiers,
-    key_code: KeyCode,
+    pub modifier: KeyModifiers,
+    pub key_code: KeyCode,
 }
 
 /// Main definition of editor keybindings
