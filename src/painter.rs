@@ -203,14 +203,20 @@ fn coerce_crlf(input: &str) -> Cow<str> {
     let mut result = Cow::Borrowed(input);
     let mut cursor: usize = 0;
     for (idx, _) in input.match_indices('\n') {
-        if idx > 0 && input.as_bytes()[idx - 1] == b'\r' {
-            // Already CRLF: Don't advance cursor as a pure LF could follow
-        } else {
+        if !(idx > 0 && input.as_bytes()[idx - 1] == b'\r') {
             if let Cow::Borrowed(_) = result {
-                result = Cow::Owned(String::with_capacity(input.len()));
+                // Best case 1 allocation, worst case 2 allocations
+                let mut owned = String::with_capacity(input.len() + 1);
+                // Optimization to avoid the `AddAssign for Cow<str>`
+                // optimization for `Cow<str>.is_empty` that would replace the
+                // preallocation
+                owned.push_str(&input[cursor..idx]);
+                result = Cow::Owned(owned);
+            } else {
+                result += &input[cursor..idx];
             }
-            result += &input[cursor..idx];
             result += "\r\n";
+            // Advance beyond the matched LF char (single byte)
             cursor = idx + 1;
         }
     }
