@@ -133,6 +133,8 @@ impl HistoryMenu {
 
     fn update_row_pos(&mut self, new_pos: Option<usize>) {
         if let (Some(row), Some(page)) = (new_pos, self.pages.get(self.page)) {
+            let values_before_page = self.pages.iter().take(self.page).sum::<Page>().size;
+            let row = row.saturating_sub(values_before_page);
             if row < page.size {
                 self.row_position = row as u16
             }
@@ -227,8 +229,8 @@ impl HistoryMenu {
     }
 
     fn banner_message(&self, page: &Page, use_ansi_coloring: bool) -> String {
-        let values_until = self.values_until_current_page();
-        let value_before = if self.values.is_empty() {
+        let values_until = self.values_until_current_page().saturating_sub(1);
+        let value_before = if self.values.is_empty() || self.page == 0 {
             0
         } else {
             let page_size = self.pages.get(self.page).map(|page| page.size).unwrap_or(0);
@@ -552,6 +554,7 @@ impl Menu for HistoryMenu {
 
     /// Creates the menu representation as a string which will be painted by the painter
     fn menu_string(&self, _available_lines: u16, use_ansi_coloring: bool) -> String {
+        let values_before_page = self.pages.iter().take(self.page).sum::<Page>().size;
         match self.pages.get(self.page) {
             Some(page) => {
                 let lines_string = self
@@ -575,7 +578,7 @@ impl Menu for HistoryMenu {
                             line.replace("\n", &format!("\r\n{}", self.multiline_marker))
                         };
 
-                        let row_number = format!("{}: ", index);
+                        let row_number = format!("{}: ", index + values_before_page);
 
                         self.create_string(
                             &line,
