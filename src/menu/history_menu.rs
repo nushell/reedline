@@ -188,7 +188,7 @@ impl HistoryMenu {
     }
 
     fn printable_entries(&self, painter: &Painter) -> usize {
-        let available_lines = painter.terminal_rows().saturating_sub(1);
+        let available_lines = painter.screen_height().saturating_sub(1);
         let (printable_entries, _) =
             self.get_values()
                 .iter()
@@ -198,7 +198,7 @@ impl HistoryMenu {
                         None => (lines, None),
                         Some(total_lines) => {
                             let new_total_lines =
-                                total_lines + self.number_of_lines(entry, painter.terminal_cols());
+                                total_lines + self.number_of_lines(entry, painter.screen_width());
 
                             if new_total_lines < available_lines {
                                 (lines + 1, Some(new_total_lines))

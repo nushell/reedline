@@ -268,16 +268,16 @@ impl Painter {
         Ok(())
     }
 
-    pub(crate) fn terminal_rows(&self) -> u16 {
+    pub(crate) fn screen_height(&self) -> u16 {
         self.terminal_size.1
     }
 
-    pub(crate) fn terminal_cols(&self) -> u16 {
+    pub(crate) fn screen_width(&self) -> u16 {
         self.terminal_size.0
     }
 
     pub fn remaining_lines(&self) -> u16 {
-        self.terminal_size.1 - self.prompt_coords.prompt_start.1
+        self.screen_height() - self.prompt_coords.prompt_start.1
     }
 
     /// Sets the prompt origin position.
@@ -291,7 +291,7 @@ impl Painter {
         //  the condition above, we need to make room for the prompt.
         //  Otherwise printing the prompt would scroll of the stored prompt
         //  origin, causing issues after repaints.
-        let new_row = if new_row == self.terminal_rows() {
+        let new_row = if new_row == self.screen_height() {
             self.print_crlf()?;
             new_row.saturating_sub(1)
         } else {
@@ -319,8 +319,8 @@ impl Painter {
     ) -> Result<()> {
         self.stdout.queue(cursor::Hide)?;
 
-        // String representation of the prompt
-        let (screen_width, screen_height) = self.terminal_size;
+        let screen_width = self.screen_width();
+        let screen_height = self.screen_height();
 
         // Lines and distance parameters
         let remaining_lines = self.remaining_lines();
@@ -383,9 +383,10 @@ impl Painter {
     }
 
     fn print_right_prompt(&mut self, lines: &PromptLines) -> Result<()> {
-        let (screen_width, _) = self.terminal_size;
         let prompt_length_right = line_width(&lines.prompt_str_right);
-        let start_position = screen_width.saturating_sub(prompt_length_right as u16);
+        let start_position = self
+            .screen_width()
+            .saturating_sub(prompt_length_right as u16);
         let input_width = lines.estimate_first_input_line_width();
 
         if input_width <= start_position {
@@ -408,7 +409,8 @@ impl Painter {
         lines: &PromptLines,
         use_ansi_coloring: bool,
     ) -> Result<()> {
-        let (screen_width, screen_height) = self.terminal_size;
+        let screen_width = self.screen_width();
+        let screen_height = self.screen_height();
         let cursor_distance = lines.distance_from_prompt(screen_width);
 
         // If there is not enough space to print the menu, then the starting
@@ -478,7 +480,8 @@ impl Painter {
         menu: Option<&dyn Menu>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
-        let (screen_width, screen_height) = self.terminal_size;
+        let screen_width = self.screen_width();
+        let screen_height = self.screen_height();
         let cursor_distance = lines.distance_from_prompt(screen_width);
         let remaining_lines = screen_height.saturating_sub(cursor_distance);
 
@@ -631,12 +634,12 @@ impl Painter {
     // could overwrite the buffer writing
     pub fn move_cursor_to_end(&mut self) -> Result<()> {
         let final_row = self.prompt_coords.prompt_start.1 + self.last_required_lines;
-        let scroll = final_row.saturating_sub(self.terminal_rows() - 1);
+        let scroll = final_row.saturating_sub(self.screen_height() - 1);
         if scroll != 0 {
             self.stdout.queue(ScrollUp(scroll))?;
         }
         self.stdout
-            .queue(MoveTo(0, final_row.min(self.terminal_rows() - 1)))?;
+            .queue(MoveTo(0, final_row.min(self.screen_height() - 1)))?;
 
         self.stdout.flush()
     }
