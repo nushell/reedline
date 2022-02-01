@@ -60,6 +60,11 @@ impl Keybindings {
         let key_combo = KeyCombination { modifier, key_code };
         self.bindings.get(&key_combo).cloned()
     }
+
+    /// Get assigned keybindings
+    pub fn get_keybindings(&self) -> &HashMap<KeyCombination, ReedlineEvent> {
+        &self.bindings
+    }
 }
 
 pub fn edit_bind(command: EditCommand) -> ReedlineEvent {

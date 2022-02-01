@@ -1,3 +1,5 @@
+use crate::default_emacs_keybindings;
+use crate::default_vi_insert_keybindings;
 use crate::EditCommand;
 use crate::PromptEditMode;
 use crate::ReedlineEvent;
@@ -69,6 +71,11 @@ pub fn get_all_keybinding_info() {
     for edit in get_reedline_edit_commands().iter() {
         println!("{}", edit);
     }
+
+    println!("\n--Default Keybindings--");
+    for kb in get_reedline_default_keybindings() {
+        println!("{}", kb)
+    }
 }
 
 /// Return a Vec of the Reedline Keybinding Modifiers
@@ -118,4 +125,21 @@ pub fn get_reedline_edit_commands() -> Vec<String> {
         ecs.push(format!("{:?}", edit));
     }
     ecs
+}
+
+pub fn get_reedline_default_keybindings() -> Vec<String> {
+    let mut keybindings = vec![];
+    let emacs = default_emacs_keybindings();
+    let vi_normal = default_vi_insert_keybindings();
+    let vi_insert = default_vi_insert_keybindings();
+    for emacs_kb in emacs.get_keybindings() {
+        keybindings.push(format!("emacs {:?}", emacs_kb));
+    }
+    for vi_n_kb in vi_normal.get_keybindings() {
+        keybindings.push(format!("vi_normal {:?}", vi_n_kb));
+    }
+    for vi_i_kb in vi_insert.get_keybindings() {
+        keybindings.push(format!("vi insert {:?}", vi_i_kb))
+    }
+    keybindings
 }
