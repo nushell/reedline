@@ -1,6 +1,5 @@
-use std::collections::vec_deque::Iter;
-
 use crate::core_editor::LineBuffer;
+use std::collections::vec_deque::Iter;
 
 /// Browsing modes for a [`History`]
 #[derive(Debug, Clone, PartialEq, Eq)]

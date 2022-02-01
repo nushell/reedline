@@ -1,12 +1,10 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-
+use super::{keybindings::Keybindings, EditMode};
 use crate::{
     default_emacs_keybindings,
     enums::{EditCommand, ReedlineEvent},
     PromptEditMode,
 };
-
-use super::{keybindings::Keybindings, EditMode};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 /// This parses the incoming Events like a emacs style-editor
 pub struct Emacs {

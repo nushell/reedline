@@ -1,13 +1,11 @@
+use super::{base::HistoryNavigationQuery, History};
+use crate::core_editor::LineBuffer;
 use std::{
     collections::{vec_deque::Iter, VecDeque},
     fs::{File, OpenOptions},
     io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
 };
-
-use crate::core_editor::LineBuffer;
-
-use super::{base::HistoryNavigationQuery, History};
 
 /// Default size of the [`FileBackedHistory`] used when calling [`FileBackedHistory::default()`]
 pub const HISTORY_SIZE: usize = 1000;

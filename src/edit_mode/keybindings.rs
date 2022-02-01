@@ -1,7 +1,5 @@
-use std::collections::HashMap;
-
 use crate::enums::ReedlineEvent;
-
+use std::collections::HashMap;
 use {
     crate::EditCommand,
     crossterm::event::{KeyCode, KeyModifiers},
