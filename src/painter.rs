@@ -13,17 +13,6 @@ use {
     unicode_width::UnicodeWidthStr,
 };
 
-#[derive(Default)]
-struct PromptCoordinates {
-    prompt_start: (u16, u16),
-}
-
-impl PromptCoordinates {
-    fn set_prompt_start(&mut self, col: u16, row: u16) {
-        self.prompt_start = (col, row);
-    }
-}
-
 pub struct PromptLines<'prompt> {
     prompt_str_left: Cow<'prompt, str>,
     prompt_str_right: Cow<'prompt, str>,
@@ -232,7 +221,7 @@ pub type W = std::io::BufWriter<std::io::Stderr>;
 pub struct Painter {
     // Stdout
     stdout: W,
-    prompt_coords: PromptCoordinates,
+    prompt_start_row: u16,
     terminal_size: (u16, u16),
     last_required_lines: u16,
     pub large_buffer: bool,
@@ -243,7 +232,7 @@ impl Painter {
     pub fn new(stdout: W) -> Self {
         Painter {
             stdout,
-            prompt_coords: PromptCoordinates::default(),
+            prompt_start_row: 0,
             terminal_size: (0, 0),
             last_required_lines: 0,
             large_buffer: false,
@@ -254,7 +243,7 @@ impl Painter {
     pub fn new_with_debug(stdout: W) -> Self {
         Painter {
             stdout,
-            prompt_coords: PromptCoordinates::default(),
+            prompt_start_row: 0,
             terminal_size: (0, 0),
             last_required_lines: 0,
             large_buffer: false,
@@ -277,7 +266,7 @@ impl Painter {
     }
 
     pub fn remaining_lines(&self) -> u16 {
-        self.screen_height() - self.prompt_coords.prompt_start.1
+        self.screen_height() - self.prompt_start_row
     }
 
     /// Sets the prompt origin position.
@@ -297,7 +286,7 @@ impl Painter {
         } else {
             new_row
         };
-        self.prompt_coords.set_prompt_start(0, new_row);
+        self.prompt_start_row = new_row;
         Ok(())
     }
 
@@ -331,18 +320,17 @@ impl Painter {
 
         // Moving the start position of the cursor based on the size of the required lines
         if self.large_buffer {
-            self.prompt_coords.prompt_start.1 = 0;
+            self.prompt_start_row = 0;
         } else if required_lines >= remaining_lines {
             let extra = required_lines.saturating_sub(remaining_lines);
             self.stdout.queue(ScrollUp(extra))?;
-            self.prompt_coords.prompt_start.1 =
-                self.prompt_coords.prompt_start.1.saturating_sub(extra);
+            self.prompt_start_row = self.prompt_start_row.saturating_sub(extra);
         }
 
         // Moving the cursor to the start of the prompt
         // from this position everything will be printed
         self.stdout
-            .queue(cursor::MoveTo(0, self.prompt_coords.prompt_start.1))?
+            .queue(cursor::MoveTo(0, self.prompt_start_row))?
             .queue(Clear(ClearType::FromCursorDown))?;
 
         if self.large_buffer {
@@ -366,8 +354,7 @@ impl Painter {
             self.stdout
                 .queue(Print(format!(" [h{}:", screen_height)))?
                 .queue(Print(format!("w{}] ", screen_width)))?
-                .queue(Print(format!("[x{}:", self.prompt_coords.prompt_start.0)))?
-                .queue(Print(format!("y{}] ", self.prompt_coords.prompt_start.1)))?
+                .queue(Print(format!("y{}] ", self.prompt_start_row)))?
                 .queue(Print(format!("rm:{} ", remaining_lines)))?
                 .queue(Print(format!("re:{} ", required_lines)))?
                 .queue(Print(format!("di:{} ", cursor_distance)))?
@@ -392,10 +379,7 @@ impl Painter {
         if input_width <= start_position {
             self.stdout
                 .queue(SavePosition)?
-                .queue(cursor::MoveTo(
-                    start_position,
-                    self.prompt_coords.prompt_start.1,
-                ))?
+                .queue(cursor::MoveTo(start_position, self.prompt_start_row))?
                 .queue(Print(&coerce_crlf(&lines.prompt_str_right)))?
                 .queue(RestorePosition)?;
         }
@@ -418,7 +402,7 @@ impl Painter {
         let starting_row = if cursor_distance >= screen_height.saturating_sub(1) {
             screen_height.saturating_sub(menu.min_rows())
         } else {
-            self.prompt_coords.prompt_start.1 + cursor_distance + 1
+            self.prompt_start_row + cursor_distance + 1
         };
 
         let remaining_lines = screen_height.saturating_sub(starting_row);
@@ -573,29 +557,24 @@ impl Painter {
     /// Updates prompt origin and offset to handle a screen resize event
     pub(crate) fn handle_resize(&mut self, width: u16, height: u16) {
         let prev_terminal_size = self.terminal_size;
+        let prev_prompt_row = self.prompt_start_row;
 
         self.terminal_size = (width, height);
         // TODO properly adjusting prompt_origin on resizing while lines > 1
 
-        let current_origin = self.prompt_coords.prompt_start;
-
-        if current_origin.1 >= (height - 1) {
+        if prev_prompt_row >= (height - 1) {
             // Terminal is shrinking up
             // FIXME: use actual prompt size at some point
             // Note: you can't just subtract the offset from the origin,
             // as we could be shrinking so fast that the offset we read back from
             // crossterm is past where it would have been.
-            self.prompt_coords
-                .set_prompt_start(current_origin.0, height - 2);
+            self.prompt_start_row = height - 2;
         } else if prev_terminal_size.1 < height {
             // Terminal is growing down, so move the prompt down the same amount to make space
             // for history that's on the screen
             // Note: if the terminal doesn't have sufficient history, this will leave a trail
             // of previous prompts currently.
-            self.prompt_coords.set_prompt_start(
-                current_origin.0,
-                current_origin.1 + (height - prev_terminal_size.1),
-            );
+            self.prompt_start_row = prev_prompt_row + (height - prev_terminal_size.1);
         }
     }
 
@@ -633,7 +612,7 @@ impl Painter {
     // If the prompt is in the middle of a multiline buffer, then the output to stdout
     // could overwrite the buffer writing
     pub fn move_cursor_to_end(&mut self) -> Result<()> {
-        let final_row = self.prompt_coords.prompt_start.1 + self.last_required_lines;
+        let final_row = self.prompt_start_row + self.last_required_lines;
         let scroll = final_row.saturating_sub(self.screen_height() - 1);
         if scroll != 0 {
             self.stdout.queue(ScrollUp(scroll))?;
