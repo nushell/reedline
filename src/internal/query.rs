@@ -73,8 +73,11 @@ pub fn get_all_keybinding_info() {
     }
 
     println!("\n--Default Keybindings--");
-    for kb in get_reedline_default_keybindings() {
-        println!("{}", kb)
+    for (mode, modifier, code, event) in get_reedline_default_keybindings() {
+        println!(
+            "mode: {}, keymodifiers: {}, keycode: {}, event: {}",
+            mode, modifier, code, event
+        )
     }
 }
 
@@ -127,7 +130,10 @@ pub fn get_reedline_edit_commands() -> Vec<String> {
     ecs
 }
 
-pub fn get_reedline_default_keybindings() -> Vec<String> {
+/// Get the default keybindings and return a Veec<(String, String, String, String)>
+/// where String 1 is mode, String 2 is key_modifiers, String 3 is key_code, and
+/// Sting 4 is event
+pub fn get_reedline_default_keybindings() -> Vec<(String, String, String, String)> {
     let mut keybindings = vec![];
     let emacs = default_emacs_keybindings();
     let vi_normal = default_vi_insert_keybindings();
@@ -137,29 +143,35 @@ pub fn get_reedline_default_keybindings() -> Vec<String> {
         let key_modifiers = emacs_kb.0.modifier;
         let key_code = emacs_kb.0.key_code;
         let event = emacs_kb.1;
-        keybindings.push(format!(
-            "mode: {}, key_modifier(s): {:?}, key_code: {:?}, event: {:?}",
-            mode, key_modifiers, key_code, event
-        ));
+        keybindings.push((
+            mode.to_string(),
+            format!("{:?}", key_modifiers),
+            format!("{:?}", key_code),
+            format!("{:?}", event),
+        ))
     }
     for vi_n_kb in vi_normal.get_keybindings() {
         let mode = "vi_normal";
         let key_modifiers = vi_n_kb.0.modifier;
         let key_code = vi_n_kb.0.key_code;
         let event = vi_n_kb.1;
-        keybindings.push(format!(
-            "mode: {}, key_modifier(s): {:?}, key_code: {:?}, event: {:?}",
-            mode, key_modifiers, key_code, event
-        ));
+        keybindings.push((
+            mode.to_string(),
+            format!("{:?}", key_modifiers),
+            format!("{:?}", key_code),
+            format!("{:?}", event),
+        ))
     }
     for vi_i_kb in vi_insert.get_keybindings() {
         let mode = "vi_insert";
         let key_modifiers = vi_i_kb.0.modifier;
         let key_code = vi_i_kb.0.key_code;
         let event = vi_i_kb.1;
-        keybindings.push(format!(
-            "mode: {}, key_modifier(s): {:?}, key_code: {:?}, event: {:?}",
-            mode, key_modifiers, key_code, event
+        keybindings.push((
+            mode.to_string(),
+            format!("{:?}", key_modifiers),
+            format!("{:?}", key_code),
+            format!("{:?}", event),
         ));
     }
     keybindings
