@@ -97,17 +97,18 @@ impl StyledText {
 ///
 /// If parsing fails silently returns the input string
 pub(crate) fn strip_ansi(string: &str) -> Cow<str> {
+    // Check if any ascii control character except LF(0x0A = 10) is present,
+    // which will be stripped. Includes the primary start of ANSI sequences ESC
+    // (0x1B = decimal 27)
     if string.bytes().any(|x| matches!(x, 0..=9 | 11..=31)) {
-        match strip_ansi_escapes::strip(string) {
-            Ok(stripped) => match String::from_utf8(stripped) {
-                Ok(new_string) => Cow::Owned(new_string),
-                Err(_) => Cow::Borrowed(string),
-            },
-            Err(_) => Cow::Borrowed(string),
+        if let Ok(stripped) = strip_ansi_escapes::strip(string) {
+            if let Ok(new_string) = String::from_utf8(stripped) {
+                return Cow::Owned(new_string);
+            }
         }
-    } else {
-        Cow::Borrowed(string)
     }
+    // Else case includes failures to parse!
+    Cow::Borrowed(string)
 }
 
 fn render_as_string(
