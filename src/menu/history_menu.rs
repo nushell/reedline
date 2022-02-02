@@ -1,6 +1,6 @@
 use super::{Menu, MenuTextStyle};
 use crate::{
-    painter::{estimated_wrapped_line_count, Painter},
+    painter::{estimate_single_line_wraps, Painter},
     Completer, History, LineBuffer, Span,
 };
 use nu_ansi_term::{ansi::RESET, Style};
@@ -190,7 +190,7 @@ impl HistoryMenu {
     }
 
     fn printable_entries(&self, painter: &Painter) -> usize {
-        let available_lines = painter.terminal_rows().saturating_sub(1);
+        let available_lines = painter.screen_height().saturating_sub(1);
         let (printable_entries, _) =
             self.get_values()
                 .iter()
@@ -200,7 +200,7 @@ impl HistoryMenu {
                         None => (lines, None),
                         Some(total_lines) => {
                             let new_total_lines =
-                                total_lines + self.number_of_lines(entry, painter.terminal_cols());
+                                total_lines + self.number_of_lines(entry, painter.screen_width());
 
                             if new_total_lines < available_lines {
                                 (lines + 1, Some(new_total_lines))
@@ -682,12 +682,12 @@ fn number_of_lines(entry: &str, max_lines: usize, terminal_columns: u16) -> u16 
         };
 
         let wrap_lines = entry.lines().take(max_lines).fold(0, |acc, line| {
-            acc + estimated_wrapped_line_count(line, terminal_columns)
+            acc + estimate_single_line_wraps(line, terminal_columns)
         });
 
         (printable_lines + wrap_lines) as u16
     } else {
-        1 + estimated_wrapped_line_count(entry, terminal_columns) as u16
+        1 + estimate_single_line_wraps(entry, terminal_columns) as u16
     };
 
     lines
