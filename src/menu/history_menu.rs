@@ -1,6 +1,6 @@
 use super::{Menu, MenuTextStyle};
 use crate::{
-    painter::{estimated_wrapped_line_count, Painter},
+    painter::{estimate_single_line_wraps, Painter},
     Completer, History, LineBuffer, Span,
 };
 use nu_ansi_term::{ansi::RESET, Style};
@@ -664,12 +664,12 @@ fn number_of_lines(entry: &str, max_lines: usize, terminal_columns: u16) -> u16 
         };
 
         let wrap_lines = entry.lines().take(max_lines).fold(0, |acc, line| {
-            acc + estimated_wrapped_line_count(line, terminal_columns)
+            acc + estimate_single_line_wraps(line, terminal_columns)
         });
 
         (printable_lines + wrap_lines) as u16
     } else {
-        1 + estimated_wrapped_line_count(entry, terminal_columns) as u16
+        1 + estimate_single_line_wraps(entry, terminal_columns) as u16
     };
 
     lines

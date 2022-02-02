@@ -73,11 +73,7 @@ impl<'prompt> PromptLines<'prompt> {
                 + &self.after_cursor
         };
 
-        let lines = input.lines().fold(0, |acc, line| {
-            let wrap = estimated_wrapped_line_count(line, terminal_columns);
-
-            acc + 1 + wrap
-        });
+        let lines = estimate_required_lines(&input, terminal_columns);
 
         if let Some(menu) = menu {
             lines as u16 + menu.menu_required_lines(terminal_columns)
@@ -90,33 +86,22 @@ impl<'prompt> PromptLines<'prompt> {
     /// This considers line wrapping
     fn distance_from_prompt(&self, terminal_columns: u16) -> u16 {
         let input = self.prompt_str_left.to_string() + &self.prompt_indicator + &self.before_cursor;
-
-        let lines = input.lines().fold(0, |acc, line| {
-            let wrap = estimated_wrapped_line_count(line, terminal_columns);
-
-            acc + 1 + wrap
-        });
-
+        let lines = estimate_required_lines(&input, terminal_columns);
         lines.saturating_sub(1) as u16
-    }
-
-    fn concatenate_lines(&self) -> String {
-        self.before_cursor.to_string() + &self.after_cursor + &self.hint
     }
 
     /// Total lines that the prompt uses considering that it may wrap the screen
     fn prompt_lines_with_wrap(&self, screen_width: u16) -> u16 {
         let complete_prompt = self.prompt_str_left.to_string() + &self.prompt_indicator;
-        let prompt_wrap = estimated_wrapped_line_count(&complete_prompt, screen_width);
-
-        (self.prompt_str_left.matches('\n').count() + prompt_wrap) as u16
+        let lines = estimate_required_lines(&complete_prompt, screen_width);
+        lines.saturating_sub(1) as u16
     }
 
     /// Estimated width of the actual input
     fn estimate_first_input_line_width(&self) -> u16 {
         let last_line_left_prompt = self.prompt_str_left.lines().last();
 
-        let prompt_lines_total = self.concatenate_lines();
+        let prompt_lines_total = self.before_cursor.to_string() + &self.after_cursor + &self.hint;
         let prompt_lines_first = prompt_lines_total.lines().next();
 
         let mut estimate = 0; // space in front of the input
@@ -139,12 +124,20 @@ impl<'prompt> PromptLines<'prompt> {
     }
 }
 
+pub(crate) fn estimate_required_lines(input: &str, screen_width: u16) -> usize {
+    input.lines().fold(0, |acc, line| {
+        let wrap = estimate_single_line_wraps(line, screen_width);
+
+        acc + 1 + wrap
+    })
+}
+
 /// Reports the additional lines needed due to wrapping for the given line.
 ///
 /// Does not account for any potential linebreaks in `line`
 ///
 /// If `line` fits in `terminal_columns` returns 0
-pub(crate) fn estimated_wrapped_line_count(line: &str, terminal_columns: u16) -> usize {
+pub(crate) fn estimate_single_line_wraps(line: &str, terminal_columns: u16) -> usize {
     let estimated_width = line_width(line);
     let terminal_columns: usize = terminal_columns.into();
 
@@ -355,8 +348,7 @@ impl Painter {
             let cursor_distance = lines.distance_from_prompt(screen_width);
             let prompt_lines = lines.prompt_lines_with_wrap(screen_width);
             let prompt_length = lines.prompt_str_left.len() + lines.prompt_indicator.len();
-            let estimated_prompt =
-                estimated_wrapped_line_count(&lines.prompt_str_left, screen_width);
+            let estimated_prompt = estimate_single_line_wraps(&lines.prompt_str_left, screen_width);
 
             self.stdout
                 .queue(Print(format!(" [h{}:", screen_height)))?
