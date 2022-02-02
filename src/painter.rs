@@ -353,7 +353,7 @@ impl Painter {
             self.stdout
                 .queue(Print(format!(" [h{}:", screen_height)))?
                 .queue(Print(format!("w{}] ", screen_width)))?
-                .queue(Print(format!("y{}] ", self.prompt_start_row)))?
+                .queue(Print(format!("y:{} ", self.prompt_start_row)))?
                 .queue(Print(format!("rm:{} ", remaining_lines)))?
                 .queue(Print(format!("re:{} ", required_lines)))?
                 .queue(Print(format!("di:{} ", cursor_distance)))?
