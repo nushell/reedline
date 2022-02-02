@@ -1,17 +1,14 @@
-use std::collections::HashMap;
-
-use crate::enums::ReedlineEvent;
-
 use {
-    crate::EditCommand,
+    crate::{enums::ReedlineEvent, EditCommand},
     crossterm::event::{KeyCode, KeyModifiers},
     serde::{Deserialize, Serialize},
+    std::collections::HashMap,
 };
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct KeyCombination {
-    modifier: KeyModifiers,
-    key_code: KeyCode,
+    pub modifier: KeyModifiers,
+    pub key_code: KeyCode,
 }
 
 /// Main definition of editor keybindings
@@ -62,6 +59,11 @@ impl Keybindings {
     pub fn find_binding(&self, modifier: KeyModifiers, key_code: KeyCode) -> Option<ReedlineEvent> {
         let key_combo = KeyCombination { modifier, key_code };
         self.bindings.get(&key_combo).cloned()
+    }
+
+    /// Get assigned keybindings
+    pub fn get_keybindings(&self) -> &HashMap<KeyCombination, ReedlineEvent> {
+        &self.bindings
     }
 }
 

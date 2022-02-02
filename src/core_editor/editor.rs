@@ -1,6 +1,5 @@
-use crate::{core_editor::get_default_clipboard, EditCommand, UndoBehavior};
-
 use super::{Clipboard, ClipboardMode, LineBuffer};
+use crate::{core_editor::get_default_clipboard, EditCommand, UndoBehavior};
 
 pub struct Editor {
     line_buffer: LineBuffer,
