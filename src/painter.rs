@@ -244,12 +244,6 @@ impl Painter {
         }
     }
 
-    /// Update the terminal size information by polling the system
-    pub(crate) fn init_terminal_size(&mut self) -> Result<()> {
-        self.terminal_size = terminal::size()?;
-        Ok(())
-    }
-
     pub(crate) fn screen_height(&self) -> u16 {
         self.terminal_size.1
     }
@@ -269,8 +263,14 @@ impl Painter {
         self.large_buffer
     }
 
-    /// Sets the prompt origin position.
+    /// Sets the prompt origin position and screen size for a new line editor
+    /// invocation
+    ///
+    /// Not to be used for resizes during a running line editor, use
+    /// [`Painter::handle_resize()`] instead
     pub(crate) fn initialize_prompt_position(&mut self) -> Result<()> {
+        // Update the terminal size
+        self.terminal_size = terminal::size()?;
         // Cursor positions are 0 based here.
         let (column, row) = cursor::position()?;
         // Assumption: if the cursor is not on the zeroth column,

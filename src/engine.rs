@@ -340,7 +340,6 @@ impl Reedline {
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        self.painter.init_terminal_size()?;
         self.painter.initialize_prompt_position()?;
         self.hide_hints = false;
 
