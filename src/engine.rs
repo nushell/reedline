@@ -25,6 +25,11 @@ use {
 // arrives. This doesn't allow for the possibility of more than 1 event
 // happening at the same time.
 const POLL_WAIT: u64 = 10;
+// Since a paste event is multiple Event::Key events happening at the same time, we specify
+// how many events should be in the crossterm_events vector before it is considered
+// a paste. 10 events in 10 milliseconds is conservative enough (unlikely somebody
+// will type more than 10 characters in 10 milliseconds)
+const EVENTS_THRESHOLD: usize = 10;
 
 /// Determines if inputs should be used to extend the regular line buffer,
 /// traverse the history in the standard prompt or edit the search string in the
@@ -346,6 +351,8 @@ impl Reedline {
         let mut reedline_events: Vec<ReedlineEvent> = vec![];
 
         loop {
+            let mut paste_enter_state = false;
+
             if event::poll(Duration::from_millis(1000))? {
                 let mut latest_resize = None;
 
@@ -367,6 +374,7 @@ impl Reedline {
                             // multiple complete entries are submitted, events
                             // are still in the crossterm queue for us to
                             // process.
+                            paste_enter_state = crossterm_events.len() > EVENTS_THRESHOLD;
                             break;
                         }
                         x => {
@@ -416,7 +424,9 @@ impl Reedline {
                         return Ok(signal);
                     }
                     EventStatus::Handled => {
-                        self.repaint(prompt)?;
+                        if !paste_enter_state {
+                            self.repaint(prompt)?;
+                        }
                     }
                     EventStatus::Inapplicable => {
                         // Nothing changed, no need to repaint
