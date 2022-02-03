@@ -144,6 +144,10 @@ impl Editor {
         self.line_buffer.is_cursor_at_last_line()
     }
 
+    pub fn is_cursor_at_buffer_end(&self) -> bool {
+        self.line_buffer.offset() == self.get_buffer().len()
+    }
+
     pub fn reset_undo_stack(&mut self) {
         self.edits = vec![LineBuffer::new()];
         self.index_undo = 2;
