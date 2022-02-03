@@ -283,9 +283,6 @@ pub enum ReedlineEvent {
     /// Search the history for a string
     SearchHistory,
 
-    /// Paste event
-    Paste(Vec<ReedlineEvent>),
-
     /// In vi mode multiple reedline events can be chained while parsing the
     /// command or movement characters
     Multiple(Vec<ReedlineEvent>),
