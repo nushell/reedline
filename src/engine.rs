@@ -1,3 +1,5 @@
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
 use {
     crate::{
         completion::{CircularCompletionHandler, Completer, DefaultCompleter},
@@ -17,11 +19,11 @@ use {
     std::{borrow::Borrow, io, time::Duration},
 };
 
-// These two parameters define when an event is a Paste Event. The POLL_WAIT is used
-// to specify for how long the POLL should wait for events. Having a POLL_WAIT
-// of zero means that every single event is treated as soon as it arrives. This
-// doesn't allow for the possibility of more than 1 event happening at the same
-// time.
+// The POLL_WAIT is used to specify for how long the POLL should wait for
+// events, to accelerate the handling of paste or compound resize events. Having
+// a POLL_WAIT of zero means that every single event is treated as soon as it
+// arrives. This doesn't allow for the possibility of more than 1 event
+// happening at the same time.
 const POLL_WAIT: u64 = 10;
 // Since a paste event is multiple Event::Key events happening at the same time, we specify
 // how many events should be in the crossterm_events vector before it is considered
@@ -343,17 +345,14 @@ impl Reedline {
         self.painter.initialize_prompt_position()?;
         self.hide_hints = false;
 
-        // Redraw if Ctrl-L was used
-        if self.input_mode == InputMode::HistorySearch {
-            self.history_search_paint(prompt)?;
-        } else {
-            self.buffer_paint(prompt)?;
-        }
+        self.repaint(prompt)?;
 
         let mut crossterm_events: Vec<Event> = vec![];
         let mut reedline_events: Vec<ReedlineEvent> = vec![];
 
         loop {
+            let mut paste_enter_state = false;
+
             if event::poll(Duration::from_millis(1000))? {
                 let mut latest_resize = None;
 
@@ -361,12 +360,26 @@ impl Reedline {
                 // pasting text, resizes, blocking this thread (e.g. during debugging)
                 // We should be able to handle all of them as quickly as possible without causing unnecessary output steps.
                 while event::poll(Duration::from_millis(POLL_WAIT))? {
-                    // TODO: Maybe replace with a separate function processing the buffered event
                     match event::read()? {
                         Event::Resize(x, y) => {
                             latest_resize = Some((x, y));
                         }
-                        x => crossterm_events.push(x),
+                        enter @ Event::Key(KeyEvent {
+                            code: KeyCode::Enter,
+                            modifiers: KeyModifiers::NONE,
+                        }) => {
+                            crossterm_events.push(enter);
+                            // Break early to check if the input is complete and
+                            // can be send to the hosting application. If
+                            // multiple complete entries are submitted, events
+                            // are still in the crossterm queue for us to
+                            // process.
+                            paste_enter_state = crossterm_events.len() > EVENTS_THRESHOLD;
+                            break;
+                        }
+                        x => {
+                            crossterm_events.push(x);
+                        }
                     }
                 }
 
@@ -374,28 +387,25 @@ impl Reedline {
                     reedline_events.push(ReedlineEvent::Resize(x, y));
                 }
 
+                // Accelerate pasted text by fusing `EditCommand`s
+                //
+                // (Text should only be `EditCommand::InsertChar`s)
                 let mut last_edit_commands = None;
-                // If the size of crossterm_event vector is larger than threshold, we could assume
-                // that a lot of events were pasted into the prompt, indicating a paste
-                if crossterm_events.len() > EVENTS_THRESHOLD {
-                    reedline_events.push(self.handle_paste(&mut crossterm_events));
-                } else {
-                    for event in crossterm_events.drain(..) {
-                        match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
-                            (None, ReedlineEvent::Edit(ec)) => {
-                                last_edit_commands = Some(ec);
-                            }
-                            (None, other_event) => {
-                                reedline_events.push(other_event);
-                            }
-                            (Some(ref mut last_ecs), ReedlineEvent::Edit(ec)) => {
-                                last_ecs.extend(ec);
-                            }
-                            (ref mut a @ Some(_), other_event) => {
-                                reedline_events.push(ReedlineEvent::Edit(a.take().unwrap()));
+                for event in crossterm_events.drain(..) {
+                    match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
+                        (None, ReedlineEvent::Edit(ec)) => {
+                            last_edit_commands = Some(ec);
+                        }
+                        (None, other_event) => {
+                            reedline_events.push(other_event);
+                        }
+                        (Some(ref mut last_ecs), ReedlineEvent::Edit(ec)) => {
+                            last_ecs.extend(ec);
+                        }
+                        (ref mut a @ Some(_), other_event) => {
+                            reedline_events.push(ReedlineEvent::Edit(a.take().unwrap()));
 
-                                reedline_events.push(other_event);
-                            }
+                            reedline_events.push(other_event);
                         }
                     }
                 }
@@ -407,22 +417,23 @@ impl Reedline {
             };
 
             for event in reedline_events.drain(..) {
-                if let EventStatus::Exits(signal) = self.handle_event(prompt, event)? {
-                    // Move the cursor below the input area, for external commands or new read_line call
-                    self.painter.move_cursor_to_end()?;
-                    return Ok(signal);
+                match self.handle_event(prompt, event)? {
+                    EventStatus::Exits(signal) => {
+                        // Move the cursor below the input area, for external commands or new read_line call
+                        self.painter.move_cursor_to_end()?;
+                        return Ok(signal);
+                    }
+                    EventStatus::Handled => {
+                        if !paste_enter_state {
+                            self.repaint(prompt)?;
+                        }
+                    }
+                    EventStatus::Inapplicable => {
+                        // Nothing changed, no need to repaint
+                    }
                 }
             }
         }
-    }
-
-    fn handle_paste(&mut self, crossterm_events: &mut Vec<Event>) -> ReedlineEvent {
-        let reedline_events = crossterm_events
-            .drain(..)
-            .map(|event| self.edit_mode.parse_event(event))
-            .collect::<Vec<ReedlineEvent>>();
-
-        ReedlineEvent::Paste(reedline_events)
     }
 
     fn handle_event(&mut self, prompt: &dyn Prompt, event: ReedlineEvent) -> Result<EventStatus> {
@@ -460,7 +471,6 @@ impl Reedline {
                     Ok(EventStatus::Exits(Signal::CtrlD))
                 } else {
                     self.run_history_commands(&[EditCommand::Delete]);
-                    self.repaint(prompt)?;
                     Ok(EventStatus::Handled)
                 }
             }
@@ -476,12 +486,10 @@ impl Reedline {
                 }
 
                 self.input_mode = InputMode::Regular;
-                self.buffer_paint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Edit(commands) => {
                 self.run_history_commands(&commands);
-                self.repaint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Mouse => Ok(EventStatus::Handled),
@@ -490,14 +498,11 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Repaint => {
-                self.repaint(prompt)?;
+                // A handled Event causes a repaint
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::Right => Ok(EventStatus::Handled),
-            ReedlineEvent::Left => Ok(EventStatus::Handled),
             ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
                 self.history.back();
-                self.repaint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::NextHistory | ReedlineEvent::Down => {
@@ -506,12 +511,12 @@ impl Reedline {
                 if self.history.string_at_cursor().is_none() {
                     self.history.back();
                 }
-                self.repaint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             // TODO: Check if events should be handled
-            ReedlineEvent::ActionHandler
-            | ReedlineEvent::Paste(_)
+            ReedlineEvent::Right
+            | ReedlineEvent::Left
+            | ReedlineEvent::ActionHandler
             | ReedlineEvent::Multiple(_)
             | ReedlineEvent::None
             | ReedlineEvent::Esc
@@ -535,9 +540,8 @@ impl Reedline {
     ) -> io::Result<EventStatus> {
         match event {
             ReedlineEvent::Menu(name) => {
-                let all_inactive = self.menus.iter().all(|menu| !menu.is_active());
-                for menu in self.menus.iter_mut() {
-                    if menu.name() == name.as_str() && all_inactive {
+                if self.active_menu().is_none() {
+                    if let Some(menu) = self.menus.iter_mut().find(|menu| menu.name() == name) {
                         menu.activate();
                         menu.update_values(
                             self.editor.line_buffer(),
@@ -548,7 +552,6 @@ impl Reedline {
                         if menu.get_values().len() == 1 {
                             return self.handle_editor_event(prompt, ReedlineEvent::Enter);
                         } else {
-                            self.buffer_paint(prompt)?;
                             return Ok(EventStatus::Handled);
                         }
                     }
@@ -556,118 +559,82 @@ impl Reedline {
                 Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::MenuNext => {
-                for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
+                self.active_menu()
+                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.move_next();
-                        self.buffer_paint(prompt)?;
-
-                        return Ok(EventStatus::Handled);
-                    }
-                }
-                Ok(EventStatus::Inapplicable)
+                        Ok(EventStatus::Handled)
+                    })
             }
             ReedlineEvent::MenuPrevious => {
-                for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
+                self.active_menu()
+                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.move_previous();
-                        self.buffer_paint(prompt)?;
-
-                        return Ok(EventStatus::Handled);
-                    }
-                }
-                Ok(EventStatus::Inapplicable)
+                        Ok(EventStatus::Handled)
+                    })
             }
             ReedlineEvent::MenuUp => {
-                for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
+                self.active_menu()
+                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.move_up();
-                        self.buffer_paint(prompt)?;
-
-                        return Ok(EventStatus::Handled);
-                    }
-                }
-                Ok(EventStatus::Inapplicable)
+                        Ok(EventStatus::Handled)
+                    })
             }
             ReedlineEvent::MenuDown => {
-                for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
+                self.active_menu()
+                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.move_down();
-                        self.buffer_paint(prompt)?;
-
-                        return Ok(EventStatus::Handled);
-                    }
-                }
-                Ok(EventStatus::Inapplicable)
+                        Ok(EventStatus::Handled)
+                    })
             }
             ReedlineEvent::MenuLeft => {
-                for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
+                self.active_menu()
+                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.move_left();
-                        self.buffer_paint(prompt)?;
-
-                        return Ok(EventStatus::Handled);
-                    }
-                }
-                Ok(EventStatus::Inapplicable)
+                        Ok(EventStatus::Handled)
+                    })
             }
             ReedlineEvent::MenuRight => {
-                for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
+                self.active_menu()
+                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.move_right();
-                        self.buffer_paint(prompt)?;
-
-                        return Ok(EventStatus::Handled);
-                    }
-                }
-                Ok(EventStatus::Inapplicable)
+                        Ok(EventStatus::Handled)
+                    })
             }
             ReedlineEvent::MenuPageNext => {
-                for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
+                self.active_menu()
+                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.next_page();
-                        self.buffer_paint(prompt)?;
-
-                        return Ok(EventStatus::Handled);
-                    }
-                }
-                Ok(EventStatus::Inapplicable)
+                        Ok(EventStatus::Handled)
+                    })
             }
             ReedlineEvent::MenuPagePrevious => {
-                for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
+                self.active_menu()
+                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.previous_page();
-                        self.buffer_paint(prompt)?;
-
-                        return Ok(EventStatus::Handled);
-                    }
-                }
-                Ok(EventStatus::Inapplicable)
+                        Ok(EventStatus::Handled)
+                    })
             }
             ReedlineEvent::HistoryHintComplete => {
-                let any_menu_active = self.menus.iter().any(|menu| menu.is_active());
                 let current_hint = self.hinter.complete_hint();
                 if self.hints_active()
-                    && self.editor.offset() == self.editor.get_buffer().len()
+                    && self.editor.is_cursor_at_buffer_end()
                     && !current_hint.is_empty()
-                    && !any_menu_active
+                    && self.active_menu().is_none()
                 {
                     self.run_edit_commands(&[EditCommand::InsertString(current_hint)]);
-                    self.buffer_paint(prompt)?;
                     Ok(EventStatus::Handled)
                 } else {
                     Ok(EventStatus::Inapplicable)
                 }
             }
             ReedlineEvent::HistoryHintWordComplete => {
-                let any_menu_active = self.menus.iter().any(|menu| menu.is_active());
                 let current_hint_part = self.hinter.next_hint_token();
                 if self.hints_active()
-                    && self.editor.offset() == self.editor.get_buffer().len()
+                    && self.editor.is_cursor_at_buffer_end()
                     && !current_hint_part.is_empty()
-                    && !any_menu_active
+                    && self.active_menu().is_none()
                 {
                     self.run_edit_commands(&[EditCommand::InsertString(current_hint_part)]);
-                    self.buffer_paint(prompt)?;
                     Ok(EventStatus::Handled)
                 } else {
                     Ok(EventStatus::Inapplicable)
@@ -677,12 +644,10 @@ impl Reedline {
                 let line_buffer = self.editor.line_buffer();
                 self.circular_completion_handler
                     .handle(self.completer.as_ref(), line_buffer);
-                self.buffer_paint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Esc => {
                 self.menus.iter_mut().for_each(|menu| menu.deactivate());
-                self.buffer_paint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::CtrlD => {
@@ -691,7 +656,6 @@ impl Reedline {
                     Ok(EventStatus::Exits(Signal::CtrlD))
                 } else {
                     self.run_edit_commands(&[EditCommand::Delete]);
-                    self.buffer_paint(prompt)?;
                     Ok(EventStatus::Handled)
                 }
             }
@@ -707,7 +671,6 @@ impl Reedline {
                     if menu.is_active() {
                         menu.replace_in_buffer(self.editor.line_buffer());
                         menu.deactivate();
-                        self.buffer_paint(prompt)?;
 
                         return Ok(EventStatus::Handled);
                     }
@@ -715,8 +678,9 @@ impl Reedline {
                 let buffer = self.editor.get_buffer().to_string();
                 if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
                     self.hide_hints = true;
-                    self.buffer_paint(prompt)?;
-                    self.append_to_history();
+                    // Additional repaint to show the content without hints etc.
+                    self.repaint(prompt)?;
+                    self.history.append(self.editor.get_buffer());
                     self.run_edit_commands(&[EditCommand::Clear]);
                     self.editor.reset_undo_stack();
 
@@ -727,61 +691,49 @@ impl Reedline {
                         self.run_edit_commands(&[EditCommand::InsertChar('\r')]);
                     }
                     self.run_edit_commands(&[EditCommand::InsertChar('\n')]);
-                    self.buffer_paint(prompt)?;
 
                     Ok(EventStatus::Handled)
                 }
             }
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands);
-                for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
-                        menu.edit_line_buffer();
-                    }
+                if let Some(menu) = self.active_menu() {
+                    menu.edit_line_buffer();
                 }
 
-                self.repaint(prompt)?;
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::Mouse => Ok(EventStatus::Handled),
+            ReedlineEvent::Mouse => Ok(EventStatus::Inapplicable),
             ReedlineEvent::Resize(width, height) => {
                 self.painter.handle_resize(width, height);
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Repaint => {
-                if self.input_mode != InputMode::HistorySearch {
-                    self.buffer_paint(prompt)?;
-                }
+                // A handled Event causes a repaint
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::PreviousHistory => {
                 self.previous_history();
-                self.buffer_paint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::NextHistory => {
                 self.next_history();
-                self.buffer_paint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Up => {
                 self.up_command();
-                self.buffer_paint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Down => {
                 self.down_command();
-                self.buffer_paint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Left => {
                 self.run_edit_commands(&[EditCommand::MoveLeft]);
-                self.buffer_paint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Right => {
                 self.run_edit_commands(&[EditCommand::MoveRight]);
-                self.buffer_paint(prompt)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::SearchHistory => {
@@ -789,38 +741,27 @@ impl Reedline {
                 self.editor.remember_undo_state(true);
 
                 self.enter_history_search();
-                self.repaint(prompt)?;
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::Paste(events) => {
-                let mut latest_signal = EventStatus::Handled;
-                // Making sure that only InsertChars are handled during a paste event
+            ReedlineEvent::Multiple(events) => {
+                let mut latest_signal = EventStatus::Inapplicable;
                 for event in events {
-                    if let ReedlineEvent::Edit(commands) = event {
-                        for command in commands {
-                            match command {
-                                EditCommand::InsertChar(c) => self.editor.insert_char(c),
-                                x => {
-                                    self.run_edit_commands(&[x]);
-                                }
-                            }
+                    match self.handle_editor_event(prompt, event)? {
+                        EventStatus::Handled => {
+                            latest_signal = EventStatus::Handled;
                         }
-                    } else {
-                        latest_signal = self.handle_editor_event(prompt, event)?;
+                        EventStatus::Inapplicable => {
+                            // NO OP
+                        }
+                        EventStatus::Exits(signal) => {
+                            // TODO: Check if we want to allow execution to
+                            // proceed if there are more events after the
+                            // terminating
+                            return Ok(EventStatus::Exits(signal));
+                        }
                     }
                 }
 
-                self.buffer_paint(prompt)?;
-                Ok(latest_signal)
-            }
-            ReedlineEvent::Multiple(events) => {
-                let latest_signal = events
-                    .into_iter()
-                    .try_fold(EventStatus::Handled, |_, event| {
-                        self.handle_editor_event(prompt, event)
-                    })?;
-
-                self.buffer_paint(prompt)?;
                 Ok(latest_signal)
             }
             ReedlineEvent::UntilFound(events) => {
@@ -835,14 +776,14 @@ impl Reedline {
                     }
                 }
                 // Exhausting the event handlers is still considered handled
-                Ok(EventStatus::Handled)
+                Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::None => Ok(EventStatus::Handled),
+            ReedlineEvent::None => Ok(EventStatus::Inapplicable),
         }
     }
 
-    fn append_to_history(&mut self) {
-        self.history.append(self.editor.get_buffer());
+    fn active_menu(&mut self) -> Option<&mut Box<dyn Menu>> {
+        self.menus.iter_mut().find(|men| men.is_active())
     }
 
     fn previous_history(&mut self) {
@@ -869,7 +810,7 @@ impl Reedline {
     ///
     /// Enables either prefix search with output in the line buffer or simple traversal
     fn set_history_navigation_based_on_line_buffer(&mut self) {
-        if self.editor.is_empty() || self.editor.offset() != self.editor.get_buffer().len() {
+        if self.editor.is_empty() || !self.editor.is_cursor_at_buffer_end() {
             // Perform bash-style basic up/down entry walking
             self.history.set_navigation(HistoryNavigationQuery::Normal(
                 // Hack: Tight coupling point to be able to restore previously typed input
@@ -945,7 +886,7 @@ impl Reedline {
             HistoryNavigationQuery::Normal(original) => {
                 if let Some(buffer_to_paint) = self.history.string_at_cursor() {
                     self.editor.set_buffer(buffer_to_paint.clone());
-                    self.set_offset(buffer_to_paint.len());
+                    self.editor.set_insertion_point(buffer_to_paint.len());
                 } else {
                     // Hack
                     self.editor.set_line_buffer(original);
@@ -954,10 +895,10 @@ impl Reedline {
             HistoryNavigationQuery::PrefixSearch(prefix) => {
                 if let Some(prefix_result) = self.history.string_at_cursor() {
                     self.editor.set_buffer(prefix_result.clone());
-                    self.set_offset(prefix_result.len());
+                    self.editor.set_insertion_point(prefix_result.len());
                 } else {
                     self.editor.set_buffer(prefix.clone());
-                    self.set_offset(prefix.len());
+                    self.editor.set_insertion_point(prefix.len());
                 }
             }
             HistoryNavigationQuery::SubstringSearch(_) => todo!(),
@@ -982,11 +923,6 @@ impl Reedline {
         for command in commands {
             self.editor.run_edit_command(command);
         }
-    }
-
-    /// Set the cursor position as understood by the underlying [`LineBuffer`] for the current line
-    fn set_offset(&mut self, pos: usize) {
-        self.editor.set_insertion_point(pos);
     }
 
     fn up_command(&mut self) {
@@ -1014,7 +950,7 @@ impl Reedline {
         !self.hide_hints && self.input_mode == InputMode::Regular
     }
 
-    /// *Partial* repaint of either the buffer or the parts for reverse history search
+    /// Repaint of either the buffer or the parts for reverse history search
     fn repaint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
         // Repainting
         if self.input_mode == InputMode::HistorySearch {
