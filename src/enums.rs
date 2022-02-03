@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use strum_macros::EnumIter;
 
 /// Valid ways how `Reedline::read_line()` can return
 #[derive(Debug)]
@@ -16,7 +17,7 @@ pub enum Signal {
 /// Editing actions which can be mapped to key bindings.
 ///
 /// Executed by `Reedline::run_edit_commands()`
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq, EnumIter)]
 pub enum EditCommand {
     /// Move to the start of the buffer
     MoveToStart,
@@ -208,7 +209,7 @@ pub enum UndoBehavior {
 }
 
 /// Reedline supported actions.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, EnumIter)]
 pub enum ReedlineEvent {
     /// No op event
     None,

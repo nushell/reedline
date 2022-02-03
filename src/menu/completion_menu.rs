@@ -1,7 +1,6 @@
-use nu_ansi_term::{ansi::RESET, Style};
-
 use super::{Menu, MenuTextStyle};
 use crate::{painter::Painter, Completer, History, LineBuffer, Span};
+use nu_ansi_term::{ansi::RESET, Style};
 
 /// Default values used as reference for the menu. These values are set during
 /// the initial declaration of the menu and are always kept as reference for the
@@ -255,7 +254,7 @@ impl Menu for CompletionMenu {
         let default_width = match self.default_details.col_width {
             Some(col_width) => col_width,
             None => {
-                let col_width = painter.terminal_cols() / self.default_details.columns;
+                let col_width = painter.screen_width() / self.default_details.columns;
                 col_width as usize
             }
         };
@@ -270,7 +269,7 @@ impl Menu for CompletionMenu {
 
         // The working columns is adjusted based on possible number of columns
         // that could be fitted in the screen with the calculated column width
-        let possible_cols = painter.terminal_cols() / self.working_details.col_width as u16;
+        let possible_cols = painter.screen_width() / self.working_details.col_width as u16;
         if possible_cols > self.default_details.columns {
             self.working_details.columns = self.default_details.columns.max(1);
         } else {

@@ -340,7 +340,6 @@ impl Reedline {
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        self.painter.init_terminal_size()?;
         self.painter.initialize_prompt_position()?;
         self.hide_hints = false;
 
@@ -403,7 +402,7 @@ impl Reedline {
                 if let Some(ec) = last_edit_commands {
                     reedline_events.push(ReedlineEvent::Edit(ec));
                 }
-            } else if self.animate && !self.painter.large_buffer {
+            } else if self.animate && !self.painter.exceeds_screen_size() {
                 reedline_events.push(ReedlineEvent::Repaint);
             };
 

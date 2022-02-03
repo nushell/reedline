@@ -1,10 +1,9 @@
+use crate::{Completer, Span};
 use std::{
     collections::{BTreeMap, BTreeSet},
     str::Chars,
     sync::Arc,
 };
-
-use crate::{Completer, Span};
 
 /// A default completer that can detect keywords
 ///
