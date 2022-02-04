@@ -295,7 +295,6 @@ impl Drop for FileBackedHistory {
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
-    use std::io::BufRead;
 
     use super::*;
 
@@ -485,11 +484,10 @@ mod tests {
 
     #[test]
     fn writes_to_new_file() {
-        use std::fs::File;
-        use std::io::BufReader;
         use tempfile::tempdir;
 
         let tmp = tempdir().unwrap();
+        // check that it also works for a path where the directory has not been created yet
         let histfile = tmp.path().join("nested_path").join(".history");
 
         let entries = vec!["test", "text", "more test text"];
@@ -502,11 +500,135 @@ mod tests {
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
-        let f = File::open(histfile).unwrap();
+        let reading_hist = FileBackedHistory::with_file(5, histfile).unwrap();
 
-        let actual: Vec<String> = BufReader::new(f).lines().map(|x| x.unwrap()).collect();
-
+        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
         assert_eq!(entries, actual);
+
+        tmp.close().unwrap();
+    }
+
+    #[test]
+    fn persists_newlines_in_entries() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().unwrap();
+        let histfile = tmp.path().join(".history");
+
+        let entries = vec![
+            "test",
+            "multiline\nentry\nunix",
+            "multiline\r\nentry\r\nwindows",
+            "more test text",
+        ];
+
+        {
+            let mut writing_hist = FileBackedHistory::with_file(5, histfile.clone()).unwrap();
+
+            entries.iter().for_each(|e| writing_hist.append(e));
+
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
+
+        let reading_hist = FileBackedHistory::with_file(5, histfile).unwrap();
+
+        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
+        assert_eq!(entries, actual);
+
+        tmp.close().unwrap();
+    }
+
+    #[test]
+    fn truncates_file_to_capacity() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().unwrap();
+        let histfile = tmp.path().join(".history");
+
+        let capacity = 5;
+        let initial_entries = vec!["test 1", "test 2"];
+        let appending_entries = vec!["test 3", "test 4"];
+        let expected_appended_entries = vec!["test 1", "test 2", "test 3", "test 4"];
+        let truncating_entries = vec!["test 5", "test 6", "test 7", "test 8"];
+        let expected_truncated_entries = vec!["test 4", "test 5", "test 6", "test 7", "test 8"];
+
+        {
+            let mut writing_hist =
+                FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
+
+            initial_entries.iter().for_each(|e| writing_hist.append(e));
+
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
+
+        {
+            let mut appending_hist =
+                FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
+
+            appending_entries
+                .iter()
+                .for_each(|e| appending_hist.append(e));
+
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+            let actual: Vec<_> = appending_hist.iter_chronologic().collect();
+            assert_eq!(expected_appended_entries, actual);
+        }
+
+        {
+            let mut truncating_hist =
+                FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
+
+            truncating_entries
+                .iter()
+                .for_each(|e| truncating_hist.append(e));
+
+            let actual: Vec<_> = truncating_hist.iter_chronologic().collect();
+            assert_eq!(expected_truncated_entries, actual);
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
+
+        let reading_hist = FileBackedHistory::with_file(capacity, histfile).unwrap();
+
+        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
+        assert_eq!(expected_truncated_entries, actual);
+
+        tmp.close().unwrap();
+    }
+
+    #[test]
+    fn truncates_too_large_file() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().unwrap();
+        let histfile = tmp.path().join(".history");
+
+        let overly_large_previous_entries = vec![
+            "test 1", "test 2", "test 3", "test 4", "test 5", "test 6", "test 7", "test 8",
+        ];
+        let expected_truncated_entries = vec!["test 4", "test 5", "test 6", "test 7", "test 8"];
+
+        {
+            let mut writing_hist = FileBackedHistory::with_file(10, histfile.clone()).unwrap();
+
+            overly_large_previous_entries
+                .iter()
+                .for_each(|e| writing_hist.append(e));
+
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
+
+        {
+            let truncating_hist = FileBackedHistory::with_file(5, histfile.clone()).unwrap();
+
+            let actual: Vec<_> = truncating_hist.iter_chronologic().collect();
+            assert_eq!(expected_truncated_entries, actual);
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
+
+        let reading_hist = FileBackedHistory::with_file(5, histfile).unwrap();
+
+        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
+        assert_eq!(expected_truncated_entries, actual);
 
         tmp.close().unwrap();
     }
