@@ -88,6 +88,7 @@ pub struct Reedline {
 
     // Provides the tab completions
     completer: Box<dyn Completer>,
+    quick_completions: bool,
 
     // Performs bash style circular rotation through the available completions
     circular_completion_handler: CircularCompletionHandler,
@@ -135,6 +136,7 @@ impl Reedline {
             painter,
             edit_mode,
             completer,
+            quick_completions: false,
             circular_completion_handler: CircularCompletionHandler::default(),
             highlighter: buffer_highlighter,
             hinter,
@@ -192,6 +194,13 @@ impl Reedline {
     /// ```
     pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Reedline {
         self.completer = completer;
+        self
+    }
+
+    /// Turn on quick completions. These completions will auto-select if the completer
+    /// ever narrows down to a single entry.
+    pub fn with_quick_completions(mut self, quick_completions: bool) -> Reedline {
+        self.quick_completions = quick_completions;
         self
     }
 
@@ -697,7 +706,17 @@ impl Reedline {
             }
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands);
-                if let Some(menu) = self.active_menu() {
+                if let Some(menu) = self.menus.iter_mut().find(|men| men.is_active()) {
+                    if self.quick_completions {
+                        menu.update_values(
+                            self.editor.line_buffer(),
+                            self.history.as_ref(),
+                            self.completer.as_ref(),
+                        );
+                        if menu.get_values().len() == 1 {
+                            return self.handle_editor_event(prompt, ReedlineEvent::Enter);
+                        }
+                    }
                     menu.edit_line_buffer();
                 }
 
