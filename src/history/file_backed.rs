@@ -147,7 +147,7 @@ impl FileBackedHistory {
             cursor: 0,
             file: None,
             len_on_disk: 0,
-            truncate_file: true,
+            truncate_file: false,
             query: HistoryNavigationQuery::Normal(LineBuffer::default()),
         }
     }
