@@ -558,7 +558,7 @@ impl Reedline {
                             self.completer.as_ref(),
                         );
 
-                        if menu.get_values().len() == 1 {
+                        if menu.get_values().len() == 1 && self.quick_completions {
                             return self.handle_editor_event(prompt, ReedlineEvent::Enter);
                         } else {
                             return Ok(EventStatus::Handled);
