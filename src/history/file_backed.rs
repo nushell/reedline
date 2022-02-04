@@ -641,10 +641,10 @@ mod tests {
         let histfile = tmp.path().join(".history");
 
         let capacity = 7;
-        let initial_entries = vec!["test 1", "test 2", "test 3", "test 4"];
+        let initial_entries = vec!["test 1", "test 2", "test 3", "test 4", "test 5"];
         let entries_a = vec!["A1", "A2", "A3"];
         let entries_b = vec!["B1", "B2", "B3"];
-        let expected_entries = vec!["test 4", "B1", "B2", "B3", "A1", "A2", "A3"];
+        let expected_entries = vec!["test 5", "B1", "B2", "B3", "A1", "A2", "A3"];
 
         {
             let mut writing_hist =
