@@ -47,6 +47,7 @@ fn main() -> Result<()> {
         "history 4".into(),
         "history 5".into(),
         "logout".into(),
+        "login".into(),
         "hello world".into(),
         "hello world reedline".into(),
         "hello world something".into(),

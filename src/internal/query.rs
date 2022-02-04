@@ -1,6 +1,8 @@
 use crate::default_emacs_keybindings;
 use crate::default_vi_insert_keybindings;
+use crate::default_vi_normal_keybindings;
 use crate::EditCommand;
+use crate::Keybindings;
 use crate::PromptEditMode;
 use crate::ReedlineEvent;
 use crossterm::event::KeyCode;
@@ -57,86 +59,58 @@ pub fn get_reedline_keybinding_modifiers() -> Vec<String> {
 
 /// Return a Vec<String> of the Reedline PromptEditModes
 pub fn get_reedline_prompt_edit_modes() -> Vec<String> {
-    let mut modes = vec![];
-    for em in PromptEditMode::iter() {
-        modes.push(em.to_string());
-    }
-    modes
+    PromptEditMode::iter().map(|em| em.to_string()).collect()
 }
 
 /// Return a Vec<String> of the Reedline KeyCodes
 pub fn get_reedline_keycodes() -> Vec<String> {
-    let mut keycodes = vec![];
-    for kc in KeyCodes::iterator() {
-        // TODO: Perhaps this should be impl Display so we can control the output
-        keycodes.push(format!("{:?}", kc));
-    }
-    keycodes
+    KeyCodes::iterator().map(|kc| format!("{:?}", kc)).collect()
 }
 
 /// Return a Vec<String> of the Reedline ReedlineEvents
 pub fn get_reedline_reedline_events() -> Vec<String> {
-    let mut rles = vec![];
-    for rle in ReedlineEvent::iter() {
-        // TODO: Perhaps this should be impl Display so we can control the output
-        rles.push(format!("{:?}", rle));
-    }
-    rles
+    ReedlineEvent::iter()
+        .map(|rle| format!("{:?}", rle))
+        .collect()
 }
 
 /// Return a Vec<String> of the Reedline EditCommands
 pub fn get_reedline_edit_commands() -> Vec<String> {
-    let mut ecs = vec![];
-    for edit in EditCommand::iter() {
-        // TODO: Perhaps this should be impl Display so we can control the output
-        ecs.push(format!("{:?}", edit));
-    }
-    ecs
+    EditCommand::iter()
+        .map(|edit| format!("{:?}", edit))
+        .collect()
 }
 
 /// Get the default keybindings and return a Veec<(String, String, String, String)>
 /// where String 1 is mode, String 2 is key_modifiers, String 3 is key_code, and
 /// Sting 4 is event
 pub fn get_reedline_default_keybindings() -> Vec<(String, String, String, String)> {
-    let mut keybindings = vec![];
-    let emacs = default_emacs_keybindings();
-    let vi_normal = default_vi_insert_keybindings();
-    let vi_insert = default_vi_insert_keybindings();
-    for emacs_kb in emacs.get_keybindings() {
-        let mode = "emacs";
-        let key_modifiers = emacs_kb.0.modifier;
-        let key_code = emacs_kb.0.key_code;
-        let event = emacs_kb.1;
-        keybindings.push((
-            mode.to_string(),
-            format!("{:?}", key_modifiers),
-            format!("{:?}", key_code),
-            format!("{:?}", event),
-        ))
-    }
-    for vi_n_kb in vi_normal.get_keybindings() {
-        let mode = "vi_normal";
-        let key_modifiers = vi_n_kb.0.modifier;
-        let key_code = vi_n_kb.0.key_code;
-        let event = vi_n_kb.1;
-        keybindings.push((
-            mode.to_string(),
-            format!("{:?}", key_modifiers),
-            format!("{:?}", key_code),
-            format!("{:?}", event),
-        ))
-    }
-    for vi_i_kb in vi_insert.get_keybindings() {
-        let mode = "vi_insert";
-        let key_modifiers = vi_i_kb.0.modifier;
-        let key_code = vi_i_kb.0.key_code;
-        let event = vi_i_kb.1;
-        keybindings.push((
-            mode.to_string(),
-            format!("{:?}", key_modifiers),
-            format!("{:?}", key_code),
-            format!("{:?}", event),
-        ));
-    }
+    let options = vec![
+        ("emacs", default_emacs_keybindings()),
+        ("vi_normal", default_vi_normal_keybindings()),
+        ("vi_insert", default_vi_insert_keybindings()),
+    ];
+
+    options
+        .into_iter()
+        .flat_map(|(mode, keybindings)| get_keybinding_strings(mode, keybindings))
+        .collect()
+}
+
+fn get_keybinding_strings(
+    mode: &str,
+    keybindings: Keybindings,
+) -> Vec<(String, String, String, String)> {
     keybindings
+        .get_keybindings()
+        .iter()
+        .map(|(combination, event)| {
+            (
+                mode.to_string(),
+                format!("{:?}", combination.modifier),
+                format!("{:?}", combination.key_code),
+                format!("{:?}", event),
+            )
+        })
+        .collect()
 }
