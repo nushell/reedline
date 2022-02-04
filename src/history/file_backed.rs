@@ -632,4 +632,49 @@ mod tests {
 
         tmp.close().unwrap();
     }
+
+    #[test]
+    fn concurrent_histories_dont_erase_eachother() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().unwrap();
+        let histfile = tmp.path().join(".history");
+
+        let capacity = 7;
+        let initial_entries = vec!["test 1", "test 2", "test 3", "test 4", "test 5"];
+        let entries_a = vec!["A1", "A2", "A3"];
+        let entries_b = vec!["B1", "B2", "B3"];
+        let expected_entries = vec!["test 5", "B1", "B2", "B3", "A1", "A2", "A3"];
+
+        {
+            let mut writing_hist =
+                FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
+
+            initial_entries.iter().for_each(|e| writing_hist.append(e));
+
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
+
+        {
+            let mut hist_a = FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
+
+            {
+                let mut hist_b = FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
+
+                entries_b.iter().for_each(|e| hist_b.append(e));
+
+                // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+            }
+            entries_a.iter().for_each(|e| hist_a.append(e));
+
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
+
+        let reading_hist = FileBackedHistory::with_file(capacity, histfile).unwrap();
+
+        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
+        assert_eq!(expected_entries, actual);
+
+        tmp.close().unwrap();
+    }
 }
