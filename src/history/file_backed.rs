@@ -665,4 +665,59 @@ mod tests {
 
         tmp.close().unwrap();
     }
+
+    #[test]
+    fn concurrent_histories_are_threadsafe() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().unwrap();
+        let histfile = tmp.path().join(".history");
+
+        let num_threads = 16;
+        let capacity = 2 * num_threads + 1;
+
+        let initial_entries = (0..capacity).map(|i| format!("initial {i}"));
+
+        {
+            let mut writing_hist =
+                FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
+
+            initial_entries.for_each(|e| writing_hist.append(&e));
+
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
+
+        let threads = (0..num_threads)
+            .map(|i| {
+                let cap = capacity;
+                let hfile = histfile.clone();
+                std::thread::spawn(move || {
+                    let mut hist = FileBackedHistory::with_file(cap, hfile).unwrap();
+                    hist.append(&format!("A{}", i));
+                    hist.sync().unwrap();
+                    hist.append(&format!("B{}", i));
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for t in threads {
+            t.join().unwrap();
+        }
+
+        let reading_hist = FileBackedHistory::with_file(capacity, histfile).unwrap();
+
+        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
+
+        assert!(
+            actual.contains(&&format!("initial {}", capacity - 1)),
+            "Overwrote entry from before threading test"
+        );
+
+        for i in 0..num_threads {
+            assert!(actual.contains(&&format!("A{}", i)),);
+            assert!(actual.contains(&&format!("B{}", i)),);
+        }
+
+        tmp.close().unwrap();
+    }
 }
