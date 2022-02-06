@@ -252,7 +252,7 @@ impl Painter {
         self.terminal_size.0
     }
 
-    fn remaining_lines(&self) -> u16 {
+    pub fn remaining_lines(&self) -> u16 {
         self.screen_height() - self.prompt_start_row
     }
 

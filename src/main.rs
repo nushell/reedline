@@ -65,7 +65,7 @@ fn main() -> Result<()> {
     let mut line_editor = Reedline::create()?
         .with_history(history)?
         .with_completer(completer)
-        .with_quick_completions(true)
+        .with_quick_completions(false)
         .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
         .with_hinter(Box::new(
             DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)),
