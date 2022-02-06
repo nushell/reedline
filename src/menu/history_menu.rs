@@ -308,7 +308,7 @@ impl HistoryMenu {
             };
 
             // Final string with formatting
-            format!("{:width$}{}", line_str, self.end_of_line(), width = 50)
+            format!("{}{}", line_str, self.end_of_line())
         }
     }
 }
