@@ -10,6 +10,27 @@ pub fn default_vi_normal_keybindings() -> Keybindings {
     let mut kb = Keybindings::new();
 
     kb.add_binding(KM::CONTROL, KC::Char('c'), ReedlineEvent::CtrlC);
+    kb.add_binding(KM::CONTROL, KC::Char('l'), ReedlineEvent::ClearScreen);
+    kb.add_binding(
+        KM::NONE,
+        KC::Up,
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuUp, ReedlineEvent::Up]),
+    );
+    kb.add_binding(
+        KM::NONE,
+        KC::Down,
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuDown, ReedlineEvent::Down]),
+    );
+    kb.add_binding(
+        KM::NONE,
+        KC::Left,
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left]),
+    );
+    kb.add_binding(
+        KM::NONE,
+        KC::Right,
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuRight, ReedlineEvent::Right]),
+    );
 
     kb
 }
