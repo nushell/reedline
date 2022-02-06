@@ -21,6 +21,34 @@ impl Default for MenuTextStyle {
     }
 }
 
+/// Defines all possible events that could happen with a menu.
+pub enum MenuEvent {
+    /// Activation event for the menu. When the bool is true it means that the values
+    /// have already being updated. This is true when the option `quick_completions` is true
+    Activate(bool),
+    /// Deactivation event
+    Deactivate,
+    /// Line buffer edit event. When the bool is true it means that the values
+    /// have already being updated. This is true when the option `quick_completions` is true
+    Edit(bool),
+    /// Selecting next element in the menu
+    NextElement,
+    /// Selecting previous element in the menu
+    PreviousElement,
+    /// Moving up in the menu
+    MoveUp,
+    /// Moving down in the menu
+    MoveDown,
+    /// Moving left in the menu
+    MoveLeft,
+    /// Moving right in the menu
+    MoveRight,
+    /// Move to next page
+    NextPage,
+    /// Move to previous page
+    PreviousPage,
+}
+
 /// Trait that defines how a menu will be printed by the painter
 pub trait Menu: Send {
     /// Menu name
@@ -34,16 +62,14 @@ pub trait Menu: Send {
     /// Checks if the menu is active
     fn is_active(&self) -> bool;
 
-    /// Activates the menu
-    fn activate(&mut self);
-
-    /// Deactivates the menu
-    fn deactivate(&mut self);
+    /// Selects what type of event happened with the menu
+    fn menu_event(&mut self, event: MenuEvent);
 
     /// Updates the values presented in the menu
     /// This function needs to be defined in the trait because when the menu is
-    /// activated the len of the values is calculated to know if there is only one
-    /// value so it can be selected immediately
+    /// activated or the quick_completion option is true, the len of the values
+    /// is calculated to know if there is only one value so it can be selected
+    /// immediately
     fn update_values(
         &mut self,
         line_buffer: &mut LineBuffer,
@@ -54,6 +80,8 @@ pub trait Menu: Send {
     /// The working details of a menu are values that could change based on
     /// the menu conditions before it being printed, such as the number or size
     /// of columns, etc.
+    /// In this function should be defined how the menu event is treated since
+    /// it is called just before painting the menu
     fn update_working_details(
         &mut self,
         line_buffer: &mut LineBuffer,
@@ -62,57 +90,8 @@ pub trait Menu: Send {
         painter: &Painter,
     );
 
-    /// Indicates how to replace in the buffer the selected value from the menu
+    /// Indicates how to replace in the line buffer the selected value from the menu
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer);
-
-    /// Text style for the values printed in the menu. The index represents the
-    /// selected values in the menu
-    fn text_style(&self, index: usize) -> String;
-
-    /// Moves the selected value to the next element
-    fn edit_line_buffer(&mut self);
-
-    /// Moves the selected value to the next element
-    fn move_next(&mut self);
-
-    /// Moves the selected value to the previous element
-    fn move_previous(&mut self);
-
-    /// Moves the selected value up
-    fn move_up(&mut self) {}
-
-    /// Moves the selected value down
-    fn move_down(&mut self) {}
-
-    /// Moves the selected value left
-    fn move_left(&mut self) {}
-
-    /// Moves the selected value right
-    fn move_right(&mut self) {}
-
-    /// If the menu is paginated then it shows the next page
-    fn next_page(&mut self) {}
-
-    /// If the menu is paginated then it shows the previous page
-    fn previous_page(&mut self) {}
-
-    /// Minimum rows that should be displayed by the menu
-    fn min_rows(&self) -> u16;
-
-    /// Row position
-    fn row_pos(&self) -> u16;
-
-    /// Column position
-    fn col_pos(&self) -> u16;
-
-    /// Gets cached values from menu that will be displayed
-    fn get_values(&self) -> &[(Span, String)];
-
-    /// Returns working details columns
-    fn get_cols(&self) -> u16;
-
-    /// Returns working details col width
-    fn get_width(&self) -> usize;
 
     /// Calculates the real required lines for the menu considering how many lines
     /// wrap the terminal or if entries have multiple lines
@@ -121,23 +100,9 @@ pub trait Menu: Send {
     /// Creates the menu representation as a string which will be painted by the painter
     fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String;
 
-    /// Get selected value from the menu
-    fn get_value(&self) -> Option<(Span, String)> {
-        self.get_values().get(self.position()).cloned()
-    }
+    /// Minimum rows that should be displayed by the menu
+    fn min_rows(&self) -> u16;
 
-    /// Menu index based on column and row position
-    fn position(&self) -> usize {
-        let position = self.row_pos() * self.get_cols() + self.col_pos();
-        position as usize
-    }
-
-    /// End of line for menu
-    fn end_of_line(&self, column: u16) -> &str {
-        if column == self.get_cols().saturating_sub(1) {
-            "\r\n"
-        } else {
-            ""
-        }
-    }
+    /// Gets cached values from menu that will be displayed
+    fn get_values(&self) -> &[(Span, String)];
 }

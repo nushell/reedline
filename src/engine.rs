@@ -1,5 +1,3 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
 use {
     crate::{
         completion::{CircularCompletionHandler, Completer, DefaultCompleter},
@@ -9,13 +7,17 @@ use {
         highlighter::SimpleMatchHighlighter,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
-        menu::Menu,
+        menu::{Menu, MenuEvent},
         painter::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         text_manipulation, DefaultValidator, EditCommand, ExampleHighlighter, Highlighter, Prompt,
         PromptHistorySearch, Signal, ValidationResult, Validator,
     },
-    crossterm::{event, event::Event, terminal, Result},
+    crossterm::{
+        event,
+        event::{Event, KeyCode, KeyEvent, KeyModifiers},
+        terminal, Result,
+    },
     std::{borrow::Borrow, io, time::Duration},
 };
 
@@ -142,7 +144,7 @@ impl Reedline {
             hinter,
             hide_hints: false,
             validator,
-            animate: true,
+            animate: false,
             use_ansi_coloring: true,
             menus: Vec::new(),
         };
@@ -551,18 +553,20 @@ impl Reedline {
             ReedlineEvent::Menu(name) => {
                 if self.active_menu().is_none() {
                     if let Some(menu) = self.menus.iter_mut().find(|menu| menu.name() == name) {
-                        menu.activate();
-                        menu.update_values(
-                            self.editor.line_buffer(),
-                            self.history.as_ref(),
-                            self.completer.as_ref(),
-                        );
+                        if self.quick_completions {
+                            menu.update_values(
+                                self.editor.line_buffer(),
+                                self.history.as_ref(),
+                                self.completer.as_ref(),
+                            );
 
-                        if menu.get_values().len() == 1 && self.quick_completions {
-                            return self.handle_editor_event(prompt, ReedlineEvent::Enter);
-                        } else {
-                            return Ok(EventStatus::Handled);
+                            if menu.get_values().len() == 1 {
+                                return self.handle_editor_event(prompt, ReedlineEvent::Enter);
+                            }
                         }
+
+                        menu.menu_event(MenuEvent::Activate(self.quick_completions));
+                        return Ok(EventStatus::Handled);
                     }
                 }
                 Ok(EventStatus::Inapplicable)
@@ -570,56 +574,56 @@ impl Reedline {
             ReedlineEvent::MenuNext => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.move_next();
+                        menu.menu_event(MenuEvent::NextElement);
                         Ok(EventStatus::Handled)
                     })
             }
             ReedlineEvent::MenuPrevious => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.move_previous();
+                        menu.menu_event(MenuEvent::PreviousElement);
                         Ok(EventStatus::Handled)
                     })
             }
             ReedlineEvent::MenuUp => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.move_up();
+                        menu.menu_event(MenuEvent::MoveUp);
                         Ok(EventStatus::Handled)
                     })
             }
             ReedlineEvent::MenuDown => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.move_down();
+                        menu.menu_event(MenuEvent::MoveDown);
                         Ok(EventStatus::Handled)
                     })
             }
             ReedlineEvent::MenuLeft => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.move_left();
+                        menu.menu_event(MenuEvent::MoveLeft);
                         Ok(EventStatus::Handled)
                     })
             }
             ReedlineEvent::MenuRight => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.move_right();
+                        menu.menu_event(MenuEvent::MoveRight);
                         Ok(EventStatus::Handled)
                     })
             }
             ReedlineEvent::MenuPageNext => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.next_page();
+                        menu.menu_event(MenuEvent::NextPage);
                         Ok(EventStatus::Handled)
                     })
             }
             ReedlineEvent::MenuPagePrevious => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.previous_page();
+                        menu.menu_event(MenuEvent::PreviousPage);
                         Ok(EventStatus::Handled)
                     })
             }
@@ -656,7 +660,9 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Esc => {
-                self.menus.iter_mut().for_each(|menu| menu.deactivate());
+                self.menus
+                    .iter_mut()
+                    .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::CtrlD => {
@@ -669,17 +675,24 @@ impl Reedline {
                 }
             }
             ReedlineEvent::CtrlC => {
-                self.menus.iter_mut().for_each(|menu| menu.deactivate());
+                self.menus
+                    .iter_mut()
+                    .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
                 self.run_edit_commands(&[EditCommand::Clear]);
                 self.editor.reset_undo_stack();
                 Ok(EventStatus::Exits(Signal::CtrlC))
             }
-            ReedlineEvent::ClearScreen => Ok(EventStatus::Exits(Signal::CtrlL)),
+            ReedlineEvent::ClearScreen => {
+                self.menus
+                    .iter_mut()
+                    .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
+                Ok(EventStatus::Exits(Signal::CtrlL))
+            }
             ReedlineEvent::Enter => {
                 for menu in self.menus.iter_mut() {
                     if menu.is_active() {
                         menu.replace_in_buffer(self.editor.line_buffer());
-                        menu.deactivate();
+                        menu.menu_event(MenuEvent::Deactivate);
 
                         return Ok(EventStatus::Handled);
                     }
@@ -717,7 +730,8 @@ impl Reedline {
                             return self.handle_editor_event(prompt, ReedlineEvent::Enter);
                         }
                     }
-                    menu.edit_line_buffer();
+
+                    menu.menu_event(MenuEvent::Edit(self.quick_completions));
                 }
 
                 Ok(EventStatus::Handled)
