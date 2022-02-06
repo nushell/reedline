@@ -172,7 +172,7 @@ impl CompletionMenu {
             let new_row = self.get_rows().saturating_sub(1);
             let index = new_row * self.get_cols() + self.col_pos;
             if index >= self.values.len() as u16 {
-                0
+                new_row.saturating_sub(1)
             } else {
                 new_row
             }
