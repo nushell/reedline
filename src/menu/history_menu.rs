@@ -1,18 +1,10 @@
-use super::{Menu, MenuTextStyle};
+use super::{Menu, MenuEvent, MenuTextStyle};
 use crate::{
     painter::{estimate_single_line_wraps, Painter},
     Completer, History, LineBuffer, Span,
 };
 use nu_ansi_term::{ansi::RESET, Style};
 use std::iter::Sum;
-
-enum MenuEvent {
-    Edit,
-    NextElement,
-    PreviousElement,
-    NextPage,
-    PreviousPage,
-}
 
 struct Page {
     size: usize,
@@ -72,6 +64,8 @@ pub struct HistoryMenu {
     page: usize,
     /// Event sent to the menu
     event: Option<MenuEvent>,
+    /// Menu in edit mode
+    in_edit: bool,
 }
 
 impl Default for HistoryMenu {
@@ -90,6 +84,7 @@ impl Default for HistoryMenu {
             multiline_marker: ":::".to_string(),
             pages: Vec::new(),
             event: None,
+            in_edit: false,
         }
     }
 }
@@ -181,6 +176,16 @@ impl HistoryMenu {
         }
     }
 
+    /// Menu index based on column and row position
+    fn index(&self) -> usize {
+        self.row_position as usize
+    }
+
+    /// Get selected value from the menu
+    fn get_value(&self) -> Option<(Span, String)> {
+        self.get_values().get(self.index()).cloned()
+    }
+
     /// Reset menu position
     fn reset_position(&mut self) {
         self.page = 0;
@@ -190,7 +195,9 @@ impl HistoryMenu {
     }
 
     fn printable_entries(&self, painter: &Painter) -> usize {
-        let available_lines = painter.screen_height().saturating_sub(1);
+        // The number 2 comes from the prompt line and the banner printed at the bottom
+        // of the history menu
+        let available_lines = painter.screen_height().saturating_sub(2);
         let (printable_entries, _) =
             self.get_values()
                 .iter()
@@ -259,13 +266,26 @@ impl HistoryMenu {
         }
     }
 
+    /// End of line for menu
+    fn end_of_line(&self) -> &str {
+        "\r\n"
+    }
+
+    /// Text style for menu
+    fn text_style(&self, index: usize) -> String {
+        if index == self.index() {
+            self.color.selected_text_style.prefix().to_string()
+        } else {
+            self.color.text_style.prefix().to_string()
+        }
+    }
+
     /// Creates default string that represents one line from a menu
     fn create_string(
         &self,
         line: &str,
         index: usize,
         row_number: &str,
-        column: u16,
         empty_space: usize,
         use_ansi_coloring: bool,
     ) -> String {
@@ -277,25 +297,20 @@ impl HistoryMenu {
                 &line,
                 RESET,
                 "",
-                self.end_of_line(column),
+                self.end_of_line(),
                 empty = empty_space
             )
         } else {
             // If no ansi coloring is found, then the selection word is
             // the line in uppercase
-            let line_str = if index == self.position() {
+            let line_str = if index == self.index() {
                 format!("{}>{}", row_number, line.to_uppercase())
             } else {
                 format!("{}{}", row_number, line)
             };
 
             // Final string with formatting
-            format!(
-                "{:width$}{}",
-                line_str,
-                self.end_of_line(column),
-                width = self.get_width()
-            )
+            format!("{:width$}{}", line_str, self.end_of_line(), width = 50)
         }
     }
 }
@@ -315,15 +330,15 @@ impl Menu for HistoryMenu {
         self.active
     }
 
-    /// Activates context menu
-    fn activate(&mut self) {
-        self.active = true;
-        self.reset_position();
-    }
+    /// Selects what type of event happened with the menu
+    fn menu_event(&mut self, event: MenuEvent) {
+        match &event {
+            MenuEvent::Activate(_) => self.active = true,
+            MenuEvent::Edit(_) => self.in_edit = true,
+            _ => {}
+        }
 
-    /// Deactivates context menu
-    fn deactivate(&mut self) {
-        self.active = false
+        self.event = Some(event)
     }
 
     /// Collecting the value from the history to be shown in the menu
@@ -338,10 +353,9 @@ impl Menu for HistoryMenu {
 
         // If there are no row selector and the menu has an Edit event, this clears
         // the position together with the pages vector
-        if let Some(MenuEvent::Edit) = self.event {
-            if row.is_none() {
-                self.reset_position()
-            }
+        if self.in_edit && row.is_none() {
+            self.reset_position();
+            self.in_edit = false;
         }
 
         let values = if query.is_empty() {
@@ -393,64 +407,10 @@ impl Menu for HistoryMenu {
         }
     }
 
-    /// Move menu cursor up
-    fn edit_line_buffer(&mut self) {
-        self.event = Some(MenuEvent::Edit);
-    }
-
-    /// Move menu cursor up
-    fn move_up(&mut self) {
-        self.move_previous()
-    }
-
-    /// Move menu cursor down
-    fn move_down(&mut self) {
-        self.move_next()
-    }
-
-    /// Move menu cursor left
-    fn move_left(&mut self) {
-        self.move_previous()
-    }
-
-    /// Move menu cursor right
-    fn move_right(&mut self) {
-        self.move_next()
-    }
-
-    /// Move menu cursor to the next element
-    fn move_next(&mut self) {
-        self.event = Some(MenuEvent::NextElement);
-    }
-
-    /// Move menu cursor to the previous element
-    fn move_previous(&mut self) {
-        self.event = Some(MenuEvent::PreviousElement);
-    }
-
-    /// Moves to the next history page
-    fn next_page(&mut self) {
-        self.event = Some(MenuEvent::NextPage);
-    }
-
-    /// Moves to the previous history page
-    fn previous_page(&mut self) {
-        self.event = Some(MenuEvent::PreviousPage);
-    }
-
     /// The buffer gets cleared with the actual value
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
         if let Some((_, value)) = self.get_value() {
             line_buffer.set_buffer(value)
-        }
-    }
-
-    /// Text style for menu
-    fn text_style(&self, index: usize) -> String {
-        if index == self.position() {
-            self.color.selected_text_style.prefix().to_string()
-        } else {
-            self.color.text_style.prefix().to_string()
         }
     }
 
@@ -461,9 +421,33 @@ impl Menu for HistoryMenu {
         completer: &dyn Completer,
         painter: &Painter,
     ) {
-        match &self.event {
-            Some(event) => match event {
-                MenuEvent::NextElement => {
+        if let Some(event) = self.event.take() {
+            match event {
+                MenuEvent::Activate(updated) => {
+                    self.active = true;
+                    self.reset_position();
+
+                    if !updated {
+                        self.update_values(line_buffer, history, completer);
+                    }
+
+                    self.pages.push(Page {
+                        size: self.printable_entries(painter),
+                        full: false,
+                    });
+                }
+                MenuEvent::Deactivate => self.active = false,
+                MenuEvent::Edit(updated) => {
+                    if !updated {
+                        self.update_values(line_buffer, history, completer);
+                    }
+
+                    self.pages.push(Page {
+                        size: self.printable_entries(painter),
+                        full: false,
+                    });
+                }
+                MenuEvent::NextElement | MenuEvent::MoveDown | MenuEvent::MoveRight => {
                     let new_pos = self.row_position + 1;
 
                     if let Some(page) = self.pages.get(self.page) {
@@ -475,22 +459,24 @@ impl Menu for HistoryMenu {
                         }
                     }
                 }
-                MenuEvent::PreviousElement => match self.row_position.checked_sub(1) {
-                    Some(new_pos) => self.row_position = new_pos,
-                    None => {
-                        let page = match self.page.checked_sub(1) {
-                            Some(page) => self.pages.get(page),
-                            None => self.pages.get(self.pages.len().saturating_sub(1)),
-                        };
+                MenuEvent::PreviousElement | MenuEvent::MoveUp | MenuEvent::MoveLeft => {
+                    match self.row_position.checked_sub(1) {
+                        Some(new_pos) => self.row_position = new_pos,
+                        None => {
+                            let page = match self.page.checked_sub(1) {
+                                Some(page) => self.pages.get(page),
+                                None => self.pages.get(self.pages.len().saturating_sub(1)),
+                            };
 
-                        if let Some(page) = page {
-                            self.row_position = page.size.saturating_sub(1) as u16
+                            if let Some(page) = page {
+                                self.row_position = page.size.saturating_sub(1) as u16
+                            }
+
+                            self.event = Some(MenuEvent::PreviousPage);
+                            self.update_working_details(line_buffer, history, completer, painter)
                         }
-
-                        self.event = Some(MenuEvent::PreviousPage);
-                        self.update_working_details(line_buffer, history, completer, painter)
                     }
-                },
+                }
                 MenuEvent::NextPage => {
                     if self.values_until_current_page() <= self.total_values().saturating_sub(1) {
                         if let Some(page) = self.pages.get_mut(self.page) {
@@ -523,25 +509,8 @@ impl Menu for HistoryMenu {
                     }
                     self.update_values(line_buffer, history, completer);
                 }
-                MenuEvent::Edit => {
-                    self.update_values(line_buffer, history, completer);
-                    self.pages.push(Page {
-                        size: self.printable_entries(painter),
-                        full: false,
-                    });
-                }
-            },
-            None => {
-                if self.pages.is_empty() {
-                    self.pages.push(Page {
-                        size: self.printable_entries(painter),
-                        full: false,
-                    });
-                }
             }
         }
-
-        self.event = None
     }
 
     /// Calculates the real required lines for the menu considering how many lines
@@ -563,7 +532,7 @@ impl Menu for HistoryMenu {
                     .take(page.size)
                     .enumerate()
                     .map(|(index, (_, line))| {
-                        let empty_space = self.get_width().saturating_sub(line.len());
+                        let empty_space = 50;
 
                         // Final string with colors
                         let line = if line.lines().count() > self.max_lines as usize {
@@ -584,7 +553,6 @@ impl Menu for HistoryMenu {
                             &line,
                             index,
                             &row_number,
-                            0,
                             empty_space,
                             use_ansi_coloring,
                         )
@@ -604,26 +572,6 @@ impl Menu for HistoryMenu {
     /// Minimum rows that should be displayed by the menu
     fn min_rows(&self) -> u16 {
         self.max_lines + 1
-    }
-
-    /// Row position
-    fn row_pos(&self) -> u16 {
-        self.row_position
-    }
-
-    /// Column position
-    fn get_cols(&self) -> u16 {
-        1
-    }
-
-    /// Column position
-    fn col_pos(&self) -> u16 {
-        0
-    }
-
-    /// Returns working details col width
-    fn get_width(&self) -> usize {
-        50
     }
 }
 
