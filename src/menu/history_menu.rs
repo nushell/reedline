@@ -286,19 +286,17 @@ impl HistoryMenu {
         line: &str,
         index: usize,
         row_number: &str,
-        empty_space: usize,
         use_ansi_coloring: bool,
     ) -> String {
         if use_ansi_coloring {
             format!(
-                "{}{}{}{}{:empty$}{}",
+                "{}{}{}{}{}{}",
                 row_number,
                 self.text_style(index),
                 &line,
                 RESET,
                 "",
                 self.end_of_line(),
-                empty = empty_space
             )
         } else {
             // If no ansi coloring is found, then the selection word is
@@ -532,8 +530,6 @@ impl Menu for HistoryMenu {
                     .take(page.size)
                     .enumerate()
                     .map(|(index, (_, line))| {
-                        let empty_space = 50;
-
                         // Final string with colors
                         let line = if line.lines().count() > self.max_lines as usize {
                             let lines = line
@@ -549,13 +545,7 @@ impl Menu for HistoryMenu {
 
                         let row_number = format!("{}: ", index + values_before_page);
 
-                        self.create_string(
-                            &line,
-                            index,
-                            &row_number,
-                            empty_space,
-                            use_ansi_coloring,
-                        )
+                        self.create_string(&line, index, &row_number, use_ansi_coloring)
                     })
                     .collect::<String>();
 
