@@ -561,7 +561,8 @@ impl Reedline {
                             );
 
                             if menu.get_values().len() == 1 {
-                                return self.handle_editor_event(prompt, ReedlineEvent::Enter);
+                                menu.replace_in_buffer(self.editor.line_buffer());
+                                return Ok(EventStatus::Handled);
                             }
                         }
 
