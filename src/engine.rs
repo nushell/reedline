@@ -553,6 +553,8 @@ impl Reedline {
             ReedlineEvent::Menu(name) => {
                 if self.active_menu().is_none() {
                     if let Some(menu) = self.menus.iter_mut().find(|menu| menu.name() == name) {
+                        menu.menu_event(MenuEvent::Activate(self.quick_completions));
+
                         if self.quick_completions {
                             menu.update_values(
                                 self.editor.line_buffer(),
@@ -561,12 +563,10 @@ impl Reedline {
                             );
 
                             if menu.get_values().len() == 1 {
-                                menu.replace_in_buffer(self.editor.line_buffer());
-                                return Ok(EventStatus::Handled);
+                                return self.handle_editor_event(prompt, ReedlineEvent::Enter);
                             }
                         }
 
-                        menu.menu_event(MenuEvent::Activate(self.quick_completions));
                         return Ok(EventStatus::Handled);
                     }
                 }
