@@ -152,6 +152,14 @@ impl LineBuffer {
         // str is guaranteed to be utf8, thus \n is safe to assume 1 byte long
     }
 
+    /// Move cursor position to the end of the line
+    ///
+    /// Insertion will append to the line.
+    /// Cursor on top of the potential `\n` or `\r` of `\r\n`
+    pub fn move_to_line_end(&mut self) {
+        self.insertion_point.offset = self.find_current_line_end();
+    }
+
     /// Set the insertion point *behind* the last character.
     pub fn move_to_end(&mut self) {
         self.insertion_point.offset = self.lines.len();
@@ -181,14 +189,6 @@ impl LineBuffer {
                     }
                 },
             )
-    }
-
-    /// Move cursor position to the end of the line
-    ///
-    /// Insertion will append to the line.
-    /// Cursor on top of the potential `\n` or `\r` of `\r\n`
-    pub fn move_to_line_end(&mut self) {
-        self.insertion_point.offset = self.find_current_line_end();
     }
 
     /// Cursor position *behind* the next unicode grapheme to the right
