@@ -828,6 +828,8 @@ impl Reedline {
 
         self.history.back();
         self.update_buffer_from_history();
+        self.editor.move_to_start();
+        self.editor.move_to_line_end();
     }
 
     fn next_history(&mut self) {
@@ -838,6 +840,7 @@ impl Reedline {
 
         self.history.forward();
         self.update_buffer_from_history();
+        self.editor.move_to_end();
     }
 
     /// Enable the search and navigation through the history from the line buffer prompt

@@ -153,6 +153,23 @@ impl Editor {
         self.index_undo = 2;
     }
 
+    pub fn move_to_start(&mut self) {
+        self.line_buffer.move_to_start()
+    }
+
+    pub fn move_to_end(&mut self) {
+        self.line_buffer.move_to_end()
+    }
+
+    #[allow(dead_code)]
+    pub fn move_to_line_start(&mut self) {
+        self.line_buffer.move_to_line_start()
+    }
+
+    pub fn move_to_line_end(&mut self) {
+        self.line_buffer.move_to_line_end()
+    }
+
     fn get_index_undo(&self) -> usize {
         if let Some(c) = self.edits.len().checked_sub(self.index_undo) {
             c
