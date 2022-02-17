@@ -7,6 +7,7 @@ use std::{
     ops::{Deref, DerefMut},
     path::PathBuf,
 };
+use time::OffsetDateTime;
 
 /// Default size of the [`FileBackedHistory`] used when calling [`FileBackedHistory::default()`]
 pub const HISTORY_SIZE: usize = 1000;
@@ -21,12 +22,27 @@ pub const NEWLINE_ESCAPE: &str = "<\\n>";
 #[derive(Debug)]
 pub struct FileBackedHistory {
     capacity: usize,
-    entries: VecDeque<String>,
-    cursor: usize, // If cursor == entries.len() outside history browsing
+    entries: VecDeque<InnerEntry>,
+    cursor: usize,
+    // If cursor == entries.len() outside history browsing
     file: Option<PathBuf>,
-    len_on_disk: usize, // Keep track what was previously written to disk
+    len_on_disk: usize,
+    // Keep track what was previously written to disk
     query: HistoryNavigationQuery,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InnerEntry {
+    pub(crate) time: OffsetDateTime,
+    pub(crate) entry: String,
+}
+
+impl InnerEntry {
+    fn new<I: Into<String>>(time: OffsetDateTime, entry: I) -> Self {
+        Self { time, entry: entry.into() }
+    }
+}
+
 
 impl Default for FileBackedHistory {
     /// Creates an in-memory [`History`] with a maximal capacity of [`HISTORY_SIZE`].
@@ -37,12 +53,15 @@ impl Default for FileBackedHistory {
     }
 }
 
-fn encode_entry(s: &str) -> String {
-    s.replace("\n", NEWLINE_ESCAPE)
+fn encode_entry(entry: &InnerEntry) -> String {
+    format!("{};{}", entry.time.to_string(), entry.entry.to_string())
+        .replace("\n", NEWLINE_ESCAPE)
 }
 
-fn decode_entry(s: &str) -> String {
-    s.replace(NEWLINE_ESCAPE, "\n")
+fn decode_entry(s: &str) -> InnerEntry {
+    let line = s.replace(NEWLINE_ESCAPE, "\n");
+    let split = line.split_once(';').unwrap();
+    InnerEntry::new(OffsetDateTime::now_utc(), split.1)
 }
 
 impl History for FileBackedHistory {
@@ -54,21 +73,21 @@ impl History for FileBackedHistory {
         if self
             .entries
             .back()
-            .map_or(true, |previous| previous != entry)
+            .map_or(true, |previous| previous.entry != entry)
             && !entry.is_empty()
         {
             if self.entries.len() == self.capacity {
                 // History is "full", so we delete the oldest entry first,
                 // before adding a new one.
-                self.entries.pop_front();
+                self.pop_front();
                 self.len_on_disk = self.len_on_disk.saturating_sub(1);
             }
-            self.entries.push_back(entry.to_string());
+            self.push_back(entry);
         }
         self.reset_cursor();
     }
 
-    fn iter_chronologic(&self) -> Iter<'_, String> {
+    fn iter_chronologic(&self) -> Iter<'_, InnerEntry> {
         self.entries.iter()
     }
 
@@ -105,7 +124,7 @@ impl History for FileBackedHistory {
     }
 
     fn string_at_cursor(&self) -> Option<String> {
-        self.entries.get(self.cursor).cloned()
+        self.entries.get(self.cursor).and_then(|x| Some(x.entry.clone()))
     }
 
     fn set_navigation(&mut self, navigation: HistoryNavigationQuery) {
@@ -120,13 +139,22 @@ impl History for FileBackedHistory {
     fn query_entries(&self, search: &str) -> Vec<String> {
         self.iter_chronologic()
             .rev()
-            .filter(|entry| entry.contains(search))
-            .cloned()
+            .filter(|entry| entry.entry.contains(search))
+            .map(|x| x.entry.to_string())
             .collect::<Vec<String>>()
     }
 
     fn max_values(&self) -> usize {
         self.entries.len()
+    }
+
+    fn push_back(&mut self, entry: &str) {
+        let time = OffsetDateTime::now_utc();
+        self.entries.push_back(InnerEntry::new(time, entry))
+    }
+
+    fn pop_front(&mut self) {
+        self.entries.pop_front();
     }
 }
 
@@ -177,7 +205,7 @@ impl FileBackedHistory {
                 .take(self.cursor)
                 .enumerate()
                 .rev()
-                .find(|(_, entry)| criteria(entry) && previous_match != Some(entry))
+                .find(|(_, entry)| criteria(&entry.entry) && previous_match != Some(entry))
             {
                 // set to entry
                 self.cursor = next_cursor;
@@ -192,7 +220,7 @@ impl FileBackedHistory {
             .iter()
             .enumerate()
             .skip(self.cursor + 1)
-            .find(|(_, entry)| criteria(entry) && previous_match != Some(entry))
+            .find(|(_, entry)| criteria(&entry.entry) && previous_match != Some(entry))
         {
             // set to entry
             self.cursor = next_cursor;
@@ -341,6 +369,7 @@ mod tests {
         hist.append("unique");
         assert_eq!(hist.entries.len(), 3);
     }
+
     #[test]
     fn appends_no_empties() {
         let mut hist = FileBackedHistory::default();
@@ -381,6 +410,7 @@ mod tests {
         hist.back();
         assert_eq!(hist.string_at_cursor(), Some("find me as well".to_string()));
     }
+
     #[test]
     fn prefix_search_returns_to_none() {
         let mut hist = FileBackedHistory::default();

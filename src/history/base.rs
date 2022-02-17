@@ -1,5 +1,6 @@
 use crate::core_editor::LineBuffer;
 use std::collections::vec_deque::Iter;
+use crate::history::file_backed::InnerEntry;
 
 /// Browsing modes for a [`History`]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,7 +21,7 @@ pub trait History: Send {
     fn append(&mut self, entry: &str);
 
     /// Chronologic interaction over all entries present in the history
-    fn iter_chronologic(&self) -> Iter<'_, String>;
+    fn iter_chronologic(&self) -> Iter<'_, InnerEntry>;
 
     /// This moves the cursor backwards respecting the navigation query that is set
     /// - Results in a no-op if the cursor is at the initial point
@@ -46,4 +47,7 @@ pub trait History: Send {
 
     /// Max number of values that can be queried from the history
     fn max_values(&self) -> usize;
+
+    fn push_back(&mut self, entry: &str);
+    fn pop_front(&mut self);
 }

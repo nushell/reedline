@@ -317,7 +317,7 @@ impl Reedline {
             .collect();
 
         for (i, entry) in history {
-            self.print_line(&format!("{}\t{}", i + 1, entry))?;
+            self.print_line(&format!("{}\t{}", i + 1, entry.entry))?;
         }
         Ok(())
     }

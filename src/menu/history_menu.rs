@@ -152,7 +152,7 @@ impl HistoryMenu {
             .rev()
             .skip(skip)
             .take(take)
-            .cloned()
+            .map(|x|x.entry.to_string())
             .collect::<Vec<String>>()
     }
 

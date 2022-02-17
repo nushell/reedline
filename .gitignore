@@ -4,3 +4,4 @@ history.txt
 target-coverage/
 tarpaulin-report.html
 .vscode
+.idea/
