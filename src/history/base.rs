@@ -41,9 +41,9 @@ impl InnerEntry {
                     .unwrap(),
                 FormatTimeType::Date(_) => self.time.format(&f.validate_format().unwrap()).unwrap(),
             };
-            return format!("{};{}", format_str, self.entry);
+            return format!("{}\t{}", format_str, self.entry);
         }
-        self.entry.to_string()
+        format!("{}\t{}", i + 1, self.entry)
     }
 }
 
