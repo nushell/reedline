@@ -34,12 +34,12 @@ impl InnerEntry {
     pub fn format(&self, i: usize, f: Option<FormatTimeType>) -> String {
         if let Some(f) = f {
             let format_str = match f {
-                FormatTimeType::Time(_) => {
-                    self.time.time().format(&f.validate_format().unwrap()).unwrap()
-                }
-                FormatTimeType::Date(_) => {
-                    self.time.format(&f.validate_format().unwrap()).unwrap()
-                }
+                FormatTimeType::Time(_) => self
+                    .time
+                    .time()
+                    .format(&f.validate_format().unwrap())
+                    .unwrap(),
+                FormatTimeType::Date(_) => self.time.format(&f.validate_format().unwrap()).unwrap(),
             };
             return format!("{};{}", format_str, self.entry);
         }
@@ -52,7 +52,6 @@ pub enum FormatTimeType {
     Time(String),
     Date(String),
 }
-
 
 impl FormatTimeType {
     pub(crate) fn validate_format(&self) -> Result<Vec<FormatItem<'_>>, InvalidFormatDescription> {
@@ -69,7 +68,6 @@ impl FormatTimeType {
 pub trait History: Send {
     /// Append entry to the history, if capacity management is part of the implementation may perform that as well
     fn append(&mut self, entry: &str);
-
 
     fn format_time_type(&self) -> Option<FormatTimeType>;
     /// Chronologic interaction over all entries present in the history

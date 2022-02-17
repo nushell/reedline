@@ -9,8 +9,8 @@ use {
         get_reedline_default_keybindings, get_reedline_edit_commands,
         get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
         get_reedline_reedline_events, CompletionMenu, DefaultCompleter, DefaultHinter,
-        DefaultPrompt, EditMode, Emacs, ExampleHighlighter, FileBackedHistory, HistoryMenu,FormatTimeType,
-        Keybindings, Reedline, ReedlineEvent, Signal, Vi,
+        DefaultPrompt, EditMode, Emacs, ExampleHighlighter, FileBackedHistory, FormatTimeType,
+        HistoryMenu, Keybindings, Reedline, ReedlineEvent, Signal, Vi,
     },
     std::{
         io::{stdout, Write},
@@ -38,7 +38,8 @@ fn main() -> Result<()> {
 
     let history = Box::new(
         FileBackedHistory::with_file(50, "history.txt".into())?
-            .with_time(FormatTimeType::Time("[hour]:[minute]:[second]".to_string())));
+            .with_time(FormatTimeType::Time("[hour]:[minute]:[second]".to_string())),
+    );
     let commands = vec![
         "test".into(),
         "clear".into(),

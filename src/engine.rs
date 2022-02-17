@@ -318,7 +318,7 @@ impl Reedline {
 
         for (i, entry) in history {
             let format_time_type = self.history.format_time_type();
-            self.print_line(&format!("{}\t{}", i + 1, entry.format(i,format_time_type)))?;
+            self.print_line(&format!("{}\t{}", i + 1, entry.format(i, format_time_type)))?;
         }
         Ok(())
     }

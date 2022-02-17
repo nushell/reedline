@@ -1,5 +1,7 @@
 use super::{base::HistoryNavigationQuery, History};
 use crate::core_editor::LineBuffer;
+use crate::history::base::{FormatTimeType, InnerEntry};
+use std::borrow::Borrow;
 use std::{
     collections::{vec_deque::Iter, VecDeque},
     fs::OpenOptions,
@@ -7,11 +9,9 @@ use std::{
     ops::{Deref, DerefMut},
     path::PathBuf,
 };
-use std::borrow::Borrow;
-use time::{OffsetDateTime, Time, format_description};
 use time::error::InvalidFormatDescription;
 use time::format_description::FormatItem;
-use crate::history::base::{FormatTimeType, InnerEntry};
+use time::{format_description, OffsetDateTime, Time};
 
 /// Default size of the [`FileBackedHistory`] used when calling [`FileBackedHistory::default()`]
 pub const HISTORY_SIZE: usize = 1000;
@@ -36,9 +36,6 @@ pub struct FileBackedHistory {
     query: HistoryNavigationQuery,
 }
 
-
-
-
 impl Default for FileBackedHistory {
     /// Creates an in-memory [`History`] with a maximal capacity of [`HISTORY_SIZE`].
     ///
@@ -49,7 +46,7 @@ impl Default for FileBackedHistory {
 }
 
 fn encode_entry(entry: &InnerEntry) -> String {
-    format!("{};{}",&entry.time,&entry.entry).replace("\n", NEWLINE_ESCAPE)
+    format!("{};{}", &entry.time, &entry.entry).replace("\n", NEWLINE_ESCAPE)
 }
 
 fn decode_entry(s: &str) -> InnerEntry {
@@ -203,7 +200,6 @@ impl FileBackedHistory {
         hist.format_time_type = Some(f);
         hist
     }
-
 
     fn back_with_criteria(&mut self, criteria: &dyn Fn(&str) -> bool) {
         if !self.entries.is_empty() {
@@ -745,7 +741,10 @@ mod tests {
 
         let reading_hist = FileBackedHistory::with_file(capacity, histfile).unwrap();
 
-        let actual: Vec<_> = reading_hist.iter_chronologic().map(|x| x.entry.to_string()).collect();
+        let actual: Vec<_> = reading_hist
+            .iter_chronologic()
+            .map(|x| x.entry.to_string())
+            .collect();
 
         assert!(
             actual.contains(&&format!("initial {}", capacity - 1)),

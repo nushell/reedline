@@ -189,7 +189,9 @@ mod engine;
 pub use engine::Reedline;
 
 mod history;
-pub use history::{FileBackedHistory, History, HistoryNavigationQuery, HISTORY_SIZE,FormatTimeType};
+pub use history::{
+    FileBackedHistory, FormatTimeType, History, HistoryNavigationQuery, HISTORY_SIZE,
+};
 
 mod prompt;
 pub use prompt::{
