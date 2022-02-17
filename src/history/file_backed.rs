@@ -1,7 +1,7 @@
 use super::{base::HistoryNavigationQuery, History};
 use crate::core_editor::LineBuffer;
 use crate::history::base::{FormatTimeType, InnerEntry};
-use std::borrow::Borrow;
+
 use std::{
     collections::{vec_deque::Iter, VecDeque},
     fs::OpenOptions,
@@ -9,9 +9,9 @@ use std::{
     ops::{Deref, DerefMut},
     path::PathBuf,
 };
-use time::error::InvalidFormatDescription;
-use time::format_description::FormatItem;
-use time::{format_description, OffsetDateTime, Time};
+
+
+use time::{OffsetDateTime};
 
 /// Default size of the [`FileBackedHistory`] used when calling [`FileBackedHistory::default()`]
 pub const HISTORY_SIZE: usize = 1000;
