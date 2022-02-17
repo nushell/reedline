@@ -37,8 +37,7 @@ fn main() -> Result<()> {
     }
 
     let history = Box::new(
-        FileBackedHistory::with_file(50, "history.txt".into())?
-            // .with_time(FormatTimeType::Time("[hour]:[minute]:[second]".to_string())),
+        FileBackedHistory::with_file(50, "history.txt".into())?, // .with_time(FormatTimeType::Time("[hour]:[minute]:[second]".to_string())),
     );
     let commands = vec![
         "test".into(),
