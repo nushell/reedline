@@ -27,7 +27,7 @@ strip-ansi-escapes = "0.1.1"
 strum = "0.23"
 strum_macros = "0.23"
 fd-lock = "3.0.3"
-time="0.3.5"
+time = {version="0.3.5",features=["parsing","formatting"]}
 
 [dev-dependencies]
 tempfile = "3.2.0"

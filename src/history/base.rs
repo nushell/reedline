@@ -1,6 +1,8 @@
 use crate::core_editor::LineBuffer;
 use std::collections::vec_deque::Iter;
-use crate::history::file_backed::InnerEntry;
+use time::error::InvalidFormatDescription;
+use time::format_description::FormatItem;
+use time::{format_description, OffsetDateTime};
 
 /// Browsing modes for a [`History`]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,11 +17,61 @@ pub enum HistoryNavigationQuery {
     // Fuzzy Search
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct InnerEntry {
+    pub(crate) time: OffsetDateTime,
+    pub(crate) entry: String,
+}
+
+impl InnerEntry {
+    pub fn new<I: Into<String>>(time: OffsetDateTime, entry: I) -> Self {
+        Self {
+            time,
+            entry: entry.into(),
+        }
+    }
+
+    pub fn format(&self, i: usize, f: Option<FormatTimeType>) -> String {
+        if let Some(f) = f {
+            let format_str = match f {
+                FormatTimeType::Time(_) => {
+                    self.time.time().format(&f.validate_format().unwrap()).unwrap()
+                }
+                FormatTimeType::Date(_) => {
+                    self.time.format(&f.validate_format().unwrap()).unwrap()
+                }
+            };
+            return format!("{};{}", format_str, self.entry);
+        }
+        self.entry.to_string()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum FormatTimeType {
+    Time(String),
+    Date(String),
+}
+
+
+impl FormatTimeType {
+    pub(crate) fn validate_format(&self) -> Result<Vec<FormatItem<'_>>, InvalidFormatDescription> {
+        match self {
+            FormatTimeType::Time(f) | FormatTimeType::Date(f) => {
+                let vec = format_description::parse(f)?;
+                Ok(vec)
+            }
+        }
+    }
+}
+
 /// Interface of a history datastructure that supports stateful navigation via [`HistoryNavigationQuery`].
 pub trait History: Send {
     /// Append entry to the history, if capacity management is part of the implementation may perform that as well
     fn append(&mut self, entry: &str);
 
+
+    fn format_time_type(&self) -> Option<FormatTimeType>;
     /// Chronologic interaction over all entries present in the history
     fn iter_chronologic(&self) -> Iter<'_, InnerEntry>;
 

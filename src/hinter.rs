@@ -45,7 +45,7 @@ impl Hinter for DefaultHinter {
         } else {
             self.current_hint = history
                 .iter_chronologic()
-                .map(|x|x.entry.to_string())
+                .map(|x| x.entry.to_string())
                 .rev()
                 .find(|entry| entry.starts_with(line))
                 .map_or_else(String::new, |entry| entry[line.len()..].to_string());

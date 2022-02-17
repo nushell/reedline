@@ -7,7 +7,11 @@ use std::{
     ops::{Deref, DerefMut},
     path::PathBuf,
 };
-use time::OffsetDateTime;
+use std::borrow::Borrow;
+use time::{OffsetDateTime, Time, format_description};
+use time::error::InvalidFormatDescription;
+use time::format_description::FormatItem;
+use crate::history::base::{FormatTimeType, InnerEntry};
 
 /// Default size of the [`FileBackedHistory`] used when calling [`FileBackedHistory::default()`]
 pub const HISTORY_SIZE: usize = 1000;
@@ -23,6 +27,7 @@ pub const NEWLINE_ESCAPE: &str = "<\\n>";
 pub struct FileBackedHistory {
     capacity: usize,
     entries: VecDeque<InnerEntry>,
+    format_time_type: Option<FormatTimeType>,
     cursor: usize,
     // If cursor == entries.len() outside history browsing
     file: Option<PathBuf>,
@@ -31,17 +36,7 @@ pub struct FileBackedHistory {
     query: HistoryNavigationQuery,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct InnerEntry {
-    pub(crate) time: OffsetDateTime,
-    pub(crate) entry: String,
-}
 
-impl InnerEntry {
-    fn new<I: Into<String>>(time: OffsetDateTime, entry: I) -> Self {
-        Self { time, entry: entry.into() }
-    }
-}
 
 
 impl Default for FileBackedHistory {
@@ -54,8 +49,7 @@ impl Default for FileBackedHistory {
 }
 
 fn encode_entry(entry: &InnerEntry) -> String {
-    format!("{};{}", entry.time.to_string(), entry.entry.to_string())
-        .replace("\n", NEWLINE_ESCAPE)
+    format!("{};{}",&entry.time,&entry.entry).replace("\n", NEWLINE_ESCAPE)
 }
 
 fn decode_entry(s: &str) -> InnerEntry {
@@ -85,6 +79,10 @@ impl History for FileBackedHistory {
             self.push_back(entry);
         }
         self.reset_cursor();
+    }
+
+    fn format_time_type(&self) -> Option<FormatTimeType> {
+        self.format_time_type.clone()
     }
 
     fn iter_chronologic(&self) -> Iter<'_, InnerEntry> {
@@ -124,7 +122,9 @@ impl History for FileBackedHistory {
     }
 
     fn string_at_cursor(&self) -> Option<String> {
-        self.entries.get(self.cursor).and_then(|x| Some(x.entry.clone()))
+        self.entries
+            .get(self.cursor)
+            .and_then(|x| Some(x.entry.clone()))
     }
 
     fn set_navigation(&mut self, navigation: HistoryNavigationQuery) {
@@ -171,6 +171,7 @@ impl FileBackedHistory {
         FileBackedHistory {
             capacity,
             entries: VecDeque::with_capacity(capacity),
+            format_time_type: None,
             cursor: 0,
             file: None,
             len_on_disk: 0,
@@ -195,6 +196,14 @@ impl FileBackedHistory {
         hist.sync()?;
         Ok(hist)
     }
+
+    pub fn with_time(self, f: FormatTimeType) -> Self {
+        let mut hist = self;
+        f.validate_format().unwrap();
+        hist.format_time_type = Some(f);
+        hist
+    }
+
 
     fn back_with_criteria(&mut self, criteria: &dyn Fn(&str) -> bool) {
         if !self.entries.is_empty() {
@@ -736,7 +745,7 @@ mod tests {
 
         let reading_hist = FileBackedHistory::with_file(capacity, histfile).unwrap();
 
-        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
+        let actual: Vec<_> = reading_hist.iter_chronologic().map(|x| x.entry.to_string()).collect();
 
         assert!(
             actual.contains(&&format!("initial {}", capacity - 1)),
