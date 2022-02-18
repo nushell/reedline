@@ -308,7 +308,7 @@ impl Reedline {
     }
 
     /// Output the complete [`History`] chronologically with numbering to the terminal
-    pub fn print_history(&mut self) -> Result<()> {
+    pub fn print_history(&mut self) -> anyhow::Result<()> {
         let history: Vec<_> = self
             .history
             .iter_chronologic()
@@ -318,7 +318,7 @@ impl Reedline {
 
         for (i, entry) in history {
             let format_time_type = self.history.format_time_type();
-            self.print_line(&entry.format(i, format_time_type))?;
+            self.print_line(&entry.format(i, format_time_type)?)?;
         }
         Ok(())
     }

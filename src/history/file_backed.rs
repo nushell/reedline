@@ -10,8 +10,8 @@ use std::{
     path::PathBuf,
 };
 
-
-use time::{OffsetDateTime};
+use time::error::InvalidFormatDescription;
+use time::OffsetDateTime;
 
 /// Default size of the [`FileBackedHistory`] used when calling [`FileBackedHistory::default()`]
 pub const HISTORY_SIZE: usize = 1000;
@@ -194,11 +194,11 @@ impl FileBackedHistory {
         Ok(hist)
     }
 
-    pub fn with_time(self, f: FormatTimeType) -> Self {
+    pub fn with_time(self, f: FormatTimeType) -> Result<Self, InvalidFormatDescription> {
         let mut hist = self;
-        f.validate_format().unwrap();
+        f.validate_format()?;
         hist.format_time_type = Some(f);
-        hist
+        Ok(hist)
     }
 
     fn back_with_criteria(&mut self, criteria: &dyn Fn(&str) -> bool) {

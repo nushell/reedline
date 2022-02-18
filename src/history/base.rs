@@ -31,19 +31,15 @@ impl InnerEntry {
         }
     }
 
-    pub fn format(&self, i: usize, f: Option<FormatTimeType>) -> String {
+    pub fn format(&self, i: usize, f: Option<FormatTimeType>) -> anyhow::Result<String> {
         if let Some(f) = f {
             let format_str = match f {
-                FormatTimeType::Time(_) => self
-                    .time
-                    .time()
-                    .format(&f.validate_format().unwrap())
-                    .unwrap(),
-                FormatTimeType::Date(_) => self.time.format(&f.validate_format().unwrap()).unwrap(),
+                FormatTimeType::Time(_) => self.time.time().format(&f.format_item()?)?,
+                FormatTimeType::Date(_) => self.time.format(&f.format_item()?)?,
             };
-            return format!("{}\t{}", format_str, self.entry);
+            return Ok(format!("{}\t{}", format_str, self.entry));
         }
-        format!("{}\t{}", i + 1, self.entry)
+        Ok(format!("{}\t{}", i + 1, self.entry))
     }
 }
 
@@ -54,7 +50,11 @@ pub enum FormatTimeType {
 }
 
 impl FormatTimeType {
-    pub(crate) fn validate_format(&self) -> Result<Vec<FormatItem<'_>>, InvalidFormatDescription> {
+    pub(crate) fn validate_format(&self) -> Result<(), InvalidFormatDescription> {
+        self.format_item().and_then(|_| Ok(()))
+    }
+
+    pub(crate) fn format_item(&self) -> Result<Vec<FormatItem<'_>>, InvalidFormatDescription> {
         match self {
             FormatTimeType::Time(f) | FormatTimeType::Date(f) => {
                 let vec = format_description::parse(f)?;
