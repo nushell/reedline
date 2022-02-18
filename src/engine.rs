@@ -722,6 +722,7 @@ impl Reedline {
                 self.run_edit_commands(&commands);
                 if let Some(menu) = self.menus.iter_mut().find(|men| men.is_active()) {
                     if self.quick_completions {
+                        menu.menu_event(MenuEvent::Edit(self.quick_completions));
                         menu.update_values(
                             self.editor.line_buffer(),
                             self.history.as_ref(),
@@ -731,7 +732,6 @@ impl Reedline {
                             return self.handle_editor_event(prompt, ReedlineEvent::Enter);
                         }
                     }
-
                     menu.menu_event(MenuEvent::Edit(self.quick_completions));
                 }
 
