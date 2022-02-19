@@ -32,8 +32,6 @@ struct ColumnDetails {
     pub columns: u16,
     /// Column width
     pub col_width: usize,
-    /// Column padding
-    pub col_padding: usize,
 }
 
 /// Completion menu definition
@@ -405,7 +403,7 @@ impl Menu for CompletionMenu {
             }
 
             let max_width = self.get_values().iter().fold(0, |acc, (_, string)| {
-                let str_len = string.len() + self.working_details.col_padding;
+                let str_len = string.len() + self.default_details.col_padding;
                 if str_len > acc {
                     str_len
                 } else {
