@@ -44,7 +44,7 @@ impl HistoryEntry {
             };
             format!("{}\t{}", format_str, self.entry)
         } else {
-            format!("{}", self.entry)
+            self.entry.to_string()
         };
         if self.index {
             return Ok(format!("{}\t{}", i + 1, format));
@@ -80,7 +80,7 @@ pub enum FormatTimeType {
 impl FormatTimeType {
     /// Validate format time type
     pub(crate) fn validate(&self) -> Result<(), InvalidFormatDescription> {
-        self.format_item().and_then(|_| Ok(()))
+        self.format_item().map(|_| ())
     }
 
     /// format [`FormatTimeType`] output with parse.

@@ -122,9 +122,7 @@ impl History for FileBackedHistory {
     }
 
     fn string_at_cursor(&self) -> Option<String> {
-        self.entries
-            .get(self.cursor)
-            .and_then(|x| Some(x.entry.clone()))
+        self.entries.get(self.cursor).map(|x| x.entry.clone())
     }
 
     fn set_navigation(&mut self, navigation: HistoryNavigationQuery) {
