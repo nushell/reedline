@@ -31,7 +31,7 @@ impl HistoryEntry {
         Self {
             time,
             entry: entry.into(),
-            index: false,
+            index: true,
         }
     }
 
