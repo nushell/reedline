@@ -27,7 +27,7 @@ strip-ansi-escapes = "0.1.1"
 strum = "0.23"
 strum_macros = "0.23"
 fd-lock = "3.0.3"
-time = { version = "0.3.5", features = ["parsing", "formatting"] }
+time = { version = "0.3.5", features = ["parsing", "formatting","macros"] }
 anyhow = "1.0.52"
 
 [dev-dependencies]

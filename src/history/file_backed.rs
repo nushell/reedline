@@ -1,6 +1,6 @@
 use super::{base::HistoryNavigationQuery, History};
 use crate::core_editor::LineBuffer;
-use crate::history::base::{FormatTimeType, InnerEntry};
+use crate::history::base::{FormatTimeType, HistoryEntry};
 
 use std::{
     collections::{vec_deque::Iter, VecDeque},
@@ -22,11 +22,14 @@ pub const NEWLINE_ESCAPE: &str = "<\\n>";
 /// Can optionally be associated with a newline separated history file using the [`FileBackedHistory::with_file()`] constructor.
 /// Similar to bash's behavior without HISTTIMEFORMAT.
 /// (See <https://www.gnu.org/software/bash/manual/html_node/Bash-History-Facilities.html>)
+///
+/// Also can use [`with_file()`] method record history OffsetDateTime.
+///
 /// If the history is associated to a file all new changes within a given history capacity will be written to disk when History is dropped.
 #[derive(Debug)]
 pub struct FileBackedHistory {
     capacity: usize,
-    entries: VecDeque<InnerEntry>,
+    entries: VecDeque<HistoryEntry>,
     format_time_type: Option<FormatTimeType>,
     cursor: usize,
     // If cursor == entries.len() outside history browsing
@@ -45,14 +48,14 @@ impl Default for FileBackedHistory {
     }
 }
 
-fn encode_entry(entry: &InnerEntry) -> String {
+fn encode_entry(entry: &HistoryEntry) -> String {
     format!("{};{}", &entry.time, &entry.entry).replace("\n", NEWLINE_ESCAPE)
 }
 
-fn decode_entry(s: &str) -> InnerEntry {
+fn decode_entry(s: &str) -> HistoryEntry {
     let line = s.replace(NEWLINE_ESCAPE, "\n");
     let split = line.split_once(';').unwrap();
-    InnerEntry::new(OffsetDateTime::now_utc(), split.1)
+    HistoryEntry::new(OffsetDateTime::now_utc(), split.1)
 }
 
 impl History for FileBackedHistory {
@@ -82,7 +85,7 @@ impl History for FileBackedHistory {
         self.format_time_type.clone()
     }
 
-    fn iter_chronologic(&self) -> Iter<'_, InnerEntry> {
+    fn iter_chronologic(&self) -> Iter<'_, HistoryEntry> {
         self.entries.iter()
     }
 
@@ -147,7 +150,7 @@ impl History for FileBackedHistory {
 
     fn push_back(&mut self, entry: &str) {
         let time = OffsetDateTime::now_utc();
-        self.entries.push_back(InnerEntry::new(time, entry))
+        self.entries.push_back(HistoryEntry::new(time, entry))
     }
 
     fn pop_front(&mut self) {
@@ -194,9 +197,10 @@ impl FileBackedHistory {
         Ok(hist)
     }
 
+    /// Creates a new history with an associated history datetime.
     pub fn with_time(self, f: FormatTimeType) -> Result<Self, InvalidFormatDescription> {
         let mut hist = self;
-        f.validate_format()?;
+        f.validate()?;
         hist.format_time_type = Some(f);
         Ok(hist)
     }
