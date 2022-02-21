@@ -203,9 +203,7 @@ impl FileBackedHistory {
 
     fn back_with_criteria(&mut self, criteria: &dyn Fn(&str) -> bool) {
         if !self.entries.is_empty() {
-            let previous_match = self.entries
-                .get(self.cursor)
-                .map(|x|x.entry.to_string());
+            let previous_match = self.entries.get(self.cursor).map(|x| x.entry.to_string());
             if let Some((next_cursor, _)) = self
                 .entries
                 .iter()
@@ -527,7 +525,10 @@ mod tests {
 
         let reading_hist = FileBackedHistory::with_file(5, histfile).unwrap();
 
-        let actual: Vec<_> = reading_hist.iter_chronologic().map(|x|x.entry.to_string()).collect();
+        let actual: Vec<_> = reading_hist
+            .iter_chronologic()
+            .map(|x| x.entry.to_string())
+            .collect();
         assert_eq!(entries, actual);
 
         tmp.close().unwrap();
@@ -557,7 +558,10 @@ mod tests {
 
         let reading_hist = FileBackedHistory::with_file(5, histfile).unwrap();
 
-        let actual: Vec<_> = reading_hist.iter_chronologic().map(|x|x.entry.to_string()).collect();
+        let actual: Vec<_> = reading_hist
+            .iter_chronologic()
+            .map(|x| x.entry.to_string())
+            .collect();
         assert_eq!(entries, actual);
 
         tmp.close().unwrap();
@@ -595,7 +599,10 @@ mod tests {
                 .for_each(|e| appending_hist.append(e));
 
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-            let actual: Vec<_> = appending_hist.iter_chronologic().map(|x|x.entry.to_string()).collect();
+            let actual: Vec<_> = appending_hist
+                .iter_chronologic()
+                .map(|x| x.entry.to_string())
+                .collect();
             assert_eq!(expected_appended_entries, actual);
         }
 
@@ -607,14 +614,20 @@ mod tests {
                 .iter()
                 .for_each(|e| truncating_hist.append(e));
 
-            let actual: Vec<_> = truncating_hist.iter_chronologic().map(|x|x.entry.to_string()).collect();
+            let actual: Vec<_> = truncating_hist
+                .iter_chronologic()
+                .map(|x| x.entry.to_string())
+                .collect();
             assert_eq!(expected_truncated_entries, actual);
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
         let reading_hist = FileBackedHistory::with_file(capacity, histfile).unwrap();
 
-        let actual: Vec<_> = reading_hist.iter_chronologic().map(|x|x.entry.to_string()).collect();
+        let actual: Vec<_> = reading_hist
+            .iter_chronologic()
+            .map(|x| x.entry.to_string())
+            .collect();
         assert_eq!(expected_truncated_entries, actual);
 
         tmp.close().unwrap();
@@ -645,14 +658,20 @@ mod tests {
         {
             let truncating_hist = FileBackedHistory::with_file(5, histfile.clone()).unwrap();
 
-            let actual: Vec<_> = truncating_hist.iter_chronologic().map(|x|x.entry.to_string()).collect();
+            let actual: Vec<_> = truncating_hist
+                .iter_chronologic()
+                .map(|x| x.entry.to_string())
+                .collect();
             assert_eq!(expected_truncated_entries, actual);
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
         let reading_hist = FileBackedHistory::with_file(5, histfile).unwrap();
 
-        let actual: Vec<_> = reading_hist.iter_chronologic().map(|x|x.entry.to_string()).collect();
+        let actual: Vec<_> = reading_hist
+            .iter_chronologic()
+            .map(|x| x.entry.to_string())
+            .collect();
         assert_eq!(expected_truncated_entries, actual);
 
         tmp.close().unwrap();
@@ -697,7 +716,10 @@ mod tests {
 
         let reading_hist = FileBackedHistory::with_file(capacity, histfile).unwrap();
 
-        let actual: Vec<_> = reading_hist.iter_chronologic().map(|x|x.entry.to_string()).collect();
+        let actual: Vec<_> = reading_hist
+            .iter_chronologic()
+            .map(|x| x.entry.to_string())
+            .collect();
         assert_eq!(expected_entries, actual);
 
         tmp.close().unwrap();
