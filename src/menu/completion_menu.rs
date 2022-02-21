@@ -226,15 +226,15 @@ impl CompletionMenu {
 
     /// Calculates how many rows the Menu will use
     fn get_rows(&self) -> u16 {
-        let values = self.get_values();
+        let values = self.get_values().len() as u16;
 
-        if values.is_empty() {
+        if values == 0 {
             // When the values are empty the no_records_msg is shown, taking 1 line
             return 1;
         }
 
-        let rows = values.len() as u16 / self.get_cols();
-        if values.len() as u16 % self.get_cols() != 0 {
+        let rows = values / self.get_cols();
+        if values % self.get_cols() != 0 {
             rows + 1
         } else {
             rows
