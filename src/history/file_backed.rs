@@ -203,14 +203,16 @@ impl FileBackedHistory {
 
     fn back_with_criteria(&mut self, criteria: &dyn Fn(&str) -> bool) {
         if !self.entries.is_empty() {
-            let previous_match = self.entries.get(self.cursor);
+            let previous_match = self.entries
+                .get(self.cursor)
+                .map(|x|x.entry.to_string());
             if let Some((next_cursor, _)) = self
                 .entries
                 .iter()
                 .take(self.cursor)
                 .enumerate()
                 .rev()
-                .find(|(_, entry)| criteria(&entry.entry) && previous_match != Some(entry))
+                .find(|(_, x)| criteria(&x.entry) && previous_match != Some(x.entry.to_string()))
             {
                 // set to entry
                 self.cursor = next_cursor;
