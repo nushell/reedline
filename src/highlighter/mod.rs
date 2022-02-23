@@ -9,5 +9,7 @@ pub use simple_match::SimpleMatchHighlighter;
 /// return a `StyledText` object, which represents the contents of the original line as styled strings
 pub trait Highlighter: Send {
     /// The action that will handle the current buffer as a line and return the corresponding `StyledText` for the buffer
-    fn highlight(&self, line: &str) -> StyledText;
+    ///
+    /// Cursor position as byte offsets in the string
+    fn highlight(&self, line: &str, cursor: usize) -> StyledText;
 }

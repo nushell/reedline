@@ -1018,7 +1018,7 @@ impl Reedline {
             // Highlight matches
             let res_string = if self.use_ansi_coloring {
                 let match_highlighter = SimpleMatchHighlighter::new(substring);
-                let styled = match_highlighter.highlight(&res_string);
+                let styled = match_highlighter.highlight(&res_string, 0);
                 styled.render_simple()
             } else {
                 res_string
@@ -1049,7 +1049,7 @@ impl Reedline {
 
         let (before_cursor, after_cursor) = self
             .highlighter
-            .highlight(buffer_to_paint)
+            .highlight(buffer_to_paint, cursor_position_in_buffer)
             .render_around_insertion_point(
                 cursor_position_in_buffer,
                 prompt.render_prompt_multiline_indicator().borrow(),
