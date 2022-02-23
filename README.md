@@ -104,7 +104,7 @@ Reedline::create()?.with_highlighter(Box::new(ExampleHighlighter::new(commands))
 ```rust,no_run
 // Create a reedline object with tab completions support
 
-use reedline::{DefaultCompleter, Reedline};
+use reedline::{DefaultCompleter, Reedline, CompletionMenu};
 
 let commands = vec![
   "test".into(),
@@ -113,8 +113,10 @@ let commands = vec![
   "this is the reedline crate".into(),
 ];
 let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
+// Use the interactive menu to select options from the completer
+let completion_menu = Box::new(CompletionMenu::default());
 
-let mut line_editor = Reedline::create()?.with_completer(completer);
+let mut line_editor = Reedline::create()?.with_completer(completer).with_menu(completion_menu);
 ```
 
 ### Integrate with custom Hinter
