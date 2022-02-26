@@ -15,7 +15,7 @@ pub struct ExampleHighlighter {
 }
 
 impl Highlighter for ExampleHighlighter {
-    fn highlight(&self, line: &str) -> StyledText {
+    fn highlight(&self, line: &str, _cursor: usize) -> StyledText {
         let mut styled_text = StyledText::new();
 
         if self
