@@ -499,6 +499,10 @@ impl Reedline {
                 self.input_mode = InputMode::Regular;
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::ExecuteHostCommand(host_command) => {
+                // TODO: Decide if we need to do something special to have a nicer painter state on the next go
+                Ok(EventStatus::Exits(Signal::Success(host_command)))
+            }
             ReedlineEvent::Edit(commands) => {
                 self.run_history_commands(&commands);
                 Ok(EventStatus::Handled)
@@ -717,6 +721,10 @@ impl Reedline {
 
                     Ok(EventStatus::Handled)
                 }
+            }
+            ReedlineEvent::ExecuteHostCommand(host_command) => {
+                // TODO: Decide if we need to do something special to have a nicer painter state on the next go
+                Ok(EventStatus::Exits(Signal::Success(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands);
