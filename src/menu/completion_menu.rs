@@ -365,7 +365,7 @@ impl Menu for CompletionMenu {
         // editing a multiline buffer.
         // Also, by replacing the new line character with a space, the insert
         // position is maintain in the line buffer.
-        let trimmed_buffer = line_buffer.get_buffer().replace("\n", " ");
+        let trimmed_buffer = line_buffer.get_buffer().replace('\n', " ");
         self.values = completer.complete(trimmed_buffer.as_str(), line_buffer.offset());
         self.reset_position();
     }

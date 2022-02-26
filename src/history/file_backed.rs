@@ -38,7 +38,7 @@ impl Default for FileBackedHistory {
 }
 
 fn encode_entry(s: &str) -> String {
-    s.replace("\n", NEWLINE_ESCAPE)
+    s.replace('\n', NEWLINE_ESCAPE)
 }
 
 fn decode_entry(s: &str) -> String {

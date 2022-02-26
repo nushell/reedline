@@ -540,7 +540,7 @@ impl Menu for HistoryMenu {
 
                             lines + "..."
                         } else {
-                            line.replace("\n", &format!("\r\n{}", self.multiline_marker))
+                            line.replace('\n', &format!("\r\n{}", self.multiline_marker))
                         };
 
                         let row_number = format!("{}: ", index + values_before_page);
