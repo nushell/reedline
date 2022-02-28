@@ -500,6 +500,10 @@ impl Reedline {
                 self.input_mode = InputMode::Regular;
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::ExecuteHostCommand(host_command) => {
+                // TODO: Decide if we need to do something special to have a nicer painter state on the next go
+                Ok(EventStatus::Exits(Signal::Success(host_command)))
+            }
             ReedlineEvent::Edit(commands) => {
                 self.run_history_commands(&commands);
                 Ok(EventStatus::Handled)
@@ -719,10 +723,15 @@ impl Reedline {
                     Ok(EventStatus::Handled)
                 }
             }
+            ReedlineEvent::ExecuteHostCommand(host_command) => {
+                // TODO: Decide if we need to do something special to have a nicer painter state on the next go
+                Ok(EventStatus::Exits(Signal::Success(host_command)))
+            }
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands);
                 if let Some(menu) = self.menus.iter_mut().find(|men| men.is_active()) {
                     if self.quick_completions {
+                        menu.menu_event(MenuEvent::Edit(self.quick_completions));
                         menu.update_values(
                             self.editor.line_buffer(),
                             self.history.as_ref(),
@@ -732,7 +741,6 @@ impl Reedline {
                             return self.handle_editor_event(prompt, ReedlineEvent::Enter);
                         }
                     }
-
                     menu.menu_event(MenuEvent::Edit(self.quick_completions));
                 }
 
@@ -1019,7 +1027,7 @@ impl Reedline {
             // Highlight matches
             let res_string = if self.use_ansi_coloring {
                 let match_highlighter = SimpleMatchHighlighter::new(substring);
-                let styled = match_highlighter.highlight(&res_string);
+                let styled = match_highlighter.highlight(&res_string, 0);
                 styled.render_simple()
             } else {
                 res_string
@@ -1050,7 +1058,7 @@ impl Reedline {
 
         let (before_cursor, after_cursor) = self
             .highlighter
-            .highlight(buffer_to_paint)
+            .highlight(buffer_to_paint, cursor_position_in_buffer)
             .render_around_insertion_point(
                 cursor_position_in_buffer,
                 prompt.render_prompt_multiline_indicator().borrow(),

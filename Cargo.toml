@@ -2,7 +2,7 @@
 name = "reedline"
 version = "0.2.0"
 authors = ["JT <jonathan.d.turner@gmail.com>"]
-edition = "2018"
+edition = "2021"
 description = "A readline-like crate for CLI text input"
 license = "MIT"
 repository = "https://github.com/nushell/reedline"
@@ -21,7 +21,7 @@ clipboard = { version = "0.5.0", optional = true }
 crossterm = { version = "0.22.1", features = ["serde"] }
 nu-ansi-term = "0.42.0"
 serde = { version = "1.0", features = ["derive"] }
-unicode-segmentation = "1.8.0"
+unicode-segmentation = "1.9.0"
 unicode-width = "0.1.9"
 strip-ansi-escapes = "0.1.1"
 strum = "0.23"
@@ -31,8 +31,8 @@ time = { version = "0.3.5", features = ["parsing", "formatting","macros"] }
 anyhow = "1.0.52"
 
 [dev-dependencies]
-tempfile = "3.2.0"
-pretty_assertions = "1.0.0"
+tempfile = "3.3.0"
+pretty_assertions = "1.1.0"
 rstest = "0.12.0"
 
 [features]

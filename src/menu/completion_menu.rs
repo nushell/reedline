@@ -32,8 +32,6 @@ struct ColumnDetails {
     pub columns: u16,
     /// Column width
     pub col_width: usize,
-    /// Column padding
-    pub col_padding: usize,
 }
 
 /// Completion menu definition
@@ -228,9 +226,15 @@ impl CompletionMenu {
 
     /// Calculates how many rows the Menu will use
     fn get_rows(&self) -> u16 {
-        let rows = self.get_values().len() as u16 / self.get_cols();
+        let values = self.get_values().len() as u16;
 
-        if self.get_values().len() as u16 % self.get_cols() != 0 {
+        if values == 0 {
+            // When the values are empty the no_records_msg is shown, taking 1 line
+            return 1;
+        }
+
+        let rows = values / self.get_cols();
+        if values % self.get_cols() != 0 {
             rows + 1
         } else {
             rows
@@ -361,7 +365,7 @@ impl Menu for CompletionMenu {
         // editing a multiline buffer.
         // Also, by replacing the new line character with a space, the insert
         // position is maintain in the line buffer.
-        let trimmed_buffer = line_buffer.get_buffer().replace("\n", " ");
+        let trimmed_buffer = line_buffer.get_buffer().replace('\n', " ");
         self.values = completer.complete(trimmed_buffer.as_str(), line_buffer.offset());
         self.reset_position();
     }
@@ -405,7 +409,7 @@ impl Menu for CompletionMenu {
             }
 
             let max_width = self.get_values().iter().fold(0, |acc, (_, string)| {
-                let str_len = string.len() + self.working_details.col_padding;
+                let str_len = string.len() + self.default_details.col_padding;
                 if str_len > acc {
                     str_len
                 } else {

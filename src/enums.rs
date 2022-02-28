@@ -316,6 +316,9 @@ pub enum ReedlineEvent {
 
     /// Move to the previous history page
     MenuPagePrevious,
+
+    /// Way to bind the execution of a whole command (directly returning from [`crate::Reedline::read_line()`]) to a keybinding
+    ExecuteHostCommand(String),
 }
 
 pub(crate) enum EventStatus {

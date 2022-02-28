@@ -25,7 +25,7 @@ impl Default for SimpleMatchHighlighter {
 }
 
 impl Highlighter for SimpleMatchHighlighter {
-    fn highlight(&self, line: &str) -> StyledText {
+    fn highlight(&self, line: &str, _cursor: usize) -> StyledText {
         let mut styled_text = StyledText::new();
         if self.query.is_empty() {
             styled_text.push((self.neutral_style, line.to_owned()));

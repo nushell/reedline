@@ -11,8 +11,8 @@
 //! ```rust,no_run
 //! // Create a default reedline object to handle user input
 //!
+//! # use std::io;
 //! use reedline::{DefaultPrompt, Reedline, Signal};
-//! use std::io;
 //!
 //!  let mut line_editor = Reedline::create()?;
 //!  let prompt = DefaultPrompt::default();
@@ -46,7 +46,7 @@
 //! //    [dependencies]
 //! //    crossterm = "*"
 //!
-//! use std::io;
+//! # use std::io;
 //! use {
 //!   crossterm::event::{KeyCode, KeyModifiers},
 //!   reedline::{default_emacs_keybindings, EditCommand, Reedline, Emacs, ReedlineEvent},
@@ -69,7 +69,7 @@
 //! ```rust,no_run
 //! // Create a reedline object with history support, including history size limits
 //!
-//! use std::io;
+//! # use std::io;
 //! use reedline::{FileBackedHistory, Reedline};
 //!
 //! let history = Box::new(
@@ -87,7 +87,7 @@
 //! ```rust,no_run
 //! // Create a reedline object with highlighter support
 //!
-//! use std::io;
+//! # use std::io;
 //! use reedline::{ExampleHighlighter, Reedline};
 //!
 //! let commands = vec![
@@ -106,8 +106,8 @@
 //! ```rust,no_run
 //! // Create a reedline object with tab completions support
 //!
-//! use std::io;
-//! use reedline::{DefaultCompleter, Reedline};
+//! # use std::io;
+//! use reedline::{DefaultCompleter, Reedline, CompletionMenu};
 //!
 //! let commands = vec![
 //!   "test".into(),
@@ -116,8 +116,10 @@
 //!   "this is the reedline crate".into(),
 //! ];
 //! let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
+//! // Use the interactive menu to select options from the completer
+//! let completion_menu = Box::new(CompletionMenu::default());
 //!
-//! let mut line_editor = Reedline::create()?.with_completer(completer);
+//! let mut line_editor = Reedline::create()?.with_completer(completer).with_menu(completion_menu);
 //! # Ok::<(), io::Error>(())
 //! ```
 //!
@@ -130,7 +132,7 @@
 //! //    [dependencies]
 //! //    nu-ansi-term = "*"
 //!
-//! use std::io;
+//! # use std::io;
 //! use {
 //!   nu_ansi_term::{Color, Style},
 //!   reedline::{DefaultHinter, Reedline},
