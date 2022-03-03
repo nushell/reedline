@@ -91,6 +91,7 @@ pub struct Reedline {
     // Provides the tab completions
     completer: Box<dyn Completer>,
     quick_completions: bool,
+    partial_completions: bool,
 
     // Performs bash style circular rotation through the available completions
     circular_completion_handler: CircularCompletionHandler,
@@ -139,6 +140,7 @@ impl Reedline {
             edit_mode,
             completer,
             quick_completions: false,
+            partial_completions: false,
             circular_completion_handler: CircularCompletionHandler::default(),
             highlighter: buffer_highlighter,
             hinter,
@@ -203,6 +205,13 @@ impl Reedline {
     /// ever narrows down to a single entry.
     pub fn with_quick_completions(mut self, quick_completions: bool) -> Reedline {
         self.quick_completions = quick_completions;
+        self
+    }
+
+    /// Turn on partial completions. These completions will fill the buffer with the
+    /// smallest common string from all the options
+    pub fn with_partial_completions(mut self, partial_completions: bool) -> Reedline {
+        self.partial_completions = partial_completions;
         self
     }
 
@@ -571,6 +580,48 @@ impl Reedline {
                             }
                         }
 
+                        if self.partial_completions {
+                            if !self.quick_completions {
+                                menu.update_values(
+                                    self.editor.line_buffer(),
+                                    self.history.as_ref(),
+                                    self.completer.as_ref(),
+                                )
+                            }
+
+                            let values = menu.get_values();
+                            let first = values.iter().next();
+
+                            let index = first.and_then(|(_, first_string)| {
+                                values.iter().skip(1).fold(None, |_, (_, value)| {
+                                    if value.starts_with(first_string) {
+                                        Some(first_string.len())
+                                    } else {
+                                        first_string
+                                            .chars()
+                                            .zip(value.chars())
+                                            .position(|(lhs, rhs)| lhs != rhs)
+                                    }
+                                })
+                            });
+
+                            if let (Some((span, value)), Some(index)) = (first, index) {
+                                let matching = &value[0..index];
+
+                                if !matching.is_empty() {
+                                    let mut offset = self.editor.line_buffer().offset();
+                                    offset += matching.len() - (span.end - span.start);
+
+                                    self.editor
+                                        .line_buffer()
+                                        .replace(span.start..span.end, matching);
+                                    self.editor.line_buffer().set_insertion_point(offset);
+
+                                    return Ok(EventStatus::Handled);
+                                }
+                            }
+                        }
+
                         return Ok(EventStatus::Handled);
                     }
                 }
@@ -736,11 +787,17 @@ impl Reedline {
                             self.history.as_ref(),
                             self.completer.as_ref(),
                         );
+
                         if menu.get_values().len() == 1 {
                             return self.handle_editor_event(prompt, ReedlineEvent::Enter);
                         }
                     }
-                    menu.menu_event(MenuEvent::Edit(self.quick_completions));
+
+                    if self.editor.line_buffer().get_buffer().is_empty() {
+                        menu.menu_event(MenuEvent::Deactivate);
+                    } else {
+                        menu.menu_event(MenuEvent::Edit(self.quick_completions));
+                    }
                 }
 
                 Ok(EventStatus::Handled)

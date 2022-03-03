@@ -58,6 +58,10 @@ fn main() -> Result<()> {
         "hello world 4".into(),
         "hello another very large option for hello word that will force one column".into(),
         "this is the reedline crate".into(),
+        "abaaacas".into(),
+        "abaaac".into(),
+        "abaaaxyc".into(),
+        "abaaarabc".into(),
     ];
 
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
@@ -66,6 +70,7 @@ fn main() -> Result<()> {
         .with_history(history)?
         .with_completer(completer)
         .with_quick_completions(false)
+        .with_partial_completions(true)
         .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
         .with_hinter(Box::new(
             DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)),
