@@ -593,7 +593,7 @@ impl Reedline {
                             let first = values.iter().next();
 
                             let index = first.and_then(|(_, first_string)| {
-                                values.iter().skip(1).fold(None, |_, (_, value)| {
+                                values.iter().skip(1).fold(None, |index, (_, value)| {
                                     if value.starts_with(first_string) {
                                         Some(first_string.len())
                                     } else {
@@ -601,6 +601,16 @@ impl Reedline {
                                             .chars()
                                             .zip(value.chars())
                                             .position(|(lhs, rhs)| lhs != rhs)
+                                            .map(|new_index| match index {
+                                                Some(index) => {
+                                                    if index <= new_index {
+                                                        index
+                                                    } else {
+                                                        new_index
+                                                    }
+                                                }
+                                                None => new_index,
+                                            })
                                     }
                                 })
                             });
