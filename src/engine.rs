@@ -208,7 +208,7 @@ impl Reedline {
         self
     }
 
-    /// Turn on partial completions. These completions will fill the buffer with the 
+    /// Turn on partial completions. These completions will fill the buffer with the
     /// smallest common string from all the options
     pub fn with_partial_completions(mut self, partial_completions: bool) -> Reedline {
         self.partial_completions = partial_completions;
