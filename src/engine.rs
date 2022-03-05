@@ -113,6 +113,9 @@ pub struct Reedline {
 
     // Engine Menus
     menus: Vec<Box<dyn Menu>>,
+
+    // replaced history
+    replaced_history: bool,
 }
 
 impl Drop for Reedline {
@@ -151,6 +154,7 @@ impl Reedline {
             animate: false,
             use_ansi_coloring: true,
             menus: Vec::new(),
+            replaced_history: false,
         };
 
         Ok(reedline)
@@ -751,7 +755,12 @@ impl Reedline {
                 }
 
                 if let Some(event) = self.replace_history_with_bang() {
-                    return Ok(event);
+                    if !self.replaced_history {
+                        self.replaced_history = true;
+                        return self.handle_editor_event(prompt, event);
+                    } else {
+                        self.replaced_history = false;
+                    }
                 }
 
                 let buffer = self.editor.get_buffer().to_string();
@@ -1064,7 +1073,7 @@ impl Reedline {
     }
 
     /// Insert in the buffer a history input where the bang character is found
-    fn replace_history_with_bang(&mut self) -> Option<EventStatus> {
+    fn replace_history_with_bang(&mut self) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
         let (string, index) = parse_selection_char(buffer, &'!');
 
@@ -1073,24 +1082,16 @@ impl Reedline {
                 .iter_chronologic()
                 .rev()
                 .nth(index)
-                .map(|history| {
-                    let start = string.len();
-                    let end = start + size;
-                    let span = Span { start, end };
-
-                    (span, history.clone())
-                })
+                .map(|history| (string.len(), size, history.clone()))
         });
 
-        if let Some((span, history)) = history_result {
-            self.editor
-                .line_buffer()
-                .replace(span.start..span.end, &history);
+        if let Some((start, size, history)) = history_result {
+            let edits = vec![
+                EditCommand::MoveToPosition(start),
+                EditCommand::ReplaceChars(size, history),
+            ];
 
-            let offset = self.editor.line_buffer().len();
-            self.editor.line_buffer().set_insertion_point(offset);
-
-            Some(EventStatus::Handled)
+            Some(ReedlineEvent::Edit(edits))
         } else {
             None
         }
