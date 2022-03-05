@@ -1,4 +1,4 @@
-use super::{Menu, MenuEvent, MenuTextStyle};
+use super::{parse_selection_char, Menu, MenuEvent, MenuTextStyle};
 use crate::{
     painter::{estimate_single_line_wraps, Painter},
     Completer, History, LineBuffer, Span,
@@ -39,9 +39,9 @@ pub struct HistoryMenu {
     page_size: usize,
     /// Menu marker displayed when the menu is active
     marker: String,
-    /// Character that will start a selection via a number. E.g let:5 will select
+    /// Character that will start a selection via a number. E.g let!5 will select
     /// the fifth entry in the current page
-    row_char: char,
+    selection_char: char,
     /// History menu active status
     active: bool,
     /// Cached values collected when querying the history.
@@ -73,7 +73,7 @@ impl Default for HistoryMenu {
         Self {
             color: MenuTextStyle::default(),
             page_size: 10,
-            row_char: ':',
+            selection_char: '!',
             active: false,
             values: Vec::new(),
             row_position: 0,
@@ -109,8 +109,8 @@ impl HistoryMenu {
     }
 
     /// Menu builder with row char
-    pub fn with_row_char(mut self, row_char: char) -> Self {
-        self.row_char = row_char;
+    pub fn with_selection_char(mut self, selection_char: char) -> Self {
+        self.selection_char = selection_char;
         self
     }
 
@@ -126,8 +126,8 @@ impl HistoryMenu {
         self
     }
 
-    fn update_row_pos(&mut self, new_pos: Option<usize>) {
-        if let (Some(row), Some(page)) = (new_pos, self.pages.get(self.page)) {
+    fn update_row_pos(&mut self, new_pos: Option<(usize, usize)>) {
+        if let (Some((row, _)), Some(page)) = (new_pos, self.pages.get(self.page)) {
             let values_before_page = self.pages.iter().take(self.page).sum::<Page>().size;
             let row = row.saturating_sub(values_before_page);
             if row < page.size {
@@ -346,7 +346,7 @@ impl Menu for HistoryMenu {
         history: &dyn History,
         _completer: &dyn Completer,
     ) {
-        let (query, row) = parse_row_selector(line_buffer.get_buffer(), &self.row_char);
+        let (query, row) = parse_selection_char(line_buffer.get_buffer(), &self.selection_char);
         self.update_row_pos(row);
 
         // If there are no row selector and the menu has an Edit event, this clears
@@ -565,49 +565,6 @@ impl Menu for HistoryMenu {
     }
 }
 
-fn parse_row_selector<'buffer>(
-    buffer: &'buffer str,
-    marker: &char,
-) -> (&'buffer str, Option<usize>) {
-    if buffer.is_empty() {
-        return (buffer, None);
-    }
-
-    let mut input = buffer.chars().peekable();
-
-    let mut index = 0;
-    while let Some(char) = input.next() {
-        if &char == marker {
-            match input.peek() {
-                Some(x) if x.is_ascii_digit() => {
-                    let mut count: usize = 0;
-                    while let Some(&c) = input.peek() {
-                        if c.is_ascii_digit() {
-                            let c = c.to_digit(10).expect("already checked if is a digit");
-                            let _ = input.next();
-                            count *= 10;
-                            count += c as usize;
-                        } else {
-                            return (&buffer[0..index], Some(count));
-                        }
-                    }
-                    return (&buffer[0..index], Some(count));
-                }
-                None => {
-                    return (&buffer[0..index], Some(0));
-                }
-                _ => {
-                    index += 1;
-                    continue;
-                }
-            }
-        }
-        index += 1
-    }
-
-    (buffer, None)
-}
-
 fn number_of_lines(entry: &str, max_lines: usize, terminal_columns: u16) -> u16 {
     let lines = if entry.contains('\n') {
         let total_lines = entry.lines().count();
@@ -634,69 +591,6 @@ fn number_of_lines(entry: &str, max_lines: usize, terminal_columns: u16) -> u16 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_row_test() {
-        let input = "search:6";
-        let (res, row) = parse_row_selector(input, &':');
-
-        assert_eq!(res, "search");
-        assert_eq!(row, Some(6))
-    }
-
-    #[test]
-    fn parse_row_other_marker_test() {
-        let input = "search?9";
-        let (res, row) = parse_row_selector(input, &'?');
-
-        assert_eq!(res, "search");
-        assert_eq!(row, Some(9))
-    }
-
-    #[test]
-    fn parse_row_double_test() {
-        let input = "ls | where:16";
-        let (res, row) = parse_row_selector(input, &':');
-
-        assert_eq!(res, "ls | where");
-        assert_eq!(row, Some(16))
-    }
-
-    #[test]
-    fn parse_row_empty_test() {
-        let input = ":10";
-        let (res, row) = parse_row_selector(input, &':');
-
-        assert_eq!(res, "");
-        assert_eq!(row, Some(10))
-    }
-
-    #[test]
-    fn parse_row_fake_indicator_test() {
-        let input = "let a: another :10";
-        let (res, row) = parse_row_selector(input, &':');
-
-        assert_eq!(res, "let a: another ");
-        assert_eq!(row, Some(10))
-    }
-
-    #[test]
-    fn parse_row_no_number_test() {
-        let input = "let a: another:";
-        let (res, row) = parse_row_selector(input, &':');
-
-        assert_eq!(res, "let a: another");
-        assert_eq!(row, Some(0))
-    }
-
-    #[test]
-    fn parse_empty_buffer_test() {
-        let input = "";
-        let (res, row) = parse_row_selector(input, &':');
-
-        assert_eq!(res, "");
-        assert_eq!(row, None)
-    }
 
     #[test]
     fn number_of_lines_test() {

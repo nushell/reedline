@@ -1,4 +1,4 @@
-use crate::Span;
+use crate::{menu::parse_selection_char, Span};
 
 use {
     crate::{
@@ -596,7 +596,7 @@ impl Reedline {
                                 let index = index.min(value.len());
                                 let matching = &value[0..index];
 
-                                if !matching.is_empty() {
+                                if !matching.is_empty() && span.end > span.start {
                                     self.editor
                                         .line_buffer()
                                         .replace(span.start..span.end, matching);
@@ -749,6 +749,11 @@ impl Reedline {
                         return Ok(EventStatus::Handled);
                     }
                 }
+
+                if let Some(event) = self.replace_history_with_bang() {
+                    return Ok(event);
+                }
+
                 let buffer = self.editor.get_buffer().to_string();
                 if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
                     self.hide_hints = true;
@@ -1055,6 +1060,39 @@ impl Reedline {
             self.history_search_paint(prompt)
         } else {
             self.buffer_paint(prompt)
+        }
+    }
+
+    /// Insert in the buffer a history input where the bang character is found
+    fn replace_history_with_bang(&mut self) -> Option<EventStatus> {
+        let buffer = self.editor.get_buffer();
+        let (string, index) = parse_selection_char(buffer, &'!');
+
+        let history_result = index.and_then(|(index, size)| {
+            self.history
+                .iter_chronologic()
+                .rev()
+                .nth(index)
+                .map(|history| {
+                    let start = string.len();
+                    let end = start + size;
+                    let span = Span { start, end };
+
+                    (span, history.clone())
+                })
+        });
+
+        if let Some((span, history)) = history_result {
+            self.editor
+                .line_buffer()
+                .replace(span.start..span.end, &history);
+
+            let offset = self.editor.line_buffer().len();
+            self.editor.line_buffer().set_insertion_point(offset);
+
+            Some(EventStatus::Handled)
+        } else {
+            None
         }
     }
 
