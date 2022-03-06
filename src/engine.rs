@@ -113,6 +113,9 @@ pub struct Reedline {
 
     // Engine Menus
     menus: Vec<Box<dyn Menu>>,
+
+    // Keeps track if a history entry was introduced using the ! (bang) command
+    replaced_history: bool,
 }
 
 impl Drop for Reedline {
@@ -151,6 +154,7 @@ impl Reedline {
             animate: false,
             use_ansi_coloring: true,
             menus: Vec::new(),
+            replaced_history: false,
         };
 
         Ok(reedline)
@@ -328,7 +332,7 @@ impl Reedline {
             .collect();
 
         for (i, entry) in history {
-            self.print_line(&format!("{}\t{}", i + 1, entry))?;
+            self.print_line(&format!("{}\t{}", i, entry))?;
         }
         Ok(())
     }
@@ -751,8 +755,12 @@ impl Reedline {
                 }
 
                 if let Some(event) = self.replace_history_with_bang() {
-                    return Ok(event);
+                    if !self.replaced_history {
+                        self.replaced_history = true;
+                        return self.handle_editor_event(prompt, event);
+                    }
                 }
+                self.replaced_history = false;
 
                 let buffer = self.editor.get_buffer().to_string();
                 if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
@@ -795,10 +803,15 @@ impl Reedline {
                     }
 
                     if self.editor.line_buffer().get_buffer().is_empty() {
+                        self.replaced_history = false;
                         menu.menu_event(MenuEvent::Deactivate);
                     } else {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
                     }
+                }
+
+                if self.editor.line_buffer().get_buffer().is_empty() {
+                    self.replaced_history = false;
                 }
 
                 Ok(EventStatus::Handled)
@@ -1064,33 +1077,32 @@ impl Reedline {
     }
 
     /// Insert in the buffer a history input where the bang character is found
-    fn replace_history_with_bang(&mut self) -> Option<EventStatus> {
+    fn replace_history_with_bang(&mut self) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
         let (string, index) = parse_selection_char(buffer, &'!');
 
-        let history_result = index.and_then(|(index, size)| {
-            self.history
-                .iter_chronologic()
-                .rev()
-                .nth(index)
-                .map(|history| {
-                    let start = string.len();
-                    let end = start + size;
-                    let span = Span { start, end };
-
-                    (span, history.clone())
-                })
+        let history_result = index.and_then(|(index, indicator)| {
+            if indicator == "!!" {
+                self.history
+                    .iter_chronologic()
+                    .rev()
+                    .next()
+                    .map(|history| (string.len(), indicator.len(), history.clone()))
+            } else {
+                self.history
+                    .iter_chronologic()
+                    .nth(index)
+                    .map(|history| (string.len(), indicator.len(), history.clone()))
+            }
         });
 
-        if let Some((span, history)) = history_result {
-            self.editor
-                .line_buffer()
-                .replace(span.start..span.end, &history);
+        if let Some((start, size, history)) = history_result {
+            let edits = vec![
+                EditCommand::MoveToPosition(start),
+                EditCommand::ReplaceChars(size, history),
+            ];
 
-            let offset = self.editor.line_buffer().len();
-            self.editor.line_buffer().set_insertion_point(offset);
-
-            Some(EventStatus::Handled)
+            Some(ReedlineEvent::Edit(edits))
         } else {
             None
         }

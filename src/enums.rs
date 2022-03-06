@@ -43,11 +43,17 @@ pub enum EditCommand {
     /// Move one word to the right
     MoveWordRight,
 
+    /// Move to position
+    MoveToPosition(usize),
+
     /// Insert a character at the current insertion point
     InsertChar(char),
 
     /// Insert a string at the current insertion point
     InsertString(String),
+
+    /// Repace characters with string
+    ReplaceChars(usize, String),
 
     /// Backspace delete from the current insertion point
     Backspace,
@@ -150,6 +156,7 @@ impl EditCommand {
             | EditCommand::MoveToEnd
             | EditCommand::MoveToLineStart
             | EditCommand::MoveToLineEnd
+            | EditCommand::MoveToPosition(_)
             | EditCommand::MoveLeft
             | EditCommand::MoveRight
             | EditCommand::MoveWordLeft
@@ -166,6 +173,7 @@ impl EditCommand {
             EditCommand::Backspace
             | EditCommand::Delete
             | EditCommand::InsertString(_)
+            | EditCommand::ReplaceChars(_, _)
             | EditCommand::BackspaceWord
             | EditCommand::DeleteWord
             | EditCommand::Clear

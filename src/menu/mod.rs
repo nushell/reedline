@@ -107,11 +107,15 @@ pub trait Menu: Send {
     fn get_values(&self) -> &[(Span, String)];
 }
 
-/// Parses a buffer looking for the selection char
+/// Splits a string that contains a marker character
+/// e.g: this is an example!10
+///     returns:
+///         this is an example
+///         (10, "!10") (index and index as string)
 pub(crate) fn parse_selection_char<'buffer>(
     buffer: &'buffer str,
     marker: &char,
-) -> (&'buffer str, Option<(usize, usize)>) {
+) -> (&'buffer str, Option<(usize, &'buffer str)>) {
     if buffer.is_empty() {
         return (buffer, None);
     }
@@ -123,7 +127,7 @@ pub(crate) fn parse_selection_char<'buffer>(
         if &char == marker {
             match input.peek() {
                 Some(x) if x == marker => {
-                    return (&buffer[0..index], Some((0, 2)));
+                    return (&buffer[0..index], Some((0, &buffer[index..index + 2])));
                 }
                 Some(x) if x.is_ascii_digit() => {
                     let mut count: usize = 0;
@@ -136,13 +140,19 @@ pub(crate) fn parse_selection_char<'buffer>(
                             count += c as usize;
                             size += 1;
                         } else {
-                            return (&buffer[0..index], Some((count, size)));
+                            return (
+                                &buffer[0..index],
+                                Some((count, &buffer[index..index + size])),
+                            );
                         }
                     }
-                    return (&buffer[0..index], Some((count, size)));
+                    return (
+                        &buffer[0..index],
+                        Some((count, &buffer[index..index + size])),
+                    );
                 }
                 None => {
-                    return (&buffer[0..index], Some((0, 0)));
+                    return (&buffer[0..index], Some((0, &buffer[index..buffer.len()])));
                 }
                 _ => {
                     index += 1;
@@ -166,7 +176,7 @@ mod tests {
         let (res, row) = parse_selection_char(input, &':');
 
         assert_eq!(res, "search");
-        assert_eq!(row, Some((6, 2)))
+        assert_eq!(row, Some((6, ":6")))
     }
 
     #[test]
@@ -175,7 +185,7 @@ mod tests {
         let (res, row) = parse_selection_char(input, &'!');
 
         assert_eq!(res, "search");
-        assert_eq!(row, Some((0, 2)))
+        assert_eq!(row, Some((0, "!!")))
     }
 
     #[test]
@@ -184,7 +194,7 @@ mod tests {
         let (res, row) = parse_selection_char(input, &'?');
 
         assert_eq!(res, "search");
-        assert_eq!(row, Some((9, 2)))
+        assert_eq!(row, Some((9, "?9")))
     }
 
     #[test]
@@ -193,7 +203,7 @@ mod tests {
         let (res, row) = parse_selection_char(input, &':');
 
         assert_eq!(res, "ls | where");
-        assert_eq!(row, Some((16, 3)))
+        assert_eq!(row, Some((16, ":16")))
     }
 
     #[test]
@@ -202,7 +212,7 @@ mod tests {
         let (res, row) = parse_selection_char(input, &':');
 
         assert_eq!(res, "");
-        assert_eq!(row, Some((10, 3)))
+        assert_eq!(row, Some((10, ":10")))
     }
 
     #[test]
@@ -211,7 +221,7 @@ mod tests {
         let (res, row) = parse_selection_char(input, &':');
 
         assert_eq!(res, "let a: another ");
-        assert_eq!(row, Some((10, 3)))
+        assert_eq!(row, Some((10, ":10")))
     }
 
     #[test]
@@ -220,7 +230,7 @@ mod tests {
         let (res, row) = parse_selection_char(input, &':');
 
         assert_eq!(res, "let a: another");
-        assert_eq!(row, Some((0, 0)))
+        assert_eq!(row, Some((0, ":")))
     }
 
     #[test]

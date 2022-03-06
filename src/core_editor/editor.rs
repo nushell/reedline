@@ -37,12 +37,14 @@ impl Editor {
             EditCommand::MoveToLineStart => self.line_buffer.move_to_line_start(),
             EditCommand::MoveToEnd => self.line_buffer.move_to_end(),
             EditCommand::MoveToLineEnd => self.line_buffer.move_to_line_end(),
+            EditCommand::MoveToPosition(pos) => self.line_buffer.set_insertion_point(*pos),
             EditCommand::MoveLeft => self.line_buffer.move_left(),
             EditCommand::MoveRight => self.line_buffer.move_right(),
             EditCommand::MoveWordLeft => self.line_buffer.move_word_left(),
             EditCommand::MoveWordRight => self.line_buffer.move_word_right(),
             EditCommand::InsertChar(c) => self.insert_char(*c),
             EditCommand::InsertString(str) => self.line_buffer.insert_str(str),
+            EditCommand::ReplaceChars(n_chars, str) => self.replace_chars(*n_chars, str),
             EditCommand::Backspace => self.line_buffer.delete_left_grapheme(),
             EditCommand::Delete => self.line_buffer.delete_right_grapheme(),
             EditCommand::BackspaceWord => self.line_buffer.delete_word_left(),
@@ -392,6 +394,14 @@ impl Editor {
                 }
             }
         }
+    }
+
+    fn replace_chars(&mut self, n_chars: usize, string: &str) {
+        for _ in 0..n_chars {
+            self.line_buffer.delete_right_grapheme();
+        }
+
+        self.line_buffer.insert_str(string);
     }
 }
 
