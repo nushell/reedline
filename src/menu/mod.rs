@@ -65,6 +65,16 @@ pub trait Menu: Send {
     /// Selects what type of event happened with the menu
     fn menu_event(&mut self, event: MenuEvent);
 
+    /// The completion menu can try to find the common string and replace it
+    /// in the given line buffer
+    fn can_partially_complete(
+        &mut self,
+        values_updated: bool,
+        line_buffer: &mut LineBuffer,
+        history: &dyn History,
+        completer: &dyn Completer,
+    ) -> bool;
+
     /// Updates the values presented in the menu
     /// This function needs to be defined in the trait because when the menu is
     /// activated or the quick_completion option is true, the len of the values
@@ -164,6 +174,36 @@ pub(crate) fn parse_selection_char<'buffer>(
     }
 
     (buffer, None)
+}
+
+/// Finds common string in a list of values
+fn find_common_string(values: &[(Span, String)]) -> (Option<&(Span, String)>, Option<usize>) {
+    let first = values.iter().next();
+
+    let index = first.and_then(|(_, first_string)| {
+        values.iter().skip(1).fold(None, |index, (_, value)| {
+            if value.starts_with(first_string) {
+                Some(first_string.len())
+            } else {
+                first_string
+                    .chars()
+                    .zip(value.chars())
+                    .position(|(lhs, rhs)| lhs != rhs)
+                    .map(|new_index| match index {
+                        Some(index) => {
+                            if index <= new_index {
+                                index
+                            } else {
+                                new_index
+                            }
+                        }
+                        None => new_index,
+                    })
+            }
+        })
+    });
+
+    (first, index)
 }
 
 #[cfg(test)]

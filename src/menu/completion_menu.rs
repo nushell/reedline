@@ -1,4 +1,4 @@
-use super::{Menu, MenuEvent, MenuTextStyle};
+use super::{find_common_string, Menu, MenuEvent, MenuTextStyle};
 use crate::{painter::Painter, Completer, History, LineBuffer, Span};
 use nu_ansi_term::{ansi::RESET, Style};
 
@@ -342,6 +342,46 @@ impl Menu for CompletionMenu {
     /// Deactivates context menu
     fn is_active(&self) -> bool {
         self.active
+    }
+
+    /// The completion menu can try to find the common string and replace it
+    /// in the given line buffer
+    fn can_partially_complete(
+        &mut self,
+        values_updated: bool,
+        line_buffer: &mut LineBuffer,
+        history: &dyn History,
+        completer: &dyn Completer,
+    ) -> bool {
+        // If the values were already updated (e.g. quick completions are true)
+        // there is no need to update the values from the menu
+        if !values_updated {
+            self.update_values(line_buffer, history, completer)
+        }
+
+        let values = self.get_values();
+        if let (Some((span, value)), Some(index)) = find_common_string(values) {
+            let index = index.min(value.len());
+            let matching = &value[0..index];
+
+            if !matching.is_empty() {
+                line_buffer.replace(span.start..span.end, matching);
+
+                let mut offset = line_buffer.offset();
+                offset += matching.len() - (span.end - span.start);
+                line_buffer.set_insertion_point(offset);
+
+                // The values need to be updated because the spans need to be
+                // recalculated for accurate replacement in the string
+                self.update_values(line_buffer, history, completer);
+
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
     }
 
     /// Selects what type of event happened with the menu
