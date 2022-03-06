@@ -114,7 +114,7 @@ pub struct Reedline {
     // Engine Menus
     menus: Vec<Box<dyn Menu>>,
 
-    // replaced history
+    // Keeps track if a history entry was introduced using the ! (bang) command
     replaced_history: bool,
 }
 
