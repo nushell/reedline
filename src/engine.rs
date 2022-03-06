@@ -1,5 +1,3 @@
-use crate::{menu::parse_selection_char, Span};
-
 use {
     crate::{
         completion::{CircularCompletionHandler, Completer, DefaultCompleter},
@@ -9,7 +7,7 @@ use {
         highlighter::SimpleMatchHighlighter,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
-        menu::{Menu, MenuEvent},
+        menu::{parse_selection_char, Menu, MenuEvent},
         painter::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         text_manipulation, DefaultValidator, EditCommand, ExampleHighlighter, Highlighter, Prompt,
@@ -586,40 +584,15 @@ impl Reedline {
                             }
                         }
 
-                        if self.partial_completions {
-                            if !self.quick_completions {
-                                menu.update_values(
-                                    self.editor.line_buffer(),
-                                    self.history.as_ref(),
-                                    self.completer.as_ref(),
-                                )
-                            }
-
-                            let values = menu.get_values();
-                            if let (Some((span, value)), Some(index)) = find_common_string(values) {
-                                let index = index.min(value.len());
-                                let matching = &value[0..index];
-
-                                if !matching.is_empty() && span.end > span.start {
-                                    self.editor
-                                        .line_buffer()
-                                        .replace(span.start..span.end, matching);
-
-                                    let mut offset = self.editor.line_buffer().offset();
-                                    offset += matching.len() - (span.end - span.start);
-                                    self.editor.line_buffer().set_insertion_point(offset);
-
-                                    // The values need to be updated because the spans need to be
-                                    // recalculated for accurate replacement in the string
-                                    menu.update_values(
-                                        self.editor.line_buffer(),
-                                        self.history.as_ref(),
-                                        self.completer.as_ref(),
-                                    );
-
-                                    return Ok(EventStatus::Handled);
-                                }
-                            }
+                        if self.partial_completions
+                            && menu.can_partially_complete(
+                                self.quick_completions,
+                                self.editor.line_buffer(),
+                                self.history.as_ref(),
+                                self.completer.as_ref(),
+                            )
+                        {
+                            return Ok(EventStatus::Handled);
                         }
 
                         return Ok(EventStatus::Handled);
@@ -1211,35 +1184,6 @@ impl Reedline {
         self.painter
             .repaint_buffer(prompt, lines, menu, self.use_ansi_coloring)
     }
-}
-
-fn find_common_string(values: &[(Span, String)]) -> (Option<&(Span, String)>, Option<usize>) {
-    let first = values.iter().next();
-
-    let index = first.and_then(|(_, first_string)| {
-        values.iter().skip(1).fold(None, |index, (_, value)| {
-            if value.starts_with(first_string) {
-                Some(first_string.len())
-            } else {
-                first_string
-                    .chars()
-                    .zip(value.chars())
-                    .position(|(lhs, rhs)| lhs != rhs)
-                    .map(|new_index| match index {
-                        Some(index) => {
-                            if index <= new_index {
-                                index
-                            } else {
-                                new_index
-                            }
-                        }
-                        None => new_index,
-                    })
-            }
-        })
-    });
-
-    (first, index)
 }
 
 #[test]

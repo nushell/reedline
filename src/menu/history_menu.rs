@@ -331,6 +331,18 @@ impl Menu for HistoryMenu {
         self.active
     }
 
+    /// The history menu should not try to auto complete to avoid comparing
+    /// all registered values
+    fn can_partially_complete(
+        &mut self,
+        _values_updated: bool,
+        _line_buffer: &mut LineBuffer,
+        _history: &dyn History,
+        _completer: &dyn Completer,
+    ) -> bool {
+        false
+    }
+
     /// Selects what type of event happened with the menu
     fn menu_event(&mut self, event: MenuEvent) {
         match &event {
@@ -621,35 +633,39 @@ fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &'a s
 
     let old_chars = old_string.chars().collect::<Vec<char>>();
 
-    let mut old_index = 0;
-    let mut start = None;
-    let mut end = None;
-    for (index, c) in new_string.chars().enumerate() {
-        let equal = if start.is_some() {
-            new_string[index..new_string.len()] == old_string[old_index..old_string.len()]
-        } else {
-            c == old_chars[old_index]
-        };
+    let (_, start, end) = new_string.chars().enumerate().fold(
+        (0, None, None),
+        |(old_index, start, end), (index, c)| {
+            let equal = if start.is_some() {
+                new_string[index..new_string.len()] == old_string[old_index..old_string.len()]
+            } else {
+                c == old_chars[old_index]
+            };
 
-        if equal {
-            old_index = (old_index + 1).min(old_string.len() - 1);
+            if equal {
+                let old_index = (old_index + 1).min(old_string.len() - 1);
 
-            end = match (start, end) {
-                (Some(_), Some(_)) => end,
-                (Some(_), None) => Some(index),
-                _ => None,
+                let end = match (start, end) {
+                    (Some(_), Some(_)) => end,
+                    (Some(_), None) => Some(index),
+                    _ => None,
+                };
+
+                (old_index, start, end)
+            } else {
+                let start = match start {
+                    Some(_) => start,
+                    None => Some(index),
+                };
+
+                (old_index, start, end)
             }
-        } else {
-            start = match start {
-                Some(_) => start,
-                None => Some(index),
-            }
-        }
-    }
+        },
+    );
 
     match (start, end) {
-        (Some(start), Some(end)) => (start, new_string[start..end].trim()),
-        (Some(start), None) => (start, new_string[start..new_string.len()].trim()),
+        (Some(start), Some(end)) => (start, &new_string[start..end]),
+        (Some(start), None) => (start, &new_string[start..new_string.len()]),
         (None, None) => (new_string.len(), ""),
         (None, Some(_)) => unreachable!(),
     }
@@ -665,7 +681,7 @@ mod tests {
         let old_string = "this is a string";
 
         let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new"));
+        assert_eq!(res, (10, "new "));
     }
 
     #[test]
@@ -674,7 +690,7 @@ mod tests {
         let old_string = "this is";
 
         let res = string_difference(new_string, old_string);
-        assert_eq!(res, (7, "a new string"));
+        assert_eq!(res, (7, " a new string"));
     }
 
     #[test]
@@ -692,7 +708,7 @@ mod tests {
         let old_string = "this is a string";
 
         let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new something"));
+        assert_eq!(res, (10, "new something "));
     }
 
     #[test]
