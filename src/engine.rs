@@ -332,7 +332,7 @@ impl Reedline {
             .collect();
 
         for (i, entry) in history {
-            self.print_line(&format!("{}\t{}", i + 1, entry))?;
+            self.print_line(&format!("{}\t{}", i, entry))?;
         }
         Ok(())
     }
@@ -758,10 +758,9 @@ impl Reedline {
                     if !self.replaced_history {
                         self.replaced_history = true;
                         return self.handle_editor_event(prompt, event);
-                    } else {
-                        self.replaced_history = false;
                     }
                 }
+                self.replaced_history = false;
 
                 let buffer = self.editor.get_buffer().to_string();
                 if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
@@ -804,10 +803,15 @@ impl Reedline {
                     }
 
                     if self.editor.line_buffer().get_buffer().is_empty() {
+                        self.replaced_history = false;
                         menu.menu_event(MenuEvent::Deactivate);
                     } else {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
                     }
+                }
+
+                if self.editor.line_buffer().get_buffer().is_empty() {
+                    self.replaced_history = false;
                 }
 
                 Ok(EventStatus::Handled)
@@ -1077,12 +1081,19 @@ impl Reedline {
         let buffer = self.editor.get_buffer();
         let (string, index) = parse_selection_char(buffer, &'!');
 
-        let history_result = index.and_then(|(index, size)| {
-            self.history
-                .iter_chronologic()
-                .rev()
-                .nth(index)
-                .map(|history| (string.len(), size, history.clone()))
+        let history_result = index.and_then(|(index, indicator)| {
+            if indicator == "!!" {
+                self.history
+                    .iter_chronologic()
+                    .rev()
+                    .next()
+                    .map(|history| (string.len(), indicator.len(), history.clone()))
+            } else {
+                self.history
+                    .iter_chronologic()
+                    .nth(index)
+                    .map(|history| (string.len(), indicator.len(), history.clone()))
+            }
         });
 
         if let Some((start, size, history)) = history_result {

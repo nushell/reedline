@@ -66,6 +66,8 @@ pub struct HistoryMenu {
     event: Option<MenuEvent>,
     /// Menu in edit mode
     in_edit: bool,
+    /// String collected after the menu is activated
+    input: Option<String>,
 }
 
 impl Default for HistoryMenu {
@@ -85,6 +87,7 @@ impl Default for HistoryMenu {
             pages: Vec::new(),
             event: None,
             in_edit: false,
+            input: None,
         }
     }
 }
@@ -126,7 +129,7 @@ impl HistoryMenu {
         self
     }
 
-    fn update_row_pos(&mut self, new_pos: Option<(usize, usize)>) {
+    fn update_row_pos(&mut self, new_pos: Option<(usize, &str)>) {
         if let (Some((row, _)), Some(page)) = (new_pos, self.pages.get(self.page)) {
             let values_before_page = self.pages.iter().take(self.page).sum::<Page>().size;
             let row = row.saturating_sub(values_before_page);
@@ -333,6 +336,10 @@ impl Menu for HistoryMenu {
         match &event {
             MenuEvent::Activate(_) => self.active = true,
             MenuEvent::Edit(_) => self.in_edit = true,
+            MenuEvent::Deactivate => {
+                self.active = false;
+                self.input = None;
+            }
             _ => {}
         }
 
@@ -346,7 +353,12 @@ impl Menu for HistoryMenu {
         history: &dyn History,
         _completer: &dyn Completer,
     ) {
-        let (query, row) = parse_selection_char(line_buffer.get_buffer(), &self.selection_char);
+        let (start, input) = match &self.input {
+            Some(old_string) => string_difference(line_buffer.get_buffer(), old_string),
+            None => (0, ""),
+        };
+
+        let (query, row) = parse_selection_char(input, &self.selection_char);
         self.update_row_pos(row);
 
         // If there are no row selector and the menu has an Edit event, this clears
@@ -367,10 +379,16 @@ impl Menu for HistoryMenu {
         self.values = values
             .into_iter()
             .map(|s| {
+                let start = if start == line_buffer.len() {
+                    line_buffer.get_insertion_point()
+                } else {
+                    start
+                };
+
                 (
                     Span {
-                        start: 0,
-                        end: s.len(),
+                        start,
+                        end: start + input.len(),
                     },
                     s,
                 )
@@ -407,8 +425,12 @@ impl Menu for HistoryMenu {
 
     /// The buffer gets cleared with the actual value
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
-        if let Some((_, value)) = self.get_value() {
-            line_buffer.set_buffer(value)
+        if let Some((span, value)) = self.get_value() {
+            line_buffer.replace(span.start..span.end, &value);
+
+            let mut offset = line_buffer.offset();
+            offset += value.len() - (span.end - span.start);
+            line_buffer.set_insertion_point(offset);
         }
     }
 
@@ -424,6 +446,7 @@ impl Menu for HistoryMenu {
                 MenuEvent::Activate(updated) => {
                     self.active = true;
                     self.reset_position();
+                    self.input = Some(line_buffer.get_buffer().to_string());
 
                     if !updated {
                         self.update_values(line_buffer, history, completer);
@@ -434,7 +457,10 @@ impl Menu for HistoryMenu {
                         full: false,
                     });
                 }
-                MenuEvent::Deactivate => self.active = false,
+                MenuEvent::Deactivate => {
+                    self.active = false;
+                    self.input = None;
+                }
                 MenuEvent::Edit(updated) => {
                     if !updated {
                         self.update_values(line_buffer, history, completer);
@@ -588,9 +614,113 @@ fn number_of_lines(entry: &str, max_lines: usize, terminal_columns: u16) -> u16 
     lines
 }
 
+fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &'a str) {
+    if old_string.is_empty() {
+        return (0, new_string);
+    }
+
+    let old_chars = old_string.chars().collect::<Vec<char>>();
+
+    let mut old_index = 0;
+    let mut start = None;
+    let mut end = None;
+    for (index, c) in new_string.chars().enumerate() {
+        let equal = if start.is_some() {
+            new_string[index..new_string.len()] == old_string[old_index..old_string.len()]
+        } else {
+            c == old_chars[old_index]
+        };
+
+        if equal {
+            old_index = (old_index + 1).min(old_string.len() - 1);
+
+            end = match (start, end) {
+                (Some(_), Some(_)) => end,
+                (Some(_), None) => Some(index),
+                _ => None,
+            }
+        } else {
+            start = match start {
+                Some(_) => start,
+                None => Some(index),
+            }
+        }
+    }
+
+    match (start, end) {
+        (Some(start), Some(end)) => (start, new_string[start..end].trim()),
+        (Some(start), None) => (start, new_string[start..new_string.len()].trim()),
+        (None, None) => (new_string.len(), ""),
+        (None, Some(_)) => unreachable!(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn string_difference_test() {
+        let new_string = "this is a new string";
+        let old_string = "this is a string";
+
+        let res = string_difference(new_string, old_string);
+        assert_eq!(res, (10, "new"));
+    }
+
+    #[test]
+    fn string_difference_new_larger() {
+        let new_string = "this is a new string";
+        let old_string = "this is";
+
+        let res = string_difference(new_string, old_string);
+        assert_eq!(res, (7, "a new string"));
+    }
+
+    #[test]
+    fn string_difference_longer_string() {
+        let new_string = "this is a new another";
+        let old_string = "this is a string";
+
+        let res = string_difference(new_string, old_string);
+        assert_eq!(res, (10, "new another"));
+    }
+
+    #[test]
+    fn string_difference_start_same() {
+        let new_string = "this is a new something string";
+        let old_string = "this is a string";
+
+        let res = string_difference(new_string, old_string);
+        assert_eq!(res, (10, "new something"));
+    }
+
+    #[test]
+    fn string_difference_empty_old() {
+        let new_string = "this new another";
+        let old_string = "";
+
+        let res = string_difference(new_string, old_string);
+        assert_eq!(res, (0, "this new another"));
+    }
+
+    #[test]
+    fn string_difference_very_difference() {
+        let new_string = "this new another";
+        let old_string = "complete different string";
+
+        let res = string_difference(new_string, old_string);
+        assert_eq!(res, (0, "this new another"));
+    }
+
+    #[test]
+    fn string_difference_both_equal() {
+        let new_string = "this new another";
+        let old_string = "this new another";
+
+        let res = string_difference(new_string, old_string);
+        assert_eq!(res, (16, ""));
+    }
 
     #[test]
     fn number_of_lines_test() {
