@@ -1039,7 +1039,13 @@ impl Reedline {
     /// Parses the ! command to replace entries from the history
     fn parse_bang_command(&mut self) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
-        let (string, index) = parse_selection_char(buffer, &'!');
+        let (remainder, index) = parse_selection_char(buffer, &'!');
+
+        if let Some(last) = remainder.chars().last() {
+            if last != ' ' {
+                return None;
+            }
+        }
 
         if let Some((_, indicator)) = &index {
             if &buffer.trim() != indicator {
@@ -1053,12 +1059,12 @@ impl Reedline {
                     .iter_chronologic()
                     .rev()
                     .next()
-                    .map(|history| (string.len(), indicator.len(), history.clone()))
+                    .map(|history| (remainder.len(), indicator.len(), history.clone()))
             } else {
                 self.history
                     .iter_chronologic()
                     .nth(index)
-                    .map(|history| (string.len(), indicator.len(), history.clone()))
+                    .map(|history| (remainder.len(), indicator.len(), history.clone()))
             }
         });
 
