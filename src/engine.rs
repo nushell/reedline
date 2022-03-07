@@ -111,9 +111,6 @@ pub struct Reedline {
 
     // Engine Menus
     menus: Vec<Box<dyn Menu>>,
-
-    // Keeps track if a history entry was introduced using the ! (bang) command
-    replaced_history: bool,
 }
 
 impl Drop for Reedline {
@@ -152,7 +149,6 @@ impl Reedline {
             animate: false,
             use_ansi_coloring: true,
             menus: Vec::new(),
-            replaced_history: false,
         };
 
         Ok(reedline)
@@ -727,13 +723,9 @@ impl Reedline {
                     }
                 }
 
-                if let Some(event) = self.replace_history_with_bang() {
-                    if !self.replaced_history {
-                        self.replaced_history = true;
-                        return self.handle_editor_event(prompt, event);
-                    }
+                if let Some(event) = self.parse_bang_command() {
+                    return self.handle_editor_event(prompt, event);
                 }
-                self.replaced_history = false;
 
                 let buffer = self.editor.get_buffer().to_string();
                 if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
@@ -776,15 +768,10 @@ impl Reedline {
                     }
 
                     if self.editor.line_buffer().get_buffer().is_empty() {
-                        self.replaced_history = false;
                         menu.menu_event(MenuEvent::Deactivate);
                     } else {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
                     }
-                }
-
-                if self.editor.line_buffer().get_buffer().is_empty() {
-                    self.replaced_history = false;
                 }
 
                 Ok(EventStatus::Handled)
@@ -1049,10 +1036,16 @@ impl Reedline {
         }
     }
 
-    /// Insert in the buffer a history input where the bang character is found
-    fn replace_history_with_bang(&mut self) -> Option<ReedlineEvent> {
+    /// Parses the ! command to replace entries from the history
+    fn parse_bang_command(&mut self) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
         let (string, index) = parse_selection_char(buffer, &'!');
+
+        if let Some((_, indicator)) = &index {
+            if &buffer.trim() != indicator {
+                return None;
+            }
+        }
 
         let history_result = index.and_then(|(index, indicator)| {
             if indicator == "!!" {
@@ -1084,7 +1077,7 @@ impl Reedline {
     /// Repaint logic for the history reverse search
     ///
     /// Overwrites the prompt indicator and highlights the search string
-    /// separately from the result bufer.
+    /// separately from the result buffer.
     fn history_search_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
         let navigation = self.history.get_navigation();
 
