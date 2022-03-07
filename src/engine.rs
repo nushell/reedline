@@ -1047,12 +1047,6 @@ impl Reedline {
             }
         }
 
-        if let Some((_, indicator)) = &index {
-            if &buffer.trim() != indicator {
-                return None;
-            }
-        }
-
         let history_result = index.and_then(|(index, indicator)| {
             if indicator == "!!" {
                 self.history
