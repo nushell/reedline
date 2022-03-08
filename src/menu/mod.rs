@@ -188,7 +188,12 @@ fn find_common_string(values: &[(Span, String)]) -> (Option<&(Span, String)>, Op
                 first_string
                     .chars()
                     .zip(value.chars())
-                    .position(|(lhs, rhs)| lhs != rhs)
+                    .position(|(mut lhs, mut rhs)| {
+                        lhs.make_ascii_lowercase();
+                        rhs.make_ascii_lowercase();
+
+                        lhs != rhs
+                    })
                     .map(|new_index| match index {
                         Some(index) => {
                             if index <= new_index {

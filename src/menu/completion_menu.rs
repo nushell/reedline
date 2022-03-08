@@ -367,8 +367,14 @@ impl Menu for CompletionMenu {
             if !matching.is_empty() {
                 line_buffer.replace(span.start..span.end, matching);
 
-                let mut offset = line_buffer.offset();
-                offset += matching.len() - (span.end - span.start);
+                let offset = if matching.len() < (span.end - span.start) {
+                    line_buffer
+                        .offset()
+                        .saturating_sub((span.end - span.start) - matching.len())
+                } else {
+                    line_buffer.offset() + matching.len() - (span.end - span.start)
+                };
+
                 line_buffer.set_insertion_point(offset);
 
                 // The values need to be updated because the spans need to be
