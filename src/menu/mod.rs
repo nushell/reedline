@@ -22,6 +22,7 @@ impl Default for MenuTextStyle {
 }
 
 /// Defines all possible events that could happen with a menu.
+#[derive(Clone)]
 pub enum MenuEvent {
     /// Activation event for the menu. When the bool is true it means that the values
     /// have already being updated. This is true when the option `quick_completions` is true

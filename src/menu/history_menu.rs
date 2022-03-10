@@ -30,7 +30,6 @@ impl<'a> Sum<&'a Page> for Page {
 }
 
 /// Struct to store the menu style
-
 /// Context menu definition
 pub struct HistoryMenu {
     /// Menu coloring
@@ -64,8 +63,6 @@ pub struct HistoryMenu {
     page: usize,
     /// Event sent to the menu
     event: Option<MenuEvent>,
-    /// Menu in edit mode
-    in_edit: bool,
     /// String collected after the menu is activated
     input: Option<String>,
 }
@@ -86,7 +83,6 @@ impl Default for HistoryMenu {
             multiline_marker: ":::".to_string(),
             pages: Vec::new(),
             event: None,
-            in_edit: false,
             input: None,
         }
     }
@@ -346,7 +342,6 @@ impl Menu for HistoryMenu {
     fn menu_event(&mut self, event: MenuEvent) {
         match &event {
             MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Edit(_) => self.in_edit = true,
             MenuEvent::Deactivate => {
                 self.active = false;
                 self.input = None;
@@ -374,9 +369,10 @@ impl Menu for HistoryMenu {
 
         // If there are no row selector and the menu has an Edit event, this clears
         // the position together with the pages vector
-        if self.in_edit && row.is_none() {
-            self.reset_position();
-            self.in_edit = false;
+        if let Some(MenuEvent::Edit(_)) = self.event {
+            if row.is_none() {
+                self.reset_position();
+            }
         }
 
         let values = if query.is_empty() {
@@ -446,7 +442,7 @@ impl Menu for HistoryMenu {
         completer: &dyn Completer,
         painter: &Painter,
     ) {
-        if let Some(event) = self.event.take() {
+        if let Some(event) = self.event.clone() {
             match event {
                 MenuEvent::Activate(updated) => {
                     self.reset_position();
@@ -464,7 +460,6 @@ impl Menu for HistoryMenu {
                 MenuEvent::Deactivate => {
                     self.active = false;
                     self.input = None;
-                    self.event = None;
                 }
                 MenuEvent::Edit(updated) => {
                     if !updated {
@@ -539,6 +534,8 @@ impl Menu for HistoryMenu {
                     self.update_values(line_buffer, history, completer);
                 }
             }
+
+            self.event = None;
         }
     }
 
