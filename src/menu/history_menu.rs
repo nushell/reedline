@@ -74,7 +74,7 @@ impl Default for HistoryMenu {
     fn default() -> Self {
         Self {
             color: MenuTextStyle::default(),
-            page_size: 10,
+            page_size: 2,
             selection_char: '!',
             active: false,
             values: Vec::new(),
@@ -193,7 +193,6 @@ impl HistoryMenu {
     fn reset_position(&mut self) {
         self.page = 0;
         self.row_position = 0;
-        self.pages = Vec::new();
     }
 
     fn printable_entries(&self, painter: &Painter) -> usize {
@@ -346,7 +345,7 @@ impl Menu for HistoryMenu {
     fn menu_event(&mut self, event: MenuEvent) {
         match &event {
             MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Edit(_) => self.in_edit = true,
+            //MenuEvent::Edit(_) => self.in_edit = true,
             MenuEvent::Deactivate => {
                 self.active = false;
                 self.input = None;
@@ -374,8 +373,11 @@ impl Menu for HistoryMenu {
 
         // If there are no row selector and the menu has an Edit event, this clears
         // the position together with the pages vector
+        println!("{} - {:?}", self.in_edit, row);
         if self.in_edit && row.is_none() {
             self.reset_position();
+            self.pages = Vec::new();
+            self.event = None;
             self.in_edit = false;
         }
 
@@ -415,6 +417,7 @@ impl Menu for HistoryMenu {
                 return &self.values;
             }
 
+            println!("{} - {:?}", self.page, self.pages);
             let start = self.pages.iter().take(self.page).sum::<Page>().size;
 
             let end: usize = if self.page >= self.pages.len() {
@@ -467,6 +470,7 @@ impl Menu for HistoryMenu {
                     self.event = None;
                 }
                 MenuEvent::Edit(updated) => {
+                    self.in_edit = true;
                     if !updated {
                         self.update_values(line_buffer, history, completer);
                     }
