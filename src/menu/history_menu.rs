@@ -460,7 +460,6 @@ impl Menu for HistoryMenu {
                 MenuEvent::Deactivate => {
                     self.active = false;
                     self.input = None;
-                    self.event = None;
                 }
                 MenuEvent::Edit(updated) => {
                     if !updated {
