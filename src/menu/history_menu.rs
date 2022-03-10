@@ -194,7 +194,6 @@ impl HistoryMenu {
         self.page = 0;
         self.row_position = 0;
         self.pages = Vec::new();
-        self.event = None;
     }
 
     fn printable_entries(&self, painter: &Painter) -> usize {
@@ -367,7 +366,7 @@ impl Menu for HistoryMenu {
     ) {
         let (start, input) = match &self.input {
             Some(old_string) => string_difference(line_buffer.get_buffer(), old_string),
-            None => (0, ""),
+            None => (line_buffer.get_insertion_point(), ""),
         };
 
         let (query, row) = parse_selection_char(input, &self.selection_char);
@@ -391,12 +390,6 @@ impl Menu for HistoryMenu {
         self.values = values
             .into_iter()
             .map(|s| {
-                let start = if start == line_buffer.len() {
-                    line_buffer.get_insertion_point()
-                } else {
-                    start
-                };
-
                 (
                     Span {
                         start,
@@ -456,7 +449,6 @@ impl Menu for HistoryMenu {
         if let Some(event) = self.event.take() {
             match event {
                 MenuEvent::Activate(updated) => {
-                    self.active = true;
                     self.reset_position();
                     self.input = Some(line_buffer.get_buffer().to_string());
 
@@ -472,6 +464,7 @@ impl Menu for HistoryMenu {
                 MenuEvent::Deactivate => {
                     self.active = false;
                     self.input = None;
+                    self.event = None;
                 }
                 MenuEvent::Edit(updated) => {
                     if !updated {
@@ -637,7 +630,14 @@ fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &'a s
         (0, None, None),
         |(old_index, start, end), (index, c)| {
             let equal = if start.is_some() {
-                new_string[index..new_string.len()] == old_string[old_index..old_string.len()]
+                if (old_string.len() - old_index) != (new_string.len() - index) {
+                    false
+                } else {
+                    let new_iter = new_string.chars().skip(index);
+                    let old_iter = old_string.chars().skip(old_index);
+
+                    new_iter.zip(old_iter).all(|(new, old)| new == old)
+                }
             } else {
                 c == old_chars[old_index]
             };
@@ -694,6 +694,15 @@ mod tests {
     }
 
     #[test]
+    fn string_difference_new_shorter() {
+        let new_string = "this is the";
+        let old_string = "this is the original";
+
+        let res = string_difference(new_string, old_string);
+        assert_eq!(res, (11, ""));
+    }
+
+    #[test]
     fn string_difference_longer_string() {
         let new_string = "this is a new another";
         let old_string = "this is a string";
@@ -736,6 +745,15 @@ mod tests {
 
         let res = string_difference(new_string, old_string);
         assert_eq!(res, (16, ""));
+    }
+
+    #[test]
+    fn string_difference_with_non_ansi() {
+        let new_string = "let b = ñ ";
+        let old_string = "let a =";
+
+        let res = string_difference(new_string, old_string);
+        assert_eq!(res, (4, "b = ñ "));
     }
 
     #[test]
