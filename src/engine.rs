@@ -1,3 +1,5 @@
+use crate::menu::IndexDirection;
+
 use {
     crate::{
         completion::{CircularCompletionHandler, Completer, DefaultCompleter},
@@ -1039,28 +1041,31 @@ impl Reedline {
     /// Parses the ! command to replace entries from the history
     fn parse_bang_command(&mut self) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
-        let (remainder, index) = parse_selection_char(buffer, &'!');
+        let parsed = parse_selection_char(buffer, &'!');
 
-        if let Some(last) = remainder.chars().last() {
+        if let Some(last) = parsed.remainder.chars().last() {
             if last != ' ' {
                 return None;
             }
         }
 
-        let history_result = index.and_then(|(index, indicator)| {
-            if indicator == "!!" {
-                self.history
-                    .iter_chronologic()
-                    .rev()
-                    .next()
-                    .map(|history| (remainder.len(), indicator.len(), history.clone()))
-            } else {
-                self.history
-                    .iter_chronologic()
-                    .nth(index)
-                    .map(|history| (remainder.len(), indicator.len(), history.clone()))
-            }
-        });
+        let history_result = parsed
+            .index
+            .zip(parsed.marker)
+            .and_then(|(index, indicator)| {
+                if matches!(parsed.direction, IndexDirection::Backward) {
+                    self.history
+                        .iter_chronologic()
+                        .rev()
+                        .nth(index.saturating_sub(1))
+                        .map(|history| (parsed.remainder.len(), indicator.len(), history.clone()))
+                } else {
+                    self.history
+                        .iter_chronologic()
+                        .nth(index)
+                        .map(|history| (parsed.remainder.len(), indicator.len(), history.clone()))
+                }
+            });
 
         if let Some((start, size, history)) = history_result {
             let edits = vec![

@@ -118,6 +118,18 @@ pub trait Menu: Send {
     fn get_values(&self) -> &[(Span, String)];
 }
 
+pub(crate) enum IndexDirection {
+    Forward,
+    Backward,
+}
+
+pub(crate) struct ParseResult<'buffer> {
+    pub remainder: &'buffer str,
+    pub index: Option<usize>,
+    pub marker: Option<&'buffer str>,
+    pub direction: IndexDirection,
+}
+
 /// Splits a string that contains a marker character
 /// e.g: this is an example!10
 ///     returns:
@@ -126,44 +138,72 @@ pub trait Menu: Send {
 pub(crate) fn parse_selection_char<'buffer>(
     buffer: &'buffer str,
     marker: &char,
-) -> (&'buffer str, Option<(usize, &'buffer str)>) {
+) -> ParseResult<'buffer> {
     if buffer.is_empty() {
-        return (buffer, None);
+        return ParseResult {
+            remainder: buffer,
+            index: None,
+            marker: None,
+            direction: IndexDirection::Forward,
+        };
     }
 
     let mut input = buffer.chars().peekable();
 
+    fn is_valid_char(c: &char) -> bool {
+        c.is_ascii_digit() || c == &'-'
+    }
+
     let mut index = 0;
+    let mut direction = IndexDirection::Forward;
     while let Some(char) = input.next() {
         if &char == marker {
             match input.peek() {
                 Some(x) if x == marker => {
-                    return (&buffer[0..index], Some((0, &buffer[index..index + 2])));
+                    return ParseResult {
+                        remainder: &buffer[0..index],
+                        index: Some(0),
+                        marker: Some(&buffer[index..index + 2]),
+                        direction: IndexDirection::Backward,
+                    }
                 }
-                Some(x) if x.is_ascii_digit() => {
+                Some(x) if is_valid_char(x) => {
                     let mut count: usize = 0;
                     let mut size: usize = 1;
                     while let Some(&c) = input.peek() {
-                        if c.is_ascii_digit() {
+                        if c == '-' {
+                            let _ = input.next();
+                            size += 1;
+                            direction = IndexDirection::Backward;
+                        } else if c.is_ascii_digit() {
                             let c = c.to_digit(10).expect("already checked if is a digit");
                             let _ = input.next();
                             count *= 10;
                             count += c as usize;
                             size += 1;
                         } else {
-                            return (
-                                &buffer[0..index],
-                                Some((count, &buffer[index..index + size])),
-                            );
+                            return ParseResult {
+                                remainder: &buffer[0..index],
+                                index: Some(count),
+                                marker: Some(&buffer[index..index + size]),
+                                direction,
+                            };
                         }
                     }
-                    return (
-                        &buffer[0..index],
-                        Some((count, &buffer[index..index + size])),
-                    );
+                    return ParseResult {
+                        remainder: &buffer[0..index],
+                        index: Some(count),
+                        marker: Some(&buffer[index..index + size]),
+                        direction,
+                    };
                 }
                 None => {
-                    return (&buffer[0..index], Some((0, &buffer[index..buffer.len()])));
+                    return ParseResult {
+                        remainder: &buffer[0..index],
+                        index: Some(0),
+                        marker: Some(&buffer[index..buffer.len()]),
+                        direction,
+                    }
                 }
                 _ => {
                     index += 1;
@@ -174,7 +214,12 @@ pub(crate) fn parse_selection_char<'buffer>(
         index += 1
     }
 
-    (buffer, None)
+    ParseResult {
+        remainder: buffer,
+        index: None,
+        marker: None,
+        direction,
+    }
 }
 
 /// Finds common string in a list of values
@@ -219,72 +264,92 @@ mod tests {
     #[test]
     fn parse_row_test() {
         let input = "search:6";
-        let (res, row) = parse_selection_char(input, &':');
+        let res = parse_selection_char(input, &':');
 
-        assert_eq!(res, "search");
-        assert_eq!(row, Some((6, ":6")))
+        assert_eq!(res.remainder, "search");
+        assert_eq!(res.index, Some(6));
+        assert_eq!(res.marker, Some(":6"));
     }
 
     #[test]
     fn parse_double_char() {
         let input = "search!!";
-        let (res, row) = parse_selection_char(input, &'!');
+        let res = parse_selection_char(input, &'!');
 
-        assert_eq!(res, "search");
-        assert_eq!(row, Some((0, "!!")))
+        assert_eq!(res.remainder, "search");
+        assert_eq!(res.index, Some(0));
+        assert_eq!(res.marker, Some("!!"));
+        assert!(matches!(res.direction, IndexDirection::Backward));
     }
 
     #[test]
     fn parse_row_other_marker_test() {
         let input = "search?9";
-        let (res, row) = parse_selection_char(input, &'?');
+        let res = parse_selection_char(input, &'?');
 
-        assert_eq!(res, "search");
-        assert_eq!(row, Some((9, "?9")))
+        assert_eq!(res.remainder, "search");
+        assert_eq!(res.index, Some(9));
+        assert_eq!(res.marker, Some("?9"));
     }
 
     #[test]
     fn parse_row_double_test() {
         let input = "ls | where:16";
-        let (res, row) = parse_selection_char(input, &':');
+        let res = parse_selection_char(input, &':');
 
-        assert_eq!(res, "ls | where");
-        assert_eq!(row, Some((16, ":16")))
+        assert_eq!(res.remainder, "ls | where");
+        assert_eq!(res.index, Some(16));
+        assert_eq!(res.marker, Some(":16"));
     }
 
     #[test]
     fn parse_row_empty_test() {
         let input = ":10";
-        let (res, row) = parse_selection_char(input, &':');
+        let res = parse_selection_char(input, &':');
 
-        assert_eq!(res, "");
-        assert_eq!(row, Some((10, ":10")))
+        assert_eq!(res.remainder, "");
+        assert_eq!(res.index, Some(10));
+        assert_eq!(res.marker, Some(":10"));
     }
 
     #[test]
     fn parse_row_fake_indicator_test() {
         let input = "let a: another :10";
-        let (res, row) = parse_selection_char(input, &':');
+        let res = parse_selection_char(input, &':');
 
-        assert_eq!(res, "let a: another ");
-        assert_eq!(row, Some((10, ":10")))
+        assert_eq!(res.remainder, "let a: another ");
+        assert_eq!(res.index, Some(10));
+        assert_eq!(res.marker, Some(":10"));
     }
 
     #[test]
     fn parse_row_no_number_test() {
         let input = "let a: another:";
-        let (res, row) = parse_selection_char(input, &':');
+        let res = parse_selection_char(input, &':');
 
-        assert_eq!(res, "let a: another");
-        assert_eq!(row, Some((0, ":")))
+        assert_eq!(res.remainder, "let a: another");
+        assert_eq!(res.index, Some(0));
+        assert_eq!(res.marker, Some(":"));
     }
 
     #[test]
     fn parse_empty_buffer_test() {
         let input = "";
-        let (res, row) = parse_selection_char(input, &':');
+        let res = parse_selection_char(input, &':');
 
-        assert_eq!(res, "");
-        assert_eq!(row, None)
+        assert_eq!(res.remainder, "");
+        assert_eq!(res.index, None);
+        assert_eq!(res.marker, None);
+    }
+
+    #[test]
+    fn parse_negative_direction() {
+        let input = "!-2";
+        let res = parse_selection_char(input, &'!');
+
+        assert_eq!(res.remainder, "");
+        assert_eq!(res.index, Some(2));
+        assert_eq!(res.marker, Some("!-2"));
+        assert!(matches!(res.direction, IndexDirection::Backward));
     }
 }
