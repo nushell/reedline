@@ -125,8 +125,8 @@ impl HistoryMenu {
         self
     }
 
-    fn update_row_pos(&mut self, new_pos: Option<(usize, &str)>) {
-        if let (Some((row, _)), Some(page)) = (new_pos, self.pages.get(self.page)) {
+    fn update_row_pos(&mut self, new_pos: Option<usize>) {
+        if let (Some(row), Some(page)) = (new_pos, self.pages.get(self.page)) {
             let values_before_page = self.pages.iter().take(self.page).sum::<Page>().size;
             let row = row.saturating_sub(values_before_page);
             if row < page.size {
@@ -364,23 +364,21 @@ impl Menu for HistoryMenu {
             None => (line_buffer.get_insertion_point(), ""),
         };
 
-        let (query, row) = parse_selection_char(input, &self.selection_char);
-        self.update_row_pos(row);
+        let parsed = parse_selection_char(input, &self.selection_char);
+        self.update_row_pos(parsed.index);
 
         // If there are no row selector and the menu has an Edit event, this clears
         // the position together with the pages vector
-        if let Some(MenuEvent::Edit(_)) = self.event {
-            if row.is_none() {
-                self.reset_position();
-            }
+        if matches!(self.event, Some(MenuEvent::Edit(_))) && parsed.index.is_none() {
+            self.reset_position();
         }
 
-        let values = if query.is_empty() {
+        let values = if parsed.remainder.is_empty() {
             self.history_size = Some(history.max_values());
             self.create_values_no_query(history)
         } else {
             self.history_size = None;
-            history.query_entries(query)
+            history.query_entries(parsed.remainder)
         };
 
         self.values = values
