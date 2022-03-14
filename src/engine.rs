@@ -719,7 +719,7 @@ impl Reedline {
                 if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
                     self.hide_hints = true;
                     // Additional repaint to show the content without hints etc.
-                    self.repaint(prompt, false)?;
+                    self.repaint(prompt, encode)?;
                     self.history.append(self.editor.get_buffer());
                     self.run_edit_commands(&[EditCommand::Clear]);
                     self.editor.reset_undo_stack();
