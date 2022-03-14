@@ -328,10 +328,10 @@ impl Reedline {
     /// Returns a [`crossterm::Result`] in which the `Err` type is [`crossterm::ErrorKind`]
     /// to distinguish I/O errors and the `Ok` variant wraps a [`Signal`] which
     /// handles user inputs.
-    pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    pub fn read_line(&mut self, prompt: &dyn Prompt, encode: bool) -> Result<Signal> {
         terminal::enable_raw_mode()?;
 
-        let result = self.read_line_helper(prompt);
+        let result = self.read_line_helper(prompt, encode);
 
         terminal::disable_raw_mode()?;
 
@@ -353,7 +353,7 @@ impl Reedline {
 
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
-    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    fn read_line_helper(&mut self, prompt: &dyn Prompt, encode: bool) -> Result<Signal> {
         self.painter.initialize_prompt_position()?;
         self.hide_hints = false;
 
@@ -376,7 +376,9 @@ impl Reedline {
                         Event::Resize(x, y) => {
                             latest_resize = Some((x, y));
                         }
-                        enter @ Event::Key(KeyEvent {
+                        enter
+                        @
+                        Event::Key(KeyEvent {
                             code: KeyCode::Enter,
                             modifiers: KeyModifiers::NONE,
                         }) => {
@@ -390,7 +392,6 @@ impl Reedline {
                             break;
                         }
                         x => {
-                           
                             crossterm_events.push(x);
                         }
                     }
@@ -438,8 +439,10 @@ impl Reedline {
                     }
                     EventStatus::Handled => {
                         if !paste_enter_state {
-                            println!("*");
-                            //self.repaint(prompt)?;
+                            if encode {
+                                println!("*");
+                            }
+                            self.repaint(prompt)?;
                         }
                     }
                     EventStatus::Inapplicable => {
