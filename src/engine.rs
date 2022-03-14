@@ -390,6 +390,7 @@ impl Reedline {
                             break;
                         }
                         x => {
+                            self.repaint(prompt)?;
                             crossterm_events.push(x);
                         }
                     }
