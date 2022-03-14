@@ -357,7 +357,7 @@ impl Reedline {
         self.painter.initialize_prompt_position()?;
         self.hide_hints = false;
 
-        self.repaint(prompt)?;
+        self.repaint(prompt, encode)?;
 
         let mut crossterm_events: Vec<Event> = vec![];
         let mut reedline_events: Vec<ReedlineEvent> = vec![];
@@ -439,11 +439,7 @@ impl Reedline {
                     }
                     EventStatus::Handled => {
                         if !paste_enter_state {
-                            if encode {
-                                println!("{:?}",&prompt);
-                                self.repaint(prompt)?;
-                            }
-                            self.repaint(prompt)?;
+                            self.repaint(prompt, encode)?;
                         }
                     }
                     EventStatus::Inapplicable => {
@@ -713,7 +709,7 @@ impl Reedline {
                 if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
                     self.hide_hints = true;
                     // Additional repaint to show the content without hints etc.
-                    self.repaint(prompt)?;
+                    self.repaint(prompt, false)?;
                     self.history.append(self.editor.get_buffer());
                     self.run_edit_commands(&[EditCommand::Clear]);
                     self.editor.reset_undo_stack();
@@ -1003,12 +999,12 @@ impl Reedline {
     }
 
     /// Repaint of either the buffer or the parts for reverse history search
-    fn repaint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
+    fn repaint(&mut self, prompt: &dyn Prompt, decode: bool) -> io::Result<()> {
         // Repainting
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)
         } else {
-            self.buffer_paint(prompt)
+            self.buffer_paint(prompt, decode)
         }
     }
 
@@ -1058,13 +1054,21 @@ impl Reedline {
     /// Triggers a full repaint including the prompt parts
     ///
     /// Includes the highlighting and hinting calls.
-    fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+    fn buffer_paint(&mut self, prompt: &dyn Prompt, encode: bool) -> Result<()> {
         let cursor_position_in_buffer = self.editor.offset();
         let buffer_to_paint = self.editor.get_buffer();
-
+        let encode_buffer = if encode {
+            let mut str_decode = String::new();
+            for _ in 0..buffer_to_paint.to_string().len() {
+                str_decode.push('*');
+            }
+            str_decode
+        } else {
+            buffer_to_paint.to_string()
+        };
         let (before_cursor, after_cursor) = self
             .highlighter
-            .highlight(buffer_to_paint, cursor_position_in_buffer)
+            .highlight(&encode_buffer, cursor_position_in_buffer)
             .render_around_insertion_point(
                 cursor_position_in_buffer,
                 prompt.render_prompt_multiline_indicator().borrow(),
@@ -1073,7 +1077,7 @@ impl Reedline {
 
         let hint: String = if self.hints_active() {
             self.hinter.handle(
-                buffer_to_paint,
+                &encode_buffer,
                 cursor_position_in_buffer,
                 self.history.as_ref(),
                 self.use_ansi_coloring,
