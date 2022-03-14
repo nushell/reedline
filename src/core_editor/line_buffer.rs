@@ -3,35 +3,11 @@ use {
     unicode_segmentation::UnicodeSegmentation,
 };
 
-/// Cursor coordinates relative to the Unicode representation of [`LineBuffer`]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct InsertionPoint {
-    offset: usize,
-}
-
-impl InsertionPoint {
-    pub fn new() -> Self {
-        Self { offset: 0 }
-    }
-}
-
-impl Default for InsertionPoint {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// In memory representation of the entered line(s) including a cursor position to facilitate cursor based editing.
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct LineBuffer {
     lines: String,
-    insertion_point: InsertionPoint,
-}
-
-impl Default for LineBuffer {
-    fn default() -> Self {
-        Self::new()
-    }
+    insertion_point: usize,
 }
 
 impl From<&str> for LineBuffer {
@@ -45,10 +21,7 @@ impl From<&str> for LineBuffer {
 impl LineBuffer {
     /// Create a line buffer instance
     pub fn new() -> LineBuffer {
-        LineBuffer {
-            lines: String::new(),
-            insertion_point: InsertionPoint::new(),
-        }
+        Self::default()
     }
 
     /// Replaces the content between [`start`..`end`] with `text`
@@ -63,26 +36,26 @@ impl LineBuffer {
 
     /// Check if the line buffer is valid utf-8 and the cursor sits on a valid grapheme boundary
     pub fn is_valid(&self) -> bool {
-        self.lines.is_char_boundary(self.offset())
+        self.lines.is_char_boundary(self.insertion_point())
             && (self
                 .lines
                 .grapheme_indices(true)
-                .any(|(i, _)| i == self.offset())
-                || self.offset() == self.lines.len())
+                .any(|(i, _)| i == self.insertion_point())
+                || self.insertion_point() == self.lines.len())
             && std::str::from_utf8(self.lines.as_bytes()).is_ok()
     }
 
     #[cfg(test)]
     fn assert_valid(&self) {
         assert!(
-            self.lines.is_char_boundary(self.offset()),
+            self.lines.is_char_boundary(self.insertion_point()),
             "Not on valid char boundary"
         );
         assert!(
             self.lines
                 .grapheme_indices(true)
-                .any(|(i, _)| i == self.offset())
-                || self.offset() == self.lines.len(),
+                .any(|(i, _)| i == self.insertion_point())
+                || self.insertion_point() == self.lines.len(),
             "Not on valid grapheme"
         );
         assert!(
@@ -92,23 +65,13 @@ impl LineBuffer {
     }
 
     /// Gets the current edit position
-    pub fn offset(&self) -> usize {
-        self.insertion_point.offset
-    }
-
-    /// Return cursor
-    fn insertion_point(&self) -> InsertionPoint {
+    pub fn insertion_point(&self) -> usize {
         self.insertion_point
     }
 
     /// Sets the current edit position
     pub fn set_insertion_point(&mut self, offset: usize) {
-        self.insertion_point = InsertionPoint { offset };
-    }
-
-    /// Gets the offset of the current insertion point
-    pub fn get_insertion_point(&self) -> usize {
-        self.insertion_point.offset
+        self.insertion_point = offset;
     }
 
     /// Output the current line in the multiline buffer
@@ -118,15 +81,15 @@ impl LineBuffer {
 
     /// Set to a single line of `buffer` and reset the `InsertionPoint` cursor to the end
     pub fn set_buffer(&mut self, buffer: String) {
-        let offset = buffer.len();
         self.lines = buffer;
-        self.insertion_point = InsertionPoint { offset };
+        self.insertion_point = self.lines.len();
     }
 
     /// Calculates the current the user is on
+    ///
+    /// Zero-based index
     pub fn line(&self) -> usize {
-        let offset = self.insertion_point.offset;
-        self.lines[..offset].matches('\n').count()
+        self.lines[..self.insertion_point].matches('\n').count()
     }
 
     /// Counts the number of lines in the buffer
@@ -141,12 +104,12 @@ impl LineBuffer {
 
     /// Reset the insertion point to the start of the buffer
     pub fn move_to_start(&mut self) {
-        self.insertion_point = InsertionPoint::new();
+        self.insertion_point = 0;
     }
 
     /// Move the cursor before the first character of the line
     pub fn move_to_line_start(&mut self) {
-        self.insertion_point.offset = self.lines[..self.insertion_point.offset]
+        self.insertion_point = self.lines[..self.insertion_point]
             .rfind('\n')
             .map_or(0, |offset| offset + 1);
         // str is guaranteed to be utf8, thus \n is safe to assume 1 byte long
@@ -157,12 +120,12 @@ impl LineBuffer {
     /// Insertion will append to the line.
     /// Cursor on top of the potential `\n` or `\r` of `\r\n`
     pub fn move_to_line_end(&mut self) {
-        self.insertion_point.offset = self.find_current_line_end();
+        self.insertion_point = self.find_current_line_end();
     }
 
     /// Set the insertion point *behind* the last character.
     pub fn move_to_end(&mut self) {
-        self.insertion_point.offset = self.lines.len();
+        self.insertion_point = self.lines.len();
     }
 
     /// Get the length of the buffer
@@ -176,33 +139,31 @@ impl LineBuffer {
     /// - end of buffer (`len()`)
     /// - `\n` or `\r\n` (on the first byte)
     pub fn find_current_line_end(&self) -> usize {
-        self.lines[self.insertion_point.offset..]
-            .find('\n')
-            .map_or_else(
-                || self.lines.len(),
-                |i| {
-                    let absolute_index = i + self.insertion_point.offset;
-                    if absolute_index > 0 && self.lines.as_bytes()[absolute_index - 1] == b'\r' {
-                        absolute_index - 1
-                    } else {
-                        absolute_index
-                    }
-                },
-            )
+        self.lines[self.insertion_point..].find('\n').map_or_else(
+            || self.lines.len(),
+            |i| {
+                let absolute_index = i + self.insertion_point;
+                if absolute_index > 0 && self.lines.as_bytes()[absolute_index - 1] == b'\r' {
+                    absolute_index - 1
+                } else {
+                    absolute_index
+                }
+            },
+        )
     }
 
     /// Cursor position *behind* the next unicode grapheme to the right
     pub fn grapheme_right_index(&self) -> usize {
-        self.lines[self.insertion_point.offset..]
+        self.lines[self.insertion_point..]
             .grapheme_indices(true)
             .nth(1)
-            .map(|(i, _)| self.insertion_point.offset + i)
+            .map(|(i, _)| self.insertion_point + i)
             .unwrap_or_else(|| self.lines.len())
     }
 
     /// Cursor position *in front of* the next unicode grapheme to the left
     pub fn grapheme_left_index(&self) -> usize {
-        self.lines[..self.insertion_point.offset]
+        self.lines[..self.insertion_point]
             .grapheme_indices(true)
             .last()
             .map(|(i, _)| i)
@@ -211,16 +172,16 @@ impl LineBuffer {
 
     /// Cursor position *behind* the next word to the right
     pub fn word_right_index(&self) -> usize {
-        self.lines[self.insertion_point.offset..]
+        self.lines[self.insertion_point..]
             .split_word_bound_indices()
             .find(|(_, word)| !is_word_boundary(word))
-            .map(|(i, word)| self.insertion_point.offset + i + word.len())
+            .map(|(i, word)| self.insertion_point + i + word.len())
             .unwrap_or_else(|| self.lines.len())
     }
 
     /// Cursor position *in front of* the next word to the left
     pub fn word_left_index(&self) -> usize {
-        self.lines[..self.insertion_point.offset]
+        self.lines[..self.insertion_point]
             .split_word_bound_indices()
             .filter(|(_, word)| !is_word_boundary(word))
             .last()
@@ -230,28 +191,27 @@ impl LineBuffer {
 
     /// Move cursor position *behind* the next unicode grapheme to the right
     pub fn move_right(&mut self) {
-        self.insertion_point.offset = self.grapheme_right_index();
+        self.insertion_point = self.grapheme_right_index();
     }
 
     /// Move cursor position *in front of* the next unicode grapheme to the left
     pub fn move_left(&mut self) {
-        self.insertion_point.offset = self.grapheme_left_index();
+        self.insertion_point = self.grapheme_left_index();
     }
 
     /// Move cursor position *in front of* the next word to the left
     pub fn move_word_left(&mut self) {
-        self.insertion_point.offset = self.word_left_index();
+        self.insertion_point = self.word_left_index();
     }
 
     /// Move cursor position *behind* the next word to the right
     pub fn move_word_right(&mut self) {
-        self.insertion_point.offset = self.word_right_index();
+        self.insertion_point = self.word_right_index();
     }
 
     ///Insert a single character at the insertion point and move right
     pub fn insert_char(&mut self, c: char) {
-        let pos = self.insertion_point();
-        self.lines.insert(pos.offset, c);
+        self.lines.insert(self.insertion_point, c);
         self.move_right();
     }
 
@@ -262,33 +222,33 @@ impl LineBuffer {
     /// ## Unicode safety:
     /// Does not validate the incoming string or the current cursor position
     pub fn insert_str(&mut self, string: &str) {
-        self.lines.insert_str(self.offset(), string);
-        self.insertion_point.offset = self.offset() + string.len();
+        self.lines.insert_str(self.insertion_point(), string);
+        self.insertion_point = self.insertion_point() + string.len();
     }
 
     /// Empty buffer and reset cursor
     pub fn clear(&mut self) {
         self.lines = String::new();
-        self.insertion_point = InsertionPoint::new();
+        self.insertion_point = 0;
     }
 
     /// Clear everything beginning at the cursor to the right/end.
     /// Keeps the cursor at the end.
     pub fn clear_to_end(&mut self) {
-        self.lines.truncate(self.insertion_point.offset);
+        self.lines.truncate(self.insertion_point);
     }
 
     /// Clear beginning at the cursor up to the end of the line.
     /// Newline character at the end remains.
     pub fn clear_to_line_end(&mut self) {
-        self.clear_range(self.insertion_point.offset..self.find_current_line_end());
+        self.clear_range(self.insertion_point..self.find_current_line_end());
     }
 
     /// Clear from the start of the buffer to the cursor.
     /// Keeps the cursor at the beginning of the line/buffer.
     pub fn clear_to_insertion_point(&mut self) {
-        self.clear_range(..self.insertion_point.offset);
-        self.insertion_point.offset = 0;
+        self.clear_range(..self.insertion_point);
+        self.insertion_point = 0;
     }
 
     /// Clear text covered by `range` in the current line
@@ -313,7 +273,7 @@ impl LineBuffer {
 
     /// Checks to see if the current edit position is pointing to whitespace
     pub fn on_whitespace(&self) -> bool {
-        self.lines[self.insertion_point.offset..]
+        self.lines[self.insertion_point..]
             .chars()
             .next()
             .map(char::is_whitespace)
@@ -339,12 +299,12 @@ impl LineBuffer {
     /// extending beyond the potential carriage return and line feed characters
     /// terminating the line
     pub fn current_line_range(&self) -> Range<usize> {
-        let left_index = self.lines[..self.insertion_point.offset]
+        let left_index = self.lines[..self.insertion_point]
             .rfind('\n')
             .map_or(0, |offset| offset + 1);
-        let right_index = self.lines[self.insertion_point.offset..]
+        let right_index = self.lines[self.insertion_point..]
             .find('\n')
-            .map_or_else(|| self.lines.len(), |i| i + self.insertion_point.offset + 1);
+            .map_or_else(|| self.lines.len(), |i| i + self.insertion_point + 1);
 
         left_index..right_index
     }
@@ -378,7 +338,7 @@ impl LineBuffer {
             self.move_word_right();
             self.move_word_left();
         }
-        let insertion_offset = self.insertion_point().offset;
+        let insertion_offset = self.insertion_point();
         let right_index = self.grapheme_right_index();
 
         if right_index > insertion_offset {
@@ -392,17 +352,17 @@ impl LineBuffer {
     /// Deletes on grapheme to the left
     pub fn delete_left_grapheme(&mut self) {
         let left_index = self.grapheme_left_index();
-        let insertion_offset = self.insertion_point().offset;
+        let insertion_offset = self.insertion_point();
         if left_index < insertion_offset {
             self.clear_range(left_index..insertion_offset);
-            self.insertion_point.offset = left_index;
+            self.insertion_point = left_index;
         }
     }
 
     /// Deletes one grapheme to the right
     pub fn delete_right_grapheme(&mut self) {
         let right_index = self.grapheme_right_index();
-        let insertion_offset = self.insertion_point().offset;
+        let insertion_offset = self.insertion_point();
         if right_index > insertion_offset {
             self.clear_range(insertion_offset..right_index);
         }
@@ -411,14 +371,14 @@ impl LineBuffer {
     /// Deletes one word to the left
     pub fn delete_word_left(&mut self) {
         let left_word_index = self.word_left_index();
-        self.clear_range(left_word_index..self.insertion_point().offset);
-        self.insertion_point.offset = left_word_index;
+        self.clear_range(left_word_index..self.insertion_point());
+        self.insertion_point = left_word_index;
     }
 
     /// Deletes one word to the right
     pub fn delete_word_right(&mut self) {
         let right_word_index = self.word_right_index();
-        self.clear_range(self.insertion_point().offset..right_word_index);
+        self.clear_range(self.insertion_point()..right_word_index);
     }
 
     /// Swaps current word with word on right
@@ -439,7 +399,7 @@ impl LineBuffer {
 
     /// Swaps current grapheme with grapheme on right
     pub fn swap_graphemes(&mut self) {
-        let initial_offset = self.insertion_point().offset;
+        let initial_offset = self.insertion_point();
 
         if initial_offset == 0 {
             self.move_right();
@@ -447,7 +407,7 @@ impl LineBuffer {
             self.move_left();
         }
 
-        let updated_offset = self.insertion_point().offset;
+        let updated_offset = self.insertion_point();
         let grapheme_1_start = self.grapheme_left_index();
         let grapheme_2_end = self.grapheme_right_index();
 
@@ -456,9 +416,9 @@ impl LineBuffer {
             let grapheme_2 = self.get_buffer()[updated_offset..grapheme_2_end].to_string();
             self.replace_range(updated_offset..grapheme_2_end, &grapheme_1);
             self.replace_range(grapheme_1_start..updated_offset, &grapheme_2);
-            self.insertion_point.offset = grapheme_2_end;
+            self.insertion_point = grapheme_2_end;
         } else {
-            self.insertion_point.offset = updated_offset;
+            self.insertion_point = updated_offset;
         }
     }
 
@@ -467,7 +427,7 @@ impl LineBuffer {
         if !self.is_cursor_at_first_line() {
             let old_range = self.current_line_range();
 
-            let grapheme_col = self.lines[old_range.start..self.offset()]
+            let grapheme_col = self.lines[old_range.start..self.insertion_point()]
                 .graphemes(true)
                 .count();
 
@@ -480,7 +440,7 @@ impl LineBuffer {
             let new_range = self.current_line_range();
             let new_line = &self.lines[new_range.clone()];
 
-            self.insertion_point.offset = new_line
+            self.insertion_point = new_line
                 .grapheme_indices(true)
                 .take(grapheme_col + 1)
                 .last()
@@ -493,7 +453,7 @@ impl LineBuffer {
         if !self.is_cursor_at_last_line() {
             let old_range = self.current_line_range();
 
-            let grapheme_col = self.lines[old_range.start..self.offset()]
+            let grapheme_col = self.lines[old_range.start..self.insertion_point()]
                 .graphemes(true)
                 .count();
 
@@ -506,7 +466,7 @@ impl LineBuffer {
             // Slightly different to move_line_up to account for the special
             // case of the last line without newline char at the end.
             // -> use `self.find_current_line_end()`
-            self.insertion_point.offset = new_line
+            self.insertion_point = new_line
                 .grapheme_indices(true)
                 .nth(grapheme_col)
                 .map_or_else(
@@ -518,12 +478,12 @@ impl LineBuffer {
 
     /// Checks to see if the cursor is on the first line of the buffer
     pub fn is_cursor_at_first_line(&self) -> bool {
-        !self.get_buffer()[0..self.offset()].contains('\n')
+        !self.get_buffer()[0..self.insertion_point()].contains('\n')
     }
 
     /// Checks to see if the cursor is on the last line of the buffer
     pub fn is_cursor_at_last_line(&self) -> bool {
-        !self.get_buffer()[self.offset()..].contains('\n')
+        !self.get_buffer()[self.insertion_point()..].contains('\n')
     }
 
     /// Finds index for the first occurrence of a char to the right of offset
@@ -541,9 +501,9 @@ impl LineBuffer {
     /// Finds index for the first occurrence of a char to the left of offset
     pub fn find_char_left(&self, c: char, current_line: bool) -> Option<usize> {
         let range = if current_line {
-            self.current_line_range().start..self.offset()
+            self.current_line_range().start..self.insertion_point()
         } else {
-            0..self.offset()
+            0..self.insertion_point()
         };
         self.lines[range.clone()].rfind(c).map(|i| i + range.start)
     }
@@ -551,67 +511,67 @@ impl LineBuffer {
     /// Moves the insertion point until the next char to the right
     pub fn move_right_until(&mut self, c: char, current_line: bool) -> usize {
         if let Some(index) = self.find_char_right(c, current_line) {
-            self.insertion_point.offset = index;
+            self.insertion_point = index;
         }
 
-        self.insertion_point.offset
+        self.insertion_point
     }
 
     /// Moves the insertion point before the next char to the right
     pub fn move_right_before(&mut self, c: char, current_line: bool) -> usize {
         if let Some(index) = self.find_char_right(c, current_line) {
-            self.insertion_point.offset = index;
-            self.insertion_point.offset = self.grapheme_left_index();
+            self.insertion_point = index;
+            self.insertion_point = self.grapheme_left_index();
         }
 
-        self.insertion_point.offset
+        self.insertion_point
     }
 
     /// Moves the insertion point until the next char to the left of offset
     pub fn move_left_until(&mut self, c: char, current_line: bool) -> usize {
         if let Some(index) = self.find_char_left(c, current_line) {
-            self.insertion_point.offset = index;
+            self.insertion_point = index;
         }
 
-        self.insertion_point.offset
+        self.insertion_point
     }
 
     /// Moves the insertion point before the next char to the left of offset
     pub fn move_left_before(&mut self, c: char, current_line: bool) -> usize {
         if let Some(index) = self.find_char_left(c, current_line) {
-            self.insertion_point.offset = index + c.len_utf8();
+            self.insertion_point = index + c.len_utf8();
         }
 
-        self.insertion_point.offset
+        self.insertion_point
     }
 
     /// Deletes until first character to the right of offset
     pub fn delete_right_until_char(&mut self, c: char, current_line: bool) {
         if let Some(index) = self.find_char_right(c, current_line) {
-            self.clear_range(self.offset()..index + c.len_utf8());
+            self.clear_range(self.insertion_point()..index + c.len_utf8());
         }
     }
 
     /// Deletes before first character to the right of offset
     pub fn delete_right_before_char(&mut self, c: char, current_line: bool) {
         if let Some(index) = self.find_char_right(c, current_line) {
-            self.clear_range(self.offset()..index);
+            self.clear_range(self.insertion_point()..index);
         }
     }
 
     /// Deletes until first character to the left of offset
     pub fn delete_left_until_char(&mut self, c: char, current_line: bool) {
         if let Some(index) = self.find_char_left(c, current_line) {
-            self.clear_range(index..self.offset());
-            self.insertion_point.offset = index;
+            self.clear_range(index..self.insertion_point());
+            self.insertion_point = index;
         }
     }
 
     /// Deletes before first character to the left of offset
     pub fn delete_left_before_char(&mut self, c: char, current_line: bool) {
         if let Some(index) = self.find_char_left(c, current_line) {
-            self.clear_range(index + c.len_utf8()..self.offset());
-            self.insertion_point.offset = index + c.len_utf8();
+            self.clear_range(index + c.len_utf8()..self.insertion_point());
+            self.insertion_point = index + c.len_utf8();
         }
     }
 }
@@ -656,7 +616,7 @@ mod test {
         let mut line_buffer = LineBuffer::new();
         line_buffer.insert_str("this is a command");
 
-        let expected_updated_insertion_point = InsertionPoint { offset: 17 };
+        let expected_updated_insertion_point = 17;
 
         assert_eq!(
             expected_updated_insertion_point,
@@ -670,7 +630,7 @@ mod test {
         let mut line_buffer = LineBuffer::new();
         line_buffer.insert_char('c');
 
-        let expected_updated_insertion_point = InsertionPoint { offset: 1 };
+        let expected_updated_insertion_point = 1;
 
         assert_eq!(
             expected_updated_insertion_point,
@@ -680,14 +640,14 @@ mod test {
     }
 
     #[rstest]
-    #[case("new string", InsertionPoint { offset: 10})]
-    #[case("new line1\nnew line 2", InsertionPoint { offset: 20})]
+    #[case("new string", 10)]
+    #[case("new line1\nnew line 2", 20)]
     fn set_buffer_updates_insertion_point_to_new_buffer_length(
         #[case] string_to_set: &str,
-        #[case] expected_insertion_point: InsertionPoint,
+        #[case] expected_insertion_point: usize,
     ) {
         let mut line_buffer = buffer_with("test string");
-        let before_operation_location = InsertionPoint { offset: 11 };
+        let before_operation_location = 11;
         assert_eq!(before_operation_location, line_buffer.insertion_point());
 
         line_buffer.set_buffer(string_to_set.to_string());
@@ -984,7 +944,7 @@ mod test {
 
         line_buffer.move_right_until(c, current_line);
 
-        assert_eq!(line_buffer.offset(), expected);
+        assert_eq!(line_buffer.insertion_point(), expected);
         line_buffer.assert_valid();
     }
 
@@ -1005,7 +965,7 @@ mod test {
 
         line_buffer.move_right_before(c, current_line);
 
-        assert_eq!(line_buffer.offset(), expected);
+        assert_eq!(line_buffer.insertion_point(), expected);
         line_buffer.assert_valid();
     }
 
@@ -1066,7 +1026,7 @@ mod test {
 
         line_buffer.move_left_until(c, current_line);
 
-        assert_eq!(line_buffer.offset(), expected);
+        assert_eq!(line_buffer.insertion_point(), expected);
         line_buffer.assert_valid();
     }
 
@@ -1086,7 +1046,7 @@ mod test {
 
         line_buffer.move_left_before(c, current_line);
 
-        assert_eq!(line_buffer.offset(), expected);
+        assert_eq!(line_buffer.insertion_point(), expected);
         line_buffer.assert_valid();
     }
 
@@ -1210,7 +1170,7 @@ mod test {
 
         line_buffer.move_to_line_end();
 
-        assert_eq!(line_buffer.offset(), expected);
+        assert_eq!(line_buffer.insertion_point(), expected);
         line_buffer.assert_valid();
     }
 
@@ -1233,7 +1193,7 @@ mod test {
 
         line_buffer.move_to_line_start();
 
-        assert_eq!(line_buffer.offset(), expected);
+        assert_eq!(line_buffer.insertion_point(), expected);
         line_buffer.assert_valid();
     }
 

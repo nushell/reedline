@@ -375,10 +375,10 @@ impl Menu for CompletionMenu {
 
                 let offset = if matching.len() < (span.end - span.start) {
                     line_buffer
-                        .offset()
+                        .insertion_point()
                         .saturating_sub((span.end - span.start) - matching.len())
                 } else {
-                    line_buffer.offset() + matching.len() - (span.end - span.start)
+                    line_buffer.insertion_point() + matching.len() - (span.end - span.start)
                 };
 
                 line_buffer.set_insertion_point(offset);
@@ -418,7 +418,7 @@ impl Menu for CompletionMenu {
         // Also, by replacing the new line character with a space, the insert
         // position is maintain in the line buffer.
         let trimmed_buffer = line_buffer.get_buffer().replace('\n', " ");
-        self.values = completer.complete(trimmed_buffer.as_str(), line_buffer.offset());
+        self.values = completer.complete(trimmed_buffer.as_str(), line_buffer.insertion_point());
         self.reset_position();
     }
 
@@ -500,7 +500,7 @@ impl Menu for CompletionMenu {
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
         if let Some((span, value)) = self.get_value() {
-            let mut offset = line_buffer.offset();
+            let mut offset = line_buffer.insertion_point();
             offset += value.len() - (span.end - span.start);
 
             line_buffer.replace(span.start..span.end, &value);

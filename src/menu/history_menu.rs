@@ -367,7 +367,7 @@ impl Menu for HistoryMenu {
     ) {
         let (start, input) = match &self.input {
             Some(old_string) => string_difference(line_buffer.get_buffer(), old_string),
-            None => (line_buffer.get_insertion_point(), ""),
+            None => (line_buffer.insertion_point(), ""),
         };
 
         let parsed = parse_selection_char(input, self.selection_char);
@@ -433,7 +433,7 @@ impl Menu for HistoryMenu {
         if let Some((span, value)) = self.get_value() {
             line_buffer.replace(span.start..span.end, &value);
 
-            let mut offset = line_buffer.offset();
+            let mut offset = line_buffer.insertion_point();
             offset += value.len() - (span.end - span.start);
             line_buffer.set_insertion_point(offset);
         }

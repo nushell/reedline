@@ -43,7 +43,10 @@ impl CircularCompletionHandler {
             *present_buffer = self.initial_line.clone();
         }
 
-        let completions = completer.complete(present_buffer.get_buffer(), present_buffer.offset());
+        let completions = completer.complete(
+            present_buffer.get_buffer(),
+            present_buffer.insertion_point(),
+        );
 
         if !completions.is_empty() {
             match self.index {
@@ -51,7 +54,7 @@ impl CircularCompletionHandler {
                     self.index += 1;
                     let span = completions[index].0;
 
-                    let mut offset = present_buffer.offset();
+                    let mut offset = present_buffer.insertion_point();
                     offset += completions[index].1.len() - (span.end - span.start);
 
                     // TODO improve the support for multiline replace
