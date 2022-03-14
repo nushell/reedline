@@ -28,7 +28,7 @@ Relevant features tested (leave open if you did not consider those areas touched
 - [ ] history
 - [ ] syntax highlighting
 - [ ] completion/hinting
-- vi mode *not yet implemented*
+- [ ] vi mode
 
 ### Info
 
@@ -44,7 +44,7 @@ Inside a [ ] ssh,[ ] tmux or [ ] screen session?
 
 - [ ] Typing of a short line containing both upper- and lowercase characters.
 - [ ] Movement left/right using the arrow keys
-- [ ] Word to the left with `Ctrl-b` and `Ctrl-Left`, Word to the right with `Ctrl-f`
+- [ ] Word to the left with `Ctrl-b` or `Ctrl-Left`, Word to the right with `Ctrl-f`
 - [ ] `Enter` to complete entry
 
 #### Clearing
@@ -61,11 +61,8 @@ Inside a [ ] ssh,[ ] tmux or [ ] screen session?
 
 ## History
 
-- [ ] Enter a unique entry you can remember.
 - [ ] On the empty line press the `up-arrow` key to see if you can recall the previous entry
 - [ ] Press `Enter` to execute this line (it should *not* be duplicated in the history, after checking leave history recall by `down-arrow`)
-- [ ] Leave the application with `Ctrl-d` on an empty line
-- [ ] After rerun you can get the last line back with `up-arrow`.
 - [ ] On an empty line start typing the beginning of a line in the history. Hit the `up-arrow` to find the matching entry.
 - [ ] After that run `Ctrl-r` to start traditional reverse search. Type your initial search. Can you find more hits by pressing `Ctrl-r` or `up-arrow`?
 - [ ] Abort this search by pressing `Ctrl-c`
@@ -80,4 +77,4 @@ Inside a [ ] ssh,[ ] tmux or [ ] screen session?
 
 ### VI mode
 
-**TODO:** *Not implemented yet*
+**TODO:** *define basic set to test*
