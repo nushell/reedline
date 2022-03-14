@@ -440,7 +440,8 @@ impl Reedline {
                     EventStatus::Handled => {
                         if !paste_enter_state {
                             if encode {
-                                println!("*");
+                                println!("{:?}",&prompt);
+                                self.repaint(prompt)?;
                             }
                             self.repaint(prompt)?;
                         }
