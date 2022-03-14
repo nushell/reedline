@@ -1,6 +1,10 @@
 use super::{Clipboard, ClipboardMode, LineBuffer};
 use crate::{core_editor::get_default_clipboard, EditCommand, UndoBehavior};
 
+/// Stateful editor executing changes to the underlying [`LineBuffer`]
+///
+/// In comparison to the state-less [`LineBuffer`] the `Editor` keeps track of
+/// the undo/redo history and has facilities for cut/copy/yank/paste
 pub struct Editor {
     line_buffer: LineBuffer,
     cut_buffer: Box<dyn Clipboard>,

@@ -21,7 +21,7 @@ impl Default for InsertionPoint {
     }
 }
 
-/// In memory representation of the entered line(s) to facilitate cursor based editing.
+/// In memory representation of the entered line(s) including a cursor position to facilitate cursor based editing.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct LineBuffer {
     lines: String,

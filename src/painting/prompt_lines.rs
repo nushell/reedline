@@ -2,7 +2,8 @@ use super::utils::{coerce_crlf, estimate_required_lines, line_width};
 use crate::{menu::Menu, prompt::PromptEditMode, Prompt, PromptHistorySearch};
 use std::borrow::Cow;
 
-pub struct PromptLines<'prompt> {
+/// Aggregate of prompt and input string used by `Painter`
+pub(crate) struct PromptLines<'prompt> {
     pub(crate) prompt_str_left: Cow<'prompt, str>,
     pub(crate) prompt_str_right: Cow<'prompt, str>,
     pub(crate) prompt_indicator: Cow<'prompt, str>,
