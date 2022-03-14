@@ -390,7 +390,7 @@ impl Reedline {
                             break;
                         }
                         x => {
-                            println!("{:?}",&x);
+                           
                             crossterm_events.push(x);
                         }
                     }
@@ -438,7 +438,8 @@ impl Reedline {
                     }
                     EventStatus::Handled => {
                         if !paste_enter_state {
-                            self.repaint(prompt)?;
+                            println!("*");
+                            //self.repaint(prompt)?;
                         }
                     }
                     EventStatus::Inapplicable => {
