@@ -116,11 +116,17 @@ pub trait Prompt: Send {
 
 impl Prompt for DefaultPrompt {
     fn render_prompt_left(&self) -> Cow<str> {
-        DefaultPrompt::render_prompt_left(self)
+        {
+            let left_prompt = get_working_dir().unwrap_or_else(|_| String::from("no path"));
+
+            Cow::Owned(left_prompt)
+        }
     }
 
     fn render_prompt_right(&self) -> Cow<str> {
-        DefaultPrompt::render_prompt_right(self)
+        {
+            Cow::Owned(get_now())
+        }
     }
 
     fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<str> {
@@ -130,9 +136,7 @@ impl Prompt for DefaultPrompt {
                 PromptViMode::Normal => DEFAULT_VI_NORMAL_PROMPT_INDICATOR.into(),
                 PromptViMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
             },
-            PromptEditMode::Custom(str) => {
-                DefaultPrompt::default_wrapped_custom_string(&str).into()
-            }
+            PromptEditMode::Custom(str) => format!("({})", str).into(),
         }
     }
 
@@ -171,20 +175,6 @@ impl DefaultPrompt {
     /// Constructor for the default prompt, which takes the amount of spaces required between the left and right-hand sides of the prompt
     pub fn new() -> DefaultPrompt {
         DefaultPrompt {}
-    }
-
-    fn render_prompt_left(&self) -> Cow<str> {
-        let left_prompt = get_working_dir().unwrap_or_else(|_| String::from("no path"));
-
-        Cow::Owned(left_prompt)
-    }
-
-    fn render_prompt_right(&self) -> Cow<str> {
-        Cow::Owned(get_now())
-    }
-
-    fn default_wrapped_custom_string(str: &str) -> String {
-        format!("({})", str)
     }
 }
 
