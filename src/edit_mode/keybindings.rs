@@ -38,6 +38,10 @@ impl Keybindings {
     }
 
     /// Adds a keybinding
+    ///
+    /// # Panics
+    ///
+    /// If `comamnd` is an empty [`ReedlineEvent::UntilFound`]
     pub fn add_binding(
         &mut self,
         modifier: KeyModifiers,

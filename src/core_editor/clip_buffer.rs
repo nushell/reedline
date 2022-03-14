@@ -13,10 +13,6 @@ pub trait Clipboard: Send {
     fn len(&mut self) -> usize {
         self.get().0.len()
     }
-
-    fn is_empty(&mut self) -> bool {
-        self.get().0.is_empty()
-    }
 }
 
 /// Determines how the content in the clipboard should be inserted
@@ -141,7 +137,7 @@ mod tests {
         assert_eq!(cb.len(), 4);
         assert_eq!(cb.get().0, "test".to_owned());
         cb.clear();
-        assert!(cb.is_empty());
+        assert_eq!(cb.get().0, String::new());
 
         // Restore!
 

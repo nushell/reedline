@@ -40,15 +40,15 @@ impl Hinter for DefaultHinter {
         history: &dyn History,
         use_ansi_coloring: bool,
     ) -> String {
-        if line.chars().count() < self.min_chars {
-            self.current_hint = String::new()
-        } else {
-            self.current_hint = history
+        self.current_hint = if line.chars().count() >= self.min_chars {
+            history
                 .iter_chronologic()
                 .rev()
                 .find(|entry| entry.starts_with(line))
-                .map_or_else(String::new, |entry| entry[line.len()..].to_string());
-        }
+                .map_or_else(String::new, |entry| entry[line.len()..].to_string())
+        } else {
+            String::new()
+        };
 
         if use_ansi_coloring && !self.current_hint.is_empty() {
             self.style.paint(&self.current_hint).to_string()
@@ -92,13 +92,15 @@ impl Default for DefaultHinter {
 
 impl DefaultHinter {
     /// A builder that sets the style applied to the hint as part of the buffer
-    pub fn with_style(mut self, style: Style) -> DefaultHinter {
+    #[must_use]
+    pub fn with_style(mut self, style: Style) -> Self {
         self.style = style;
         self
     }
 
     /// A builder that sets the number of characters that have to be present to enable history hints
-    pub fn with_min_chars(mut self, min_chars: usize) -> DefaultHinter {
+    #[must_use]
+    pub fn with_min_chars(mut self, min_chars: usize) -> Self {
         self.min_chars = min_chars;
         self
     }

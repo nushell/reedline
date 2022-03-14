@@ -78,7 +78,7 @@ pub trait Menu: Send {
 
     /// Updates the values presented in the menu
     /// This function needs to be defined in the trait because when the menu is
-    /// activated or the quick_completion option is true, the len of the values
+    /// activated or the `quick_completion` option is true, the len of the values
     /// is calculated to know if there is only one value so it can be selected
     /// immediately
     fn update_values(
@@ -135,10 +135,7 @@ pub(crate) struct ParseResult<'buffer> {
 ///     returns:
 ///         this is an example
 ///         (10, "!10") (index and index as string)
-pub(crate) fn parse_selection_char<'buffer>(
-    buffer: &'buffer str,
-    marker: &char,
-) -> ParseResult<'buffer> {
+pub(crate) fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
     if buffer.is_empty() {
         return ParseResult {
             remainder: buffer,
@@ -150,16 +147,12 @@ pub(crate) fn parse_selection_char<'buffer>(
 
     let mut input = buffer.chars().peekable();
 
-    fn is_valid_char(c: &char) -> bool {
-        c.is_ascii_digit() || c == &'-'
-    }
-
     let mut index = 0;
     let mut direction = IndexDirection::Forward;
     while let Some(char) = input.next() {
-        if &char == marker {
+        if char == marker {
             match input.peek() {
-                Some(x) if x == marker => {
+                Some(&x) if x == marker => {
                     return ParseResult {
                         remainder: &buffer[0..index],
                         index: Some(0),
@@ -167,7 +160,7 @@ pub(crate) fn parse_selection_char<'buffer>(
                         direction: IndexDirection::Backward,
                     }
                 }
-                Some(x) if is_valid_char(x) => {
+                Some(&x) if x.is_ascii_digit() || x == '-' => {
                     let mut count: usize = 0;
                     let mut size: usize = 1;
                     while let Some(&c) = input.peek() {
@@ -211,7 +204,7 @@ pub(crate) fn parse_selection_char<'buffer>(
                 }
             }
         }
-        index += 1
+        index += 1;
     }
 
     ParseResult {
@@ -264,7 +257,7 @@ mod tests {
     #[test]
     fn parse_row_test() {
         let input = "search:6";
-        let res = parse_selection_char(input, &':');
+        let res = parse_selection_char(input, ':');
 
         assert_eq!(res.remainder, "search");
         assert_eq!(res.index, Some(6));
@@ -274,7 +267,7 @@ mod tests {
     #[test]
     fn parse_double_char() {
         let input = "search!!";
-        let res = parse_selection_char(input, &'!');
+        let res = parse_selection_char(input, '!');
 
         assert_eq!(res.remainder, "search");
         assert_eq!(res.index, Some(0));
@@ -285,7 +278,7 @@ mod tests {
     #[test]
     fn parse_row_other_marker_test() {
         let input = "search?9";
-        let res = parse_selection_char(input, &'?');
+        let res = parse_selection_char(input, '?');
 
         assert_eq!(res.remainder, "search");
         assert_eq!(res.index, Some(9));
@@ -295,7 +288,7 @@ mod tests {
     #[test]
     fn parse_row_double_test() {
         let input = "ls | where:16";
-        let res = parse_selection_char(input, &':');
+        let res = parse_selection_char(input, ':');
 
         assert_eq!(res.remainder, "ls | where");
         assert_eq!(res.index, Some(16));
@@ -305,7 +298,7 @@ mod tests {
     #[test]
     fn parse_row_empty_test() {
         let input = ":10";
-        let res = parse_selection_char(input, &':');
+        let res = parse_selection_char(input, ':');
 
         assert_eq!(res.remainder, "");
         assert_eq!(res.index, Some(10));
@@ -315,7 +308,7 @@ mod tests {
     #[test]
     fn parse_row_fake_indicator_test() {
         let input = "let a: another :10";
-        let res = parse_selection_char(input, &':');
+        let res = parse_selection_char(input, ':');
 
         assert_eq!(res.remainder, "let a: another ");
         assert_eq!(res.index, Some(10));
@@ -325,7 +318,7 @@ mod tests {
     #[test]
     fn parse_row_no_number_test() {
         let input = "let a: another:";
-        let res = parse_selection_char(input, &':');
+        let res = parse_selection_char(input, ':');
 
         assert_eq!(res.remainder, "let a: another");
         assert_eq!(res.index, Some(0));
@@ -335,7 +328,7 @@ mod tests {
     #[test]
     fn parse_empty_buffer_test() {
         let input = "";
-        let res = parse_selection_char(input, &':');
+        let res = parse_selection_char(input, ':');
 
         assert_eq!(res.remainder, "");
         assert_eq!(res.index, None);
@@ -345,7 +338,7 @@ mod tests {
     #[test]
     fn parse_negative_direction() {
         let input = "!-2";
-        let res = parse_selection_char(input, &'!');
+        let res = parse_selection_char(input, '!');
 
         assert_eq!(res.remainder, "");
         assert_eq!(res.index, Some(2));

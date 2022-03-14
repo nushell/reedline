@@ -156,20 +156,20 @@ impl Editor {
     }
 
     pub fn move_to_start(&mut self) {
-        self.line_buffer.move_to_start()
+        self.line_buffer.move_to_start();
     }
 
     pub fn move_to_end(&mut self) {
-        self.line_buffer.move_to_end()
+        self.line_buffer.move_to_end();
     }
 
     #[allow(dead_code)]
     pub fn move_to_line_start(&mut self) {
-        self.line_buffer.move_to_line_start()
+        self.line_buffer.move_to_line_start();
     }
 
     pub fn move_to_line_end(&mut self) {
-        self.line_buffer.move_to_line_end()
+        self.line_buffer.move_to_line_end();
     }
 
     fn get_index_undo(&self) -> usize {

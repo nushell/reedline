@@ -119,7 +119,7 @@ impl Drop for Reedline {
     fn drop(&mut self) {
         // Ensures that the terminal is in a good state if we panic semigracefully
         // Calling `disable_raw_mode()` twice is fine with Linux
-        let _ = terminal::disable_raw_mode();
+        let _ignore = terminal::disable_raw_mode();
     }
 }
 
@@ -156,7 +156,7 @@ impl Reedline {
         Ok(reedline)
     }
 
-    /// A builder to include the hinter in your instance of the Reedline engine
+    /// A builder to include a [`Hinter`] in your instance of the Reedline engine
     /// # Example
     /// ```rust,no_run
     /// //Cargo.toml
@@ -174,7 +174,8 @@ impl Reedline {
     /// ));
     /// # Ok::<(), io::Error>(())
     /// ```
-    pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Reedline {
+    #[must_use]
+    pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Self {
         self.hinter = hinter;
         self
     }
@@ -198,35 +199,40 @@ impl Reedline {
     /// let mut line_editor = Reedline::create()?.with_completer(completer);
     /// # Ok::<(), io::Error>(())
     /// ```
-    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Reedline {
+    #[must_use]
+    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
         self.completer = completer;
         self
     }
 
     /// Turn on quick completions. These completions will auto-select if the completer
     /// ever narrows down to a single entry.
-    pub fn with_quick_completions(mut self, quick_completions: bool) -> Reedline {
+    #[must_use]
+    pub fn with_quick_completions(mut self, quick_completions: bool) -> Self {
         self.quick_completions = quick_completions;
         self
     }
 
     /// Turn on partial completions. These completions will fill the buffer with the
     /// smallest common string from all the options
-    pub fn with_partial_completions(mut self, partial_completions: bool) -> Reedline {
+    #[must_use]
+    pub fn with_partial_completions(mut self, partial_completions: bool) -> Self {
         self.partial_completions = partial_completions;
         self
     }
 
     /// A builder which enables or disables the use of ansi coloring in the prompt
     /// and in the command line syntax highlighting.
-    pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Reedline {
+    #[must_use]
+    pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
         self.use_ansi_coloring = use_ansi_coloring;
         self
     }
 
     /// A builder which enables or disables animations/automatic repainting of prompt.
     /// If `repaint` is true, every second the prompt will be repainted and the clock updates
-    pub fn with_animation(mut self, repaint: bool) -> Reedline {
+    #[must_use]
+    pub fn with_animation(mut self, repaint: bool) -> Self {
         self.animate = repaint;
         self
     }
@@ -249,7 +255,8 @@ impl Reedline {
     /// Reedline::create()?.with_highlighter(Box::new(ExampleHighlighter::new(commands)));
     /// # Ok::<(), io::Error>(())
     /// ```
-    pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Reedline {
+    #[must_use]
+    pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Self {
         self.highlighter = highlighter;
         self
     }
@@ -289,25 +296,29 @@ impl Reedline {
     /// Reedline::create()?.with_validator(Box::new(DefaultValidator));
     /// # Ok::<(), io::Error>(())
     /// ```
-    pub fn with_validator(mut self, validator: Box<dyn Validator>) -> Reedline {
+    #[must_use]
+    pub fn with_validator(mut self, validator: Box<dyn Validator>) -> Self {
         self.validator = validator;
         self
     }
 
     /// A builder which configures the edit mode for your instance of the Reedline engine
-    pub fn with_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Reedline {
+    #[must_use]
+    pub fn with_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
         self.edit_mode = edit_mode;
         self
     }
 
     /// A builder that appends a menu to the engine
-    pub fn with_menu(mut self, menu: Box<dyn Menu>) -> Reedline {
+    #[must_use]
+    pub fn with_menu(mut self, menu: Box<dyn Menu>) -> Self {
         self.menus.push(menu);
         self
     }
 
     /// A builder which configures the painter for debug mode
-    pub fn with_debug_mode(mut self) -> Reedline {
+    #[must_use]
+    pub fn with_debug_mode(mut self) -> Self {
         self.painter = Painter::new_with_debug(std::io::BufWriter::new(std::io::stderr()));
 
         self
@@ -1041,7 +1052,7 @@ impl Reedline {
     /// Parses the ! command to replace entries from the history
     fn parse_bang_command(&mut self) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
-        let parsed = parse_selection_char(buffer, &'!');
+        let parsed = parse_selection_char(buffer, '!');
 
         if let Some(last) = parsed.remainder.chars().last() {
             if last != ' ' {
@@ -1116,7 +1127,7 @@ impl Reedline {
             );
 
             self.painter
-                .repaint_buffer(prompt, lines, None, self.use_ansi_coloring)?;
+                .repaint_buffer(prompt, &lines, None, self.use_ansi_coloring)?;
         }
 
         Ok(())
@@ -1180,7 +1191,7 @@ impl Reedline {
             .map(|menu| menu.as_ref());
 
         self.painter
-            .repaint_buffer(prompt, lines, menu, self.use_ansi_coloring)
+            .repaint_buffer(prompt, &lines, menu, self.use_ansi_coloring)
     }
 }
 

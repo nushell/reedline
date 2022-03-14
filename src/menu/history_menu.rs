@@ -90,36 +90,42 @@ impl Default for HistoryMenu {
 
 impl HistoryMenu {
     /// Menu builder with new value for text style
+    #[must_use]
     pub fn with_text_style(mut self, text_style: Style) -> Self {
         self.color.text_style = text_style;
         self
     }
 
     /// Menu builder with new value for text style
+    #[must_use]
     pub fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
         self.color.selected_text_style = selected_text_style;
         self
     }
 
     /// Menu builder with page size
+    #[must_use]
     pub fn with_page_size(mut self, page_size: usize) -> Self {
         self.page_size = page_size;
         self
     }
 
     /// Menu builder with row char
+    #[must_use]
     pub fn with_selection_char(mut self, selection_char: char) -> Self {
         self.selection_char = selection_char;
         self
     }
 
     /// Menu builder with menu marker
+    #[must_use]
     pub fn with_marker(mut self, marker: String) -> Self {
         self.marker = marker;
         self
     }
 
     /// Menu builder with max entry lines
+    #[must_use]
     pub fn with_max_entry_lines(mut self, max_lines: u16) -> Self {
         self.max_lines = max_lines;
         self
@@ -130,7 +136,7 @@ impl HistoryMenu {
             let values_before_page = self.pages.iter().take(self.page).sum::<Page>().size;
             let row = row.saturating_sub(values_before_page);
             if row < page.size {
-                self.row_position = row as u16
+                self.row_position = row as u16;
             }
         }
     }
@@ -265,7 +271,7 @@ impl HistoryMenu {
     }
 
     /// End of line for menu
-    fn end_of_line(&self) -> &str {
+    fn end_of_line() -> &'static str {
         "\r\n"
     }
 
@@ -294,7 +300,7 @@ impl HistoryMenu {
                 &line,
                 RESET,
                 "",
-                self.end_of_line(),
+                Self::end_of_line(),
             )
         } else {
             // If no ansi coloring is found, then the selection word is
@@ -306,7 +312,7 @@ impl HistoryMenu {
             };
 
             // Final string with formatting
-            format!("{}{}", line_str, self.end_of_line())
+            format!("{}{}", line_str, Self::end_of_line())
         }
     }
 }
@@ -349,7 +355,7 @@ impl Menu for HistoryMenu {
             _ => {}
         }
 
-        self.event = Some(event)
+        self.event = Some(event);
     }
 
     /// Collecting the value from the history to be shown in the menu
@@ -364,7 +370,7 @@ impl Menu for HistoryMenu {
             None => (line_buffer.get_insertion_point(), ""),
         };
 
-        let parsed = parse_selection_char(input, &self.selection_char);
+        let parsed = parse_selection_char(input, self.selection_char);
         self.update_row_pos(parsed.index);
 
         // If there are no row selector and the menu has an Edit event, this clears
@@ -475,44 +481,44 @@ impl Menu for HistoryMenu {
                     if let Some(page) = self.pages.get(self.page) {
                         if new_pos >= page.size as u16 {
                             self.event = Some(MenuEvent::NextPage);
-                            self.update_working_details(line_buffer, history, completer, painter)
+                            self.update_working_details(line_buffer, history, completer, painter);
                         } else {
-                            self.row_position = new_pos
+                            self.row_position = new_pos;
                         }
                     }
                 }
                 MenuEvent::PreviousElement | MenuEvent::MoveUp | MenuEvent::MoveLeft => {
-                    match self.row_position.checked_sub(1) {
-                        Some(new_pos) => self.row_position = new_pos,
-                        None => {
-                            let page = match self.page.checked_sub(1) {
-                                Some(page) => self.pages.get(page),
-                                None => self.pages.get(self.pages.len().saturating_sub(1)),
-                            };
+                    if let Some(new_pos) = self.row_position.checked_sub(1) {
+                        self.row_position = new_pos;
+                    } else {
+                        let page = if let Some(page) = self.page.checked_sub(1) {
+                            self.pages.get(page)
+                        } else {
+                            self.pages.get(self.pages.len().saturating_sub(1))
+                        };
 
-                            if let Some(page) = page {
-                                self.row_position = page.size.saturating_sub(1) as u16
-                            }
-
-                            self.event = Some(MenuEvent::PreviousPage);
-                            self.update_working_details(line_buffer, history, completer, painter)
+                        if let Some(page) = page {
+                            self.row_position = page.size.saturating_sub(1) as u16;
                         }
+
+                        self.event = Some(MenuEvent::PreviousPage);
+                        self.update_working_details(line_buffer, history, completer, painter);
                     }
                 }
                 MenuEvent::NextPage => {
                     if self.values_until_current_page() <= self.total_values().saturating_sub(1) {
                         if let Some(page) = self.pages.get_mut(self.page) {
-                            if !page.full {
-                                page.size += self.page_size;
-                            } else {
+                            if page.full {
                                 self.row_position = 0;
                                 self.page += 1;
                                 if self.page >= self.pages.len() {
                                     self.pages.push(Page {
                                         size: self.page_size,
                                         full: false,
-                                    })
+                                    });
                                 }
+                            } else {
+                                page.size += self.page_size;
                             }
                         }
 
@@ -625,13 +631,13 @@ fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &'a s
         (0, None, None),
         |(old_index, start, end), (index, c)| {
             let equal = if start.is_some() {
-                if (old_string.len() - old_index) != (new_string.len() - index) {
-                    false
-                } else {
+                if (old_string.len() - old_index) == (new_string.len() - index) {
                     let new_iter = new_string.chars().skip(index);
                     let old_iter = old_string.chars().skip(old_index);
 
                     new_iter.zip(old_iter).all(|(new, old)| new == old)
+                } else {
+                    false
                 }
             } else {
                 c == old_chars[old_index]

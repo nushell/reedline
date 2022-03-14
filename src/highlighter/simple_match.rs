@@ -17,9 +17,9 @@ pub struct SimpleMatchHighlighter {
 impl Default for SimpleMatchHighlighter {
     fn default() -> Self {
         Self {
-            neutral_style: Default::default(),
+            neutral_style: Style::default(),
             match_style: Style::new().fg(Color::Green),
-            query: Default::default(),
+            query: String::default(),
         }
     }
 }
@@ -57,18 +57,21 @@ impl SimpleMatchHighlighter {
     }
 
     /// Update query string to match
+    #[must_use]
     pub fn with_query(mut self, query: String) -> Self {
         self.query = query;
         self
     }
 
     /// Set style for the matches found
+    #[must_use]
     pub fn with_match_style(mut self, match_style: Style) -> Self {
         self.match_style = match_style;
         self
     }
 
     /// Set style for the text that does not match the query
+    #[must_use]
     pub fn with_neutral_style(mut self, neutral_style: Style) -> Self {
         self.neutral_style = neutral_style;
         self
