@@ -218,7 +218,6 @@ pub struct Painter {
     terminal_size: (u16, u16),
     last_required_lines: u16,
     large_buffer: bool,
-    debug_mode: bool,
 }
 
 impl Painter {
@@ -229,18 +228,6 @@ impl Painter {
             terminal_size: (0, 0),
             last_required_lines: 0,
             large_buffer: false,
-            debug_mode: false,
-        }
-    }
-
-    pub fn new_with_debug(stdout: W) -> Self {
-        Painter {
-            stdout,
-            prompt_start_row: 0,
-            terminal_size: (0, 0),
-            last_required_lines: 0,
-            large_buffer: false,
-            debug_mode: true,
         }
     }
 
@@ -342,26 +329,6 @@ impl Painter {
         // The last_required_lines is used to move the cursor at the end where stdout
         // can print without overwriting the things written during the painting
         self.last_required_lines = required_lines;
-
-        // In debug mode a string with position information is printed at the end of the buffer
-        if self.debug_mode {
-            let cursor_distance = lines.distance_from_prompt(screen_width);
-            let prompt_lines = lines.prompt_lines_with_wrap(screen_width);
-            let prompt_length = lines.prompt_str_left.len() + lines.prompt_indicator.len();
-            let estimated_prompt = estimate_single_line_wraps(&lines.prompt_str_left, screen_width);
-
-            self.stdout
-                .queue(Print(format!(" [h{}:", screen_height)))?
-                .queue(Print(format!("w{}] ", screen_width)))?
-                .queue(Print(format!("y:{} ", self.prompt_start_row)))?
-                .queue(Print(format!("rm:{} ", remaining_lines)))?
-                .queue(Print(format!("re:{} ", required_lines)))?
-                .queue(Print(format!("di:{} ", cursor_distance)))?
-                .queue(Print(format!("pl:{} ", prompt_lines)))?
-                .queue(Print(format!("pr:{} ", prompt_length)))?
-                .queue(Print(format!("wr:{} ", estimated_prompt)))?
-                .queue(Print(format!("ls:{} ", self.last_required_lines)))?;
-        }
 
         self.stdout.queue(RestorePosition)?.queue(cursor::Show)?;
 

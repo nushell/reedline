@@ -21,7 +21,6 @@ use {
 fn main() -> Result<()> {
     // quick command like parameter handling
     let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
-    let debug_mode = matches!(std::env::args().nth(2), Some(x) if x == "--debug");
     let args: Vec<String> = std::env::args().collect();
     // if -k is passed, show the events
     if args.len() > 1 && args[1] == "-k" {
@@ -100,10 +99,6 @@ fn main() -> Result<()> {
     };
 
     line_editor = line_editor.with_edit_mode(edit_mode);
-
-    if debug_mode {
-        line_editor = line_editor.with_debug_mode();
-    }
 
     let prompt = DefaultPrompt::new();
 
