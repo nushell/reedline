@@ -10,7 +10,7 @@ use {
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         menu::{parse_selection_char, Menu, MenuEvent},
-        painter::{Painter, PromptLines},
+        painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         text_manipulation, DefaultValidator, EditCommand, ExampleHighlighter, Highlighter, Prompt,
         PromptHistorySearch, Signal, ValidationResult, Validator,

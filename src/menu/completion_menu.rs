@@ -1,5 +1,5 @@
 use super::{find_common_string, Menu, MenuEvent, MenuTextStyle};
-use crate::{painter::Painter, Completer, History, LineBuffer, Span};
+use crate::{painting::Painter, Completer, History, LineBuffer, Span};
 use nu_ansi_term::{ansi::RESET, Style};
 
 /// Default values used as reference for the menu. These values are set during

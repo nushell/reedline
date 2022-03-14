@@ -1,7 +1,7 @@
 mod example;
 mod simple_match;
 
-use crate::styled_text::StyledText;
+use crate::StyledText;
 
 pub use example::ExampleHighlighter;
 pub use simple_match::SimpleMatchHighlighter;
