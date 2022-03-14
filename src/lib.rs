@@ -180,8 +180,6 @@
 mod core_editor;
 pub use core_editor::LineBuffer;
 
-mod text_manipulation;
-
 mod enums;
 pub use enums::{EditCommand, ReedlineEvent, Signal, UndoBehavior};
 
@@ -221,8 +219,8 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 mod menu;
 pub use menu::{CompletionMenu, HistoryMenu, Menu, MenuEvent};
 
-mod internal;
-pub use internal::{
+mod utils;
+pub use utils::{
     get_reedline_default_keybindings, get_reedline_edit_commands,
     get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
     get_reedline_reedline_events,

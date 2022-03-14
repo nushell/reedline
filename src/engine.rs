@@ -1,4 +1,4 @@
-use crate::menu::IndexDirection;
+use crate::{menu::IndexDirection, utils::text_manipulation};
 
 use {
     crate::{
@@ -12,7 +12,7 @@ use {
         menu::{parse_selection_char, Menu, MenuEvent},
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
-        text_manipulation, DefaultValidator, EditCommand, ExampleHighlighter, Highlighter, Prompt,
+        DefaultValidator, EditCommand, ExampleHighlighter, Highlighter, Prompt,
         PromptHistorySearch, Signal, ValidationResult, Validator,
     },
     crossterm::{
