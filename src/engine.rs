@@ -431,7 +431,7 @@ impl Reedline {
             };
 
             for event in reedline_events.drain(..) {
-                match self.handle_event(prompt, event)? {
+                match self.handle_event(prompt, event, encode)? {
                     EventStatus::Exits(signal) => {
                         // Move the cursor below the input area, for external commands or new read_line call
                         self.painter.move_cursor_to_end()?;
@@ -450,11 +450,16 @@ impl Reedline {
         }
     }
 
-    fn handle_event(&mut self, prompt: &dyn Prompt, event: ReedlineEvent) -> Result<EventStatus> {
+    fn handle_event(
+        &mut self,
+        prompt: &dyn Prompt,
+        event: ReedlineEvent,
+        encode: bool,
+    ) -> Result<EventStatus> {
         if self.input_mode == InputMode::HistorySearch {
             self.handle_history_search_event(prompt, event)
         } else {
-            self.handle_editor_event(prompt, event)
+            self.handle_editor_event(prompt, event, encode)
         }
     }
 
@@ -555,6 +560,7 @@ impl Reedline {
         &mut self,
         prompt: &dyn Prompt,
         event: ReedlineEvent,
+        encode: bool,
     ) -> io::Result<EventStatus> {
         match event {
             ReedlineEvent::Menu(name) => {
@@ -570,7 +576,11 @@ impl Reedline {
                             );
 
                             if menu.get_values().len() == 1 {
-                                return self.handle_editor_event(prompt, ReedlineEvent::Enter);
+                                return self.handle_editor_event(
+                                    prompt,
+                                    ReedlineEvent::Enter,
+                                    encode,
+                                );
                             }
                         }
 
@@ -740,7 +750,7 @@ impl Reedline {
                             self.completer.as_ref(),
                         );
                         if menu.get_values().len() == 1 {
-                            return self.handle_editor_event(prompt, ReedlineEvent::Enter);
+                            return self.handle_editor_event(prompt, ReedlineEvent::Enter, encode);
                         }
                     }
                     menu.menu_event(MenuEvent::Edit(self.quick_completions));
@@ -791,7 +801,7 @@ impl Reedline {
             ReedlineEvent::Multiple(events) => {
                 let mut latest_signal = EventStatus::Inapplicable;
                 for event in events {
-                    match self.handle_editor_event(prompt, event)? {
+                    match self.handle_editor_event(prompt, event, encode)? {
                         EventStatus::Handled => {
                             latest_signal = EventStatus::Handled;
                         }
@@ -811,7 +821,7 @@ impl Reedline {
             }
             ReedlineEvent::UntilFound(events) => {
                 for event in events {
-                    match self.handle_editor_event(prompt, event)? {
+                    match self.handle_editor_event(prompt, event, encode)? {
                         EventStatus::Inapplicable => {
                             // Try again with the next event handler
                         }
