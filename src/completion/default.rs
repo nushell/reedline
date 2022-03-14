@@ -257,7 +257,8 @@ impl DefaultCompleter {
     /// changing this won't start completing on smaller words that
     /// were added in the past, nor will it exclude larger words
     /// already inserted into the completion tree.
-    pub fn set_min_word_len(mut self, len: usize) -> DefaultCompleter {
+    #[must_use]
+    pub fn set_min_word_len(mut self, len: usize) -> Self {
         self.min_word_len = len;
         self
     }

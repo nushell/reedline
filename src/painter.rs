@@ -203,7 +203,7 @@ fn coerce_crlf(input: &str) -> Cow<str> {
         }
     }
     if let Cow::Owned(_) = result {
-        result += &input[cursor..input.len()]
+        result += &input[cursor..input.len()];
     }
     result
 }
@@ -297,12 +297,12 @@ impl Painter {
     /// prompt should scroll up and how much space is required to print all the
     /// lines for the buffer
     ///
-    /// Note. The ScrollUp operation in crossterm deletes lines from the top of
+    /// Note. The `ScrollUp` operation in `crossterm` deletes lines from the top of
     /// the screen.
     pub fn repaint_buffer(
         &mut self,
         prompt: &dyn Prompt,
-        lines: PromptLines,
+        lines: &PromptLines,
         menu: Option<&dyn Menu>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
@@ -334,9 +334,9 @@ impl Painter {
             .queue(Clear(ClearType::FromCursorDown))?;
 
         if self.large_buffer {
-            self.print_large_buffer(prompt, &lines, menu, use_ansi_coloring)?
+            self.print_large_buffer(prompt, lines, menu, use_ansi_coloring)?;
         } else {
-            self.print_small_buffer(prompt, &lines, menu, use_ansi_coloring)?
+            self.print_small_buffer(prompt, lines, menu, use_ansi_coloring)?;
         }
 
         // The last_required_lines is used to move the cursor at the end where stdout

@@ -265,6 +265,6 @@ fn get_all_keybinding_info() {
         println!(
             "mode: {}, keymodifiers: {}, keycode: {}, event: {}",
             mode, modifier, code, event
-        )
+        );
     }
 }

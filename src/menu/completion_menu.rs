@@ -4,7 +4,7 @@ use nu_ansi_term::{ansi::RESET, Style};
 
 /// Default values used as reference for the menu. These values are set during
 /// the initial declaration of the menu and are always kept as reference for the
-/// changeable ColumnDetail
+/// changeable [`ColumnDetails`]
 struct DefaultColumnDetails {
     /// Number of columns that the menu will have
     pub columns: u16,
@@ -78,36 +78,42 @@ impl Default for CompletionMenu {
 
 impl CompletionMenu {
     /// Menu builder with new value for text style
+    #[must_use]
     pub fn with_text_style(mut self, text_style: Style) -> Self {
         self.color.text_style = text_style;
         self
     }
 
     /// Menu builder with new value for text style
+    #[must_use]
     pub fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
         self.color.selected_text_style = selected_text_style;
         self
     }
 
     /// Menu builder with new columns value
+    #[must_use]
     pub fn with_columns(mut self, columns: u16) -> Self {
         self.default_details.columns = columns;
         self
     }
 
     /// Menu builder with new column width value
+    #[must_use]
     pub fn with_column_width(mut self, col_width: Option<usize>) -> Self {
         self.default_details.col_width = col_width;
         self
     }
 
     /// Menu builder with new column width value
+    #[must_use]
     pub fn with_column_padding(mut self, col_padding: usize) -> Self {
         self.default_details.col_padding = col_padding;
         self
     }
 
     /// Menu builder with marker
+    #[must_use]
     pub fn with_marker(mut self, marker: String) -> Self {
         self.marker = marker;
         self
@@ -356,7 +362,7 @@ impl Menu for CompletionMenu {
         // If the values were already updated (e.g. quick completions are true)
         // there is no need to update the values from the menu
         if !values_updated {
-            self.update_values(line_buffer, history, completer)
+            self.update_values(line_buffer, history, completer);
         }
 
         let values = self.get_values();
@@ -396,7 +402,7 @@ impl Menu for CompletionMenu {
             self.active = true;
         }
 
-        self.event = Some(event)
+        self.event = Some(event);
     }
 
     /// Updates menu values
@@ -465,12 +471,11 @@ impl Menu for CompletionMenu {
 
             // If no default width is found, then the total screen width is used to estimate
             // the column width based on the default number of columns
-            let default_width = match self.default_details.col_width {
-                Some(col_width) => col_width,
-                None => {
-                    let col_width = painter.screen_width() / self.default_details.columns;
-                    col_width as usize
-                }
+            let default_width = if let Some(col_width) = self.default_details.col_width {
+                col_width
+            } else {
+                let col_width = painter.screen_width() / self.default_details.columns;
+                col_width as usize
             };
 
             // Adjusting the working width of the column based the max line width found
