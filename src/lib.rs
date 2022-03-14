@@ -195,7 +195,7 @@ pub use history::{FileBackedHistory, History, HistoryNavigationQuery, HISTORY_SI
 mod prompt;
 pub use prompt::{
     DefaultPrompt, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
-    PromptViMode, DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_INDICATOR,
+    PromptViMode,
 };
 
 mod edit_mode;
