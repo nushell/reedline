@@ -1129,7 +1129,7 @@ impl Reedline {
     ///
     /// Includes the highlighting and hinting calls.
     fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
-        let cursor_position_in_buffer = self.editor.offset();
+        let cursor_position_in_buffer = self.editor.insertion_point();
         let buffer_to_paint = self.editor.get_buffer();
 
         let (before_cursor, after_cursor) = self
