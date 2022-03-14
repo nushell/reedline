@@ -1,7 +1,7 @@
 mod completion_menu;
 mod history_menu;
 
-use crate::{painter::Painter, Completer, History, LineBuffer, Span};
+use crate::{painting::Painter, Completer, History, LineBuffer, Span};
 pub use completion_menu::CompletionMenu;
 pub use history_menu::HistoryMenu;
 use nu_ansi_term::{Color, Style};

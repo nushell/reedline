@@ -1,3 +1,4 @@
+use super::utils::strip_ansi;
 use nu_ansi_term::{Color, Style};
 
 /// A representation of a buffer with styling, used for doing syntax highlighting
@@ -84,16 +85,6 @@ impl StyledText {
     pub fn raw_string(&self) -> String {
         self.buffer.iter().map(|(_, str)| str.as_str()).collect()
     }
-}
-
-/// Returns string with the ANSI escape codes removed
-///
-/// If parsing fails silently returns the input string
-pub(crate) fn strip_ansi(string: &str) -> String {
-    strip_ansi_escapes::strip(string)
-        .map_err(|_| ())
-        .and_then(|x| String::from_utf8(x).map_err(|_| ()))
-        .unwrap_or_else(|_| string.to_owned())
 }
 
 fn render_as_string(

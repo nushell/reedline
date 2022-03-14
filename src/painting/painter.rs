@@ -1,157 +1,15 @@
+use super::utils::{coerce_crlf, line_width};
+
 use {
-    crate::{
-        menu::Menu, prompt::PromptEditMode, styled_text::strip_ansi, Prompt, PromptHistorySearch,
-    },
+    crate::{menu::Menu, painting::PromptLines, Prompt},
     crossterm::{
         cursor::{self, MoveTo, RestorePosition, SavePosition},
         style::{Print, ResetColor, SetForegroundColor},
         terminal::{self, Clear, ClearType, ScrollUp},
         QueueableCommand, Result,
     },
-    std::borrow::Cow,
     std::io::Write,
-    unicode_width::UnicodeWidthStr,
 };
-
-pub struct PromptLines<'prompt> {
-    prompt_str_left: Cow<'prompt, str>,
-    prompt_str_right: Cow<'prompt, str>,
-    prompt_indicator: Cow<'prompt, str>,
-    before_cursor: Cow<'prompt, str>,
-    after_cursor: Cow<'prompt, str>,
-    hint: Cow<'prompt, str>,
-}
-
-impl<'prompt> PromptLines<'prompt> {
-    /// Splits the strings before and after the cursor as well as the hint
-    /// This vector with the str are used to calculate how many lines are
-    /// required to print after the prompt
-    pub fn new(
-        prompt: &'prompt dyn Prompt,
-        prompt_mode: PromptEditMode,
-        history_indicator: Option<PromptHistorySearch>,
-        before_cursor: &'prompt str,
-        after_cursor: &'prompt str,
-        hint: &'prompt str,
-    ) -> Self {
-        let prompt_str_left = prompt.render_prompt_left();
-        let prompt_str_right = prompt.render_prompt_right();
-
-        let prompt_indicator = match history_indicator {
-            Some(prompt_search) => prompt.render_prompt_history_search_indicator(prompt_search),
-            None => prompt.render_prompt_indicator(prompt_mode),
-        };
-
-        let before_cursor = coerce_crlf(before_cursor);
-        let after_cursor = coerce_crlf(after_cursor);
-        let hint = coerce_crlf(hint);
-
-        Self {
-            prompt_str_left,
-            prompt_str_right,
-            prompt_indicator,
-            before_cursor,
-            after_cursor,
-            hint,
-        }
-    }
-
-    /// The required lines to paint the buffer are calculated by counting the
-    /// number of newlines in all the strings that form the prompt and buffer.
-    /// The plus 1 is to indicate that there should be at least one line.
-    fn required_lines(&self, terminal_columns: u16, menu: Option<&dyn Menu>) -> u16 {
-        let input = if menu.is_none() {
-            self.prompt_str_left.to_string()
-                + &self.prompt_indicator
-                + &self.before_cursor
-                + &self.after_cursor
-                + &self.hint
-        } else {
-            self.prompt_str_left.to_string()
-                + &self.prompt_indicator
-                + &self.before_cursor
-                + &self.after_cursor
-        };
-
-        let lines = estimate_required_lines(&input, terminal_columns);
-
-        if let Some(menu) = menu {
-            lines as u16 + menu.menu_required_lines(terminal_columns)
-        } else {
-            lines as u16
-        }
-    }
-
-    /// Estimated distance of the cursor to the prompt.
-    /// This considers line wrapping
-    fn distance_from_prompt(&self, terminal_columns: u16) -> u16 {
-        let input = self.prompt_str_left.to_string() + &self.prompt_indicator + &self.before_cursor;
-        let lines = estimate_required_lines(&input, terminal_columns);
-        lines.saturating_sub(1) as u16
-    }
-
-    /// Total lines that the prompt uses considering that it may wrap the screen
-    fn prompt_lines_with_wrap(&self, screen_width: u16) -> u16 {
-        let complete_prompt = self.prompt_str_left.to_string() + &self.prompt_indicator;
-        let lines = estimate_required_lines(&complete_prompt, screen_width);
-        lines.saturating_sub(1) as u16
-    }
-
-    /// Estimated width of the actual input
-    fn estimate_first_input_line_width(&self) -> u16 {
-        let last_line_left_prompt = self.prompt_str_left.lines().last();
-
-        let prompt_lines_total = self.before_cursor.to_string() + &self.after_cursor + &self.hint;
-        let prompt_lines_first = prompt_lines_total.lines().next();
-
-        let mut estimate = 0; // space in front of the input
-
-        if let Some(last_line_left_prompt) = last_line_left_prompt {
-            estimate += line_width(last_line_left_prompt);
-        }
-
-        estimate += line_width(&self.prompt_indicator);
-
-        if let Some(prompt_lines_first) = prompt_lines_first {
-            estimate += line_width(prompt_lines_first);
-        }
-
-        if estimate > u16::MAX as usize {
-            u16::MAX
-        } else {
-            estimate as u16
-        }
-    }
-}
-
-pub(crate) fn estimate_required_lines(input: &str, screen_width: u16) -> usize {
-    input.lines().fold(0, |acc, line| {
-        let wrap = estimate_single_line_wraps(line, screen_width);
-
-        acc + 1 + wrap
-    })
-}
-
-/// Reports the additional lines needed due to wrapping for the given line.
-///
-/// Does not account for any potential linebreaks in `line`
-///
-/// If `line` fits in `terminal_columns` returns 0
-pub(crate) fn estimate_single_line_wraps(line: &str, terminal_columns: u16) -> usize {
-    let estimated_width = line_width(line);
-    let terminal_columns: usize = terminal_columns.into();
-
-    // integer ceiling rounding division for positive divisors
-    let estimated_line_count = (estimated_width + terminal_columns - 1) / terminal_columns;
-
-    // Any wrapping will add to our overall line count
-    estimated_line_count.saturating_sub(1)
-}
-
-/// Compute the line width for ANSI escaped text
-fn line_width(line: &str) -> usize {
-    strip_ansi(line).width()
-}
 
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
@@ -179,33 +37,6 @@ fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
     };
 
     string[index..limit].trim_end_matches('\n')
-}
-
-fn coerce_crlf(input: &str) -> Cow<str> {
-    let mut result = Cow::Borrowed(input);
-    let mut cursor: usize = 0;
-    for (idx, _) in input.match_indices('\n') {
-        if !(idx > 0 && input.as_bytes()[idx - 1] == b'\r') {
-            if let Cow::Borrowed(_) = result {
-                // Best case 1 allocation, worst case 2 allocations
-                let mut owned = String::with_capacity(input.len() + 1);
-                // Optimization to avoid the `AddAssign for Cow<str>`
-                // optimization for `Cow<str>.is_empty` that would replace the
-                // preallocation
-                owned.push_str(&input[cursor..idx]);
-                result = Cow::Owned(owned);
-            } else {
-                result += &input[cursor..idx];
-            }
-            result += "\r\n";
-            // Advance beyond the matched LF char (single byte)
-            cursor = idx + 1;
-        }
-    }
-    if let Cow::Owned(_) = result {
-        result += &input[cursor..input.len()];
-    }
-    result
 }
 
 /// the type used by crossterm operations
@@ -594,7 +425,6 @@ impl Painter {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-    use rstest::rstest;
 
     #[test]
     fn test_skip_lines() {
@@ -645,24 +475,5 @@ mod tests {
 
         assert_eq!(skip_buffer_lines(string, 0, Some(0)), "sentence1",);
         assert_eq!(skip_buffer_lines(string, 1, Some(0)), "sentence2",);
-    }
-
-    #[rstest]
-    #[case("sentence\nsentence", "sentence\r\nsentence")]
-    #[case("sentence\r\nsentence", "sentence\r\nsentence")]
-    #[case("sentence\nsentence\n", "sentence\r\nsentence\r\n")]
-    #[case("😇\nsentence", "😇\r\nsentence")]
-    #[case("sentence\n😇", "sentence\r\n😇")]
-    #[case("\n", "\r\n")]
-    #[case("", "")]
-    fn test_coerce_crlf(#[case] input: &str, #[case] expected: &str) {
-        let result = coerce_crlf(input);
-
-        assert_eq!(result, expected);
-
-        assert!(
-            input != expected || matches!(result, Cow::Borrowed(_)),
-            "Unnecessary allocation"
-        )
     }
 }

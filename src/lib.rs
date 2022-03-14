@@ -185,7 +185,8 @@ mod text_manipulation;
 mod enums;
 pub use enums::{EditCommand, ReedlineEvent, Signal, UndoBehavior};
 
-mod painter;
+mod painting;
+pub use painting::StyledText;
 
 mod engine;
 pub use engine::Reedline;
@@ -207,9 +208,6 @@ pub use edit_mode::{
 
 mod highlighter;
 pub use highlighter::{ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
-
-mod styled_text;
-pub use styled_text::StyledText;
 
 mod completion;
 pub use completion::{Completer, DefaultCompleter, Span};

@@ -1,6 +1,6 @@
 use super::{parse_selection_char, Menu, MenuEvent, MenuTextStyle};
 use crate::{
-    painter::{estimate_single_line_wraps, Painter},
+    painting::{estimate_single_line_wraps, Painter},
     Completer, History, LineBuffer, Span,
 };
 use nu_ansi_term::{ansi::RESET, Style};
