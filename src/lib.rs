@@ -184,7 +184,7 @@ mod enums;
 pub use enums::{EditCommand, ReedlineEvent, Signal, UndoBehavior};
 
 mod painting;
-pub use painting::StyledText;
+pub use painting::{Painter, StyledText};
 
 mod engine;
 pub use engine::Reedline;

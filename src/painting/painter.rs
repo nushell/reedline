@@ -42,6 +42,7 @@ fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
 /// the type used by crossterm operations
 pub type W = std::io::BufWriter<std::io::Stderr>;
 
+/// Implementation of the output to the terminal
 pub struct Painter {
     // Stdout
     stdout: W,
@@ -52,7 +53,7 @@ pub struct Painter {
 }
 
 impl Painter {
-    pub fn new(stdout: W) -> Self {
+    pub(crate) fn new(stdout: W) -> Self {
         Painter {
             stdout,
             prompt_start_row: 0,
@@ -62,15 +63,17 @@ impl Painter {
         }
     }
 
-    pub(crate) fn screen_height(&self) -> u16 {
+    /// Height of the current terminal window
+    pub fn screen_height(&self) -> u16 {
         self.terminal_size.1
     }
 
-    pub(crate) fn screen_width(&self) -> u16 {
+    /// Width of the current terminal window
+    pub fn screen_width(&self) -> u16 {
         self.terminal_size.0
     }
 
-    pub fn remaining_lines(&self) -> u16 {
+    fn remaining_lines(&self) -> u16 {
         self.screen_height() - self.prompt_start_row
     }
 
@@ -117,7 +120,7 @@ impl Painter {
     ///
     /// Note. The `ScrollUp` operation in `crossterm` deletes lines from the top of
     /// the screen.
-    pub fn repaint_buffer(
+    pub(crate) fn repaint_buffer(
         &mut self,
         prompt: &dyn Prompt,
         lines: &PromptLines,
@@ -393,7 +396,7 @@ impl Painter {
 
     /// Clear the screen by printing enough whitespace to start the prompt or
     /// other output back at the first line of the terminal.
-    pub fn clear_screen(&mut self) -> Result<()> {
+    pub(crate) fn clear_screen(&mut self) -> Result<()> {
         self.stdout.queue(cursor::Hide)?;
         let (_, num_lines) = terminal::size()?;
         for _ in 0..2 * num_lines {
@@ -408,7 +411,7 @@ impl Painter {
     // The prompt is moved to the end of the buffer after the event was handled
     // If the prompt is in the middle of a multiline buffer, then the output to stdout
     // could overwrite the buffer writing
-    pub fn move_cursor_to_end(&mut self) -> Result<()> {
+    pub(crate) fn move_cursor_to_end(&mut self) -> Result<()> {
         let final_row = self.prompt_start_row + self.last_required_lines;
         let scroll = final_row.saturating_sub(self.screen_height() - 1);
         if scroll != 0 {
