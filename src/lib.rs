@@ -150,14 +150,14 @@
 //!
 //! ## Are we prompt yet? (Development status)
 //!
-//! Nushell has now all basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
+//! Nushell has now all the basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
 //! )
 //!
 //! - General editing functionality, that should feel familiar coming from other shells (e.g. bash, fish, zsh).
-//! - Configurable keybindings (Emacs style bindings and basic vi style).
+//! - Configurable keybindings (emacs-style bindings and basic vi-style).
 //! - Configurable prompt
-//! - Content aware syntax highlighting.
-//! - Autocompletion (With graphical selection menu or simple cycling in line).
+//! - Content-aware syntax highlighting.
+//! - Autocompletion (With graphical selection menu or simple cycling inline).
 //! - History with interactive search options (optionally persists to file, can support multilple sessions accessing the same file)
 //! - Fish-style history autosuggestion hints
 //! - Undo support.
@@ -166,14 +166,14 @@
 //!
 //! ### Areas for future improvements
 //!
-//! - [ ] Support for unicode beyond simple left-to-right scripts
+//! - [ ] Support for Unicode beyond simple left-to-right scripts
 //! - [ ] Easier keybinding configuration
 //! - [ ] Support for more advanced vi commands
 //! - [ ] Visual selection
 //! - [ ] Smooth experience if completion or prompt content takes long to compute
 //! - [ ] Support for a concurrent output stream from background tasks to be displayed, while the input prompt is active. ("Full duplex" mode)
 //!
-//! For more ideas checkout the [feature discussion](https://github.com/nushell/reedline/issues/63) or hop on the `#reedline` channel of the [nushell discord](https://discordapp.com/invite/NtAbbGn).
+//! For more ideas check out the [feature discussion](https://github.com/nushell/reedline/issues/63) or hop on the `#reedline` channel of the [nushell discord](https://discordapp.com/invite/NtAbbGn).
 //!
 //! ### Development history
 //!
