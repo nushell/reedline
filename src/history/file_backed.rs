@@ -737,7 +737,7 @@ mod tests {
         let num_threads = 16;
         let capacity = 2 * num_threads + 1;
 
-        let initial_entries = (0..capacity).map(|i| format!("initial {i}"));
+        let initial_entries = (0..capacity).map(|i| format!("initial {}", i));
 
         {
             let mut writing_hist =
