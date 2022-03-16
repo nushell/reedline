@@ -5,13 +5,30 @@
 [![docs.rs](https://img.shields.io/docsrs/reedline)](https://docs.rs/reedline/)
 [![CI status](https://github.com/nushell/reedline/actions/workflows/ci.yml/badge.svg)](https://github.com/nushell/reedline/actions)
 [![Discord](https://img.shields.io/discord/601130461678272522.svg?logo=discord)](https://discord.gg/NtAbbGn)
-[![Twitch Status](https://img.shields.io/twitch/status/jntrnr?style=social)](https://twitch.tv/jntrnr)
 
 ## Introduction
 
-Reedline is a project to create a readline-style crate for Rust that supports many of the modern conveniences of CLIs, including syntax highlighting, completions, multiline support, Unicode support, and more.
+Reedline is a project to create a line editor (like bash's `readline` or zsh's `zle`) that supports many of the modern conveniences of CLIs, including syntax highlighting, completions, multiline support, Unicode support, and more.
+It is currently primarily developed as the interactive editor for [nushell](https://github.com/nushell/nushell) (starting with `v0.60`) striving to provide a pleasant interactive experience.
+
+## Outline
+
+- [Examples](#examples)
+  - [Quickstart example](#basic-example)
+  - [Keybinding configuration example](#integrate-with-custom-keybindings)
+  - [History example](#integrate-with-history)
+  - [Syntax highlighting example](#integrate-with-custom-syntax-highlighter)
+  - [Interactive tab-completion example](#integrate-with-custom-tab-completion)
+  - [Fish-style history autosuggestions](#integrate-with-hinter-for-fish-style-history-autosuggestions)
+  - [Line validation example](#integrate-with-custom-line-completion-validator)
+  - [Vi-style edit mode example](#integrate-with-custom-edit-mode)
+- [Development status](#are-we-prompt-yet-development-status)
+- [Contributing](./CONTRIBUTING.md)
+- [Alternatives](#alternatives)
 
 ## Examples
+
+For the full documentation visit <https://docs.rs/reedline>. The examples should highlight how you enable the most important features or which traits can be implemented for language-specific behavior.
 
 ### Basic example
 
@@ -42,7 +59,7 @@ fn main() {
 }
 ```
 
-### Integrate with custom Keybindings
+### Integrate with custom keybindings
 
 ```rust,no_run
 // Configure reedline with custom keybindings
@@ -66,7 +83,7 @@ keybindings.add_binding(
 let mut line_editor = Reedline::create()?.with_keybindings(keybindings);
 ```
 
-## Integrate with custom History
+## Integrate with `History`
 
 ```rust,no_run
 // Create a reedline object with history support, including history size limits
@@ -82,7 +99,7 @@ let mut line_editor = Reedline::create()?
   .expect("Error configuring reedline with history");
 ```
 
-### Integrate with custom Highlighter
+### Integrate with custom syntax `Highlighter`
 
 ```rust,no_run
 // Create a reedline object with highlighter support
@@ -119,7 +136,7 @@ let completion_menu = Box::new(CompletionMenu::default());
 let mut line_editor = Reedline::create()?.with_completer(completer).with_menu(completion_menu);
 ```
 
-### Integrate with custom Hinter
+### Integrate with `Hinter` for fish-style history autosuggestions
 
 ```rust,no_run
 // Create a reedline object with in-line hint support
@@ -139,7 +156,7 @@ let mut line_editor = Reedline::create()?.with_hinter(Box::new(
 ));
 ```
 
-### Integrate with custom line completion Validator
+### Integrate with custom line completion `Validator`
 
 ```rust,no_run
 // Create a reedline object with line completion validation support
@@ -165,22 +182,36 @@ let mut line_editor = Reedline::create()?.with_edit_mode(
 
 ## Are we prompt yet? (Development status)
 
-This crate is currently under active development in JT's [live-coding streams](https://www.twitch.tv/jntrnr).
-If you want to see a feature, jump by the streams, file an [issue](https://github.com/nushell/reedline/issues) or contribute a [PR](https://github.com/nushell/reedline/pulls)!
+Nushell has now all the basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
+)
 
-- [x] Basic unicode grapheme aware cursor editing.
-- [x] Configurable prompt
-- [x] Basic EMACS-style editing shortcuts.
-- [x] Configurable keybindings.
-- [x] Basic system integration with clipboard or optional stored history file.
-- [x] Content aware highlighting.
-- [x] Autocompletion.
-- [x] Undo support.
-- [x] Multiline aware editing with line completion validation.
+- General editing functionality, that should feel familiar coming from other shells (e.g. bash, fish, zsh).
+- Configurable keybindings (emacs-style bindings and basic vi-style).
+- Configurable prompt
+- Content-aware syntax highlighting.
+- Autocompletion (With graphical selection menu or simple cycling inline).
+- History with interactive search options (optionally persists to file, can support multiple sessions accessing the same file)
+- Fish-style history autosuggestion hints
+- Undo support.
+- Clipboard integration
+- Line completeness validation for seamless entry of multiline command sequences.
 
-For a more detailed roadmap check out [TODO.txt](https://github.com/nushell/reedline/blob/main/TODO.txt).
+### Areas for future improvements
 
-Join the vision discussion in the [vision milestone list](https://github.com/nushell/reedline/milestone/1) by contributing suggestions or voting.
+- [ ] Support for Unicode beyond simple left-to-right scripts
+- [ ] Easier keybinding configuration
+- [ ] Support for more advanced vi commands
+- [ ] Visual selection
+- [ ] Smooth experience if completion or prompt content takes long to compute
+- [ ] Support for a concurrent output stream from background tasks to be displayed, while the input prompt is active. ("Full duplex" mode)
+
+For more ideas check out the [feature discussion](https://github.com/nushell/reedline/issues/63) or hop on the `#reedline` channel of the [nushell discord](https://discordapp.com/invite/NtAbbGn).
+
+### Development history
+
+If you want to follow along with the history of how reedline got started, you can watch the [recordings](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv) of [JT](https://github.com/jntrnr)`s [live-coding streams](https://www.twitch.tv/jntrnr).
+
+[Playlist: Creating a line editor in Rust](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv)
 
 ### Alternatives
 
