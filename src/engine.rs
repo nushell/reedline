@@ -328,10 +328,10 @@ impl Reedline {
     /// Returns a [`crossterm::Result`] in which the `Err` type is [`crossterm::ErrorKind`]
     /// to distinguish I/O errors and the `Ok` variant wraps a [`Signal`] which
     /// handles user inputs.
-    pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    pub fn read_line(&mut self, prompt: &dyn Prompt, encode: bool) -> Result<Signal> {
         terminal::enable_raw_mode()?;
 
-        let result = self.read_line_helper(prompt);
+        let result = self.read_line_helper(prompt, encode);
 
         terminal::disable_raw_mode()?;
 
@@ -353,11 +353,11 @@ impl Reedline {
 
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
-    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    fn read_line_helper(&mut self, prompt: &dyn Prompt, encode: bool) -> Result<Signal> {
         self.painter.initialize_prompt_position()?;
         self.hide_hints = false;
 
-        self.repaint(prompt)?;
+        self.repaint(prompt, encode)?;
 
         let mut crossterm_events: Vec<Event> = vec![];
         let mut reedline_events: Vec<ReedlineEvent> = vec![];
@@ -376,7 +376,9 @@ impl Reedline {
                         Event::Resize(x, y) => {
                             latest_resize = Some((x, y));
                         }
-                        enter @ Event::Key(KeyEvent {
+                        enter
+                        @
+                        Event::Key(KeyEvent {
                             code: KeyCode::Enter,
                             modifiers: KeyModifiers::NONE,
                         }) => {
@@ -429,7 +431,7 @@ impl Reedline {
             };
 
             for event in reedline_events.drain(..) {
-                match self.handle_event(prompt, event)? {
+                match self.handle_event(prompt, event, encode)? {
                     EventStatus::Exits(signal) => {
                         // Move the cursor below the input area, for external commands or new read_line call
                         self.painter.move_cursor_to_end()?;
@@ -437,7 +439,7 @@ impl Reedline {
                     }
                     EventStatus::Handled => {
                         if !paste_enter_state {
-                            self.repaint(prompt)?;
+                            self.repaint(prompt, encode)?;
                         }
                     }
                     EventStatus::Inapplicable => {
@@ -448,11 +450,16 @@ impl Reedline {
         }
     }
 
-    fn handle_event(&mut self, prompt: &dyn Prompt, event: ReedlineEvent) -> Result<EventStatus> {
+    fn handle_event(
+        &mut self,
+        prompt: &dyn Prompt,
+        event: ReedlineEvent,
+        encode: bool,
+    ) -> Result<EventStatus> {
         if self.input_mode == InputMode::HistorySearch {
             self.handle_history_search_event(prompt, event)
         } else {
-            self.handle_editor_event(prompt, event)
+            self.handle_editor_event(prompt, event, encode)
         }
     }
 
@@ -553,6 +560,7 @@ impl Reedline {
         &mut self,
         prompt: &dyn Prompt,
         event: ReedlineEvent,
+        encode: bool,
     ) -> io::Result<EventStatus> {
         match event {
             ReedlineEvent::Menu(name) => {
@@ -568,7 +576,11 @@ impl Reedline {
                             );
 
                             if menu.get_values().len() == 1 {
-                                return self.handle_editor_event(prompt, ReedlineEvent::Enter);
+                                return self.handle_editor_event(
+                                    prompt,
+                                    ReedlineEvent::Enter,
+                                    encode,
+                                );
                             }
                         }
 
@@ -707,7 +719,7 @@ impl Reedline {
                 if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
                     self.hide_hints = true;
                     // Additional repaint to show the content without hints etc.
-                    self.repaint(prompt)?;
+                    self.repaint(prompt, encode)?;
                     self.history.append(self.editor.get_buffer());
                     self.run_edit_commands(&[EditCommand::Clear]);
                     self.editor.reset_undo_stack();
@@ -738,7 +750,7 @@ impl Reedline {
                             self.completer.as_ref(),
                         );
                         if menu.get_values().len() == 1 {
-                            return self.handle_editor_event(prompt, ReedlineEvent::Enter);
+                            return self.handle_editor_event(prompt, ReedlineEvent::Enter, encode);
                         }
                     }
                     menu.menu_event(MenuEvent::Edit(self.quick_completions));
@@ -789,7 +801,7 @@ impl Reedline {
             ReedlineEvent::Multiple(events) => {
                 let mut latest_signal = EventStatus::Inapplicable;
                 for event in events {
-                    match self.handle_editor_event(prompt, event)? {
+                    match self.handle_editor_event(prompt, event, encode)? {
                         EventStatus::Handled => {
                             latest_signal = EventStatus::Handled;
                         }
@@ -809,7 +821,7 @@ impl Reedline {
             }
             ReedlineEvent::UntilFound(events) => {
                 for event in events {
-                    match self.handle_editor_event(prompt, event)? {
+                    match self.handle_editor_event(prompt, event, encode)? {
                         EventStatus::Inapplicable => {
                             // Try again with the next event handler
                         }
@@ -997,12 +1009,12 @@ impl Reedline {
     }
 
     /// Repaint of either the buffer or the parts for reverse history search
-    fn repaint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
+    fn repaint(&mut self, prompt: &dyn Prompt, decode: bool) -> io::Result<()> {
         // Repainting
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)
         } else {
-            self.buffer_paint(prompt)
+            self.buffer_paint(prompt, decode)
         }
     }
 
@@ -1052,13 +1064,21 @@ impl Reedline {
     /// Triggers a full repaint including the prompt parts
     ///
     /// Includes the highlighting and hinting calls.
-    fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+    fn buffer_paint(&mut self, prompt: &dyn Prompt, encode: bool) -> Result<()> {
         let cursor_position_in_buffer = self.editor.offset();
         let buffer_to_paint = self.editor.get_buffer();
-
+        let encode_buffer = if encode {
+            let mut str_decode = String::new();
+            for _ in 0..buffer_to_paint.to_string().len() {
+                str_decode.push('*');
+            }
+            str_decode
+        } else {
+            buffer_to_paint.to_string()
+        };
         let (before_cursor, after_cursor) = self
             .highlighter
-            .highlight(buffer_to_paint, cursor_position_in_buffer)
+            .highlight(&encode_buffer, cursor_position_in_buffer)
             .render_around_insertion_point(
                 cursor_position_in_buffer,
                 prompt.render_prompt_multiline_indicator().borrow(),
@@ -1067,7 +1087,7 @@ impl Reedline {
 
         let hint: String = if self.hints_active() {
             self.hinter.handle(
-                buffer_to_paint,
+                &encode_buffer,
                 cursor_position_in_buffer,
                 self.history.as_ref(),
                 self.use_ansi_coloring,

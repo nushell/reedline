@@ -105,7 +105,7 @@ fn main() -> anyhow::Result<()> {
     let prompt = DefaultPrompt::new();
 
     loop {
-        let sig = line_editor.read_line(&prompt);
+        let sig = line_editor.read_line(&prompt, false);
 
         match sig {
             Ok(Signal::CtrlD) => {
