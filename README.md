@@ -15,7 +15,7 @@ It is currently primarily developed as the interactive editor for [nushell](http
 
 - [Examples](#examples)
   - [Quickstart example](#basic-example)
-  - [Keybinding configurarion example](#integrate-with-custom-keybindings)
+  - [Keybinding configuration example](#integrate-with-custom-keybindings)
   - [History example](#integrate-with-history)
   - [Syntax highlighting example](#integrate-with-custom-syntax-highlighter)
   - [Interactive tab-completion example](#integrate-with-custom-tab-completion)
@@ -190,7 +190,7 @@ Nushell has now all basic features to become the primary line editor for [nushel
 - Configurable prompt
 - Content aware syntax highlighting.
 - Autocompletion (With graphical selection menu or simple cycling in line).
-- History with interactive search options (optionally persists to file, can support multilple sessions accessing the same file)
+- History with interactive search options (optionally persists to file, can support multiple sessions accessing the same file)
 - Fish-style history autosuggestion hints
 - Undo support.
 - Clipboard integration
