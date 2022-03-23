@@ -46,6 +46,14 @@ pub fn default_emacs_keybindings() -> Keybindings {
         ]),
     );
     kb.add_binding(KM::ALT, KC::Char('b'), edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('f'),
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::HistoryHintWordComplete,
+            edit_bind(EC::MoveWordRight),
+        ]),
+    );
     kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
     kb.add_binding(KM::ALT, KC::Char('u'), edit_bind(EC::UppercaseWord));
     kb.add_binding(KM::ALT, KC::Char('l'), edit_bind(EC::LowercaseWord));
