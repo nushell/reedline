@@ -1,4 +1,4 @@
-use crate::{Completer, Span};
+use crate::{Completer, Span, Suggestion};
 use std::{
     collections::{BTreeMap, BTreeSet},
     str::Chars,
@@ -68,7 +68,7 @@ impl Completer for DefaultCompleter {
     ///         (Span { start: 7, end: 10 }, "batmobile".into()),
     ///     ]);
     /// ```
-    fn complete(&self, line: &str, pos: usize) -> Vec<(Span, String)> {
+    fn complete(&self, line: &str, pos: usize) -> Vec<Suggestion> {
         let mut span_line_whitespaces = 0;
         let mut completions = vec![];
         if !line.is_empty() {
@@ -91,16 +91,19 @@ impl Completer for DefaultCompleter {
                             extensions
                                 .iter()
                                 .map(|ext| {
-                                    (
-                                        Span::new(
-                                            pos - span_line.len() - span_line_whitespaces,
-                                            pos,
-                                        ),
-                                        format!("{}{}", span_line, ext),
-                                    )
+                                    let span = Span::new(
+                                        pos - span_line.len() - span_line_whitespaces,
+                                        pos,
+                                    );
+
+                                    Suggestion {
+                                        value: format!("{}{}", span_line, ext),
+                                        description: None,
+                                        span,
+                                    }
                                 })
-                                .filter(|t| t.1.len() > (t.0.end - t.0.start))
-                                .collect::<Vec<(Span, String)>>(),
+                                .filter(|t| t.value.len() > (t.span.end - t.span.start))
+                                .collect::<Vec<Suggestion>>(),
                         );
                     }
                 }

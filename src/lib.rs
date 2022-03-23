@@ -222,7 +222,7 @@ mod highlighter;
 pub use highlighter::{ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
 
 mod completion;
-pub use completion::{Completer, DefaultCompleter, Span};
+pub use completion::{Completer, DefaultCompleter, Span, Suggestion};
 
 mod hinter;
 pub use hinter::{DefaultHinter, Hinter};

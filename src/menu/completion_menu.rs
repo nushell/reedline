@@ -1,5 +1,5 @@
 use super::{find_common_string, Menu, MenuEvent, MenuTextStyle};
-use crate::{painting::Painter, Completer, History, LineBuffer, Span};
+use crate::{painting::Painter, Completer, History, LineBuffer, Suggestion};
 use nu_ansi_term::{ansi::RESET, Style};
 
 /// Default values used as reference for the menu. These values are set during
@@ -48,7 +48,7 @@ pub struct CompletionMenu {
     /// Working column details keep changing based on the collected values
     working_details: ColumnDetails,
     /// Menu cached values
-    values: Vec<(Span, String)>,
+    values: Vec<Suggestion>,
     /// column position of the cursor. Starts from 0
     col_pos: u16,
     /// row position in the menu. Starts from 0
@@ -226,7 +226,7 @@ impl CompletionMenu {
     }
 
     /// Get selected value from the menu
-    fn get_value(&self) -> Option<(Span, String)> {
+    fn get_value(&self) -> Option<Suggestion> {
         self.get_values().get(self.index()).cloned()
     }
 
@@ -366,7 +366,15 @@ impl Menu for CompletionMenu {
         }
 
         let values = self.get_values();
-        if let (Some((span, value)), Some(index)) = find_common_string(values) {
+        if let (
+            Some(Suggestion {
+                value,
+                span,
+                ..
+            }),
+            Some(index),
+        ) = find_common_string(values)
+        {
             let index = index.min(value.len());
             let matching = &value[0..index];
 
@@ -460,8 +468,8 @@ impl Menu for CompletionMenu {
                 }
             }
 
-            let max_width = self.get_values().iter().fold(0, |acc, (_, string)| {
-                let str_len = string.len() + self.default_details.col_padding;
+            let max_width = self.get_values().iter().fold(0, |acc, suggestion| {
+                let str_len = suggestion.value.len() + self.default_details.col_padding;
                 if str_len > acc {
                     str_len
                 } else {
@@ -499,7 +507,12 @@ impl Menu for CompletionMenu {
 
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
-        if let Some((span, value)) = self.get_value() {
+        if let Some(Suggestion {
+            value,
+            span,
+            ..
+        }) = self.get_value()
+        {
             let mut offset = line_buffer.insertion_point();
             offset += value.len() - (span.end - span.start);
 
@@ -514,7 +527,7 @@ impl Menu for CompletionMenu {
     }
 
     /// Gets values from filler that will be displayed in the menu
-    fn get_values(&self) -> &[(Span, String)] {
+    fn get_values(&self) -> &[Suggestion] {
         &self.values
     }
 
@@ -544,13 +557,21 @@ impl Menu for CompletionMenu {
                 .skip(skip_values)
                 .take(available_values)
                 .enumerate()
-                .map(|(index, (_, line))| {
+                .map(|(index, suggestion)| {
                     // Correcting the enumerate index based on the number of skipped values
                     let index = index + skip_values;
                     let column = index as u16 % self.get_cols();
-                    let empty_space = self.get_width().saturating_sub(line.len());
+                    let empty_space = self
+                        .get_width()
+                        .saturating_sub(suggestion.value.len());
 
-                    self.create_string(line, index, column, empty_space, use_ansi_coloring)
+                    self.create_string(
+                        &suggestion.value,
+                        index,
+                        column,
+                        empty_space,
+                        use_ansi_coloring,
+                    )
                 })
                 .collect()
         }

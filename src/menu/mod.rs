@@ -1,7 +1,7 @@
 mod completion_menu;
 mod history_menu;
 
-use crate::{painting::Painter, Completer, History, LineBuffer, Span};
+use crate::{painting::Painter, Completer, History, LineBuffer, Suggestion};
 pub use completion_menu::CompletionMenu;
 pub use history_menu::HistoryMenu;
 use nu_ansi_term::{Color, Style};
@@ -115,7 +115,7 @@ pub trait Menu: Send {
     fn min_rows(&self) -> u16;
 
     /// Gets cached values from menu that will be displayed
-    fn get_values(&self) -> &[(Span, String)];
+    fn get_values(&self) -> &[Suggestion];
 }
 
 pub(crate) enum IndexDirection {
@@ -215,18 +215,19 @@ pub(crate) fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
     }
 }
 
-/// Finds common string in a list of values
-fn find_common_string(values: &[(Span, String)]) -> (Option<&(Span, String)>, Option<usize>) {
+/// Finds index for the common string in the suggestions
+fn find_common_string(values: &[Suggestion]) -> (Option<&Suggestion>, Option<usize>) {
     let first = values.iter().next();
 
-    let index = first.and_then(|(_, first_string)| {
-        values.iter().skip(1).fold(None, |index, (_, value)| {
-            if value.starts_with(first_string) {
-                Some(first_string.len())
+    let index = first.and_then(|first| {
+        values.iter().skip(1).fold(None, |index, suggestion| {
+            if suggestion.value.starts_with(&first.value) {
+                Some(first.value.len())
             } else {
-                first_string
+                first
+                    .value
                     .chars()
-                    .zip(value.chars())
+                    .zip(suggestion.value.chars())
                     .position(|(mut lhs, mut rhs)| {
                         lhs.make_ascii_lowercase();
                         rhs.make_ascii_lowercase();
