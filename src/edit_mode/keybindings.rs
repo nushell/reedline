@@ -83,7 +83,14 @@ pub fn add_common_keybindings(kb: &mut Keybindings) {
     kb.add_binding(KM::NONE, KC::Esc, ReedlineEvent::Esc);
     kb.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
     kb.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
-    kb.add_binding(KM::NONE, KC::End, edit_bind(EC::MoveToLineEnd));
+    kb.add_binding(
+        KM::NONE,
+        KC::End,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::HistoryHintComplete,
+            edit_bind(EC::MoveToLineEnd),
+        ]),
+    );
     kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
 
     kb.add_binding(KM::CONTROL, KC::Char('c'), ReedlineEvent::CtrlC);
