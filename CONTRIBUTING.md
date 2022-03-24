@@ -21,7 +21,7 @@ This is no different than other Rust projects.
 
 ```bash
 git clone https://github.com/nushell/reedline
-cd nushell
+cd reedline
 # To try our example program
 cargo run
 ```
