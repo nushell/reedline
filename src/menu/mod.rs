@@ -10,6 +10,7 @@ use nu_ansi_term::{Color, Style};
 struct MenuTextStyle {
     selected_text_style: Style,
     text_style: Style,
+    description_style: Style,
 }
 
 impl Default for MenuTextStyle {
@@ -17,6 +18,7 @@ impl Default for MenuTextStyle {
         Self {
             selected_text_style: Color::Green.bold().reverse(),
             text_style: Color::DarkGray.normal(),
+            description_style: Color::Yellow.normal(),
         }
     }
 }
