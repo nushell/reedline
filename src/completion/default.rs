@@ -48,24 +48,24 @@ impl Completer for DefaultCompleter {
     ///
     /// # Example
     /// ```
-    /// use reedline::{DefaultCompleter,Completer,Span};
+    /// use reedline::{DefaultCompleter,Completer,Span,Suggestion};
     ///
     /// let mut completions = DefaultCompleter::default();
     /// completions.insert(vec!["batman","robin","batmobile","batcave","robber"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
     ///     completions.complete("bat",3),
     ///     vec![
-    ///         (Span { start: 0, end: 3 }, "batcave".into()),
-    ///         (Span { start: 0, end: 3 }, "batman".into()),
-    ///         (Span { start: 0, end: 3 }, "batmobile".into()),
+    ///         Suggestion {value: "batcave".into(), description: None, span: Span { start: 0, end: 3 }},
+    ///         Suggestion {value: "batman".into(), description: None, span: Span { start: 0, end: 3 }},
+    ///         Suggestion {value: "batmobile".into(), description: None, span: Span { start: 0, end: 3 }},
     ///     ]);
     ///
     /// assert_eq!(
     ///     completions.complete("to the bat",10),
     ///     vec![
-    ///         (Span { start: 7, end: 10 }, "batcave".into()),
-    ///         (Span { start: 7, end: 10 }, "batman".into()),
-    ///         (Span { start: 7, end: 10 }, "batmobile".into()),
+    ///         Suggestion {value: "batcave".into(), description: None, span: Span { start: 7, end: 10 }},
+    ///         Suggestion {value: "batman".into(), description: None, span: Span { start: 7, end: 10 }},
+    ///         Suggestion {value: "batmobile".into(), description: None, span: Span { start: 7, end: 10 }},
     ///     ]);
     /// ```
     fn complete(&self, line: &str, pos: usize) -> Vec<Suggestion> {
@@ -165,21 +165,21 @@ impl DefaultCompleter {
     ///
     /// # Example
     /// ```
-    /// use reedline::{DefaultCompleter,Completer,Span};
+    /// use reedline::{DefaultCompleter,Completer,Span,Suggestion};
     ///
     /// let mut completions = DefaultCompleter::default();
     /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
     ///     completions.complete("te",2),
-    ///     vec![(Span { start: 0, end: 2 }, "test".into())]);
+    ///     vec![Suggestion {value: "test".into(), description: None, span: Span { start: 0, end: 2 }}]);
     ///
     /// let mut completions = DefaultCompleter::with_inclusions(&['-', '_']);
     /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
     ///     completions.complete("te",2),
     ///     vec![
-    ///         (Span { start: 0, end: 2 }, "test-hyphen".into()),
-    ///         (Span { start: 0, end: 2 }, "test_underscore".into()),
+    ///         Suggestion {value: "test-hyphen".into(), description: None, span: Span { start: 0, end: 2 }},
+    ///         Suggestion {value: "test_underscore".into(), description: None, span: Span { start: 0, end: 2 }},
     ///     ]);
     /// ```
     pub fn with_inclusions(incl: &[char]) -> Self {
