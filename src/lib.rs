@@ -121,7 +121,7 @@
 //! // Use the interactive menu to select options from the completer
 //! let completion_menu = Box::new(CompletionMenu::default());
 //!
-//! let mut line_editor = Reedline::create()?.with_completer(completer).with_menu(completion_menu);
+//! let mut line_editor = Reedline::create()?.with_completer(completer).with_menu(completion_menu, None);
 //! # Ok::<(), io::Error>(())
 //! ```
 //!
