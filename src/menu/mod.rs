@@ -8,10 +8,13 @@ pub use history_menu::HistoryMenu;
 use nu_ansi_term::{Color, Style};
 
 /// Struct to store the menu style
-struct MenuTextStyle {
-    selected_text_style: Style,
-    text_style: Style,
-    description_style: Style,
+pub struct MenuTextStyle {
+    /// Text style for selected text in a menu
+    pub selected_text_style: Style,
+    /// Text style for not selected text in the menu
+    pub text_style: Style,
+    /// Text style for the item description
+    pub description_style: Style,
 }
 
 impl Default for MenuTextStyle {
@@ -59,9 +62,7 @@ pub trait Menu: Send {
     fn name(&self) -> &str;
 
     /// Menu indicator
-    fn indicator(&self) -> &str {
-        "% "
-    }
+    fn indicator(&self) -> &str;
 
     /// Checks if the menu is active
     fn is_active(&self) -> bool;
@@ -119,4 +120,126 @@ pub trait Menu: Send {
 
     /// Gets cached values from menu that will be displayed
     fn get_values(&self) -> &[Suggestion];
+}
+
+/// Type of menu that can be used with Reedline engine
+pub(crate) enum MenuType {
+    /// Menu that uses the engine completer to update its values
+    EngineCompleter(Box<dyn Menu>),
+    /// Menu that has its own Completer
+    WithCompleter {
+        menu: Box<dyn Menu>,
+        completer: Box<dyn Completer>,
+    },
+}
+
+impl MenuType {
+    fn as_ref(&self) -> &dyn Menu {
+        match self {
+            Self::EngineCompleter(menu) => menu.as_ref(),
+            Self::WithCompleter { menu, .. } => menu.as_ref(),
+        }
+    }
+
+    fn as_mut(&mut self) -> &mut dyn Menu {
+        match self {
+            Self::EngineCompleter(menu) => menu.as_mut(),
+            Self::WithCompleter { menu, .. } => menu.as_mut(),
+        }
+    }
+}
+
+impl Menu for MenuType {
+    fn name(&self) -> &str {
+        self.as_ref().name()
+    }
+
+    fn indicator(&self) -> &str {
+        self.as_ref().indicator()
+    }
+
+    fn is_active(&self) -> bool {
+        self.as_ref().is_active()
+    }
+
+    fn menu_event(&mut self, event: MenuEvent) {
+        self.as_mut().menu_event(event)
+    }
+
+    fn can_partially_complete(
+        &mut self,
+        values_updated: bool,
+        line_buffer: &mut LineBuffer,
+        history: &dyn History,
+        completer: &dyn Completer,
+    ) -> bool {
+        match self {
+            Self::EngineCompleter(menu) => {
+                menu.can_partially_complete(values_updated, line_buffer, history, completer)
+            }
+            Self::WithCompleter {
+                menu,
+                completer: own_completer,
+            } => menu.can_partially_complete(
+                values_updated,
+                line_buffer,
+                history,
+                own_completer.as_ref(),
+            ),
+        }
+    }
+
+    fn update_values(
+        &mut self,
+        line_buffer: &mut LineBuffer,
+        history: &dyn History,
+        completer: &dyn Completer,
+    ) {
+        match self {
+            Self::EngineCompleter(menu) => menu.update_values(line_buffer, history, completer),
+            Self::WithCompleter {
+                menu,
+                completer: own_completer,
+            } => menu.update_values(line_buffer, history, own_completer.as_ref()),
+        }
+    }
+
+    fn update_working_details(
+        &mut self,
+        line_buffer: &mut LineBuffer,
+        history: &dyn History,
+        completer: &dyn Completer,
+        painter: &Painter,
+    ) {
+        match self {
+            Self::EngineCompleter(menu) => {
+                menu.update_working_details(line_buffer, history, completer, painter)
+            }
+            Self::WithCompleter {
+                menu,
+                completer: own_completer,
+            } => menu.update_working_details(line_buffer, history, own_completer.as_ref(), painter),
+        }
+    }
+
+    fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
+        self.as_ref().replace_in_buffer(line_buffer)
+    }
+
+    fn menu_required_lines(&self, terminal_columns: u16) -> u16 {
+        self.as_ref().menu_required_lines(terminal_columns)
+    }
+
+    fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String {
+        self.as_ref()
+            .menu_string(available_lines, use_ansi_coloring)
+    }
+
+    fn min_rows(&self) -> u16 {
+        self.as_ref().min_rows()
+    }
+
+    fn get_values(&self) -> &[Suggestion] {
+        self.as_ref().get_values()
+    }
 }

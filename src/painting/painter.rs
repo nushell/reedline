@@ -1,7 +1,10 @@
-use super::utils::{coerce_crlf, line_width};
-
 use {
-    crate::{menu::Menu, painting::PromptLines, Prompt},
+    super::utils::{coerce_crlf, line_width},
+    crate::{
+        menu::{Menu, MenuType},
+        painting::PromptLines,
+        Prompt,
+    },
     crossterm::{
         cursor::{self, MoveTo, RestorePosition, SavePosition},
         style::{Print, ResetColor, SetForegroundColor},
@@ -124,7 +127,7 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         lines: &PromptLines,
-        menu: Option<&dyn Menu>,
+        menu: Option<&MenuType>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
         self.stdout.queue(cursor::Hide)?;
@@ -219,7 +222,7 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         lines: &PromptLines,
-        menu: Option<&dyn Menu>,
+        menu: Option<&MenuType>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
         // print our prompt with color
@@ -261,7 +264,7 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         lines: &PromptLines,
-        menu: Option<&dyn Menu>,
+        menu: Option<&MenuType>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
         let screen_width = self.screen_width();
