@@ -231,7 +231,7 @@ mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
-pub use menu::{CompletionMenu, HistoryMenu, Menu, MenuEvent};
+pub use menu::{menu_functions, CompletionMenu, HistoryMenu, Menu, MenuEvent};
 
 mod utils;
 pub use utils::{

@@ -1,5 +1,3 @@
-use crate::{menu::IndexDirection, utils::text_manipulation};
-
 use {
     crate::{
         completion::{CircularCompletionHandler, Completer, DefaultCompleter},
@@ -9,9 +7,13 @@ use {
         highlighter::SimpleMatchHighlighter,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
-        menu::{parse_selection_char, Menu, MenuEvent},
+        menu::{
+            menu_functions::{parse_selection_char, IndexDirection},
+            Menu, MenuEvent,
+        },
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
+        utils::text_manipulation,
         DefaultValidator, EditCommand, ExampleHighlighter, Highlighter, Prompt,
         PromptHistorySearch, Signal, ValidationResult, Validator,
     },

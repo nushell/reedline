@@ -1,4 +1,7 @@
-use super::{parse_selection_char, Menu, MenuEvent, MenuTextStyle};
+use super::{
+    menu_functions::{parse_selection_char, string_difference},
+    Menu, MenuEvent, MenuTextStyle,
+};
 use crate::{
     painting::{estimate_single_line_wraps, Painter},
     Completer, History, LineBuffer, Span, Suggestion,
@@ -624,142 +627,9 @@ fn number_of_lines(entry: &str, max_lines: usize, terminal_columns: u16) -> u16 
     lines
 }
 
-fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &'a str) {
-    if old_string.is_empty() {
-        return (0, new_string);
-    }
-
-    let old_chars = old_string.chars().collect::<Vec<char>>();
-
-    let (_, start, end) = new_string.chars().enumerate().fold(
-        (0, None, None),
-        |(old_index, start, end), (index, c)| {
-            let equal = if start.is_some() {
-                if (old_string.len() - old_index) == (new_string.len() - index) {
-                    let new_iter = new_string.chars().skip(index);
-                    let old_iter = old_string.chars().skip(old_index);
-
-                    new_iter.zip(old_iter).all(|(new, old)| new == old)
-                } else {
-                    false
-                }
-            } else {
-                c == old_chars[old_index]
-            };
-
-            if equal {
-                let old_index = (old_index + 1).min(old_string.len() - 1);
-
-                let end = match (start, end) {
-                    (Some(_), Some(_)) => end,
-                    (Some(_), None) => Some(index),
-                    _ => None,
-                };
-
-                (old_index, start, end)
-            } else {
-                let start = match start {
-                    Some(_) => start,
-                    None => Some(index),
-                };
-
-                (old_index, start, end)
-            }
-        },
-    );
-
-    match (start, end) {
-        (Some(start), Some(end)) => (start, &new_string[start..end]),
-        (Some(start), None) => (start, &new_string[start..new_string.len()]),
-        (None, None) => (new_string.len(), ""),
-        (None, Some(_)) => unreachable!(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn string_difference_test() {
-        let new_string = "this is a new string";
-        let old_string = "this is a string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new "));
-    }
-
-    #[test]
-    fn string_difference_new_larger() {
-        let new_string = "this is a new string";
-        let old_string = "this is";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (7, " a new string"));
-    }
-
-    #[test]
-    fn string_difference_new_shorter() {
-        let new_string = "this is the";
-        let old_string = "this is the original";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (11, ""));
-    }
-
-    #[test]
-    fn string_difference_longer_string() {
-        let new_string = "this is a new another";
-        let old_string = "this is a string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new another"));
-    }
-
-    #[test]
-    fn string_difference_start_same() {
-        let new_string = "this is a new something string";
-        let old_string = "this is a string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new something "));
-    }
-
-    #[test]
-    fn string_difference_empty_old() {
-        let new_string = "this new another";
-        let old_string = "";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (0, "this new another"));
-    }
-
-    #[test]
-    fn string_difference_very_difference() {
-        let new_string = "this new another";
-        let old_string = "complete different string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (0, "this new another"));
-    }
-
-    #[test]
-    fn string_difference_both_equal() {
-        let new_string = "this new another";
-        let old_string = "this new another";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (16, ""));
-    }
-
-    #[test]
-    fn string_difference_with_non_ansi() {
-        let new_string = "let b = ñ ";
-        let old_string = "let a =";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (4, "b = ñ "));
-    }
 
     #[test]
     fn number_of_lines_test() {

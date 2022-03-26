@@ -1,4 +1,4 @@
-use super::{find_common_string, Menu, MenuEvent, MenuTextStyle};
+use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
 use crate::{painting::Painter, Completer, History, LineBuffer, Suggestion};
 use nu_ansi_term::{ansi::RESET, Style};
 
