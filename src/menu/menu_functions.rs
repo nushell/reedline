@@ -138,15 +138,15 @@ pub fn find_common_string(values: &[Suggestion]) -> (Option<&Suggestion>, Option
             } else {
                 first
                     .value
-                    .chars()
-                    .zip(suggestion.value.chars())
-                    .position(|(mut lhs, mut rhs)| {
+                    .char_indices()
+                    .zip(suggestion.value.char_indices())
+                    .find(|((_, mut lhs), (_, mut rhs))| {
                         lhs.make_ascii_lowercase();
                         rhs.make_ascii_lowercase();
 
                         lhs != rhs
                     })
-                    .map(|new_index| match index {
+                    .map(|((new_index, _), _)| match index {
                         Some(index) => {
                             if index <= new_index {
                                 index
@@ -402,5 +402,39 @@ mod tests {
 
         let res = string_difference(new_string, old_string);
         assert_eq!(res, (4, "b = ñ "));
+    }
+
+    #[test]
+    fn find_common_string_with_ansi() {
+        use crate::Span;
+
+        let input: Vec<_> = ["nushell", "null"]
+            .into_iter()
+            .map(|s| Suggestion {
+                value: s.into(),
+                description: None,
+                span: Span::new(0, s.len()),
+            })
+            .collect();
+        let res = find_common_string(&input);
+
+        assert!(matches!(res, (Some(elem), Some(2)) if elem == &input[0]));
+    }
+
+    #[test]
+    fn find_common_string_with_non_ansi() {
+        use crate::Span;
+
+        let input: Vec<_> = ["ｎｕｓｈｅｌｌ", "ｎｕｌｌ"]
+            .into_iter()
+            .map(|s| Suggestion {
+                value: s.into(),
+                description: None,
+                span: Span::new(0, s.len()),
+            })
+            .collect();
+        let res = find_common_string(&input);
+
+        assert!(matches!(res, (Some(elem), Some(6)) if elem == &input[0]));
     }
 }
