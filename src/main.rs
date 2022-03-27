@@ -61,6 +61,8 @@ fn main() -> Result<()> {
         "abaaac".into(),
         "abaaaxyc".into(),
         "abaaarabc".into(),
+        "こんにちは世界".into(),
+        "こんばんは世界".into(),
     ];
 
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));

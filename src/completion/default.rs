@@ -348,3 +348,40 @@ impl CompletionNode {
         completions
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn default_completer_with_non_ansi() {
+        use super::*;
+
+        let mut completions = DefaultCompleter::default();
+        completions.insert(
+            vec!["ｎｕｓｈｅｌｌ", "ｎｕｌｌ", "ｎｕｍｂｅｒ"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        );
+
+        assert_eq!(
+            completions.complete("ｎ", 3),
+            vec![
+                Suggestion {
+                    value: "ｎｕｌｌ".into(),
+                    description: None,
+                    span: Span { start: 0, end: 3 },
+                },
+                Suggestion {
+                    value: "ｎｕｍｂｅｒ".into(),
+                    description: None,
+                    span: Span { start: 0, end: 3 },
+                },
+                Suggestion {
+                    value: "ｎｕｓｈｅｌｌ".into(),
+                    description: None,
+                    span: Span { start: 0, end: 3 },
+                },
+            ]
+        );
+    }
+}
