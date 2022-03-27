@@ -46,4 +46,10 @@ pub trait History: Send {
 
     /// Max number of values that can be queried from the history
     fn max_values(&self) -> usize;
+
+    /// Synchronize the state of the history with the backing filesystem or database if available
+    fn sync(&mut self) -> std::io::Result<()>;
+
+    /// Reset the browsing cursor back outside the history, does not affect the [`HistoryNavigationQuery`]
+    fn reset_cursor(&mut self);
 }

@@ -549,6 +549,13 @@ impl Reedline {
                 }
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::SynchronizeHistory => {
+                // this will internally also reset the cursor
+                self.history.sync()?;
+                // continue with the search
+                self.history.back();
+                Ok(EventStatus::Handled)
+            }
             // TODO: Check if events should be handled
             ReedlineEvent::Right
             | ReedlineEvent::Left
@@ -762,6 +769,10 @@ impl Reedline {
             ReedlineEvent::ExecuteHostCommand(host_command) => {
                 // TODO: Decide if we need to do something special to have a nicer painter state on the next go
                 Ok(EventStatus::Exits(Signal::Success(host_command)))
+            }
+            ReedlineEvent::SynchronizeHistory => {
+                self.history.sync()?;
+                Ok(EventStatus::Handled)
             }
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands);

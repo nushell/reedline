@@ -327,6 +327,9 @@ pub enum ReedlineEvent {
 
     /// Way to bind the execution of a whole command (directly returning from [`crate::Reedline::read_line()`]) to a keybinding
     ExecuteHostCommand(String),
+
+    /// Explicitly sync the history for concurrent reedline sessions
+    SynchronizeHistory,
 }
 
 pub(crate) enum EventStatus {
