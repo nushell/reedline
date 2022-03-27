@@ -68,7 +68,12 @@ impl EditMode for Vi {
 
                     let c = c.to_ascii_lowercase();
 
-                    if modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT {
+                    if let Some(event) = self
+                        .normal_keybindings
+                        .find_binding(modifiers, KeyCode::Char(c))
+                    {
+                        event
+                    } else if modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT {
                         self.cache.push(if modifier == KeyModifiers::SHIFT {
                             c.to_ascii_uppercase()
                         } else {
@@ -97,9 +102,7 @@ impl EditMode for Vi {
 
                         event
                     } else {
-                        self.normal_keybindings
-                            .find_binding(modifiers, KeyCode::Char(c))
-                            .unwrap_or(ReedlineEvent::None)
+                        ReedlineEvent::None
                     }
                 }
                 (ViMode::Insert, modifier, KeyCode::Char(c)) => {
@@ -111,8 +114,10 @@ impl EditMode for Vi {
                     // Mixed modifiers are used by non american keyboards that have extra
                     // keys like 'alt gr'. Keep this in mind if in the future there are
                     // cases where an event is not being captured
-
-                    let c = c.to_ascii_lowercase();
+                    let c = match modifier {
+                        KeyModifiers::NONE => c,
+                        _ => c.to_ascii_lowercase(),
+                    };
 
                     if modifier == KeyModifiers::NONE
                         || modifier == KeyModifiers::SHIFT
@@ -162,5 +167,99 @@ impl EditMode for Vi {
             ViMode::Normal => PromptEditMode::Vi(PromptViMode::Normal),
             ViMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn esc_leads_to_normal_mode_test() {
+        let mut vi = Vi::default();
+        let esc = Event::Key(KeyEvent {
+            modifiers: KeyModifiers::NONE,
+            code: KeyCode::Esc,
+        });
+        let result = vi.parse_event(esc);
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+        );
+        assert!(matches!(vi.mode, ViMode::Normal));
+    }
+
+    #[test]
+    fn keybinding_without_modifier_test() {
+        let mut keybindings = default_vi_normal_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::Char('e'),
+            ReedlineEvent::ClearScreen,
+        );
+
+        let mut vi = Vi {
+            insert_keybindings: default_vi_insert_keybindings(),
+            normal_keybindings: keybindings,
+            cache: Vec::new(),
+            mode: ViMode::Normal,
+            previous: None,
+        };
+
+        let esc = Event::Key(KeyEvent {
+            modifiers: KeyModifiers::NONE,
+            code: KeyCode::Char('e'),
+        });
+        let result = vi.parse_event(esc);
+
+        assert_eq!(result, ReedlineEvent::ClearScreen);
+    }
+
+    #[test]
+    fn keybinding_with_shift_modifier_test() {
+        let mut keybindings = default_vi_normal_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::SHIFT,
+            KeyCode::Char('$'),
+            ReedlineEvent::CtrlD,
+        );
+
+        let mut vi = Vi {
+            insert_keybindings: default_vi_insert_keybindings(),
+            normal_keybindings: keybindings,
+            cache: Vec::new(),
+            mode: ViMode::Normal,
+            previous: None,
+        };
+
+        let esc = Event::Key(KeyEvent {
+            modifiers: KeyModifiers::SHIFT,
+            code: KeyCode::Char('$'),
+        });
+        let result = vi.parse_event(esc);
+
+        assert_eq!(result, ReedlineEvent::CtrlD);
+    }
+
+    #[test]
+    fn non_register_modifier_test() {
+        let keybindings = default_vi_normal_keybindings();
+        let mut vi = Vi {
+            insert_keybindings: default_vi_insert_keybindings(),
+            normal_keybindings: keybindings,
+            cache: Vec::new(),
+            mode: ViMode::Normal,
+            previous: None,
+        };
+
+        let esc = Event::Key(KeyEvent {
+            modifiers: KeyModifiers::NONE,
+            code: KeyCode::Char('e'),
+        });
+        let result = vi.parse_event(esc);
+
+        assert_eq!(result, ReedlineEvent::None);
     }
 }

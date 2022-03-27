@@ -55,6 +55,10 @@ where
             let _ = input.next();
             Some(Command::MoveToLineStart)
         }
+        Some('^') => {
+            let _ = input.next();
+            Some(Command::MoveToLineStart)
+        }
         Some('$') => {
             let _ = input.next();
             Some(Command::MoveToLineEnd)

@@ -102,7 +102,10 @@ impl EditMode for Emacs {
                     // Mixed modifiers are used by non american keyboards that have extra
                     // keys like 'alt gr'. Keep this in mind if in the future there are
                     // cases where an event is not being captured
-                    let c = c.to_ascii_lowercase();
+                    let c = match modifier {
+                        KeyModifiers::NONE => c,
+                        _ => c.to_ascii_lowercase(),
+                    };
 
                     if modifier == KeyModifiers::NONE
                         || modifier == KeyModifiers::SHIFT
