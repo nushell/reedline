@@ -180,48 +180,55 @@ pub fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &
         return (0, new_string);
     }
 
-    let old_chars = old_string.chars().collect::<Vec<char>>();
+    let old_chars = old_string.char_indices().collect::<Vec<(usize, char)>>();
+    let new_chars = new_string.char_indices().collect::<Vec<(usize, char)>>();
 
-    let (_, start, end) = new_string.chars().enumerate().fold(
+    let (_, start, end) = new_chars.iter().enumerate().fold(
         (0, None, None),
-        |(old_index, start, end), (index, c)| {
+        |(old_char_index, start, end), (new_char_index, (_, c))| {
             let equal = if start.is_some() {
-                if (old_string.len() - old_index) == (new_string.len() - index) {
-                    let new_iter = new_string.chars().skip(index);
-                    let old_iter = old_string.chars().skip(old_index);
+                if (old_chars.len() - old_char_index) == (new_chars.len() - new_char_index) {
+                    let new_iter = new_chars.iter().skip(new_char_index);
+                    let old_iter = old_chars.iter().skip(old_char_index);
 
-                    new_iter.zip(old_iter).all(|(new, old)| new == old)
+                    new_iter
+                        .zip(old_iter)
+                        .all(|((_, new), (_, old))| new == old)
                 } else {
                     false
                 }
             } else {
-                c == old_chars[old_index]
+                *c == old_chars[old_char_index].1
             };
 
             if equal {
-                let old_index = (old_index + 1).min(old_string.len() - 1);
+                let old_char_index = (old_char_index + 1).min(old_chars.len() - 1);
 
                 let end = match (start, end) {
                     (Some(_), Some(_)) => end,
-                    (Some(_), None) => Some(index),
+                    (Some(_), None) => Some(new_char_index),
                     _ => None,
                 };
 
-                (old_index, start, end)
+                (old_char_index, start, end)
             } else {
                 let start = match start {
                     Some(_) => start,
-                    None => Some(index),
+                    None => Some(new_char_index),
                 };
 
-                (old_index, start, end)
+                (old_char_index, start, end)
             }
         },
     );
 
+    // Convert char index to byte index
+    let start = start.map(|i| new_chars[i].0);
+    let end = end.map(|i| new_chars[i].0);
+
     match (start, end) {
         (Some(start), Some(end)) => (start, &new_string[start..end]),
-        (Some(start), None) => (start, &new_string[start..new_string.len()]),
+        (Some(start), None) => (start, &new_string[start..]),
         (None, None) => (new_string.len(), ""),
         (None, Some(_)) => unreachable!(),
     }
@@ -397,11 +404,11 @@ mod tests {
 
     #[test]
     fn string_difference_with_non_ansi() {
-        let new_string = "let b = ñ ";
-        let old_string = "let a =";
+        let new_string = "ｎｕｓｈｅｌｌ";
+        let old_string = "ｎｕｌｌ";
 
         let res = string_difference(new_string, old_string);
-        assert_eq!(res, (4, "b = ñ "));
+        assert_eq!(res, (6, "ｓｈｅ"));
     }
 
     #[test]
