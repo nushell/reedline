@@ -20,7 +20,7 @@ use std::{
 /// ];
 /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 ///
-/// let mut line_editor = Reedline::create().unwrap().with_completer(completer);
+/// let mut line_editor = Reedline::create().with_completer(completer);
 /// ```
 #[derive(Debug, Clone)]
 pub struct DefaultCompleter {

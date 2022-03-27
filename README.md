@@ -39,11 +39,11 @@ use reedline::{DefaultPrompt, Reedline, Signal};
 use std::io;
 
 fn main() -> io::Result<()> {
-    let mut line_editor = Reedline::create()?;
+    let mut line_editor = Reedline::create();
     let prompt = DefaultPrompt::default();
 
     loop {
-        let sig = line_editor.read_line(&prompt).unwrap();
+        let sig = line_editor.read_line(&prompt)?;
         match sig {
             Signal::Success(buffer) => {
                 println!("We processed: {}", buffer);
@@ -81,7 +81,7 @@ keybindings.add_binding(
   vec![EditCommand::BackspaceWord],
 );
 
-let mut line_editor = Reedline::create()?.with_keybindings(keybindings);
+let mut line_editor = Reedline::create().with_keybindings(keybindings);
 ```
 
 ## Integrate with `History`
@@ -95,9 +95,8 @@ let history = Box::new(
   FileBackedHistory::with_file(5, "history.txt".into())
     .expect("Error configuring history with file"),
 );
-let mut line_editor = Reedline::create()?
-  .with_history(history)
-  .expect("Error configuring reedline with history");
+let mut line_editor = Reedline::create()
+  .with_history(history);
 ```
 
 ### Integrate with custom syntax `Highlighter`
@@ -114,7 +113,7 @@ let commands = vec![
   "this is the reedline crate".into(),
 ];
 let mut line_editor =
-Reedline::create()?.with_highlighter(Box::new(ExampleHighlighter::new(commands)));
+Reedline::create().with_highlighter(Box::new(ExampleHighlighter::new(commands)));
 ```
 
 ### Integrate with custom tab completion
@@ -134,7 +133,7 @@ let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2)
 // Use the interactive menu to select options from the completer
 let completion_menu = Box::new(CompletionMenu::default());
 
-let mut line_editor = Reedline::create()?.with_completer(completer).with_menu(completion_menu);
+let mut line_editor = Reedline::create().with_completer(completer).with_menu(completion_menu);
 ```
 
 ### Integrate with `Hinter` for fish-style history autosuggestions
@@ -151,7 +150,7 @@ use {
   reedline::{DefaultHinter, Reedline},
 };
 
-let mut line_editor = Reedline::create()?.with_hinter(Box::new(
+let mut line_editor = Reedline::create().with_hinter(Box::new(
   DefaultHinter::default()
   .with_style(Style::new().italic().fg(Color::LightGray)),
 ));
@@ -166,7 +165,7 @@ use reedline::{DefaultValidator, Reedline};
 
 let validator = Box::new(DefaultValidator);
 
-let mut line_editor = Reedline::create()?.with_validator(validator);
+let mut line_editor = Reedline::create().with_validator(validator);
 ```
 
 ### Integrate with custom Edit Mode
@@ -176,7 +175,7 @@ let mut line_editor = Reedline::create()?.with_validator(validator);
 
 use reedline::{EditMode, Reedline};
 
-let mut line_editor = Reedline::create()?.with_edit_mode(
+let mut line_editor = Reedline::create().with_edit_mode(
   EditMode::ViNormal, // or EditMode::Emacs or EditMode::ViInsert
 );
 ```
