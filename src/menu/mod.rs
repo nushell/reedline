@@ -1,15 +1,20 @@
 mod completion_menu;
 mod history_menu;
+pub mod menu_functions;
 
-use crate::{painting::Painter, Completer, History, LineBuffer, Span};
+use crate::{painting::Painter, Completer, History, LineBuffer, Suggestion};
 pub use completion_menu::CompletionMenu;
 pub use history_menu::HistoryMenu;
 use nu_ansi_term::{Color, Style};
 
 /// Struct to store the menu style
-struct MenuTextStyle {
-    selected_text_style: Style,
-    text_style: Style,
+pub struct MenuTextStyle {
+    /// Text style for selected text in a menu
+    pub selected_text_style: Style,
+    /// Text style for not selected text in the menu
+    pub text_style: Style,
+    /// Text style for the item description
+    pub description_style: Style,
 }
 
 impl Default for MenuTextStyle {
@@ -17,6 +22,7 @@ impl Default for MenuTextStyle {
         Self {
             selected_text_style: Color::Green.bold().reverse(),
             text_style: Color::DarkGray.normal(),
+            description_style: Color::Yellow.normal(),
         }
     }
 }
@@ -56,15 +62,17 @@ pub trait Menu: Send {
     fn name(&self) -> &str;
 
     /// Menu indicator
-    fn indicator(&self) -> &str {
-        "% "
-    }
+    fn indicator(&self) -> &str;
 
     /// Checks if the menu is active
     fn is_active(&self) -> bool;
 
     /// Selects what type of event happened with the menu
     fn menu_event(&mut self, event: MenuEvent);
+
+    /// A menu may not be allowed to quick complete because it needs to stay
+    /// active even with one element
+    fn can_quick_complete(&self) -> bool;
 
     /// The completion menu can try to find the common string and replace it
     /// in the given line buffer
@@ -115,234 +123,131 @@ pub trait Menu: Send {
     fn min_rows(&self) -> u16;
 
     /// Gets cached values from menu that will be displayed
-    fn get_values(&self) -> &[(Span, String)];
+    fn get_values(&self) -> &[Suggestion];
 }
 
-pub(crate) enum IndexDirection {
-    Forward,
-    Backward,
+/// Type of menu that can be used with Reedline engine
+pub(crate) enum MenuType {
+    /// Menu that uses the engine completer to update its values
+    EngineCompleter(Box<dyn Menu>),
+    /// Menu that has its own Completer
+    WithCompleter {
+        menu: Box<dyn Menu>,
+        completer: Box<dyn Completer>,
+    },
 }
 
-pub(crate) struct ParseResult<'buffer> {
-    pub remainder: &'buffer str,
-    pub index: Option<usize>,
-    pub marker: Option<&'buffer str>,
-    pub direction: IndexDirection,
-}
-
-/// Splits a string that contains a marker character
-/// e.g: this is an example!10
-///     returns:
-///         this is an example
-///         (10, "!10") (index and index as string)
-pub(crate) fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
-    if buffer.is_empty() {
-        return ParseResult {
-            remainder: buffer,
-            index: None,
-            marker: None,
-            direction: IndexDirection::Forward,
-        };
-    }
-
-    let mut input = buffer.chars().peekable();
-
-    let mut index = 0;
-    let mut direction = IndexDirection::Forward;
-    while let Some(char) = input.next() {
-        if char == marker {
-            match input.peek() {
-                Some(&x) if x == marker => {
-                    return ParseResult {
-                        remainder: &buffer[0..index],
-                        index: Some(0),
-                        marker: Some(&buffer[index..index + 2]),
-                        direction: IndexDirection::Backward,
-                    }
-                }
-                Some(&x) if x.is_ascii_digit() || x == '-' => {
-                    let mut count: usize = 0;
-                    let mut size: usize = 1;
-                    while let Some(&c) = input.peek() {
-                        if c == '-' {
-                            let _ = input.next();
-                            size += 1;
-                            direction = IndexDirection::Backward;
-                        } else if c.is_ascii_digit() {
-                            let c = c.to_digit(10).expect("already checked if is a digit");
-                            let _ = input.next();
-                            count *= 10;
-                            count += c as usize;
-                            size += 1;
-                        } else {
-                            return ParseResult {
-                                remainder: &buffer[0..index],
-                                index: Some(count),
-                                marker: Some(&buffer[index..index + size]),
-                                direction,
-                            };
-                        }
-                    }
-                    return ParseResult {
-                        remainder: &buffer[0..index],
-                        index: Some(count),
-                        marker: Some(&buffer[index..index + size]),
-                        direction,
-                    };
-                }
-                None => {
-                    return ParseResult {
-                        remainder: &buffer[0..index],
-                        index: Some(0),
-                        marker: Some(&buffer[index..buffer.len()]),
-                        direction,
-                    }
-                }
-                _ => {
-                    index += 1;
-                    continue;
-                }
-            }
+impl MenuType {
+    fn as_ref(&self) -> &dyn Menu {
+        match self {
+            Self::EngineCompleter(menu) => menu.as_ref(),
+            Self::WithCompleter { menu, .. } => menu.as_ref(),
         }
-        index += 1;
     }
 
-    ParseResult {
-        remainder: buffer,
-        index: None,
-        marker: None,
-        direction,
+    fn as_mut(&mut self) -> &mut dyn Menu {
+        match self {
+            Self::EngineCompleter(menu) => menu.as_mut(),
+            Self::WithCompleter { menu, .. } => menu.as_mut(),
+        }
     }
 }
 
-/// Finds common string in a list of values
-fn find_common_string(values: &[(Span, String)]) -> (Option<&(Span, String)>, Option<usize>) {
-    let first = values.iter().next();
+impl Menu for MenuType {
+    fn name(&self) -> &str {
+        self.as_ref().name()
+    }
 
-    let index = first.and_then(|(_, first_string)| {
-        values.iter().skip(1).fold(None, |index, (_, value)| {
-            if value.starts_with(first_string) {
-                Some(first_string.len())
-            } else {
-                first_string
-                    .chars()
-                    .zip(value.chars())
-                    .position(|(mut lhs, mut rhs)| {
-                        lhs.make_ascii_lowercase();
-                        rhs.make_ascii_lowercase();
+    fn indicator(&self) -> &str {
+        self.as_ref().indicator()
+    }
 
-                        lhs != rhs
-                    })
-                    .map(|new_index| match index {
-                        Some(index) => {
-                            if index <= new_index {
-                                index
-                            } else {
-                                new_index
-                            }
-                        }
-                        None => new_index,
-                    })
+    fn is_active(&self) -> bool {
+        self.as_ref().is_active()
+    }
+
+    fn menu_event(&mut self, event: MenuEvent) {
+        self.as_mut().menu_event(event)
+    }
+
+    fn can_quick_complete(&self) -> bool {
+        self.as_ref().can_quick_complete()
+    }
+
+    fn can_partially_complete(
+        &mut self,
+        values_updated: bool,
+        line_buffer: &mut LineBuffer,
+        history: &dyn History,
+        completer: &dyn Completer,
+    ) -> bool {
+        match self {
+            Self::EngineCompleter(menu) => {
+                menu.can_partially_complete(values_updated, line_buffer, history, completer)
             }
-        })
-    });
-
-    (first, index)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_row_test() {
-        let input = "search:6";
-        let res = parse_selection_char(input, ':');
-
-        assert_eq!(res.remainder, "search");
-        assert_eq!(res.index, Some(6));
-        assert_eq!(res.marker, Some(":6"));
+            Self::WithCompleter {
+                menu,
+                completer: own_completer,
+            } => menu.can_partially_complete(
+                values_updated,
+                line_buffer,
+                history,
+                own_completer.as_ref(),
+            ),
+        }
     }
 
-    #[test]
-    fn parse_double_char() {
-        let input = "search!!";
-        let res = parse_selection_char(input, '!');
-
-        assert_eq!(res.remainder, "search");
-        assert_eq!(res.index, Some(0));
-        assert_eq!(res.marker, Some("!!"));
-        assert!(matches!(res.direction, IndexDirection::Backward));
+    fn update_values(
+        &mut self,
+        line_buffer: &mut LineBuffer,
+        history: &dyn History,
+        completer: &dyn Completer,
+    ) {
+        match self {
+            Self::EngineCompleter(menu) => menu.update_values(line_buffer, history, completer),
+            Self::WithCompleter {
+                menu,
+                completer: own_completer,
+            } => menu.update_values(line_buffer, history, own_completer.as_ref()),
+        }
     }
 
-    #[test]
-    fn parse_row_other_marker_test() {
-        let input = "search?9";
-        let res = parse_selection_char(input, '?');
-
-        assert_eq!(res.remainder, "search");
-        assert_eq!(res.index, Some(9));
-        assert_eq!(res.marker, Some("?9"));
+    fn update_working_details(
+        &mut self,
+        line_buffer: &mut LineBuffer,
+        history: &dyn History,
+        completer: &dyn Completer,
+        painter: &Painter,
+    ) {
+        match self {
+            Self::EngineCompleter(menu) => {
+                menu.update_working_details(line_buffer, history, completer, painter)
+            }
+            Self::WithCompleter {
+                menu,
+                completer: own_completer,
+            } => menu.update_working_details(line_buffer, history, own_completer.as_ref(), painter),
+        }
     }
 
-    #[test]
-    fn parse_row_double_test() {
-        let input = "ls | where:16";
-        let res = parse_selection_char(input, ':');
-
-        assert_eq!(res.remainder, "ls | where");
-        assert_eq!(res.index, Some(16));
-        assert_eq!(res.marker, Some(":16"));
+    fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
+        self.as_ref().replace_in_buffer(line_buffer)
     }
 
-    #[test]
-    fn parse_row_empty_test() {
-        let input = ":10";
-        let res = parse_selection_char(input, ':');
-
-        assert_eq!(res.remainder, "");
-        assert_eq!(res.index, Some(10));
-        assert_eq!(res.marker, Some(":10"));
+    fn menu_required_lines(&self, terminal_columns: u16) -> u16 {
+        self.as_ref().menu_required_lines(terminal_columns)
     }
 
-    #[test]
-    fn parse_row_fake_indicator_test() {
-        let input = "let a: another :10";
-        let res = parse_selection_char(input, ':');
-
-        assert_eq!(res.remainder, "let a: another ");
-        assert_eq!(res.index, Some(10));
-        assert_eq!(res.marker, Some(":10"));
+    fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String {
+        self.as_ref()
+            .menu_string(available_lines, use_ansi_coloring)
     }
 
-    #[test]
-    fn parse_row_no_number_test() {
-        let input = "let a: another:";
-        let res = parse_selection_char(input, ':');
-
-        assert_eq!(res.remainder, "let a: another");
-        assert_eq!(res.index, Some(0));
-        assert_eq!(res.marker, Some(":"));
+    fn min_rows(&self) -> u16 {
+        self.as_ref().min_rows()
     }
 
-    #[test]
-    fn parse_empty_buffer_test() {
-        let input = "";
-        let res = parse_selection_char(input, ':');
-
-        assert_eq!(res.remainder, "");
-        assert_eq!(res.index, None);
-        assert_eq!(res.marker, None);
-    }
-
-    #[test]
-    fn parse_negative_direction() {
-        let input = "!-2";
-        let res = parse_selection_char(input, '!');
-
-        assert_eq!(res.remainder, "");
-        assert_eq!(res.index, Some(2));
-        assert_eq!(res.marker, Some("!-2"));
-        assert!(matches!(res.direction, IndexDirection::Backward));
+    fn get_values(&self) -> &[Suggestion] {
+        self.as_ref().get_values()
     }
 }

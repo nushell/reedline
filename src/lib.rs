@@ -121,7 +121,7 @@
 //! // Use the interactive menu to select options from the completer
 //! let completion_menu = Box::new(CompletionMenu::default());
 //!
-//! let mut line_editor = Reedline::create()?.with_completer(completer).with_menu(completion_menu);
+//! let mut line_editor = Reedline::create()?.with_completer(completer).with_menu(completion_menu, None);
 //! # Ok::<(), io::Error>(())
 //! ```
 //!
@@ -222,7 +222,7 @@ mod highlighter;
 pub use highlighter::{ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
 
 mod completion;
-pub use completion::{Completer, DefaultCompleter, Span};
+pub use completion::{Completer, DefaultCompleter, Span, Suggestion};
 
 mod hinter;
 pub use hinter::{DefaultHinter, Hinter};
@@ -231,7 +231,7 @@ mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
-pub use menu::{CompletionMenu, HistoryMenu, Menu, MenuEvent};
+pub use menu::{menu_functions, CompletionMenu, HistoryMenu, Menu, MenuEvent, MenuTextStyle};
 
 mod utils;
 pub use utils::{

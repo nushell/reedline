@@ -30,5 +30,16 @@ impl Span {
 pub trait Completer: Send {
     /// the action that will take the line and position and convert it to a vector of completions, which include the
     /// span to replace and the contents of that replacement
-    fn complete(&self, line: &str, pos: usize) -> Vec<(Span, String)>;
+    fn complete(&self, line: &str, pos: usize) -> Vec<Suggestion>;
+}
+
+/// Suggestion returned by the Completer
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Suggestion {
+    /// String replacement that will be introduced to the the buffer
+    pub value: String,
+    /// Optional description for the replacement
+    pub description: Option<String>,
+    /// Replacement span in the buffer
+    pub span: Span,
 }

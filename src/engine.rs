@@ -1,5 +1,3 @@
-use crate::{menu::IndexDirection, utils::text_manipulation};
-
 use {
     crate::{
         completion::{CircularCompletionHandler, Completer, DefaultCompleter},
@@ -9,9 +7,13 @@ use {
         highlighter::SimpleMatchHighlighter,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
-        menu::{parse_selection_char, Menu, MenuEvent},
+        menu::{
+            menu_functions::{parse_selection_char, IndexDirection},
+            Menu, MenuEvent, MenuType,
+        },
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
+        utils::text_manipulation,
         DefaultValidator, EditCommand, ExampleHighlighter, Highlighter, Prompt,
         PromptHistorySearch, Signal, ValidationResult, Validator,
     },
@@ -112,7 +114,7 @@ pub struct Reedline {
     use_ansi_coloring: bool,
 
     // Engine Menus
-    menus: Vec<Box<dyn Menu>>,
+    menus: Vec<MenuType>,
 }
 
 impl Drop for Reedline {
@@ -311,8 +313,13 @@ impl Reedline {
 
     /// A builder that appends a menu to the engine
     #[must_use]
-    pub fn with_menu(mut self, menu: Box<dyn Menu>) -> Self {
-        self.menus.push(menu);
+    pub fn with_menu(mut self, menu: Box<dyn Menu>, completer: Option<Box<dyn Completer>>) -> Self {
+        if let Some(completer) = completer {
+            self.menus.push(MenuType::WithCompleter { menu, completer })
+        } else {
+            self.menus.push(MenuType::EngineCompleter(menu))
+        }
+
         self
     }
 
@@ -573,7 +580,7 @@ impl Reedline {
                     if let Some(menu) = self.menus.iter_mut().find(|menu| menu.name() == name) {
                         menu.menu_event(MenuEvent::Activate(self.quick_completions));
 
-                        if self.quick_completions {
+                        if self.quick_completions && menu.can_quick_complete() {
                             menu.update_values(
                                 self.editor.line_buffer(),
                                 self.history.as_ref(),
@@ -759,7 +766,7 @@ impl Reedline {
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands);
                 if let Some(menu) = self.menus.iter_mut().find(|men| men.is_active()) {
-                    if self.quick_completions {
+                    if self.quick_completions && menu.can_quick_complete() {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
                         menu.update_values(
                             self.editor.line_buffer(),
@@ -860,8 +867,8 @@ impl Reedline {
         }
     }
 
-    fn active_menu(&mut self) -> Option<&mut Box<dyn Menu>> {
-        self.menus.iter_mut().find(|men| men.is_active())
+    fn active_menu(&mut self) -> Option<&mut MenuType> {
+        self.menus.iter_mut().find(|menu| menu.is_active())
     }
 
     fn previous_history(&mut self) {
@@ -1176,11 +1183,7 @@ impl Reedline {
             }
         }
 
-        let menu = self
-            .menus
-            .iter()
-            .find(|menu| menu.is_active())
-            .map(|menu| menu.as_ref());
+        let menu = self.menus.iter().find(|menu| menu.is_active());
 
         self.painter
             .repaint_buffer(prompt, &lines, menu, self.use_ansi_coloring)

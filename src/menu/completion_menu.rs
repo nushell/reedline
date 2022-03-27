@@ -1,5 +1,5 @@
-use super::{find_common_string, Menu, MenuEvent, MenuTextStyle};
-use crate::{painting::Painter, Completer, History, LineBuffer, Span};
+use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
+use crate::{painting::Painter, Completer, History, LineBuffer, Suggestion};
 use nu_ansi_term::{ansi::RESET, Style};
 
 /// Default values used as reference for the menu. These values are set during
@@ -48,7 +48,7 @@ pub struct CompletionMenu {
     /// Working column details keep changing based on the collected values
     working_details: ColumnDetails,
     /// Menu cached values
-    values: Vec<(Span, String)>,
+    values: Vec<Suggestion>,
     /// column position of the cursor. Starts from 0
     col_pos: u16,
     /// row position in the menu. Starts from 0
@@ -88,6 +88,13 @@ impl CompletionMenu {
     #[must_use]
     pub fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
         self.color.selected_text_style = selected_text_style;
+        self
+    }
+
+    /// Menu builder with new value for text style
+    #[must_use]
+    pub fn with_description_text_style(mut self, description_text_style: Style) -> Self {
+        self.color.description_style = description_text_style;
         self
     }
 
@@ -226,7 +233,7 @@ impl CompletionMenu {
     }
 
     /// Get selected value from the menu
-    fn get_value(&self) -> Option<(Span, String)> {
+    fn get_value(&self) -> Option<Suggestion> {
         self.get_values().get(self.index()).cloned()
     }
 
@@ -286,50 +293,73 @@ impl CompletionMenu {
         }
     }
 
-    /// Text style for menu
-    fn text_style(&self, index: usize) -> String {
-        if index == self.index() {
-            self.color.selected_text_style.prefix().to_string()
-        } else {
-            self.color.text_style.prefix().to_string()
-        }
-    }
-
-    /// Creates default string that represents one line from a menu
+    /// Creates default string that represents one suggestion from the menu
     fn create_string(
         &self,
-        line: &str,
+        suggestion: &Suggestion,
         index: usize,
         column: u16,
         empty_space: usize,
         use_ansi_coloring: bool,
     ) -> String {
-        if use_ansi_coloring {
+        let description = if let Some(description) = &suggestion.description {
             format!(
-                "{}{}{}{:empty$}{}",
-                self.text_style(index),
-                &line,
-                RESET,
+                "{:empty$}{}",
                 "",
-                self.end_of_line(column),
-                empty = empty_space
+                description,
+                empty = self.default_details.col_padding
             )
+        } else {
+            "".to_string()
+        };
+
+        if use_ansi_coloring {
+            if index == self.index() {
+                format!(
+                    "{}{}{:>empty$}{}{}",
+                    self.color.selected_text_style.prefix(),
+                    &suggestion.value,
+                    description,
+                    RESET,
+                    self.end_of_line(column),
+                    empty = empty_space,
+                )
+            } else {
+                format!(
+                    "{}{}{}{}{:>empty$}{}{}",
+                    self.color.text_style.prefix(),
+                    &suggestion.value,
+                    RESET,
+                    self.color.description_style.prefix(),
+                    description,
+                    RESET,
+                    self.end_of_line(column),
+                    empty = empty_space,
+                )
+            }
         } else {
             // If no ansi coloring is found, then the selection word is
             // the line in uppercase
-            let line_str = if index == self.index() {
-                format!(">{}", line.to_uppercase())
+            let (marker, empty_space) = if index == self.index() {
+                (">", empty_space.saturating_sub(1))
             } else {
-                line.to_string()
+                ("", empty_space)
             };
 
-            // Final string with formatting
-            format!(
-                "{:width$}{}",
-                line_str,
+            let line = format!(
+                "{}{}{:>empty$}{}",
+                marker,
+                &suggestion.value,
+                description,
                 self.end_of_line(column),
-                width = self.get_width()
-            )
+                empty = empty_space,
+            );
+
+            if index == self.index() {
+                line.to_uppercase()
+            } else {
+                line
+            }
         }
     }
 }
@@ -350,6 +380,11 @@ impl Menu for CompletionMenu {
         self.active
     }
 
+    /// The completion menu can to quick complete if there is only one element
+    fn can_quick_complete(&self) -> bool {
+        true
+    }
+
     /// The completion menu can try to find the common string and replace it
     /// in the given line buffer
     fn can_partially_complete(
@@ -366,7 +401,7 @@ impl Menu for CompletionMenu {
         }
 
         let values = self.get_values();
-        if let (Some((span, value)), Some(index)) = find_common_string(values) {
+        if let (Some(Suggestion { value, span, .. }), Some(index)) = find_common_string(values) {
             let index = index.min(value.len());
             let matching = &value[0..index];
 
@@ -432,6 +467,56 @@ impl Menu for CompletionMenu {
         painter: &Painter,
     ) {
         if let Some(event) = self.event.take() {
+            // The working value for the menu are updated first before executing any of the
+            // menu events
+            //
+            // If there is at least one suggestion that contains a description, then the layout
+            // is changed to one column to fit the description
+            let exist_description = self
+                .get_values()
+                .iter()
+                .any(|suggestion| suggestion.description.is_some());
+
+            if exist_description {
+                self.working_details.columns = 1;
+                self.working_details.col_width = painter.screen_width() as usize;
+            } else {
+                let max_width = self.get_values().iter().fold(0, |acc, suggestion| {
+                    let str_len = suggestion.value.len() + self.default_details.col_padding;
+                    if str_len > acc {
+                        str_len
+                    } else {
+                        acc
+                    }
+                });
+
+                // If no default width is found, then the total screen width is used to estimate
+                // the column width based on the default number of columns
+                let default_width = if let Some(col_width) = self.default_details.col_width {
+                    col_width
+                } else {
+                    let col_width = painter.screen_width() / self.default_details.columns;
+                    col_width as usize
+                };
+
+                // Adjusting the working width of the column based the max line width found
+                // in the menu values
+                if max_width > default_width {
+                    self.working_details.col_width = max_width;
+                } else {
+                    self.working_details.col_width = default_width;
+                };
+
+                // The working columns is adjusted based on possible number of columns
+                // that could be fitted in the screen with the calculated column width
+                let possible_cols = painter.screen_width() / self.working_details.col_width as u16;
+                if possible_cols > self.default_details.columns {
+                    self.working_details.columns = self.default_details.columns.max(1);
+                } else {
+                    self.working_details.columns = possible_cols;
+                }
+            }
+
             match event {
                 MenuEvent::Activate(updated) => {
                     self.active = true;
@@ -459,47 +544,12 @@ impl Menu for CompletionMenu {
                     // The completion menu doest have the concept of pages, yet
                 }
             }
-
-            let max_width = self.get_values().iter().fold(0, |acc, (_, string)| {
-                let str_len = string.len() + self.default_details.col_padding;
-                if str_len > acc {
-                    str_len
-                } else {
-                    acc
-                }
-            });
-
-            // If no default width is found, then the total screen width is used to estimate
-            // the column width based on the default number of columns
-            let default_width = if let Some(col_width) = self.default_details.col_width {
-                col_width
-            } else {
-                let col_width = painter.screen_width() / self.default_details.columns;
-                col_width as usize
-            };
-
-            // Adjusting the working width of the column based the max line width found
-            // in the menu values
-            if max_width > default_width {
-                self.working_details.col_width = max_width;
-            } else {
-                self.working_details.col_width = default_width;
-            };
-
-            // The working columns is adjusted based on possible number of columns
-            // that could be fitted in the screen with the calculated column width
-            let possible_cols = painter.screen_width() / self.working_details.col_width as u16;
-            if possible_cols > self.default_details.columns {
-                self.working_details.columns = self.default_details.columns.max(1);
-            } else {
-                self.working_details.columns = possible_cols;
-            }
         }
     }
 
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
-        if let Some((span, value)) = self.get_value() {
+        if let Some(Suggestion { value, span, .. }) = self.get_value() {
             let mut offset = line_buffer.insertion_point();
             offset += value.len() - (span.end - span.start);
 
@@ -514,7 +564,7 @@ impl Menu for CompletionMenu {
     }
 
     /// Gets values from filler that will be displayed in the menu
-    fn get_values(&self) -> &[(Span, String)] {
+    fn get_values(&self) -> &[Suggestion] {
         &self.values
     }
 
@@ -544,13 +594,13 @@ impl Menu for CompletionMenu {
                 .skip(skip_values)
                 .take(available_values)
                 .enumerate()
-                .map(|(index, (_, line))| {
+                .map(|(index, suggestion)| {
                     // Correcting the enumerate index based on the number of skipped values
                     let index = index + skip_values;
                     let column = index as u16 % self.get_cols();
-                    let empty_space = self.get_width().saturating_sub(line.len());
+                    let empty_space = self.get_width().saturating_sub(suggestion.value.len());
 
-                    self.create_string(line, index, column, empty_space, use_ansi_coloring)
+                    self.create_string(suggestion, index, column, empty_space, use_ansi_coloring)
                 })
                 .collect()
         }

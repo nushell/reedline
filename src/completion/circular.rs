@@ -52,13 +52,13 @@ impl CircularCompletionHandler {
             match self.index {
                 index if index < completions.len() => {
                     self.index += 1;
-                    let span = completions[index].0;
+                    let span = completions[index].span;
 
                     let mut offset = present_buffer.insertion_point();
-                    offset += completions[index].1.len() - (span.end - span.start);
+                    offset += completions[index].value.len() - (span.end - span.start);
 
                     // TODO improve the support for multiline replace
-                    present_buffer.replace(span.start..span.end, &completions[index].1);
+                    present_buffer.replace(span.start..span.end, &completions[index].value);
                     present_buffer.set_insertion_point(offset);
                 }
                 _ => {

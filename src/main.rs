@@ -80,8 +80,8 @@ fn main() -> Result<()> {
     let completion_menu = Box::new(CompletionMenu::default());
     let history_menu = Box::new(HistoryMenu::default());
     line_editor = line_editor
-        .with_menu(completion_menu)
-        .with_menu(history_menu);
+        .with_menu(completion_menu, None)
+        .with_menu(history_menu, None);
 
     let edit_mode: Box<dyn EditMode> = if vi_mode {
         let mut normal_keybindings = default_vi_normal_keybindings();
