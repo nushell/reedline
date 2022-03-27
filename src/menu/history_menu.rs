@@ -459,13 +459,10 @@ impl Menu for HistoryMenu {
     ) {
         if let Some(event) = self.event.clone() {
             match event {
-                MenuEvent::Activate(updated) => {
+                MenuEvent::Activate(_) => {
                     self.reset_position();
                     self.input = Some(line_buffer.get_buffer().to_string());
-
-                    if !updated {
-                        self.update_values(line_buffer, history, completer);
-                    }
+                    self.update_values(line_buffer, history, completer);
 
                     self.pages.push(Page {
                         size: self.printable_entries(painter),
@@ -476,11 +473,8 @@ impl Menu for HistoryMenu {
                     self.active = false;
                     self.input = None;
                 }
-                MenuEvent::Edit(updated) => {
-                    if !updated {
-                        self.update_values(line_buffer, history, completer);
-                    }
-
+                MenuEvent::Edit(_) => {
+                    self.update_values(line_buffer, history, completer);
                     self.pages.push(Page {
                         size: self.printable_entries(painter),
                         full: false,
