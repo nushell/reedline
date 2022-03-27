@@ -107,9 +107,12 @@ impl EditMode for Emacs {
                         _ => c.to_ascii_lowercase(),
                     };
 
-                    if let Some(event) = self.keybindings.find_binding(modifier, KeyCode::Char(c)) {
-                        event
-                    } else {
+                    if modifier == KeyModifiers::NONE
+                        || modifier == KeyModifiers::SHIFT
+                        || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
+                        || modifier
+                            == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
+                    {
                         ReedlineEvent::Edit(vec![EditCommand::InsertChar(
                             if modifier == KeyModifiers::SHIFT {
                                 c.to_ascii_uppercase()
@@ -117,6 +120,10 @@ impl EditMode for Emacs {
                                 c
                             },
                         )])
+                    } else {
+                        self.keybindings
+                            .find_binding(modifier, KeyCode::Char(c))
+                            .unwrap_or(ReedlineEvent::None)
                     }
                 }
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
