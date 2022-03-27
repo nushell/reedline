@@ -67,8 +67,8 @@ fn main() -> Result<()> {
 
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
-    let mut line_editor = Reedline::create()?
-        .with_history(history)?
+    let mut line_editor = Reedline::create()
+        .with_history(history)
         .with_completer(completer)
         .with_quick_completions(true)
         .with_partial_completions(true)

@@ -127,7 +127,8 @@ impl Drop for Reedline {
 
 impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
-    pub fn create() -> io::Result<Reedline> {
+    #[must_use]
+    pub fn create() -> Self {
         let history = Box::new(FileBackedHistory::default());
         let painter = Painter::new(std::io::BufWriter::new(std::io::stderr()));
         let buffer_highlighter = Box::new(ExampleHighlighter::default());
@@ -136,7 +137,7 @@ impl Reedline {
         let validator = Box::new(DefaultValidator);
         let edit_mode = Box::new(Emacs::default());
 
-        let reedline = Reedline {
+        Reedline {
             editor: Editor::default(),
             history,
             input_mode: InputMode::Regular,
@@ -153,9 +154,7 @@ impl Reedline {
             animate: false,
             use_ansi_coloring: true,
             menus: Vec::new(),
-        };
-
-        Ok(reedline)
+        }
     }
 
     /// A builder to include a [`Hinter`] in your instance of the Reedline engine
@@ -280,10 +279,10 @@ impl Reedline {
     ///     .expect("Error configuring reedline with history");
     /// # Ok::<(), io::Error>(())
     /// ```
-    pub fn with_history(mut self, history: Box<dyn History>) -> std::io::Result<Reedline> {
+    #[must_use]
+    pub fn with_history(mut self, history: Box<dyn History>) -> Self {
         self.history = history;
-
-        Ok(self)
+        self
     }
 
     /// A builder that configures the validator for your instance of the Reedline engine
