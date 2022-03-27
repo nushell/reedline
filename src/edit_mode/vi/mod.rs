@@ -67,8 +67,12 @@ impl EditMode for Vi {
                     }
 
                     let c = c.to_ascii_lowercase();
-
-                    if modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT {
+                    if let Some(event) = self
+                        .normal_keybindings
+                        .find_binding(modifiers, KeyCode::Char(c))
+                    {
+                        event
+                    } else {
                         self.cache.push(if modifier == KeyModifiers::SHIFT {
                             c.to_ascii_uppercase()
                         } else {
@@ -96,10 +100,6 @@ impl EditMode for Vi {
                         self.previous = Some(event.clone());
 
                         event
-                    } else {
-                        self.normal_keybindings
-                            .find_binding(modifiers, KeyCode::Char(c))
-                            .unwrap_or(ReedlineEvent::None)
                     }
                 }
                 (ViMode::Insert, modifier, KeyCode::Char(c)) => {
@@ -111,15 +111,17 @@ impl EditMode for Vi {
                     // Mixed modifiers are used by non american keyboards that have extra
                     // keys like 'alt gr'. Keep this in mind if in the future there are
                     // cases where an event is not being captured
+                    let c = match modifier {
+                        KeyModifiers::NONE => c,
+                        _ => c.to_ascii_lowercase(),
+                    };
 
-                    let c = c.to_ascii_lowercase();
-
-                    if modifier == KeyModifiers::NONE
-                        || modifier == KeyModifiers::SHIFT
-                        || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
-                        || modifier
-                            == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
+                    if let Some(event) = self
+                        .insert_keybindings
+                        .find_binding(modifier, KeyCode::Char(c))
                     {
+                        event
+                    } else {
                         ReedlineEvent::Edit(vec![EditCommand::InsertChar(
                             if modifier == KeyModifiers::SHIFT {
                                 c.to_ascii_uppercase()
@@ -127,10 +129,6 @@ impl EditMode for Vi {
                                 c
                             },
                         )])
-                    } else {
-                        self.insert_keybindings
-                            .find_binding(modifier, KeyCode::Char(c))
-                            .unwrap_or(ReedlineEvent::None)
                     }
                 }
                 (_, KeyModifiers::NONE, KeyCode::Esc) => {

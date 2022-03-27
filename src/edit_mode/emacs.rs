@@ -102,14 +102,14 @@ impl EditMode for Emacs {
                     // Mixed modifiers are used by non american keyboards that have extra
                     // keys like 'alt gr'. Keep this in mind if in the future there are
                     // cases where an event is not being captured
-                    let c = c.to_ascii_lowercase();
+                    let c = match modifier {
+                        KeyModifiers::NONE => c,
+                        _ => c.to_ascii_lowercase(),
+                    };
 
-                    if modifier == KeyModifiers::NONE
-                        || modifier == KeyModifiers::SHIFT
-                        || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
-                        || modifier
-                            == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
-                    {
+                    if let Some(event) = self.keybindings.find_binding(modifier, KeyCode::Char(c)) {
+                        event
+                    } else {
                         ReedlineEvent::Edit(vec![EditCommand::InsertChar(
                             if modifier == KeyModifiers::SHIFT {
                                 c.to_ascii_uppercase()
@@ -117,10 +117,6 @@ impl EditMode for Emacs {
                                 c
                             },
                         )])
-                    } else {
-                        self.keybindings
-                            .find_binding(modifier, KeyCode::Char(c))
-                            .unwrap_or(ReedlineEvent::None)
                     }
                 }
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
