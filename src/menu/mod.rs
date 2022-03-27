@@ -70,6 +70,10 @@ pub trait Menu: Send {
     /// Selects what type of event happened with the menu
     fn menu_event(&mut self, event: MenuEvent);
 
+    /// A menu may not be allowed to quick complete because it needs to stay
+    /// active even with one element
+    fn can_quick_complete(&self) -> bool;
+
     /// The completion menu can try to find the common string and replace it
     /// in the given line buffer
     fn can_partially_complete(
@@ -164,6 +168,10 @@ impl Menu for MenuType {
 
     fn menu_event(&mut self, event: MenuEvent) {
         self.as_mut().menu_event(event)
+    }
+
+    fn can_quick_complete(&self) -> bool {
+        self.as_ref().can_quick_complete()
     }
 
     fn can_partially_complete(

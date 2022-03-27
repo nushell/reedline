@@ -335,6 +335,11 @@ impl Menu for HistoryMenu {
         self.active
     }
 
+    /// There is no use for quick complete for the history menu
+    fn can_quick_complete(&self) -> bool {
+        false
+    }
+
     /// The history menu should not try to auto complete to avoid comparing
     /// all registered values
     fn can_partially_complete(

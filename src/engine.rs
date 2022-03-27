@@ -580,7 +580,7 @@ impl Reedline {
                     if let Some(menu) = self.menus.iter_mut().find(|menu| menu.name() == name) {
                         menu.menu_event(MenuEvent::Activate(self.quick_completions));
 
-                        if self.quick_completions {
+                        if self.quick_completions && menu.can_quick_complete() {
                             menu.update_values(
                                 self.editor.line_buffer(),
                                 self.history.as_ref(),
@@ -766,7 +766,7 @@ impl Reedline {
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands);
                 if let Some(menu) = self.menus.iter_mut().find(|men| men.is_active()) {
-                    if self.quick_completions {
+                    if self.quick_completions && menu.can_quick_complete() {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
                         menu.update_values(
                             self.editor.line_buffer(),

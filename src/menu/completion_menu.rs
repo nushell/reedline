@@ -380,6 +380,11 @@ impl Menu for CompletionMenu {
         self.active
     }
 
+    /// The completion menu can to quick complete if there is only one element
+    fn can_quick_complete(&self) -> bool {
+        true
+    }
+
     /// The completion menu can try to find the common string and replace it
     /// in the given line buffer
     fn can_partially_complete(
@@ -462,36 +467,11 @@ impl Menu for CompletionMenu {
         painter: &Painter,
     ) {
         if let Some(event) = self.event.take() {
-            match event {
-                MenuEvent::Activate(updated) => {
-                    self.active = true;
-                    self.reset_position();
-
-                    if !updated {
-                        self.update_values(line_buffer, history, completer);
-                    }
-                }
-                MenuEvent::Deactivate => self.active = false,
-                MenuEvent::Edit(updated) => {
-                    self.reset_position();
-
-                    if !updated {
-                        self.update_values(line_buffer, history, completer);
-                    }
-                }
-                MenuEvent::NextElement => self.move_next(),
-                MenuEvent::PreviousElement => self.move_previous(),
-                MenuEvent::MoveUp => self.move_up(),
-                MenuEvent::MoveDown => self.move_down(),
-                MenuEvent::MoveLeft => self.move_left(),
-                MenuEvent::MoveRight => self.move_right(),
-                MenuEvent::PreviousPage | MenuEvent::NextPage => {
-                    // The completion menu doest have the concept of pages, yet
-                }
-            }
-
-            // If there is at least one suggestion that contains a description we change
-            // the layout to one column to display the description
+            // The working value for the menu are updated first before executing any of the
+            // menu events
+            //
+            // If there is at least one suggestion that contains a description, then the layout
+            // is changed to one column to fit the description
             let exist_description = self
                 .get_values()
                 .iter()
@@ -534,6 +514,34 @@ impl Menu for CompletionMenu {
                     self.working_details.columns = self.default_details.columns.max(1);
                 } else {
                     self.working_details.columns = possible_cols;
+                }
+            }
+
+            match event {
+                MenuEvent::Activate(updated) => {
+                    self.active = true;
+                    self.reset_position();
+
+                    if !updated {
+                        self.update_values(line_buffer, history, completer);
+                    }
+                }
+                MenuEvent::Deactivate => self.active = false,
+                MenuEvent::Edit(updated) => {
+                    self.reset_position();
+
+                    if !updated {
+                        self.update_values(line_buffer, history, completer);
+                    }
+                }
+                MenuEvent::NextElement => self.move_next(),
+                MenuEvent::PreviousElement => self.move_previous(),
+                MenuEvent::MoveUp => self.move_up(),
+                MenuEvent::MoveDown => self.move_down(),
+                MenuEvent::MoveLeft => self.move_left(),
+                MenuEvent::MoveRight => self.move_right(),
+                MenuEvent::PreviousPage | MenuEvent::NextPage => {
+                    // The completion menu doest have the concept of pages, yet
                 }
             }
         }
