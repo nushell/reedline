@@ -1,4 +1,5 @@
 mod clip_buffer;
+mod edit_stack;
 mod editor;
 mod line_buffer;
 
