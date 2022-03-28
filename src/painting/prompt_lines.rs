@@ -1,6 +1,6 @@
 use super::utils::{coerce_crlf, estimate_required_lines, line_width};
 use crate::{
-    menu::{Menu, MenuType},
+    menu::{Menu, ReedlineMenu},
     prompt::PromptEditMode,
     Prompt, PromptHistorySearch,
 };
@@ -53,7 +53,7 @@ impl<'prompt> PromptLines<'prompt> {
     /// The required lines to paint the buffer are calculated by counting the
     /// number of newlines in all the strings that form the prompt and buffer.
     /// The plus 1 is to indicate that there should be at least one line.
-    pub(crate) fn required_lines(&self, terminal_columns: u16, menu: Option<&MenuType>) -> u16 {
+    pub(crate) fn required_lines(&self, terminal_columns: u16, menu: Option<&ReedlineMenu>) -> u16 {
         let input = if menu.is_none() {
             self.prompt_str_left.to_string()
                 + &self.prompt_indicator

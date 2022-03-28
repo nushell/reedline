@@ -126,9 +126,8 @@ pub trait Menu: Send {
     fn get_values(&self) -> &[Suggestion];
 }
 
-/// Type of menu that can be used with Reedline engine
-pub(crate) enum MenuType {
-    /// Menu that uses the engine completer to update its values
+pub(crate) enum ReedlineMenu {
+    /// Menu that uses Reedline's completer to update its values
     EngineCompleter(Box<dyn Menu>),
     /// Menu that has its own Completer
     WithCompleter {
@@ -137,7 +136,7 @@ pub(crate) enum MenuType {
     },
 }
 
-impl MenuType {
+impl ReedlineMenu {
     fn as_ref(&self) -> &dyn Menu {
         match self {
             Self::EngineCompleter(menu) => menu.as_ref(),
@@ -153,7 +152,7 @@ impl MenuType {
     }
 }
 
-impl Menu for MenuType {
+impl Menu for ReedlineMenu {
     fn name(&self) -> &str {
         self.as_ref().name()
     }
