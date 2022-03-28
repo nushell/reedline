@@ -1,4 +1,7 @@
-use super::{Clipboard, ClipboardMode, LineBuffer};
+use super::{
+    edit_stack::{BasicEditStack, EditStack},
+    Clipboard, ClipboardMode, LineBuffer,
+};
 use crate::{core_editor::get_default_clipboard, EditCommand, UndoBehavior};
 
 /// Stateful editor executing changes to the underlying [`LineBuffer`]
@@ -9,8 +12,7 @@ pub struct Editor {
     line_buffer: LineBuffer,
     cut_buffer: Box<dyn Clipboard>,
 
-    edits: Vec<LineBuffer>,
-    index_undo: usize,
+    edit_stack: Box<dyn EditStack<LineBuffer>>,
 }
 
 impl Default for Editor {
@@ -18,10 +20,7 @@ impl Default for Editor {
         Editor {
             line_buffer: LineBuffer::new(),
             cut_buffer: Box::new(get_default_clipboard()),
-
-            // Note: Using list-zipper we can reduce these to one field
-            edits: vec![LineBuffer::new()],
-            index_undo: 2,
+            edit_stack: Box::new(BasicEditStack::new()),
         }
     }
 }
@@ -155,8 +154,7 @@ impl Editor {
     }
 
     pub fn reset_undo_stack(&mut self) {
-        self.edits = vec![LineBuffer::new()];
-        self.index_undo = 2;
+        self.edit_stack.reset();
     }
 
     pub fn move_to_start(&mut self) {
@@ -176,58 +174,25 @@ impl Editor {
         self.line_buffer.move_to_line_end();
     }
 
-    fn get_index_undo(&self) -> usize {
-        if let Some(c) = self.edits.len().checked_sub(self.index_undo) {
-            c
-        } else {
-            0
-        }
-    }
-
     fn undo(&mut self) {
-        // NOTE: Try-blocks should help us get rid of this indirection too
-        self.undo_internal();
+        let val = self.edit_stack.undo();
+        self.line_buffer = val.clone();
     }
 
     fn redo(&mut self) {
-        // NOTE: Try-blocks should help us get rid of this indirection too
-        self.redo_internal();
-    }
-
-    fn redo_internal(&mut self) -> Option<()> {
-        if self.index_undo > 2 {
-            self.index_undo = self.index_undo.checked_sub(2)?;
-            self.undo_internal()
-        } else {
-            None
-        }
-    }
-
-    fn undo_internal(&mut self) -> Option<()> {
-        self.line_buffer = self.edits.get(self.get_index_undo())?.clone();
-
-        if self.index_undo <= self.edits.len() {
-            self.index_undo = self.index_undo.checked_add(1)?;
-        }
-        Some(())
+        let val = self.edit_stack.redo();
+        self.line_buffer = val.clone();
     }
 
     pub fn remember_undo_state(&mut self, is_after_action: bool) -> Option<()> {
-        self.reset_index_undo();
-
-        if self.edits.len() > 1
-            && self.edits.last()?.word_count() == self.line_buffer.word_count()
+        if self.edit_stack.current().word_count() == self.line_buffer.word_count()
             && !is_after_action
         {
-            self.edits.pop();
+            self.edit_stack.undo();
         }
-        self.edits.push(self.line_buffer.clone());
+        self.edit_stack.insert(self.line_buffer.clone());
 
         Some(())
-    }
-
-    fn reset_index_undo(&mut self) {
-        self.index_undo = 2;
     }
 
     fn cut_current_line(&mut self) {
@@ -431,7 +396,12 @@ mod test {
                 LineBuffer::from("ab "),
                 LineBuffer::from("ab c")
             ],
-            editor.edits
+            editor
+                .edit_stack
+                .edits()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>()
         );
     }
 }
