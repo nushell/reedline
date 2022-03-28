@@ -302,28 +302,42 @@ impl CompletionMenu {
         empty_space: usize,
         use_ansi_coloring: bool,
     ) -> String {
-        let description = if let Some(description) = &suggestion.description {
-            format!(
-                "{:empty$}{}",
-                "",
-                description,
-                empty = self.default_details.col_padding
-            )
-        } else {
-            "".to_string()
-        };
+        let description = &suggestion
+            .description
+            .as_ref()
+            .map(|description| {
+                format!(
+                    "{:empty$}{}",
+                    "",
+                    description,
+                    empty = self.default_details.col_padding
+                )
+            })
+            .unwrap_or_else(|| "".to_string());
 
         if use_ansi_coloring {
             if index == self.index() {
-                format!(
-                    "{}{}{:>empty$}{}{}",
-                    self.color.selected_text_style.prefix(),
-                    &suggestion.value,
-                    description,
-                    RESET,
-                    self.end_of_line(column),
-                    empty = empty_space,
-                )
+                if suggestion.description.is_some() {
+                    format!(
+                        "{}{}{:>empty$}{}{}",
+                        self.color.selected_text_style.prefix(),
+                        &suggestion.value,
+                        description,
+                        RESET,
+                        self.end_of_line(column),
+                        empty = empty_space,
+                    )
+                } else {
+                    format!(
+                        "{}{}{}{:>empty$}{}",
+                        self.color.selected_text_style.prefix(),
+                        &suggestion.value,
+                        RESET,
+                        description,
+                        self.end_of_line(column),
+                        empty = empty_space,
+                    )
+                }
             } else {
                 format!(
                     "{}{}{}{}{:>empty$}{}{}",
@@ -338,8 +352,7 @@ impl CompletionMenu {
                 )
             }
         } else {
-            // If no ansi coloring is found, then the selection word is
-            // the line in uppercase
+            // If no ansi coloring is found, then the selection word is line in uppercase
             let (marker, empty_space) = if index == self.index() {
                 (">", empty_space.saturating_sub(1))
             } else {

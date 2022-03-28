@@ -9,7 +9,7 @@ use {
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         menu::{
             menu_functions::{parse_selection_char, IndexDirection},
-            Menu, MenuEvent, MenuType,
+            Menu, MenuEvent, ReedlineMenu,
         },
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
@@ -114,7 +114,7 @@ pub struct Reedline {
     use_ansi_coloring: bool,
 
     // Engine Menus
-    menus: Vec<MenuType>,
+    menus: Vec<ReedlineMenu>,
 }
 
 impl Drop for Reedline {
@@ -315,9 +315,10 @@ impl Reedline {
     #[must_use]
     pub fn with_menu(mut self, menu: Box<dyn Menu>, completer: Option<Box<dyn Completer>>) -> Self {
         if let Some(completer) = completer {
-            self.menus.push(MenuType::WithCompleter { menu, completer })
+            self.menus
+                .push(ReedlineMenu::WithCompleter { menu, completer })
         } else {
-            self.menus.push(MenuType::EngineCompleter(menu))
+            self.menus.push(ReedlineMenu::EngineCompleter(menu))
         }
 
         self
@@ -867,7 +868,7 @@ impl Reedline {
         }
     }
 
-    fn active_menu(&mut self) -> Option<&mut MenuType> {
+    fn active_menu(&mut self) -> Option<&mut ReedlineMenu> {
         self.menus.iter_mut().find(|menu| menu.is_active())
     }
 
