@@ -374,6 +374,7 @@ impl Editor {
 #[cfg(test)]
 mod test {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     fn editor_with(buffer: &str) -> Editor {
         let mut editor = Editor::default();
@@ -407,5 +408,32 @@ mod test {
         assert_eq!(editor.get_buffer(), "This is a ");
         editor.run_edit_command(&EditCommand::Redo);
         assert_eq!(editor.get_buffer(), "This is a test");
+    }
+
+    #[test]
+    fn test_undo_ignores_cursor_movements() {
+        let mut editor = editor_with("This is a");
+
+        for cmd in str_to_edit_commands(" test") {
+            editor.run_edit_command(&cmd);
+        }
+
+        editor.run_edit_command(&EditCommand::MoveLeft);
+        editor.run_edit_command(&EditCommand::MoveToEnd);
+        editor.run_edit_command(&EditCommand::MoveToStart);
+        editor.run_edit_command(&EditCommand::MoveRight);
+        editor.run_edit_command(&EditCommand::MoveToEnd);
+        editor.run_edit_command(&EditCommand::MoveWordLeft);
+        editor.run_edit_command(&EditCommand::MoveWordLeft);
+        editor.run_edit_command(&EditCommand::MoveWordRight);
+        editor.run_edit_command(&EditCommand::MoveToLineStart);
+        editor.run_edit_command(&EditCommand::MoveToLineEnd);
+        editor.run_edit_command(&EditCommand::MoveToPosition(3));
+
+        // All the movements are ignored.
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This is a ");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "");
     }
 }
