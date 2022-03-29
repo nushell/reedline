@@ -36,8 +36,9 @@ For the full documentation visit <https://docs.rs/reedline>. The examples should
 // Create a default reedline object to handle user input
 
 use reedline::{DefaultPrompt, Reedline, Signal};
+use std::io;
 
-fn main() {
+fn main() -> io::Result<()> {
     let mut line_editor = Reedline::create()?;
     let prompt = DefaultPrompt::default();
 
@@ -49,7 +50,7 @@ fn main() {
             }
             Signal::CtrlD | Signal::CtrlC => {
                 println!("\nAborted!");
-                break;
+                break Ok(());
             }
             Signal::CtrlL => {
                 line_editor.clear_screen().unwrap();
