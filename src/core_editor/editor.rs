@@ -1,7 +1,4 @@
-use super::{
-    edit_stack::{BasicEditStack, EditStack},
-    Clipboard, ClipboardMode, LineBuffer,
-};
+use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 use crate::{core_editor::get_default_clipboard, EditCommand, UndoBehavior};
 
 /// Stateful editor executing changes to the underlying [`LineBuffer`]
@@ -12,7 +9,7 @@ pub struct Editor {
     line_buffer: LineBuffer,
     cut_buffer: Box<dyn Clipboard>,
 
-    edit_stack: Box<dyn EditStack<LineBuffer>>,
+    edit_stack: EditStack<LineBuffer>,
 }
 
 impl Default for Editor {
@@ -20,7 +17,7 @@ impl Default for Editor {
         Editor {
             line_buffer: LineBuffer::new(),
             cut_buffer: Box::new(get_default_clipboard()),
-            edit_stack: Box::new(BasicEditStack::new()),
+            edit_stack: EditStack::new(),
         }
     }
 }
