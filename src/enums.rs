@@ -164,7 +164,10 @@ impl EditCommand {
             | EditCommand::MoveRightUntil(_)
             | EditCommand::MoveRightBefore(_)
             | EditCommand::MoveLeftUntil(_)
-            | EditCommand::MoveLeftBefore(_) => UndoBehavior::Full,
+            | EditCommand::MoveLeftBefore(_)
+            //  Undo/Redo
+            | EditCommand::Undo
+            | EditCommand::Redo => UndoBehavior::Ignore,
 
             // Coalesceable insert
             EditCommand::InsertChar(_) => UndoBehavior::Coalesce,
@@ -196,8 +199,6 @@ impl EditCommand {
             | EditCommand::CutRightBefore(_)
             | EditCommand::CutLeftUntil(_)
             | EditCommand::CutLeftBefore(_) => UndoBehavior::Full,
-
-            EditCommand::Undo | EditCommand::Redo => UndoBehavior::Ignore,
         }
     }
 }
