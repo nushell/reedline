@@ -375,30 +375,37 @@ impl Editor {
 mod test {
     use super::*;
 
-    #[test]
-    fn test_undo_initial_char() {
+    fn editor_with(buffer: &str) -> Editor {
         let mut editor = Editor::default();
-        editor.line_buffer().set_buffer(String::from("a"));
-        editor.remember_undo_state(false);
-        editor.line_buffer().set_buffer(String::from("ab"));
-        editor.remember_undo_state(false);
-        editor.line_buffer().set_buffer(String::from("ab "));
-        editor.remember_undo_state(false);
-        editor.line_buffer().set_buffer(String::from("ab c"));
-        editor.remember_undo_state(true);
+        editor.line_buffer.set_buffer(buffer.to_string());
+        editor
+    }
 
-        assert_eq!(
-            vec![
-                LineBuffer::from(""),
-                LineBuffer::from("ab "),
-                LineBuffer::from("ab c")
-            ],
-            editor
-                .edit_stack
-                .edits()
-                .into_iter()
-                .cloned()
-                .collect::<Vec<_>>()
-        );
+    fn str_to_edit_commands(s: &str) -> Vec<EditCommand> {
+        s.chars().map(|c| EditCommand::InsertChar(c)).collect()
+    }
+
+    #[test]
+    fn test_undo_works_on_work_boundries() {
+        let mut editor = editor_with("This is a");
+        for cmd in str_to_edit_commands(" test") {
+            editor.run_edit_command(&cmd);
+        }
+        assert_eq!(editor.get_buffer(), "This is a test");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This is a ");
+    }
+
+    #[test]
+    fn test_redo_works_on_word_boundries() {
+        let mut editor = editor_with("This is a");
+        for cmd in str_to_edit_commands(" test") {
+            editor.run_edit_command(&cmd);
+        }
+        assert_eq!(editor.get_buffer(), "This is a test");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This is a ");
+        editor.run_edit_command(&EditCommand::Redo);
+        assert_eq!(editor.get_buffer(), "This is a test");
     }
 }

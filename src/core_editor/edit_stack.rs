@@ -57,11 +57,6 @@ where
         self.internal_list = vec![T::default()];
     }
 
-    /// List out all the entries on the undo stack Mostly used for debugging. Might remove this one
-    pub(super) fn edits<'a>(&'a self) -> Box<dyn Iterator<Item = &'a T> + 'a> {
-        Box::new(self.internal_list.iter().take(self.index + 1))
-    }
-
     /// Return the entry currently being pointed to
     pub(super) fn current(&mut self) -> &T {
         &self.internal_list[self.index]
