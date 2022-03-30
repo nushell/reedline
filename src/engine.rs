@@ -343,6 +343,17 @@ impl Reedline {
         Ok(())
     }
 
+    /// Read-only view of the history
+    pub fn history(&self) -> &dyn History {
+        &*self.history
+    }
+
+    /// Update the underlying [`History`] to/from disk
+    pub fn sync_history(&mut self) -> std::io::Result<()> {
+        // TODO: check for interactions in the non-submitting events
+        self.history.sync()
+    }
+
     /// Wait for input and provide the user with a specified [`Prompt`].
     ///
     /// Returns a [`crossterm::Result`] in which the `Err` type is [`crossterm::ErrorKind`]
