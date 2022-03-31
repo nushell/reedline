@@ -59,9 +59,8 @@ enum InputMode {
 ///
 /// ## Example usage
 /// ```no_run
-/// use std::io;
 /// use reedline::{Reedline, Signal, DefaultPrompt};
-/// let mut line_editor = Reedline::create()?;
+/// let mut line_editor = Reedline::create();
 /// let prompt = DefaultPrompt::default();
 ///
 /// let out = line_editor.read_line(&prompt).unwrap();
@@ -74,7 +73,6 @@ enum InputMode {
 ///
 ///    }
 /// }
-/// # Ok::<(), io::Error>(())
 /// ```
 pub struct Reedline {
     editor: Editor,
@@ -127,7 +125,8 @@ impl Drop for Reedline {
 
 impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
-    pub fn create() -> io::Result<Reedline> {
+    #[must_use]
+    pub fn create() -> Self {
         let history = Box::new(FileBackedHistory::default());
         let painter = Painter::new(std::io::BufWriter::new(std::io::stderr()));
         let buffer_highlighter = Box::new(ExampleHighlighter::default());
@@ -136,7 +135,7 @@ impl Reedline {
         let validator = Box::new(DefaultValidator);
         let edit_mode = Box::new(Emacs::default());
 
-        let reedline = Reedline {
+        Reedline {
             editor: Editor::default(),
             history,
             input_mode: InputMode::Regular,
@@ -153,9 +152,7 @@ impl Reedline {
             animate: false,
             use_ansi_coloring: true,
             menus: Vec::new(),
-        };
-
-        Ok(reedline)
+        }
     }
 
     /// A builder to include a [`Hinter`] in your instance of the Reedline engine
@@ -164,17 +161,15 @@ impl Reedline {
     /// //Cargo.toml
     /// //[dependencies]
     /// //nu-ansi-term = "*"
-    /// use std::io;
     /// use {
     ///     nu_ansi_term::{Color, Style},
     ///     reedline::{DefaultHinter, Reedline},
     /// };
     ///
-    /// let mut line_editor = Reedline::create()?.with_hinter(Box::new(
+    /// let mut line_editor = Reedline::create().with_hinter(Box::new(
     ///     DefaultHinter::default()
     ///     .with_style(Style::new().italic().fg(Color::LightGray)),
     /// ));
-    /// # Ok::<(), io::Error>(())
     /// ```
     #[must_use]
     pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Self {
@@ -187,7 +182,6 @@ impl Reedline {
     /// ```rust,no_run
     /// // Create a reedline object with tab completions support
     ///
-    /// use std::io;
     /// use reedline::{DefaultCompleter, Reedline};
     ///
     /// let commands = vec![
@@ -198,8 +192,7 @@ impl Reedline {
     /// ];
     /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
     ///
-    /// let mut line_editor = Reedline::create()?.with_completer(completer);
-    /// # Ok::<(), io::Error>(())
+    /// let mut line_editor = Reedline::create().with_completer(completer);
     /// ```
     #[must_use]
     pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
@@ -244,7 +237,6 @@ impl Reedline {
     /// ```rust,no_run
     /// // Create a reedline object with highlighter support
     ///
-    /// use std::io;
     /// use reedline::{ExampleHighlighter, Reedline};
     ///
     /// let commands = vec![
@@ -254,8 +246,7 @@ impl Reedline {
     ///   "this is the reedline crate".into(),
     /// ];
     /// let mut line_editor =
-    /// Reedline::create()?.with_highlighter(Box::new(ExampleHighlighter::new(commands)));
-    /// # Ok::<(), io::Error>(())
+    /// Reedline::create().with_highlighter(Box::new(ExampleHighlighter::new(commands)));
     /// ```
     #[must_use]
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Self {
@@ -268,22 +259,19 @@ impl Reedline {
     /// ```rust,no_run
     /// // Create a reedline object with history support, including history size limits
     ///
-    /// use std::io;
     /// use reedline::{FileBackedHistory, Reedline};
     ///
     /// let history = Box::new(
     /// FileBackedHistory::with_file(5, "history.txt".into())
     ///     .expect("Error configuring history with file"),
     /// );
-    /// let mut line_editor = Reedline::create()?
-    ///     .with_history(history)
-    ///     .expect("Error configuring reedline with history");
-    /// # Ok::<(), io::Error>(())
+    /// let mut line_editor = Reedline::create()
+    ///     .with_history(history);
     /// ```
-    pub fn with_history(mut self, history: Box<dyn History>) -> std::io::Result<Reedline> {
+    #[must_use]
+    pub fn with_history(mut self, history: Box<dyn History>) -> Self {
         self.history = history;
-
-        Ok(self)
+        self
     }
 
     /// A builder that configures the validator for your instance of the Reedline engine
@@ -291,12 +279,10 @@ impl Reedline {
     /// ```rust,no_run
     /// // Create a reedline object with validator support
     ///
-    /// use std::io;
     /// use reedline::{DefaultValidator, Reedline};
     ///
     /// let mut line_editor =
-    /// Reedline::create()?.with_validator(Box::new(DefaultValidator));
-    /// # Ok::<(), io::Error>(())
+    /// Reedline::create().with_validator(Box::new(DefaultValidator));
     /// ```
     #[must_use]
     pub fn with_validator(mut self, validator: Box<dyn Validator>) -> Self {
@@ -1205,5 +1191,5 @@ impl Reedline {
 #[test]
 fn thread_safe() {
     fn f<S: Send>(_: S) {}
-    f(Reedline::create().unwrap());
+    f(Reedline::create());
 }
