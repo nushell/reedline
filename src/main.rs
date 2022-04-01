@@ -18,6 +18,10 @@ use {
     },
 };
 
+#[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone)]
+struct TestContext {
+    timestamp: String,
+}
 fn main() -> Result<()> {
     // quick command like parameter handling
     let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
@@ -35,6 +39,14 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    #[cfg(feature = "sqlite")]
+    let history = {
+        let history = Box::new(reedline::SqliteBackedHistory::<TestContext>::with_file(
+            "history.sqlite3".into(),
+        )?);
+        history
+    };
+    #[cfg(not(feature = "sqlite"))]
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
     let commands = vec![
         "test".into(),
@@ -68,7 +80,7 @@ fn main() -> Result<()> {
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
     let mut line_editor = Reedline::create()
-        .with_history(history)
+        .with_history(history.clone())
         .with_completer(completer)
         .with_quick_completions(true)
         .with_partial_completions(true)
@@ -112,6 +124,10 @@ fn main() -> Result<()> {
                 break;
             }
             Ok(Signal::Success(buffer)) => {
+                history.update_context(|mut c| {
+                    c.timestamp = "foo".to_string();
+                    c
+                });
                 if (buffer.trim() == "exit") || (buffer.trim() == "logout") {
                     break;
                 }
