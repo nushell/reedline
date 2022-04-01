@@ -132,7 +132,7 @@ fn main() -> Result<()> {
                     history_clone
                         .lock()
                         .expect("lock poisoned")
-                        .update_context(|mut c| {
+                        .update_last_command_context(|mut c| {
                             c.timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
                             c
                         })

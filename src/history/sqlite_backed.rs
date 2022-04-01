@@ -8,7 +8,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// This trait represents additional context to be added to a history (see [SqliteBackedHistory])
 pub trait HistoryEntryContext: Serialize + DeserializeOwned + Default + Send {}
+
 impl<T> HistoryEntryContext for T where T: Serialize + DeserializeOwned + Default + Send {}
 
 /// A history that stores the values to an SQLite database.
@@ -21,46 +23,17 @@ pub struct SqliteBackedHistory<ContextType> {
     cursor: SqliteHistoryCursor,
 }
 
+// for arrow-navigation
 struct SqliteHistoryCursor {
     id: i64,
     command: Option<String>,
     query: HistoryNavigationQuery,
 }
 
-struct SqliteDoubleEnded<'a, F>
-where
-    F: FnMut(&Row<'_>) -> rusqlite::Result<(i64, String)>,
-{
-    fwd: MappedRows<'a, F>,
-    bwd: MappedRows<'a, F>,
-}
-impl<'a, F> Iterator for SqliteDoubleEnded<'a, F>
-where
-    F: FnMut(&Row<'_>) -> rusqlite::Result<(i64, String)>,
-{
-    type Item = String;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let s = self.fwd.next().transpose().unwrap();
-        return s.map(|e| e.1);
-    }
-}
-impl<'a, F> DoubleEndedIterator for SqliteDoubleEnded<'a, F>
-where
-    F: FnMut(&Row<'_>) -> rusqlite::Result<(i64, String)>,
-{
-    fn next_back(&mut self) -> Option<Self::Item> {
-        let s = self.bwd.next().transpose().unwrap();
-        s.map(|e| e.1)
-    }
-}
-
-/// Allow wrapping a history in Arc<Mutex<_>> so the creator of a Reedline can keep a reference to the history.
-/// The alternative would be that Reedline would have to be generic over the history type
+/// Allow wrapping any history in Arc<Mutex<_>> so the creator of a Reedline can keep a reference to the history.
+/// That way the library user can call history-specific methods ([`SqliteBackedHistory::update_last_command_context`])
+/// The alternative would be that Reedline would have to be generic over the history type.
 impl<H: History> History for Arc<Mutex<H>> {
-    /// Appends an entry if non-empty and not repetition of the previous entry.
-    /// Resets the browsing cursor to the default state in front of the most recent entry.
-    ///
     fn append(&mut self, entry: &str) {
         self.lock().expect("lock poisoned").append(entry)
     }
@@ -101,14 +74,10 @@ impl<H: History> History for Arc<Mutex<H>> {
         self.lock().expect("lock poisoned").max_values()
     }
 
-    /// Writes unwritten history contents to disk.
-    ///
-    /// If file would exceed `capacity` truncates the oldest entries.
     fn sync(&mut self) -> std::io::Result<()> {
         self.lock().expect("lock poisoned").sync()
     }
 
-    /// Reset the internal browsing cursor
     fn reset_cursor(&mut self) {
         self.lock().expect("lock poisoned").reset_cursor()
     }
@@ -209,6 +178,7 @@ impl<ContextType: HistoryEntryContext> History for SqliteBackedHistory<ContextTy
 
     /// Reset the internal browsing cursor
     fn reset_cursor(&mut self) {
+        // if no command run yet, fetch last id from db
         if self.last_run_command_id == None {
             self.last_run_command_id = self
                 .db
@@ -228,10 +198,6 @@ fn map_sqlite_err(err: rusqlite::Error) -> std::io::Error {
 }
 
 impl<ContextType: HistoryEntryContext> SqliteBackedHistory<ContextType> {
-    /*pub fn new() -> Self {
-        with_file_for_test(":memory:")
-    }*/
-
     /// Creates a new history with an associated history file.
     ///
     ///
@@ -248,8 +214,16 @@ impl<ContextType: HistoryEntryContext> SqliteBackedHistory<ContextType> {
     pub fn in_memory() -> std::io::Result<Self> {
         Self::from_connection(Connection::open_in_memory().map_err(map_sqlite_err)?)
     }
+    /// initialize a new database / migrate an existing one
     fn from_connection(db: Connection) -> std::io::Result<Self> {
+        // https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
         db.pragma_update(None, "journal_mode", "wal")
+            .map_err(map_sqlite_err)?;
+        db.pragma_update(None, "synchronous", "normal")
+            .map_err(map_sqlite_err)?;
+        db.pragma_update(None, "mmap_size", "1000000000")
+            .map_err(map_sqlite_err)?;
+        db.pragma_update(None, "foreign_keys", "on")
             .map_err(map_sqlite_err)?;
         db.execute(
             "
@@ -257,7 +231,7 @@ impl<ContextType: HistoryEntryContext> SqliteBackedHistory<ContextType> {
             id integer primary key autoincrement,
             command text not null,
             context text not null
-        ) strict
+        ) strict;
         ",
             params![],
         )
@@ -277,8 +251,8 @@ impl<ContextType: HistoryEntryContext> SqliteBackedHistory<ContextType> {
     }
 
     // todo: better error type (which one?)
-    /// updates the context stored for the last saved command
-    pub fn update_context<F>(&mut self, callback: F) -> Result<(), String>
+    /// updates the context stored for the last ran command
+    pub fn update_last_command_context<F>(&mut self, callback: F) -> Result<(), String>
     where
         F: FnOnce(ContextType) -> ContextType,
     {
