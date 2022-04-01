@@ -68,8 +68,8 @@ impl History for FileBackedHistory {
         self.reset_cursor();
     }
 
-    fn iter_chronologic(&self) -> Iter<'_, String> {
-        self.entries.iter()
+    fn iter_chronologic(&self) -> Box<(dyn DoubleEndedIterator<Item = String> + '_)> {
+        Box::new(self.entries.iter().map(|e| e.to_string()))
     }
 
     fn back(&mut self) {
@@ -121,7 +121,6 @@ impl History for FileBackedHistory {
         self.iter_chronologic()
             .rev()
             .filter(|entry| entry.contains(search))
-            .cloned()
             .collect::<Vec<String>>()
     }
 

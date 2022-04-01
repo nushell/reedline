@@ -1,5 +1,4 @@
 use crate::core_editor::LineBuffer;
-use std::collections::vec_deque::Iter;
 
 /// Browsing modes for a [`History`]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,7 +19,7 @@ pub trait History: Send {
     fn append(&mut self, entry: &str);
 
     /// Chronologic interaction over all entries present in the history
-    fn iter_chronologic(&self) -> Iter<'_, String>;
+    fn iter_chronologic(&self) -> Box<dyn DoubleEndedIterator<Item=String> + '_>;
 
     /// This moves the cursor backwards respecting the navigation query that is set
     /// - Results in a no-op if the cursor is at the initial point

@@ -1,15 +1,11 @@
-use rusqlite::{named_params, params, Connection};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use rusqlite::{named_params, params, Connection, MappedRows, OptionalExtension, Row};
+use serde::{de::DeserializeOwned, Serialize};
 
 use super::{base::HistoryNavigationQuery, History};
 use crate::core_editor::LineBuffer;
 use std::{
-    collections::{vec_deque::Iter, VecDeque},
-    fs::OpenOptions,
-    io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write},
-    ops::{Deref, DerefMut},
     path::PathBuf,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex},
 };
 
 pub trait HistoryEntryContext: Serialize + DeserializeOwned + Default + Send {}
@@ -18,33 +14,113 @@ impl<T> HistoryEntryContext for T where T: Serialize + DeserializeOwned + Defaul
 /// A history that stores the values to an SQLite database.
 /// In addition to storing the command, the history can store an additional arbitrary HistoryEntryContext,
 /// to add information such as a timestamp, running directory, result...
-#[derive(Clone)]
-pub struct SqliteBackedHistory<ContextType>
-where
-    ContextType: HistoryEntryContext,
-{
-    inner: Arc<Mutex<SqliteBackedHistoryInner<ContextType>>>,
-    dummy: VecDeque<String>,
-}
-struct SqliteBackedHistoryInner<ContextType> {
+pub struct SqliteBackedHistory<ContextType> {
     db: rusqlite::Connection,
-    last_command_id: Option<i64>,
-    last_command_context: Option<ContextType>,
+    last_run_command_id: Option<i64>,
+    last_run_command_context: Option<ContextType>,
+    cursor: SqliteHistoryCursor,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct CommandSqlite<'a> {
+struct SqliteHistoryCursor {
     id: i64,
-    command: &'a str,
+    command: Option<String>,
+    query: HistoryNavigationQuery,
 }
+
+struct SqliteDoubleEnded<'a, F>
+where
+    F: FnMut(&Row<'_>) -> rusqlite::Result<(i64, String)>,
+{
+    fwd: MappedRows<'a, F>,
+    bwd: MappedRows<'a, F>,
+}
+impl<'a, F> Iterator for SqliteDoubleEnded<'a, F>
+where
+    F: FnMut(&Row<'_>) -> rusqlite::Result<(i64, String)>,
+{
+    type Item = String;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let s = self.fwd.next().transpose().unwrap();
+        return s.map(|e| e.1);
+    }
+}
+impl<'a, F> DoubleEndedIterator for SqliteDoubleEnded<'a, F>
+where
+    F: FnMut(&Row<'_>) -> rusqlite::Result<(i64, String)>,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let s = self.bwd.next().transpose().unwrap();
+        s.map(|e| e.1)
+    }
+}
+
+/// Allow wrapping a history in Arc<Mutex<_>> so the creator of a Reedline can keep a reference to the history.
+/// The alternative would be that Reedline would have to be generic over the history type
+impl<H: History> History for Arc<Mutex<H>> {
+    /// Appends an entry if non-empty and not repetition of the previous entry.
+    /// Resets the browsing cursor to the default state in front of the most recent entry.
+    ///
+    fn append(&mut self, entry: &str) {
+        self.lock().expect("lock poisoned").append(entry)
+    }
+
+    fn iter_chronologic(&self) -> Box<(dyn DoubleEndedIterator<Item = std::string::String> + '_)> {
+        let inner = self.lock().expect("lock poisoned");
+        // TODO: performance :)
+        Box::new(inner.iter_chronologic().collect::<Vec<_>>().into_iter())
+    }
+
+    fn back(&mut self) {
+        self.lock().expect("lock poisoned").back()
+    }
+
+    fn forward(&mut self) {
+        self.lock().expect("lock poisoned").forward()
+    }
+
+    fn string_at_cursor(&self) -> Option<String> {
+        self.lock().expect("lock poisoned").string_at_cursor()
+    }
+
+    fn set_navigation(&mut self, navigation: HistoryNavigationQuery) {
+        self.lock()
+            .expect("lock poisoned")
+            .set_navigation(navigation)
+    }
+
+    fn get_navigation(&self) -> HistoryNavigationQuery {
+        self.lock().expect("lock poisoned").get_navigation()
+    }
+
+    fn query_entries(&self, search: &str) -> Vec<String> {
+        self.lock().expect("lock poisoned").query_entries(search)
+    }
+
+    fn max_values(&self) -> usize {
+        self.lock().expect("lock poisoned").max_values()
+    }
+
+    /// Writes unwritten history contents to disk.
+    ///
+    /// If file would exceed `capacity` truncates the oldest entries.
+    fn sync(&mut self) -> std::io::Result<()> {
+        self.lock().expect("lock poisoned").sync()
+    }
+
+    /// Reset the internal browsing cursor
+    fn reset_cursor(&mut self) {
+        self.lock().expect("lock poisoned").reset_cursor()
+    }
+}
+
 impl<ContextType: HistoryEntryContext> History for SqliteBackedHistory<ContextType> {
     /// Appends an entry if non-empty and not repetition of the previous entry.
     /// Resets the browsing cursor to the default state in front of the most recent entry.
     ///
     fn append(&mut self, entry: &str) {
-        let mut inner = self.inner.lock().expect("lock poisoned");
         let ctx = ContextType::default();
-        let ret: i64 = inner
+        let ret: i64 = self
             .db
             .prepare(
                 "insert into history (command, context) values (:command, :context) returning id",
@@ -58,45 +134,70 @@ impl<ContextType: HistoryEntryContext> History for SqliteBackedHistory<ContextTy
                 |row| row.get(0),
             )
             .unwrap();
-        inner.last_command_id = Some(ret);
-        inner.last_command_context = Some(ctx);
+        self.last_run_command_id = Some(ret);
+        self.last_run_command_context = Some(ctx);
+        self.reset_cursor();
     }
 
-    fn iter_chronologic(&self) -> Iter<'_, String> {
-        self.dummy.iter()
-        // self.entries.iter()
+    fn iter_chronologic(&self) -> Box<(dyn DoubleEndedIterator<Item = std::string::String> + '_)> {
+        /*let mapper = |r: &Row| Ok((r.get(0)?, r.get(1)?));
+        let fwd = inner
+            .db
+            .prepare("select id, command from history order by id asc").unwrap()
+            .query_map(params![], mapper)
+            .unwrap();
+        let bwd = inner
+            .db
+            .prepare("select id, command from history order by id desc").unwrap()
+            .query_map(params![], mapper)
+            .unwrap();
+        let de = SqliteDoubleEnded {
+                fwd,
+                bwd
+            };*/
+        // todo: read in chunks or dynamically (?)
+        let fwd = self
+            .db
+            .prepare("select command from history order by id asc")
+            .unwrap()
+            .query_map(params![], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<String>>>()
+            .unwrap();
+        return Box::new(fwd.into_iter());
     }
 
     fn back(&mut self) {
-        todo!()
+        self.navigate_in_direction(true)
+        // self.cursor.id
     }
 
     fn forward(&mut self) {
-        todo!()
+        self.navigate_in_direction(false)
     }
 
     fn string_at_cursor(&self) -> Option<String> {
-        todo!()
+        self.cursor.command.clone()
     }
 
     fn set_navigation(&mut self, navigation: HistoryNavigationQuery) {
-        todo!()
+        self.cursor.query = navigation;
+        self.reset_cursor();
     }
 
     fn get_navigation(&self) -> HistoryNavigationQuery {
-        todo!()
+        self.cursor.query.clone()
     }
 
     fn query_entries(&self, search: &str) -> Vec<String> {
         self.iter_chronologic()
             .rev()
             .filter(|entry| entry.contains(search))
-            .cloned()
             .collect::<Vec<String>>()
     }
 
     fn max_values(&self) -> usize {
-        todo!()
+        self.last_run_command_id.unwrap_or(0) as usize
     }
 
     /// Writes unwritten history contents to disk.
@@ -108,14 +209,23 @@ impl<ContextType: HistoryEntryContext> History for SqliteBackedHistory<ContextTy
 
     /// Reset the internal browsing cursor
     fn reset_cursor(&mut self) {
-        todo!()
+        if self.last_run_command_id == None {
+            self.last_run_command_id = self
+                .db
+                .prepare("select max(id) from history")
+                .unwrap()
+                .query_row(params![], |e| e.get(0))
+                .optional()
+                .unwrap();
+        }
+        self.cursor.id = self.last_run_command_id.unwrap_or(0) + 1;
+        self.cursor.command = None;
     }
 }
 fn map_sqlite_err(err: rusqlite::Error) -> std::io::Error {
     // todo: better error mapping
     std::io::Error::new(std::io::ErrorKind::Other, err)
 }
-
 
 impl<ContextType: HistoryEntryContext> SqliteBackedHistory<ContextType> {
     /*pub fn new() -> Self {
@@ -139,7 +249,8 @@ impl<ContextType: HistoryEntryContext> SqliteBackedHistory<ContextType> {
         Self::from_connection(Connection::open_in_memory().map_err(map_sqlite_err)?)
     }
     fn from_connection(db: Connection) -> std::io::Result<Self> {
-        db.pragma_update(None, "journal_mode", "wal").map_err(map_sqlite_err)?;
+        db.pragma_update(None, "journal_mode", "wal")
+            .map_err(map_sqlite_err)?;
         db.execute(
             "
         create table if not exists history (
@@ -149,28 +260,34 @@ impl<ContextType: HistoryEntryContext> SqliteBackedHistory<ContextType> {
         ) strict
         ",
             params![],
-        ).map_err(map_sqlite_err)?;
-        Ok(SqliteBackedHistory {
-            dummy: VecDeque::new(),
-            inner: Arc::new(Mutex::new(SqliteBackedHistoryInner {
-                db,
-                last_command_id: None,
-                last_command_context: None,
-            })),
-        })
+        )
+        .map_err(map_sqlite_err)?;
+        let mut hist = SqliteBackedHistory {
+            db,
+            last_run_command_id: None,
+            last_run_command_context: None,
+            cursor: SqliteHistoryCursor {
+                id: 0,
+                command: None,
+                query: HistoryNavigationQuery::Normal(LineBuffer::default()),
+            },
+        };
+        hist.reset_cursor();
+        Ok(hist)
     }
 
     // todo: better error type (which one?)
     /// updates the context stored for the last saved command
-    pub fn update_context<F>(&self, callback: F) -> Result<(), String>
+    pub fn update_context<F>(&mut self, callback: F) -> Result<(), String>
     where
         F: FnOnce(ContextType) -> ContextType,
     {
-        let mut inner = self.inner.lock().expect("lock poisoned");
-        if let (Some(id), Some(ctx)) = (inner.last_command_id, inner.last_command_context.take()) {
+        if let (Some(id), Some(ctx)) = (
+            self.last_run_command_id,
+            self.last_run_command_context.take(),
+        ) {
             let mapped_ctx = callback(ctx);
-            inner
-                .db
+            self.db
                 .execute(
                     "update history set context = :context where id = :id",
                     named_params! {
@@ -179,10 +296,46 @@ impl<ContextType: HistoryEntryContext> SqliteBackedHistory<ContextType> {
                     },
                 )
                 .map_err(|e| format!("{e}"))?;
-            inner.last_command_context.replace(mapped_ctx);
+            self.last_run_command_context.replace(mapped_ctx);
             Ok(())
         } else {
             Err(format!("No command has been executed yet"))
+        }
+    }
+
+    fn navigate_in_direction(&mut self, backward: bool) {
+        let like_str = match &self.cursor.query {
+            HistoryNavigationQuery::Normal(_) => format!("%"),
+            HistoryNavigationQuery::PrefixSearch(prefix) => format!("{prefix}%"),
+            HistoryNavigationQuery::SubstringSearch(cont) => format!("%{cont}%"),
+        };
+        let query = if backward {
+            "select id, command from history where id < :id and command like :like and command != :prev_result order by id desc limit 1"
+        } else {
+            "select id, command from history where id > :id and command like :like and command != :prev_result order by id asc limit 1"
+        };
+        let next_id: Option<(i64, String)> = self
+            .db
+            .prepare(query)
+            .unwrap()
+            .query_row(
+                named_params! {
+                    ":id": self.cursor.id,
+                    ":like": like_str,
+                    ":prev_result": self.cursor.command.clone().unwrap_or(String::new())
+                },
+                |e| Ok((e.get(0)?, e.get(1)?)),
+            )
+            .optional()
+            .unwrap();
+        if let Some((next_id, next_command)) = next_id {
+            self.cursor.id = next_id;
+            self.cursor.command = Some(next_command);
+        } else {
+            if !backward {
+                // forward search resets to none, backwards search doesn't
+                self.cursor.command = None;
+            }
         }
     }
 }
@@ -195,7 +348,10 @@ mod tests {
     fn in_memory_for_test() -> SqliteBackedHistory<()> {
         SqliteBackedHistory::in_memory().unwrap()
     }
-    fn with_file_for_test(capacity: i32, file: PathBuf) -> std::io::Result<SqliteBackedHistory<()>> {
+    fn with_file_for_test(
+        capacity: i32,
+        file: PathBuf,
+    ) -> std::io::Result<SqliteBackedHistory<()>> {
         SqliteBackedHistory::with_file(file)
     }
 
@@ -440,101 +596,6 @@ mod tests {
     }
 
     #[test]
-    fn truncates_file_to_capacity() {
-        use tempfile::tempdir;
-
-        let tmp = tempdir().unwrap();
-        let histfile = tmp.path().join(".history");
-
-        let capacity = 5;
-        let initial_entries = vec!["test 1", "test 2"];
-        let appending_entries = vec!["test 3", "test 4"];
-        let expected_appended_entries = vec!["test 1", "test 2", "test 3", "test 4"];
-        let truncating_entries = vec!["test 5", "test 6", "test 7", "test 8"];
-        let expected_truncated_entries = vec!["test 4", "test 5", "test 6", "test 7", "test 8"];
-
-        {
-            let mut writing_hist =
-                with_file_for_test(capacity, histfile.clone()).unwrap();
-
-            initial_entries.iter().for_each(|e| writing_hist.append(e));
-
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-        }
-
-        {
-            let mut appending_hist =
-                with_file_for_test(capacity, histfile.clone()).unwrap();
-
-            appending_entries
-                .iter()
-                .for_each(|e| appending_hist.append(e));
-
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-            let actual: Vec<_> = appending_hist.iter_chronologic().collect();
-            assert_eq!(expected_appended_entries, actual);
-        }
-
-        {
-            let mut truncating_hist =
-                with_file_for_test(capacity, histfile.clone()).unwrap();
-
-            truncating_entries
-                .iter()
-                .for_each(|e| truncating_hist.append(e));
-
-            let actual: Vec<_> = truncating_hist.iter_chronologic().collect();
-            assert_eq!(expected_truncated_entries, actual);
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-        }
-
-        let reading_hist = with_file_for_test(capacity, histfile).unwrap();
-
-        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
-        assert_eq!(expected_truncated_entries, actual);
-
-        tmp.close().unwrap();
-    }
-
-    #[test]
-    fn truncates_too_large_file() {
-        use tempfile::tempdir;
-
-        let tmp = tempdir().unwrap();
-        let histfile = tmp.path().join(".history");
-
-        let overly_large_previous_entries = vec![
-            "test 1", "test 2", "test 3", "test 4", "test 5", "test 6", "test 7", "test 8",
-        ];
-        let expected_truncated_entries = vec!["test 4", "test 5", "test 6", "test 7", "test 8"];
-
-        {
-            let mut writing_hist = with_file_for_test(10, histfile.clone()).unwrap();
-
-            overly_large_previous_entries
-                .iter()
-                .for_each(|e| writing_hist.append(e));
-
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-        }
-
-        {
-            let truncating_hist = with_file_for_test(5, histfile.clone()).unwrap();
-
-            let actual: Vec<_> = truncating_hist.iter_chronologic().collect();
-            assert_eq!(expected_truncated_entries, actual);
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-        }
-
-        let reading_hist = with_file_for_test(5, histfile).unwrap();
-
-        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
-        assert_eq!(expected_truncated_entries, actual);
-
-        tmp.close().unwrap();
-    }
-
-    #[test]
     fn concurrent_histories_dont_erase_eachother() {
         use tempfile::tempdir;
 
@@ -545,11 +606,12 @@ mod tests {
         let initial_entries = vec!["test 1", "test 2", "test 3", "test 4", "test 5"];
         let entries_a = vec!["A1", "A2", "A3"];
         let entries_b = vec!["B1", "B2", "B3"];
-        let expected_entries = vec!["test 5", "B1", "B2", "B3", "A1", "A2", "A3"];
+        let expected_entries = vec![
+            "test 1", "test 2", "test 3", "test 4", "test 5", "B1", "B2", "B3", "A1", "A2", "A3",
+        ];
 
         {
-            let mut writing_hist =
-                SqliteBackedHistory::<()>::with_file(histfile.clone()).unwrap();
+            let mut writing_hist = SqliteBackedHistory::<()>::with_file(histfile.clone()).unwrap();
 
             initial_entries.iter().for_each(|e| writing_hist.append(e));
 
@@ -592,8 +654,7 @@ mod tests {
         let initial_entries = (0..capacity).map(|i| format!("initial {i}"));
 
         {
-            let mut writing_hist =
-                with_file_for_test(capacity, histfile.clone()).unwrap();
+            let mut writing_hist = with_file_for_test(capacity, histfile.clone()).unwrap();
 
             initial_entries.for_each(|e| writing_hist.append(&e));
 
