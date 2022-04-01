@@ -7,10 +7,7 @@ use {
         highlighter::SimpleMatchHighlighter,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
-        menu::{
-            menu_functions::{parse_selection_char, IndexDirection},
-            Menu, MenuEvent, ReedlineMenu,
-        },
+        menu::{Menu, MenuEvent, ReedlineMenu},
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         utils::text_manipulation,
@@ -24,6 +21,9 @@ use {
     },
     std::{borrow::Borrow, io, time::Duration},
 };
+
+#[cfg(feature = "bashisms")]
+use crate::menu_functions::{parse_selection_char, ParseAction};
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for
 // events, to accelerate the handling of paste or compound resize events. Having
@@ -733,6 +733,7 @@ impl Reedline {
                     }
                 }
 
+                #[cfg(feature = "bashisms")]
                 if let Some(event) = self.parse_bang_command() {
                     return self.handle_editor_event(prompt, event);
                 }
@@ -1046,6 +1047,7 @@ impl Reedline {
         }
     }
 
+    #[cfg(feature = "bashisms")]
     /// Parses the ! command to replace entries from the history
     fn parse_bang_command(&mut self) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
@@ -1060,19 +1062,25 @@ impl Reedline {
         let history_result = parsed
             .index
             .zip(parsed.marker)
-            .and_then(|(index, indicator)| {
-                if matches!(parsed.direction, IndexDirection::Backward) {
-                    self.history
-                        .iter_chronologic()
-                        .rev()
-                        .nth(index.saturating_sub(1))
-                        .map(|history| (parsed.remainder.len(), indicator.len(), history.clone()))
-                } else {
-                    self.history
-                        .iter_chronologic()
-                        .nth(index)
-                        .map(|history| (parsed.remainder.len(), indicator.len(), history.clone()))
-                }
+            .and_then(|(index, indicator)| match parsed.action {
+                ParseAction::BackwardSearch => self
+                    .history
+                    .iter_chronologic()
+                    .rev()
+                    .nth(index.saturating_sub(1))
+                    .map(|history| (parsed.remainder.len(), indicator.len(), history.clone())),
+                ParseAction::ForwardSearch => self
+                    .history
+                    .iter_chronologic()
+                    .nth(index)
+                    .map(|history| (parsed.remainder.len(), indicator.len(), history.clone())),
+                ParseAction::LastToken => self
+                    .history
+                    .iter_chronologic()
+                    .rev()
+                    .next()
+                    .and_then(|history| history.split_whitespace().rev().next())
+                    .map(|token| (parsed.remainder.len(), indicator.len(), token.to_string())),
             });
 
         if let Some((start, size, history)) = history_result {
