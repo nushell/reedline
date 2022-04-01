@@ -57,6 +57,8 @@ pub struct CompletionMenu {
     marker: String,
     /// Event sent to the menu
     event: Option<MenuEvent>,
+    /// Longest suggestion found in the values
+    longest_suggestion: usize,
 }
 
 impl Default for CompletionMenu {
@@ -72,6 +74,7 @@ impl Default for CompletionMenu {
             row_pos: 0,
             marker: "| ".to_string(),
             event: None,
+            longest_suggestion: 0,
         }
     }
 }
@@ -302,30 +305,17 @@ impl CompletionMenu {
         empty_space: usize,
         use_ansi_coloring: bool,
     ) -> String {
-        let description = &suggestion
-            .description
-            .as_ref()
-            .map(|description| {
-                format!(
-                    "{:empty$}{}",
-                    "",
-                    description,
-                    empty = self.default_details.col_padding
-                )
-            })
-            .unwrap_or_else(|| "".to_string());
-
         if use_ansi_coloring {
             if index == self.index() {
-                if suggestion.description.is_some() {
+                if let Some(description) = &suggestion.description {
                     format!(
-                        "{}{}{:>empty$}{}{}",
+                        "{}{:max$}{}{}{}",
                         self.color.selected_text_style.prefix(),
                         &suggestion.value,
                         description,
                         RESET,
                         self.end_of_line(column),
-                        empty = empty_space,
+                        max = self.longest_suggestion + self.default_details.col_padding,
                     )
                 } else {
                     format!(
@@ -333,14 +323,14 @@ impl CompletionMenu {
                         self.color.selected_text_style.prefix(),
                         &suggestion.value,
                         RESET,
-                        description,
+                        "",
                         self.end_of_line(column),
                         empty = empty_space,
                     )
                 }
-            } else {
+            } else if let Some(description) = &suggestion.description {
                 format!(
-                    "{}{}{}{}{:>empty$}{}{}",
+                    "{}{:max$}{}{}{}{}{}",
                     self.color.text_style.prefix(),
                     &suggestion.value,
                     RESET,
@@ -348,25 +338,48 @@ impl CompletionMenu {
                     description,
                     RESET,
                     self.end_of_line(column),
+                    max = self.longest_suggestion + self.default_details.col_padding,
+                )
+            } else {
+                format!(
+                    "{}{}{}{}{:>empty$}{}{}",
+                    self.color.text_style.prefix(),
+                    &suggestion.value,
+                    RESET,
+                    self.color.description_style.prefix(),
+                    "",
+                    RESET,
+                    self.end_of_line(column),
                     empty = empty_space,
                 )
             }
         } else {
-            // If no ansi coloring is found, then the selection word is line in uppercase
-            let (marker, empty_space) = if index == self.index() {
-                (">", empty_space.saturating_sub(1))
-            } else {
-                ("", empty_space)
-            };
+            // If no ansi coloring is found, then the selection word is the line in uppercase
+            let marker = if index == self.index() { ">" } else { "" };
 
-            let line = format!(
-                "{}{}{:>empty$}{}",
-                marker,
-                &suggestion.value,
-                description,
-                self.end_of_line(column),
-                empty = empty_space,
-            );
+            let line = if let Some(description) = &suggestion.description {
+                format!(
+                    "{}{:max$}{}{}",
+                    marker,
+                    &suggestion.value,
+                    description,
+                    self.end_of_line(column),
+                    max = self.longest_suggestion
+                        + self
+                            .default_details
+                            .col_padding
+                            .saturating_sub(marker.len()),
+                )
+            } else {
+                format!(
+                    "{}{}{:>empty$}{}",
+                    marker,
+                    &suggestion.value,
+                    "",
+                    self.end_of_line(column),
+                    empty = empty_space.saturating_sub(marker.len()),
+                )
+            };
 
             if index == self.index() {
                 line.to_uppercase()
@@ -493,6 +506,14 @@ impl Menu for CompletionMenu {
             if exist_description {
                 self.working_details.columns = 1;
                 self.working_details.col_width = painter.screen_width() as usize;
+
+                self.longest_suggestion = self.get_values().iter().fold(0, |prev, suggestion| {
+                    if prev >= suggestion.value.len() {
+                        prev
+                    } else {
+                        suggestion.value.len()
+                    }
+                });
             } else {
                 let max_width = self.get_values().iter().fold(0, |acc, suggestion| {
                     let str_len = suggestion.value.len() + self.default_details.col_padding;
