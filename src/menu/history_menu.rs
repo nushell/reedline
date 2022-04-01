@@ -160,7 +160,6 @@ impl HistoryMenu {
             .rev()
             .skip(skip)
             .take(take)
-            .cloned()
             .collect::<Vec<String>>()
     }
 

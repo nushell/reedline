@@ -320,7 +320,6 @@ impl Reedline {
         let history: Vec<_> = self
             .history
             .iter_chronologic()
-            .cloned()
             .enumerate()
             .collect();
 

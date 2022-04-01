@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use {
     crossterm::{
         event::{poll, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -20,7 +22,7 @@ use {
 
 #[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone)]
 struct TestContext {
-    timestamp: String,
+    timestamp: u64,
 }
 fn main() -> Result<()> {
     // quick command like parameter handling
@@ -40,11 +42,11 @@ fn main() -> Result<()> {
     }
 
     #[cfg(feature = "sqlite")]
-    let history = {
-        let history = Box::new(reedline::SqliteBackedHistory::<TestContext>::with_file(
-            "history.sqlite3".into(),
-        )?);
-        history
+    let (history, history_clone) = {
+        let history = Box::new(std::sync::Arc::new(std::sync::Mutex::new(
+            reedline::SqliteBackedHistory::<TestContext>::with_file("history.sqlite3".into())?,
+        )));
+        (history.clone(), history)
     };
     #[cfg(not(feature = "sqlite"))]
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
@@ -80,7 +82,7 @@ fn main() -> Result<()> {
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
     let mut line_editor = Reedline::create()
-        .with_history(history.clone())
+        .with_history(history)
         .with_completer(completer)
         .with_quick_completions(true)
         .with_partial_completions(true)
@@ -124,10 +126,18 @@ fn main() -> Result<()> {
                 break;
             }
             Ok(Signal::Success(buffer)) => {
-                history.update_context(|mut c| {
-                    c.timestamp = "foo".to_string();
-                    c
-                }).unwrap();
+                #[cfg(feature = "sqlite")]
+                {
+                    // save timestamp to history
+                    history_clone
+                        .lock()
+                        .expect("lock poisoned")
+                        .update_context(|mut c| {
+                            c.timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
+                            c
+                        })
+                        .unwrap();
+                }
                 if (buffer.trim() == "exit") || (buffer.trim() == "logout") {
                     break;
                 }
