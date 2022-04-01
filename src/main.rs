@@ -127,7 +127,7 @@ fn main() -> Result<()> {
                 history.update_context(|mut c| {
                     c.timestamp = "foo".to_string();
                     c
-                });
+                }).unwrap();
                 if (buffer.trim() == "exit") || (buffer.trim() == "logout") {
                     break;
                 }
