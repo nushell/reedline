@@ -16,23 +16,25 @@ pub struct ParseResult<'buffer> {
     /// Marker representation as string
     pub marker: Option<&'buffer str>,
     /// Direction of the search based on the marker
-    pub direction: IndexDirection,
+    pub action: ParseAction,
 }
 
 /// Direction of the index found in the string
 #[derive(Debug, PartialEq)]
-pub enum IndexDirection {
-    /// Forward index
-    Forward,
-    /// Backward index
-    Backward,
+pub enum ParseAction {
+    /// Forward index search
+    ForwardSearch,
+    /// Backward index search
+    BackwardSearch,
+    /// Last token
+    LastToken,
 }
 
 /// Splits a string that contains a marker character
 ///
 /// ## Example usage
 /// ```
-/// use reedline::menu_functions::{parse_selection_char, IndexDirection, ParseResult};
+/// use reedline::menu_functions::{parse_selection_char, ParseAction, ParseResult};
 ///
 /// let parsed = parse_selection_char("this is an example!10", '!');
 ///
@@ -42,7 +44,7 @@ pub enum IndexDirection {
 ///         remainder: "this is an example",
 ///         index: Some(10),
 ///         marker: Some("!10"),
-///         direction: IndexDirection::Forward
+///         action: ParseAction::ForwardSearch
 ///     }
 /// )
 ///
@@ -53,23 +55,33 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
             remainder: buffer,
             index: None,
             marker: None,
-            direction: IndexDirection::Forward,
+            action: ParseAction::ForwardSearch,
         };
     }
 
     let mut input = buffer.chars().peekable();
 
     let mut index = 0;
-    let mut direction = IndexDirection::Forward;
+    let mut action = ParseAction::ForwardSearch;
     while let Some(char) = input.next() {
         if char == marker {
             match input.peek() {
+                #[cfg(feature = "bashisms")]
                 Some(&x) if x == marker => {
                     return ParseResult {
                         remainder: &buffer[0..index],
                         index: Some(0),
                         marker: Some(&buffer[index..index + 2]),
-                        direction: IndexDirection::Backward,
+                        action: ParseAction::BackwardSearch,
+                    }
+                }
+                #[cfg(feature = "bashisms")]
+                Some(&x) if x == '$' => {
+                    return ParseResult {
+                        remainder: &buffer[0..index],
+                        index: Some(0),
+                        marker: Some(&buffer[index..index + 2]),
+                        action: ParseAction::LastToken,
                     }
                 }
                 Some(&x) if x.is_ascii_digit() || x == '-' => {
@@ -79,7 +91,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                         if c == '-' {
                             let _ = input.next();
                             size += 1;
-                            direction = IndexDirection::Backward;
+                            action = ParseAction::BackwardSearch;
                         } else if c.is_ascii_digit() {
                             let c = c.to_digit(10).expect("already checked if is a digit");
                             let _ = input.next();
@@ -91,7 +103,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                                 remainder: &buffer[0..index],
                                 index: Some(count),
                                 marker: Some(&buffer[index..index + size]),
-                                direction,
+                                action,
                             };
                         }
                     }
@@ -99,7 +111,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                         remainder: &buffer[0..index],
                         index: Some(count),
                         marker: Some(&buffer[index..index + size]),
-                        direction,
+                        action,
                     };
                 }
                 None => {
@@ -107,7 +119,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                         remainder: &buffer[0..index],
                         index: Some(0),
                         marker: Some(&buffer[index..buffer.len()]),
-                        direction,
+                        action,
                     }
                 }
                 _ => {
@@ -123,7 +135,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
         remainder: buffer,
         index: None,
         marker: None,
-        direction,
+        action,
     }
 }
 
@@ -248,6 +260,7 @@ mod tests {
         assert_eq!(res.marker, Some(":6"));
     }
 
+    #[cfg(feature = "bashisms")]
     #[test]
     fn parse_double_char() {
         let input = "search!!";
@@ -256,7 +269,19 @@ mod tests {
         assert_eq!(res.remainder, "search");
         assert_eq!(res.index, Some(0));
         assert_eq!(res.marker, Some("!!"));
-        assert!(matches!(res.direction, IndexDirection::Backward));
+        assert!(matches!(res.action, ParseAction::BackwardSearch));
+    }
+
+    #[cfg(feature = "bashisms")]
+    #[test]
+    fn parse_last_token() {
+        let input = "!$";
+        let res = parse_selection_char(input, '!');
+
+        assert_eq!(res.remainder, "");
+        assert_eq!(res.index, Some(0));
+        assert_eq!(res.marker, Some("!$"));
+        assert!(matches!(res.action, ParseAction::LastToken));
     }
 
     #[test]
@@ -327,7 +352,7 @@ mod tests {
         assert_eq!(res.remainder, "");
         assert_eq!(res.index, Some(2));
         assert_eq!(res.marker, Some("!-2"));
-        assert!(matches!(res.direction, IndexDirection::Backward));
+        assert!(matches!(res.action, ParseAction::BackwardSearch));
     }
 
     #[test]
