@@ -7,9 +7,7 @@ use {
         highlighter::SimpleMatchHighlighter,
         hinter::{DefaultHinter, Hinter},
         history::{FileBackedHistory, History, HistoryNavigationQuery},
-        menu::{
-            Menu, MenuEvent, ReedlineMenu,
-        },
+        menu::{Menu, MenuEvent, ReedlineMenu},
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         utils::text_manipulation,
@@ -1064,27 +1062,25 @@ impl Reedline {
         let history_result = parsed
             .index
             .zip(parsed.marker)
-            .and_then(|(index, indicator)| {
-                match parsed.action {
-                    ParseAction::BackwardSearch => self.history
-                        .iter_chronologic()
-                        .rev()
-                        .nth(index.saturating_sub(1))
-                        .map(|history| (parsed.remainder.len(), indicator.len(), history.clone())),
-                    ParseAction::ForwardSearch => self.history
-                        .iter_chronologic()
-                        .nth(index)
-                        .map(|history| (parsed.remainder.len(), indicator.len(), history.clone())),
-                    ParseAction::LastToken => {
-                        self.history
-                        .iter_chronologic()
-                        .rev()
-                        .next()
-                        .and_then(|history| history.split_whitespace().rev().next())
-                        .map(|token| (parsed.remainder.len(), indicator.len(), token.to_string()))
-                    }
-
-                }
+            .and_then(|(index, indicator)| match parsed.action {
+                ParseAction::BackwardSearch => self
+                    .history
+                    .iter_chronologic()
+                    .rev()
+                    .nth(index.saturating_sub(1))
+                    .map(|history| (parsed.remainder.len(), indicator.len(), history.clone())),
+                ParseAction::ForwardSearch => self
+                    .history
+                    .iter_chronologic()
+                    .nth(index)
+                    .map(|history| (parsed.remainder.len(), indicator.len(), history.clone())),
+                ParseAction::LastToken => self
+                    .history
+                    .iter_chronologic()
+                    .rev()
+                    .next()
+                    .and_then(|history| history.split_whitespace().rev().next())
+                    .map(|token| (parsed.remainder.len(), indicator.len(), token.to_string())),
             });
 
         if let Some((start, size, history)) = history_result {
