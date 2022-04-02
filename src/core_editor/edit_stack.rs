@@ -58,8 +58,17 @@ where
     }
 
     /// Return the entry currently being pointed to
-    pub(super) fn current(&mut self) -> &T {
+    pub(super) fn current(&self) -> &T {
         &self.internal_list[self.index]
+    }
+
+    pub(super) fn peek_pervious(&self, n: usize) -> Option<&T> {
+        let prev_index = self.index.checked_sub(n)?;
+        Some(&self.internal_list[prev_index])
+    }
+
+    pub(super) fn replace_current(&mut self, value: T) {
+        self.internal_list[self.index] = value;
     }
 }
 

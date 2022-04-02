@@ -326,8 +326,8 @@ impl LineBuffer {
     }
 
     /// Counts the number of words in the buffer
-    pub fn word_count(&self) -> usize {
-        self.lines.trim().split_whitespace().count()
+    pub fn words<'a>(&'a self) -> Box<dyn Iterator<Item = &str> + 'a> {
+        Box::new(self.lines.trim().split_whitespace())
     }
 
     /// Capitalize the character at insertion point (or the first character
@@ -715,7 +715,7 @@ mod test {
     fn word_count_works(#[case] input: &str, #[case] expected_count: usize) {
         let line_buffer = buffer_with(input);
 
-        assert_eq!(expected_count, line_buffer.word_count());
+        assert_eq!(expected_count, line_buffer.words().count());
         line_buffer.assert_valid();
     }
 

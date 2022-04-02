@@ -1,6 +1,65 @@
 use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 use crate::{core_editor::get_default_clipboard, EditCommand, UndoBehavior};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UndoNode {
+    line_buffer: LineBuffer,
+    edit_commands: Vec<EditCommand>,
+}
+
+impl Default for UndoNode {
+    fn default() -> Self {
+        Self {
+            line_buffer: LineBuffer::new(),
+            edit_commands: Vec::new(),
+        }
+    }
+}
+
+impl UndoNode {
+    fn new(line_buffer: LineBuffer, edit_commands: Vec<EditCommand>) -> Self {
+        Self {
+            line_buffer,
+            edit_commands,
+        }
+    }
+
+    fn has_only_movements(&self) -> bool {
+        self.edit_commands
+            .iter()
+            .all(|edit_command| match edit_command {
+                EditCommand::MoveToStart
+                | EditCommand::MoveToEnd
+                | EditCommand::MoveToLineStart
+                | EditCommand::MoveToLineEnd
+                | EditCommand::MoveToPosition(_)
+                | EditCommand::MoveLeft
+                | EditCommand::MoveRight
+                | EditCommand::MoveWordLeft
+                | EditCommand::MoveWordRight
+                | EditCommand::MoveRightUntil(_)
+                | EditCommand::MoveRightBefore(_)
+                | EditCommand::MoveLeftUntil(_)
+                | EditCommand::MoveLeftBefore(_) => true,
+
+                _ => false,
+            })
+    }
+
+    fn add_edit_command(&mut self, edit_command: EditCommand) {
+        self.edit_commands.push(edit_command);
+    }
+
+    fn has_only_insert_chars(&self) -> bool {
+        self.edit_commands
+            .iter()
+            .all(|edit_command| match edit_command {
+                EditCommand::InsertChar(_) => true,
+                _ => false,
+            })
+    }
+}
+
 /// Stateful editor executing changes to the underlying [`LineBuffer`]
 ///
 /// In comparison to the state-less [`LineBuffer`] the `Editor` keeps track of
@@ -9,7 +68,7 @@ pub struct Editor {
     line_buffer: LineBuffer,
     cut_buffer: Box<dyn Clipboard>,
 
-    edit_stack: EditStack<LineBuffer>,
+    edit_stack: EditStack<UndoNode>,
 }
 
 impl Default for Editor {
@@ -76,15 +135,7 @@ impl Editor {
             EditCommand::MoveLeftUntil(c) => self.move_left_until_char(*c, false, true),
             EditCommand::MoveLeftBefore(c) => self.move_left_until_char(*c, true, true),
         }
-        match command.undo_behavior() {
-            UndoBehavior::Ignore => {}
-            UndoBehavior::Full => {
-                self.remember_undo_state();
-            }
-            UndoBehavior::Coalesce => {
-                self.remember_undo_state_coalesce();
-            }
-        }
+        self.setup_edit_stack(command.clone());
     }
 
     pub fn move_line_up(&mut self) {
@@ -173,28 +224,17 @@ impl Editor {
 
     fn undo(&mut self) {
         let val = self.edit_stack.undo();
-        self.line_buffer = val.clone();
+        self.line_buffer = val.line_buffer.clone();
     }
 
     fn redo(&mut self) {
         let val = self.edit_stack.redo();
-        self.line_buffer = val.clone();
+        self.line_buffer = val.line_buffer.clone();
     }
 
     pub fn remember_undo_state(&mut self) {
-        self.edit_stack.insert(self.line_buffer.clone());
-    }
-
-    fn remember_undo_state_coalesce(&mut self) -> Option<()> {
-        let current_line_buffer = &self.line_buffer;
-        let old_line_buffer = self.edit_stack.current();
-
-        if current_line_buffer.words().count() == old_line_buffer.words().count() {
-            self.edit_stack.undo();
-        }
-        self.edit_stack.insert(self.line_buffer.clone());
-
-        Some(())
+        let undo_node = UndoNode::new(self.line_buffer.clone(), vec![]);
+        self.edit_stack.insert(undo_node);
     }
 
     fn cut_current_line(&mut self) {
@@ -374,6 +414,50 @@ impl Editor {
 
         self.line_buffer.insert_str(string);
     }
+
+    fn setup_edit_stack(&mut self, command: EditCommand) {
+        println!("\n\n{:?}", command);
+        println!("Current (edit stack): {:#?}", self.edit_stack);
+        println!("Current (Line Buffer): {:#?}", self.line_buffer);
+        match command.undo_behavior() {
+            UndoBehavior::Ignore => {
+                // Do nothing
+            }
+            UndoBehavior::Full => {
+                let undo_node = UndoNode::new(self.line_buffer.clone(), vec![command]);
+                self.edit_stack.insert(undo_node);
+            }
+            UndoBehavior::CoalesceUnit => {
+                let old_node = self.edit_stack.current();
+
+                if old_node.has_only_insert_chars()
+                    && self.line_buffer.words().count() == old_node.line_buffer.words().count()
+                {
+                    let mut new_node =
+                        UndoNode::new(self.line_buffer.clone(), old_node.edit_commands.clone());
+                    new_node.add_edit_command(command.clone());
+                    self.edit_stack.replace_current(new_node);
+                } else {
+                    let new_node = UndoNode::new(self.line_buffer.clone(), vec![command.clone()]);
+                    self.edit_stack.insert(new_node);
+                }
+            }
+            UndoBehavior::CoalesceFull => {
+                let old_node = self.edit_stack.current();
+
+                if old_node.has_only_movements() {
+                    let mut new_node =
+                        UndoNode::new(self.line_buffer.clone(), old_node.edit_commands.clone());
+                    new_node.add_edit_command(command.clone());
+                    self.edit_stack.replace_current(new_node);
+                } else {
+                    let new_node = UndoNode::new(self.line_buffer.clone(), vec![command.clone()]);
+                    self.edit_stack.insert(new_node);
+                }
+            }
+        }
+        println!("Updated (edit stack): {:#?}", self.edit_stack);
+    }
 }
 
 #[cfg(test)]
@@ -383,20 +467,28 @@ mod test {
 
     fn editor_with(buffer: &str) -> Editor {
         let mut editor = Editor::default();
-        editor.line_buffer.set_buffer(buffer.to_string());
+        for c in buffer.chars() {
+            editor.run_edit_command(&EditCommand::InsertChar(c));
+        }
         editor
     }
 
-    fn str_to_edit_commands(s: &str) -> Vec<EditCommand> {
-        s.chars().map(|c| EditCommand::InsertChar(c)).collect()
+    fn buffer_with(content: &str) -> LineBuffer {
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.insert_str(content);
+
+        line_buffer
+    }
+
+    fn run_command_n_times(editor: &mut Editor, command: &EditCommand, n: usize) {
+        for _ in 0..n {
+            editor.run_edit_command(command);
+        }
     }
 
     #[test]
     fn test_undo_works_on_work_boundries() {
-        let mut editor = editor_with("This is a");
-        for cmd in str_to_edit_commands(" test") {
-            editor.run_edit_command(&cmd);
-        }
+        let mut editor = editor_with("This is a test");
         assert_eq!(editor.get_buffer(), "This is a test");
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(editor.get_buffer(), "This is a ");
@@ -404,24 +496,20 @@ mod test {
 
     #[test]
     fn test_redo_works_on_word_boundries() {
-        let mut editor = editor_with("This is a");
-        for cmd in str_to_edit_commands(" test") {
-            editor.run_edit_command(&cmd);
-        }
+        let mut editor = editor_with("This is a test");
+
         assert_eq!(editor.get_buffer(), "This is a test");
         editor.run_edit_command(&EditCommand::Undo);
+        println!("{:#?}", editor.edit_stack);
         assert_eq!(editor.get_buffer(), "This is a ");
         editor.run_edit_command(&EditCommand::Redo);
+        println!("{:#?}", editor.edit_stack);
         assert_eq!(editor.get_buffer(), "This is a test");
     }
 
     #[test]
-    fn test_undo_ignores_cursor_movements() {
-        let mut editor = editor_with("This is a");
-
-        for cmd in str_to_edit_commands(" test") {
-            editor.run_edit_command(&cmd);
-        }
+    fn test_undo_coalesces_cursor_movements() {
+        let mut editor = editor_with("This is a test");
 
         editor.run_edit_command(&EditCommand::MoveLeft);
         editor.run_edit_command(&EditCommand::MoveToEnd);
@@ -435,10 +523,60 @@ mod test {
         editor.run_edit_command(&EditCommand::MoveToLineEnd);
         editor.run_edit_command(&EditCommand::MoveToPosition(3));
 
-        // All the movements are ignored.
+        // All the movements are coalesced into one undo
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This is a test");
+        // Starts to chip of the edits
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(editor.get_buffer(), "This is a ");
+    }
+
+    #[test]
+    fn test_undo_works_when_adding_and_removing_words_from_middle_of_the_line() {
+        let mut editor = editor_with("This is a test");
+
+        run_command_n_times(&mut editor, &EditCommand::MoveLeft, 5);
+
+        editor.run_edit_command(&EditCommand::CutWordLeft);
         editor.run_edit_command(&EditCommand::Undo);
-        assert_eq!(editor.get_buffer(), "");
+        let mut line_buffer = buffer_with("This is a test");
+        line_buffer.set_insertion_point(9);
+        assert_eq!(editor.line_buffer, line_buffer);
+
+        // Undo immediately after and edit in the middle igmores all the movement-only operations
+        editor.run_edit_command(&EditCommand::Undo);
+        let mut line_buffer = buffer_with("This is a ");
+        line_buffer.set_insertion_point(8);
+
+        editor.run_edit_command(&EditCommand::Undo);
+        let mut line_buffer = buffer_with("This is ");
+        line_buffer.set_insertion_point(7);
+    }
+
+    #[test]
+    fn test_undo_works_on_edits_to_old_words() {
+        let mut editor = editor_with("Ths tst");
+
+        run_command_n_times(&mut editor, &EditCommand::MoveLeft, 5);
+        editor.run_edit_command(&EditCommand::InsertChar('i'));
+        run_command_n_times(&mut editor, &EditCommand::MoveRight, 3);
+        editor.run_edit_command(&EditCommand::InsertChar('e'));
+
+        assert_eq!(editor.get_buffer(), "This test");
+        // undo removes the last edit
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This tst");
+        // undo jumps to movements node
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This tst");
+        // undo removes the last edit
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "Ths tst");
+        // undo jumps to movements node
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "Ths tst");
+        // undo removes the second word
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "Ths ");
     }
 }

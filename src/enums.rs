@@ -164,13 +164,13 @@ impl EditCommand {
             | EditCommand::MoveRightUntil(_)
             | EditCommand::MoveRightBefore(_)
             | EditCommand::MoveLeftUntil(_)
-            | EditCommand::MoveLeftBefore(_)
+            | EditCommand::MoveLeftBefore(_) => UndoBehavior::CoalesceFull,
+
             //  Undo/Redo
-            | EditCommand::Undo
-            | EditCommand::Redo => UndoBehavior::Ignore,
+            EditCommand::Undo | EditCommand::Redo => UndoBehavior::Ignore,
 
             // Coalesceable insert
-            EditCommand::InsertChar(_) => UndoBehavior::Coalesce,
+            EditCommand::InsertChar(_) => UndoBehavior::CoalesceUnit,
 
             // Full edits
             EditCommand::Backspace
@@ -214,7 +214,9 @@ pub enum UndoBehavior {
     /// The operation is a single operation that should be best coalesced in logical units such as words
     ///
     /// e.g. insertion of characters by typing
-    Coalesce,
+    CoalesceUnit,
+    /// The operation is a full edit that should be best coalesced in logical units such as words
+    CoalesceFull,
 }
 
 /// Reedline supported actions.
