@@ -9,7 +9,7 @@ const SELECTION_CHAR: char = '!';
 pub(crate) struct HistoryCompleter<'menu>(&'menu dyn History);
 
 // Safe to implement Send since the Historycompleter should only be used when
-// updating the menu and that should happen in the same thread
+// updating the menu and that must happen in the same thread
 unsafe impl<'menu> Send for HistoryCompleter<'menu> {}
 
 impl<'menu> Completer for HistoryCompleter<'menu> {
