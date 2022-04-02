@@ -79,10 +79,10 @@ impl Editor {
         match command.undo_behavior() {
             UndoBehavior::Ignore => {}
             UndoBehavior::Full => {
-                self.remember_undo_state(true);
+                self.remember_undo_state();
             }
             UndoBehavior::Coalesce => {
-                self.remember_undo_state(false);
+                self.remember_undo_state_coalesce();
             }
         }
     }
@@ -181,10 +181,15 @@ impl Editor {
         self.line_buffer = val.clone();
     }
 
-    pub fn remember_undo_state(&mut self, is_after_action: bool) -> Option<()> {
-        if self.edit_stack.current().word_count() == self.line_buffer.word_count()
-            && !is_after_action
-        {
+    pub fn remember_undo_state(&mut self) {
+        self.edit_stack.insert(self.line_buffer.clone());
+    }
+
+    fn remember_undo_state_coalesce(&mut self) -> Option<()> {
+        let current_line_buffer = &self.line_buffer;
+        let old_line_buffer = self.edit_stack.current();
+
+        if current_line_buffer.words().count() == old_line_buffer.words().count() {
             self.edit_stack.undo();
         }
         self.edit_stack.insert(self.line_buffer.clone());

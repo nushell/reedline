@@ -515,7 +515,7 @@ impl Reedline {
             ReedlineEvent::Enter | ReedlineEvent::HistoryHintComplete => {
                 if let Some(string) = self.history.string_at_cursor() {
                     self.editor.set_buffer(string);
-                    self.editor.remember_undo_state(true);
+                    self.editor.remember_undo_state();
                 }
 
                 self.input_mode = InputMode::Regular;
@@ -824,7 +824,7 @@ impl Reedline {
             }
             ReedlineEvent::SearchHistory => {
                 // Make sure we are able to undo the result of a reverse history search
-                self.editor.remember_undo_state(true);
+                self.editor.remember_undo_state();
 
                 self.enter_history_search();
                 Ok(EventStatus::Handled)
