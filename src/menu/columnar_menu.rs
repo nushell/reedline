@@ -405,7 +405,7 @@ impl ColumnarMenu {
 impl Menu for ColumnarMenu {
     /// Menu name
     fn name(&self) -> &str {
-        "completion_menu"
+        self.name.as_str()
     }
 
     /// Menu indicator

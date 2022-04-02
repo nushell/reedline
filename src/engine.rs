@@ -301,7 +301,13 @@ impl Reedline {
     #[must_use]
     pub fn with_menu(mut self, menu: ReedlineMenu) -> Self {
         self.menus.push(menu);
+        self
+    }
 
+    /// A builder that clears the list of menus added to the engine
+    #[must_use]
+    pub fn clear_menus(mut self) -> Self {
+        self.menus = Vec::new();
         self
     }
 
