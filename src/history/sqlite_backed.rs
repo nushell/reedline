@@ -182,7 +182,7 @@ impl<ContextType: HistoryEntryContext> History for SqliteBackedHistory<ContextTy
         if self.last_run_command_id == None {
             self.last_run_command_id = self
                 .db
-                .prepare("select max(id) from history")
+                .prepare("select coalesce(max(id), 0) from history")
                 .unwrap()
                 .query_row(params![], |e| e.get(0))
                 .optional()
