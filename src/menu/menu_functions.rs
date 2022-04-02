@@ -445,6 +445,7 @@ mod tests {
             .map(|s| Suggestion {
                 value: s.into(),
                 description: None,
+                extra: None,
                 span: Span::new(0, s.len()),
             })
             .collect();
@@ -462,6 +463,7 @@ mod tests {
             .map(|s| Suggestion {
                 value: s.into(),
                 description: None,
+                extra: None,
                 span: Span::new(0, s.len()),
             })
             .collect();
