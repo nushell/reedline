@@ -299,13 +299,8 @@ impl Reedline {
 
     /// A builder that appends a menu to the engine
     #[must_use]
-    pub fn with_menu(mut self, menu: Box<dyn Menu>, completer: Option<Box<dyn Completer>>) -> Self {
-        if let Some(completer) = completer {
-            self.menus
-                .push(ReedlineMenu::WithCompleter { menu, completer })
-        } else {
-            self.menus.push(ReedlineMenu::EngineCompleter(menu))
-        }
+    pub fn with_menu(mut self, menu: ReedlineMenu) -> Self {
+        self.menus.push(menu);
 
         self
     }
@@ -581,8 +576,8 @@ impl Reedline {
                         if self.quick_completions && menu.can_quick_complete() {
                             menu.update_values(
                                 self.editor.line_buffer(),
-                                self.history.as_ref(),
                                 self.completer.as_ref(),
+                                self.history.as_ref(),
                             );
 
                             if menu.get_values().len() == 1 {
@@ -594,8 +589,8 @@ impl Reedline {
                             && menu.can_partially_complete(
                                 self.quick_completions,
                                 self.editor.line_buffer(),
-                                self.history.as_ref(),
                                 self.completer.as_ref(),
+                                self.history.as_ref(),
                             )
                         {
                             return Ok(EventStatus::Handled);
@@ -769,8 +764,8 @@ impl Reedline {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
                         menu.update_values(
                             self.editor.line_buffer(),
-                            self.history.as_ref(),
                             self.completer.as_ref(),
+                            self.history.as_ref(),
                         );
 
                         if menu.get_values().len() == 1 {
@@ -1182,8 +1177,8 @@ impl Reedline {
             if menu.is_active() {
                 menu.update_working_details(
                     self.editor.line_buffer(),
-                    self.history.as_ref(),
                     self.completer.as_ref(),
+                    self.history.as_ref(),
                     &self.painter,
                 );
             }

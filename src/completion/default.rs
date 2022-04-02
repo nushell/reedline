@@ -99,6 +99,7 @@ impl Completer for DefaultCompleter {
                                     Suggestion {
                                         value: format!("{}{}", span_line, ext),
                                         description: None,
+                                        extra: None,
                                         span,
                                     }
                                 })
@@ -369,16 +370,19 @@ mod tests {
                 Suggestion {
                     value: "ｎｕｌｌ".into(),
                     description: None,
+                    extra: None,
                     span: Span { start: 0, end: 3 },
                 },
                 Suggestion {
                     value: "ｎｕｍｂｅｒ".into(),
                     description: None,
+                    extra: None,
                     span: Span { start: 0, end: 3 },
                 },
                 Suggestion {
                     value: "ｎｕｓｈｅｌｌ".into(),
                     description: None,
+                    extra: None,
                     span: Span { start: 0, end: 3 },
                 },
             ]

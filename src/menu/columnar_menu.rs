@@ -1,5 +1,5 @@
 use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
-use crate::{painting::Painter, Completer, History, LineBuffer, Suggestion};
+use crate::{painting::Painter, Completer, LineBuffer, Suggestion};
 use nu_ansi_term::{ansi::RESET, Style};
 
 /// Default values used as reference for the menu. These values are set during
@@ -34,8 +34,12 @@ struct ColumnDetails {
     pub col_width: usize,
 }
 
-/// Completion menu definition
-pub struct CompletionMenu {
+/// Menu to present suggestions in a columnar fashion
+/// It presents a description of the suggestion if available
+pub struct ColumnarMenu {
+    /// Menu name
+    name: String,
+    /// Columnar menu active status
     active: bool,
     /// Menu coloring
     color: MenuTextStyle,
@@ -61,9 +65,10 @@ pub struct CompletionMenu {
     longest_suggestion: usize,
 }
 
-impl Default for CompletionMenu {
+impl Default for ColumnarMenu {
     fn default() -> Self {
         Self {
+            name: "columnar_menu".to_string(),
             active: false,
             color: MenuTextStyle::default(),
             default_details: DefaultColumnDetails::default(),
@@ -79,7 +84,14 @@ impl Default for CompletionMenu {
     }
 }
 
-impl CompletionMenu {
+impl ColumnarMenu {
+    /// Menu builder with new name
+    #[must_use]
+    pub fn with_name(mut self, name: &str) -> Self {
+        self.name = name.into();
+        self
+    }
+
     /// Menu builder with new value for text style
     #[must_use]
     pub fn with_text_style(mut self, text_style: Style) -> Self {
@@ -390,7 +402,7 @@ impl CompletionMenu {
     }
 }
 
-impl Menu for CompletionMenu {
+impl Menu for ColumnarMenu {
     /// Menu name
     fn name(&self) -> &str {
         "completion_menu"
@@ -406,24 +418,23 @@ impl Menu for CompletionMenu {
         self.active
     }
 
-    /// The completion menu can to quick complete if there is only one element
+    /// The columnar menu can to quick complete if there is only one element
     fn can_quick_complete(&self) -> bool {
         true
     }
 
-    /// The completion menu can try to find the common string and replace it
+    /// The columnar menu can try to find the common string and replace it
     /// in the given line buffer
     fn can_partially_complete(
         &mut self,
         values_updated: bool,
         line_buffer: &mut LineBuffer,
-        history: &dyn History,
         completer: &dyn Completer,
     ) -> bool {
         // If the values were already updated (e.g. quick completions are true)
         // there is no need to update the values from the menu
         if !values_updated {
-            self.update_values(line_buffer, history, completer);
+            self.update_values(line_buffer, completer);
         }
 
         let values = self.get_values();
@@ -446,7 +457,7 @@ impl Menu for CompletionMenu {
 
                 // The values need to be updated because the spans need to be
                 // recalculated for accurate replacement in the string
-                self.update_values(line_buffer, history, completer);
+                self.update_values(line_buffer, completer);
 
                 true
             } else {
@@ -467,12 +478,7 @@ impl Menu for CompletionMenu {
     }
 
     /// Updates menu values
-    fn update_values(
-        &mut self,
-        line_buffer: &mut LineBuffer,
-        _history: &dyn History,
-        completer: &dyn Completer,
-    ) {
+    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &dyn Completer) {
         // If there is a new line character in the line buffer, the completer
         // doesn't calculate the suggested values correctly. This happens when
         // editing a multiline buffer.
@@ -488,7 +494,6 @@ impl Menu for CompletionMenu {
     fn update_working_details(
         &mut self,
         line_buffer: &mut LineBuffer,
-        history: &dyn History,
         completer: &dyn Completer,
         painter: &Painter,
     ) {
@@ -557,7 +562,7 @@ impl Menu for CompletionMenu {
                     self.reset_position();
 
                     if !updated {
-                        self.update_values(line_buffer, history, completer);
+                        self.update_values(line_buffer, completer);
                     }
                 }
                 MenuEvent::Deactivate => self.active = false,
@@ -565,7 +570,7 @@ impl Menu for CompletionMenu {
                     self.reset_position();
 
                     if !updated {
-                        self.update_values(line_buffer, history, completer);
+                        self.update_values(line_buffer, completer);
                     }
                 }
                 MenuEvent::NextElement => self.move_next(),
@@ -575,7 +580,7 @@ impl Menu for CompletionMenu {
                 MenuEvent::MoveLeft => self.move_left(),
                 MenuEvent::MoveRight => self.move_right(),
                 MenuEvent::PreviousPage | MenuEvent::NextPage => {
-                    // The completion menu doest have the concept of pages, yet
+                    // The columnar menu doest have the concept of pages, yet
                 }
             }
         }

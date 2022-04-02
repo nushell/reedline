@@ -218,7 +218,9 @@ mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
-pub use menu::{menu_functions, CompletionMenu, HistoryMenu, Menu, MenuEvent, MenuTextStyle};
+pub use menu::{
+    menu_functions, ColumnarMenu, Menu, MenuEvent, MenuTextStyle, ReedlineMenu, SearchMenu,
+};
 
 mod utils;
 pub use utils::{
