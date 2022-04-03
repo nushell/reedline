@@ -38,7 +38,7 @@ impl<'a> Sum<&'a Page> for Page {
 
 /// Struct to store the menu style
 /// Context menu definition
-pub struct SearchMenu {
+pub struct ListMenu {
     /// Menu name
     name: String,
     /// Menu coloring
@@ -73,7 +73,7 @@ pub struct SearchMenu {
     input: Option<String>,
 }
 
-impl Default for SearchMenu {
+impl Default for ListMenu {
     fn default() -> Self {
         Self {
             name: "search_menu".to_string(),
@@ -94,7 +94,7 @@ impl Default for SearchMenu {
     }
 }
 
-impl SearchMenu {
+impl ListMenu {
     /// Menu builder with new name
     #[must_use]
     pub fn with_name(mut self, name: &str) -> Self {
@@ -324,7 +324,7 @@ impl SearchMenu {
     }
 }
 
-impl Menu for SearchMenu {
+impl Menu for ListMenu {
     fn name(&self) -> &str {
         self.name.as_str()
     }
@@ -432,10 +432,12 @@ impl Menu for SearchMenu {
     /// The buffer gets cleared with the actual value
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
         if let Some(Suggestion { value, span, .. }) = self.get_value() {
-            line_buffer.replace(span.start..span.end, &value);
+            let start = span.start.min(line_buffer.len());
+            let end = span.end.min(line_buffer.len());
+            line_buffer.replace(start..end, &value);
 
             let mut offset = line_buffer.insertion_point();
-            offset += value.len() - (span.end - span.start);
+            offset += value.len().saturating_sub(end.saturating_sub(start));
             line_buffer.set_insertion_point(offset);
         }
     }

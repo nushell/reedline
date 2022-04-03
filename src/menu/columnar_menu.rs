@@ -589,10 +589,12 @@ impl Menu for ColumnarMenu {
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
         if let Some(Suggestion { value, span, .. }) = self.get_value() {
-            let mut offset = line_buffer.insertion_point();
-            offset += value.len() - (span.end - span.start);
+            let start = span.start.min(line_buffer.len());
+            let end = span.end.min(line_buffer.len());
+            line_buffer.replace(start..end, &value);
 
-            line_buffer.replace(span.start..span.end, &value);
+            let mut offset = line_buffer.insertion_point();
+            offset += value.len().saturating_sub(end.saturating_sub(start));
             line_buffer.set_insertion_point(offset);
         }
     }

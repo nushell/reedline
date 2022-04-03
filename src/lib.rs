@@ -220,7 +220,7 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
 pub use menu::{
-    menu_functions, ColumnarMenu, Menu, MenuEvent, MenuTextStyle, ReedlineMenu, SearchMenu,
+    menu_functions, ColumnarMenu, ListMenu, Menu, MenuEvent, MenuTextStyle, ReedlineMenu,
 };
 
 mod utils;

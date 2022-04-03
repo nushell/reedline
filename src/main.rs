@@ -11,8 +11,8 @@ use {
         get_reedline_default_keybindings, get_reedline_edit_commands,
         get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
         get_reedline_reedline_events, ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt,
-        EditMode, Emacs, ExampleHighlighter, FileBackedHistory, Keybindings, Reedline,
-        ReedlineEvent, SearchMenu, Signal, Vi,
+        EditMode, Emacs, ExampleHighlighter, FileBackedHistory, Keybindings, ListMenu, Reedline,
+        ReedlineEvent, Signal, Vi,
     },
     std::{
         io::{stdout, Write},
@@ -86,7 +86,7 @@ fn main() -> Result<()> {
             ColumnarMenu::default().with_name("completion_menu"),
         )))
         .with_menu(ReedlineMenu::HistoryMenu(Box::new(
-            SearchMenu::default().with_name("history_menu"),
+            ListMenu::default().with_name("history_menu"),
         )));
 
     let edit_mode: Box<dyn EditMode> = if vi_mode {

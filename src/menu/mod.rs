@@ -1,14 +1,14 @@
 mod columnar_menu;
+mod list_menu;
 pub mod menu_functions;
-mod search_menu;
 
 use crate::{
     completion::history::HistoryCompleter, painting::Painter, Completer, History, LineBuffer,
     Suggestion,
 };
 pub use columnar_menu::ColumnarMenu;
+pub use list_menu::ListMenu;
 use nu_ansi_term::{Color, Style};
-pub use search_menu::SearchMenu;
 
 /// Struct to store the menu style
 pub struct MenuTextStyle {
