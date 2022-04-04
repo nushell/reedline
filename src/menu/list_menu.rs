@@ -143,7 +143,7 @@ impl ListMenu {
     }
 }
 
-// Menu functionality 
+// Menu functionality
 impl ListMenu {
     /// Menu builder with menu marker
     #[must_use]
@@ -388,7 +388,14 @@ impl Menu for ListMenu {
     fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &dyn Completer) {
         let (start, input) = if self.only_buffer_difference {
             match &self.input {
-                Some(old_string) => string_difference(line_buffer.get_buffer(), old_string),
+                Some(old_string) => {
+                    let (start, input) = string_difference(line_buffer.get_buffer(), old_string);
+                    if input.is_empty() {
+                        (line_buffer.insertion_point(), "")
+                    } else {
+                        (start, input)
+                    }
+                }
                 None => (line_buffer.insertion_point(), ""),
             }
         } else {

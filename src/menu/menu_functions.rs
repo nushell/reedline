@@ -383,6 +383,15 @@ mod tests {
     }
 
     #[test]
+    fn string_difference_inserting() {
+        let new_string = "let a = (insert) | ";
+        let old_string = "let a = () | ";
+
+        let res = string_difference(new_string, old_string);
+        assert_eq!(res, (9, "insert"));
+    }
+
+    #[test]
     fn string_difference_longer_string() {
         let new_string = "this is a new another";
         let old_string = "this is a string";

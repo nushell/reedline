@@ -159,7 +159,7 @@ impl ColumnarMenu {
     }
 }
 
-// Menu functionality 
+// Menu functionality
 impl ColumnarMenu {
     /// Move menu cursor to the next element
     fn move_next(&mut self) {
