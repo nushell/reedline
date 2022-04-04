@@ -449,7 +449,7 @@ impl Menu for ColumnarMenu {
         &mut self,
         values_updated: bool,
         line_buffer: &mut LineBuffer,
-        completer: &dyn Completer,
+        completer: &mut dyn Completer,
     ) -> bool {
         // If the values were already updated (e.g. quick completions are true)
         // there is no need to update the values from the menu
@@ -503,7 +503,7 @@ impl Menu for ColumnarMenu {
     }
 
     /// Updates menu values
-    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &dyn Completer) {
+    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &mut dyn Completer) {
         if self.only_buffer_difference {
             if let Some(old_string) = &self.input {
                 let (start, input) = string_difference(line_buffer.get_buffer(), old_string);
@@ -530,7 +530,7 @@ impl Menu for ColumnarMenu {
     fn update_working_details(
         &mut self,
         line_buffer: &mut LineBuffer,
-        completer: &dyn Completer,
+        completer: &mut dyn Completer,
         painter: &Painter,
     ) {
         if let Some(event) = self.event.take() {

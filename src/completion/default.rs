@@ -68,7 +68,7 @@ impl Completer for DefaultCompleter {
     ///         Suggestion {value: "batmobile".into(), description: None, extra: None, span: Span { start: 7, end: 10 }},
     ///     ]);
     /// ```
-    fn complete(&self, line: &str, pos: usize) -> Vec<Suggestion> {
+    fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
         let mut span_line_whitespaces = 0;
         let mut completions = vec![];
         if !line.is_empty() {

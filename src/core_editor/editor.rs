@@ -382,7 +382,7 @@ mod test {
     }
 
     fn str_to_edit_commands(s: &str) -> Vec<EditCommand> {
-        s.chars().map(|c| EditCommand::InsertChar(c)).collect()
+        s.chars().map(EditCommand::InsertChar).collect()
     }
 
     #[test]

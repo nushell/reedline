@@ -365,7 +365,7 @@ impl Menu for ListMenu {
         &mut self,
         _values_updated: bool,
         _line_buffer: &mut LineBuffer,
-        _completer: &dyn Completer,
+        _completer: &mut dyn Completer,
     ) -> bool {
         false
     }
@@ -385,7 +385,7 @@ impl Menu for ListMenu {
     }
 
     /// Collecting the value from the completer to be shown in the menu
-    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &dyn Completer) {
+    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &mut dyn Completer) {
         let (start, input) = if self.only_buffer_difference {
             match &self.input {
                 Some(old_string) => {
@@ -471,7 +471,7 @@ impl Menu for ListMenu {
     fn update_working_details(
         &mut self,
         line_buffer: &mut LineBuffer,
-        completer: &dyn Completer,
+        completer: &mut dyn Completer,
         painter: &Painter,
     ) {
         if let Some(event) = self.event.clone() {
