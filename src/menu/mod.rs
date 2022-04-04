@@ -83,7 +83,7 @@ pub trait Menu: Send {
         &mut self,
         values_updated: bool,
         line_buffer: &mut LineBuffer,
-        completer: &dyn Completer,
+        completer: &mut dyn Completer,
     ) -> bool;
 
     /// Updates the values presented in the menu
@@ -91,7 +91,7 @@ pub trait Menu: Send {
     /// activated or the `quick_completion` option is true, the len of the values
     /// is calculated to know if there is only one value so it can be selected
     /// immediately
-    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &dyn Completer);
+    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &mut dyn Completer);
 
     /// The working details of a menu are values that could change based on
     /// the menu conditions before it being printed, such as the number or size
@@ -101,7 +101,7 @@ pub trait Menu: Send {
     fn update_working_details(
         &mut self,
         line_buffer: &mut LineBuffer,
-        completer: &dyn Completer,
+        completer: &mut dyn Completer,
         painter: &Painter,
     );
 
@@ -158,7 +158,7 @@ impl ReedlineMenu {
         &mut self,
         values_updated: bool,
         line_buffer: &mut LineBuffer,
-        completer: &dyn Completer,
+        completer: &mut dyn Completer,
         history: &dyn History,
     ) -> bool {
         match self {
@@ -166,39 +166,39 @@ impl ReedlineMenu {
                 menu.can_partially_complete(values_updated, line_buffer, completer)
             }
             Self::HistoryMenu(menu) => {
-                let history_completer = HistoryCompleter::new(history);
-                menu.can_partially_complete(values_updated, line_buffer, &history_completer)
+                let mut history_completer = HistoryCompleter::new(history);
+                menu.can_partially_complete(values_updated, line_buffer, &mut history_completer)
             }
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
-            } => menu.can_partially_complete(values_updated, line_buffer, own_completer.as_ref()),
+            } => menu.can_partially_complete(values_updated, line_buffer, own_completer.as_mut()),
         }
     }
 
     pub(crate) fn update_values(
         &mut self,
         line_buffer: &mut LineBuffer,
-        completer: &dyn Completer,
+        completer: &mut dyn Completer,
         history: &dyn History,
     ) {
         match self {
             Self::EngineCompleter(menu) => menu.update_values(line_buffer, completer),
             Self::HistoryMenu(menu) => {
-                let history_completer = HistoryCompleter::new(history);
-                menu.update_values(line_buffer, &history_completer)
+                let mut history_completer = HistoryCompleter::new(history);
+                menu.update_values(line_buffer, &mut history_completer)
             }
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
-            } => menu.update_values(line_buffer, own_completer.as_ref()),
+            } => menu.update_values(line_buffer, own_completer.as_mut()),
         }
     }
 
     pub(crate) fn update_working_details(
         &mut self,
         line_buffer: &mut LineBuffer,
-        completer: &dyn Completer,
+        completer: &mut dyn Completer,
         history: &dyn History,
         painter: &Painter,
     ) {
@@ -207,13 +207,13 @@ impl ReedlineMenu {
                 menu.update_working_details(line_buffer, completer, painter)
             }
             Self::HistoryMenu(menu) => {
-                let history_completer = HistoryCompleter::new(history);
-                menu.update_working_details(line_buffer, &history_completer, painter)
+                let mut history_completer = HistoryCompleter::new(history);
+                menu.update_working_details(line_buffer, &mut history_completer, painter)
             }
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
-            } => menu.update_working_details(line_buffer, own_completer.as_ref(), painter),
+            } => menu.update_working_details(line_buffer, own_completer.as_mut(), painter),
         }
     }
 }
@@ -243,7 +243,7 @@ impl Menu for ReedlineMenu {
         &mut self,
         values_updated: bool,
         line_buffer: &mut LineBuffer,
-        completer: &dyn Completer,
+        completer: &mut dyn Completer,
     ) -> bool {
         match self {
             Self::EngineCompleter(menu) => {
@@ -255,25 +255,25 @@ impl Menu for ReedlineMenu {
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
-            } => menu.can_partially_complete(values_updated, line_buffer, own_completer.as_ref()),
+            } => menu.can_partially_complete(values_updated, line_buffer, own_completer.as_mut()),
         }
     }
 
-    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &dyn Completer) {
+    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &mut dyn Completer) {
         match self {
             Self::EngineCompleter(menu) => menu.update_values(line_buffer, completer),
             Self::HistoryMenu(menu) => menu.update_values(line_buffer, completer),
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
-            } => menu.update_values(line_buffer, own_completer.as_ref()),
+            } => menu.update_values(line_buffer, own_completer.as_mut()),
         }
     }
 
     fn update_working_details(
         &mut self,
         line_buffer: &mut LineBuffer,
-        completer: &dyn Completer,
+        completer: &mut dyn Completer,
         painter: &Painter,
     ) {
         match self {
@@ -284,7 +284,7 @@ impl Menu for ReedlineMenu {
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
-            } => menu.update_working_details(line_buffer, own_completer.as_ref(), painter),
+            } => menu.update_working_details(line_buffer, own_completer.as_mut(), painter),
         }
     }
 

@@ -13,7 +13,7 @@ pub(crate) struct HistoryCompleter<'menu>(&'menu dyn History);
 unsafe impl<'menu> Send for HistoryCompleter<'menu> {}
 
 impl<'menu> Completer for HistoryCompleter<'menu> {
-    fn complete(&self, line: &str, pos: usize) -> Vec<Suggestion> {
+    fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
         let parsed = parse_selection_char(line, SELECTION_CHAR);
         let values = self.0.query_entries(parsed.remainder);
 
@@ -24,7 +24,7 @@ impl<'menu> Completer for HistoryCompleter<'menu> {
     }
 
     fn partial_complete(
-        &self,
+        &mut self,
         line: &str,
         pos: usize,
         start: usize,
@@ -39,7 +39,7 @@ impl<'menu> Completer for HistoryCompleter<'menu> {
             .collect()
     }
 
-    fn total_completions(&self, _line: &str, _pos: usize) -> usize {
+    fn total_completions(&mut self, _line: &str, _pos: usize) -> usize {
         self.0.max_values()
     }
 }

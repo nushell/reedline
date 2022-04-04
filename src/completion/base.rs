@@ -30,13 +30,13 @@ impl Span {
 pub trait Completer: Send {
     /// the action that will take the line and position and convert it to a vector of completions, which include the
     /// span to replace and the contents of that replacement
-    fn complete(&self, line: &str, pos: usize) -> Vec<Suggestion>;
+    fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion>;
 
     /// action that will return a partial section of available completions
     /// this command comes handy when trying to avoid to pull all the data at once
     /// from the completer
     fn partial_complete(
-        &self,
+        &mut self,
         line: &str,
         pos: usize,
         start: usize,
@@ -50,7 +50,7 @@ pub trait Completer: Send {
     }
 
     /// number of available completions
-    fn total_completions(&self, line: &str, pos: usize) -> usize {
+    fn total_completions(&mut self, line: &str, pos: usize) -> usize {
         self.complete(line, pos).len()
     }
 }

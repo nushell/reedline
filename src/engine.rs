@@ -582,7 +582,7 @@ impl Reedline {
                         if self.quick_completions && menu.can_quick_complete() {
                             menu.update_values(
                                 self.editor.line_buffer(),
-                                self.completer.as_ref(),
+                                self.completer.as_mut(),
                                 self.history.as_ref(),
                             );
 
@@ -595,7 +595,7 @@ impl Reedline {
                             && menu.can_partially_complete(
                                 self.quick_completions,
                                 self.editor.line_buffer(),
-                                self.completer.as_ref(),
+                                self.completer.as_mut(),
                                 self.history.as_ref(),
                             )
                         {
@@ -692,7 +692,7 @@ impl Reedline {
             ReedlineEvent::ActionHandler => {
                 let line_buffer = self.editor.line_buffer();
                 self.circular_completion_handler
-                    .handle(self.completer.as_ref(), line_buffer);
+                    .handle(self.completer.as_mut(), line_buffer);
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Esc => {
@@ -770,7 +770,7 @@ impl Reedline {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
                         menu.update_values(
                             self.editor.line_buffer(),
-                            self.completer.as_ref(),
+                            self.completer.as_mut(),
                             self.history.as_ref(),
                         );
 
@@ -1183,7 +1183,7 @@ impl Reedline {
             if menu.is_active() {
                 menu.update_working_details(
                     self.editor.line_buffer(),
-                    self.completer.as_ref(),
+                    self.completer.as_mut(),
                     self.history.as_ref(),
                     &self.painter,
                 );
