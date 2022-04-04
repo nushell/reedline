@@ -99,7 +99,7 @@
 //! ```rust,no_run
 //! // Create a reedline object with tab completions support
 //!
-//! use reedline::{DefaultCompleter, Reedline, CompletionMenu};
+//! use reedline::{ColumnarMenu, DefaultCompleter, Reedline, ReedlineMenu};
 //!
 //! let commands = vec![
 //!   "test".into(),
@@ -109,9 +109,10 @@
 //! ];
 //! let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 //! // Use the interactive menu to select options from the completer
-//! let completion_menu = Box::new(CompletionMenu::default());
+//! let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu"));
 //!
-//! let mut line_editor = Reedline::create().with_completer(completer).with_menu(completion_menu, None);
+//! let mut line_editor =
+//! Reedline::create().with_completer(completer).with_menu(ReedlineMenu::EngineCompleter(completion_menu));
 //! ```
 //!
 //! ## Integrate with [`Hinter`] for fish-style history autosuggestions
@@ -218,7 +219,9 @@ mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
-pub use menu::{menu_functions, CompletionMenu, HistoryMenu, Menu, MenuEvent, MenuTextStyle};
+pub use menu::{
+    menu_functions, ColumnarMenu, ListMenu, Menu, MenuEvent, MenuTextStyle, ReedlineMenu,
+};
 
 mod utils;
 pub use utils::{

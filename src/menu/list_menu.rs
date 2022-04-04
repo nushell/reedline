@@ -1,13 +1,17 @@
-use super::{
-    menu_functions::{parse_selection_char, string_difference},
-    Menu, MenuEvent, MenuTextStyle,
+use {
+    super::{
+        menu_functions::{parse_selection_char, string_difference},
+        Menu, MenuEvent, MenuTextStyle,
+    },
+    crate::{
+        painting::{estimate_single_line_wraps, Painter},
+        Completer, LineBuffer, Suggestion,
+    },
+    nu_ansi_term::{ansi::RESET, Style},
+    std::iter::Sum,
 };
-use crate::{
-    painting::{estimate_single_line_wraps, Painter},
-    Completer, History, LineBuffer, Span, Suggestion,
-};
-use nu_ansi_term::{ansi::RESET, Style};
-use std::iter::Sum;
+
+const SELECTION_CHAR: char = '!';
 
 struct Page {
     size: usize,
@@ -34,29 +38,28 @@ impl<'a> Sum<&'a Page> for Page {
 
 /// Struct to store the menu style
 /// Context menu definition
-pub struct HistoryMenu {
+pub struct ListMenu {
+    /// Menu name
+    name: String,
     /// Menu coloring
     color: MenuTextStyle,
-    /// Number of history records pulled until page is full
+    /// Number of records pulled until page is full
     page_size: usize,
     /// Menu marker displayed when the menu is active
     marker: String,
-    /// Character that will start a selection via a number. E.g let!5 will select
-    /// the fifth entry in the current page
-    selection_char: char,
-    /// History menu active status
+    /// Menu active status
     active: bool,
-    /// Cached values collected when querying the history.
+    /// Cached values collected when querying the completer.
     /// When collecting chronological values, the menu only caches at least
     /// page_size records.
-    /// When performing a query to the history object, the cached values will
+    /// When performing a query to the completer, the cached values will
     /// be the result from such query
     values: Vec<Suggestion>,
     /// row position in the menu. Starts from 0
     row_position: u16,
-    /// Max size of the history when querying without a search buffer
-    history_size: Option<usize>,
-    /// Max number of lines that are shown with large history entries
+    /// Max size of the suggestions when querying without a search buffer
+    query_size: Option<usize>,
+    /// Max number of lines that are shown with large suggestions entries
     max_lines: u16,
     /// Multiline marker
     multiline_marker: String,
@@ -68,30 +71,42 @@ pub struct HistoryMenu {
     event: Option<MenuEvent>,
     /// String collected after the menu is activated
     input: Option<String>,
+    /// Calls the completer using only the line buffer difference difference
+    /// after the menu was activated
+    only_buffer_difference: bool,
 }
 
-impl Default for HistoryMenu {
+impl Default for ListMenu {
     fn default() -> Self {
         Self {
+            name: "search_menu".to_string(),
             color: MenuTextStyle::default(),
             page_size: 10,
-            selection_char: '!',
             active: false,
             values: Vec::new(),
             row_position: 0,
             page: 0,
-            history_size: None,
+            query_size: None,
             marker: "? ".to_string(),
             max_lines: 5,
             multiline_marker: ":::".to_string(),
             pages: Vec::new(),
             event: None,
             input: None,
+            only_buffer_difference: true,
         }
     }
 }
 
-impl HistoryMenu {
+// Menu configuration functions
+impl ListMenu {
+    /// Menu builder with new name
+    #[must_use]
+    pub fn with_name(mut self, name: &str) -> Self {
+        self.name = name.into();
+        self
+    }
+
     /// Menu builder with new value for text style
     #[must_use]
     pub fn with_text_style(mut self, text_style: Style) -> Self {
@@ -106,20 +121,30 @@ impl HistoryMenu {
         self
     }
 
-    /// Menu builder with page size
+    /// Menu builder with new value for description style
+    #[must_use]
+    pub fn with_description_text_style(mut self, description_text_style: Style) -> Self {
+        self.color.description_style = description_text_style;
+        self
+    }
+
+    /// Menu builder with new page size
     #[must_use]
     pub fn with_page_size(mut self, page_size: usize) -> Self {
         self.page_size = page_size;
         self
     }
 
-    /// Menu builder with row char
+    /// Menu builder with new only buffer difference
     #[must_use]
-    pub fn with_selection_char(mut self, selection_char: char) -> Self {
-        self.selection_char = selection_char;
+    pub fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
+        self.only_buffer_difference = only_buffer_difference;
         self
     }
+}
 
+// Menu functionality
+impl ListMenu {
     /// Menu builder with menu marker
     #[must_use]
     pub fn with_marker(mut self, marker: String) -> Self {
@@ -144,33 +169,13 @@ impl HistoryMenu {
         }
     }
 
-    fn create_values_no_query(&mut self, history: &dyn History) -> Vec<String> {
-        // When there is no line buffer it is better to get a partial list of all
-        // the values that can be queried from the history. There is no point to
-        // replicate the whole entries list in the history menu
-        let skip = self.pages.iter().take(self.page).sum::<Page>().size;
-        let take = self
-            .pages
-            .get(self.page)
-            .map(|page| page.size)
-            .unwrap_or(self.page_size);
-
-        history
-            .iter_chronologic()
-            .rev()
-            .skip(skip)
-            .take(take)
-            .cloned()
-            .collect::<Vec<String>>()
-    }
-
     /// The number of rows an entry from the menu can take considering wrapping
     fn number_of_lines(&self, entry: &str, terminal_columns: u16) -> u16 {
         number_of_lines(entry, self.max_lines as usize, terminal_columns)
     }
 
     fn total_values(&self) -> usize {
-        self.history_size.unwrap_or(self.values.len())
+        self.query_size.unwrap_or(self.values.len())
     }
 
     fn values_until_current_page(&self) -> usize {
@@ -203,7 +208,7 @@ impl HistoryMenu {
 
     fn printable_entries(&self, painter: &Painter) -> usize {
         // The number 2 comes from the prompt line and the banner printed at the bottom
-        // of the history menu
+        // of the menu
         let available_lines = painter.screen_height().saturating_sub(2);
         let (printable_entries, _) =
             self.get_values()
@@ -291,27 +296,41 @@ impl HistoryMenu {
     fn create_string(
         &self,
         line: &str,
+        description: Option<&str>,
         index: usize,
         row_number: &str,
         use_ansi_coloring: bool,
     ) -> String {
+        let description = description.map_or("".to_string(), |desc| {
+            if use_ansi_coloring {
+                format!(
+                    "{}({}) {}",
+                    self.color.description_style.prefix(),
+                    desc,
+                    RESET
+                )
+            } else {
+                format!("({}) ", desc)
+            }
+        });
+
         if use_ansi_coloring {
             format!(
                 "{}{}{}{}{}{}",
                 row_number,
+                description,
                 self.text_style(index),
                 &line,
                 RESET,
-                "",
                 Self::end_of_line(),
             )
         } else {
             // If no ansi coloring is found, then the selection word is
             // the line in uppercase
             let line_str = if index == self.index() {
-                format!("{}>{}", row_number, line.to_uppercase())
+                format!("{}{}>{}", row_number, description, line.to_uppercase())
             } else {
-                format!("{}{}", row_number, line)
+                format!("{}{}{}", row_number, description, line)
             };
 
             // Final string with formatting
@@ -320,9 +339,9 @@ impl HistoryMenu {
     }
 }
 
-impl Menu for HistoryMenu {
+impl Menu for ListMenu {
     fn name(&self) -> &str {
-        "history_menu"
+        self.name.as_str()
     }
 
     /// Menu indicator
@@ -335,18 +354,17 @@ impl Menu for HistoryMenu {
         self.active
     }
 
-    /// There is no use for quick complete for the history menu
+    /// There is no use for quick complete for the menu
     fn can_quick_complete(&self) -> bool {
         false
     }
 
-    /// The history menu should not try to auto complete to avoid comparing
+    /// The menu should not try to auto complete to avoid comparing
     /// all registered values
     fn can_partially_complete(
         &mut self,
         _values_updated: bool,
         _line_buffer: &mut LineBuffer,
-        _history: &dyn History,
         _completer: &dyn Completer,
     ) -> bool {
         false
@@ -366,19 +384,25 @@ impl Menu for HistoryMenu {
         self.event = Some(event);
     }
 
-    /// Collecting the value from the history to be shown in the menu
-    fn update_values(
-        &mut self,
-        line_buffer: &mut LineBuffer,
-        history: &dyn History,
-        _completer: &dyn Completer,
-    ) {
-        let (start, input) = match &self.input {
-            Some(old_string) => string_difference(line_buffer.get_buffer(), old_string),
-            None => (line_buffer.insertion_point(), ""),
+    /// Collecting the value from the completer to be shown in the menu
+    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &dyn Completer) {
+        let (start, input) = if self.only_buffer_difference {
+            match &self.input {
+                Some(old_string) => {
+                    let (start, input) = string_difference(line_buffer.get_buffer(), old_string);
+                    if input.is_empty() {
+                        (line_buffer.insertion_point(), "")
+                    } else {
+                        (start, input)
+                    }
+                }
+                None => (line_buffer.insertion_point(), ""),
+            }
+        } else {
+            (line_buffer.insertion_point(), line_buffer.get_buffer())
         };
 
-        let parsed = parse_selection_char(input, self.selection_char);
+        let parsed = parse_selection_char(input, SELECTION_CHAR);
         self.update_row_pos(parsed.index);
 
         // If there are no row selector and the menu has an Edit event, this clears
@@ -387,39 +411,31 @@ impl Menu for HistoryMenu {
             self.reset_position();
         }
 
-        let values = if parsed.remainder.is_empty() {
-            self.history_size = Some(history.max_values());
-            self.create_values_no_query(history)
+        self.values = if parsed.remainder.is_empty() {
+            self.query_size = Some(completer.total_completions(parsed.remainder, start));
+
+            let skip = self.pages.iter().take(self.page).sum::<Page>().size;
+            let take = self
+                .pages
+                .get(self.page)
+                .map(|page| page.size)
+                .unwrap_or(self.page_size);
+
+            completer.partial_complete(input, start, skip, take)
         } else {
-            self.history_size = None;
-            history.query_entries(parsed.remainder)
-        };
-
-        self.values = values
-            .into_iter()
-            .map(|value| {
-                let span = Span {
-                    start,
-                    end: start + input.len(),
-                };
-
-                Suggestion {
-                    value,
-                    description: None,
-                    span,
-                }
-            })
-            .collect();
+            self.query_size = None;
+            completer.complete(input, start)
+        }
     }
 
     /// Gets values from cached values that will be displayed in the menu
     fn get_values(&self) -> &[Suggestion] {
-        if self.history_size.is_some() {
-            // When there is a history size value it means that only a chunk of the
+        if self.query_size.is_some() {
+            // When there is a size value it means that only a chunk of the
             // chronological data from the database was collected
             &self.values
         } else {
-            // If no history record then it means that the values hold the result
+            // If no record then it means that the values hold the result
             // from the query to the database. This slice can be used to get the
             // data that will be shown in the menu
             if self.values.is_empty() {
@@ -442,10 +458,12 @@ impl Menu for HistoryMenu {
     /// The buffer gets cleared with the actual value
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
         if let Some(Suggestion { value, span, .. }) = self.get_value() {
-            line_buffer.replace(span.start..span.end, &value);
+            let start = span.start.min(line_buffer.len());
+            let end = span.end.min(line_buffer.len());
+            line_buffer.replace(start..end, &value);
 
             let mut offset = line_buffer.insertion_point();
-            offset += value.len() - (span.end - span.start);
+            offset += value.len().saturating_sub(end.saturating_sub(start));
             line_buffer.set_insertion_point(offset);
         }
     }
@@ -453,7 +471,6 @@ impl Menu for HistoryMenu {
     fn update_working_details(
         &mut self,
         line_buffer: &mut LineBuffer,
-        history: &dyn History,
         completer: &dyn Completer,
         painter: &Painter,
     ) {
@@ -461,8 +478,14 @@ impl Menu for HistoryMenu {
             match event {
                 MenuEvent::Activate(_) => {
                     self.reset_position();
-                    self.input = Some(line_buffer.get_buffer().to_string());
-                    self.update_values(line_buffer, history, completer);
+
+                    self.input = if self.only_buffer_difference {
+                        Some(line_buffer.get_buffer().to_string())
+                    } else {
+                        None
+                    };
+
+                    self.update_values(line_buffer, completer);
 
                     self.pages.push(Page {
                         size: self.printable_entries(painter),
@@ -474,7 +497,7 @@ impl Menu for HistoryMenu {
                     self.input = None;
                 }
                 MenuEvent::Edit(_) => {
-                    self.update_values(line_buffer, history, completer);
+                    self.update_values(line_buffer, completer);
                     self.pages.push(Page {
                         size: self.printable_entries(painter),
                         full: false,
@@ -486,7 +509,7 @@ impl Menu for HistoryMenu {
                     if let Some(page) = self.pages.get(self.page) {
                         if new_pos >= page.size as u16 {
                             self.event = Some(MenuEvent::NextPage);
-                            self.update_working_details(line_buffer, history, completer, painter);
+                            self.update_working_details(line_buffer, completer, painter);
                         } else {
                             self.row_position = new_pos;
                         }
@@ -507,7 +530,7 @@ impl Menu for HistoryMenu {
                         }
 
                         self.event = Some(MenuEvent::PreviousPage);
-                        self.update_working_details(line_buffer, history, completer, painter);
+                        self.update_working_details(line_buffer, completer, painter);
                     }
                 }
                 MenuEvent::NextPage => {
@@ -527,12 +550,12 @@ impl Menu for HistoryMenu {
                             }
                         }
 
-                        self.update_values(line_buffer, history, completer);
+                        self.update_values(line_buffer, completer);
                         self.set_actual_page_size(self.printable_entries(painter));
                     } else {
                         self.row_position = 0;
                         self.page = 0;
-                        self.update_values(line_buffer, history, completer);
+                        self.update_values(line_buffer, completer);
                     }
                 }
                 MenuEvent::PreviousPage => {
@@ -540,7 +563,7 @@ impl Menu for HistoryMenu {
                         Some(page_num) => self.page = page_num,
                         None => self.page = self.pages.len().saturating_sub(1),
                     }
-                    self.update_values(line_buffer, history, completer);
+                    self.update_values(line_buffer, completer);
                 }
             }
 
@@ -583,7 +606,13 @@ impl Menu for HistoryMenu {
 
                         let row_number = format!("{}: ", index + values_before_page);
 
-                        self.create_string(&line, index, &row_number, use_ansi_coloring)
+                        self.create_string(
+                            &line,
+                            suggestion.description.as_deref(),
+                            index,
+                            &row_number,
+                            use_ansi_coloring,
+                        )
                     })
                     .collect::<String>();
 

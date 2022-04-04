@@ -1,3 +1,5 @@
+use reedline::ReedlineMenu;
+
 use {
     crossterm::{
         event::{poll, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -8,9 +10,9 @@ use {
         default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
         get_reedline_default_keybindings, get_reedline_edit_commands,
         get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
-        get_reedline_reedline_events, CompletionMenu, DefaultCompleter, DefaultHinter,
-        DefaultPrompt, EditMode, Emacs, ExampleHighlighter, FileBackedHistory, HistoryMenu,
-        Keybindings, Reedline, ReedlineEvent, Signal, Vi,
+        get_reedline_reedline_events, ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt,
+        EditMode, Emacs, ExampleHighlighter, FileBackedHistory, Keybindings, ListMenu, Reedline,
+        ReedlineEvent, Signal, Vi,
     },
     std::{
         io::{stdout, Write},
@@ -79,11 +81,13 @@ fn main() -> Result<()> {
         .with_ansi_colors(true);
 
     // Adding default menus for the compiled reedline
-    let completion_menu = Box::new(CompletionMenu::default());
-    let history_menu = Box::new(HistoryMenu::default());
     line_editor = line_editor
-        .with_menu(completion_menu, None)
-        .with_menu(history_menu, None);
+        .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name("completion_menu"),
+        )))
+        .with_menu(ReedlineMenu::HistoryMenu(Box::new(
+            ListMenu::default().with_name("history_menu"),
+        )));
 
     let edit_mode: Box<dyn EditMode> = if vi_mode {
         let mut normal_keybindings = default_vi_normal_keybindings();

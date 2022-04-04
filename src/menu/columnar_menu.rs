@@ -1,5 +1,7 @@
 use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
-use crate::{painting::Painter, Completer, History, LineBuffer, Suggestion};
+use crate::{
+    menu_functions::string_difference, painting::Painter, Completer, LineBuffer, Suggestion,
+};
 use nu_ansi_term::{ansi::RESET, Style};
 
 /// Default values used as reference for the menu. These values are set during
@@ -34,8 +36,12 @@ struct ColumnDetails {
     pub col_width: usize,
 }
 
-/// Completion menu definition
-pub struct CompletionMenu {
+/// Menu to present suggestions in a columnar fashion
+/// It presents a description of the suggestion if available
+pub struct ColumnarMenu {
+    /// Menu name
+    name: String,
+    /// Columnar menu active status
     active: bool,
     /// Menu coloring
     color: MenuTextStyle,
@@ -59,11 +65,17 @@ pub struct CompletionMenu {
     event: Option<MenuEvent>,
     /// Longest suggestion found in the values
     longest_suggestion: usize,
+    /// String collected after the menu is activated
+    input: Option<String>,
+    /// Calls the completer using only the line buffer difference difference
+    /// after the menu was activated
+    only_buffer_difference: bool,
 }
 
-impl Default for CompletionMenu {
+impl Default for ColumnarMenu {
     fn default() -> Self {
         Self {
+            name: "columnar_menu".to_string(),
             active: false,
             color: MenuTextStyle::default(),
             default_details: DefaultColumnDetails::default(),
@@ -75,11 +87,21 @@ impl Default for CompletionMenu {
             marker: "| ".to_string(),
             event: None,
             longest_suggestion: 0,
+            input: None,
+            only_buffer_difference: false,
         }
     }
 }
 
-impl CompletionMenu {
+// Menu configuration functions
+impl ColumnarMenu {
+    /// Menu builder with new name
+    #[must_use]
+    pub fn with_name(mut self, name: &str) -> Self {
+        self.name = name.into();
+        self
+    }
+
     /// Menu builder with new value for text style
     #[must_use]
     pub fn with_text_style(mut self, text_style: Style) -> Self {
@@ -129,6 +151,16 @@ impl CompletionMenu {
         self
     }
 
+    /// Menu builder with new only buffer difference
+    #[must_use]
+    pub fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
+        self.only_buffer_difference = only_buffer_difference;
+        self
+    }
+}
+
+// Menu functionality
+impl ColumnarMenu {
     /// Move menu cursor to the next element
     fn move_next(&mut self) {
         let mut new_col = self.col_pos + 1;
@@ -390,10 +422,10 @@ impl CompletionMenu {
     }
 }
 
-impl Menu for CompletionMenu {
+impl Menu for ColumnarMenu {
     /// Menu name
     fn name(&self) -> &str {
-        "completion_menu"
+        self.name.as_str()
     }
 
     /// Menu indicator
@@ -406,24 +438,23 @@ impl Menu for CompletionMenu {
         self.active
     }
 
-    /// The completion menu can to quick complete if there is only one element
+    /// The columnar menu can to quick complete if there is only one element
     fn can_quick_complete(&self) -> bool {
         true
     }
 
-    /// The completion menu can try to find the common string and replace it
+    /// The columnar menu can try to find the common string and replace it
     /// in the given line buffer
     fn can_partially_complete(
         &mut self,
         values_updated: bool,
         line_buffer: &mut LineBuffer,
-        history: &dyn History,
         completer: &dyn Completer,
     ) -> bool {
         // If the values were already updated (e.g. quick completions are true)
         // there is no need to update the values from the menu
         if !values_updated {
-            self.update_values(line_buffer, history, completer);
+            self.update_values(line_buffer, completer);
         }
 
         let values = self.get_values();
@@ -446,7 +477,7 @@ impl Menu for CompletionMenu {
 
                 // The values need to be updated because the spans need to be
                 // recalculated for accurate replacement in the string
-                self.update_values(line_buffer, history, completer);
+                self.update_values(line_buffer, completer);
 
                 true
             } else {
@@ -459,28 +490,39 @@ impl Menu for CompletionMenu {
 
     /// Selects what type of event happened with the menu
     fn menu_event(&mut self, event: MenuEvent) {
-        if let MenuEvent::Activate(_) = event {
-            self.active = true;
+        match &event {
+            MenuEvent::Activate(_) => self.active = true,
+            MenuEvent::Deactivate => {
+                self.active = false;
+                self.input = None;
+            }
+            _ => {}
         }
 
         self.event = Some(event);
     }
 
     /// Updates menu values
-    fn update_values(
-        &mut self,
-        line_buffer: &mut LineBuffer,
-        _history: &dyn History,
-        completer: &dyn Completer,
-    ) {
-        // If there is a new line character in the line buffer, the completer
-        // doesn't calculate the suggested values correctly. This happens when
-        // editing a multiline buffer.
-        // Also, by replacing the new line character with a space, the insert
-        // position is maintain in the line buffer.
-        let trimmed_buffer = line_buffer.get_buffer().replace('\n', " ");
-        self.values = completer.complete(trimmed_buffer.as_str(), line_buffer.insertion_point());
-        self.reset_position();
+    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &dyn Completer) {
+        if self.only_buffer_difference {
+            if let Some(old_string) = &self.input {
+                let (start, input) = string_difference(line_buffer.get_buffer(), old_string);
+                if !input.is_empty() {
+                    self.values = completer.complete(input, start);
+                    self.reset_position();
+                }
+            }
+        } else {
+            // If there is a new line character in the line buffer, the completer
+            // doesn't calculate the suggested values correctly. This happens when
+            // editing a multiline buffer.
+            // Also, by replacing the new line character with a space, the insert
+            // position is maintain in the line buffer.
+            let trimmed_buffer = line_buffer.get_buffer().replace('\n', " ");
+            self.values =
+                completer.complete(trimmed_buffer.as_str(), line_buffer.insertion_point());
+            self.reset_position();
+        }
     }
 
     /// The working details for the menu changes based on the size of the lines
@@ -488,7 +530,6 @@ impl Menu for CompletionMenu {
     fn update_working_details(
         &mut self,
         line_buffer: &mut LineBuffer,
-        history: &dyn History,
         completer: &dyn Completer,
         painter: &Painter,
     ) {
@@ -556,8 +597,14 @@ impl Menu for CompletionMenu {
                     self.active = true;
                     self.reset_position();
 
+                    self.input = if self.only_buffer_difference {
+                        Some(line_buffer.get_buffer().to_string())
+                    } else {
+                        None
+                    };
+
                     if !updated {
-                        self.update_values(line_buffer, history, completer);
+                        self.update_values(line_buffer, completer);
                     }
                 }
                 MenuEvent::Deactivate => self.active = false,
@@ -565,7 +612,7 @@ impl Menu for CompletionMenu {
                     self.reset_position();
 
                     if !updated {
-                        self.update_values(line_buffer, history, completer);
+                        self.update_values(line_buffer, completer);
                     }
                 }
                 MenuEvent::NextElement => self.move_next(),
@@ -575,7 +622,7 @@ impl Menu for CompletionMenu {
                 MenuEvent::MoveLeft => self.move_left(),
                 MenuEvent::MoveRight => self.move_right(),
                 MenuEvent::PreviousPage | MenuEvent::NextPage => {
-                    // The completion menu doest have the concept of pages, yet
+                    // The columnar menu doest have the concept of pages, yet
                 }
             }
         }
@@ -584,10 +631,12 @@ impl Menu for CompletionMenu {
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
         if let Some(Suggestion { value, span, .. }) = self.get_value() {
-            let mut offset = line_buffer.insertion_point();
-            offset += value.len() - (span.end - span.start);
+            let start = span.start.min(line_buffer.len());
+            let end = span.end.min(line_buffer.len());
+            line_buffer.replace(start..end, &value);
 
-            line_buffer.replace(span.start..span.end, &value);
+            let mut offset = line_buffer.insertion_point();
+            offset += value.len().saturating_sub(end.saturating_sub(start));
             line_buffer.set_insertion_point(offset);
         }
     }
