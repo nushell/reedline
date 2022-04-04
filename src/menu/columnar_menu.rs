@@ -1,5 +1,7 @@
 use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
-use crate::{painting::Painter, Completer, LineBuffer, Suggestion};
+use crate::{
+    menu_functions::string_difference, painting::Painter, Completer, LineBuffer, Suggestion,
+};
 use nu_ansi_term::{ansi::RESET, Style};
 
 /// Default values used as reference for the menu. These values are set during
@@ -63,6 +65,11 @@ pub struct ColumnarMenu {
     event: Option<MenuEvent>,
     /// Longest suggestion found in the values
     longest_suggestion: usize,
+    /// String collected after the menu is activated
+    input: Option<String>,
+    /// Calls the completer using only the line buffer difference difference
+    /// after the menu was activated
+    only_buffer_difference: bool,
 }
 
 impl Default for ColumnarMenu {
@@ -80,10 +87,13 @@ impl Default for ColumnarMenu {
             marker: "| ".to_string(),
             event: None,
             longest_suggestion: 0,
+            input: None,
+            only_buffer_difference: false,
         }
     }
 }
 
+// Menu configuration functions
 impl ColumnarMenu {
     /// Menu builder with new name
     #[must_use]
@@ -141,6 +151,16 @@ impl ColumnarMenu {
         self
     }
 
+    /// Menu builder with new only buffer difference
+    #[must_use]
+    pub fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
+        self.only_buffer_difference = only_buffer_difference;
+        self
+    }
+}
+
+// Menu functionality 
+impl ColumnarMenu {
     /// Move menu cursor to the next element
     fn move_next(&mut self) {
         let mut new_col = self.col_pos + 1;
@@ -470,8 +490,13 @@ impl Menu for ColumnarMenu {
 
     /// Selects what type of event happened with the menu
     fn menu_event(&mut self, event: MenuEvent) {
-        if let MenuEvent::Activate(_) = event {
-            self.active = true;
+        match &event {
+            MenuEvent::Activate(_) => self.active = true,
+            MenuEvent::Deactivate => {
+                self.active = false;
+                self.input = None;
+            }
+            _ => {}
         }
 
         self.event = Some(event);
@@ -479,14 +504,25 @@ impl Menu for ColumnarMenu {
 
     /// Updates menu values
     fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &dyn Completer) {
-        // If there is a new line character in the line buffer, the completer
-        // doesn't calculate the suggested values correctly. This happens when
-        // editing a multiline buffer.
-        // Also, by replacing the new line character with a space, the insert
-        // position is maintain in the line buffer.
-        let trimmed_buffer = line_buffer.get_buffer().replace('\n', " ");
-        self.values = completer.complete(trimmed_buffer.as_str(), line_buffer.insertion_point());
-        self.reset_position();
+        if self.only_buffer_difference {
+            if let Some(old_string) = &self.input {
+                let (start, input) = string_difference(line_buffer.get_buffer(), old_string);
+                if !input.is_empty() {
+                    self.values = completer.complete(input, start);
+                    self.reset_position();
+                }
+            }
+        } else {
+            // If there is a new line character in the line buffer, the completer
+            // doesn't calculate the suggested values correctly. This happens when
+            // editing a multiline buffer.
+            // Also, by replacing the new line character with a space, the insert
+            // position is maintain in the line buffer.
+            let trimmed_buffer = line_buffer.get_buffer().replace('\n', " ");
+            self.values =
+                completer.complete(trimmed_buffer.as_str(), line_buffer.insertion_point());
+            self.reset_position();
+        }
     }
 
     /// The working details for the menu changes based on the size of the lines
@@ -560,6 +596,12 @@ impl Menu for ColumnarMenu {
                 MenuEvent::Activate(updated) => {
                     self.active = true;
                     self.reset_position();
+
+                    self.input = if self.only_buffer_difference {
+                        Some(line_buffer.get_buffer().to_string())
+                    } else {
+                        None
+                    };
 
                     if !updated {
                         self.update_values(line_buffer, completer);

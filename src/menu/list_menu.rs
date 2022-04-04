@@ -71,6 +71,9 @@ pub struct ListMenu {
     event: Option<MenuEvent>,
     /// String collected after the menu is activated
     input: Option<String>,
+    /// Calls the completer using only the line buffer difference difference
+    /// after the menu was activated
+    only_buffer_difference: bool,
 }
 
 impl Default for ListMenu {
@@ -90,10 +93,12 @@ impl Default for ListMenu {
             pages: Vec::new(),
             event: None,
             input: None,
+            only_buffer_difference: true,
         }
     }
 }
 
+// Menu configuration functions
 impl ListMenu {
     /// Menu builder with new name
     #[must_use]
@@ -123,13 +128,23 @@ impl ListMenu {
         self
     }
 
-    /// Menu builder with page size
+    /// Menu builder with new page size
     #[must_use]
     pub fn with_page_size(mut self, page_size: usize) -> Self {
         self.page_size = page_size;
         self
     }
 
+    /// Menu builder with new only buffer difference
+    #[must_use]
+    pub fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
+        self.only_buffer_difference = only_buffer_difference;
+        self
+    }
+}
+
+// Menu functionality 
+impl ListMenu {
     /// Menu builder with menu marker
     #[must_use]
     pub fn with_marker(mut self, marker: String) -> Self {
@@ -371,9 +386,13 @@ impl Menu for ListMenu {
 
     /// Collecting the value from the completer to be shown in the menu
     fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &dyn Completer) {
-        let (start, input) = match &self.input {
-            Some(old_string) => string_difference(line_buffer.get_buffer(), old_string),
-            None => (line_buffer.insertion_point(), ""),
+        let (start, input) = if self.only_buffer_difference {
+            match &self.input {
+                Some(old_string) => string_difference(line_buffer.get_buffer(), old_string),
+                None => (line_buffer.insertion_point(), ""),
+            }
+        } else {
+            (line_buffer.insertion_point(), line_buffer.get_buffer())
         };
 
         let parsed = parse_selection_char(input, SELECTION_CHAR);
@@ -399,7 +418,7 @@ impl Menu for ListMenu {
         } else {
             self.query_size = None;
             completer.complete(input, start)
-        };
+        }
     }
 
     /// Gets values from cached values that will be displayed in the menu
@@ -452,7 +471,13 @@ impl Menu for ListMenu {
             match event {
                 MenuEvent::Activate(_) => {
                     self.reset_position();
-                    self.input = Some(line_buffer.get_buffer().to_string());
+
+                    self.input = if self.only_buffer_difference {
+                        Some(line_buffer.get_buffer().to_string())
+                    } else {
+                        None
+                    };
+
                     self.update_values(line_buffer, completer);
 
                     self.pages.push(Page {
