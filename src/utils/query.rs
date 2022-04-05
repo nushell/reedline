@@ -3,47 +3,62 @@ use crate::{
     EditCommand, Keybindings, PromptEditMode, ReedlineEvent,
 };
 use crossterm::event::KeyCode;
+use std::fmt::{Display, Formatter};
 use strum::IntoEnumIterator;
 
-#[derive(Debug)]
-struct KeyCodes;
-impl KeyCodes {
-    pub fn iterator() -> std::slice::Iter<'static, KeyCode> {
-        static KEYCODE: [KeyCode; 29] = [
-            crossterm::event::KeyCode::Backspace,
-            crossterm::event::KeyCode::Enter,
-            crossterm::event::KeyCode::Left,
-            crossterm::event::KeyCode::Right,
-            crossterm::event::KeyCode::Up,
-            crossterm::event::KeyCode::Down,
-            crossterm::event::KeyCode::Home,
-            crossterm::event::KeyCode::End,
-            crossterm::event::KeyCode::PageUp,
-            crossterm::event::KeyCode::PageDown,
-            crossterm::event::KeyCode::Tab,
-            crossterm::event::KeyCode::BackTab,
-            crossterm::event::KeyCode::Delete,
-            crossterm::event::KeyCode::Insert,
-            crossterm::event::KeyCode::F(1),
-            crossterm::event::KeyCode::F(2),
-            crossterm::event::KeyCode::F(3),
-            crossterm::event::KeyCode::F(4),
-            crossterm::event::KeyCode::F(5),
-            crossterm::event::KeyCode::F(6),
-            crossterm::event::KeyCode::F(7),
-            crossterm::event::KeyCode::F(8),
-            crossterm::event::KeyCode::F(9),
-            crossterm::event::KeyCode::F(10),
-            crossterm::event::KeyCode::F(11),
-            crossterm::event::KeyCode::F(12),
-            crossterm::event::KeyCode::Char('a'),
-            crossterm::event::KeyCode::Null,
-            crossterm::event::KeyCode::Esc,
+struct ReedLineCrossTermKeyCode(crossterm::event::KeyCode);
+impl ReedLineCrossTermKeyCode {
+    fn iterator() -> std::slice::Iter<'static, ReedLineCrossTermKeyCode> {
+        static KEYCODE: [ReedLineCrossTermKeyCode; 18] = [
+            ReedLineCrossTermKeyCode(KeyCode::Backspace),
+            ReedLineCrossTermKeyCode(KeyCode::Enter),
+            ReedLineCrossTermKeyCode(KeyCode::Left),
+            ReedLineCrossTermKeyCode(KeyCode::Right),
+            ReedLineCrossTermKeyCode(KeyCode::Up),
+            ReedLineCrossTermKeyCode(KeyCode::Down),
+            ReedLineCrossTermKeyCode(KeyCode::Home),
+            ReedLineCrossTermKeyCode(KeyCode::End),
+            ReedLineCrossTermKeyCode(KeyCode::PageUp),
+            ReedLineCrossTermKeyCode(KeyCode::PageDown),
+            ReedLineCrossTermKeyCode(KeyCode::Tab),
+            ReedLineCrossTermKeyCode(KeyCode::BackTab),
+            ReedLineCrossTermKeyCode(KeyCode::Delete),
+            ReedLineCrossTermKeyCode(KeyCode::Insert),
+            ReedLineCrossTermKeyCode(KeyCode::F(1)),
+            ReedLineCrossTermKeyCode(KeyCode::Char('a')),
+            ReedLineCrossTermKeyCode(KeyCode::Null),
+            ReedLineCrossTermKeyCode(KeyCode::Esc),
         ];
         KEYCODE.iter()
     }
 }
 
+impl Display for ReedLineCrossTermKeyCode {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            ReedLineCrossTermKeyCode(kc) => match kc {
+                KeyCode::Backspace => write!(f, "Backspace"),
+                KeyCode::Enter => write!(f, "Enter"),
+                KeyCode::Left => write!(f, "Left"),
+                KeyCode::Right => write!(f, "Right"),
+                KeyCode::Up => write!(f, "Up"),
+                KeyCode::Down => write!(f, "Down"),
+                KeyCode::Home => write!(f, "Home"),
+                KeyCode::End => write!(f, "End"),
+                KeyCode::PageUp => write!(f, "PageUp"),
+                KeyCode::PageDown => write!(f, "PageDown"),
+                KeyCode::Tab => write!(f, "Tab"),
+                KeyCode::BackTab => write!(f, "BackTab"),
+                KeyCode::Delete => write!(f, "Delete"),
+                KeyCode::Insert => write!(f, "Insert"),
+                KeyCode::F(_) => write!(f, "F<number>"),
+                KeyCode::Char(_) => write!(f, "Char_<letter>"),
+                KeyCode::Null => write!(f, "Null"),
+                KeyCode::Esc => write!(f, "Esc"),
+            },
+        }
+    }
+}
 /// Return a `Vec` of the Reedline Keybinding Modifiers
 pub fn get_reedline_keybinding_modifiers() -> Vec<String> {
     vec![
@@ -61,21 +76,19 @@ pub fn get_reedline_prompt_edit_modes() -> Vec<String> {
 
 /// Return a `Vec<String>` of the Reedline `KeyCode`s
 pub fn get_reedline_keycodes() -> Vec<String> {
-    KeyCodes::iterator().map(|kc| format!("{:?}", kc)).collect()
+    ReedLineCrossTermKeyCode::iterator()
+        .map(|kc| format!("{}", kc))
+        .collect()
 }
 
 /// Return a `Vec<String>` of the Reedline [`ReedlineEvent`]s
 pub fn get_reedline_reedline_events() -> Vec<String> {
-    ReedlineEvent::iter()
-        .map(|rle| format!("{:?}", rle))
-        .collect()
+    ReedlineEvent::iter().map(|rle| rle.to_string()).collect()
 }
 
 /// Return a `Vec<String>` of the Reedline [`EditCommand`]s
 pub fn get_reedline_edit_commands() -> Vec<String> {
-    EditCommand::iter()
-        .map(|edit| format!("{:?}", edit))
-        .collect()
+    EditCommand::iter().map(|edit| edit.to_string()).collect()
 }
 
 /// Get the default keybindings and return a `Vec<(String, String, String, String)>`
