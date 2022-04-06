@@ -39,7 +39,7 @@ use reedline::{DefaultPrompt, Reedline, Signal};
 use std::io;
 
 fn main() -> io::Result<()> {
-    let mut line_editor = Reedline::create();
+    let mut line_editor = Reedline::create()?;
     let prompt = DefaultPrompt::default();
 
     loop {
