@@ -111,7 +111,7 @@ fn get_keybinding_strings(
     mode: &str,
     keybindings: &Keybindings,
 ) -> Vec<(String, String, String, String)> {
-    keybindings
+    let mut data: Vec<(String, String, String, String)> = keybindings
         .get_keybindings()
         .iter()
         .map(|(combination, event)| {
@@ -122,5 +122,9 @@ fn get_keybinding_strings(
                 format!("{:?}", event),
             )
         })
-        .collect()
+        .collect();
+
+    data.sort();
+
+    data
 }
