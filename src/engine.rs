@@ -548,13 +548,16 @@ impl Reedline {
                 }
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::Esc => {
+                self.input_mode = InputMode::Regular;
+                Ok(EventStatus::Handled)
+            }
             // TODO: Check if events should be handled
             ReedlineEvent::Right
             | ReedlineEvent::Left
             | ReedlineEvent::ActionHandler
             | ReedlineEvent::Multiple(_)
             | ReedlineEvent::None
-            | ReedlineEvent::Esc
             | ReedlineEvent::HistoryHintWordComplete
             | ReedlineEvent::Menu(_)
             | ReedlineEvent::MenuNext
