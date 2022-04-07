@@ -77,7 +77,20 @@ impl DefaultPrompt {
 
 fn get_working_dir() -> Result<String, std::io::Error> {
     let path = env::current_dir()?;
-    Ok(path.display().to_string())
+    let path_str = path.display().to_string();
+    let homedir: String = match env::var("USERPROFILE") {
+        Ok(win_home) => win_home,
+        Err(_) => match env::var("HOME") {
+            Ok(maclin_home) => maclin_home,
+            Err(_) => path_str.clone(),
+        },
+    };
+    let new_path = if path_str != homedir {
+        path_str.replace(&homedir, "~").replace("\\", "/")
+    } else {
+        path_str
+    };
+    Ok(new_path)
 }
 
 fn get_now() -> String {

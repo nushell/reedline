@@ -7,7 +7,7 @@ use {
     },
     crossterm::{
         cursor::{self, MoveTo, RestorePosition, SavePosition},
-        style::{Print, ResetColor, SetForegroundColor},
+        style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor},
         terminal::{self, Clear, ClearType, ScrollUp},
         QueueableCommand, Result,
     },
@@ -229,7 +229,8 @@ impl Painter {
         // print our prompt with color
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_color()))?;
+                .queue(SetForegroundColor(prompt.get_prompt_color()))?
+                .queue(SetAttribute(Attribute::Bold))?;
         }
 
         self.stdout
@@ -239,7 +240,20 @@ impl Painter {
             Some(menu) => menu.indicator(),
             None => &lines.prompt_indicator,
         };
+
+        if use_ansi_coloring {
+            self.stdout
+                .queue(SetForegroundColor(prompt.get_indicator_color()))?
+                .queue(SetAttribute(Attribute::Bold))?;
+        }
+
         self.stdout.queue(Print(&coerce_crlf(prompt_indicator)))?;
+
+        if use_ansi_coloring {
+            self.stdout
+                .queue(SetForegroundColor(prompt.get_prompt_right_color()))?
+                .queue(SetAttribute(Attribute::Bold))?;
+        }
 
         self.print_right_prompt(lines)?;
 
