@@ -86,7 +86,7 @@ fn get_working_dir() -> Result<String, std::io::Error> {
         },
     };
     let new_path = if path_str != homedir {
-        path_str.replace(&homedir, "~").replace("\\", "/")
+        path_str.replace(&homedir, "~")
     } else {
         path_str
     };
