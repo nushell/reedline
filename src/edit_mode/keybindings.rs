@@ -106,6 +106,8 @@ pub fn add_common_keybindings(kb: &mut Keybindings) {
         ]),
     );
     kb.add_binding(KM::CONTROL, KC::Left, edit_bind(EC::MoveWordLeft));
+    kb.add_binding(KM::CONTROL, KC::Backspace, edit_bind(EC::BackspaceWord));
+    kb.add_binding(KM::CONTROL, KC::Delete, edit_bind(EC::DeleteWord));
 
     kb.add_binding(
         KM::NONE,

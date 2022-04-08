@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt::{Display, Formatter};
 use strum_macros::EnumIter;
 
 /// Valid ways how `Reedline::read_line()` can return
@@ -144,6 +145,55 @@ pub enum EditCommand {
 
     /// CutUntil left before char
     MoveLeftBefore(char),
+}
+
+impl Display for EditCommand {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            EditCommand::MoveToStart => write!(f, "MoveToStart"),
+            EditCommand::MoveToLineStart => write!(f, "MoveToLineStart"),
+            EditCommand::MoveToEnd => write!(f, "MoveToEnd"),
+            EditCommand::MoveToLineEnd => write!(f, "MoveToLineEnd"),
+            EditCommand::MoveLeft => write!(f, "MoveLeft"),
+            EditCommand::MoveRight => write!(f, "MoveRight"),
+            EditCommand::MoveWordLeft => write!(f, "MoveWordLeft"),
+            EditCommand::MoveWordRight => write!(f, "MoveWordRight"),
+            EditCommand::MoveToPosition(_) => write!(f, "MoveToPosition  Value: <int>"),
+            EditCommand::InsertChar(_) => write!(f, "InsertChar  Value: <char>"),
+            EditCommand::InsertString(_) => write!(f, "InsertString Value: <string>"),
+            EditCommand::ReplaceChars(_, _) => write!(f, "ReplaceChars <int> <string>"),
+            EditCommand::Backspace => write!(f, "Backspace"),
+            EditCommand::Delete => write!(f, "Delete"),
+            EditCommand::BackspaceWord => write!(f, "BackspaceWord"),
+            EditCommand::DeleteWord => write!(f, "DeleteWord"),
+            EditCommand::Clear => write!(f, "Clear"),
+            EditCommand::ClearToLineEnd => write!(f, "ClearToLineEnd"),
+            EditCommand::CutCurrentLine => write!(f, "CutCurrentLine"),
+            EditCommand::CutFromStart => write!(f, "CutFromStart"),
+            EditCommand::CutFromLineStart => write!(f, "CutFromLineStart"),
+            EditCommand::CutToEnd => write!(f, "CutToEnd"),
+            EditCommand::CutToLineEnd => write!(f, "CutToLineEnd"),
+            EditCommand::CutWordLeft => write!(f, "CutWordLeft"),
+            EditCommand::CutWordRight => write!(f, "CutWordRight"),
+            EditCommand::PasteCutBufferBefore => write!(f, "PasteCutBufferBefore"),
+            EditCommand::PasteCutBufferAfter => write!(f, "PasteCutBufferAfter"),
+            EditCommand::UppercaseWord => write!(f, "UppercaseWord"),
+            EditCommand::LowercaseWord => write!(f, "LowercaseWord"),
+            EditCommand::CapitalizeChar => write!(f, "CapitalizeChar"),
+            EditCommand::SwapWords => write!(f, "SwapWords"),
+            EditCommand::SwapGraphemes => write!(f, "SwapGraphemes"),
+            EditCommand::Undo => write!(f, "Undo"),
+            EditCommand::Redo => write!(f, "Redo"),
+            EditCommand::CutRightUntil(_) => write!(f, "CutRightUntil Value: <char>"),
+            EditCommand::CutRightBefore(_) => write!(f, "CutRightBefore Value: <char>"),
+            EditCommand::MoveRightUntil(_) => write!(f, "MoveRightUntil Value: <char>"),
+            EditCommand::MoveRightBefore(_) => write!(f, "MoveRightBefore Value: <char>"),
+            EditCommand::CutLeftUntil(_) => write!(f, "CutLeftUntil Value: <char>"),
+            EditCommand::CutLeftBefore(_) => write!(f, "CutLeftBefore Value: <char>"),
+            EditCommand::MoveLeftUntil(_) => write!(f, "MoveLeftUntil Value: <char>"),
+            EditCommand::MoveLeftBefore(_) => write!(f, "MoveLeftBefore Value: <char>"),
+        }
+    }
 }
 
 impl EditCommand {
@@ -327,6 +377,48 @@ pub enum ReedlineEvent {
 
     /// Way to bind the execution of a whole command (directly returning from [`crate::Reedline::read_line()`]) to a keybinding
     ExecuteHostCommand(String),
+}
+
+impl Display for ReedlineEvent {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            ReedlineEvent::None => write!(f, "None"),
+            ReedlineEvent::HistoryHintComplete => write!(f, "HistoryHintComplete"),
+            ReedlineEvent::HistoryHintWordComplete => write!(f, "HistoryHintWordComplete"),
+            ReedlineEvent::ActionHandler => write!(f, "ActionHandler"),
+            ReedlineEvent::CtrlD => write!(f, "CtrlD"),
+            ReedlineEvent::CtrlC => write!(f, "CtrlC"),
+            ReedlineEvent::ClearScreen => write!(f, "ClearScreen"),
+            ReedlineEvent::Enter => write!(f, "Enter"),
+            ReedlineEvent::Esc => write!(f, "Esc"),
+            ReedlineEvent::Mouse => write!(f, "Mouse"),
+            ReedlineEvent::Resize(_, _) => write!(f, "Resize <int> <int>"),
+            ReedlineEvent::Edit(_) => write!(
+                f,
+                "Edit: <EditCommand> or Edit: <EditCommand> value: <string>"
+            ),
+            ReedlineEvent::Repaint => write!(f, "Repaint"),
+            ReedlineEvent::PreviousHistory => write!(f, "PreviousHistory"),
+            ReedlineEvent::Up => write!(f, "Up"),
+            ReedlineEvent::Down => write!(f, "Down"),
+            ReedlineEvent::Right => write!(f, "Right"),
+            ReedlineEvent::Left => write!(f, "Left"),
+            ReedlineEvent::NextHistory => write!(f, "NextHistory"),
+            ReedlineEvent::SearchHistory => write!(f, "SearchHistory"),
+            ReedlineEvent::Multiple(_) => write!(f, "Multiple[ {{ ReedLineEvents, }} ]"),
+            ReedlineEvent::UntilFound(_) => write!(f, "UntilFound [ {{ ReedLineEvents, }} ]"),
+            ReedlineEvent::Menu(_) => write!(f, "Menu Name: <string>"),
+            ReedlineEvent::MenuNext => write!(f, "MenuNext"),
+            ReedlineEvent::MenuPrevious => write!(f, "MenuPrevious"),
+            ReedlineEvent::MenuUp => write!(f, "MenuUp"),
+            ReedlineEvent::MenuDown => write!(f, "MenuDown"),
+            ReedlineEvent::MenuLeft => write!(f, "MenuLeft"),
+            ReedlineEvent::MenuRight => write!(f, "MenuRight"),
+            ReedlineEvent::MenuPageNext => write!(f, "MenuPageNext"),
+            ReedlineEvent::MenuPagePrevious => write!(f, "MenuPagePrevious"),
+            ReedlineEvent::ExecuteHostCommand(_) => write!(f, "ExecuteHostCommand"),
+        }
+    }
 }
 
 pub(crate) enum EventStatus {
