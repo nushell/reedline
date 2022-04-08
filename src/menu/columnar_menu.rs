@@ -340,14 +340,19 @@ impl ColumnarMenu {
         if use_ansi_coloring {
             if index == self.index() {
                 if let Some(description) = &suggestion.description {
+                    let left_text_size = self.longest_suggestion + self.default_details.col_padding;
+                    let right_text_size = self.get_width().saturating_sub(left_text_size);
                     format!(
                         "{}{:max$}{}{}{}",
                         self.color.selected_text_style.prefix(),
                         &suggestion.value,
-                        description,
+                        description
+                            .chars()
+                            .take(right_text_size)
+                            .collect::<String>(),
                         RESET,
                         self.end_of_line(column),
-                        max = self.longest_suggestion + self.default_details.col_padding,
+                        max = left_text_size,
                     )
                 } else {
                     format!(
@@ -361,16 +366,21 @@ impl ColumnarMenu {
                     )
                 }
             } else if let Some(description) = &suggestion.description {
+                let left_text_size = self.longest_suggestion + self.default_details.col_padding;
+                let right_text_size = self.get_width().saturating_sub(left_text_size);
                 format!(
                     "{}{:max$}{}{}{}{}{}",
                     self.color.text_style.prefix(),
                     &suggestion.value,
                     RESET,
                     self.color.description_style.prefix(),
-                    description,
+                    description
+                        .chars()
+                        .take(right_text_size)
+                        .collect::<String>(),
                     RESET,
                     self.end_of_line(column),
-                    max = self.longest_suggestion + self.default_details.col_padding,
+                    max = left_text_size,
                 )
             } else {
                 format!(
@@ -394,7 +404,7 @@ impl ColumnarMenu {
                     "{}{:max$}{}{}",
                     marker,
                     &suggestion.value,
-                    description,
+                    description.chars().take(empty_space).collect::<String>(),
                     self.end_of_line(column),
                     max = self.longest_suggestion
                         + self
