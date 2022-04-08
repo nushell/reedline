@@ -349,7 +349,8 @@ impl ColumnarMenu {
                         description
                             .chars()
                             .take(right_text_size)
-                            .collect::<String>(),
+                            .collect::<String>()
+                            .replace('\n', " "),
                         RESET,
                         self.end_of_line(column),
                         max = left_text_size,
@@ -377,7 +378,8 @@ impl ColumnarMenu {
                     description
                         .chars()
                         .take(right_text_size)
-                        .collect::<String>(),
+                        .collect::<String>()
+                        .replace('\n', " "),
                     RESET,
                     self.end_of_line(column),
                     max = left_text_size,
@@ -404,7 +406,11 @@ impl ColumnarMenu {
                     "{}{:max$}{}{}",
                     marker,
                     &suggestion.value,
-                    description.chars().take(empty_space).collect::<String>(),
+                    description
+                        .chars()
+                        .take(empty_space)
+                        .collect::<String>()
+                        .replace('\n', " "),
                     self.end_of_line(column),
                     max = self.longest_suggestion
                         + self
