@@ -65,6 +65,18 @@ impl Keybindings {
         self.bindings.get(&key_combo).cloned()
     }
 
+    /// Remove a keybinding
+    ///
+    /// Returns `Some(ReedlineEvent)` if the keycombination was previously bound to a particular [`ReedlineEvent`]
+    pub fn remove_binding(
+        &mut self,
+        modifier: KeyModifiers,
+        key_code: KeyCode,
+    ) -> Option<ReedlineEvent> {
+        let key_combo = KeyCombination { modifier, key_code };
+        self.bindings.remove(&key_combo)
+    }
+
     /// Get assigned keybindings
     pub fn get_keybindings(&self) -> &HashMap<KeyCombination, ReedlineEvent> {
         &self.bindings
