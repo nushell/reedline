@@ -5,14 +5,14 @@ use {
         edit_mode::{EditMode, Emacs},
         enums::{EventStatus, ReedlineEvent},
         highlighter::SimpleMatchHighlighter,
-        hinter::{DefaultHinter, Hinter},
+        hinter::Hinter,
         history::{FileBackedHistory, History, HistoryNavigationQuery},
         menu::{Menu, MenuEvent, ReedlineMenu},
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         utils::text_manipulation,
-        DefaultValidator, EditCommand, ExampleHighlighter, Highlighter, Prompt,
-        PromptHistorySearch, Signal, ValidationResult, Validator,
+        EditCommand, ExampleHighlighter, Highlighter, Prompt, PromptHistorySearch, Signal,
+        ValidationResult, Validator,
     },
     crossterm::{
         event,
@@ -82,7 +82,7 @@ pub struct Reedline {
     input_mode: InputMode,
 
     // Validator
-    validator: Box<dyn Validator>,
+    validator: Option<Box<dyn Validator>>,
 
     // Stdout
     painter: Painter,
@@ -102,7 +102,7 @@ pub struct Reedline {
     highlighter: Box<dyn Highlighter>,
 
     // Showcase hints based on various strategies (history, language-completion, spellcheck, etc)
-    hinter: Box<dyn Hinter>,
+    hinter: Option<Box<dyn Hinter>>,
     hide_hints: bool,
 
     // Is Some(n) read_line() should repaint prompt every `n` milliseconds
@@ -131,8 +131,8 @@ impl Reedline {
         let painter = Painter::new(std::io::BufWriter::new(std::io::stderr()));
         let buffer_highlighter = Box::new(ExampleHighlighter::default());
         let completer = Box::new(DefaultCompleter::default());
-        let hinter = Box::new(DefaultHinter::default());
-        let validator = Box::new(DefaultValidator);
+        let hinter = None;
+        let validator = None;
         let edit_mode = Box::new(Emacs::default());
 
         Reedline {
@@ -173,7 +173,14 @@ impl Reedline {
     /// ```
     #[must_use]
     pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Self {
-        self.hinter = hinter;
+        self.hinter = Some(hinter);
+        self
+    }
+
+    /// Remove current [`Hinter`]
+    #[must_use]
+    pub fn disable_hints(mut self) -> Self {
+        self.hinter = None;
         self
     }
 
@@ -286,7 +293,14 @@ impl Reedline {
     /// ```
     #[must_use]
     pub fn with_validator(mut self, validator: Box<dyn Validator>) -> Self {
-        self.validator = validator;
+        self.validator = Some(validator);
+        self
+    }
+
+    /// Remove the current [`Validator`]
+    #[must_use]
+    pub fn disable_validator(mut self) -> Self {
+        self.validator = None;
         self
     }
 
@@ -667,30 +681,32 @@ impl Reedline {
                     })
             }
             ReedlineEvent::HistoryHintComplete => {
-                let current_hint = self.hinter.complete_hint();
-                if self.hints_active()
-                    && self.editor.is_cursor_at_buffer_end()
-                    && !current_hint.is_empty()
-                    && self.active_menu().is_none()
-                {
-                    self.run_edit_commands(&[EditCommand::InsertString(current_hint)]);
-                    Ok(EventStatus::Handled)
-                } else {
-                    Ok(EventStatus::Inapplicable)
+                if let Some(hinter) = self.hinter.as_mut() {
+                    let current_hint = hinter.complete_hint();
+                    if self.hints_active()
+                        && self.editor.is_cursor_at_buffer_end()
+                        && !current_hint.is_empty()
+                        && self.active_menu().is_none()
+                    {
+                        self.run_edit_commands(&[EditCommand::InsertString(current_hint)]);
+                        return Ok(EventStatus::Handled);
+                    }
                 }
+                Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::HistoryHintWordComplete => {
-                let current_hint_part = self.hinter.next_hint_token();
-                if self.hints_active()
-                    && self.editor.is_cursor_at_buffer_end()
-                    && !current_hint_part.is_empty()
-                    && self.active_menu().is_none()
-                {
-                    self.run_edit_commands(&[EditCommand::InsertString(current_hint_part)]);
-                    Ok(EventStatus::Handled)
-                } else {
-                    Ok(EventStatus::Inapplicable)
+                if let Some(hinter) = self.hinter.as_mut() {
+                    let current_hint_part = hinter.next_hint_token();
+                    if self.hints_active()
+                        && self.editor.is_cursor_at_buffer_end()
+                        && !current_hint_part.is_empty()
+                        && self.active_menu().is_none()
+                    {
+                        self.run_edit_commands(&[EditCommand::InsertString(current_hint_part)]);
+                        return Ok(EventStatus::Handled);
+                    }
                 }
+                Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::ActionHandler => {
                 let line_buffer = self.editor.line_buffer();
@@ -743,23 +759,26 @@ impl Reedline {
                 }
 
                 let buffer = self.editor.get_buffer().to_string();
-                if matches!(self.validator.validate(&buffer), ValidationResult::Complete) {
-                    self.hide_hints = true;
-                    // Additional repaint to show the content without hints etc.
-                    self.repaint(prompt)?;
-                    self.history.append(self.editor.get_buffer());
-                    self.run_edit_commands(&[EditCommand::Clear]);
-                    self.editor.reset_undo_stack();
+                match self.validator.as_mut().map(|v| v.validate(&buffer)) {
+                    None | Some(ValidationResult::Complete) => {
+                        self.hide_hints = true;
+                        // Additional repaint to show the content without hints etc.
+                        self.repaint(prompt)?;
+                        self.history.append(self.editor.get_buffer());
+                        self.run_edit_commands(&[EditCommand::Clear]);
+                        self.editor.reset_undo_stack();
 
-                    Ok(EventStatus::Exits(Signal::Success(buffer)))
-                } else {
-                    #[cfg(windows)]
-                    {
-                        self.run_edit_commands(&[EditCommand::InsertChar('\r')]);
+                        Ok(EventStatus::Exits(Signal::Success(buffer)))
                     }
-                    self.run_edit_commands(&[EditCommand::InsertChar('\n')]);
+                    Some(ValidationResult::Incomplete) => {
+                        #[cfg(windows)]
+                        {
+                            self.run_edit_commands(&[EditCommand::InsertChar('\r')]);
+                        }
+                        self.run_edit_commands(&[EditCommand::InsertChar('\n')]);
 
-                    Ok(EventStatus::Handled)
+                        Ok(EventStatus::Handled)
+                    }
                 }
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
@@ -1159,12 +1178,14 @@ impl Reedline {
             );
 
         let hint: String = if self.hints_active() {
-            self.hinter.handle(
-                buffer_to_paint,
-                cursor_position_in_buffer,
-                self.history.as_ref(),
-                self.use_ansi_coloring,
-            )
+            self.hinter.as_mut().map_or_else(String::new, |hinter| {
+                hinter.handle(
+                    buffer_to_paint,
+                    cursor_position_in_buffer,
+                    self.history.as_ref(),
+                    self.use_ansi_coloring,
+                )
+            })
         } else {
             String::new()
         };

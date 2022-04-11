@@ -1,4 +1,4 @@
-use reedline::ReedlineMenu;
+use reedline::{DefaultValidator, ReedlineMenu};
 
 use {
     crossterm::{
@@ -78,6 +78,7 @@ fn main() -> Result<()> {
         .with_hinter(Box::new(
             DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)),
         ))
+        .with_validator(Box::new(DefaultValidator))
         .with_ansi_colors(true);
 
     // Adding default menus for the compiled reedline
