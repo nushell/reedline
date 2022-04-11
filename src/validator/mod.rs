@@ -8,6 +8,7 @@ pub trait Validator: Send {
     fn validate(&self, line: &str) -> ValidationResult;
 }
 
+#[derive(Clone, Copy)]
 /// Whether or not the validation shows the input was complete
 pub enum ValidationResult {
     /// An incomplete input which may need to span multiple lines to be complete
