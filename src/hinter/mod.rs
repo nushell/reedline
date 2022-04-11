@@ -1,5 +1,7 @@
 mod default;
+mod noop;
 pub use default::DefaultHinter;
+pub use noop::NoOpHinter;
 
 use crate::History;
 /// A trait that's responsible for returning the hint for the current line and position

@@ -213,7 +213,7 @@ mod completion;
 pub use completion::{Completer, DefaultCompleter, Span, Suggestion};
 
 mod hinter;
-pub use hinter::{DefaultHinter, Hinter};
+pub use hinter::{DefaultHinter, Hinter, NoOpHinter};
 
 mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
