@@ -11,7 +11,7 @@ use {
 /// The default color for the prompt, indicator, and right prompt
 pub static DEFAULT_PROMPT_COLOR: Color = Color::Green;
 pub static DEFAULT_INDICATOR_COLOR: Color = Color::Cyan;
-pub static DEFAULT_PROMPT_RIGHT_COLOR: Color = Color::AnsiValue(208);
+pub static DEFAULT_PROMPT_RIGHT_COLOR: Color = Color::AnsiValue(5);
 
 /// The current success/failure of the history search
 pub enum PromptHistorySearchStatus {
