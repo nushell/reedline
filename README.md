@@ -209,7 +209,7 @@ For more ideas check out the [feature discussion](https://github.com/nushell/ree
 
 ### Development history
 
-If you want to follow along with the history of how reedline got started, you can watch the [recordings](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv) of [JT](https://github.com/jntrnr)`s [live-coding streams](https://www.twitch.tv/jntrnr).
+If you want to follow along with the history of how reedline got started, you can watch the [recordings](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv) of [JT](https://github.com/jntrnr)'s [live-coding streams](https://www.twitch.tv/jntrnr).
 
 [Playlist: Creating a line editor in Rust](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv)
 
