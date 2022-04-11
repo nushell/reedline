@@ -810,7 +810,6 @@ impl Reedline {
 
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::Mouse => Ok(EventStatus::Inapplicable),
             ReedlineEvent::Resize(width, height) => {
                 self.painter.handle_resize(width, height);
                 Ok(EventStatus::Handled)
@@ -885,7 +884,7 @@ impl Reedline {
                 // Exhausting the event handlers is still considered handled
                 Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::None => Ok(EventStatus::Inapplicable),
+            ReedlineEvent::None | ReedlineEvent::Mouse => Ok(EventStatus::Inapplicable),
         }
     }
 

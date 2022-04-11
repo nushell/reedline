@@ -18,9 +18,7 @@ impl<T> EditStack<T> {
 
 impl<T> EditStack<T>
 where
-    T: Default,
-    T: Clone,
-    T: Send,
+    T: Default + Clone + Send,
 {
     /// Go back one point in the undo stack. If present on first edit do nothing
     pub(super) fn undo(&mut self) -> &T {

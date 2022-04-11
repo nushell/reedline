@@ -51,11 +51,7 @@ where
             let _ = input.next();
             Some(Command::EnterViAppend)
         }
-        Some('0') => {
-            let _ = input.next();
-            Some(Command::MoveToLineStart)
-        }
-        Some('^') => {
+        Some('0' | '^') => {
             let _ = input.next();
             Some(Command::MoveToLineStart)
         }

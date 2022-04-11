@@ -181,15 +181,13 @@ impl Editor {
         self.line_buffer = val.clone();
     }
 
-    pub fn remember_undo_state(&mut self, is_after_action: bool) -> Option<()> {
+    pub fn remember_undo_state(&mut self, is_after_action: bool) {
         if self.edit_stack.current().word_count() == self.line_buffer.word_count()
             && !is_after_action
         {
             self.edit_stack.undo();
         }
         self.edit_stack.insert(self.line_buffer.clone());
-
-        Some(())
     }
 
     fn cut_current_line(&mut self) {
