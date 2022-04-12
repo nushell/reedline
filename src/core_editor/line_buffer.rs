@@ -174,7 +174,7 @@ impl LineBuffer {
     pub fn word_right_index(&self) -> usize {
         self.lines[self.insertion_point..]
             .split_word_bound_indices()
-            .find(|(_, word)| !is_word_boundary(word))
+            .find(|(_, word)| !is_whitespace_str(word))
             .map(|(i, word)| self.insertion_point + i + word.len())
             .unwrap_or_else(|| self.lines.len())
     }
@@ -183,7 +183,7 @@ impl LineBuffer {
     pub fn word_left_index(&self) -> usize {
         self.lines[..self.insertion_point]
             .split_word_bound_indices()
-            .filter(|(_, word)| !is_word_boundary(word))
+            .filter(|(_, word)| !is_whitespace_str(word))
             .last()
             .map(|(i, _)| i)
             .unwrap_or(0)
@@ -285,7 +285,7 @@ impl LineBuffer {
         let right_index = self.word_right_index();
         let left_index = self.lines[..right_index]
             .split_word_bound_indices()
-            .filter(|(_, word)| !is_word_boundary(word))
+            .filter(|(_, word)| !is_whitespace_str(word))
             .last()
             .map(|(i, _)| i)
             .unwrap_or(0);
@@ -577,8 +577,8 @@ impl LineBuffer {
 }
 
 /// Match any sequence of characters that are considered a word boundary
-fn is_word_boundary(s: &str) -> bool {
-    !s.chars().any(char::is_alphanumeric)
+fn is_whitespace_str(s: &str) -> bool {
+    s.chars().all(char::is_whitespace)
 }
 
 #[cfg(test)]
