@@ -1,12 +1,12 @@
 mod base;
-#[cfg(feature="file-history")]
+mod cursor;
 mod file_backed;
 #[cfg(feature="sqlite")]
 mod sqlite_backed;
 #[cfg(feature="sqlite")]
 pub use sqlite_backed::SqliteBackedHistory;
 
-pub use base::{HistoryCursor, HistoryItem, HistoryItemId, History, HistoryNavigationQuery, Result};
+pub use base::{HistoryItem, HistoryItemId, History, HistoryNavigationQuery, Result, SearchQuery, SearchDirection};
+pub use cursor::HistoryCursor;
 
-#[cfg(feature="file-history")]
 pub use file_backed::{FileBackedHistory, HISTORY_SIZE};

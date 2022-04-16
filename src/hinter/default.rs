@@ -1,4 +1,4 @@
-use crate::{Hinter, History};
+use crate::{history::SearchQuery, Hinter, History};
 use nu_ansi_term::{Color, Style};
 
 /// A hinter that use the completions or the history to show a hint to the user
@@ -20,10 +20,12 @@ impl Hinter for DefaultHinter {
     ) -> String {
         self.current_hint = if line.chars().count() >= self.min_chars {
             history
-                .iter_chronologic()
-                .rev()
-                .find(|entry| entry.starts_with(line))
-                .map_or_else(String::new, |entry| entry[line.len()..].to_string())
+                .search(SearchQuery::last_with_prefix(line.to_string()))
+                .expect("todo: error handling")
+                .get(0)
+                .map_or_else(String::new, |entry| {
+                    entry.command_line[line.len()..].to_string()
+                })
         } else {
             String::new()
         };

@@ -1,135 +1,89 @@
+use crate::{History, HistoryNavigationQuery};
 
-impl HistoryCursor for FileBackedHistory {
-    fn iter_chronologic(&self) -> Box<(dyn DoubleEndedIterator<Item = String> + '_)> {
-        Box::new(self.entries.iter().map(|e| e.to_string()))
+use super::base::CommandLineSearch;
+use super::base::SearchDirection;
+use super::base::SearchFilter;
+use super::HistoryItem;
+use super::HistoryItemId;
+use super::Result;
+use super::SearchQuery;
+
+/// Interface of a stateful navigation via [`HistoryNavigationQuery`].
+#[derive(Debug)]
+pub struct HistoryCursor {
+    query: HistoryNavigationQuery,
+    current: Option<HistoryItem>,
+}
+
+impl HistoryCursor {
+    pub fn new(query: HistoryNavigationQuery) -> HistoryCursor {
+        HistoryCursor {
+            query,
+            current: None,
+        }
     }
 
-    fn back(&mut self) {
+    /// This moves the cursor backwards respecting the navigation query that is set
+    /// - Results in a no-op if the cursor is at the initial point
+    pub fn back(&mut self, history: &dyn History) -> Result<()> {
+        self.navigate_in_direction(history, SearchDirection::Backward)
+    }
+
+    /// This moves the cursor forwards respecting the navigation-query that is set
+    /// - Results in a no-op if the cursor is at the latest point
+    pub fn forward(&mut self, history: &dyn History) -> Result<()> {
+        self.navigate_in_direction(history, SearchDirection::Forward)
+    }
+
+    fn get_search_start(&self, history: &dyn History) -> Result<Option<HistoryItemId>> {
+        if let Some(it) = &self.current {
+            Ok(it.id)
+        } else {
+            history.newest()
+        }
+    }
+
+    fn get_search_filter(&self) -> SearchFilter {
         match self.query.clone() {
-            HistoryNavigationQuery::Normal(_) => {
-                if self.cursor > 0 {
-                    self.cursor -= 1;
-                }
-            }
+            HistoryNavigationQuery::Normal(_) => SearchFilter::anything(),
             HistoryNavigationQuery::PrefixSearch(prefix) => {
-                self.back_with_criteria(&|entry| entry.starts_with(&prefix));
+                SearchFilter::from_text_search(CommandLineSearch::Prefix(prefix))
             }
             HistoryNavigationQuery::SubstringSearch(substring) => {
-                self.back_with_criteria(&|entry| entry.contains(&substring));
+                SearchFilter::from_text_search(CommandLineSearch::Substring(substring))
             }
         }
     }
-
-    fn forward(&mut self) {
-        match self.query.clone() {
-            HistoryNavigationQuery::Normal(_) => {
-                if self.cursor < self.entries.len() {
-                    self.cursor += 1;
-                }
-            }
-            HistoryNavigationQuery::PrefixSearch(prefix) => {
-                self.forward_with_criteria(&|entry| entry.starts_with(&prefix));
-            }
-            HistoryNavigationQuery::SubstringSearch(substring) => {
-                self.forward_with_criteria(&|entry| entry.contains(&substring));
+    fn navigate_in_direction(
+        &mut self,
+        history: &dyn History,
+        direction: SearchDirection,
+    ) -> Result<()> {
+        if let Some(start_id) = self.get_search_start(history)? {
+            let mut next = history.search(SearchQuery {
+                start_id: Some(start_id),
+                end_id: None,
+                start_time: None,
+                end_time: None,
+                direction,
+                limit: Some(1),
+                filter: self.get_search_filter(),
+            })?;
+            if next.len() == 1 {
+                self.current = Some(next.swap_remove(0));
             }
         }
-    }
-
-    fn string_at_cursor(&self) -> Option<String> {
-        self.entries.get(self.cursor).cloned()
-    }
-
-    fn set_navigation(&mut self, navigation: HistoryNavigationQuery) {
-        self.query = navigation;
-        self.reset_cursor();
-    }
-
-    fn get_navigation(&self) -> HistoryNavigationQuery {
-        self.query.clone()
-    }
-
-    fn query_entries(&self, search: &str) -> Vec<String> {
-        self.iter_chronologic()
-            .rev()
-            .filter(|entry| entry.contains(search))
-            .collect::<Vec<String>>()
-    }
-
-    fn max_values(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Writes unwritten history contents to disk.
-    ///
-    /// If file would exceed `capacity` truncates the oldest entries.
-    fn sync(&mut self) -> std::io::Result<()> {
-        if let Some(fname) = &self.file {
-            // The unwritten entries
-            let own_entries = self.entries.range(self.len_on_disk..);
-
-            let mut f_lock = fd_lock::RwLock::new(
-                OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .read(true)
-                    .open(fname)?,
-            );
-            let mut writer_guard = f_lock.write()?;
-            let (mut foreign_entries, truncate) = {
-                let reader = BufReader::new(writer_guard.deref());
-                let mut from_file = reader
-                    .lines()
-                    .map(|o| o.map(|i| decode_entry(&i)))
-                    .collect::<Result<VecDeque<_>, _>>()?;
-                if from_file.len() + own_entries.len() > self.capacity {
-                    (
-                        from_file.split_off(from_file.len() - (self.capacity - own_entries.len())),
-                        true,
-                    )
-                } else {
-                    (from_file, false)
-                }
-            };
-
-            {
-                let mut writer = BufWriter::new(writer_guard.deref_mut());
-                if truncate {
-                    writer.seek(SeekFrom::Start(0))?;
-
-                    for line in &foreign_entries {
-                        writer.write_all(encode_entry(line).as_bytes())?;
-                        writer.write_all("\n".as_bytes())?;
-                    }
-                } else {
-                    writer.seek(SeekFrom::End(0))?;
-                }
-                for line in own_entries {
-                    writer.write_all(encode_entry(line).as_bytes())?;
-                    writer.write_all("\n".as_bytes())?;
-                }
-                writer.flush()?;
-            }
-            if truncate {
-                let file = writer_guard.deref_mut();
-                let file_len = file.stream_position()?;
-                file.set_len(file_len)?;
-            }
-
-            let own_entries = self.entries.drain(self.len_on_disk..);
-            foreign_entries.extend(own_entries);
-            self.entries = foreign_entries;
-
-            self.len_on_disk = self.entries.len();
-        }
-
-        self.reset_cursor();
-
         Ok(())
     }
 
-    /// Reset the internal browsing cursor
-    fn reset_cursor(&mut self) {
-        self.cursor = self.entries.len();
+    /// Returns the string (if present) at the cursor
+    pub fn string_at_cursor(&self) -> Option<String> {
+        self.current.as_ref().map(|e| e.command_line.to_string())
     }
+
+    /// Poll the current [`HistoryNavigationQuery`] mode
+    pub fn get_navigation(&self) -> HistoryNavigationQuery {
+        self.query.clone()
+    }
+
 }

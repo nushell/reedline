@@ -23,6 +23,9 @@ impl Default for Editor {
 }
 
 impl Editor {
+    pub fn line_buffer_immut(&self) -> &LineBuffer {
+        &self.line_buffer
+    }
     pub fn line_buffer(&mut self) -> &mut LineBuffer {
         &mut self.line_buffer
     }

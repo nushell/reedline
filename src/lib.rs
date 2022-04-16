@@ -192,7 +192,7 @@ mod engine;
 pub use engine::Reedline;
 
 mod history;
-pub use history::{FileBackedHistory, History, HistoryNavigationQuery, HISTORY_SIZE};
+pub use history::{FileBackedHistory, History, HistoryItem, HistoryNavigationQuery, HISTORY_SIZE};
 #[cfg(feature="sqlite")]
 pub use history::{SqliteBackedHistory};
 

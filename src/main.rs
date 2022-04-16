@@ -1,5 +1,6 @@
+use chrono::Utc;
 use reedline::{DefaultValidator, ReedlineMenu};
-use std::time::SystemTime;
+use std::time::{Instant};
 
 use {
     crossterm::{
@@ -12,8 +13,8 @@ use {
         get_reedline_default_keybindings, get_reedline_edit_commands,
         get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
         get_reedline_reedline_events, ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt,
-        EditMode, Emacs, ExampleHighlighter, FileBackedHistory, Keybindings, ListMenu, Reedline,
-        ReedlineEvent, Signal, Vi,
+        EditMode, Emacs, ExampleHighlighter, HistoryItem, Keybindings, ListMenu,
+        Reedline, ReedlineEvent, Signal, Vi,
     },
     std::{
         io::{stdout, Write},
@@ -43,7 +44,10 @@ fn main() -> Result<()> {
     }
 
     #[cfg(feature = "sqlite")]
-    let history = Box::new(reedline::SqliteBackedHistory::with_file("history.sqlite3".into())?);
+    let history = Box::new(
+        reedline::SqliteBackedHistory::with_file("history.sqlite3".into())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
+    );
     #[cfg(not(feature = "sqlite"))]
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
     let commands = vec![
@@ -125,15 +129,14 @@ fn main() -> Result<()> {
                 break;
             }
             Ok(Signal::Success(buffer)) => {
-                #[cfg(feature = "sqlite")]
-                {
-                    // save timestamp to history
-                    line_editor.update_last_command_context(|mut c| {
-                            c.timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
-                            c
-                        })
-                        .unwrap();
-                }
+                let start = Instant::now();
+                // save timestamp to history
+                line_editor
+                    .update_last_command_context(&|mut c: HistoryItem| {
+                        c.start_timestamp = Some(Utc::now());
+                        c
+                    })
+                    .expect("todo: handle error");
                 if (buffer.trim() == "exit") || (buffer.trim() == "logout") {
                     break;
                 }
@@ -146,6 +149,12 @@ fn main() -> Result<()> {
                     continue;
                 }
                 println!("Our buffer: {}", buffer);
+                line_editor
+                    .update_last_command_context(&|mut c| {
+                        c.duration = Some(start.elapsed());
+                        c
+                    })
+                    .expect("todo: handle error");
             }
             Ok(Signal::CtrlC) => {
                 // Prompt has been cleared and should start on the next line

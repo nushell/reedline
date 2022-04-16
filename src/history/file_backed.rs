@@ -1,7 +1,10 @@
-use super::{base::{HistoryNavigationQuery, SearchFilter, Result}, History, HistoryItem, HistoryItemId};
-use crate::core_editor::LineBuffer;
+use super::{
+    base::{Result, HistorySessionId},
+    History, HistoryItem, HistoryItemId,
+};
+
 use std::{
-    collections::{VecDeque},
+    collections::VecDeque,
     fs::OpenOptions,
     io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write},
     ops::{Deref, DerefMut},
@@ -22,10 +25,8 @@ pub const NEWLINE_ESCAPE: &str = "<\\n>";
 pub struct FileBackedHistory {
     capacity: usize,
     entries: VecDeque<String>,
-    cursor: usize, // If cursor == entries.len() outside history browsing
     file: Option<PathBuf>,
     len_on_disk: usize, // Keep track what was previously written to disk
-    query: HistoryNavigationQuery,
 }
 
 impl Default for FileBackedHistory {
@@ -49,7 +50,7 @@ impl History for FileBackedHistory {
     /// Appends an entry if non-empty and not repetition of the previous entry.
     /// Resets the browsing cursor to the default state in front of the most recent entry.
     ///
-    
+
     fn save(&mut self, h: HistoryItem) -> Result<HistoryItem> {
         let entry = h.command_line;
         // Don't append if the preceding value is identical or the string empty
@@ -70,23 +71,37 @@ impl History for FileBackedHistory {
         } else {
             None
         };
-        Ok(HistoryItem {
-            command_line: entry,
-            cwd: None,
-            duration: None,
-            exit_status: None,
-            hostname: None,
-            id: entry_id,
-            start_timestamp: None,
-            more_info: None,
-            session_id: None
-        })
+        Ok(FileBackedHistory::construct_entry(entry_id, entry))
+    }
+
+    fn load(&mut self, id: super::HistoryItemId) -> Result<super::HistoryItem> {
+        Ok(FileBackedHistory::construct_entry(Some(id), self.entries[id.0 as usize].clone()))
+    }
+
+    fn count(&self, _query: super::SearchQuery) -> Result<i64> {
+        todo!()
+    }
+
+    fn search(&self, _query: super::SearchQuery) -> Result<Vec<HistoryItem>> {
+        todo!()
+    }
+
+    fn update(
+        &mut self,
+        _id: super::HistoryItemId,
+        _updater: &dyn Fn(super::HistoryItem) -> super::HistoryItem,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    fn delete(&mut self, _h: super::HistoryItemId) -> Result<()> {
+        todo!()
     }
 
     /// Writes unwritten history contents to disk.
     ///
     /// If file would exceed `capacity` truncates the oldest entries.
-    fn sync(&mut self) -> Result<()> {
+    fn sync(&mut self) -> std::io::Result<()> {
         if let Some(fname) = &self.file {
             // The unwritten entries
             let own_entries = self.entries.range(self.len_on_disk..);
@@ -104,7 +119,7 @@ impl History for FileBackedHistory {
                 let mut from_file = reader
                     .lines()
                     .map(|o| o.map(|i| decode_entry(&i)))
-                    .collect::<Result<VecDeque<_>, _>>()?;
+                    .collect::<std::io::Result<VecDeque<_>>>()?;
                 if from_file.len() + own_entries.len() > self.capacity {
                     (
                         from_file.split_off(from_file.len() - (self.capacity - own_entries.len())),
@@ -145,42 +160,11 @@ impl History for FileBackedHistory {
 
             self.len_on_disk = self.entries.len();
         }
-
-        self.reset_cursor();
-
         Ok(())
     }
 
-
-    fn load(&mut self, id: super::HistoryItemId) -> Result<super::HistoryItem> {
-        todo!()
-    }
-
-    fn search(
-        &self,
-        start: chrono::DateTime<chrono::Utc>,
-        direction: super::base::SearchDirection,
-        end: Option<chrono::DateTime<chrono::Utc>>,
-        limit: Option<i64>,
-        filter: SearchFilter,
-    ) -> Result<Vec<super::HistoryItem>> {
-        todo!()
-    }
-
-    fn update(
-        &mut self,
-        id: super::HistoryItemId,
-        updater: Box<dyn FnOnce(super::HistoryItem) -> super::HistoryItem>,
-    ) -> Result<()> {
-        todo!()
-    }
-
-    fn entry_count(&self) -> Result<i64> {
-        todo!()
-    }
-
-    fn delete(&mut self, h: super::HistoryItemId) -> Result<()> {
-        todo!()
+    fn new_session_id(&mut self) -> Result<HistorySessionId> {
+        Ok(HistorySessionId::new(0))
     }
 }
 
@@ -197,10 +181,8 @@ impl FileBackedHistory {
         FileBackedHistory {
             capacity,
             entries: VecDeque::with_capacity(capacity),
-            cursor: 0,
             file: None,
             len_on_disk: 0,
-            query: HistoryNavigationQuery::Normal(LineBuffer::default()),
         }
     }
 
@@ -222,36 +204,18 @@ impl FileBackedHistory {
         Ok(hist)
     }
 
-    fn back_with_criteria(&mut self, criteria: &dyn Fn(&str) -> bool) {
-        if !self.entries.is_empty() {
-            let previous_match = self.entries.get(self.cursor);
-            if let Some((next_cursor, _)) = self
-                .entries
-                .iter()
-                .take(self.cursor)
-                .enumerate()
-                .rev()
-                .find(|(_, entry)| criteria(entry) && previous_match != Some(entry))
-            {
-                // set to entry
-                self.cursor = next_cursor;
-            }
-        }
-    }
-
-    fn forward_with_criteria(&mut self, criteria: &dyn Fn(&str) -> bool) {
-        let previous_match = self.entries.get(self.cursor);
-        if let Some((next_cursor, _)) = self
-            .entries
-            .iter()
-            .enumerate()
-            .skip(self.cursor + 1)
-            .find(|(_, entry)| criteria(entry) && previous_match != Some(entry))
-        {
-            // set to entry
-            self.cursor = next_cursor;
-        } else {
-            self.reset_cursor();
+    // this history doesn't store any info except command line
+    fn construct_entry(id: Option<HistoryItemId>, command_line: String) -> HistoryItem {
+        HistoryItem {
+            id,
+            start_timestamp: None,
+            command_line,
+            session_id: None,
+            hostname: None,
+            cwd: None,
+            duration: None,
+            exit_status: None,
+            more_info: None,
         }
     }
 }
@@ -262,7 +226,7 @@ impl Drop for FileBackedHistory {
         let _res = self.sync();
     }
 }
-
+/*
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
@@ -704,3 +668,4 @@ mod tests {
         tmp.close().unwrap();
     }
 }
+*/
