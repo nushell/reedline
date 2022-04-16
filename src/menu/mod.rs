@@ -3,11 +3,12 @@ mod list_menu;
 pub mod menu_functions;
 
 use crate::{
-    completion::history::HistoryCompleter, painting::Painter, Completer, History, LineBuffer,
+    completion::history::HistoryCompleter, painting::Painter, Completer, LineBuffer,
     Suggestion,
 };
 pub use columnar_menu::ColumnarMenu;
 pub use list_menu::ListMenu;
+use crate::History;
 use nu_ansi_term::{Color, Style};
 
 /// Struct to store the menu style

@@ -1,4 +1,12 @@
+use std::time::Duration;
+
+use chrono::Utc;
+use serde::{de::DeserializeOwned, Serialize};
+
 use crate::core_editor::LineBuffer;
+
+// todo: better error type
+pub type Result<T> = std::result::Result<T, String>;
 
 /// Browsing modes for a [`History`]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,13 +21,82 @@ pub enum HistoryNavigationQuery {
     // Fuzzy Search
 }
 
-/// Interface of a history datastructure that supports stateful navigation via [`HistoryNavigationQuery`].
-pub trait History: Send {
-    /// Append entry to the history, if capacity management is part of the implementation may perform that as well
-    fn append(&mut self, entry: &str);
+#[derive(Copy, Clone)]
+pub struct HistoryItemId(pub(crate) i64);
+impl HistoryItemId {
+    pub fn new(i: i64) -> HistoryItemId {
+        HistoryItemId(i)
+    }
+}
+/// This trait represents additional context to be added to a history (see [HistoryItem])
+pub trait HistoryEntryContext: Serialize + DeserializeOwned + Default + Send {}
+impl HistoryEntryContext for () {}
+#[derive(Clone)]
+pub struct HistoryItem<ExtraInfo: HistoryEntryContext = ()> {
+    pub id: Option<HistoryItemId>,
+    pub start_timestamp: chrono::DateTime<Utc>,
+    pub command_line: String,
+    pub session_id: Option<i64>,
+    pub hostname: Option<String>,
+    pub cwd: Option<String>,
+    pub duration: Option<Duration>,
+    pub exit_status: Option<i64>,
+    pub more_info: Option<ExtraInfo>, // pub more_info: Option<Box<dyn HistoryEntryContext>>
+}
 
+impl Default for HistoryItem {
+    fn default() -> HistoryItem {
+        todo!()
+    }
+}
+
+pub enum SearchDirection {
+    Backward,
+    Forward,
+}
+
+pub enum CommandLineSearch {
+    Prefix(String),
+    Substring(String),
+    Exact(String),
+}
+
+pub struct SearchFilter {
+    pub command_line: Option<CommandLineSearch>,
+    pub hostname: Option<String>,
+    pub cwd_exact: Option<String>,
+    pub cwd_prefix: Option<String>,
+    pub exit_successful: Option<bool>,
+}
+
+pub trait History {
+    // returns the same history item but with the correct id set
+    fn save(&mut self, h: HistoryItem) -> Result<HistoryItem>;
+    fn load(&mut self, id: HistoryItemId) -> Result<HistoryItem>;
+    fn search(
+        &self,
+        start: chrono::DateTime<Utc>,
+        direction: SearchDirection,
+        end: Option<chrono::DateTime<Utc>>,
+        limit: Option<i64>,
+        filter: SearchFilter,
+    ) -> Result<Vec<HistoryItem>>;
+
+    fn update(
+        &mut self,
+        id: HistoryItemId,
+        updater: Box<dyn FnOnce(HistoryItem) -> HistoryItem>,
+    ) -> Result<()>;
+
+    fn entry_count(&self) -> Result<i64>;
+    fn delete(&mut self, h: HistoryItemId) -> Result<()>;
+    fn sync(&mut self) -> Result<()>;
+}
+
+/// Interface of a history datastructure that supports stateful navigation via [`HistoryNavigationQuery`].
+pub trait HistoryCursor: Send {
     /// Chronologic interaction over all entries present in the history
-    fn iter_chronologic(&self) -> Box<dyn DoubleEndedIterator<Item=String> + '_>;
+    fn iter_chronologic(&self) -> Box<dyn DoubleEndedIterator<Item = String> + '_>;
 
     /// This moves the cursor backwards respecting the navigation query that is set
     /// - Results in a no-op if the cursor is at the initial point

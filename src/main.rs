@@ -43,12 +43,7 @@ fn main() -> Result<()> {
     }
 
     #[cfg(feature = "sqlite")]
-    let (history, history_clone) = {
-        let history = Box::new(std::sync::Arc::new(std::sync::Mutex::new(
-            reedline::SqliteBackedHistory::<TestContext>::with_file("history.sqlite3".into())?,
-        )));
-        (history.clone(), history)
-    };
+    let history = Box::new(reedline::SqliteBackedHistory::with_file("history.sqlite3".into())?);
     #[cfg(not(feature = "sqlite"))]
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
     let commands = vec![
@@ -133,10 +128,7 @@ fn main() -> Result<()> {
                 #[cfg(feature = "sqlite")]
                 {
                     // save timestamp to history
-                    history_clone
-                        .lock()
-                        .expect("lock poisoned")
-                        .update_last_command_context(|mut c| {
+                    line_editor.update_last_command_context(|mut c| {
                             c.timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
                             c
                         })

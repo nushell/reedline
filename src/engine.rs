@@ -6,8 +6,7 @@ use {
         enums::{EventStatus, ReedlineEvent},
         highlighter::SimpleMatchHighlighter,
         hinter::Hinter,
-        history::{FileBackedHistory, History, HistoryNavigationQuery},
-        menu::{Menu, MenuEvent, ReedlineMenu},
+        history::{FileBackedHistory, HistoryNavigationQuery, Result as HistoryResult},
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         utils::text_manipulation,
@@ -22,6 +21,7 @@ use {
     std::{borrow::Borrow, io, time::Duration},
 };
 
+use crate::{history::History, ReedlineMenu, Menu, MenuEvent};
 #[cfg(feature = "bashisms")]
 use crate::menu_functions::{parse_selection_char, ParseAction};
 
@@ -350,7 +350,7 @@ impl Reedline {
     }
 
     /// Update the underlying [`History`] to/from disk
-    pub fn sync_history(&mut self) -> std::io::Result<()> {
+    pub fn sync_history(&mut self) -> HistoryResult<()> {
         // TODO: check for interactions in the non-submitting events
         self.history.sync()
     }

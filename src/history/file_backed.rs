@@ -1,7 +1,7 @@
-use super::{base::HistoryNavigationQuery, History};
+use super::{base::{HistoryNavigationQuery, SearchFilter, Result}, History, HistoryItem, HistoryItemId};
 use crate::core_editor::LineBuffer;
 use std::{
-    collections::{vec_deque::Iter, VecDeque},
+    collections::{VecDeque},
     fs::OpenOptions,
     io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write},
     ops::{Deref, DerefMut},
@@ -49,12 +49,14 @@ impl History for FileBackedHistory {
     /// Appends an entry if non-empty and not repetition of the previous entry.
     /// Resets the browsing cursor to the default state in front of the most recent entry.
     ///
-    fn append(&mut self, entry: &str) {
+    
+    fn save(&mut self, h: HistoryItem) -> Result<HistoryItem> {
+        let entry = h.command_line;
         // Don't append if the preceding value is identical or the string empty
-        if self
+        let entry_id = if self
             .entries
             .back()
-            .map_or(true, |previous| previous != entry)
+            .map_or(true, |previous| previous != &entry)
             && !entry.is_empty()
         {
             if self.entries.len() == self.capacity {
@@ -64,74 +66,27 @@ impl History for FileBackedHistory {
                 self.len_on_disk = self.len_on_disk.saturating_sub(1);
             }
             self.entries.push_back(entry.to_string());
-        }
-        self.reset_cursor();
-    }
-
-    fn iter_chronologic(&self) -> Box<(dyn DoubleEndedIterator<Item = String> + '_)> {
-        Box::new(self.entries.iter().map(|e| e.to_string()))
-    }
-
-    fn back(&mut self) {
-        match self.query.clone() {
-            HistoryNavigationQuery::Normal(_) => {
-                if self.cursor > 0 {
-                    self.cursor -= 1;
-                }
-            }
-            HistoryNavigationQuery::PrefixSearch(prefix) => {
-                self.back_with_criteria(&|entry| entry.starts_with(&prefix));
-            }
-            HistoryNavigationQuery::SubstringSearch(substring) => {
-                self.back_with_criteria(&|entry| entry.contains(&substring));
-            }
-        }
-    }
-
-    fn forward(&mut self) {
-        match self.query.clone() {
-            HistoryNavigationQuery::Normal(_) => {
-                if self.cursor < self.entries.len() {
-                    self.cursor += 1;
-                }
-            }
-            HistoryNavigationQuery::PrefixSearch(prefix) => {
-                self.forward_with_criteria(&|entry| entry.starts_with(&prefix));
-            }
-            HistoryNavigationQuery::SubstringSearch(substring) => {
-                self.forward_with_criteria(&|entry| entry.contains(&substring));
-            }
-        }
-    }
-
-    fn string_at_cursor(&self) -> Option<String> {
-        self.entries.get(self.cursor).cloned()
-    }
-
-    fn set_navigation(&mut self, navigation: HistoryNavigationQuery) {
-        self.query = navigation;
-        self.reset_cursor();
-    }
-
-    fn get_navigation(&self) -> HistoryNavigationQuery {
-        self.query.clone()
-    }
-
-    fn query_entries(&self, search: &str) -> Vec<String> {
-        self.iter_chronologic()
-            .rev()
-            .filter(|entry| entry.contains(search))
-            .collect::<Vec<String>>()
-    }
-
-    fn max_values(&self) -> usize {
-        self.entries.len()
+            Some(HistoryItemId::new((self.entries.len() - 1) as i64))
+        } else {
+            None
+        };
+        Ok(HistoryItem {
+            command_line: entry,
+            cwd: None,
+            duration: None,
+            exit_status: None,
+            hostname: None,
+            id: entry_id,
+            start_timestamp: None,
+            more_info: None,
+            session_id: None
+        })
     }
 
     /// Writes unwritten history contents to disk.
     ///
     /// If file would exceed `capacity` truncates the oldest entries.
-    fn sync(&mut self) -> std::io::Result<()> {
+    fn sync(&mut self) -> Result<()> {
         if let Some(fname) = &self.file {
             // The unwritten entries
             let own_entries = self.entries.range(self.len_on_disk..);
@@ -196,9 +151,36 @@ impl History for FileBackedHistory {
         Ok(())
     }
 
-    /// Reset the internal browsing cursor
-    fn reset_cursor(&mut self) {
-        self.cursor = self.entries.len();
+
+    fn load(&mut self, id: super::HistoryItemId) -> Result<super::HistoryItem> {
+        todo!()
+    }
+
+    fn search(
+        &self,
+        start: chrono::DateTime<chrono::Utc>,
+        direction: super::base::SearchDirection,
+        end: Option<chrono::DateTime<chrono::Utc>>,
+        limit: Option<i64>,
+        filter: SearchFilter,
+    ) -> Result<Vec<super::HistoryItem>> {
+        todo!()
+    }
+
+    fn update(
+        &mut self,
+        id: super::HistoryItemId,
+        updater: Box<dyn FnOnce(super::HistoryItem) -> super::HistoryItem>,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    fn entry_count(&self) -> Result<i64> {
+        todo!()
+    }
+
+    fn delete(&mut self, h: super::HistoryItemId) -> Result<()> {
+        todo!()
     }
 }
 
