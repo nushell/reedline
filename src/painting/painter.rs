@@ -423,7 +423,17 @@ impl Painter {
         self.stdout.queue(MoveTo(0, 0))?;
         self.stdout.queue(cursor::Show)?;
 
-        self.stdout.flush()
+        self.stdout.flush()?;
+        self.initialize_prompt_position()
+    }
+
+    pub(crate) fn clear_scrollback(&mut self) -> Result<()> {
+        self.stdout
+            .queue(crossterm::terminal::Clear(ClearType::Purge))?
+            .queue(crossterm::terminal::Clear(ClearType::All))?
+            .queue(cursor::MoveTo(0, 0))?
+            .flush()?;
+        self.initialize_prompt_position()
     }
 
     // The prompt is moved to the end of the buffer after the event was handled

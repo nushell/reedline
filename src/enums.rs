@@ -11,8 +11,6 @@ pub enum Signal {
     CtrlC, // Interrupt current editing
     /// Abort with `Ctrl+D` signalling `EOF` or abort of a whole interactive session
     CtrlD, // End terminal session
-    /// Signal to clear the current screen. Buffer content remains untouched.
-    CtrlL, // FormFeed/Clear current screen
 }
 
 /// Editing actions which can be mapped to key bindings.
@@ -302,6 +300,11 @@ pub enum ReedlineEvent {
     /// Clears the screen and sets prompt to first line
     ClearScreen,
 
+    /// Clears the screen and the scrollback buffer
+    ///
+    /// Sets the prompt back to the first line
+    ClearScrollback,
+
     /// Handle enter event
     Enter,
 
@@ -389,6 +392,7 @@ impl Display for ReedlineEvent {
             ReedlineEvent::CtrlD => write!(f, "CtrlD"),
             ReedlineEvent::CtrlC => write!(f, "CtrlC"),
             ReedlineEvent::ClearScreen => write!(f, "ClearScreen"),
+            ReedlineEvent::ClearScrollback => write!(f, "ClearScrollback"),
             ReedlineEvent::Enter => write!(f, "Enter"),
             ReedlineEvent::Esc => write!(f, "Esc"),
             ReedlineEvent::Mouse => write!(f, "Mouse"),

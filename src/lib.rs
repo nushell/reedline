@@ -28,9 +28,6 @@
 //!              println!("\nAborted!");
 //!              break;
 //!          }
-//!          Ok(Signal::CtrlL) => {
-//!              line_editor.clear_screen();
-//!          }
 //!          x => {
 //!              println!("Event: {:?}", x);
 //!          }
