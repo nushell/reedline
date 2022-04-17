@@ -1,4 +1,4 @@
-use reedline::{DefaultValidator, ReedlineMenu};
+use reedline::{DefaultValidator, EditCommand, ReedlineMenu};
 
 use {
     crossterm::{
@@ -97,10 +97,13 @@ fn main() -> Result<()> {
         add_menu_keybindings(&mut normal_keybindings);
         add_menu_keybindings(&mut insert_keybindings);
 
+        add_newline_keybinding(&mut insert_keybindings);
+
         Box::new(Vi::new(insert_keybindings, normal_keybindings))
     } else {
         let mut keybindings = default_emacs_keybindings();
         add_menu_keybindings(&mut keybindings);
+        add_newline_keybinding(&mut keybindings);
 
         Box::new(Emacs::new(keybindings))
     };
@@ -232,6 +235,15 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
         KeyModifiers::SHIFT,
         KeyCode::BackTab,
         ReedlineEvent::MenuPrevious,
+    );
+}
+
+fn add_newline_keybinding(keybindings: &mut Keybindings) {
+    // This doesn't work for macOS
+    keybindings.add_binding(
+        KeyModifiers::ALT,
+        KeyCode::Enter,
+        ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
     );
 }
 
