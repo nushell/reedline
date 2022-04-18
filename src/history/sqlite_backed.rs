@@ -277,7 +277,7 @@ impl SqliteBackedHistory {
             .map_err(map_sqlite_err)?;
         db.pragma_update(None, "foreign_keys", "on")
             .map_err(map_sqlite_err)?;
-        db.execute(
+        db.execute_batch(
             "
         create table if not exists history (
             id integer primary key autoincrement,
@@ -297,7 +297,6 @@ impl SqliteBackedHistory {
         create index if not exists idx_history_cmd on history(session_id);
         -- todo: better indexes
         ",
-            params![],
         )
         .map_err(map_sqlite_err)?;
         Ok(SqliteBackedHistory { db })
