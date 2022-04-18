@@ -1,4 +1,3 @@
-
 #[cfg(not(feature = "sqlite"))]
 use reedline::FileBackedHistory;
 use reedline::{DefaultValidator, ReedlineMenu};
@@ -14,8 +13,8 @@ use {
         get_reedline_default_keybindings, get_reedline_edit_commands,
         get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
         get_reedline_reedline_events, ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt,
-        EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline,
-        ReedlineEvent, Signal, Vi,
+        EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline, ReedlineEvent,
+        Signal, Vi,
     },
     std::{
         io::{stdout, Write},

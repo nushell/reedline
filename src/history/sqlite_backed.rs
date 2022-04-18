@@ -2,8 +2,8 @@ use chrono::{TimeZone, Utc};
 use rusqlite::{named_params, params, Connection, ToSql};
 
 use super::{
-    base::{CommandLineSearch, HistorySessionId, SearchDirection, SearchQuery},
-    History, HistoryItem, HistoryItemId, Result,
+    base::{CommandLineSearch, SearchDirection, SearchQuery},
+    History, HistoryItem, HistoryItemId, HistorySessionId, Result,
 };
 
 use std::{path::PathBuf, time::Duration};
@@ -16,7 +16,7 @@ pub struct SqliteBackedHistory {
 }
 
 fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem> {
-    let x: String = row.get("more_info")?;
+    let x: Option<String> = row.get("more_info")?;
     Ok(HistoryItem {
         id: Some(HistoryItemId::new(row.get("id")?)),
         start_timestamp: row
@@ -32,7 +32,18 @@ fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem
             .get::<&str, Option<i64>>("duration_ms")?
             .map(|e| Duration::from_millis(e as u64)),
         exit_status: row.get("exit_status")?,
-        more_info: serde_json::from_str(&x).unwrap(),
+        more_info: x
+            .map(|x| {
+                serde_json::from_str(&x).map_err(|e| {
+                    // hack
+                    rusqlite::Error::InvalidColumnType(
+                        0,
+                        format!("could not deserialize more_info: {e}"),
+                        rusqlite::types::Type::Text,
+                    )
+                })
+            })
+            .transpose()?,
     })
 }
 
@@ -69,7 +80,7 @@ impl History for SqliteBackedHistory {
                     ":cwd": entry.cwd,
                     ":duration_ms": entry.duration.map(|e| e.as_millis() as i64),
                     ":exit_status": entry.exit_status,
-                    ":more_info": &serde_json::to_string(&entry.more_info).unwrap()
+                    ":more_info": entry.more_info.as_ref().map(|e| serde_json::to_string(e).unwrap())
                 },
                 |row| row.get(0),
             )

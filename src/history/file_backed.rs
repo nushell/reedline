@@ -1,6 +1,6 @@
 use super::{
-    base::{CommandLineSearch, HistorySessionId, Result},
-    History, HistoryItem, HistoryItemId, SearchDirection, SearchQuery,
+    base::{CommandLineSearch, Result},
+    History, HistoryItem, HistoryItemId, HistorySessionId, SearchDirection, SearchQuery,
 };
 
 use std::{
