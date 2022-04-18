@@ -1,16 +1,12 @@
 use chrono::{TimeZone, Utc};
 use rusqlite::{named_params, params, Connection, ToSql};
 
-
 use super::{
-    base::{CommandLineSearch, SearchDirection, SearchQuery, HistorySessionId},
+    base::{CommandLineSearch, HistorySessionId, SearchDirection, SearchQuery},
     History, HistoryItem, HistoryItemId, Result,
 };
 
-use std::{
-    path::PathBuf,
-    time::Duration,
-};
+use std::{path::PathBuf, time::Duration, collections::HashMap};
 
 /// A history that stores the values to an SQLite database.
 /// In addition to storing the command, the history can store an additional arbitrary HistoryEntryContext,
@@ -27,7 +23,9 @@ fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem
             .get::<&str, Option<i64>>("start_timestamp")?
             .map(|e| Utc.timestamp_millis(e)),
         command_line: row.get("command_line")?,
-        session_id: row.get("session_id")?,
+        session_id: row
+            .get::<&str, Option<i64>>("session_id")?
+            .map(HistorySessionId::new),
         hostname: row.get("hostname")?,
         cwd: row.get("cwd")?,
         duration: row
@@ -57,7 +55,7 @@ impl History for SqliteBackedHistory {
                     ":id": entry.id.map(|id| id.0),
                     ":start_timestamp": entry.start_timestamp.map(|e| e.timestamp_millis()),
                     ":command_line": entry.command_line,
-                    ":session_id": entry.session_id,
+                    ":session_id": entry.session_id.map(|e| e.0),
                     ":hostname": entry.hostname,
                     ":cwd": entry.cwd,
                     ":duration_ms": entry.duration.map(|e| e.as_millis() as i64),
@@ -71,7 +69,7 @@ impl History for SqliteBackedHistory {
         Ok(entry)
     }
 
-    fn load(&mut self, id: HistoryItemId) -> Result<HistoryItem> {
+    fn load(&self, id: HistoryItemId) -> Result<HistoryItem> {
         let entry = self
             .db
             .prepare("select * from history where id = :id")
@@ -82,7 +80,8 @@ impl History for SqliteBackedHistory {
     }
 
     fn count(&self, query: SearchQuery) -> Result<i64> {
-        let (query, params) = self.construct_query(query, "coalesce(count(*), 0)");
+        let (query, params) = self.construct_query(&query, "coalesce(count(*), 0)");
+        debug_print_query(&query, &params);
         let params_borrow: Vec<(&str, &dyn ToSql)> = params.iter().map(|e| (e.0, &*e.1)).collect();
         let result: i64 = self
             .db
@@ -94,7 +93,8 @@ impl History for SqliteBackedHistory {
     }
 
     fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>> {
-        let (query, params) = self.construct_query(query, "*");
+        let (query, params) = self.construct_query(&query, "*");
+        debug_print_query(&query, &params);
         let params_borrow: Vec<(&str, &dyn ToSql)> = params.iter().map(|e| (e.0, &*e.1)).collect();
         let results: Vec<HistoryItem> = self
             .db
@@ -271,7 +271,7 @@ impl SqliteBackedHistory {
             more_info text
         ) strict;
         create index if not exists idx_history_time on history(start_timestamp);
-        create index if not exists idx_history_cwd on history(hostname, cwd);
+        create index if not exists idx_history_cwd on history(cwd); -- suboptimal for many hosts
         create index if not exists idx_history_exit_status on history(exit_status);
         create index if not exists idx_history_cmd on history(command_line);
         create index if not exists idx_history_cmd on history(session_id);
@@ -282,43 +282,51 @@ impl SqliteBackedHistory {
         .map_err(map_sqlite_err)?;
         Ok(SqliteBackedHistory { db })
     }
-    fn construct_query(
+    fn construct_query<'a>(
         &self,
-        query: SearchQuery,
+        query: &'a SearchQuery,
         select_expression: &str,
-    ) -> (String, Vec<(&'static str, Box<dyn ToSql>)>) {
-        let SearchQuery {
-            start_time,
-            start_id,
-            direction,
-            end_time,
-            end_id,
-            limit,
-            filter,
-        } = query;
-        let (op, asc) = match direction {
-            SearchDirection::Forward => (">", "asc"),
-            SearchDirection::Backward => ("<", "desc"),
+    ) -> (String, Vec<(&'static str, Box<dyn ToSql + 'a>)>) {
+        // todo: this whole function could be done with less allocs
+        let (is_asc, asc) = match query.direction {
+            SearchDirection::Forward => (true, "asc"),
+            SearchDirection::Backward => (false, "desc"),
         };
-        let mut wheres: Vec<String> = vec![];
+        let mut wheres: Vec<&str> = vec![];
         let mut params: Vec<(&str, Box<dyn ToSql>)> = vec![];
-        if let Some(start) = start_time {
-            wheres.push(format!("timestamp_start {op} :start_time"));
+        if let Some(start) = query.start_time {
+            wheres.push(if is_asc {
+                "timestamp_start > :start_time"
+            } else {
+                "timestamp_start < :start_time"
+            });
             params.push((":start_time", Box::new(start.timestamp_millis())))
         }
-        if let Some(end) = end_time {
-            wheres.push(format!("where :end_time {op}= timestamp_start"));
+        if let Some(end) = query.end_time {
+            wheres.push(if is_asc {
+                ":end_time >= timestamp_start"
+            } else {
+                ":end_time <= timestamp_start"
+            });
             params.push((":end_time", Box::new(end.timestamp_millis())));
         }
-        if let Some(start) = start_id {
-            wheres.push(format!("id {op} :start_id"));
+        if let Some(start) = query.start_id {
+            wheres.push(if is_asc {
+                "id > :start_id"
+            } else {
+                "id < :start_id"
+            });
             params.push((":start_id", Box::new(start.0)))
         }
-        if let Some(end) = end_id {
-            wheres.push(format!("where :end_id {op}= id"));
+        if let Some(end) = query.end_id {
+            wheres.push(if is_asc {
+                ":end_id >= id"
+            } else {
+                ":end_id <= id"
+            });
             params.push((":end_id", Box::new(end.0)));
         }
-        let limit = match limit {
+        let limit = match query.limit {
             Some(l) => {
                 params.push((":limit", Box::new(l)));
                 format!("limit :limit")
@@ -326,34 +334,39 @@ impl SqliteBackedHistory {
             None => format!(""),
         };
 
-        if let Some(command_line) = &filter.command_line {
+        if let Some(command_line) = &query.filter.command_line {
             // todo: escape %
             let command_line_like = match command_line {
                 CommandLineSearch::Exact(e) => format!("{e}"),
                 CommandLineSearch::Prefix(prefix) => format!("{prefix}%"),
                 CommandLineSearch::Substring(cont) => format!("%{cont}%"),
             };
-            wheres.push("command_line like :command_line".to_string());
+            wheres.push("command_line like :command_line");
             params.push((":command_line", Box::new(command_line_like)));
         }
-        if let Some(hostname) = filter.hostname {
-            wheres.push("hostname = :hostname".to_string());
+
+        if let Some(str) = &query.filter.not_command_line {
+            wheres.push("command_line != :not_cmd");
+            params.push((":not_cmd", Box::new(str)));
+        }
+        if let Some(hostname) = &query.filter.hostname {
+            wheres.push("hostname = :hostname");
             params.push((":hostname", Box::new(hostname)));
         }
-        if let Some(cwd_exact) = filter.cwd_exact {
-            wheres.push("cwd = :cwd".to_string());
+        if let Some(cwd_exact) = &query.filter.cwd_exact {
+            wheres.push("cwd = :cwd");
             params.push((":cwd", Box::new(cwd_exact)));
         }
-        if let Some(cwd_prefix) = filter.cwd_prefix {
-            wheres.push("cwd like :cwd_like".to_string());
+        if let Some(cwd_prefix) = &query.filter.cwd_prefix {
+            wheres.push("cwd like :cwd_like");
             let cwd_like = format!("{cwd_prefix}%");
             params.push((":cwd_like", Box::new(cwd_like)));
         }
-        if let Some(exit_successful) = filter.exit_successful {
+        if let Some(exit_successful) = query.filter.exit_successful {
             if exit_successful {
-                wheres.push("exit_status = 0".to_string());
+                wheres.push("exit_status = 0");
             } else {
-                wheres.push("exit_status != 0".to_string());
+                wheres.push("exit_status != 0");
             }
         }
         let mut wheres = wheres.join(" and ");
@@ -366,7 +379,11 @@ impl SqliteBackedHistory {
         {wheres}
         order by id {asc} {limit}"
         );
-        // println!("query={query}");
+        // aprintln!("query={query}");
         (query, params)
     }
+}
+
+fn debug_print_query<'a>(query: &'a str, params: &'a [(&str, Box<dyn ToSql + 'a>)]) {
+    // eprintln!("SQL: {}; -- {:?}", query, params.iter().map(|(k, e)| (k, e.to_sql().unwrap())).collect::<HashMap<_, _>>());
 }

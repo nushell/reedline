@@ -1,6 +1,6 @@
 use super::{
-    base::{Result, HistorySessionId},
-    History, HistoryItem, HistoryItemId,
+    base::{CommandLineSearch, HistorySessionId, Result},
+    History, HistoryItem, HistoryItemId, SearchDirection, SearchQuery,
 };
 
 use std::{
@@ -47,10 +47,7 @@ fn decode_entry(s: &str) -> String {
 }
 
 impl History for FileBackedHistory {
-    /// Appends an entry if non-empty and not repetition of the previous entry.
-    /// Resets the browsing cursor to the default state in front of the most recent entry.
-    ///
-
+    /// only saves a value if it's different than the last value
     fn save(&mut self, h: HistoryItem) -> Result<HistoryItem> {
         let entry = h.command_line;
         // Don't append if the preceding value is identical or the string empty
@@ -74,16 +71,87 @@ impl History for FileBackedHistory {
         Ok(FileBackedHistory::construct_entry(entry_id, entry))
     }
 
-    fn load(&mut self, id: super::HistoryItemId) -> Result<super::HistoryItem> {
-        Ok(FileBackedHistory::construct_entry(Some(id), self.entries[id.0 as usize].clone()))
+    fn load(&self, id: HistoryItemId) -> Result<super::HistoryItem> {
+        Ok(FileBackedHistory::construct_entry(
+            Some(id),
+            self.entries[id.0 as usize].clone(),
+        ))
     }
 
-    fn count(&self, _query: super::SearchQuery) -> Result<i64> {
-        todo!()
+    fn count(&self, query: SearchQuery) -> Result<i64> {
+        // todo: this could be done cheaper
+        Ok(self.search(query)?.len() as i64)
     }
 
-    fn search(&self, _query: super::SearchQuery) -> Result<Vec<HistoryItem>> {
-        todo!()
+    fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>> {
+        if query.start_time.is_some() || query.end_time.is_some() {
+            return Err("filtering by time not supported in plain text history".to_string());
+        }
+
+        if query.filter.hostname.is_some()
+            || query.filter.cwd_exact.is_some()
+            || query.filter.cwd_prefix.is_some()
+            || query.filter.exit_successful.is_some()
+        {
+            return Err(
+                "filtering by extra context is not supported in plain text history".to_string(),
+            );
+        }
+        let (min_id, max_id) = {
+            let start = query.start_id.map(|e| e.0);
+            let end = query.end_id.map(|e| e.0);
+            if let SearchDirection::Backward = query.direction {
+                (end, start)
+            } else {
+                (start, end)
+            }
+        };
+        // add one to make it inclusive
+        let min_id = min_id.map(|e| e + 1).unwrap_or(0);
+        // subtract one to make it inclusive
+        let max_id = max_id
+            .map(|e| e - 1)
+            .unwrap_or(self.entries.len() as i64 - 1);
+        if max_id < 0 || min_id > self.entries.len() as i64 - 1 {
+            return Ok(vec![]);
+        }
+        let intrinsic_limit = max_id - min_id + 1;
+        let limit = if let Some(given_limit) = query.limit {
+            std::cmp::min(intrinsic_limit, given_limit) as usize
+        } else {
+            intrinsic_limit as usize
+        };
+        let filter = |(idx, cmd): (usize, &String)| {
+            if !match &query.filter.command_line {
+                Some(CommandLineSearch::Prefix(p)) => cmd.starts_with(p),
+                Some(CommandLineSearch::Substring(p)) => cmd.contains(p),
+                Some(CommandLineSearch::Exact(p)) => cmd == p,
+                None => true,
+            } {
+                return None;
+            }
+            if let Some(str) = &query.filter.not_command_line {
+                if cmd == str {
+                    return None;
+                }
+            }
+            Some(FileBackedHistory::construct_entry(
+                Some(HistoryItemId::new(idx as i64)),
+                cmd.to_string(), // todo: this copy might be a perf bottleneck
+            ))
+        };
+
+        let iter = self
+            .entries
+            .iter()
+            .enumerate()
+            .skip(min_id as usize)
+            .take(intrinsic_limit as usize);
+        if let SearchDirection::Backward = query.direction {
+            Ok(iter.rev().filter_map(filter).take(limit).collect())
+        } else {
+            Ok(iter.filter_map(filter).take(limit).collect())
+        }
     }
 
     fn update(
@@ -91,11 +159,11 @@ impl History for FileBackedHistory {
         _id: super::HistoryItemId,
         _updater: &dyn Fn(super::HistoryItem) -> super::HistoryItem,
     ) -> Result<()> {
-        todo!()
+        Err("updating entries is not supported in plain text history".to_string())
     }
 
     fn delete(&mut self, _h: super::HistoryItemId) -> Result<()> {
-        todo!()
+        Err("removing entries is not supported in plain text history".to_string())
     }
 
     /// Writes unwritten history contents to disk.
@@ -226,446 +294,3 @@ impl Drop for FileBackedHistory {
         let _res = self.sync();
     }
 }
-/*
-#[cfg(test)]
-mod tests {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn accessing_empty_history_returns_nothing() {
-        let hist = FileBackedHistory::default();
-        assert_eq!(hist.string_at_cursor(), None);
-    }
-
-    #[test]
-    fn going_forward_in_empty_history_does_not_error_out() {
-        let mut hist = FileBackedHistory::default();
-        hist.forward();
-        assert_eq!(hist.string_at_cursor(), None);
-    }
-
-    #[test]
-    fn going_backwards_in_empty_history_does_not_error_out() {
-        let mut hist = FileBackedHistory::default();
-        hist.back();
-        assert_eq!(hist.string_at_cursor(), None);
-    }
-
-    #[test]
-    fn going_backwards_bottoms_out() {
-        let mut hist = FileBackedHistory::default();
-        hist.append("command1");
-        hist.append("command2");
-        hist.back();
-        hist.back();
-        hist.back();
-        hist.back();
-        hist.back();
-        assert_eq!(hist.string_at_cursor(), Some("command1".to_string()));
-    }
-
-    #[test]
-    fn going_forwards_bottoms_out() {
-        let mut hist = FileBackedHistory::default();
-        hist.append("command1");
-        hist.append("command2");
-        hist.forward();
-        hist.forward();
-        hist.forward();
-        hist.forward();
-        hist.forward();
-        assert_eq!(hist.string_at_cursor(), None);
-    }
-
-    #[test]
-    fn appends_only_unique() {
-        let mut hist = FileBackedHistory::default();
-        hist.append("unique_old");
-        hist.append("test");
-        hist.append("test");
-        hist.append("unique");
-        assert_eq!(hist.entries.len(), 3);
-    }
-    #[test]
-    fn appends_no_empties() {
-        let mut hist = FileBackedHistory::default();
-        hist.append("");
-        assert_eq!(hist.entries.len(), 0);
-    }
-
-    #[test]
-    fn prefix_search_works() {
-        let mut hist = FileBackedHistory::default();
-        hist.append("find me as well");
-        hist.append("test");
-        hist.append("find me");
-
-        hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
-
-        hist.back();
-        assert_eq!(hist.string_at_cursor(), Some("find me".to_string()));
-        hist.back();
-        assert_eq!(hist.string_at_cursor(), Some("find me as well".to_string()));
-    }
-
-    #[test]
-    fn prefix_search_bottoms_out() {
-        let mut hist = FileBackedHistory::default();
-        hist.append("find me as well");
-        hist.append("test");
-        hist.append("find me");
-
-        hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
-        hist.back();
-        assert_eq!(hist.string_at_cursor(), Some("find me".to_string()));
-        hist.back();
-        assert_eq!(hist.string_at_cursor(), Some("find me as well".to_string()));
-        hist.back();
-        hist.back();
-        hist.back();
-        hist.back();
-        assert_eq!(hist.string_at_cursor(), Some("find me as well".to_string()));
-    }
-    #[test]
-    fn prefix_search_returns_to_none() {
-        let mut hist = FileBackedHistory::default();
-        hist.append("find me as well");
-        hist.append("test");
-        hist.append("find me");
-
-        hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
-        hist.back();
-        assert_eq!(hist.string_at_cursor(), Some("find me".to_string()));
-        hist.back();
-        assert_eq!(hist.string_at_cursor(), Some("find me as well".to_string()));
-        hist.forward();
-        assert_eq!(hist.string_at_cursor(), Some("find me".to_string()));
-        hist.forward();
-        assert_eq!(hist.string_at_cursor(), None);
-        hist.forward();
-        assert_eq!(hist.string_at_cursor(), None);
-    }
-
-    #[test]
-    fn prefix_search_ignores_consecutive_equivalent_entries_going_backwards() {
-        let mut hist = FileBackedHistory::default();
-        hist.append("find me as well");
-        hist.append("find me once");
-        hist.append("test");
-        hist.append("find me once");
-
-        hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
-        hist.back();
-        assert_eq!(hist.string_at_cursor(), Some("find me once".to_string()));
-        hist.back();
-        assert_eq!(hist.string_at_cursor(), Some("find me as well".to_string()));
-    }
-
-    #[test]
-    fn prefix_search_ignores_consecutive_equivalent_entries_going_forwards() {
-        let mut hist = FileBackedHistory::default();
-        hist.append("find me once");
-        hist.append("test");
-        hist.append("find me once");
-        hist.append("find me as well");
-
-        hist.set_navigation(HistoryNavigationQuery::PrefixSearch("find".to_string()));
-        hist.back();
-        hist.back();
-        assert_eq!(hist.string_at_cursor(), Some("find me once".to_string()));
-        hist.forward();
-        assert_eq!(hist.string_at_cursor(), Some("find me as well".to_string()));
-        hist.forward();
-        assert_eq!(hist.string_at_cursor(), None);
-    }
-
-    #[test]
-    fn substring_search_works() {
-        let mut hist = FileBackedHistory::default();
-        hist.append("substring");
-        hist.append("don't find me either");
-        hist.append("prefix substring");
-        hist.append("don't find me");
-        hist.append("prefix substring suffix");
-
-        hist.set_navigation(HistoryNavigationQuery::SubstringSearch(
-            "substring".to_string(),
-        ));
-        hist.back();
-        assert_eq!(
-            hist.string_at_cursor(),
-            Some("prefix substring suffix".to_string())
-        );
-        hist.back();
-        assert_eq!(
-            hist.string_at_cursor(),
-            Some("prefix substring".to_string())
-        );
-        hist.back();
-        assert_eq!(hist.string_at_cursor(), Some("substring".to_string()));
-    }
-
-    #[test]
-    fn substring_search_with_empty_value_returns_none() {
-        let mut hist = FileBackedHistory::default();
-        hist.append("substring");
-
-        hist.set_navigation(HistoryNavigationQuery::SubstringSearch("".to_string()));
-
-        assert_eq!(hist.string_at_cursor(), None);
-    }
-
-    #[test]
-    fn writes_to_new_file() {
-        use tempfile::tempdir;
-
-        let tmp = tempdir().unwrap();
-        // check that it also works for a path where the directory has not been created yet
-        let histfile = tmp.path().join("nested_path").join(".history");
-
-        let entries = vec!["test", "text", "more test text"];
-
-        {
-            let mut hist = FileBackedHistory::with_file(5, histfile.clone()).unwrap();
-
-            entries.iter().for_each(|e| hist.append(e));
-
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-        }
-
-        let reading_hist = FileBackedHistory::with_file(5, histfile).unwrap();
-
-        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
-        assert_eq!(entries, actual);
-
-        tmp.close().unwrap();
-    }
-
-    #[test]
-    fn persists_newlines_in_entries() {
-        use tempfile::tempdir;
-
-        let tmp = tempdir().unwrap();
-        let histfile = tmp.path().join(".history");
-
-        let entries = vec![
-            "test",
-            "multiline\nentry\nunix",
-            "multiline\r\nentry\r\nwindows",
-            "more test text",
-        ];
-
-        {
-            let mut writing_hist = FileBackedHistory::with_file(5, histfile.clone()).unwrap();
-
-            entries.iter().for_each(|e| writing_hist.append(e));
-
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-        }
-
-        let reading_hist = FileBackedHistory::with_file(5, histfile).unwrap();
-
-        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
-        assert_eq!(entries, actual);
-
-        tmp.close().unwrap();
-    }
-
-    #[test]
-    fn truncates_file_to_capacity() {
-        use tempfile::tempdir;
-
-        let tmp = tempdir().unwrap();
-        let histfile = tmp.path().join(".history");
-
-        let capacity = 5;
-        let initial_entries = vec!["test 1", "test 2"];
-        let appending_entries = vec!["test 3", "test 4"];
-        let expected_appended_entries = vec!["test 1", "test 2", "test 3", "test 4"];
-        let truncating_entries = vec!["test 5", "test 6", "test 7", "test 8"];
-        let expected_truncated_entries = vec!["test 4", "test 5", "test 6", "test 7", "test 8"];
-
-        {
-            let mut writing_hist =
-                FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
-
-            initial_entries.iter().for_each(|e| writing_hist.append(e));
-
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-        }
-
-        {
-            let mut appending_hist =
-                FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
-
-            appending_entries
-                .iter()
-                .for_each(|e| appending_hist.append(e));
-
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-            let actual: Vec<_> = appending_hist.iter_chronologic().collect();
-            assert_eq!(expected_appended_entries, actual);
-        }
-
-        {
-            let mut truncating_hist =
-                FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
-
-            truncating_entries
-                .iter()
-                .for_each(|e| truncating_hist.append(e));
-
-            let actual: Vec<_> = truncating_hist.iter_chronologic().collect();
-            assert_eq!(expected_truncated_entries, actual);
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-        }
-
-        let reading_hist = FileBackedHistory::with_file(capacity, histfile).unwrap();
-
-        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
-        assert_eq!(expected_truncated_entries, actual);
-
-        tmp.close().unwrap();
-    }
-
-    #[test]
-    fn truncates_too_large_file() {
-        use tempfile::tempdir;
-
-        let tmp = tempdir().unwrap();
-        let histfile = tmp.path().join(".history");
-
-        let overly_large_previous_entries = vec![
-            "test 1", "test 2", "test 3", "test 4", "test 5", "test 6", "test 7", "test 8",
-        ];
-        let expected_truncated_entries = vec!["test 4", "test 5", "test 6", "test 7", "test 8"];
-
-        {
-            let mut writing_hist = FileBackedHistory::with_file(10, histfile.clone()).unwrap();
-
-            overly_large_previous_entries
-                .iter()
-                .for_each(|e| writing_hist.append(e));
-
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-        }
-
-        {
-            let truncating_hist = FileBackedHistory::with_file(5, histfile.clone()).unwrap();
-
-            let actual: Vec<_> = truncating_hist.iter_chronologic().collect();
-            assert_eq!(expected_truncated_entries, actual);
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-        }
-
-        let reading_hist = FileBackedHistory::with_file(5, histfile).unwrap();
-
-        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
-        assert_eq!(expected_truncated_entries, actual);
-
-        tmp.close().unwrap();
-    }
-
-    #[test]
-    fn concurrent_histories_dont_erase_eachother() {
-        use tempfile::tempdir;
-
-        let tmp = tempdir().unwrap();
-        let histfile = tmp.path().join(".history");
-
-        let capacity = 7;
-        let initial_entries = vec!["test 1", "test 2", "test 3", "test 4", "test 5"];
-        let entries_a = vec!["A1", "A2", "A3"];
-        let entries_b = vec!["B1", "B2", "B3"];
-        let expected_entries = vec!["test 5", "B1", "B2", "B3", "A1", "A2", "A3"];
-
-        {
-            let mut writing_hist =
-                FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
-
-            initial_entries.iter().for_each(|e| writing_hist.append(e));
-
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-        }
-
-        {
-            let mut hist_a = FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
-
-            {
-                let mut hist_b = FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
-
-                entries_b.iter().for_each(|e| hist_b.append(e));
-
-                // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-            }
-            entries_a.iter().for_each(|e| hist_a.append(e));
-
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-        }
-
-        let reading_hist = FileBackedHistory::with_file(capacity, histfile).unwrap();
-
-        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
-        assert_eq!(expected_entries, actual);
-
-        tmp.close().unwrap();
-    }
-
-    #[test]
-    fn concurrent_histories_are_threadsafe() {
-        use tempfile::tempdir;
-
-        let tmp = tempdir().unwrap();
-        let histfile = tmp.path().join(".history");
-
-        let num_threads = 16;
-        let capacity = 2 * num_threads + 1;
-
-        let initial_entries = (0..capacity).map(|i| format!("initial {i}"));
-
-        {
-            let mut writing_hist =
-                FileBackedHistory::with_file(capacity, histfile.clone()).unwrap();
-
-            initial_entries.for_each(|e| writing_hist.append(&e));
-
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-        }
-
-        let threads = (0..num_threads)
-            .map(|i| {
-                let cap = capacity;
-                let hfile = histfile.clone();
-                std::thread::spawn(move || {
-                    let mut hist = FileBackedHistory::with_file(cap, hfile).unwrap();
-                    hist.append(&format!("A{}", i));
-                    hist.sync().unwrap();
-                    hist.append(&format!("B{}", i));
-                })
-            })
-            .collect::<Vec<_>>();
-
-        for t in threads {
-            t.join().unwrap();
-        }
-
-        let reading_hist = FileBackedHistory::with_file(capacity, histfile).unwrap();
-
-        let actual: Vec<_> = reading_hist.iter_chronologic().collect();
-
-        assert!(
-            actual.contains(&&format!("initial {}", capacity - 1)),
-            "Overwrote entry from before threading test"
-        );
-
-        for i in 0..num_threads {
-            assert!(actual.contains(&&format!("A{}", i)),);
-            assert!(actual.contains(&&format!("B{}", i)),);
-        }
-
-        tmp.close().unwrap();
-    }
-}
-*/

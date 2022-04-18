@@ -1,6 +1,8 @@
 use chrono::Utc;
 use reedline::{DefaultValidator, ReedlineMenu};
 use std::time::{Instant};
+#[cfg(not(feature = "sqlite"))]
+use reedline::FileBackedHistory;
 
 use {
     crossterm::{
@@ -121,6 +123,8 @@ fn main() -> Result<()> {
 
     let prompt = DefaultPrompt::new();
 
+    #[cfg(feature = "sqlite")]
+    let session_id = line_editor.history_mut().new_session_id().expect("todo: error handling");
     loop {
         let sig = line_editor.read_line(&prompt);
 
@@ -130,13 +134,17 @@ fn main() -> Result<()> {
             }
             Ok(Signal::Success(buffer)) => {
                 let start = Instant::now();
-                // save timestamp to history
+                // save timestamp, cwd, hostname to history
+                #[cfg(feature = "sqlite")]
                 line_editor
                     .update_last_command_context(&|mut c: HistoryItem| {
                         c.start_timestamp = Some(Utc::now());
+                        c.hostname = Some(gethostname::gethostname().to_string_lossy().to_string());
+                        c.cwd = std::env::current_dir().ok().map(|e| e.to_string_lossy().to_string());
+                        c.session_id = Some(session_id);
                         c
                     })
-                    .expect("todo: handle error");
+                    .expect("todo: error handling");
                 if (buffer.trim() == "exit") || (buffer.trim() == "logout") {
                     break;
                 }
@@ -149,12 +157,14 @@ fn main() -> Result<()> {
                     continue;
                 }
                 println!("Our buffer: {}", buffer);
+                #[cfg(feature = "sqlite")]
                 line_editor
                     .update_last_command_context(&|mut c| {
                         c.duration = Some(start.elapsed());
+                        c.exit_status = Some(0);
                         c
                     })
-                    .expect("todo: handle error");
+                    .expect("todo: error handling");
             }
             Ok(Signal::CtrlC) => {
                 // Prompt has been cleared and should start on the next line

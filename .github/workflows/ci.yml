@@ -27,7 +27,12 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --all 
+          args: --workspace 
+      
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --workspace --features sqlite
 
       - uses: actions-rs/cargo@v1
         with:

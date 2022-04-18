@@ -356,6 +356,10 @@ impl Reedline {
     pub fn history(&self) -> &dyn History {
         &*self.history
     }
+    /// Read-write view of the history
+    pub fn history_mut(&mut self) -> &mut dyn History {
+        &mut *self.history
+    }
 
     /// Update the underlying [`History`] to/from disk
     pub fn sync_history(&mut self) -> std::io::Result<()> {
@@ -784,7 +788,7 @@ impl Reedline {
                         self.hide_hints = true;
                         // Additional repaint to show the content without hints etc.
                         self.repaint(prompt)?;
-                        let entry = HistoryItem::from_command_line(self.editor.get_buffer().to_string());
+                        let entry = HistoryItem::from_command_line(self.editor.get_buffer());
                         let entry = self.history.save(entry).expect("todo: error handling");
                         self.history_last_run_id = entry.id;
                         self.run_edit_commands(&[EditCommand::Clear]);
