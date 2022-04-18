@@ -6,7 +6,7 @@ use super::{
     History, HistoryItem, HistoryItemId, Result,
 };
 
-use std::{path::PathBuf, time::Duration, collections::HashMap};
+use std::{path::PathBuf, time::Duration};
 
 /// A history that stores the values to an SQLite database.
 /// In addition to storing the command, the history can store an additional arbitrary HistoryEntryContext,
@@ -47,6 +47,15 @@ impl History for SqliteBackedHistory {
                 "insert into history
                                (id,  start_timestamp,  command_line,  session_id,  hostname,  cwd,  duration_ms,  exit_status,  more_info)
                         values (:id, :start_timestamp, :command_line, :session_id, :hostname, :cwd, :duration_ms, :exit_status, :more_info)
+                    on conflict (history.id) do update set
+                        start_timestamp = excluded.start_timestamp,
+                        command_line = excluded.command_line,
+                        session_id = excluded.session_id,
+                        hostname = excluded.hostname,
+                        cwd = excluded.cwd,
+                        duration_ms = excluded.duration_ms,
+                        exit_status = excluded.exit_status,
+                        more_info = excluded.more_info
                     returning id",
             )
             .map_err(|e|e.to_string())?
@@ -229,6 +238,8 @@ fn map_sqlite_err(err: rusqlite::Error) -> String {
     format!("{:?}", err)
 }
 
+type BoxedNamedParams<'a> = Vec<(&'static str, Box<dyn ToSql + 'a>)>;
+
 impl SqliteBackedHistory {
     /// Creates a new history with an associated history file.
     ///
@@ -260,7 +271,7 @@ impl SqliteBackedHistory {
         db.execute(
             "
         create table if not exists history (
-            id integer primary key on conflict replace autoincrement,
+            id integer primary key autoincrement,
             command_line text not null,
             start_timestamp integer,
             session_id integer,
@@ -286,14 +297,14 @@ impl SqliteBackedHistory {
         &self,
         query: &'a SearchQuery,
         select_expression: &str,
-    ) -> (String, Vec<(&'static str, Box<dyn ToSql + 'a>)>) {
+    ) -> (String, BoxedNamedParams<'a>) {
         // todo: this whole function could be done with less allocs
         let (is_asc, asc) = match query.direction {
             SearchDirection::Forward => (true, "asc"),
             SearchDirection::Backward => (false, "desc"),
         };
         let mut wheres: Vec<&str> = vec![];
-        let mut params: Vec<(&str, Box<dyn ToSql>)> = vec![];
+        let mut params: BoxedNamedParams = vec![];
         if let Some(start) = query.start_time {
             wheres.push(if is_asc {
                 "timestamp_start > :start_time"
@@ -329,15 +340,14 @@ impl SqliteBackedHistory {
         let limit = match query.limit {
             Some(l) => {
                 params.push((":limit", Box::new(l)));
-                format!("limit :limit")
+                "limit :limit"
             }
-            None => format!(""),
+            None => "",
         };
-
         if let Some(command_line) = &query.filter.command_line {
             // todo: escape %
             let command_line_like = match command_line {
-                CommandLineSearch::Exact(e) => format!("{e}"),
+                CommandLineSearch::Exact(e) => e.to_string(),
                 CommandLineSearch::Prefix(prefix) => format!("{prefix}%"),
                 CommandLineSearch::Substring(cont) => format!("%{cont}%"),
             };
@@ -384,6 +394,6 @@ impl SqliteBackedHistory {
     }
 }
 
-fn debug_print_query<'a>(query: &'a str, params: &'a [(&str, Box<dyn ToSql + 'a>)]) {
-    // eprintln!("SQL: {}; -- {:?}", query, params.iter().map(|(k, e)| (k, e.to_sql().unwrap())).collect::<HashMap<_, _>>());
+fn debug_print_query<'a>(_query: &'a str, _params: &'a [(&str, Box<dyn ToSql + 'a>)]) {
+    // eprintln!("SQL: {}; -- {:?}", query, params.iter().map(|(k, e)| (k, e.to_sql().unwrap())).collect::<std::collections::HashMap<_, _>>());
 }

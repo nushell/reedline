@@ -133,7 +133,7 @@ pub struct SearchQuery {
 impl SearchQuery {
     /// all that contain string in reverse chronological order
     pub fn all_that_contain_rev(contains: String) -> SearchQuery {
-        return SearchQuery {
+        SearchQuery {
             direction: SearchDirection::Backward,
             start_time: None,
             end_time: None,
@@ -141,10 +141,10 @@ impl SearchQuery {
             end_id: None,
             limit: None,
             filter: SearchFilter::from_text_search(CommandLineSearch::Substring(contains)),
-        };
+        }
     }
     pub fn last_with_search(filter: SearchFilter) -> SearchQuery {
-        return SearchQuery {
+        SearchQuery {
             direction: SearchDirection::Backward,
             start_time: None,
             end_time: None,
@@ -152,7 +152,7 @@ impl SearchQuery {
             end_id: None,
             limit: Some(1),
             filter,
-        };
+        }
     }
     pub fn last_with_prefix(prefix: String) -> SearchQuery {
         SearchQuery::last_with_search(SearchFilter::from_text_search(CommandLineSearch::Prefix(
@@ -253,6 +253,27 @@ mod test {
         history.save(create_item(1, "/etc/nginx", "vim htpasswd", 0))?; // 11
         history.save(create_item(1, "/etc/nginx", "cat nginx.conf", 0))?; // 12
         Ok(Box::new(history))
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn update_item() -> Result<()> {
+        let mut history = create_filled_example_history()?;
+        let id = HistoryItemId::new(2);
+        let before = history.load(id)?;
+        history.update(id, &|mut e| {
+            e.exit_status = Some(1);
+            e
+        })?;
+        let after = history.load(id)?;
+        assert_eq!(
+            after,
+            HistoryItem {
+                exit_status: Some(1),
+                ..before
+            }
+        );
+        Ok(())
     }
 
     fn search_returned(

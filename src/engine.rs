@@ -575,14 +575,20 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
-                self.history_cursor.back(self.history.as_ref()).expect("todo: error handling");
+                self.history_cursor
+                    .back(self.history.as_ref())
+                    .expect("todo: error handling");
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::NextHistory | ReedlineEvent::Down => {
-                self.history_cursor.forward(self.history.as_ref()).expect("todo: error handling");
+                self.history_cursor
+                    .forward(self.history.as_ref())
+                    .expect("todo: error handling");
                 // Hacky way to ensure that we don't fall of into failed search going forward
                 if self.history_cursor.string_at_cursor().is_none() {
-                    self.history_cursor.back(self.history.as_ref()).expect("todo: error handling");
+                    self.history_cursor
+                        .back(self.history.as_ref())
+                        .expect("todo: error handling");
                 }
                 Ok(EventStatus::Handled)
             }
@@ -994,7 +1000,9 @@ impl Reedline {
                             HistoryNavigationQuery::SubstringSearch(String::from(*c)),
                         );
                     }
-                    self.history_cursor.back(self.history.as_mut()).expect("todo: error handling");
+                    self.history_cursor
+                        .back(self.history.as_mut())
+                        .expect("todo: error handling");
                 }
                 EditCommand::Backspace => {
                     let navigation = self.history_cursor.get_navigation();
@@ -1005,7 +1013,9 @@ impl Reedline {
                         self.history_cursor = HistoryCursor::new(
                             HistoryNavigationQuery::SubstringSearch(new_substring.to_string()),
                         );
-                        self.history_cursor.back(self.history.as_mut()).expect("todo: error handling");
+                        self.history_cursor
+                            .back(self.history.as_mut())
+                            .expect("todo: error handling");
                     }
                 }
                 _ => {

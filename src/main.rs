@@ -1,8 +1,7 @@
-use chrono::Utc;
-use reedline::{DefaultValidator, ReedlineMenu};
-use std::time::{Instant};
+
 #[cfg(not(feature = "sqlite"))]
 use reedline::FileBackedHistory;
+use reedline::{DefaultValidator, ReedlineMenu};
 
 use {
     crossterm::{
@@ -15,8 +14,8 @@ use {
         get_reedline_default_keybindings, get_reedline_edit_commands,
         get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
         get_reedline_reedline_events, ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt,
-        EditMode, Emacs, ExampleHighlighter, HistoryItem, Keybindings, ListMenu,
-        Reedline, ReedlineEvent, Signal, Vi,
+        EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline,
+        ReedlineEvent, Signal, Vi,
     },
     std::{
         io::{stdout, Write},
@@ -124,7 +123,10 @@ fn main() -> Result<()> {
     let prompt = DefaultPrompt::new();
 
     #[cfg(feature = "sqlite")]
-    let session_id = line_editor.history_mut().new_session_id().expect("todo: error handling");
+    let session_id = line_editor
+        .history_mut()
+        .new_session_id()
+        .expect("todo: error handling");
     loop {
         let sig = line_editor.read_line(&prompt);
 
@@ -133,14 +135,17 @@ fn main() -> Result<()> {
                 break;
             }
             Ok(Signal::Success(buffer)) => {
-                let start = Instant::now();
+                #[cfg(feature = "sqlite")]
+                let start = std::time::Instant::now();
                 // save timestamp, cwd, hostname to history
                 #[cfg(feature = "sqlite")]
                 line_editor
-                    .update_last_command_context(&|mut c: HistoryItem| {
-                        c.start_timestamp = Some(Utc::now());
+                    .update_last_command_context(&|mut c: reedline::HistoryItem| {
+                        c.start_timestamp = Some(chrono::Utc::now());
                         c.hostname = Some(gethostname::gethostname().to_string_lossy().to_string());
-                        c.cwd = std::env::current_dir().ok().map(|e| e.to_string_lossy().to_string());
+                        c.cwd = std::env::current_dir()
+                            .ok()
+                            .map(|e| e.to_string_lossy().to_string());
                         c.session_id = Some(session_id);
                         c
                     })
