@@ -79,6 +79,10 @@ where
             let _ = input.next();
             Some(Command::DeleteToEnd)
         }
+        Some('I') => {
+            let _ = input.next();
+            Some(Command::PrependToStart)
+        }
         Some('A') => {
             let _ = input.next();
             Some(Command::AppendToEnd)
@@ -135,6 +139,7 @@ pub enum Command {
     Undo,
     DeleteToEnd,
     AppendToEnd,
+    PrependToStart,
     Change,
     MoveRightUntil(char),
     MoveRightBefore(char),
@@ -160,7 +165,8 @@ impl Command {
             Self::PasteBefore => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferBefore)],
             Self::Undo => vec![ReedlineOption::Edit(EditCommand::Undo)],
             Self::DeleteToEnd => vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)],
-            Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToEnd)],
+            Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
+            Self::PrependToStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
             Self::MoveRightUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveRightUntil(*c))],
             Self::MoveRightBefore(c) => {
                 vec![ReedlineOption::Edit(EditCommand::MoveRightBefore(*c))]
