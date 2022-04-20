@@ -9,6 +9,11 @@ jobs:
       matrix:
         rust:
           - stable
+        features:
+          - ""
+          - sqlite
+          - bashisms
+          - bashisms,sqlite
 
     steps:
       - uses: actions/checkout@v2
@@ -22,17 +27,11 @@ jobs:
 
       - uses: actions-rs/cargo@v1
         with:
-          command: build
-
+          command: build --features ${{ matrix.features }}
       - uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --workspace 
-      
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --workspace --features sqlite
+          args: --workspace --features ${{ matrix.features }}
 
       - uses: actions-rs/cargo@v1
         with:
@@ -42,9 +41,4 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: -- -D warnings
-
-      - uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --features sqlite -- -D warnings
+          args: --features ${{ matrix.features }} -- -D warnings
