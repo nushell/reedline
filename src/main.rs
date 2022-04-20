@@ -124,7 +124,7 @@ fn main() -> Result<()> {
                     break;
                 }
                 if buffer.trim() == "clear" {
-                    line_editor.clear_screen()?;
+                    line_editor.clear_scrollback()?;
                     continue;
                 }
                 if buffer.trim() == "history" {
@@ -135,9 +135,6 @@ fn main() -> Result<()> {
             }
             Ok(Signal::CtrlC) => {
                 // Prompt has been cleared and should start on the next line
-            }
-            Ok(Signal::CtrlL) => {
-                line_editor.clear_screen()?;
             }
             Err(err) => {
                 println!("Error: {:?}", err);
