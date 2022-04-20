@@ -231,7 +231,8 @@ impl History for FileBackedHistory {
         Ok(())
     }
 
-    fn new_session_id(&mut self) -> Result<HistorySessionId> {
+    fn next_session_id(&mut self) -> Result<HistorySessionId> {
+        // doesn't support separating out different sessions
         Ok(HistorySessionId::new(0))
     }
 }

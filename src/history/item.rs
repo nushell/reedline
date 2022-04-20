@@ -21,27 +21,27 @@ impl HistorySessionId {
 pub trait HistoryItemExtraInfo: Serialize + DeserializeOwned + Default + Send {}
 #[derive(Default, Debug, PartialEq, Eq)]
 /// something that is serialized as null and deserialized by ignoring everything
-pub struct Anything;
-impl Serialize for Anything {
+pub struct IgnoreAllExtraInfo;
+impl Serialize for IgnoreAllExtraInfo {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        Option::<Anything>::None.serialize(serializer)
+        Option::<IgnoreAllExtraInfo>::None.serialize(serializer)
     }
 }
-impl<'de> Deserialize<'de> for Anything {
+impl<'de> Deserialize<'de> for IgnoreAllExtraInfo {
     fn deserialize<D>(d: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        serde::de::IgnoredAny::deserialize(d).map(|_| Anything)
+        serde::de::IgnoredAny::deserialize(d).map(|_| IgnoreAllExtraInfo)
     }
 }
-impl HistoryItemExtraInfo for Anything {}
+impl HistoryItemExtraInfo for IgnoreAllExtraInfo {}
 /// Represents one run command with some optional additional context
 #[derive(Clone, Debug, PartialEq)]
-pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = Anything> {
+pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
     /// primary key, unique across one history
     pub id: Option<HistoryItemId>,
     /// date-time when this command was started

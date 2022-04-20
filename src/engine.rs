@@ -1,3 +1,5 @@
+#[cfg(feature = "bashisms")]
+use crate::menu_functions::{parse_selection_char, ParseAction};
 use {
     crate::{
         completion::{CircularCompletionHandler, Completer, DefaultCompleter},
@@ -6,12 +8,15 @@ use {
         enums::{EventStatus, ReedlineEvent},
         highlighter::SimpleMatchHighlighter,
         hinter::Hinter,
-        history::{FileBackedHistory, HistoryNavigationQuery},
+        history::{
+            FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
+            HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
+        },
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         utils::text_manipulation,
-        EditCommand, ExampleHighlighter, Highlighter, Prompt, PromptHistorySearch, Signal,
-        ValidationResult, Validator,
+        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
+        PromptHistorySearch, ReedlineMenu, Signal, ValidationResult, Validator,
     },
     crossterm::{
         event,
@@ -19,13 +24,6 @@ use {
         terminal, Result,
     },
     std::{borrow::Borrow, io, time::Duration},
-};
-
-#[cfg(feature = "bashisms")]
-use crate::menu_functions::{parse_selection_char, ParseAction};
-use crate::{
-    history::{History, HistoryCursor, HistoryItem, HistoryItemId, SearchDirection, SearchQuery},
-    LineBuffer, Menu, MenuEvent, ReedlineMenu,
 };
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for
@@ -83,6 +81,7 @@ pub struct Reedline {
     // History
     history: Box<dyn History>,
     history_cursor: HistoryCursor,
+    history_session_id: Option<HistorySessionId>, // none if history doesn't support this
     history_last_run_id: Option<HistoryItemId>,
     input_mode: InputMode,
 
@@ -146,6 +145,7 @@ impl Reedline {
             history_cursor: HistoryCursor::new(HistoryNavigationQuery::Normal(
                 LineBuffer::default(),
             )),
+            history_session_id: None,
             history_last_run_id: None,
             input_mode: InputMode::Regular,
             painter,
@@ -355,10 +355,6 @@ impl Reedline {
     /// Read-only view of the history
     pub fn history(&self) -> &dyn History {
         &*self.history
-    }
-    /// Read-write view of the history
-    pub fn history_mut(&mut self) -> &mut dyn History {
-        &mut *self.history
     }
 
     /// Update the underlying [`History`] to/from disk
@@ -794,7 +790,15 @@ impl Reedline {
                         self.hide_hints = true;
                         // Additional repaint to show the content without hints etc.
                         self.repaint(prompt)?;
-                        let entry = HistoryItem::from_command_line(self.editor.get_buffer());
+                        let mut entry = HistoryItem::from_command_line(self.editor.get_buffer());
+                        // todo: in theory there's a race condition here because another shell might get the next session id at the same time
+                        entry.session_id = Some(
+                            self.history_session_id
+                                .get_or_insert_with(|| {
+                                    self.history.next_session_id().expect("todo: error handling")
+                                })
+                                .clone(),
+                        );
                         let entry = self.history.save(entry).expect("todo: error handling");
                         self.history_last_run_id = entry.id;
                         self.run_edit_commands(&[EditCommand::Clear]);

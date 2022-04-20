@@ -22,10 +22,6 @@ use {
     },
 };
 
-#[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone)]
-struct TestContext {
-    timestamp: u64,
-}
 fn main() -> Result<()> {
     // quick command like parameter handling
     let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
@@ -121,11 +117,6 @@ fn main() -> Result<()> {
 
     let prompt = DefaultPrompt::new();
 
-    #[cfg(feature = "sqlite")]
-    let session_id = line_editor
-        .history_mut()
-        .new_session_id()
-        .expect("todo: error handling");
     loop {
         let sig = line_editor.read_line(&prompt);
 
@@ -145,7 +136,6 @@ fn main() -> Result<()> {
                         c.cwd = std::env::current_dir()
                             .ok()
                             .map(|e| e.to_string_lossy().to_string());
-                        c.session_id = Some(session_id);
                         c
                     })
                     .expect("todo: error handling");

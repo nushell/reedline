@@ -101,7 +101,6 @@ impl History for SqliteBackedHistory {
 
     fn count(&self, query: SearchQuery) -> Result<i64> {
         let (query, params) = self.construct_query(&query, "coalesce(count(*), 0)");
-        debug_print_query(&query, &params);
         let params_borrow: Vec<(&str, &dyn ToSql)> = params.iter().map(|e| (e.0, &*e.1)).collect();
         let result: i64 = self
             .db
@@ -114,7 +113,6 @@ impl History for SqliteBackedHistory {
 
     fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>> {
         let (query, params) = self.construct_query(&query, "*");
-        debug_print_query(&query, &params);
         let params_borrow: Vec<(&str, &dyn ToSql)> = params.iter().map(|e| (e.0, &*e.1)).collect();
         let results: Vec<HistoryItem> = self
             .db
@@ -163,7 +161,7 @@ impl History for SqliteBackedHistory {
         Ok(())
     }
 
-    fn new_session_id(&mut self) -> Result<HistorySessionId> {
+    fn next_session_id(&mut self) -> Result<HistorySessionId> {
         Ok(HistorySessionId::new(
             self.db
                 .query_row(
@@ -403,8 +401,4 @@ impl SqliteBackedHistory {
         // aprintln!("query={query}");
         (query, params)
     }
-}
-
-fn debug_print_query<'a>(_query: &'a str, _params: &'a [(&str, Box<dyn ToSql + 'a>)]) {
-    // eprintln!("SQL: {}; -- {:?}", query, params.iter().map(|(k, e)| (k, e.to_sql().unwrap())).collect::<std::collections::HashMap<_, _>>());
 }

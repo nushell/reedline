@@ -123,6 +123,17 @@ mod tests {
         )
     }
 
+    fn get_all_entry_texts(hist: &dyn History) -> Vec<String> {
+        let res = hist.search(SearchQuery::everything(SearchDirection::Forward)).unwrap();
+        let actual: Vec<_> = res.iter().map(|e| e.command_line.to_string()).collect();
+        actual
+    }
+    fn add_text_entries(hist: &mut dyn History, entries: &[impl AsRef<str>]) {
+        entries.iter().for_each(|e| {
+            hist.save(HistoryItem::from_command_line(e.as_ref())).unwrap();
+        });
+    }
+
     #[test]
     fn accessing_empty_history_returns_nothing() -> Result<()> {
         let (_hist, cursor) = create_history();
@@ -186,7 +197,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "sqlite"))]
     #[test]
     fn appends_no_empties() -> Result<()> {
         let (mut hist, _) = create_history();
@@ -365,244 +375,219 @@ mod tests {
         {
             let (mut hist, _) = create_history_at(5, &histfile);
 
-            entries.iter().for_each(|e| {
-                hist.save(HistoryItem::from_command_line(*e)).unwrap();
-            });
-
+            add_text_entries(hist.as_mut(), &entries);
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
         let (reading_hist, _) = create_history_at(5, &histfile);
-        let res = reading_hist.search(SearchQuery::everything(SearchDirection::Forward))?;
-        let actual: Vec<_> = res.iter().map(|e| &e.command_line).collect();
+        let actual = get_all_entry_texts(reading_hist.as_ref());
         assert_eq!(entries, actual);
 
         tmp.close().unwrap();
         Ok(())
     }
-    /*
-       #[test]
-       fn persists_newlines_in_entries() -> Result<()> {
-           use tempfile::tempdir;
 
-           let tmp = tempdir()?;
-           let histfile = tmp.path().join(".history");
+    #[test]
+    fn persists_newlines_in_entries() -> Result<()> {
+        use tempfile::tempdir;
 
-           let entries = vec![
-               "test",
-               "multiline\nentry\nunix",
-               "multiline\r\nentry\r\nwindows",
-               "more test text",
-           ];
+        let tmp = tempdir().unwrap();
+        let histfile = tmp.path().join(".history");
 
-           {
-           let (mut hist, mut cursor) = create_history();
+        let entries = vec![
+            "test",
+            "multiline\nentry\nunix",
+            "multiline\r\nentry\r\nwindows",
+            "more test text",
+        ];
 
-               entries.iter().for_each(|e| writing_hist.save(HistoryItem::from_command_line(e)))?;
+        {
+            let (mut writing_hist, _) = create_history_at(5, &histfile);
+            add_text_entries(writing_hist.as_mut(), &entries);
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
 
-               // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-           }
+        let (reading_hist, _) = create_history_at(5, &histfile);
 
-           let (mut hist, mut cursor) = create_history();
+        let actual: Vec<_> = get_all_entry_texts(reading_hist.as_ref());
+        assert_eq!(entries, actual);
 
-           let actual: Vec<_> = reading_hist.iter_chronologic().collect();
-           assert_eq!(entries, actual);
+        tmp.close().unwrap();
+        Ok(())
+    }
 
-           tmp.close()?;
-     Ok(())  }
+    #[cfg(not(feature = "sqlite"))]
+    #[test]
+    fn truncates_file_to_capacity() -> Result<()> {
+        use tempfile::tempdir;
 
-       #[test]
-       fn truncates_file_to_capacity() -> Result<()> {
-           use tempfile::tempdir;
+        let tmp = tempdir().unwrap();
+        let histfile = tmp.path().join(".history");
 
-           let tmp = tempdir()?;
-           let histfile = tmp.path().join(".history");
+        let capacity = 5;
+        let initial_entries = vec!["test 1", "test 2"];
+        let appending_entries = vec!["test 3", "test 4"];
+        let expected_appended_entries = vec!["test 1", "test 2", "test 3", "test 4"];
+        let truncating_entries = vec!["test 5", "test 6", "test 7", "test 8"];
+        let expected_truncated_entries = vec!["test 4", "test 5", "test 6", "test 7", "test 8"];
 
-           let capacity = 5;
-           let initial_entries = vec!["test 1", "test 2"];
-           let appending_entries = vec!["test 3", "test 4"];
-           let expected_appended_entries = vec!["test 1", "test 2", "test 3", "test 4"];
-           let truncating_entries = vec!["test 5", "test 6", "test 7", "test 8"];
-           let expected_truncated_entries = vec!["test 4", "test 5", "test 6", "test 7", "test 8"];
+        {
+            let (mut writing_hist, _) = create_history_at(capacity, &histfile);
+            add_text_entries(writing_hist.as_mut(), &initial_entries);
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
 
-           {
-               let mut writing_hist =
-                   FileBackedHistory::with_file(capacity, histfile.clone())?;
+        {
+            let  (mut appending_hist, _) = create_history_at(capacity, &histfile);
+            add_text_entries(appending_hist.as_mut(), &appending_entries);
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+            let actual: Vec<_> = get_all_entry_texts(appending_hist.as_ref());
+            assert_eq!(expected_appended_entries, actual);
+        }
 
-               initial_entries.iter().for_each(|e| writing_hist.save(HistoryItem::from_command_line(e)))?;
+        {
+            let (mut truncating_hist, _) = create_history_at(capacity, &histfile);
+            add_text_entries(truncating_hist.as_mut(), &truncating_entries);
+            let actual: Vec<_> = get_all_entry_texts(truncating_hist.as_ref());
+            assert_eq!(expected_truncated_entries, actual);
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
 
-               // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-           }
+        let (reading_hist, _) = create_history();
 
-           {
-               let mut appending_hist =
-                   FileBackedHistory::with_file(capacity, histfile.clone())?;
+        let actual: Vec<_> = get_all_entry_texts(reading_hist.as_ref());
+        assert_eq!(expected_truncated_entries, actual);
 
-               appending_entries
-                   .iter()
-                   .for_each(|e| appending_hist.save(HistoryItem::from_command_line(e)))?;
+        tmp.close().unwrap();
+        Ok(())
+    }
 
-               // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-               let actual: Vec<_> = appending_hist.iter_chronologic().collect();
-               assert_eq!(expected_appended_entries, actual);
-           }
+    #[test]
+    fn truncates_too_large_file() -> Result<()> {
+        use tempfile::tempdir;
 
-           {
-               let mut truncating_hist =
-                   FileBackedHistory::with_file(capacity, histfile.clone())?;
+        let tmp = tempdir().unwrap();
+        let histfile = tmp.path().join(".history");
 
-               truncating_entries
-                   .iter()
-                   .for_each(|e| truncating_hist.save(HistoryItem::from_command_line(e)))?;
+        let overly_large_previous_entries = vec![
+            "test 1", "test 2", "test 3", "test 4", "test 5", "test 6", "test 7", "test 8",
+        ];
+        let expected_truncated_entries = vec!["test 4", "test 5", "test 6", "test 7", "test 8"];
 
-               let actual: Vec<_> = truncating_hist.iter_chronologic().collect();
-               assert_eq!(expected_truncated_entries, actual);
-               // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-           }
+        {
+            let (mut writing_hist, _) = create_history_at(10, &histfile);
+            add_text_entries(writing_hist.as_mut(), &overly_large_previous_entries);
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
 
-           let (mut hist, mut cursor) = create_history();
+        {
+            let (truncating_hist, _) = create_history();
 
-           let actual: Vec<_> = reading_hist.iter_chronologic().collect();
-           assert_eq!(expected_truncated_entries, actual);
+            let actual: Vec<_> = get_all_entry_texts(truncating_hist.as_ref());
+            assert_eq!(expected_truncated_entries, actual);
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
 
-           tmp.close()?;
-    Ok(())   }
+        let (reading_hist, _) = create_history();
 
-       #[test]
-       fn truncates_too_large_file() -> Result<()> {
-           use tempfile::tempdir;
+        let actual: Vec<_> = get_all_entry_texts(reading_hist.as_ref());
+        assert_eq!(expected_truncated_entries, actual);
 
-           let tmp = tempdir()?;
-           let histfile = tmp.path().join(".history");
+        tmp.close().unwrap();
+        Ok(())
+    }
 
-           let overly_large_previous_entries = vec![
-               "test 1", "test 2", "test 3", "test 4", "test 5", "test 6", "test 7", "test 8",
-           ];
-           let expected_truncated_entries = vec!["test 4", "test 5", "test 6", "test 7", "test 8"];
+    #[test]
+    fn concurrent_histories_dont_erase_eachother() -> Result<()> {
+        use tempfile::tempdir;
 
-           {
-           let (mut hist, mut cursor) = create_history();
+        let tmp = tempdir().unwrap();
+        let histfile = tmp.path().join(".history");
 
-               overly_large_previous_entries
-                   .iter()
-                   .for_each(|e| writing_hist.save(HistoryItem::from_command_line(e)))?;
+        let capacity = 7;
+        let initial_entries = vec!["test 1", "test 2", "test 3", "test 4", "test 5"];
+        let entries_a = vec!["A1", "A2", "A3"];
+        let entries_b = vec!["B1", "B2", "B3"];
+        let expected_entries = vec!["test 5", "B1", "B2", "B3", "A1", "A2", "A3"];
 
-               // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-           }
+        {
+            let (mut writing_hist, _) = create_history_at(capacity, &histfile);
+            add_text_entries(writing_hist.as_mut(), &initial_entries);
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
 
-           {
-           let (mut hist, mut cursor) = create_history();
+        {
+            let (mut hist_a, _) = create_history_at(capacity, &histfile);
 
-               let actual: Vec<_> = truncating_hist.iter_chronologic().collect();
-               assert_eq!(expected_truncated_entries, actual);
-               // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-           }
+            {
+                let (mut hist_b, _) = create_history_at(capacity, &histfile);
 
-           let (mut hist, mut cursor) = create_history();
+                add_text_entries(hist_b.as_mut(), &entries_b);
+                // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+            }
+            add_text_entries(hist_a.as_mut(), &entries_a);
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
 
-           let actual: Vec<_> = reading_hist.iter_chronologic().collect();
-           assert_eq!(expected_truncated_entries, actual);
+        let (reading_hist, _) = create_history_at(capacity, &histfile);
 
-           tmp.close()?;
-    Ok(())   }
+        let actual: Vec<_> = get_all_entry_texts(reading_hist.as_ref());
+        assert_eq!(expected_entries, actual);
 
-       #[test]
-       fn concurrent_histories_dont_erase_eachother() -> Result<()> {
-           use tempfile::tempdir;
+        tmp.close().unwrap();
+        Ok(())
+    }
 
-           let tmp = tempdir()?;
-           let histfile = tmp.path().join(".history");
+    #[test]
+    fn concurrent_histories_are_threadsafe() -> Result<()> {
+        use tempfile::tempdir;
 
-           let capacity = 7;
-           let initial_entries = vec!["test 1", "test 2", "test 3", "test 4", "test 5"];
-           let entries_a = vec!["A1", "A2", "A3"];
-           let entries_b = vec!["B1", "B2", "B3"];
-           let expected_entries = vec!["test 5", "B1", "B2", "B3", "A1", "A2", "A3"];
+        let tmp = tempdir().unwrap();
+        let histfile = tmp.path().join(".history");
 
-           {
-               let mut writing_hist =
-                   FileBackedHistory::with_file(capacity, histfile.clone())?;
+        let num_threads = 16;
+        let capacity = 2 * num_threads + 1;
 
-               initial_entries.iter().for_each(|e| writing_hist.save(HistoryItem::from_command_line(e)))?;
+        let initial_entries: Vec<_> = (0..capacity).map(|i| format!("initial {i}")).collect();
 
-               // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-           }
+        {
+            let (mut writing_hist, _) = create_history_at(capacity, &histfile);
+            add_text_entries(writing_hist.as_mut(), &initial_entries);
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+        }
 
-           {
-           let (mut hist, mut cursor) = create_history();
+        let threads = (0..num_threads)
+            .map(|i| {
+                let cap = capacity;
+                let hfile = histfile.clone();
+                std::thread::spawn(move || {
+                    let (mut hist, _) = create_history_at(cap, &hfile);
+                    hist.save(HistoryItem::from_command_line(&format!("A{}", i))).unwrap();
+                    hist.sync().unwrap();
+                    hist.save(HistoryItem::from_command_line(&format!("B{}", i))).unwrap();
+                })
+            })
+            .collect::<Vec<_>>();
 
-               {
-           let (mut hist, mut cursor) = create_history();
+        for t in threads {
+            t.join().unwrap();
+        }
 
-                   entries_b.iter().for_each(|e| hist_b.append(e));
+        let (reading_hist, _) = create_history();
 
-                   // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-               }
-               entries_a.iter().for_each(|e| hist_a.append(e));
+        let actual: Vec<_> = get_all_entry_texts(reading_hist.as_ref());
 
-               // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-           }
+        assert!(
+            actual.contains(&&format!("initial {}", capacity - 1)),
+            "Overwrote entry from before threading test"
+        );
 
-           let (mut hist, mut cursor) = create_history();
+        for i in 0..num_threads {
+            assert!(actual.contains(&&format!("A{}", i)),);
+            assert!(actual.contains(&&format!("B{}", i)),);
+        }
 
-           let actual: Vec<_> = reading_hist.iter_chronologic().collect();
-           assert_eq!(expected_entries, actual);
-
-           tmp.close()?;
-     Ok(())  }
-
-       #[test]
-       fn concurrent_histories_are_threadsafe() -> Result<()> {
-           use tempfile::tempdir;
-
-           let tmp = tempdir()?;
-           let histfile = tmp.path().join(".history");
-
-           let num_threads = 16;
-           let capacity = 2 * num_threads + 1;
-
-           let initial_entries = (0..capacity).map(|i| format!("initial {i}"));
-
-           {
-               let mut writing_hist =
-                   FileBackedHistory::with_file(capacity, histfile.clone())?;
-
-               initial_entries.for_each(|e| writing_hist.save(HistoryItem::from_command_line(&e)))?;
-
-               // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
-           }
-
-           let threads = (0..num_threads)
-               .map(|i| {
-                   let cap = capacity;
-                   let hfile = histfile.clone();
-                   std::thread::spawn(move || {
-           let (mut hist, mut cursor) = create_history();
-                       hist.save(HistoryItem::from_command_line(&format!("A{}", i)))?;
-                       hist.sync()?;
-                       hist.save(HistoryItem::from_command_line(&format!("B{}", i)))?;
-                   })
-               })
-               .collect::<Vec<_>>();
-
-           for t in threads {
-               t.join()?;
-           }
-
-           let (mut hist, mut cursor) = create_history();
-
-           let actual: Vec<_> = reading_hist.iter_chronologic().collect();
-
-           assert!(
-               actual.contains(&&format!("initial {}", capacity - 1)),
-               "Overwrote entry from before threading test"
-           );
-
-           for i in 0..num_threads {
-               assert!(actual.contains(&&format!("A{}", i)),);
-               assert!(actual.contains(&&format!("B{}", i)),);
-           }
-
-           tmp.close()?;
-     Ok(())  }*/
+        tmp.close().unwrap();
+        Ok(())
+    }
 }

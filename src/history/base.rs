@@ -35,7 +35,7 @@ pub enum SearchDirection {
 
 pub struct SearchFilter {
     pub command_line: Option<CommandLineSearch>,
-    pub not_command_line: Option<String>, // to skip duplicates
+    pub not_command_line: Option<String>, // to skip the currently shown value in up-arrow navigation
     pub hostname: Option<String>,
     pub cwd_exact: Option<String>,
     pub cwd_prefix: Option<String>,
@@ -122,14 +122,9 @@ pub trait History: Send {
     fn save(&mut self, h: HistoryItem) -> Result<HistoryItem>;
     /// load a history item by its id
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem>;
-    /// gets the newest item id in this history
-    fn newest(&self) -> Result<Option<HistoryItemId>> {
-        let res = self.search(SearchQuery::last_with_search(SearchFilter::anything()))?;
-        Ok(res.get(0).and_then(|e| e.id))
-    }
 
-    /// creates a new unique session id
-    fn new_session_id(&mut self) -> Result<HistorySessionId>;
+    /// retrieves the next unused session id
+    fn next_session_id(&mut self) -> Result<HistorySessionId>;
 
     /// count the results of a query
     fn count(&self, query: SearchQuery) -> Result<i64>;
