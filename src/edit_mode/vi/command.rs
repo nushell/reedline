@@ -77,7 +77,7 @@ where
         }
         Some('C') => {
             let _ = input.next();
-            Some(Command::ChangeTillEnd)
+            Some(Command::ChangeToLineEnd)
         }
         Some('D') => {
             let _ = input.next();
@@ -141,7 +141,7 @@ pub enum Command {
     EnterViAppend,
     EnterViInsert,
     Undo,
-    ChangeTillEnd,
+    ChangeToLineEnd,
     DeleteToEnd,
     AppendToEnd,
     PrependToStart,
@@ -169,7 +169,7 @@ impl Command {
             Self::PasteAfter => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferAfter)],
             Self::PasteBefore => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferBefore)],
             Self::Undo => vec![ReedlineOption::Edit(EditCommand::Undo)],
-            Self::ChangeTillEnd => vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)],
+            Self::ChangeToLineEnd => vec![ReedlineOption::Edit(EditCommand::ClearToLineEnd)],
             Self::DeleteToEnd => vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)],
             Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
             Self::PrependToStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
