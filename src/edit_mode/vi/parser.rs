@@ -29,6 +29,7 @@ impl ParseResult {
             (&self.command, &self.motion),
             (Some(Command::EnterViInsert), None)
                 | (Some(Command::EnterViAppend), None)
+                | (Some(Command::ChangeToLineEnd), None)
                 | (Some(Command::AppendToEnd), None)
                 | (Some(Command::PrependToStart), None)
                 | (Some(Command::HistorySearch), None)
