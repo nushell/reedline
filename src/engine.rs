@@ -771,11 +771,7 @@ impl Reedline {
                         Ok(EventStatus::Exits(Signal::Success(buffer)))
                     }
                     Some(ValidationResult::Incomplete) => {
-                        #[cfg(windows)]
-                        {
-                            self.run_edit_commands(&[EditCommand::InsertChar('\r')]);
-                        }
-                        self.run_edit_commands(&[EditCommand::InsertChar('\n')]);
+                        self.run_edit_commands(&[EditCommand::InsertNewline]);
 
                         Ok(EventStatus::Handled)
                     }

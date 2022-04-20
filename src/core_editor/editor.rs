@@ -44,6 +44,7 @@ impl Editor {
             EditCommand::MoveWordRight => self.line_buffer.move_word_right(),
             EditCommand::InsertChar(c) => self.insert_char(*c),
             EditCommand::InsertString(str) => self.line_buffer.insert_str(str),
+            EditCommand::InsertNewline => self.line_buffer.insert_newline(),
             EditCommand::ReplaceChars(n_chars, str) => self.replace_chars(*n_chars, str),
             EditCommand::Backspace => self.line_buffer.delete_left_grapheme(),
             EditCommand::Delete => self.line_buffer.delete_right_grapheme(),
