@@ -165,8 +165,8 @@ impl Command {
             Self::PasteBefore => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferBefore)],
             Self::Undo => vec![ReedlineOption::Edit(EditCommand::Undo)],
             Self::DeleteToEnd => vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)],
-            Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToEnd)],
-            Self::PrependToStart => vec![ReedlineOption::Edit(EditCommand::MoveToStart)],
+            Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
+            Self::PrependToStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
             Self::MoveRightUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveRightUntil(*c))],
             Self::MoveRightBefore(c) => {
                 vec![ReedlineOption::Edit(EditCommand::MoveRightBefore(*c))]
