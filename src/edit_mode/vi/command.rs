@@ -91,6 +91,10 @@ where
             let _ = input.next();
             Some(Command::AppendToEnd)
         }
+        Some('S') => {
+            let _ = input.next();
+            Some(Command::RewriteCurrentLine)
+        }
         Some('f') => {
             let _ = input.next();
             match input.peek() {
@@ -145,6 +149,7 @@ pub enum Command {
     DeleteToEnd,
     AppendToEnd,
     PrependToStart,
+    RewriteCurrentLine,
     Change,
     MoveRightUntil(char),
     MoveRightBefore(char),
@@ -173,6 +178,7 @@ impl Command {
             Self::DeleteToEnd => vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)],
             Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
             Self::PrependToStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
+            Self::RewriteCurrentLine => vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)],
             Self::MoveRightUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveRightUntil(*c))],
             Self::MoveRightBefore(c) => {
                 vec![ReedlineOption::Edit(EditCommand::MoveRightBefore(*c))]
