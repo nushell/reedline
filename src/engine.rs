@@ -384,6 +384,13 @@ impl Reedline {
         Ok(())
     }
 
+    /// Clear the screen and the scollback buffer of the terminal
+    pub fn clear_scrollback(&mut self) -> Result<()> {
+        self.painter.clear_scrollback()?;
+
+        Ok(())
+    }
+
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
@@ -523,7 +530,14 @@ impl Reedline {
                 self.input_mode = InputMode::Regular;
                 Ok(EventStatus::Exits(Signal::CtrlC))
             }
-            ReedlineEvent::ClearScreen => Ok(EventStatus::Exits(Signal::CtrlL)),
+            ReedlineEvent::ClearScreen => {
+                self.painter.clear_screen()?;
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::ClearScrollback => {
+                self.painter.clear_scrollback()?;
+                Ok(EventStatus::Handled)
+            }
             ReedlineEvent::Enter | ReedlineEvent::HistoryHintComplete => {
                 if let Some(string) = self.history.string_at_cursor() {
                     self.editor.set_buffer(string);
@@ -715,9 +729,7 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Esc => {
-                self.menus
-                    .iter_mut()
-                    .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
+                self.deactivate_menus();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::CtrlD => {
@@ -730,18 +742,20 @@ impl Reedline {
                 }
             }
             ReedlineEvent::CtrlC => {
-                self.menus
-                    .iter_mut()
-                    .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
+                self.deactivate_menus();
                 self.run_edit_commands(&[EditCommand::Clear]);
                 self.editor.reset_undo_stack();
                 Ok(EventStatus::Exits(Signal::CtrlC))
             }
             ReedlineEvent::ClearScreen => {
-                self.menus
-                    .iter_mut()
-                    .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
-                Ok(EventStatus::Exits(Signal::CtrlL))
+                self.deactivate_menus();
+                self.painter.clear_screen()?;
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::ClearScrollback => {
+                self.deactivate_menus();
+                self.painter.clear_scrollback()?;
+                Ok(EventStatus::Handled)
             }
             ReedlineEvent::Enter => {
                 for menu in self.menus.iter_mut() {
@@ -771,11 +785,7 @@ impl Reedline {
                         Ok(EventStatus::Exits(Signal::Success(buffer)))
                     }
                     Some(ValidationResult::Incomplete) => {
-                        #[cfg(windows)]
-                        {
-                            self.run_edit_commands(&[EditCommand::InsertChar('\r')]);
-                        }
-                        self.run_edit_commands(&[EditCommand::InsertChar('\n')]);
+                        self.run_edit_commands(&[EditCommand::InsertNewline]);
 
                         Ok(EventStatus::Handled)
                     }
@@ -890,6 +900,12 @@ impl Reedline {
 
     fn active_menu(&mut self) -> Option<&mut ReedlineMenu> {
         self.menus.iter_mut().find(|menu| menu.is_active())
+    }
+
+    fn deactivate_menus(&mut self) {
+        self.menus
+            .iter_mut()
+            .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
     }
 
     fn previous_history(&mut self) {

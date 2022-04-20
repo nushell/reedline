@@ -11,8 +11,6 @@ pub enum Signal {
     CtrlC, // Interrupt current editing
     /// Abort with `Ctrl+D` signalling `EOF` or abort of a whole interactive session
     CtrlD, // End terminal session
-    /// Signal to clear the current screen. Buffer content remains untouched.
-    CtrlL, // FormFeed/Clear current screen
 }
 
 /// Editing actions which can be mapped to key bindings.
@@ -52,6 +50,12 @@ pub enum EditCommand {
 
     /// Insert a string at the current insertion point
     InsertString(String),
+
+    /// Inserts the system specific new line character
+    ///
+    /// - On Unix systems LF (`"\n"`)
+    /// - On Windows CRLF (`"\r\n"`)
+    InsertNewline,
 
     /// Repace characters with string
     ReplaceChars(usize, String),
@@ -161,6 +165,7 @@ impl Display for EditCommand {
             EditCommand::MoveToPosition(_) => write!(f, "MoveToPosition  Value: <int>"),
             EditCommand::InsertChar(_) => write!(f, "InsertChar  Value: <char>"),
             EditCommand::InsertString(_) => write!(f, "InsertString Value: <string>"),
+            EditCommand::InsertNewline => write!(f, "InsertNewline"),
             EditCommand::ReplaceChars(_, _) => write!(f, "ReplaceChars <int> <string>"),
             EditCommand::Backspace => write!(f, "Backspace"),
             EditCommand::Delete => write!(f, "Delete"),
@@ -223,6 +228,7 @@ impl EditCommand {
             EditCommand::Backspace
             | EditCommand::Delete
             | EditCommand::InsertString(_)
+            | EditCommand::InsertNewline
             | EditCommand::ReplaceChars(_, _)
             | EditCommand::BackspaceWord
             | EditCommand::DeleteWord
@@ -301,6 +307,11 @@ pub enum ReedlineEvent {
 
     /// Clears the screen and sets prompt to first line
     ClearScreen,
+
+    /// Clears the screen and the scrollback buffer
+    ///
+    /// Sets the prompt back to the first line
+    ClearScrollback,
 
     /// Handle enter event
     Enter,
@@ -389,6 +400,7 @@ impl Display for ReedlineEvent {
             ReedlineEvent::CtrlD => write!(f, "CtrlD"),
             ReedlineEvent::CtrlC => write!(f, "CtrlC"),
             ReedlineEvent::ClearScreen => write!(f, "ClearScreen"),
+            ReedlineEvent::ClearScrollback => write!(f, "ClearScrollback"),
             ReedlineEvent::Enter => write!(f, "Enter"),
             ReedlineEvent::Esc => write!(f, "Esc"),
             ReedlineEvent::Mouse => write!(f, "Mouse"),
