@@ -75,6 +75,10 @@ where
             let _ = input.next();
             Some(Command::HistorySearch)
         }
+        Some('C') => {
+            let _ = input.next();
+            Some(Command::ChangeTillEnd)
+        }
         Some('D') => {
             let _ = input.next();
             Some(Command::DeleteToEnd)
@@ -137,6 +141,7 @@ pub enum Command {
     EnterViAppend,
     EnterViInsert,
     Undo,
+    ChangeTillEnd,
     DeleteToEnd,
     AppendToEnd,
     PrependToStart,
@@ -164,6 +169,7 @@ impl Command {
             Self::PasteAfter => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferAfter)],
             Self::PasteBefore => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferBefore)],
             Self::Undo => vec![ReedlineOption::Edit(EditCommand::Undo)],
+            Self::ChangeTillEnd => vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)],
             Self::DeleteToEnd => vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)],
             Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
             Self::PrependToStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
