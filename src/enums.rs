@@ -66,6 +66,9 @@ pub enum EditCommand {
     /// Delete in-place from the current insertion point
     Delete,
 
+    /// Delete in-place from the current insertion point
+    CutChar,
+
     /// Backspace delete a word from the current insertion point
     BackspaceWord,
 
@@ -169,6 +172,7 @@ impl Display for EditCommand {
             EditCommand::ReplaceChars(_, _) => write!(f, "ReplaceChars <int> <string>"),
             EditCommand::Backspace => write!(f, "Backspace"),
             EditCommand::Delete => write!(f, "Delete"),
+            EditCommand::CutChar => write!(f, "CutChar"),
             EditCommand::BackspaceWord => write!(f, "BackspaceWord"),
             EditCommand::DeleteWord => write!(f, "DeleteWord"),
             EditCommand::Clear => write!(f, "Clear"),
@@ -227,6 +231,7 @@ impl EditCommand {
             // Full edits
             EditCommand::Backspace
             | EditCommand::Delete
+            | EditCommand::CutChar
             | EditCommand::InsertString(_)
             | EditCommand::InsertNewline
             | EditCommand::ReplaceChars(_, _)
