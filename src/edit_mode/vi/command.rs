@@ -190,8 +190,8 @@ impl Command {
             }
             Self::MoveLeftUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftUntil(*c))],
             Self::MoveLeftBefore(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftBefore(*c))],
-            Self::DeleteChar => vec![ReedlineOption::Edit(EditCommand::Delete)],
-            Self::DeleteCharInsert => vec![ReedlineOption::Edit(EditCommand::Delete)],
+            Self::DeleteChar => vec![ReedlineOption::Edit(EditCommand::CutChar)],
+            Self::DeleteCharInsert => vec![ReedlineOption::Edit(EditCommand::CutChar)],
             Self::HistorySearch => vec![ReedlineOption::Event(ReedlineEvent::SearchHistory)],
             // Mark a command as incomplete whenever a motion is required to finish the command
             Self::Delete | Self::Change | Self::Incomplete => vec![ReedlineOption::Incomplete],
