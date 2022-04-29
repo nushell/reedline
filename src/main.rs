@@ -110,6 +110,9 @@ fn main() -> Result<()> {
 
     line_editor = line_editor.with_edit_mode(edit_mode);
 
+    // Adding vi as text editor
+    line_editor = line_editor.with_text_editor("emacs".into());
+
     let prompt = DefaultPrompt::new();
 
     loop {
