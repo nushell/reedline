@@ -67,4 +67,6 @@ pub struct Suggestion {
     pub extra: Option<Vec<String>>,
     /// Replacement span in the buffer
     pub span: Span,
+    /// Wheater append whitespace after selecting this suggestion
+    pub append_whitespace: bool,
 }
