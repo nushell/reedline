@@ -309,7 +309,7 @@ impl Reedline {
     /// use reedline::{DefaultValidator, Reedline};
     ///
     /// let mut line_editor =
-    /// Reedline::create().with_editor("vim".into());
+    /// Reedline::create().with_text_editor("vim".into());
     /// ```
     #[must_use]
     pub fn with_text_editor(mut self, editor: String) -> Self {
