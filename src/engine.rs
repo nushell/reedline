@@ -113,7 +113,7 @@ pub struct Reedline {
 
     // Engine Menus
     menus: Vec<ReedlineMenu>,
-    
+
     // Text editor used to open the line buffer for editing
     text_editor: String,
 }
@@ -300,11 +300,11 @@ impl Reedline {
         self.validator = Some(validator);
         self
     }
-    
-    /// A builder that configures the text editor used to edit the line buffer 
+
+    /// A builder that configures the text editor used to edit the line buffer
     /// # Example
     /// ```rust,no_run
-    /// // Create a reedline object with vim as editor 
+    /// // Create a reedline object with vim as editor
     ///
     /// use reedline::{DefaultValidator, Reedline};
     ///
@@ -313,7 +313,7 @@ impl Reedline {
     /// ```
     #[must_use]
     pub fn with_text_editor(mut self, editor: String) -> Self {
-        self.text_editor = editor; 
+        self.text_editor = editor;
         self
     }
 
