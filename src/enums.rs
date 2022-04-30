@@ -388,6 +388,9 @@ pub enum ReedlineEvent {
 
     /// Way to bind the execution of a whole command (directly returning from [`crate::Reedline::read_line()`]) to a keybinding
     ExecuteHostCommand(String),
+
+    /// Open text editor
+    OpenEditor,
 }
 
 impl Display for ReedlineEvent {
@@ -429,6 +432,7 @@ impl Display for ReedlineEvent {
             ReedlineEvent::MenuPageNext => write!(f, "MenuPageNext"),
             ReedlineEvent::MenuPagePrevious => write!(f, "MenuPagePrevious"),
             ReedlineEvent::ExecuteHostCommand(_) => write!(f, "ExecuteHostCommand"),
+            ReedlineEvent::OpenEditor => write!(f, "OpenEditor"),
         }
     }
 }
