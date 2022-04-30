@@ -713,8 +713,8 @@ mod tests {
     use super::*;
 
     macro_rules! partial_completion_tests {
-        (completions: $completions:expr, $($name:ident: $value:expr,)*) => {
-            mod partial_completions {
+        (name: $test_group_name:ident, completions: $completions:expr, test_cases: $($name:ident: $value:expr,)*) => {
+            mod $test_group_name {
                 use crate::{menu::Menu, ColumnarMenu, LineBuffer};
                 use super::FakeCompleter;
 
@@ -737,11 +737,23 @@ mod tests {
     }
 
     partial_completion_tests! {
+        name: partial_completion_prefix_matches,
         completions: ["build.rs", "build-all.sh"],
 
-        completes_from_empty: ("", "build"),
-        completes_from_something: ("bui", "build"),
-        completes_full_match: ("build", "build"),
+        test_cases:
+            completes_from_empty: ("", "build"),
+            completes_from_something: ("bui", "build"),
+            completes_full_match: ("build", "build"),
+    }
+
+    partial_completion_tests! {
+        name: partial_completion_fuzzy_matches,
+        completions: ["build.rs", "build-all.sh", "prepare-build.sh"],
+
+        test_cases:
+            completes_from_empty: ("", ""),
+            completes_from_something: ("bui", "bui"),
+            completes_full_match: ("build", "build"),
     }
 
     struct FakeCompleter {
