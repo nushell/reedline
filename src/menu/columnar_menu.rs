@@ -478,7 +478,11 @@ impl Menu for ColumnarMenu {
             let index = index.min(value.len());
             let matching = &value[0..index];
 
-            if !matching.is_empty() {
+            // make sure that the partial completion does not overwrite user entered input
+            let extends_input =
+                matching.starts_with(&line_buffer.get_buffer()[span.start..span.end]);
+
+            if !matching.is_empty() && extends_input {
                 line_buffer.replace(span.start..span.end, matching);
 
                 let offset = if matching.len() < (span.end - span.start) {
@@ -741,9 +745,9 @@ mod tests {
         completions: ["build.rs", "build-all.sh"],
 
         test_cases:
-            completes_from_empty: ("", "build"),
-            completes_from_something: ("bui", "build"),
-            completes_full_match: ("build", "build"),
+            empty_completes_prefix: ("", "build"),
+            partial_completes_shared_prefix: ("bui", "build"),
+            full_prefix_completes_nothing: ("build", "build"),
     }
 
     partial_completion_tests! {
@@ -751,9 +755,17 @@ mod tests {
         completions: ["build.rs", "build-all.sh", "prepare-build.sh"],
 
         test_cases:
-            completes_from_empty: ("", ""),
-            completes_from_something: ("bui", "bui"),
-            completes_full_match: ("build", "build"),
+            no_shared_prefix_completes_nothing: ("", ""),
+            shared_prefix_completes_nothing: ("bui", "bui"),
+    }
+
+    partial_completion_tests! {
+        name: partial_completion_fuzzy_same_prefix_matches,
+        completions: ["build.rs", "build-all.sh", "build-all-tests.sh"],
+
+        test_cases:
+            // assure "all" does not get replaced with shared prefix "build"
+            completes_no_shared_prefix: ("all", "all"),
     }
 
     struct FakeCompleter {
