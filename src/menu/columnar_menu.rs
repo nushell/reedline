@@ -705,3 +705,72 @@ impl Menu for ColumnarMenu {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::Span;
+
+    use super::*;
+
+    macro_rules! partial_completion_tests {
+        (completions: $completions:expr, $($name:ident: $value:expr,)*) => {
+            mod partial_completions {
+                use crate::{menu::Menu, ColumnarMenu, LineBuffer};
+                use super::FakeCompleter;
+
+                $(
+                    #[test]
+                    fn $name() {
+                        let (input, expected) = $value;
+                        let mut menu = ColumnarMenu::default();
+                        let mut line_buffer = LineBuffer::default();
+                        line_buffer.set_buffer(input.to_string());
+                        let mut completer = FakeCompleter::new(&$completions);
+
+                        menu.can_partially_complete(false, &mut line_buffer, &mut completer);
+
+                        assert_eq!(line_buffer.get_buffer(), expected);
+                    }
+                )*
+            }
+        }
+    }
+
+    partial_completion_tests! {
+        completions: ["build.rs", "build-all.sh"],
+
+        completes_from_empty: ("", "build"),
+        completes_from_something: ("bui", "build"),
+        completes_full_match: ("build", "build"),
+    }
+
+    struct FakeCompleter {
+        completions: Vec<String>,
+    }
+
+    impl FakeCompleter {
+        fn new(completions: &[&str]) -> Self {
+            Self {
+                completions: completions.into_iter().map(|c| c.to_string()).collect(),
+            }
+        }
+    }
+
+    impl Completer for FakeCompleter {
+        fn complete(&mut self, _line: &str, pos: usize) -> Vec<Suggestion> {
+            self.completions
+                .iter()
+                .map(|c| fake_suggestion(c, pos))
+                .collect()
+        }
+    }
+
+    fn fake_suggestion(name: &str, pos: usize) -> Suggestion {
+        Suggestion {
+            value: name.to_string(),
+            description: None,
+            extra: None,
+            span: Span { start: 0, end: pos },
+        }
+    }
+}
