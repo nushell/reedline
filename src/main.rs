@@ -109,7 +109,7 @@ fn main() -> Result<()> {
     line_editor = line_editor.with_edit_mode(edit_mode);
 
     // Adding vi as text editor
-    line_editor = line_editor.with_buffer_editor("hx".into(), "nu".into());
+    line_editor = line_editor.with_buffer_editor("vi".into(), "nu".into());
 
     let prompt = DefaultPrompt::new();
 
