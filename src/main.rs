@@ -1,5 +1,3 @@
-use reedline::{DefaultValidator, EditCommand, ReedlineMenu};
-
 use {
     crossterm::{
         event::{poll, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -11,8 +9,8 @@ use {
         get_reedline_default_keybindings, get_reedline_edit_commands,
         get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
         get_reedline_reedline_events, ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt,
-        EditMode, Emacs, ExampleHighlighter, FileBackedHistory, Keybindings, ListMenu, Reedline,
-        ReedlineEvent, Signal, Vi,
+        DefaultValidator, EditCommand, EditMode, Emacs, ExampleHighlighter, FileBackedHistory,
+        Keybindings, ListMenu, Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi,
     },
     std::{
         io::{stdout, Write},
@@ -111,7 +109,7 @@ fn main() -> Result<()> {
     line_editor = line_editor.with_edit_mode(edit_mode);
 
     // Adding vi as text editor
-    line_editor = line_editor.with_text_editor("emacs".into());
+    line_editor = line_editor.with_buffer_editor("hx".into(), "nu".into());
 
     let prompt = DefaultPrompt::new();
 

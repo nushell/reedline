@@ -115,7 +115,9 @@ pub struct Reedline {
     menus: Vec<ReedlineMenu>,
 
     // Text editor used to open the line buffer for editing
-    text_editor: String,
+    // The first element in the tuple is the command used to open
+    // the line buffer and the second one is the file extension used for the temp file
+    buffer_editor: Option<(String, String)>,
 }
 
 impl Drop for Reedline {
@@ -155,7 +157,7 @@ impl Reedline {
             animate: false,
             use_ansi_coloring: true,
             menus: Vec::new(),
-            text_editor: "emacs".into(),
+            buffer_editor: None,
         }
     }
 
@@ -309,11 +311,11 @@ impl Reedline {
     /// use reedline::{DefaultValidator, Reedline};
     ///
     /// let mut line_editor =
-    /// Reedline::create().with_text_editor("vim".into());
+    /// Reedline::create().with_buffer_editor("vim".into(), "nu".into());
     /// ```
     #[must_use]
-    pub fn with_text_editor(mut self, editor: String) -> Self {
-        self.text_editor = editor;
+    pub fn with_buffer_editor(mut self, editor: String, extension: String) -> Self {
+        self.buffer_editor = Some((editor, extension));
         self
     }
 
@@ -1156,26 +1158,31 @@ impl Reedline {
     }
 
     fn open_editor(&mut self) -> Result<()> {
-        let temp_directory = std::env::temp_dir();
-        let temp_file = temp_directory.join("buffer");
+        match &self.buffer_editor {
+            None => Ok(()),
+            Some((cmd, extension)) => {
+                let temp_directory = std::env::temp_dir();
+                let temp_file = temp_directory.join(format!("reedline_buffer.{}", extension));
 
-        {
-            let mut file = File::create(temp_file.clone())?;
-            write!(file, "{}", self.editor.get_buffer())?;
+                {
+                    let mut file = File::create(temp_file.clone())?;
+                    write!(file, "{}", self.editor.get_buffer())?;
+                }
+
+                let mut process = Command::new(cmd);
+                process.arg(temp_file.as_path());
+
+                let mut child = process.spawn()?;
+                child.wait()?;
+
+                let res = std::fs::read_to_string(temp_file)?;
+                let res = res.trim_end().to_string();
+
+                self.editor.line_buffer().set_buffer(res);
+
+                Ok(())
+            }
         }
-
-        let mut process = Command::new(self.text_editor.as_str());
-        process.arg(temp_file.as_path());
-
-        let mut child = process.spawn()?;
-        child.wait()?;
-
-        let res = std::fs::read_to_string(temp_file)?;
-        let res = res.trim_end().to_string();
-
-        self.editor.line_buffer().set_buffer(res);
-
-        Ok(())
     }
 
     /// Repaint logic for the history reverse search
