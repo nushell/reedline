@@ -66,7 +66,7 @@ pub enum EditCommand {
     /// Delete in-place from the current insertion point
     Delete,
 
-    /// Delete in-place from the current insertion point
+    /// Cut the grapheme right from the current insertion point
     CutChar,
 
     /// Backspace delete a word from the current insertion point
@@ -78,7 +78,7 @@ pub enum EditCommand {
     /// Clear the current buffer
     Clear,
 
-    /// Clear the current buffer
+    /// Clear to the end of the current line
     ClearToLineEnd,
 
     /// Cut the current line

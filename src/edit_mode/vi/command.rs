@@ -73,7 +73,7 @@ where
         }
         Some('s') => {
             let _ = input.next();
-            Some(Command::DeleteCharInsert)
+            Some(Command::SubstituteCharWithInsert)
         }
         Some('?') => {
             let _ = input.next();
@@ -136,7 +136,7 @@ pub enum Command {
     Incomplete,
     Delete,
     DeleteChar,
-    DeleteCharInsert,
+    SubstituteCharWithInsert,
     PasteAfter,
     PasteBefore,
     MoveLeft,
@@ -191,7 +191,7 @@ impl Command {
             Self::MoveLeftUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftUntil(*c))],
             Self::MoveLeftBefore(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftBefore(*c))],
             Self::DeleteChar => vec![ReedlineOption::Edit(EditCommand::CutChar)],
-            Self::DeleteCharInsert => vec![ReedlineOption::Edit(EditCommand::CutChar)],
+            Self::SubstituteCharWithInsert => vec![ReedlineOption::Edit(EditCommand::CutChar)],
             Self::HistorySearch => vec![ReedlineOption::Event(ReedlineEvent::SearchHistory)],
             // Mark a command as incomplete whenever a motion is required to finish the command
             Self::Delete | Self::Change | Self::Incomplete => vec![ReedlineOption::Incomplete],
