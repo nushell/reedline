@@ -73,6 +73,10 @@ where
         }
         Some('s') => {
             let _ = input.next();
+            Some(Command::SubstituteCharWithInsert)
+        }
+        Some('?') => {
+            let _ = input.next();
             Some(Command::HistorySearch)
         }
         Some('C') => {
@@ -90,6 +94,10 @@ where
         Some('A') => {
             let _ = input.next();
             Some(Command::AppendToEnd)
+        }
+        Some('S') => {
+            let _ = input.next();
+            Some(Command::RewriteCurrentLine)
         }
         Some('f') => {
             let _ = input.next();
@@ -128,6 +136,7 @@ pub enum Command {
     Incomplete,
     Delete,
     DeleteChar,
+    SubstituteCharWithInsert,
     PasteAfter,
     PasteBefore,
     MoveLeft,
@@ -145,6 +154,7 @@ pub enum Command {
     DeleteToEnd,
     AppendToEnd,
     PrependToStart,
+    RewriteCurrentLine,
     Change,
     MoveRightUntil(char),
     MoveRightBefore(char),
@@ -173,13 +183,15 @@ impl Command {
             Self::DeleteToEnd => vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)],
             Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
             Self::PrependToStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
+            Self::RewriteCurrentLine => vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)],
             Self::MoveRightUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveRightUntil(*c))],
             Self::MoveRightBefore(c) => {
                 vec![ReedlineOption::Edit(EditCommand::MoveRightBefore(*c))]
             }
             Self::MoveLeftUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftUntil(*c))],
             Self::MoveLeftBefore(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftBefore(*c))],
-            Self::DeleteChar => vec![ReedlineOption::Edit(EditCommand::Delete)],
+            Self::DeleteChar => vec![ReedlineOption::Edit(EditCommand::CutChar)],
+            Self::SubstituteCharWithInsert => vec![ReedlineOption::Edit(EditCommand::CutChar)],
             Self::HistorySearch => vec![ReedlineOption::Event(ReedlineEvent::SearchHistory)],
             // Mark a command as incomplete whenever a motion is required to finish the command
             Self::Delete | Self::Change | Self::Incomplete => vec![ReedlineOption::Incomplete],
