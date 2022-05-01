@@ -115,9 +115,12 @@ pub struct Reedline {
     menus: Vec<ReedlineMenu>,
 
     // Text editor used to open the line buffer for editing
-    // The first element in the tuple is the command used to open
-    // the line buffer and the second one is the file extension used for the temp file
-    buffer_editor: Option<(String, String)>,
+    buffer_editor: Option<BufferEditor>,
+}
+
+struct BufferEditor {
+    editor: String,
+    extension: String,
 }
 
 impl Drop for Reedline {
@@ -315,7 +318,7 @@ impl Reedline {
     /// ```
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: String, extension: String) -> Self {
-        self.buffer_editor = Some((editor, extension));
+        self.buffer_editor = Some(BufferEditor { editor, extension });
         self
     }
 
@@ -1160,7 +1163,7 @@ impl Reedline {
     fn open_editor(&mut self) -> Result<()> {
         match &self.buffer_editor {
             None => Ok(()),
-            Some((cmd, extension)) => {
+            Some(BufferEditor { editor, extension }) => {
                 let temp_directory = std::env::temp_dir();
                 let temp_file = temp_directory.join(format!("reedline_buffer.{}", extension));
 
@@ -1169,11 +1172,13 @@ impl Reedline {
                     write!(file, "{}", self.editor.get_buffer())?;
                 }
 
-                let mut process = Command::new(cmd);
-                process.arg(temp_file.as_path());
+                {
+                    let mut process = Command::new(editor);
+                    process.arg(temp_file.as_path());
 
-                let mut child = process.spawn()?;
-                child.wait()?;
+                    let mut child = process.spawn()?;
+                    child.wait()?;
+                }
 
                 let res = std::fs::read_to_string(temp_file)?;
                 let res = res.trim_end().to_string();
