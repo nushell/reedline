@@ -7,7 +7,7 @@ on:
 name: continuous-integration
 
 jobs:
-  build-clippy:
+  build-lint-test:
     strategy:
       fail-fast: false
       matrix:
@@ -15,7 +15,6 @@ jobs:
         rust:
           - stable
         # Define the feature sets that will be built here (for caching you define a separate name)
-        # Note: Repeat the same thing below for the test running job
         style: [bashisms, default]
         include:
           - style: bashisms
@@ -57,38 +56,6 @@ jobs:
         with:
           command: clippy
           args: ${{ matrix.flags }} -- -D warnings
-
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [ubuntu-latest]
-        rust:
-          - stable
-        # Define the feature sets that will be built here (for caching you define a separate name)
-        style: [bashisms, default]
-        include:
-          - style: bashisms
-            flags: "--features bashisms"
-          - style: default
-            flags: ""
-
-    runs-on: ${{ matrix.platform }}
-
-    steps:
-      - uses: actions/checkout@v2
-
-      - name: Setup Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.rust }}
-          override: true
-          components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v1
-        with:
-          key: ${{ matrix.style }}v1 # increment this to bust the cache if needed
 
       - uses: taiki-e/install-action@nextest
 
