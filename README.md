@@ -3,7 +3,7 @@
 ![GitHub](https://img.shields.io/github/license/nushell/reedline)
 [![Crates.io](https://img.shields.io/crates/v/reedline)](https://crates.io/crates/reedline)
 [![docs.rs](https://img.shields.io/docsrs/reedline)](https://docs.rs/reedline/)
-[![CI status](https://github.com/nushell/reedline/actions/workflows/ci.yml/badge.svg)](https://github.com/nushell/reedline/actions)
+![GitHub Workflow Status](https://img.shields.io/github/workflow/status/nushell/reedline/continuous-integration)
 [![Discord](https://img.shields.io/discord/601130461678272522.svg?logo=discord)](https://discord.gg/NtAbbGn)
 
 ## Introduction

@@ -32,6 +32,8 @@ impl ParseResult {
                 | (Some(Command::ChangeToLineEnd), None)
                 | (Some(Command::AppendToEnd), None)
                 | (Some(Command::PrependToStart), None)
+                | (Some(Command::RewriteCurrentLine), None)
+                | (Some(Command::SubstituteCharWithInsert), None)
                 | (Some(Command::HistorySearch), None)
                 | (Some(Command::Change), Some(_))
         )

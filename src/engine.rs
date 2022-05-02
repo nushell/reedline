@@ -19,7 +19,7 @@ use {
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, Result,
     },
-    std::{borrow::Borrow, io, time::Duration},
+    std::{borrow::Borrow, fs::File, io, io::Write, process::Command, time::Duration},
 };
 
 #[cfg(feature = "bashisms")]
@@ -113,6 +113,14 @@ pub struct Reedline {
 
     // Engine Menus
     menus: Vec<ReedlineMenu>,
+
+    // Text editor used to open the line buffer for editing
+    buffer_editor: Option<BufferEditor>,
+}
+
+struct BufferEditor {
+    editor: String,
+    extension: String,
 }
 
 impl Drop for Reedline {
@@ -152,6 +160,7 @@ impl Reedline {
             animate: false,
             use_ansi_coloring: true,
             menus: Vec::new(),
+            buffer_editor: None,
         }
     }
 
@@ -294,6 +303,22 @@ impl Reedline {
     #[must_use]
     pub fn with_validator(mut self, validator: Box<dyn Validator>) -> Self {
         self.validator = Some(validator);
+        self
+    }
+
+    /// A builder that configures the text editor used to edit the line buffer
+    /// # Example
+    /// ```rust,no_run
+    /// // Create a reedline object with vim as editor
+    ///
+    /// use reedline::{DefaultValidator, Reedline};
+    ///
+    /// let mut line_editor =
+    /// Reedline::create().with_buffer_editor("vim".into(), "nu".into());
+    /// ```
+    #[must_use]
+    pub fn with_buffer_editor(mut self, editor: String, extension: String) -> Self {
+        self.buffer_editor = Some(BufferEditor { editor, extension });
         self
     }
 
@@ -587,6 +612,7 @@ impl Reedline {
             | ReedlineEvent::Multiple(_)
             | ReedlineEvent::None
             | ReedlineEvent::HistoryHintWordComplete
+            | ReedlineEvent::OpenEditor
             | ReedlineEvent::Menu(_)
             | ReedlineEvent::MenuNext
             | ReedlineEvent::MenuPrevious
@@ -820,6 +846,7 @@ impl Reedline {
 
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),
             ReedlineEvent::Resize(width, height) => {
                 self.painter.handle_resize(width, height);
                 Ok(EventStatus::Handled)
@@ -1130,6 +1157,36 @@ impl Reedline {
             Some(ReedlineEvent::Edit(edits))
         } else {
             None
+        }
+    }
+
+    fn open_editor(&mut self) -> Result<()> {
+        match &self.buffer_editor {
+            None => Ok(()),
+            Some(BufferEditor { editor, extension }) => {
+                let temp_directory = std::env::temp_dir();
+                let temp_file = temp_directory.join(format!("reedline_buffer.{}", extension));
+
+                {
+                    let mut file = File::create(temp_file.clone())?;
+                    write!(file, "{}", self.editor.get_buffer())?;
+                }
+
+                {
+                    let mut process = Command::new(editor);
+                    process.arg(temp_file.as_path());
+
+                    let mut child = process.spawn()?;
+                    child.wait()?;
+                }
+
+                let res = std::fs::read_to_string(temp_file)?;
+                let res = res.trim_end().to_string();
+
+                self.editor.line_buffer().set_buffer(res);
+
+                Ok(())
+            }
         }
     }
 

@@ -429,8 +429,8 @@ impl Painter {
 
     pub(crate) fn clear_scrollback(&mut self) -> Result<()> {
         self.stdout
-            .queue(crossterm::terminal::Clear(ClearType::Purge))?
             .queue(crossterm::terminal::Clear(ClearType::All))?
+            .queue(crossterm::terminal::Clear(ClearType::Purge))?
             .queue(cursor::MoveTo(0, 0))?
             .flush()?;
         self.initialize_prompt_position()
