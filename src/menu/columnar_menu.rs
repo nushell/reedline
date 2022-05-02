@@ -650,9 +650,18 @@ impl Menu for ColumnarMenu {
 
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
-        if let Some(Suggestion { value, span, .. }) = self.get_value() {
+        if let Some(Suggestion {
+            mut value,
+            span,
+            append_whitespace,
+            ..
+        }) = self.get_value()
+        {
             let start = span.start.min(line_buffer.len());
             let end = span.end.min(line_buffer.len());
+            if append_whitespace {
+                value.push(' ');
+            }
             line_buffer.replace(start..end, &value);
 
             let mut offset = line_buffer.insertion_point();
@@ -795,6 +804,7 @@ mod tests {
             description: None,
             extra: None,
             span: Span { start: 0, end: pos },
+            append_whitespace: false,
         }
     }
 }

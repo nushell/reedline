@@ -55,17 +55,17 @@ impl Completer for DefaultCompleter {
     /// assert_eq!(
     ///     completions.complete("bat",3),
     ///     vec![
-    ///         Suggestion {value: "batcave".into(), description: None, extra: None, span: Span { start: 0, end: 3 }},
-    ///         Suggestion {value: "batman".into(), description: None, extra: None, span: Span { start: 0, end: 3 }},
-    ///         Suggestion {value: "batmobile".into(), description: None, extra: None, span: Span { start: 0, end: 3 }},
+    ///         Suggestion {value: "batcave".into(), description: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
+    ///         Suggestion {value: "batman".into(), description: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
+    ///         Suggestion {value: "batmobile".into(), description: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
     ///     ]);
     ///
     /// assert_eq!(
     ///     completions.complete("to the bat",10),
     ///     vec![
-    ///         Suggestion {value: "batcave".into(), description: None, extra: None, span: Span { start: 7, end: 10 }},
-    ///         Suggestion {value: "batman".into(), description: None, extra: None, span: Span { start: 7, end: 10 }},
-    ///         Suggestion {value: "batmobile".into(), description: None, extra: None, span: Span { start: 7, end: 10 }},
+    ///         Suggestion {value: "batcave".into(), description: None, extra: None, span: Span { start: 7, end: 10 }, append_whitespace: false},
+    ///         Suggestion {value: "batman".into(), description: None, extra: None, span: Span { start: 7, end: 10 }, append_whitespace: false},
+    ///         Suggestion {value: "batmobile".into(), description: None, extra: None, span: Span { start: 7, end: 10 }, append_whitespace: false},
     ///     ]);
     /// ```
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
@@ -101,6 +101,7 @@ impl Completer for DefaultCompleter {
                                         description: None,
                                         extra: None,
                                         span,
+                                        append_whitespace: false,
                                     }
                                 })
                                 .filter(|t| t.value.len() > (t.span.end - t.span.start))
@@ -172,15 +173,15 @@ impl DefaultCompleter {
     /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
     ///     completions.complete("te",2),
-    ///     vec![Suggestion {value: "test".into(), description: None, extra: None, span: Span { start: 0, end: 2 }}]);
+    ///     vec![Suggestion {value: "test".into(), description: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false}]);
     ///
     /// let mut completions = DefaultCompleter::with_inclusions(&['-', '_']);
     /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
     ///     completions.complete("te",2),
     ///     vec![
-    ///         Suggestion {value: "test-hyphen".into(), description: None, extra: None, span: Span { start: 0, end: 2 }},
-    ///         Suggestion {value: "test_underscore".into(), description: None, extra: None, span: Span { start: 0, end: 2 }},
+    ///         Suggestion {value: "test-hyphen".into(), description: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false},
+    ///         Suggestion {value: "test_underscore".into(), description: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false},
     ///     ]);
     /// ```
     pub fn with_inclusions(incl: &[char]) -> Self {
@@ -372,18 +373,21 @@ mod tests {
                     description: None,
                     extra: None,
                     span: Span { start: 0, end: 3 },
+                    append_whitespace: false,
                 },
                 Suggestion {
                     value: "ｎｕｍｂｅｒ".into(),
                     description: None,
                     extra: None,
                     span: Span { start: 0, end: 3 },
+                    append_whitespace: false,
                 },
                 Suggestion {
                     value: "ｎｕｓｈｅｌｌ".into(),
                     description: None,
                     extra: None,
                     span: Span { start: 0, end: 3 },
+                    append_whitespace: false,
                 },
             ]
         );

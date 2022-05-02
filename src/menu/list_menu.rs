@@ -457,9 +457,18 @@ impl Menu for ListMenu {
 
     /// The buffer gets cleared with the actual value
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
-        if let Some(Suggestion { value, span, .. }) = self.get_value() {
+        if let Some(Suggestion {
+            mut value,
+            span,
+            append_whitespace,
+            ..
+        }) = self.get_value()
+        {
             let start = span.start.min(line_buffer.len());
             let end = span.end.min(line_buffer.len());
+            if append_whitespace {
+                value.push(' ');
+            }
             line_buffer.replace(start..end, &value);
 
             let mut offset = line_buffer.insertion_point();

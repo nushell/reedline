@@ -456,6 +456,7 @@ mod tests {
                 description: None,
                 extra: None,
                 span: Span::new(0, s.len()),
+                append_whitespace: false,
             })
             .collect();
         let res = find_common_string(&input);
@@ -474,6 +475,7 @@ mod tests {
                 description: None,
                 extra: None,
                 span: Span::new(0, s.len()),
+                append_whitespace: false,
             })
             .collect();
         let res = find_common_string(&input);
