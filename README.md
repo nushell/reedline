@@ -118,7 +118,7 @@ Reedline::create().with_highlighter(Box::new(ExampleHighlighter::new(commands)))
 ```rust,no_run
 // Create a reedline object with tab completions support
 
-use reedline::{DefaultCompleter, Reedline, CompletionMenu};
+use reedline::{ColumnarMenu, DefaultCompleter, Reedline, ReedlineMenu};
 
 let commands = vec![
   "test".into(),
@@ -128,9 +128,10 @@ let commands = vec![
 ];
 let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 // Use the interactive menu to select options from the completer
-let completion_menu = Box::new(CompletionMenu::default());
+let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu"));
 
-let mut line_editor = Reedline::create().with_completer(completer).with_menu(completion_menu);
+let mut line_editor =
+Reedline::create().with_completer(completer).with_menu(ReedlineMenu::EngineCompleter(completion_menu));
 ```
 
 ### Integrate with `Hinter` for fish-style history autosuggestions
@@ -165,16 +166,20 @@ let validator = Box::new(DefaultValidator);
 let mut line_editor = Reedline::create().with_validator(validator);
 ```
 
-### Integrate with custom Edit Mode
+### Use custom `EditMode`
 
 ```rust,no_run
 // Create a reedline object with custom edit mode
+// This can define a keybinding setting or enable vi-emulation
 
-use reedline::{EditMode, Reedline};
+use reedline::{
+    default_vi_insert_keybindings, default_vi_normal_keybindings, EditMode, Reedline, Vi,
+};
 
-let mut line_editor = Reedline::create().with_edit_mode(
-  EditMode::ViNormal, // or EditMode::Emacs or EditMode::ViInsert
-);
+let mut line_editor = Reedline::create().with_edit_mode(Box::new(Vi::new(
+    default_vi_insert_keybindings(),
+    default_vi_normal_keybindings(),
+)));
 ```
 
 ## Are we prompt yet? (Development status)

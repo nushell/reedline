@@ -133,6 +133,34 @@
 //! ));
 //! ```
 //!
+//!
+//! ## Integrate with custom line completion [`Validator`]
+//!
+//! ```rust,no_run
+//! // Create a reedline object with line completion validation support
+//!
+//! use reedline::{DefaultValidator, Reedline};
+//!
+//! let validator = Box::new(DefaultValidator);
+//!
+//! let mut line_editor = Reedline::create().with_validator(validator);
+//! ```
+//!
+//! ## Use custom [`EditMode`]
+//!
+//! ```rust,no_run
+//! // Create a reedline object with custom edit mode
+//! // This can define a keybinding setting or enable vi-emulation
+//! use reedline::{
+//!     default_vi_insert_keybindings, default_vi_normal_keybindings, EditMode, Reedline, Vi,
+//! };
+//!
+//! let mut line_editor = Reedline::create().with_edit_mode(Box::new(Vi::new(
+//!     default_vi_insert_keybindings(),
+//!     default_vi_normal_keybindings(),
+//! )));
+//! ```
+//!
 //! ## Are we prompt yet? (Development status)
 //!
 //! Nushell has now all the basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
