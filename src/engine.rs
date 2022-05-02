@@ -166,7 +166,7 @@ impl Reedline {
 
     /// A builder to include a [`Hinter`] in your instance of the Reedline engine
     /// # Example
-    /// ```rust,no_run
+    /// ```rust
     /// //Cargo.toml
     /// //[dependencies]
     /// //nu-ansi-term = "*"
@@ -195,7 +195,7 @@ impl Reedline {
 
     /// A builder to configure the tab completion
     /// # Example
-    /// ```rust,no_run
+    /// ```rust
     /// // Create a reedline object with tab completions support
     ///
     /// use reedline::{DefaultCompleter, Reedline};
@@ -250,7 +250,7 @@ impl Reedline {
 
     /// A builder that configures the highlighter for your instance of the Reedline engine
     /// # Example
-    /// ```rust,no_run
+    /// ```rust
     /// // Create a reedline object with highlighter support
     ///
     /// use reedline::{ExampleHighlighter, Reedline};
@@ -292,7 +292,7 @@ impl Reedline {
 
     /// A builder that configures the validator for your instance of the Reedline engine
     /// # Example
-    /// ```rust,no_run
+    /// ```rust
     /// // Create a reedline object with validator support
     ///
     /// use reedline::{DefaultValidator, Reedline};

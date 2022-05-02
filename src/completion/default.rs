@@ -9,7 +9,7 @@ use std::{
 ///
 /// # Example
 ///
-/// ```rust, no_run
+/// ```rust
 /// use reedline::{DefaultCompleter, Reedline};
 ///
 /// let commands = vec![
