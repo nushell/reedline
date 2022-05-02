@@ -36,7 +36,7 @@
 //! ```
 //! ## Integrate with custom keybindings
 //!
-//! ```rust,no_run
+//! ```rust
 //! // Configure reedline with custom keybindings
 //!
 //! //Cargo.toml
@@ -76,7 +76,7 @@
 //!
 //! ## Integrate with custom syntax [`Highlighter`]
 //!
-//! ```rust,no_run
+//! ```rust
 //! // Create a reedline object with highlighter support
 //!
 //! use reedline::{ExampleHighlighter, Reedline};
@@ -93,7 +93,7 @@
 //!
 //! ## Integrate with custom tab completion
 //!
-//! ```rust,no_run
+//! ```rust
 //! // Create a reedline object with tab completions support
 //!
 //! use reedline::{ColumnarMenu, DefaultCompleter, Reedline, ReedlineMenu};
@@ -114,7 +114,7 @@
 //!
 //! ## Integrate with [`Hinter`] for fish-style history autosuggestions
 //!
-//! ```rust,no_run
+//! ```rust
 //! // Create a reedline object with in-line hint support
 //!
 //! //Cargo.toml
@@ -136,7 +136,7 @@
 //!
 //! ## Integrate with custom line completion [`Validator`]
 //!
-//! ```rust,no_run
+//! ```rust
 //! // Create a reedline object with line completion validation support
 //!
 //! use reedline::{DefaultValidator, Reedline};
@@ -148,7 +148,7 @@
 //!
 //! ## Use custom [`EditMode`]
 //!
-//! ```rust,no_run
+//! ```rust
 //! // Create a reedline object with custom edit mode
 //! // This can define a keybinding setting or enable vi-emulation
 //! use reedline::{
