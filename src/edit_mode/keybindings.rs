@@ -170,5 +170,5 @@ pub fn add_common_keybindings(kb: &mut Keybindings) {
         KC::Char('n'),
         ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuDown, ReedlineEvent::Down]),
     );
-    kb.add_binding(KM::CONTROL, KC::Char('i'), ReedlineEvent::OpenEditor);
+    kb.add_binding(KM::CONTROL, KC::Char('u'), ReedlineEvent::OpenEditor);
 }
