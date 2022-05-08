@@ -30,6 +30,7 @@ fd-lock = "3.0.3"
 rusqlite = { version = "0.27.0", optional = true, features = ["bundled"] }
 serde_json = { version = "1.0.79", optional = true }
 gethostname = { version = "0.2.3", optional = true }
+thiserror = "1.0.31"
 
 [dev-dependencies]
 tempfile = "3.3.0"

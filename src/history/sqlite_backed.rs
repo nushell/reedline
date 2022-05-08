@@ -3,8 +3,9 @@ use rusqlite::{named_params, params, Connection, ToSql};
 
 use super::{
     base::{CommandLineSearch, SearchDirection, SearchQuery},
-    History, HistoryItem, HistoryItemId, HistorySessionId, Result,
+    History, HistoryItem, HistoryItemId, HistorySessionId,
 };
+use crate::{Result, result::{ReedlineError, ReedlineErrorVariants}};
 
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
 
@@ -71,7 +72,7 @@ impl History for SqliteBackedHistory {
                         more_info = excluded.more_info
                     returning id",
             )
-            .map_err(|e|e.to_string())?
+            .map_err(map_sqlite_err)?
             .query_row(
                 named_params! {
                     ":id": entry.id.map(|id| id.0),
@@ -121,7 +122,7 @@ impl History for SqliteBackedHistory {
             .prepare(&query)
             .unwrap()
             .query_map(&params_borrow[..], deserialize_history_item)
-            .map_err(|e| e.to_string())?
+            .map_err(map_sqlite_err)?
             .collect::<rusqlite::Result<Vec<HistoryItem>>>()
             .map_err(|e| e.to_string())?;
         Ok(results)
@@ -244,9 +245,9 @@ impl History for SqliteBackedHistory {
         self.cursor.command = None;
     }*/
 }
-fn map_sqlite_err(err: rusqlite::Error) -> String {
+fn map_sqlite_err(err: rusqlite::Error) -> ReedlineError {
     // todo: better error mapping
-    format!("{:?}", err)
+    ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!("{:?}", err)))
 }
 
 type BoxedNamedParams<'a> = Vec<(&'static str, Box<dyn ToSql + 'a>)>;
@@ -259,7 +260,7 @@ impl SqliteBackedHistory {
     ///
     pub fn with_file(file: PathBuf) -> Result<Self> {
         if let Some(base_dir) = file.parent() {
-            std::fs::create_dir_all(base_dir).map_err(|e| format!("{}", e))?;
+            std::fs::create_dir_all(base_dir).map_err(|e| ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!("{}", e))))?;
         }
         let db = Connection::open(&file).map_err(map_sqlite_err)?;
         Self::from_connection(db)

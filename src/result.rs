@@ -1,0 +1,25 @@
+use thiserror::Error;
+
+
+/// non-public (for now)
+#[derive(Error, Debug)]
+pub(crate) enum ReedlineErrorVariants {
+    // todo: we should probably be more specific here
+    #[error("error within history database: {0}")]
+    HistoryDatabaseError(String),
+    #[error("error within history: {0}")]
+    OtherHistoryError(&'static str),
+    #[error("the history {history} does not support feature {feature}")]
+    HistoryFeatureUnsupported {
+        history: &'static str,
+        feature: &'static str,
+    }
+}
+
+
+/// separate struct to not expose anything to the public (for now)
+#[derive(Debug)]
+pub struct ReedlineError(pub(crate) ReedlineErrorVariants);
+
+// for now don't expose the above error type to the public
+pub type Result<T> = std::result::Result<T, ReedlineError>;

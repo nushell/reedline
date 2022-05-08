@@ -1,5 +1,6 @@
 #[cfg(feature = "bashisms")]
 use crate::menu_functions::{parse_selection_char, ParseAction};
+use crate::result::{ReedlineError, ReedlineErrorVariants};
 use {
     crate::{
         completion::{CircularCompletionHandler, Completer, DefaultCompleter},
@@ -392,11 +393,11 @@ impl Reedline {
     pub fn update_last_command_context(
         &mut self,
         f: &dyn Fn(HistoryItem) -> HistoryItem,
-    ) -> crate::history::Result<()> {
+    ) -> crate::Result<()> {
         if let Some(r) = &self.history_last_run_id {
             self.history.update(*r, f)?;
         } else {
-            return Err("No command run".to_string());
+            return Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError("No command run")));
         }
         Ok(())
     }

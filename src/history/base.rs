@@ -1,11 +1,8 @@
 use chrono::Utc;
 
-use crate::{core_editor::LineBuffer, HistoryItem};
+use crate::{core_editor::LineBuffer, HistoryItem, Result};
 
 use super::{HistoryItemId, HistorySessionId};
-
-// todo: better error type
-pub type Result<T> = std::result::Result<T, String>;
 
 /// Browsing modes for a [`History`]
 #[derive(Debug, Clone, PartialEq, Eq)]

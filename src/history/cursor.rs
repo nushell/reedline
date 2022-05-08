@@ -4,8 +4,8 @@ use super::base::CommandLineSearch;
 use super::base::SearchDirection;
 use super::base::SearchFilter;
 use super::HistoryItem;
-use super::Result;
 use super::SearchQuery;
+use crate::Result;
 
 /// Interface of a stateful navigation via [`HistoryNavigationQuery`].
 #[derive(Debug)]
@@ -124,13 +124,16 @@ mod tests {
     }
 
     fn get_all_entry_texts(hist: &dyn History) -> Vec<String> {
-        let res = hist.search(SearchQuery::everything(SearchDirection::Forward)).unwrap();
+        let res = hist
+            .search(SearchQuery::everything(SearchDirection::Forward))
+            .unwrap();
         let actual: Vec<_> = res.iter().map(|e| e.command_line.to_string()).collect();
         actual
     }
     fn add_text_entries(hist: &mut dyn History, entries: &[impl AsRef<str>]) {
         entries.iter().for_each(|e| {
-            hist.save(HistoryItem::from_command_line(e.as_ref())).unwrap();
+            hist.save(HistoryItem::from_command_line(e.as_ref()))
+                .unwrap();
         });
     }
 
@@ -430,7 +433,7 @@ mod tests {
         }
 
         {
-            let  (mut appending_hist, _) = create_history_at(capacity, &histfile);
+            let (mut appending_hist, _) = create_history_at(capacity, &histfile);
             add_text_entries(appending_hist.as_mut(), &appending_entries);
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
             let actual: Vec<_> = get_all_entry_texts(appending_hist.as_ref());
@@ -554,9 +557,11 @@ mod tests {
                 let hfile = histfile.clone();
                 std::thread::spawn(move || {
                     let (mut hist, _) = create_history_at(cap, &hfile);
-                    hist.save(HistoryItem::from_command_line(&format!("A{}", i))).unwrap();
+                    hist.save(HistoryItem::from_command_line(&format!("A{}", i)))
+                        .unwrap();
                     hist.sync().unwrap();
-                    hist.save(HistoryItem::from_command_line(&format!("B{}", i))).unwrap();
+                    hist.save(HistoryItem::from_command_line(&format!("B{}", i)))
+                        .unwrap();
                 })
             })
             .collect::<Vec<_>>();

@@ -1,6 +1,10 @@
 use super::{
-    base::{CommandLineSearch, Result},
-    History, HistoryItem, HistoryItemId, HistorySessionId, SearchDirection, SearchQuery,
+    base::CommandLineSearch, History, HistoryItem, HistoryItemId, HistorySessionId,
+    SearchDirection, SearchQuery,
+};
+use crate::{
+    result::{ReedlineError, ReedlineErrorVariants},
+    Result,
 };
 
 use std::{
@@ -85,7 +89,12 @@ impl History for FileBackedHistory {
 
     fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>> {
         if query.start_time.is_some() || query.end_time.is_some() {
-            return Err("filtering by time not supported in plain text history".to_string());
+            return Err(ReedlineError(
+                ReedlineErrorVariants::HistoryFeatureUnsupported {
+                    history: "FileBackedHistory",
+                    feature: "filtering by time",
+                },
+            ));
         }
 
         if query.filter.hostname.is_some()
@@ -93,9 +102,12 @@ impl History for FileBackedHistory {
             || query.filter.cwd_prefix.is_some()
             || query.filter.exit_successful.is_some()
         {
-            return Err(
-                "filtering by extra context is not supported in plain text history".to_string(),
-            );
+            return Err(ReedlineError(
+                ReedlineErrorVariants::HistoryFeatureUnsupported {
+                    history: "FileBackedHistory",
+                    feature: "filtering by extra info",
+                },
+            ));
         }
         let (min_id, max_id) = {
             let start = query.start_id.map(|e| e.0);
@@ -159,11 +171,21 @@ impl History for FileBackedHistory {
         _id: super::HistoryItemId,
         _updater: &dyn Fn(super::HistoryItem) -> super::HistoryItem,
     ) -> Result<()> {
-        Err("updating entries is not supported in plain text history".to_string())
+        Err(ReedlineError(
+            ReedlineErrorVariants::HistoryFeatureUnsupported {
+                history: "FileBackedHistory",
+                feature: "updating entries",
+            },
+        ))
     }
 
     fn delete(&mut self, _h: super::HistoryItemId) -> Result<()> {
-        Err("removing entries is not supported in plain text history".to_string())
+        Err(ReedlineError(
+            ReedlineErrorVariants::HistoryFeatureUnsupported {
+                history: "FileBackedHistory",
+                feature: "removing entries",
+            },
+        ))
     }
 
     /// Writes unwritten history contents to disk.

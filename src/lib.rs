@@ -216,6 +216,9 @@ pub use painting::{Painter, StyledText};
 mod engine;
 pub use engine::Reedline;
 
+mod result;
+pub(crate) use result::Result;
+
 mod history;
 #[cfg(feature = "sqlite")]
 pub use history::SqliteBackedHistory;
