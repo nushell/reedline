@@ -453,7 +453,7 @@ mod tests {
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
-        let (reading_hist, _) = create_history();
+        let (reading_hist, _) = create_history_at(capacity, &histfile);
 
         let actual: Vec<_> = get_all_entry_texts(reading_hist.as_ref());
         assert_eq!(expected_truncated_entries, actual);
@@ -481,14 +481,14 @@ mod tests {
         }
 
         {
-            let (truncating_hist, _) = create_history();
+            let (truncating_hist, _) = create_history_at(5, &histfile);
 
             let actual: Vec<_> = get_all_entry_texts(truncating_hist.as_ref());
             assert_eq!(expected_truncated_entries, actual);
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
-        let (reading_hist, _) = create_history();
+        let (reading_hist, _) = create_history_at(5, &histfile);
 
         let actual: Vec<_> = get_all_entry_texts(reading_hist.as_ref());
         assert_eq!(expected_truncated_entries, actual);
@@ -573,7 +573,7 @@ mod tests {
             t.join().unwrap();
         }
 
-        let (reading_hist, _) = create_history();
+        let (reading_hist, _) = create_history_at(capacity, &histfile);
 
         let actual: Vec<_> = get_all_entry_texts(reading_hist.as_ref());
 
