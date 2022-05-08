@@ -129,16 +129,19 @@ fn main() -> Result<()> {
                 let start = std::time::Instant::now();
                 // save timestamp, cwd, hostname to history
                 #[cfg(feature = "sqlite")]
-                line_editor
-                    .update_last_command_context(&|mut c: reedline::HistoryItem| {
-                        c.start_timestamp = Some(chrono::Utc::now());
-                        c.hostname = Some(gethostname::gethostname().to_string_lossy().to_string());
-                        c.cwd = std::env::current_dir()
-                            .ok()
-                            .map(|e| e.to_string_lossy().to_string());
-                        c
-                    })
-                    .expect("todo: error handling");
+                if !buffer.is_empty() {
+                    line_editor
+                        .update_last_command_context(&|mut c: reedline::HistoryItem| {
+                            c.start_timestamp = Some(chrono::Utc::now());
+                            c.hostname =
+                                Some(gethostname::gethostname().to_string_lossy().to_string());
+                            c.cwd = std::env::current_dir()
+                                .ok()
+                                .map(|e| e.to_string_lossy().to_string());
+                            c
+                        })
+                        .expect("todo: error handling");
+                }
                 if (buffer.trim() == "exit") || (buffer.trim() == "logout") {
                     break;
                 }
@@ -152,13 +155,15 @@ fn main() -> Result<()> {
                 }
                 println!("Our buffer: {}", buffer);
                 #[cfg(feature = "sqlite")]
-                line_editor
-                    .update_last_command_context(&|mut c| {
-                        c.duration = Some(start.elapsed());
-                        c.exit_status = Some(0);
-                        c
-                    })
-                    .expect("todo: error handling");
+                if !buffer.is_empty() {
+                    line_editor
+                        .update_last_command_context(&|mut c| {
+                            c.duration = Some(start.elapsed());
+                            c.exit_status = Some(0);
+                            c
+                        })
+                        .expect("todo: error handling");
+                }
             }
             Ok(Signal::CtrlC) => {
                 // Prompt has been cleared and should start on the next line

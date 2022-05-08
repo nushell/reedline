@@ -6,6 +6,8 @@ use super::{
     History, HistoryItem, HistoryItemId, HistorySessionId, Result,
 };
 
+const SQLITE_APPLICATION_ID: i32 = 1151497937;
+
 use std::{path::PathBuf, time::Duration};
 
 /// A history that stores the values to an SQLite database.
@@ -277,6 +279,18 @@ impl SqliteBackedHistory {
             .map_err(map_sqlite_err)?;
         db.pragma_update(None, "foreign_keys", "on")
             .map_err(map_sqlite_err)?;
+        db.pragma_update(None, "application_id", SQLITE_APPLICATION_ID)
+            .map_err(map_sqlite_err)?;
+        let db_version: i32 = db
+            .query_row(
+                "SELECT user_version FROM pragma_user_version",
+                params![],
+                |r| r.get(0),
+            )
+            .map_err(map_sqlite_err)?;
+        if db_version != 0 {
+            return Err(format!("Unknown database version {db_version}"));
+        }
         db.execute_batch(
             "
         create table if not exists history (
