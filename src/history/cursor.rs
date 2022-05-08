@@ -198,14 +198,6 @@ mod tests {
     }
 
     #[test]
-    fn appends_no_empties() -> Result<()> {
-        let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line(""))?;
-        assert_eq!(hist.count_all()?, 0);
-        Ok(())
-    }
-
-    #[test]
     fn prefix_search_works() -> Result<()> {
         let (mut hist, _) = create_history();
         hist.save(HistoryItem::from_command_line("find me as well"))?;

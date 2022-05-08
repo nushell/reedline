@@ -790,17 +790,22 @@ impl Reedline {
                         self.hide_hints = true;
                         // Additional repaint to show the content without hints etc.
                         self.repaint(prompt)?;
-                        let mut entry = HistoryItem::from_command_line(self.editor.get_buffer());
-                        // todo: in theory there's a race condition here because another shell might get the next session id at the same time
-                        entry.session_id = Some(
-                            self.history_session_id
-                                .get_or_insert_with(|| {
-                                    self.history.next_session_id().expect("todo: error handling")
-                                })
-                                .clone(),
-                        );
-                        let entry = self.history.save(entry).expect("todo: error handling");
-                        self.history_last_run_id = entry.id;
+                        let buf = self.editor.get_buffer();
+                        if !buf.is_empty() {
+                            let mut entry = HistoryItem::from_command_line(buf);
+                            // todo: in theory there's a race condition here because another shell might get the next session id at the same time
+                            entry.session_id = Some(
+                                self.history_session_id
+                                    .get_or_insert_with(|| {
+                                        self.history
+                                            .next_session_id()
+                                            .expect("todo: error handling")
+                                    })
+                                    .clone(),
+                            );
+                            let entry = self.history.save(entry).expect("todo: error handling");
+                            self.history_last_run_id = entry.id;
+                        }
                         self.run_edit_commands(&[EditCommand::Clear]);
                         self.editor.reset_undo_stack();
 
