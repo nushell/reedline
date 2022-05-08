@@ -3,7 +3,7 @@
 ![GitHub](https://img.shields.io/github/license/nushell/reedline)
 [![Crates.io](https://img.shields.io/crates/v/reedline)](https://crates.io/crates/reedline)
 [![docs.rs](https://img.shields.io/docsrs/reedline)](https://docs.rs/reedline/)
-[![CI status](https://github.com/nushell/reedline/actions/workflows/ci.yml/badge.svg)](https://github.com/nushell/reedline/actions)
+![GitHub Workflow Status](https://img.shields.io/github/workflow/status/nushell/reedline/continuous-integration)
 [![Discord](https://img.shields.io/discord/601130461678272522.svg?logo=discord)](https://discord.gg/NtAbbGn)
 
 ## Introduction
@@ -52,9 +52,6 @@ fn main() -> io::Result<()> {
                 println!("\nAborted!");
                 break Ok(());
             }
-            Signal::CtrlL => {
-                line_editor.clear_screen().unwrap();
-            }
         }
     }
 }
@@ -62,7 +59,7 @@ fn main() -> io::Result<()> {
 
 ### Integrate with custom keybindings
 
-```rust,no_run
+```rust
 // Configure reedline with custom keybindings
 
 //Cargo.toml
@@ -101,7 +98,7 @@ let mut line_editor = Reedline::create()
 
 ### Integrate with custom syntax `Highlighter`
 
-```rust,no_run
+```rust
 // Create a reedline object with highlighter support
 
 use reedline::{ExampleHighlighter, Reedline};
@@ -118,10 +115,10 @@ Reedline::create().with_highlighter(Box::new(ExampleHighlighter::new(commands)))
 
 ### Integrate with custom tab completion
 
-```rust,no_run
+```rust
 // Create a reedline object with tab completions support
 
-use reedline::{DefaultCompleter, Reedline, CompletionMenu};
+use reedline::{ColumnarMenu, DefaultCompleter, Reedline, ReedlineMenu};
 
 let commands = vec![
   "test".into(),
@@ -131,14 +128,15 @@ let commands = vec![
 ];
 let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 // Use the interactive menu to select options from the completer
-let completion_menu = Box::new(CompletionMenu::default());
+let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu"));
 
-let mut line_editor = Reedline::create().with_completer(completer).with_menu(completion_menu);
+let mut line_editor =
+Reedline::create().with_completer(completer).with_menu(ReedlineMenu::EngineCompleter(completion_menu));
 ```
 
 ### Integrate with `Hinter` for fish-style history autosuggestions
 
-```rust,no_run
+```rust
 // Create a reedline object with in-line hint support
 
 //Cargo.toml
@@ -158,7 +156,7 @@ let mut line_editor = Reedline::create().with_hinter(Box::new(
 
 ### Integrate with custom line completion `Validator`
 
-```rust,no_run
+```rust
 // Create a reedline object with line completion validation support
 
 use reedline::{DefaultValidator, Reedline};
@@ -168,16 +166,20 @@ let validator = Box::new(DefaultValidator);
 let mut line_editor = Reedline::create().with_validator(validator);
 ```
 
-### Integrate with custom Edit Mode
+### Use custom `EditMode`
 
-```rust,no_run
+```rust
 // Create a reedline object with custom edit mode
+// This can define a keybinding setting or enable vi-emulation
 
-use reedline::{EditMode, Reedline};
+use reedline::{
+    default_vi_insert_keybindings, default_vi_normal_keybindings, EditMode, Reedline, Vi,
+};
 
-let mut line_editor = Reedline::create().with_edit_mode(
-  EditMode::ViNormal, // or EditMode::Emacs or EditMode::ViInsert
-);
+let mut line_editor = Reedline::create().with_edit_mode(Box::new(Vi::new(
+    default_vi_insert_keybindings(),
+    default_vi_normal_keybindings(),
+)));
 ```
 
 ## Are we prompt yet? (Development status)

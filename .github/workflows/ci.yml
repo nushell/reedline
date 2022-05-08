@@ -1,44 +1,76 @@
-on: pull_request
+on:
+  pull_request:
+  push: # Run CI on the main branch after every merge. This is important to fill the GitHub Actions cache in a way that pull requests can see it
+    branches:
+      - main
 
-name: Continuous integration
+name: continuous-integration
 
 jobs:
-  ci:
-    runs-on: ubuntu-latest
+  build-lint-test:
     strategy:
+      fail-fast: false
       matrix:
+        platform: [ubuntu-latest]
         rust:
           - stable
-        features:
-          - ""
-          - sqlite
-          - bashisms
-          - bashisms,sqlite
+        # Define the feature sets that will be built here (for caching you define a separate name)
+        style: [bashisms, default, sqlite, basqlite]
+        include:
+          - style: bashisms
+            flags: "--features bashisms"
+          - style: default
+            flags: ""
+          - style: sqlite
+            flags: "--features sqlite"
+          - style: basqlite
+            flags: "--features bashisms,sqlite"
+
+    runs-on: ${{ matrix.platform }}
 
     steps:
       - uses: actions/checkout@v2
 
-      - uses: actions-rs/toolchain@v1
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: ${{ matrix.rust }}
           override: true
           components: rustfmt, clippy
 
-      - uses: actions-rs/cargo@v1
+      - uses: Swatinem/rust-cache@v1
         with:
-          command: build --features ${{ matrix.features }}
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --workspace --features ${{ matrix.features }}
+          key: ${{ matrix.style }}v1 # increment this to bust the cache if needed
 
-      - uses: actions-rs/cargo@v1
+      - name: Rustfmt
+        uses: actions-rs/cargo@v1
         with:
           command: fmt
           args: --all -- --check
 
-      - uses: actions-rs/cargo@v1
+      - name: Build reedline
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: ${{ matrix.flags }}
+
+      - name: Clippy
+        uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --features ${{ matrix.features }} -- -D warnings
+          args: ${{ matrix.flags }} -- -D warnings
+
+      - uses: taiki-e/install-action@nextest
+
+      - name: Tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: nextest
+          args: run --all ${{ matrix.flags }}
+
+      - name: Doctests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --doc ${{ matrix.flags }}

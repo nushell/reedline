@@ -28,9 +28,6 @@
 //!              println!("\nAborted!");
 //!              break;
 //!          }
-//!          Ok(Signal::CtrlL) => {
-//!              line_editor.clear_screen();
-//!          }
 //!          x => {
 //!              println!("Event: {:?}", x);
 //!          }
@@ -39,7 +36,7 @@
 //! ```
 //! ## Integrate with custom keybindings
 //!
-//! ```rust,no_run
+//! ```rust
 //! // Configure reedline with custom keybindings
 //!
 //! //Cargo.toml
@@ -79,7 +76,7 @@
 //!
 //! ## Integrate with custom syntax [`Highlighter`]
 //!
-//! ```rust,no_run
+//! ```rust
 //! // Create a reedline object with highlighter support
 //!
 //! use reedline::{ExampleHighlighter, Reedline};
@@ -96,7 +93,7 @@
 //!
 //! ## Integrate with custom tab completion
 //!
-//! ```rust,no_run
+//! ```rust
 //! // Create a reedline object with tab completions support
 //!
 //! use reedline::{ColumnarMenu, DefaultCompleter, Reedline, ReedlineMenu};
@@ -117,7 +114,7 @@
 //!
 //! ## Integrate with [`Hinter`] for fish-style history autosuggestions
 //!
-//! ```rust,no_run
+//! ```rust
 //! // Create a reedline object with in-line hint support
 //!
 //! //Cargo.toml
@@ -134,6 +131,34 @@
 //!   DefaultHinter::default()
 //!   .with_style(Style::new().italic().fg(Color::LightGray)),
 //! ));
+//! ```
+//!
+//!
+//! ## Integrate with custom line completion [`Validator`]
+//!
+//! ```rust
+//! // Create a reedline object with line completion validation support
+//!
+//! use reedline::{DefaultValidator, Reedline};
+//!
+//! let validator = Box::new(DefaultValidator);
+//!
+//! let mut line_editor = Reedline::create().with_validator(validator);
+//! ```
+//!
+//! ## Use custom [`EditMode`]
+//!
+//! ```rust
+//! // Create a reedline object with custom edit mode
+//! // This can define a keybinding setting or enable vi-emulation
+//! use reedline::{
+//!     default_vi_insert_keybindings, default_vi_normal_keybindings, EditMode, Reedline, Vi,
+//! };
+//!
+//! let mut line_editor = Reedline::create().with_edit_mode(Box::new(Vi::new(
+//!     default_vi_insert_keybindings(),
+//!     default_vi_normal_keybindings(),
+//! )));
 //! ```
 //!
 //! ## Are we prompt yet? (Development status)

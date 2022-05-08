@@ -478,7 +478,11 @@ impl Menu for ColumnarMenu {
             let index = index.min(value.len());
             let matching = &value[0..index];
 
-            if !matching.is_empty() {
+            // make sure that the partial completion does not overwrite user entered input
+            let extends_input =
+                matching.starts_with(&line_buffer.get_buffer()[span.start..span.end]);
+
+            if !matching.is_empty() && extends_input {
                 line_buffer.replace(span.start..span.end, matching);
 
                 let offset = if matching.len() < (span.end - span.start) {
@@ -646,9 +650,18 @@ impl Menu for ColumnarMenu {
 
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
-        if let Some(Suggestion { value, span, .. }) = self.get_value() {
+        if let Some(Suggestion {
+            mut value,
+            span,
+            append_whitespace,
+            ..
+        }) = self.get_value()
+        {
             let start = span.start.min(line_buffer.len());
             let end = span.end.min(line_buffer.len());
+            if append_whitespace {
+                value.push(' ');
+            }
             line_buffer.replace(start..end, &value);
 
             let mut offset = line_buffer.insertion_point();
@@ -702,6 +715,96 @@ impl Menu for ColumnarMenu {
                     self.create_string(suggestion, index, column, empty_space, use_ansi_coloring)
                 })
                 .collect()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Span;
+
+    use super::*;
+
+    macro_rules! partial_completion_tests {
+        (name: $test_group_name:ident, completions: $completions:expr, test_cases: $($name:ident: $value:expr,)*) => {
+            mod $test_group_name {
+                use crate::{menu::Menu, ColumnarMenu, LineBuffer};
+                use super::FakeCompleter;
+
+                $(
+                    #[test]
+                    fn $name() {
+                        let (input, expected) = $value;
+                        let mut menu = ColumnarMenu::default();
+                        let mut line_buffer = LineBuffer::default();
+                        line_buffer.set_buffer(input.to_string());
+                        let mut completer = FakeCompleter::new(&$completions);
+
+                        menu.can_partially_complete(false, &mut line_buffer, &mut completer);
+
+                        assert_eq!(line_buffer.get_buffer(), expected);
+                    }
+                )*
+            }
+        }
+    }
+
+    partial_completion_tests! {
+        name: partial_completion_prefix_matches,
+        completions: ["build.rs", "build-all.sh"],
+
+        test_cases:
+            empty_completes_prefix: ("", "build"),
+            partial_completes_shared_prefix: ("bui", "build"),
+            full_prefix_completes_nothing: ("build", "build"),
+    }
+
+    partial_completion_tests! {
+        name: partial_completion_fuzzy_matches,
+        completions: ["build.rs", "build-all.sh", "prepare-build.sh"],
+
+        test_cases:
+            no_shared_prefix_completes_nothing: ("", ""),
+            shared_prefix_completes_nothing: ("bui", "bui"),
+    }
+
+    partial_completion_tests! {
+        name: partial_completion_fuzzy_same_prefix_matches,
+        completions: ["build.rs", "build-all.sh", "build-all-tests.sh"],
+
+        test_cases:
+            // assure "all" does not get replaced with shared prefix "build"
+            completes_no_shared_prefix: ("all", "all"),
+    }
+
+    struct FakeCompleter {
+        completions: Vec<String>,
+    }
+
+    impl FakeCompleter {
+        fn new(completions: &[&str]) -> Self {
+            Self {
+                completions: completions.into_iter().map(|c| c.to_string()).collect(),
+            }
+        }
+    }
+
+    impl Completer for FakeCompleter {
+        fn complete(&mut self, _line: &str, pos: usize) -> Vec<Suggestion> {
+            self.completions
+                .iter()
+                .map(|c| fake_suggestion(c, pos))
+                .collect()
+        }
+    }
+
+    fn fake_suggestion(name: &str, pos: usize) -> Suggestion {
+        Suggestion {
+            value: name.to_string(),
+            description: None,
+            extra: None,
+            span: Span { start: 0, end: pos },
+            append_whitespace: false,
         }
     }
 }

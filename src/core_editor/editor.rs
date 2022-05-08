@@ -47,9 +47,11 @@ impl Editor {
             EditCommand::MoveWordRight => self.line_buffer.move_word_right(),
             EditCommand::InsertChar(c) => self.insert_char(*c),
             EditCommand::InsertString(str) => self.line_buffer.insert_str(str),
+            EditCommand::InsertNewline => self.line_buffer.insert_newline(),
             EditCommand::ReplaceChars(n_chars, str) => self.replace_chars(*n_chars, str),
             EditCommand::Backspace => self.line_buffer.delete_left_grapheme(),
             EditCommand::Delete => self.line_buffer.delete_right_grapheme(),
+            EditCommand::CutChar => self.cut_char(),
             EditCommand::BackspaceWord => self.line_buffer.delete_word_left(),
             EditCommand::DeleteWord => self.line_buffer.delete_word_right(),
             EditCommand::Clear => self.line_buffer.clear(),
@@ -260,6 +262,19 @@ impl Editor {
     fn cut_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let right_index = self.line_buffer.word_right_index();
+        if right_index > insertion_offset {
+            let cut_range = insertion_offset..right_index;
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[cut_range.clone()],
+                ClipboardMode::Normal,
+            );
+            self.clear_range(cut_range);
+        }
+    }
+
+    fn cut_char(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let right_index = self.line_buffer.grapheme_right_index();
         if right_index > insertion_offset {
             let cut_range = insertion_offset..right_index;
             self.cut_buffer.set(

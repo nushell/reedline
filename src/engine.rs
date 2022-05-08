@@ -23,7 +23,7 @@ use {
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, Result,
     },
-    std::{borrow::Borrow, io, time::Duration},
+    std::{borrow::Borrow, fs::File, io, io::Write, process::Command, time::Duration},
 };
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for
@@ -117,6 +117,14 @@ pub struct Reedline {
 
     // Engine Menus
     menus: Vec<ReedlineMenu>,
+
+    // Text editor used to open the line buffer for editing
+    buffer_editor: Option<BufferEditor>,
+}
+
+struct BufferEditor {
+    editor: String,
+    extension: String,
 }
 
 impl Drop for Reedline {
@@ -161,12 +169,13 @@ impl Reedline {
             animate: false,
             use_ansi_coloring: true,
             menus: Vec::new(),
+            buffer_editor: None,
         }
     }
 
     /// A builder to include a [`Hinter`] in your instance of the Reedline engine
     /// # Example
-    /// ```rust,no_run
+    /// ```rust
     /// //Cargo.toml
     /// //[dependencies]
     /// //nu-ansi-term = "*"
@@ -195,7 +204,7 @@ impl Reedline {
 
     /// A builder to configure the tab completion
     /// # Example
-    /// ```rust,no_run
+    /// ```rust
     /// // Create a reedline object with tab completions support
     ///
     /// use reedline::{DefaultCompleter, Reedline};
@@ -250,7 +259,7 @@ impl Reedline {
 
     /// A builder that configures the highlighter for your instance of the Reedline engine
     /// # Example
-    /// ```rust,no_run
+    /// ```rust
     /// // Create a reedline object with highlighter support
     ///
     /// use reedline::{ExampleHighlighter, Reedline};
@@ -292,7 +301,7 @@ impl Reedline {
 
     /// A builder that configures the validator for your instance of the Reedline engine
     /// # Example
-    /// ```rust,no_run
+    /// ```rust
     /// // Create a reedline object with validator support
     ///
     /// use reedline::{DefaultValidator, Reedline};
@@ -303,6 +312,22 @@ impl Reedline {
     #[must_use]
     pub fn with_validator(mut self, validator: Box<dyn Validator>) -> Self {
         self.validator = Some(validator);
+        self
+    }
+
+    /// A builder that configures the text editor used to edit the line buffer
+    /// # Example
+    /// ```rust,no_run
+    /// // Create a reedline object with vim as editor
+    ///
+    /// use reedline::{DefaultValidator, Reedline};
+    ///
+    /// let mut line_editor =
+    /// Reedline::create().with_buffer_editor("vim".into(), "nu".into());
+    /// ```
+    #[must_use]
+    pub fn with_buffer_editor(mut self, editor: String, extension: String) -> Self {
+        self.buffer_editor = Some(BufferEditor { editor, extension });
         self
     }
 
@@ -400,6 +425,13 @@ impl Reedline {
     /// other output back at the first line of the terminal.
     pub fn clear_screen(&mut self) -> Result<()> {
         self.painter.clear_screen()?;
+
+        Ok(())
+    }
+
+    /// Clear the screen and the scollback buffer of the terminal
+    pub fn clear_scrollback(&mut self) -> Result<()> {
+        self.painter.clear_scrollback()?;
 
         Ok(())
     }
@@ -543,7 +575,14 @@ impl Reedline {
                 self.input_mode = InputMode::Regular;
                 Ok(EventStatus::Exits(Signal::CtrlC))
             }
-            ReedlineEvent::ClearScreen => Ok(EventStatus::Exits(Signal::CtrlL)),
+            ReedlineEvent::ClearScreen => {
+                self.painter.clear_screen()?;
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::ClearScrollback => {
+                self.painter.clear_scrollback()?;
+                Ok(EventStatus::Handled)
+            }
             ReedlineEvent::Enter | ReedlineEvent::HistoryHintComplete => {
                 if let Some(string) = self.history_cursor.string_at_cursor() {
                     self.editor.set_buffer(string);
@@ -599,6 +638,7 @@ impl Reedline {
             | ReedlineEvent::Multiple(_)
             | ReedlineEvent::None
             | ReedlineEvent::HistoryHintWordComplete
+            | ReedlineEvent::OpenEditor
             | ReedlineEvent::Menu(_)
             | ReedlineEvent::MenuNext
             | ReedlineEvent::MenuPrevious
@@ -741,9 +781,7 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Esc => {
-                self.menus
-                    .iter_mut()
-                    .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
+                self.deactivate_menus();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::CtrlD => {
@@ -756,18 +794,20 @@ impl Reedline {
                 }
             }
             ReedlineEvent::CtrlC => {
-                self.menus
-                    .iter_mut()
-                    .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
+                self.deactivate_menus();
                 self.run_edit_commands(&[EditCommand::Clear]);
                 self.editor.reset_undo_stack();
                 Ok(EventStatus::Exits(Signal::CtrlC))
             }
             ReedlineEvent::ClearScreen => {
-                self.menus
-                    .iter_mut()
-                    .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
-                Ok(EventStatus::Exits(Signal::CtrlL))
+                self.deactivate_menus();
+                self.painter.clear_screen()?;
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::ClearScrollback => {
+                self.deactivate_menus();
+                self.painter.clear_scrollback()?;
+                Ok(EventStatus::Handled)
             }
             ReedlineEvent::Enter => {
                 for menu in self.menus.iter_mut() {
@@ -812,11 +852,7 @@ impl Reedline {
                         Ok(EventStatus::Exits(Signal::Success(buffer)))
                     }
                     Some(ValidationResult::Incomplete) => {
-                        #[cfg(windows)]
-                        {
-                            self.run_edit_commands(&[EditCommand::InsertChar('\r')]);
-                        }
-                        self.run_edit_commands(&[EditCommand::InsertChar('\n')]);
+                        self.run_edit_commands(&[EditCommand::InsertNewline]);
 
                         Ok(EventStatus::Handled)
                     }
@@ -851,6 +887,7 @@ impl Reedline {
 
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),
             ReedlineEvent::Resize(width, height) => {
                 self.painter.handle_resize(width, height);
                 Ok(EventStatus::Handled)
@@ -931,6 +968,12 @@ impl Reedline {
 
     fn active_menu(&mut self) -> Option<&mut ReedlineMenu> {
         self.menus.iter_mut().find(|menu| menu.is_active())
+    }
+
+    fn deactivate_menus(&mut self) {
+        self.menus
+            .iter_mut()
+            .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
     }
 
     fn previous_history(&mut self) {
@@ -1162,6 +1205,36 @@ impl Reedline {
             Some(ReedlineEvent::Edit(edits))
         } else {
             None
+        }
+    }
+
+    fn open_editor(&mut self) -> Result<()> {
+        match &self.buffer_editor {
+            None => Ok(()),
+            Some(BufferEditor { editor, extension }) => {
+                let temp_directory = std::env::temp_dir();
+                let temp_file = temp_directory.join(format!("reedline_buffer.{}", extension));
+
+                {
+                    let mut file = File::create(temp_file.clone())?;
+                    write!(file, "{}", self.editor.get_buffer())?;
+                }
+
+                {
+                    let mut process = Command::new(editor);
+                    process.arg(temp_file.as_path());
+
+                    let mut child = process.spawn()?;
+                    child.wait()?;
+                }
+
+                let res = std::fs::read_to_string(temp_file)?;
+                let res = res.trim_end().to_string();
+
+                self.editor.line_buffer().set_buffer(res);
+
+                Ok(())
+            }
         }
     }
 

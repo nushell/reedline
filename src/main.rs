@@ -1,6 +1,5 @@
 #[cfg(not(feature = "sqlite"))]
 use reedline::FileBackedHistory;
-use reedline::{DefaultValidator, ReedlineMenu};
 
 use {
     crossterm::{
@@ -13,8 +12,8 @@ use {
         get_reedline_default_keybindings, get_reedline_edit_commands,
         get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
         get_reedline_reedline_events, ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt,
-        EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline, ReedlineEvent,
-        Signal, Vi,
+        DefaultValidator, EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu,
+        Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi,
     },
     std::{
         io::{stdout, Write},
@@ -105,15 +104,21 @@ fn main() -> Result<()> {
         add_menu_keybindings(&mut normal_keybindings);
         add_menu_keybindings(&mut insert_keybindings);
 
+        add_newline_keybinding(&mut insert_keybindings);
+
         Box::new(Vi::new(insert_keybindings, normal_keybindings))
     } else {
         let mut keybindings = default_emacs_keybindings();
         add_menu_keybindings(&mut keybindings);
+        add_newline_keybinding(&mut keybindings);
 
         Box::new(Emacs::new(keybindings))
     };
 
     line_editor = line_editor.with_edit_mode(edit_mode);
+
+    // Adding vi as text editor
+    line_editor = line_editor.with_buffer_editor("vi".into(), "nu".into());
 
     let prompt = DefaultPrompt::new();
 
@@ -146,7 +151,7 @@ fn main() -> Result<()> {
                     break;
                 }
                 if buffer.trim() == "clear" {
-                    line_editor.clear_screen()?;
+                    line_editor.clear_scrollback()?;
                     continue;
                 }
                 if buffer.trim() == "history" {
@@ -167,9 +172,6 @@ fn main() -> Result<()> {
             }
             Ok(Signal::CtrlC) => {
                 // Prompt has been cleared and should start on the next line
-            }
-            Ok(Signal::CtrlL) => {
-                line_editor.clear_screen()?;
             }
             Err(err) => {
                 println!("Error: {:?}", err);
@@ -267,6 +269,15 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
         KeyModifiers::SHIFT,
         KeyCode::BackTab,
         ReedlineEvent::MenuPrevious,
+    );
+}
+
+fn add_newline_keybinding(keybindings: &mut Keybindings) {
+    // This doesn't work for macOS
+    keybindings.add_binding(
+        KeyModifiers::ALT,
+        KeyCode::Enter,
+        ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
     );
 }
 

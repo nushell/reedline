@@ -226,6 +226,17 @@ impl LineBuffer {
         self.insertion_point = self.insertion_point() + string.len();
     }
 
+    /// Inserts the system specific new line character
+    ///
+    /// - On Unix systems LF (`"\n"`)
+    /// - On Windows CRLF (`"\r\n"`)
+    pub fn insert_newline(&mut self) {
+        #[cfg(target_os = "windows")]
+        self.insert_str("\r\n");
+        #[cfg(not(target_os = "windows"))]
+        self.insert_char('\n');
+    }
+
     /// Empty buffer and reset cursor
     pub fn clear(&mut self) {
         self.lines = String::new();
