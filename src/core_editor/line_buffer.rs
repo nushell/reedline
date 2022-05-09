@@ -179,6 +179,35 @@ impl LineBuffer {
             .unwrap_or_else(|| self.lines.len())
     }
 
+    /// Cursor position *at end of* the next word to the right
+    pub fn word_right_end_index(&self) -> usize {
+        self.lines[self.insertion_point..]
+            .split_word_bound_indices()
+            .filter_map(|(i, word)| {
+                word.grapheme_indices(true)
+                    .next_back()
+                    .map(|x| self.insertion_point + x.0 + i)
+                    .filter(|x| !is_whitespace_str(word) && *x != self.insertion_point)
+            })
+            .next()
+            .unwrap_or_else(|| {
+                self.lines
+                    .grapheme_indices(true)
+                    .last()
+                    .map(|x| x.0)
+                    .unwrap_or(0)
+            })
+    }
+
+    /// Cursor position *in front of* the next word to the right
+    pub fn word_right_start_index(&self) -> usize {
+        self.lines[self.insertion_point..]
+            .split_word_bound_indices()
+            .find(|(i, word)| *i != 0 && !is_whitespace_str(word))
+            .map(|(i, _)| self.insertion_point + i)
+            .unwrap_or_else(|| self.lines.len())
+    }
+
     /// Cursor position *in front of* the next word to the left
     pub fn word_left_index(&self) -> usize {
         self.lines[..self.insertion_point]
@@ -207,6 +236,16 @@ impl LineBuffer {
     /// Move cursor position *behind* the next word to the right
     pub fn move_word_right(&mut self) {
         self.insertion_point = self.word_right_index();
+    }
+
+    /// Move cursor position to the start of the next word
+    pub fn move_word_right_start(&mut self) {
+        self.insertion_point = self.word_right_start_index();
+    }
+
+    /// Move cursor position to the end of the next word
+    pub fn move_word_right_end(&mut self) {
+        self.insertion_point = self.word_right_end_index();
     }
 
     ///Insert a single character at the insertion point and move right
