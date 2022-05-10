@@ -759,6 +759,35 @@ mod test {
     }
 
     #[rstest]
+    #[case("", 0, 0)] // Basecase
+    #[case("word", 0, 3)] // Cursor on top of the last grapheme of the word
+    #[case("word and another one", 0, 3)]
+    #[case("word and another one", 3, 7)] // repeat calling will move
+    #[case("word and another one", 4, 7)] // Starting from whitespace works
+    #[case("word\nline two", 0, 3)] // Multiline...
+    #[case("word\nline two", 3, 8)] // ... contineus to next word end
+    #[case("weirdö characters", 0, 5)] // Multibyte unicode at the word end (latin UTF-8 should be two bytes long)
+    #[case("weirdö characters", 5, 17)] // continue with unicode (latin UTF-8 should be two bytes long)
+    #[case("weirdö", 0, 5)] // Multibyte unicode at the buffer end is fine as well
+    #[case("weirdö", 5, 5)] // Multibyte unicode at the buffer end is fine as well
+    #[case("word😇 with emoji", 0, 3)] // (Emojis are a separate word)
+    #[case("word😇 with emoji", 3, 4)] // Moves to end of "emoji word" as it is one grapheme, on top of the first byte
+    #[case("😇", 0, 0)] // More UTF-8 shenanigans
+    fn test_move_word_right_end(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        line_buffer.move_word_right_end();
+
+        assert_eq!(line_buffer.insertion_point(), expected);
+        line_buffer.assert_valid();
+    }
+
+    #[rstest]
     #[case("This is a te", 4)]
     #[case("This is a test", 4)]
     #[case("This      is a test", 4)]
