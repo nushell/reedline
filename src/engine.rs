@@ -397,7 +397,9 @@ impl Reedline {
         if let Some(r) = &self.history_last_run_id {
             self.history.update(*r, f)?;
         } else {
-            return Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError("No command run")));
+            return Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
+                "No command run",
+            )));
         }
         Ok(())
     }

@@ -5,7 +5,10 @@ use super::{
     base::{CommandLineSearch, SearchDirection, SearchQuery},
     History, HistoryItem, HistoryItemId, HistorySessionId,
 };
-use crate::{Result, result::{ReedlineError, ReedlineErrorVariants}};
+use crate::{
+    result::{ReedlineError, ReedlineErrorVariants},
+    Result,
+};
 
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
 
@@ -247,7 +250,10 @@ impl History for SqliteBackedHistory {
 }
 fn map_sqlite_err(err: rusqlite::Error) -> ReedlineError {
     // todo: better error mapping
-    ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!("{:?}", err)))
+    ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!(
+        "{:?}",
+        err
+    )))
 }
 
 type BoxedNamedParams<'a> = Vec<(&'static str, Box<dyn ToSql + 'a>)>;
@@ -260,7 +266,12 @@ impl SqliteBackedHistory {
     ///
     pub fn with_file(file: PathBuf) -> Result<Self> {
         if let Some(base_dir) = file.parent() {
-            std::fs::create_dir_all(base_dir).map_err(|e| ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!("{}", e))))?;
+            std::fs::create_dir_all(base_dir).map_err(|e| {
+                ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!(
+                    "{}",
+                    e
+                )))
+            })?;
         }
         let db = Connection::open(&file).map_err(map_sqlite_err)?;
         Self::from_connection(db)

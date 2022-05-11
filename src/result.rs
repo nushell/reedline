@@ -1,6 +1,5 @@
 use thiserror::Error;
 
-
 /// non-public (for now)
 #[derive(Error, Debug)]
 pub(crate) enum ReedlineErrorVariants {
@@ -13,9 +12,8 @@ pub(crate) enum ReedlineErrorVariants {
     HistoryFeatureUnsupported {
         history: &'static str,
         feature: &'static str,
-    }
+    },
 }
-
 
 /// separate struct to not expose anything to the public (for now)
 #[derive(Debug)]
