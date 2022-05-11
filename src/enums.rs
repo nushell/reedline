@@ -42,6 +42,12 @@ pub enum EditCommand {
     /// Move one word to the right
     MoveWordRight,
 
+    /// Move one word to the right, stop at start of word
+    MoveWordRightStart,
+
+    /// Move one word to the right, stop at end of word
+    MoveWordRightEnd,
+
     /// Move to position
     MoveToPosition(usize),
 
@@ -101,6 +107,9 @@ pub enum EditCommand {
 
     /// Cut the word right of the insertion point
     CutWordRight,
+
+    /// Cut the word right of the insertion point and any following space
+    CutWordRightToNext,
 
     /// Paste the cut buffer in front of the insertion point (Emacs, vi `P`)
     PasteCutBufferBefore,
@@ -165,6 +174,8 @@ impl Display for EditCommand {
             EditCommand::MoveRight => write!(f, "MoveRight"),
             EditCommand::MoveWordLeft => write!(f, "MoveWordLeft"),
             EditCommand::MoveWordRight => write!(f, "MoveWordRight"),
+            EditCommand::MoveWordRightEnd => write!(f, "MoveWordRightEnd"),
+            EditCommand::MoveWordRightStart => write!(f, "MoveWordRightStart"),
             EditCommand::MoveToPosition(_) => write!(f, "MoveToPosition  Value: <int>"),
             EditCommand::InsertChar(_) => write!(f, "InsertChar  Value: <char>"),
             EditCommand::InsertString(_) => write!(f, "InsertString Value: <string>"),
@@ -184,6 +195,7 @@ impl Display for EditCommand {
             EditCommand::CutToLineEnd => write!(f, "CutToLineEnd"),
             EditCommand::CutWordLeft => write!(f, "CutWordLeft"),
             EditCommand::CutWordRight => write!(f, "CutWordRight"),
+            EditCommand::CutWordRightToNext => write!(f, "CutWordRightToNext"),
             EditCommand::PasteCutBufferBefore => write!(f, "PasteCutBufferBefore"),
             EditCommand::PasteCutBufferAfter => write!(f, "PasteCutBufferAfter"),
             EditCommand::UppercaseWord => write!(f, "UppercaseWord"),
@@ -220,6 +232,8 @@ impl EditCommand {
             | EditCommand::MoveRight
             | EditCommand::MoveWordLeft
             | EditCommand::MoveWordRight
+            | EditCommand::MoveWordRightStart
+            | EditCommand::MoveWordRightEnd
             | EditCommand::MoveRightUntil(_)
             | EditCommand::MoveRightBefore(_)
             | EditCommand::MoveLeftUntil(_)
@@ -246,6 +260,7 @@ impl EditCommand {
             | EditCommand::CutToEnd
             | EditCommand::CutWordLeft
             | EditCommand::CutWordRight
+            | EditCommand::CutWordRightToNext
             | EditCommand::PasteCutBufferBefore
             | EditCommand::PasteCutBufferAfter
             | EditCommand::UppercaseWord

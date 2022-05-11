@@ -7,7 +7,11 @@ where
     match input.peek() {
         Some('w') => {
             let _ = input.next();
-            Some(Motion::Word)
+            Some(Motion::NextWord)
+        }
+        Some('e') => {
+            let _ = input.next();
+            Some(Motion::NextWordEnd)
         }
         Some('d') => {
             let _ = input.next();
@@ -43,7 +47,8 @@ where
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Motion {
-    Word,
+    NextWord,
+    NextWordEnd,
     Line,
     Start,
     End,

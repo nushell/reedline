@@ -179,6 +179,35 @@ impl LineBuffer {
             .unwrap_or_else(|| self.lines.len())
     }
 
+    /// Cursor position *at end of* the next word to the right
+    pub fn word_right_end_index(&self) -> usize {
+        self.lines[self.insertion_point..]
+            .split_word_bound_indices()
+            .filter_map(|(i, word)| {
+                word.grapheme_indices(true)
+                    .next_back()
+                    .map(|x| self.insertion_point + x.0 + i)
+                    .filter(|x| !is_whitespace_str(word) && *x != self.insertion_point)
+            })
+            .next()
+            .unwrap_or_else(|| {
+                self.lines
+                    .grapheme_indices(true)
+                    .last()
+                    .map(|x| x.0)
+                    .unwrap_or(0)
+            })
+    }
+
+    /// Cursor position *in front of* the next word to the right
+    pub fn word_right_start_index(&self) -> usize {
+        self.lines[self.insertion_point..]
+            .split_word_bound_indices()
+            .find(|(i, word)| *i != 0 && !is_whitespace_str(word))
+            .map(|(i, _)| self.insertion_point + i)
+            .unwrap_or_else(|| self.lines.len())
+    }
+
     /// Cursor position *in front of* the next word to the left
     pub fn word_left_index(&self) -> usize {
         self.lines[..self.insertion_point]
@@ -207,6 +236,16 @@ impl LineBuffer {
     /// Move cursor position *behind* the next word to the right
     pub fn move_word_right(&mut self) {
         self.insertion_point = self.word_right_index();
+    }
+
+    /// Move cursor position to the start of the next word
+    pub fn move_word_right_start(&mut self) {
+        self.insertion_point = self.word_right_start_index();
+    }
+
+    /// Move cursor position to the end of the next word
+    pub fn move_word_right_end(&mut self) {
+        self.insertion_point = self.word_right_end_index();
     }
 
     ///Insert a single character at the insertion point and move right
@@ -716,6 +755,35 @@ mod test {
         let expected_line_buffer = buffer_with("This is a ");
 
         assert_eq!(expected_line_buffer, line_buffer);
+        line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("", 0, 0)] // Basecase
+    #[case("word", 0, 3)] // Cursor on top of the last grapheme of the word
+    #[case("word and another one", 0, 3)]
+    #[case("word and another one", 3, 7)] // repeat calling will move
+    #[case("word and another one", 4, 7)] // Starting from whitespace works
+    #[case("word\nline two", 0, 3)] // Multiline...
+    #[case("word\nline two", 3, 8)] // ... contineus to next word end
+    #[case("weirdö characters", 0, 5)] // Multibyte unicode at the word end (latin UTF-8 should be two bytes long)
+    #[case("weirdö characters", 5, 17)] // continue with unicode (latin UTF-8 should be two bytes long)
+    #[case("weirdö", 0, 5)] // Multibyte unicode at the buffer end is fine as well
+    #[case("weirdö", 5, 5)] // Multibyte unicode at the buffer end is fine as well
+    #[case("word😇 with emoji", 0, 3)] // (Emojis are a separate word)
+    #[case("word😇 with emoji", 3, 4)] // Moves to end of "emoji word" as it is one grapheme, on top of the first byte
+    #[case("😇", 0, 0)] // More UTF-8 shenanigans
+    fn test_move_word_right_end(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        line_buffer.move_word_right_end();
+
+        assert_eq!(line_buffer.insertion_point(), expected);
         line_buffer.assert_valid();
     }
 

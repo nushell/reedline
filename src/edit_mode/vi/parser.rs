@@ -162,7 +162,7 @@ mod tests {
                 multiplier: None,
                 command: Some(Command::Delete),
                 count: None,
-                motion: Some(Motion::Word),
+                motion: Some(Motion::NextWord),
                 valid: true
             }
         );
@@ -179,7 +179,7 @@ mod tests {
                 multiplier: Some(2),
                 command: Some(Command::Delete),
                 count: None,
-                motion: Some(Motion::Word),
+                motion: Some(Motion::NextWord),
                 valid: true
             }
         );
@@ -196,7 +196,7 @@ mod tests {
                 multiplier: Some(2),
                 command: Some(Command::Delete),
                 count: Some(2),
-                motion: Some(Motion::Word),
+                motion: Some(Motion::NextWord),
                 valid: true
             }
         );
@@ -213,7 +213,7 @@ mod tests {
                 multiplier: Some(2),
                 command: Some(Command::Delete),
                 count: Some(20),
-                motion: Some(Motion::Word),
+                motion: Some(Motion::NextWord),
                 valid: true
             }
         );
@@ -300,7 +300,8 @@ mod tests {
         ]))]
     #[case(&['d', 'd'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
-    #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight])]))]
+    #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext])]))]
+    #[case(&['d', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight])]))]
     fn test_reedline_move(#[case] input: &[char], #[case] expected: ReedlineEvent) {
         let res = vi_parse(input);
         let output = res.to_reedline_event();
