@@ -90,7 +90,7 @@ impl History for SqliteBackedHistory {
                 },
                 |row| row.get(0),
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(map_sqlite_err)?;
         entry.id = Some(HistoryItemId::new(ret));
         Ok(entry)
     }
@@ -99,9 +99,9 @@ impl History for SqliteBackedHistory {
         let entry = self
             .db
             .prepare("select * from history where id = :id")
-            .map_err(|e| e.to_string())?
+            .map_err(map_sqlite_err)?
             .query_row(named_params! { ":id": id.0 }, deserialize_history_item)
-            .map_err(|e| e.to_string())?;
+            .map_err(map_sqlite_err)?;
         Ok(entry)
     }
 
@@ -113,7 +113,7 @@ impl History for SqliteBackedHistory {
             .prepare(&query)
             .unwrap()
             .query_row(&params_borrow[..], |r| r.get(0))
-            .map_err(|e| e.to_string())?;
+            .map_err(map_sqlite_err)?;
         Ok(result)
     }
 
@@ -127,7 +127,7 @@ impl History for SqliteBackedHistory {
             .query_map(&params_borrow[..], deserialize_history_item)
             .map_err(map_sqlite_err)?
             .collect::<rusqlite::Result<Vec<HistoryItem>>>()
-            .map_err(|e| e.to_string())?;
+            .map_err(map_sqlite_err)?;
         Ok(results)
         /* if let Some((next_id, next_command)) = next_id {
             self.cursor.id = next_id;
@@ -155,9 +155,11 @@ impl History for SqliteBackedHistory {
         let changed = self
             .db
             .execute("delete from history where id = ?", params![h.0])
-            .map_err(|e| e.to_string())?;
+            .map_err(map_sqlite_err)?;
         if changed == 0 {
-            return Err("Could not find item".to_string());
+            return Err(ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(
+                "Could not find item".to_string(),
+            )));
         }
         Ok(())
     }
@@ -301,7 +303,9 @@ impl SqliteBackedHistory {
             )
             .map_err(map_sqlite_err)?;
         if db_version != 0 {
-            return Err(format!("Unknown database version {db_version}"));
+            return Err(ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(
+                format!("Unknown database version {db_version}"),
+            )));
         }
         db.execute_batch(
             "

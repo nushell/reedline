@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use thiserror::Error;
 
 /// non-public (for now)
@@ -18,6 +20,13 @@ pub(crate) enum ReedlineErrorVariants {
 /// separate struct to not expose anything to the public (for now)
 #[derive(Debug)]
 pub struct ReedlineError(pub(crate) ReedlineErrorVariants);
+
+impl Display for ReedlineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl std::error::Error for ReedlineError {}
 
 // for now don't expose the above error type to the public
 pub type Result<T> = std::result::Result<T, ReedlineError>;
