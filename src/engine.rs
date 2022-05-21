@@ -1,7 +1,7 @@
 #[cfg(feature = "bashisms")]
 use crate::{
-    menu_functions::{parse_selection_char, ParseAction},
     history::SearchFilter,
+    menu_functions::{parse_selection_char, ParseAction},
 };
 
 use crate::result::{ReedlineError, ReedlineErrorVariants};
