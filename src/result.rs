@@ -1,5 +1,4 @@
 use std::fmt::Display;
-
 use thiserror::Error;
 
 /// non-public (for now)

@@ -5,3 +5,4 @@ history.sqlite3*
 target-coverage/
 tarpaulin-report.html
 .vscode
+.helix

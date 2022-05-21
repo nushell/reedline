@@ -11,7 +11,7 @@ use {
         hinter::Hinter,
         history::{
             FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
-            HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
+            HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchFilter, SearchQuery,
         },
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
@@ -1178,21 +1178,58 @@ impl Reedline {
             .and_then(|(index, indicator)| match parsed.action {
                 ParseAction::BackwardSearch => self
                     .history
-                    .iter_chronologic()
-                    .rev()
-                    .nth(index.saturating_sub(1))
-                    .map(|history| (parsed.remainder.len(), indicator.len(), history.clone())),
+                    .search(SearchQuery {
+                        direction: SearchDirection::Backward,
+                        start_time: None,
+                        end_time: None,
+                        start_id: None,
+                        end_id: None,
+                        limit: None,
+                        filter: SearchFilter::anything(),
+                    })
+                    .unwrap_or_else(|_| Vec::new())
+                    .get(index.saturating_sub(1))
+                    .map(|history| {
+                        (
+                            parsed.remainder.len(),
+                            indicator.len(),
+                            history.command_line.clone(),
+                        )
+                    }),
                 ParseAction::ForwardSearch => self
                     .history
-                    .iter_chronologic()
-                    .nth(index)
-                    .map(|history| (parsed.remainder.len(), indicator.len(), history.clone())),
+                    .search(SearchQuery {
+                        direction: SearchDirection::Forward,
+                        start_time: None,
+                        end_time: None,
+                        start_id: None,
+                        end_id: None,
+                        limit: None,
+                        filter: SearchFilter::anything(),
+                    })
+                    .unwrap_or_else(|_| Vec::new())
+                    .get(index)
+                    .map(|history| {
+                        (
+                            parsed.remainder.len(),
+                            indicator.len(),
+                            history.command_line.clone(),
+                        )
+                    }),
                 ParseAction::LastToken => self
                     .history
-                    .iter_chronologic()
-                    .rev()
-                    .next()
-                    .and_then(|history| history.split_whitespace().rev().next())
+                    .search(SearchQuery {
+                        direction: SearchDirection::Backward,
+                        start_time: None,
+                        end_time: None,
+                        start_id: None,
+                        end_id: None,
+                        limit: None,
+                        filter: SearchFilter::anything(),
+                    })
+                    .unwrap_or_else(|_| Vec::new())
+                    .get(0)
+                    .and_then(|history| history.command_line.split_whitespace().rev().next())
                     .map(|token| (parsed.remainder.len(), indicator.len(), token.to_string())),
             });
 
