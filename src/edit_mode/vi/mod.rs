@@ -256,7 +256,7 @@ mod test {
 
         let esc = Event::Key(KeyEvent {
             modifiers: KeyModifiers::NONE,
-            code: KeyCode::Char('e'),
+            code: KeyCode::Char('q'),
         });
         let result = vi.parse_event(esc);
 

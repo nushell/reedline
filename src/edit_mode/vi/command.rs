@@ -37,7 +37,11 @@ where
         }
         Some('w') => {
             let _ = input.next();
-            Some(Command::MoveWordRight)
+            Some(Command::MoveWordRightStart)
+        }
+        Some('e') => {
+            let _ = input.next();
+            Some(Command::MoveWordRightEnd)
         }
         Some('b') => {
             let _ = input.next();
@@ -143,7 +147,8 @@ pub enum Command {
     MoveRight,
     MoveUp,
     MoveDown,
-    MoveWordRight,
+    MoveWordRightStart,
+    MoveWordRightEnd,
     MoveWordLeft,
     MoveToLineStart,
     MoveToLineEnd,
@@ -173,7 +178,8 @@ impl Command {
             Self::MoveToLineStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
             Self::MoveToLineEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
             Self::MoveWordLeft => vec![ReedlineOption::Edit(EditCommand::MoveWordLeft)],
-            Self::MoveWordRight => vec![ReedlineOption::Edit(EditCommand::MoveWordRight)],
+            Self::MoveWordRightStart => vec![ReedlineOption::Edit(EditCommand::MoveWordRightStart)],
+            Self::MoveWordRightEnd => vec![ReedlineOption::Edit(EditCommand::MoveWordRightEnd)],
             Self::EnterViInsert => vec![ReedlineOption::Event(ReedlineEvent::Repaint)],
             Self::EnterViAppend => vec![ReedlineOption::Edit(EditCommand::MoveRight)],
             Self::PasteAfter => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferAfter)],
@@ -207,7 +213,10 @@ impl Command {
             Self::Delete => match motion {
                 Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CutToEnd)]),
                 Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)]),
-                Motion::Word => Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)]),
+                Motion::NextWord => {
+                    Some(vec![ReedlineOption::Edit(EditCommand::CutWordRightToNext)])
+                }
+                Motion::NextWordEnd => Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)]),
                 Motion::RightUntil(c) => {
                     Some(vec![ReedlineOption::Edit(EditCommand::CutRightUntil(*c))])
                 }
@@ -232,7 +241,11 @@ impl Command {
                     ReedlineOption::Edit(EditCommand::ClearToLineEnd),
                     ReedlineOption::Event(ReedlineEvent::Repaint),
                 ]),
-                Motion::Word => Some(vec![
+                Motion::NextWord => Some(vec![
+                    ReedlineOption::Edit(EditCommand::CutWordRightToNext),
+                    ReedlineOption::Event(ReedlineEvent::Repaint),
+                ]),
+                Motion::NextWordEnd => Some(vec![
                     ReedlineOption::Edit(EditCommand::CutWordRight),
                     ReedlineOption::Event(ReedlineEvent::Repaint),
                 ]),

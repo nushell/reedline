@@ -271,7 +271,7 @@ impl FileBackedHistory {
         }
         FileBackedHistory {
             capacity,
-            entries: VecDeque::with_capacity(capacity),
+            entries: VecDeque::new(),
             file: None,
             len_on_disk: 0,
         }
