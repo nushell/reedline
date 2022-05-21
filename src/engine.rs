@@ -1,5 +1,9 @@
 #[cfg(feature = "bashisms")]
-use crate::menu_functions::{parse_selection_char, ParseAction};
+use crate::{
+    menu_functions::{parse_selection_char, ParseAction},
+    history::SearchFilter,
+};
+
 use crate::result::{ReedlineError, ReedlineErrorVariants};
 use {
     crate::{
@@ -11,7 +15,7 @@ use {
         hinter::Hinter,
         history::{
             FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
-            HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchFilter, SearchQuery,
+            HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},

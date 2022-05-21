@@ -5,6 +5,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub(crate) enum ReedlineErrorVariants {
     // todo: we should probably be more specific here
+    #[cfg(feature = "sqlite")]
     #[error("error within history database: {0}")]
     HistoryDatabaseError(String),
     #[error("error within history: {0}")]
