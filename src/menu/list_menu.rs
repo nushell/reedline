@@ -9,6 +9,7 @@ use {
     },
     nu_ansi_term::{ansi::RESET, Style},
     std::iter::Sum,
+    unicode_width::UnicodeWidthStr,
 };
 
 const SELECTION_CHAR: char = '!';
@@ -219,7 +220,13 @@ impl ListMenu {
                         None => (lines, None),
                         Some(total_lines) => {
                             let new_total_lines = total_lines
-                                + self.number_of_lines(&suggestion.value, painter.screen_width());
+                                + self.number_of_lines(
+                                    &suggestion.value,
+                                    //  to account for the index and the indicator e.g. 0: XXXX
+                                    painter.screen_width().saturating_sub(
+                                        self.indicator().width() as u16 + count_digits(lines),
+                                    ),
+                                );
 
                             if new_total_lines < available_lines {
                                 (lines + 1, Some(new_total_lines))
@@ -583,8 +590,18 @@ impl Menu for ListMenu {
     /// Calculates the real required lines for the menu considering how many lines
     /// wrap the terminal and if an entry is larger than the remaining lines
     fn menu_required_lines(&self, terminal_columns: u16) -> u16 {
-        self.get_values().iter().fold(0, |acc, suggestion| {
-            acc + self.number_of_lines(&suggestion.value, terminal_columns)
+        let mut entry_index = 0;
+        self.get_values().iter().fold(0, |total_lines, suggestion| {
+            //  to account for the the index and the indicator e.g. 0: XXXX
+            let ret = total_lines
+                + self.number_of_lines(
+                    &suggestion.value,
+                    terminal_columns.saturating_sub(
+                        self.indicator().width() as u16 + count_digits(entry_index),
+                    ),
+                );
+            entry_index += 1;
+            ret
         }) + 1
     }
 
@@ -662,6 +679,19 @@ fn number_of_lines(entry: &str, max_lines: usize, terminal_columns: u16) -> u16 
     };
 
     lines
+}
+
+fn count_digits(mut n: usize) -> u16 {
+    // count the digits in the number
+    if n == 0 {
+        return 1;
+    }
+    let mut count = 0;
+    while n > 0 {
+        n /= 10;
+        count += 1;
+    }
+    count
 }
 
 #[cfg(test)]
