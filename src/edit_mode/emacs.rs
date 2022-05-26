@@ -17,7 +17,6 @@ pub fn default_emacs_keybindings() -> Keybindings {
     let mut kb = Keybindings::new();
 
     // CTRL
-    kb.add_binding(KM::CONTROL, KC::Char('d'), ReedlineEvent::CtrlD);
     kb.add_binding(KM::CONTROL, KC::Char('g'), edit_bind(EC::Redo));
     kb.add_binding(KM::CONTROL, KC::Char('z'), edit_bind(EC::Undo));
     kb.add_binding(KM::CONTROL, KC::Char('a'), edit_bind(EC::MoveToLineStart));
@@ -37,7 +36,6 @@ pub fn default_emacs_keybindings() -> Keybindings {
         edit_bind(EC::PasteCutBufferBefore),
     );
     kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
-    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
     kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
 
     // ALT
