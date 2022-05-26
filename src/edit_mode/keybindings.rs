@@ -106,6 +106,7 @@ pub fn add_common_keybindings(kb: &mut Keybindings) {
     kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
 
     kb.add_binding(KM::CONTROL, KC::Char('c'), ReedlineEvent::CtrlC);
+    kb.add_binding(KM::CONTROL, KC::Char('d'), ReedlineEvent::CtrlD);
     kb.add_binding(KM::CONTROL, KC::Char('l'), ReedlineEvent::ClearScreen);
     kb.add_binding(KM::CONTROL, KC::Char('r'), ReedlineEvent::SearchHistory);
 
@@ -120,6 +121,7 @@ pub fn add_common_keybindings(kb: &mut Keybindings) {
     kb.add_binding(KM::CONTROL, KC::Left, edit_bind(EC::MoveWordLeft));
     kb.add_binding(KM::CONTROL, KC::Backspace, edit_bind(EC::BackspaceWord));
     kb.add_binding(KM::CONTROL, KC::Delete, edit_bind(EC::DeleteWord));
+    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
 
     kb.add_binding(
         KM::NONE,
