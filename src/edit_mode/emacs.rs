@@ -1,8 +1,11 @@
-use super::{
-    keybindings::{add_common_keybindings, edit_bind, Keybindings},
-    EditMode,
-};
 use crate::{
+    edit_mode::{
+        keybindings::{
+            add_common_control_bindings, add_common_edit_bindings, add_common_navigation_bindings,
+            edit_bind, Keybindings,
+        },
+        EditMode,
+    },
     enums::{EditCommand, ReedlineEvent},
     PromptEditMode,
 };
@@ -15,10 +18,26 @@ pub fn default_emacs_keybindings() -> Keybindings {
     use KeyModifiers as KM;
 
     let mut kb = Keybindings::new();
+    add_common_control_bindings(&mut kb);
+    add_common_navigation_bindings(&mut kb);
+    add_common_edit_bindings(&mut kb);
 
-    // CTRL
-    kb.add_binding(KM::CONTROL, KC::Char('g'), edit_bind(EC::Redo));
-    kb.add_binding(KM::CONTROL, KC::Char('z'), edit_bind(EC::Undo));
+    // *** CTRL ***
+    // Moves
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('b'),
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left]),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('f'),
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::HistoryHintComplete,
+            ReedlineEvent::MenuRight,
+            ReedlineEvent::Right,
+        ]),
+    );
     kb.add_binding(KM::CONTROL, KC::Char('a'), edit_bind(EC::MoveToLineStart));
     kb.add_binding(
         KM::CONTROL,
@@ -28,20 +47,25 @@ pub fn default_emacs_keybindings() -> Keybindings {
             edit_bind(EC::MoveToLineEnd),
         ]),
     );
-    kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::CutToEnd));
-    kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
+    // Undo/Redo
+    kb.add_binding(KM::CONTROL, KC::Char('g'), edit_bind(EC::Redo));
+    kb.add_binding(KM::CONTROL, KC::Char('z'), edit_bind(EC::Undo));
+    // Cutting
     kb.add_binding(
         KM::CONTROL,
         KC::Char('y'),
         edit_bind(EC::PasteCutBufferBefore),
     );
+    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
+    kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::CutToEnd));
+    kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
+    // Edits
     kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
     kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
 
-    // ALT
+    // *** ALT ***
+    // Moves
     kb.add_binding(KM::ALT, KC::Left, edit_bind(EC::MoveWordLeft));
-    kb.add_binding(KM::ALT, KC::Delete, edit_bind(EC::DeleteWord));
-    kb.add_binding(KM::ALT, KC::Backspace, edit_bind(EC::BackspaceWord));
     kb.add_binding(
         KM::ALT,
         KC::Right,
@@ -59,17 +83,20 @@ pub fn default_emacs_keybindings() -> Keybindings {
             edit_bind(EC::MoveWordRight),
         ]),
     );
-    kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
-    kb.add_binding(KM::ALT, KC::Char('u'), edit_bind(EC::UppercaseWord));
-    kb.add_binding(KM::ALT, KC::Char('l'), edit_bind(EC::LowercaseWord));
-    kb.add_binding(KM::ALT, KC::Char('c'), edit_bind(EC::CapitalizeChar));
+    // Edits
+    kb.add_binding(KM::ALT, KC::Delete, edit_bind(EC::DeleteWord));
+    kb.add_binding(KM::ALT, KC::Backspace, edit_bind(EC::BackspaceWord));
     kb.add_binding(
         KM::ALT,
         KC::Char('m'),
         ReedlineEvent::Edit(vec![EditCommand::BackspaceWord]),
     );
-
-    add_common_keybindings(&mut kb);
+    // Cutting
+    kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
+    // Case changes
+    kb.add_binding(KM::ALT, KC::Char('u'), edit_bind(EC::UppercaseWord));
+    kb.add_binding(KM::ALT, KC::Char('l'), edit_bind(EC::LowercaseWord));
+    kb.add_binding(KM::ALT, KC::Char('c'), edit_bind(EC::CapitalizeChar));
 
     kb
 }

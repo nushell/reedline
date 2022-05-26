@@ -87,42 +87,29 @@ pub fn edit_bind(command: EditCommand) -> ReedlineEvent {
     ReedlineEvent::Edit(vec![command])
 }
 
-pub fn add_common_keybindings(kb: &mut Keybindings) {
-    use EditCommand as EC;
+/// Add the basic special keybindings
+///
+/// `Ctrl-C`, `Ctrl-D`, `Ctrl-O`, `Ctrl-R`
+/// + `Esc`
+/// + `Ctrl-O` to open the external editor
+pub fn add_common_control_bindings(kb: &mut Keybindings) {
     use KeyCode as KC;
     use KeyModifiers as KM;
 
     kb.add_binding(KM::NONE, KC::Esc, ReedlineEvent::Esc);
-    kb.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
-    kb.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
-    kb.add_binding(
-        KM::NONE,
-        KC::End,
-        ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::HistoryHintComplete,
-            edit_bind(EC::MoveToLineEnd),
-        ]),
-    );
-    kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
-
     kb.add_binding(KM::CONTROL, KC::Char('c'), ReedlineEvent::CtrlC);
     kb.add_binding(KM::CONTROL, KC::Char('d'), ReedlineEvent::CtrlD);
     kb.add_binding(KM::CONTROL, KC::Char('l'), ReedlineEvent::ClearScreen);
     kb.add_binding(KM::CONTROL, KC::Char('r'), ReedlineEvent::SearchHistory);
+    kb.add_binding(KM::CONTROL, KC::Char('o'), ReedlineEvent::OpenEditor);
+}
+/// Add the arrow navigation and its `Ctrl` variants
+pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
+    use EditCommand as EC;
+    use KeyCode as KC;
+    use KeyModifiers as KM;
 
-    kb.add_binding(
-        KM::CONTROL,
-        KC::Right,
-        ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWordRight),
-        ]),
-    );
-    kb.add_binding(KM::CONTROL, KC::Left, edit_bind(EC::MoveWordLeft));
-    kb.add_binding(KM::CONTROL, KC::Backspace, edit_bind(EC::BackspaceWord));
-    kb.add_binding(KM::CONTROL, KC::Delete, edit_bind(EC::DeleteWord));
-    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
-
+    // Arrow keys without modifier
     kb.add_binding(
         KM::NONE,
         KC::Up,
@@ -148,20 +135,30 @@ pub fn add_common_keybindings(kb: &mut Keybindings) {
         ]),
     );
 
+    // Ctrl Left and Right
+    kb.add_binding(KM::CONTROL, KC::Left, edit_bind(EC::MoveWordLeft));
     kb.add_binding(
         KM::CONTROL,
-        KC::Char('b'),
-        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left]),
-    );
-    kb.add_binding(
-        KM::CONTROL,
-        KC::Char('f'),
+        KC::Right,
         ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::HistoryHintComplete,
-            ReedlineEvent::MenuRight,
-            ReedlineEvent::Right,
+            ReedlineEvent::HistoryHintWordComplete,
+            edit_bind(EC::MoveWordRight),
         ]),
     );
+    // Home/End
+    kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
+    kb.add_binding(
+        KM::NONE,
+        KC::End,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::HistoryHintComplete,
+            edit_bind(EC::MoveToLineEnd),
+        ]),
+    );
+    // Ctrl Home/End
+    kb.add_binding(KM::CONTROL, KC::Home, edit_bind(EC::MoveToStart));
+    kb.add_binding(KM::CONTROL, KC::End, edit_bind(EC::MoveToEnd));
+    // EMACS arrows
     kb.add_binding(
         KM::CONTROL,
         KC::Char('p'),
@@ -172,5 +169,19 @@ pub fn add_common_keybindings(kb: &mut Keybindings) {
         KC::Char('n'),
         ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuDown, ReedlineEvent::Down]),
     );
-    kb.add_binding(KM::CONTROL, KC::Char('o'), ReedlineEvent::OpenEditor);
+}
+
+/// Add basic functionality to edit
+///
+/// `Delete`, `Backspace` and the basic variants do delete words
+pub fn add_common_edit_bindings(kb: &mut Keybindings) {
+    use EditCommand as EC;
+    use KeyCode as KC;
+    use KeyModifiers as KM;
+    kb.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
+    kb.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
+    kb.add_binding(KM::CONTROL, KC::Backspace, edit_bind(EC::BackspaceWord));
+    kb.add_binding(KM::CONTROL, KC::Delete, edit_bind(EC::DeleteWord));
+    // Base commands should not affect cut buffer
+    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::DeleteWord));
 }
