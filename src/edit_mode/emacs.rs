@@ -38,15 +38,6 @@ pub fn default_emacs_keybindings() -> Keybindings {
             ReedlineEvent::Right,
         ]),
     );
-    kb.add_binding(KM::CONTROL, KC::Char('a'), edit_bind(EC::MoveToLineStart));
-    kb.add_binding(
-        KM::CONTROL,
-        KC::Char('e'),
-        ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::HistoryHintComplete,
-            edit_bind(EC::MoveToLineEnd),
-        ]),
-    );
     // Undo/Redo
     kb.add_binding(KM::CONTROL, KC::Char('g'), edit_bind(EC::Redo));
     kb.add_binding(KM::CONTROL, KC::Char('z'), edit_bind(EC::Undo));
