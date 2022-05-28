@@ -192,5 +192,5 @@ pub fn add_common_edit_bindings(kb: &mut Keybindings) {
     kb.add_binding(KM::CONTROL, KC::Backspace, edit_bind(EC::BackspaceWord));
     kb.add_binding(KM::CONTROL, KC::Delete, edit_bind(EC::DeleteWord));
     // Base commands should not affect cut buffer
-    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::DeleteWord));
+    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::BackspaceWord));
 }
