@@ -96,9 +96,9 @@ fn render_as_string(
     let formatted_multiline_prompt = format!("\n{}", multiline_prompt);
     for (line_number, line) in renderable.1.split('\n').enumerate() {
         if line_number != 0 {
-            rendered.push_str(&prompt_style.paint(&formatted_multiline_prompt).to_string());
+            rendered.push_str(&prompt_style.paint(&formatted_multiline_prompt));
         }
-        rendered.push_str(&renderable.0.paint(line).to_string());
+        rendered.push_str(&renderable.0.paint(line));
     }
     rendered
 }
