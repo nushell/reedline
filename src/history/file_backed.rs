@@ -137,9 +137,8 @@ impl History for FileBackedHistory {
             // The unwritten entries
             let own_entries = self.entries.range(self.len_on_disk..);
 
-            let parent = fname.parent().expect("history path shouldn't be '/'");
-            if !parent.exists() {
-                std::fs::create_dir_all(parent)?;
+            if let Some(base_dir) = fname.parent() {
+                std::fs::create_dir_all(base_dir)?;
             }
 
             let mut f_lock = fd_lock::RwLock::new(
