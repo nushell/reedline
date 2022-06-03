@@ -377,7 +377,7 @@ impl LineBuffer {
 
     /// Counts the number of words in the buffer
     pub fn word_count(&self) -> usize {
-        self.lines.trim().split_whitespace().count()
+        self.lines.split_whitespace().count()
     }
 
     /// Capitalize the character at insertion point (or the first character

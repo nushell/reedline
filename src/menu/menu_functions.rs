@@ -7,7 +7,7 @@ use crate::Suggestion;
 ///
 /// Contains an index marker :10. This marker indicates that the user
 /// may want to select the 10th element from a list
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ParseResult<'buffer> {
     /// Text before the marker
     pub remainder: &'buffer str,
@@ -20,7 +20,7 @@ pub struct ParseResult<'buffer> {
 }
 
 /// Direction of the index found in the string
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ParseAction {
     /// Forward index search
     ForwardSearch,
