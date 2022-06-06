@@ -1,3 +1,6 @@
+#[cfg(not(feature = "sqlite"))]
+use reedline::FileBackedHistory;
+
 use {
     crossterm::{
         event::{poll, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -9,8 +12,8 @@ use {
         get_reedline_default_keybindings, get_reedline_edit_commands,
         get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
         get_reedline_reedline_events, ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt,
-        DefaultValidator, EditCommand, EditMode, Emacs, ExampleHighlighter, FileBackedHistory,
-        Keybindings, ListMenu, Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi,
+        DefaultValidator, EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu,
+        Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi,
     },
     std::{
         io::{stdout, Write},
@@ -35,6 +38,12 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    #[cfg(feature = "sqlite")]
+    let history = Box::new(
+        reedline::SqliteBackedHistory::with_file("history.sqlite3".into())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
+    );
+    #[cfg(not(feature = "sqlite"))]
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
     let commands = vec![
         "test".into(),
@@ -121,6 +130,23 @@ fn main() -> Result<()> {
                 break;
             }
             Ok(Signal::Success(buffer)) => {
+                #[cfg(feature = "sqlite")]
+                let start = std::time::Instant::now();
+                // save timestamp, cwd, hostname to history
+                #[cfg(feature = "sqlite")]
+                if !buffer.is_empty() {
+                    line_editor
+                        .update_last_command_context(&|mut c: reedline::HistoryItem| {
+                            c.start_timestamp = Some(chrono::Utc::now());
+                            c.hostname =
+                                Some(gethostname::gethostname().to_string_lossy().to_string());
+                            c.cwd = std::env::current_dir()
+                                .ok()
+                                .map(|e| e.to_string_lossy().to_string());
+                            c
+                        })
+                        .expect("todo: error handling");
+                }
                 if (buffer.trim() == "exit") || (buffer.trim() == "logout") {
                     break;
                 }
@@ -133,6 +159,16 @@ fn main() -> Result<()> {
                     continue;
                 }
                 println!("Our buffer: {}", buffer);
+                #[cfg(feature = "sqlite")]
+                if !buffer.is_empty() {
+                    line_editor
+                        .update_last_command_context(&|mut c| {
+                            c.duration = Some(start.elapsed());
+                            c.exit_status = Some(0);
+                            c
+                        })
+                        .expect("todo: error handling");
+                }
             }
             Ok(Signal::CtrlC) => {
                 // Prompt has been cleared and should start on the next line

@@ -1,3 +1,10 @@
+#[cfg(feature = "bashisms")]
+use crate::{
+    history::SearchFilter,
+    menu_functions::{parse_selection_char, ParseAction},
+};
+
+use crate::result::{ReedlineError, ReedlineErrorVariants};
 use {
     crate::{
         completion::{CircularCompletionHandler, Completer, DefaultCompleter},
@@ -6,13 +13,15 @@ use {
         enums::{EventStatus, ReedlineEvent},
         highlighter::SimpleMatchHighlighter,
         hinter::Hinter,
-        history::{FileBackedHistory, History, HistoryNavigationQuery},
-        menu::{Menu, MenuEvent, ReedlineMenu},
+        history::{
+            FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
+            HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
+        },
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         utils::text_manipulation,
-        EditCommand, ExampleHighlighter, Highlighter, Prompt, PromptHistorySearch, Signal,
-        ValidationResult, Validator,
+        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
+        PromptHistorySearch, ReedlineMenu, Signal, ValidationResult, Validator,
     },
     crossterm::{
         event,
@@ -21,9 +30,6 @@ use {
     },
     std::{borrow::Borrow, fs::File, io, io::Write, process::Command, time::Duration},
 };
-
-#[cfg(feature = "bashisms")]
-use crate::menu_functions::{parse_selection_char, ParseAction};
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for
 // events, to accelerate the handling of paste or compound resize events. Having
@@ -79,6 +85,9 @@ pub struct Reedline {
 
     // History
     history: Box<dyn History>,
+    history_cursor: HistoryCursor,
+    history_session_id: Option<HistorySessionId>, // none if history doesn't support this
+    history_last_run_id: Option<HistoryItemId>,
     input_mode: InputMode,
 
     // Validator
@@ -146,6 +155,11 @@ impl Reedline {
         Reedline {
             editor: Editor::default(),
             history,
+            history_cursor: HistoryCursor::new(HistoryNavigationQuery::Normal(
+                LineBuffer::default(),
+            )),
+            history_session_id: None,
+            history_last_run_id: None,
             input_mode: InputMode::Regular,
             painter,
             edit_mode,
@@ -359,13 +373,11 @@ impl Reedline {
     pub fn print_history(&mut self) -> Result<()> {
         let history: Vec<_> = self
             .history
-            .iter_chronologic()
-            .cloned()
-            .enumerate()
-            .collect();
+            .search(SearchQuery::everything(SearchDirection::Forward))
+            .expect("todo: error handling");
 
-        for (i, entry) in history {
-            self.print_line(&format!("{}\t{}", i, entry))?;
+        for (i, entry) in history.iter().enumerate() {
+            self.print_line(&format!("{}\t{}", i, entry.command_line))?;
         }
         Ok(())
     }
@@ -379,6 +391,21 @@ impl Reedline {
     pub fn sync_history(&mut self) -> std::io::Result<()> {
         // TODO: check for interactions in the non-submitting events
         self.history.sync()
+    }
+
+    /// update the last history item with more information
+    pub fn update_last_command_context(
+        &mut self,
+        f: &dyn Fn(HistoryItem) -> HistoryItem,
+    ) -> crate::Result<()> {
+        if let Some(r) = &self.history_last_run_id {
+            self.history.update(*r, f)?;
+        } else {
+            return Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
+                "No command run",
+            )));
+        }
+        Ok(())
     }
 
     /// Wait for input and provide the user with a specified [`Prompt`].
@@ -564,7 +591,7 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Enter | ReedlineEvent::HistoryHintComplete => {
-                if let Some(string) = self.history.string_at_cursor() {
+                if let Some(string) = self.history_cursor.string_at_cursor() {
                     self.editor.set_buffer(string);
                     self.editor.remember_undo_state(true);
                 }
@@ -590,14 +617,20 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
-                self.history.back();
+                self.history_cursor
+                    .back(self.history.as_ref())
+                    .expect("todo: error handling");
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::NextHistory | ReedlineEvent::Down => {
-                self.history.forward();
+                self.history_cursor
+                    .forward(self.history.as_ref())
+                    .expect("todo: error handling");
                 // Hacky way to ensure that we don't fall of into failed search going forward
-                if self.history.string_at_cursor().is_none() {
-                    self.history.back();
+                if self.history_cursor.string_at_cursor().is_none() {
+                    self.history_cursor
+                        .back(self.history.as_ref())
+                        .expect("todo: error handling");
                 }
                 Ok(EventStatus::Handled)
             }
@@ -804,7 +837,19 @@ impl Reedline {
                         self.hide_hints = true;
                         // Additional repaint to show the content without hints etc.
                         self.repaint(prompt)?;
-                        self.history.append(self.editor.get_buffer());
+                        let buf = self.editor.get_buffer();
+                        if !buf.is_empty() {
+                            let mut entry = HistoryItem::from_command_line(buf);
+                            // todo: in theory there's a race condition here because another shell might get the next session id at the same time
+                            entry.session_id =
+                                Some(*self.history_session_id.get_or_insert_with(|| {
+                                    self.history
+                                        .next_session_id()
+                                        .expect("todo: error handling")
+                                }));
+                            let entry = self.history.save(entry).expect("todo: error handling");
+                            self.history_last_run_id = entry.id;
+                        }
                         self.run_edit_commands(&[EditCommand::Clear]);
                         self.editor.reset_undo_stack();
 
@@ -938,10 +983,13 @@ impl Reedline {
     fn previous_history(&mut self) {
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
-            self.set_history_navigation_based_on_line_buffer();
+            self.history_cursor =
+                HistoryCursor::new(self.get_history_navigation_based_on_line_buffer());
         }
 
-        self.history.back();
+        self.history_cursor
+            .back(self.history.as_ref())
+            .expect("todo: error handling");
         self.update_buffer_from_history();
         self.editor.move_to_start();
         self.editor.move_to_line_end();
@@ -950,10 +998,13 @@ impl Reedline {
     fn next_history(&mut self) {
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
-            self.set_history_navigation_based_on_line_buffer();
+            self.history_cursor =
+                HistoryCursor::new(self.get_history_navigation_based_on_line_buffer());
         }
 
-        self.history.forward();
+        self.history_cursor
+            .forward(self.history.as_ref())
+            .expect("todo: error handling");
         self.update_buffer_from_history();
         self.editor.move_to_end();
     }
@@ -961,13 +1012,13 @@ impl Reedline {
     /// Enable the search and navigation through the history from the line buffer prompt
     ///
     /// Enables either prefix search with output in the line buffer or simple traversal
-    fn set_history_navigation_based_on_line_buffer(&mut self) {
+    fn get_history_navigation_based_on_line_buffer(&self) -> HistoryNavigationQuery {
         if self.editor.is_empty() || !self.editor.is_cursor_at_buffer_end() {
             // Perform bash-style basic up/down entry walking
-            self.history.set_navigation(HistoryNavigationQuery::Normal(
+            HistoryNavigationQuery::Normal(
                 // Hack: Tight coupling point to be able to restore previously typed input
-                self.editor.line_buffer().clone(),
-            ));
+                self.editor.line_buffer_immut().clone(),
+            )
         } else {
             // Prefix search like found in fish, zsh, etc.
             // Search string is set once from the current buffer
@@ -975,8 +1026,7 @@ impl Reedline {
             // Continuing with typing will leave the search
             // but next invocation of this method will start the next search
             let buffer = self.editor.get_buffer().to_string();
-            self.history
-                .set_navigation(HistoryNavigationQuery::PrefixSearch(buffer));
+            HistoryNavigationQuery::PrefixSearch(buffer)
         }
     }
 
@@ -984,9 +1034,9 @@ impl Reedline {
     ///
     /// This mode uses a separate prompt and handles keybindings slightly differently!
     fn enter_history_search(&mut self) {
+        self.history_cursor =
+            HistoryCursor::new(HistoryNavigationQuery::SubstringSearch("".to_string()));
         self.input_mode = InputMode::HistorySearch;
-        self.history
-            .set_navigation(HistoryNavigationQuery::SubstringSearch("".to_string()));
     }
 
     /// Dispatches the applicable [`EditCommand`] actions for editing the history search string.
@@ -996,30 +1046,32 @@ impl Reedline {
         for command in commands {
             match command {
                 EditCommand::InsertChar(c) => {
-                    let navigation = self.history.get_navigation();
+                    let navigation = self.history_cursor.get_navigation();
                     if let HistoryNavigationQuery::SubstringSearch(mut substring) = navigation {
                         substring.push(*c);
-                        self.history
-                            .set_navigation(HistoryNavigationQuery::SubstringSearch(substring));
+                        self.history_cursor =
+                            HistoryCursor::new(HistoryNavigationQuery::SubstringSearch(substring));
                     } else {
-                        self.history
-                            .set_navigation(HistoryNavigationQuery::SubstringSearch(String::from(
-                                *c,
-                            )));
+                        self.history_cursor = HistoryCursor::new(
+                            HistoryNavigationQuery::SubstringSearch(String::from(*c)),
+                        );
                     }
-                    self.history.back();
+                    self.history_cursor
+                        .back(self.history.as_mut())
+                        .expect("todo: error handling");
                 }
                 EditCommand::Backspace => {
-                    let navigation = self.history.get_navigation();
+                    let navigation = self.history_cursor.get_navigation();
 
                     if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
                         let new_substring = text_manipulation::remove_last_grapheme(&substring);
 
-                        self.history
-                            .set_navigation(HistoryNavigationQuery::SubstringSearch(
-                                new_substring.to_string(),
-                            ));
-                        self.history.back();
+                        self.history_cursor = HistoryCursor::new(
+                            HistoryNavigationQuery::SubstringSearch(new_substring.to_string()),
+                        );
+                        self.history_cursor
+                            .back(self.history.as_mut())
+                            .expect("todo: error handling");
                     }
                 }
                 _ => {
@@ -1034,9 +1086,9 @@ impl Reedline {
     /// When using the up/down traversal or fish/zsh style prefix search update the main line buffer accordingly.
     /// Not used for the separate modal reverse search!
     fn update_buffer_from_history(&mut self) {
-        match self.history.get_navigation() {
+        match self.history_cursor.get_navigation() {
             HistoryNavigationQuery::Normal(original) => {
-                if let Some(buffer_to_paint) = self.history.string_at_cursor() {
+                if let Some(buffer_to_paint) = self.history_cursor.string_at_cursor() {
                     self.editor.set_buffer(buffer_to_paint.clone());
                     self.editor.set_insertion_point(buffer_to_paint.len());
                 } else {
@@ -1045,7 +1097,7 @@ impl Reedline {
                 }
             }
             HistoryNavigationQuery::PrefixSearch(prefix) => {
-                if let Some(prefix_result) = self.history.string_at_cursor() {
+                if let Some(prefix_result) = self.history_cursor.string_at_cursor() {
                     self.editor.set_buffer(prefix_result.clone());
                     self.editor.set_insertion_point(prefix_result.len());
                 } else {
@@ -1061,10 +1113,10 @@ impl Reedline {
     fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         if self.input_mode == InputMode::HistoryTraversal {
             if matches!(
-                self.history.get_navigation(),
+                self.history_cursor.get_navigation(),
                 HistoryNavigationQuery::Normal(_)
             ) {
-                if let Some(string) = self.history.string_at_cursor() {
+                if let Some(string) = self.history_cursor.string_at_cursor() {
                     self.editor.set_buffer(string);
                 }
             }
@@ -1099,7 +1151,7 @@ impl Reedline {
 
     /// Checks if hints should be displayed and are able to be completed
     fn hints_active(&self) -> bool {
-        !self.hide_hints && self.input_mode == InputMode::Regular
+        !self.hide_hints && matches!(self.input_mode, InputMode::Regular)
     }
 
     /// Repaint of either the buffer or the parts for reverse history search
@@ -1130,21 +1182,50 @@ impl Reedline {
             .and_then(|(index, indicator)| match parsed.action {
                 ParseAction::BackwardSearch => self
                     .history
-                    .iter_chronologic()
-                    .rev()
-                    .nth(index.saturating_sub(1))
-                    .map(|history| (parsed.remainder.len(), indicator.len(), history.clone())),
+                    .search(SearchQuery {
+                        direction: SearchDirection::Backward,
+                        start_time: None,
+                        end_time: None,
+                        start_id: None,
+                        end_id: None,
+                        limit: Some(index as i64), // fetch the latest n entries
+                        filter: SearchFilter::anything(),
+                    })
+                    .unwrap_or_else(|_| Vec::new())
+                    .get(index.saturating_sub(1))
+                    .map(|history| {
+                        (
+                            parsed.remainder.len(),
+                            indicator.len(),
+                            history.command_line.clone(),
+                        )
+                    }),
                 ParseAction::ForwardSearch => self
                     .history
-                    .iter_chronologic()
-                    .nth(index)
-                    .map(|history| (parsed.remainder.len(), indicator.len(), history.clone())),
+                    .search(SearchQuery {
+                        direction: SearchDirection::Forward,
+                        start_time: None,
+                        end_time: None,
+                        start_id: None,
+                        end_id: None,
+                        limit: Some((index + 1) as i64), // fetch the oldest n entries
+                        filter: SearchFilter::anything(),
+                    })
+                    .unwrap_or_else(|_| Vec::new())
+                    .get(index)
+                    .map(|history| {
+                        (
+                            parsed.remainder.len(),
+                            indicator.len(),
+                            history.command_line.clone(),
+                        )
+                    }),
                 ParseAction::LastToken => self
                     .history
-                    .iter_chronologic()
-                    .rev()
-                    .next()
-                    .and_then(|history| history.split_whitespace().rev().next())
+                    .search(SearchQuery::last_with_search(SearchFilter::anything()))
+                    .unwrap_or_else(|_| Vec::new())
+                    .get(0)
+                    .and_then(|history| history.command_line.split_whitespace().rev().next())
                     .map(|token| (parsed.remainder.len(), indicator.len(), token.to_string())),
             });
 
@@ -1195,18 +1276,19 @@ impl Reedline {
     /// Overwrites the prompt indicator and highlights the search string
     /// separately from the result buffer.
     fn history_search_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
-        let navigation = self.history.get_navigation();
+        let navigation = self.history_cursor.get_navigation();
 
         if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
-            let status = if !substring.is_empty() && self.history.string_at_cursor().is_none() {
-                PromptHistorySearchStatus::Failing
-            } else {
-                PromptHistorySearchStatus::Passing
-            };
+            let status =
+                if !substring.is_empty() && self.history_cursor.string_at_cursor().is_none() {
+                    PromptHistorySearchStatus::Failing
+                } else {
+                    PromptHistorySearchStatus::Passing
+                };
 
             let prompt_history_search = PromptHistorySearch::new(status, substring.clone());
 
-            let res_string = self.history.string_at_cursor().unwrap_or_default();
+            let res_string = self.history_cursor.string_at_cursor().unwrap_or_default();
 
             // Highlight matches
             let res_string = if self.use_ansi_coloring {

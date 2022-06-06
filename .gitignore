@@ -1,6 +1,8 @@
 target/
 history.txt
+history.sqlite3*
 .DS_Store
 target-coverage/
 tarpaulin-report.html
 .vscode
+.helix

@@ -2,9 +2,9 @@ mod columnar_menu;
 mod list_menu;
 pub mod menu_functions;
 
+use crate::History;
 use crate::{
-    completion::history::HistoryCompleter, painting::Painter, Completer, History, LineBuffer,
-    Suggestion,
+    completion::history::HistoryCompleter, painting::Painter, Completer, LineBuffer, Suggestion,
 };
 pub use columnar_menu::ColumnarMenu;
 pub use list_menu::ListMenu;

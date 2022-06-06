@@ -1,5 +1,8 @@
-use crate::core_editor::LineBuffer;
-use std::collections::vec_deque::Iter;
+use chrono::Utc;
+
+use crate::{core_editor::LineBuffer, HistoryItem, Result};
+
+use super::{HistoryItemId, HistorySessionId};
 
 /// Browsing modes for a [`History`]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,42 +17,280 @@ pub enum HistoryNavigationQuery {
     // Fuzzy Search
 }
 
-/// Interface of a history datastructure that supports stateful navigation via [`HistoryNavigationQuery`].
+// todo: merge with [HistoryNavigationQuery]
+pub enum CommandLineSearch {
+    Prefix(String),
+    Substring(String),
+    Exact(String),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SearchDirection {
+    Backward,
+    Forward,
+}
+
+pub struct SearchFilter {
+    pub command_line: Option<CommandLineSearch>,
+    pub not_command_line: Option<String>, // to skip the currently shown value in up-arrow navigation
+    pub hostname: Option<String>,
+    pub cwd_exact: Option<String>,
+    pub cwd_prefix: Option<String>,
+    pub exit_successful: Option<bool>,
+}
+impl SearchFilter {
+    pub fn from_text_search(cmd: CommandLineSearch) -> SearchFilter {
+        let mut s = SearchFilter::anything();
+        s.command_line = Some(cmd);
+        s
+    }
+    pub fn anything() -> SearchFilter {
+        SearchFilter {
+            command_line: None,
+            not_command_line: None,
+            hostname: None,
+            cwd_exact: None,
+            cwd_prefix: None,
+            exit_successful: None,
+        }
+    }
+}
+
+pub struct SearchQuery {
+    pub direction: SearchDirection,
+    /// if given, only get results after/before this time (depending on direction)
+    pub start_time: Option<chrono::DateTime<Utc>>,
+    pub end_time: Option<chrono::DateTime<Utc>>,
+    /// if given, only get results after/before this id (depending on direction)
+    pub start_id: Option<HistoryItemId>,
+    pub end_id: Option<HistoryItemId>,
+    pub limit: Option<i64>,
+    pub filter: SearchFilter,
+}
+/// some utility functions
+impl SearchQuery {
+    /// all that contain string in reverse chronological order
+    pub fn all_that_contain_rev(contains: String) -> SearchQuery {
+        SearchQuery {
+            direction: SearchDirection::Backward,
+            start_time: None,
+            end_time: None,
+            start_id: None,
+            end_id: None,
+            limit: None,
+            filter: SearchFilter::from_text_search(CommandLineSearch::Substring(contains)),
+        }
+    }
+    pub fn last_with_search(filter: SearchFilter) -> SearchQuery {
+        SearchQuery {
+            direction: SearchDirection::Backward,
+            start_time: None,
+            end_time: None,
+            start_id: None,
+            end_id: None,
+            limit: Some(1),
+            filter,
+        }
+    }
+    pub fn last_with_prefix(prefix: String) -> SearchQuery {
+        SearchQuery::last_with_search(SearchFilter::from_text_search(CommandLineSearch::Prefix(
+            prefix,
+        )))
+    }
+    pub fn everything(direction: SearchDirection) -> SearchQuery {
+        SearchQuery {
+            direction,
+            start_time: None,
+            end_time: None,
+            start_id: None,
+            end_id: None,
+            limit: None,
+            filter: SearchFilter::anything(),
+        }
+    }
+}
+
+/// Represents a history file or database
+/// Data could be stored e.g. in a plain text file, in a JSONL file, in a SQLite database
 pub trait History: Send {
-    /// Append entry to the history, if capacity management is part of the implementation may perform that as well
-    fn append(&mut self, entry: &str);
+    /// save a history item to the database
+    /// if given id is None, a new id is created and set in the return value
+    /// if given id is Some, the existing entry is updated
+    fn save(&mut self, h: HistoryItem) -> Result<HistoryItem>;
+    /// load a history item by its id
+    fn load(&self, id: HistoryItemId) -> Result<HistoryItem>;
 
-    /// Chronologic interaction over all entries present in the history
-    fn iter_chronologic(&self) -> Iter<'_, String>;
+    /// retrieves the next unused session id
+    fn next_session_id(&mut self) -> Result<HistorySessionId>;
 
-    /// This moves the cursor backwards respecting the navigation query that is set
-    /// - Results in a no-op if the cursor is at the initial point
-    fn back(&mut self);
+    /// count the results of a query
+    fn count(&self, query: SearchQuery) -> Result<i64>;
+    /// return the total number of history items
+    fn count_all(&self) -> Result<i64> {
+        self.count(SearchQuery::everything(SearchDirection::Forward))
+    }
+    /// return the results of a query
+    fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>>;
 
-    /// This moves the cursor forwards respecting the navigation-query that is set
-    /// - Results in a no-op if the cursor is at the latest point
-    fn forward(&mut self);
-
-    /// Returns the string (if present) at the cursor
-    fn string_at_cursor(&self) -> Option<String>;
-
-    /// Set a new navigation mode for search based on input query defined in [`HistoryNavigationQuery`]
-    ///
-    /// By current convention, resets the position in the stateful browsing to the default.
-    fn set_navigation(&mut self, navigation: HistoryNavigationQuery);
-
-    /// Poll the current [`HistoryNavigationQuery`] mode
-    fn get_navigation(&self) -> HistoryNavigationQuery;
-
-    /// Query the values in the history entries
-    fn query_entries(&self, search: &str) -> Vec<String>;
-
-    /// Max number of values that can be queried from the history
-    fn max_values(&self) -> usize;
-
-    /// Synchronize the state of the history with the backing filesystem or database if available
+    /// update an item atomically
+    fn update(
+        &mut self,
+        id: HistoryItemId,
+        updater: &dyn Fn(HistoryItem) -> HistoryItem,
+    ) -> Result<()>;
+    /// remove an item from this history
+    fn delete(&mut self, h: HistoryItemId) -> Result<()>;
+    /// ensure that this history is written to disk
     fn sync(&mut self) -> std::io::Result<()>;
+}
 
-    /// Reset the browsing cursor back outside the history, does not affect the [`HistoryNavigationQuery`]
-    fn reset_cursor(&mut self);
+#[cfg(test)]
+mod test {
+    #[cfg(feature = "sqlite")]
+    const IS_FILE_BASED: bool = false;
+    #[cfg(not(feature = "sqlite"))]
+    const IS_FILE_BASED: bool = true;
+
+    fn create_item(session: i64, cwd: &str, cmd: &str, exit_status: i64) -> HistoryItem {
+        HistoryItem {
+            id: None,
+            start_timestamp: None,
+            command_line: cmd.to_string(),
+            session_id: Some(HistorySessionId::new(session)),
+            hostname: Some("foohost".to_string()),
+            cwd: Some(cwd.to_string()),
+            duration: Some(Duration::from_millis(1000)),
+            exit_status: Some(exit_status),
+            more_info: None,
+        }
+    }
+    use std::time::Duration;
+
+    use super::*;
+    fn create_filled_example_history() -> Result<Box<dyn History>> {
+        #[cfg(feature = "sqlite")]
+        let mut history = crate::SqliteBackedHistory::in_memory()?;
+        #[cfg(not(feature = "sqlite"))]
+        let mut history = crate::FileBackedHistory::default();
+        #[cfg(not(feature = "sqlite"))]
+        history.save(create_item(1, "/", "dummy", 0))?; // add dummy item so ids start with 1
+        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
+        history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
+        history.save(create_item(1, "/home/me/Downloads", "unzip foo.zip", 0))?; // 3
+        history.save(create_item(1, "/home/me/Downloads", "cd foo", 0))?; // 4
+        history.save(create_item(1, "/home/me/Downloads/foo", "ls", 0))?; // 5
+        history.save(create_item(1, "/home/me/Downloads/foo", "ls -alh", 0))?; // 6
+        history.save(create_item(1, "/home/me/Downloads/foo", "cat x.txt", 0))?; // 7
+
+        history.save(create_item(1, "/home/me", "cd /etc/nginx", 0))?; // 8
+        history.save(create_item(1, "/etc/nginx", "ls -l", 0))?; // 9
+        history.save(create_item(1, "/etc/nginx", "vim nginx.conf", 0))?; // 10
+        history.save(create_item(1, "/etc/nginx", "vim htpasswd", 0))?; // 11
+        history.save(create_item(1, "/etc/nginx", "cat nginx.conf", 0))?; // 12
+        Ok(Box::new(history))
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn update_item() -> Result<()> {
+        let mut history = create_filled_example_history()?;
+        let id = HistoryItemId::new(2);
+        let before = history.load(id)?;
+        history.update(id, &|mut e| {
+            e.exit_status = Some(1);
+            e
+        })?;
+        let after = history.load(id)?;
+        assert_eq!(
+            after,
+            HistoryItem {
+                exit_status: Some(1),
+                ..before
+            }
+        );
+        Ok(())
+    }
+
+    fn search_returned(
+        history: &dyn History,
+        res: Vec<HistoryItem>,
+        wanted: Vec<i64>,
+    ) -> Result<()> {
+        let wanted = wanted
+            .iter()
+            .map(|id| history.load(HistoryItemId::new(*id)))
+            .collect::<Result<Vec<HistoryItem>>>()?;
+        assert_eq!(res, wanted);
+        Ok(())
+    }
+
+    #[test]
+    fn count_all() -> Result<()> {
+        let history = create_filled_example_history()?;
+        println!(
+            "{:#?}",
+            history.search(SearchQuery::everything(SearchDirection::Forward))
+        );
+
+        assert_eq!(history.count_all()?, if IS_FILE_BASED { 13 } else { 12 });
+        Ok(())
+    }
+
+    #[test]
+    fn get_latest() -> Result<()> {
+        let history = create_filled_example_history()?;
+        let res = history.search(SearchQuery::last_with_search(SearchFilter::anything()))?;
+
+        search_returned(&*history, res, vec![12])?;
+        Ok(())
+    }
+
+    #[test]
+    fn get_earliest() -> Result<()> {
+        let history = create_filled_example_history()?;
+        let res = history.search(SearchQuery {
+            limit: Some(1),
+            ..SearchQuery::everything(SearchDirection::Forward)
+        })?;
+        search_returned(&*history, res, vec![if IS_FILE_BASED { 0 } else { 1 }])?;
+        Ok(())
+    }
+
+    #[test]
+    fn search_prefix() -> Result<()> {
+        let history = create_filled_example_history()?;
+        let res = history.search(SearchQuery {
+            filter: SearchFilter::from_text_search(CommandLineSearch::Prefix("ls ".to_string())),
+            ..SearchQuery::everything(SearchDirection::Backward)
+        })?;
+        search_returned(&*history, res, vec![9, 6])?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn search_includes() -> Result<()> {
+        let history = create_filled_example_history()?;
+        let res = history.search(SearchQuery {
+            filter: SearchFilter::from_text_search(CommandLineSearch::Substring(
+                "foo.zip".to_string(),
+            )),
+            ..SearchQuery::everything(SearchDirection::Forward)
+        })?;
+        search_returned(&*history, res, vec![2, 3])?;
+        Ok(())
+    }
+
+    #[test]
+    fn search_includes_limit() -> Result<()> {
+        let history = create_filled_example_history()?;
+        let res = history.search(SearchQuery {
+            filter: SearchFilter::from_text_search(CommandLineSearch::Substring("c".to_string())),
+            limit: Some(2),
+            ..SearchQuery::everything(SearchDirection::Forward)
+        })?;
+        search_returned(&*history, res, vec![1, 4])?;
+
+        Ok(())
+    }
 }

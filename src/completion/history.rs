@@ -1,6 +1,9 @@
 use std::ops::Deref;
 
-use crate::{menu_functions::parse_selection_char, Completer, History, Span, Suggestion};
+use crate::{
+    history::SearchQuery, menu_functions::parse_selection_char, Completer, History, Span,
+    Suggestion,
+};
 
 const SELECTION_CHAR: char = '!';
 
@@ -15,32 +18,30 @@ unsafe impl<'menu> Send for HistoryCompleter<'menu> {}
 impl<'menu> Completer for HistoryCompleter<'menu> {
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
         let parsed = parse_selection_char(line, SELECTION_CHAR);
-        let values = self.0.query_entries(parsed.remainder);
+        let values = self
+            .0
+            .search(SearchQuery::all_that_contain_rev(
+                parsed.remainder.to_string(),
+            ))
+            .expect("todo: error handling");
 
         values
             .into_iter()
-            .map(|value| self.create_suggestion(line, pos, value.deref()))
+            .map(|value| self.create_suggestion(line, pos, value.command_line.deref()))
             .collect()
     }
 
-    fn partial_complete(
-        &mut self,
-        line: &str,
-        pos: usize,
-        start: usize,
-        offset: usize,
-    ) -> Vec<Suggestion> {
-        self.0
-            .iter_chronologic()
-            .rev()
-            .skip(start)
-            .take(offset)
-            .map(|value| self.create_suggestion(line, pos, value.deref()))
-            .collect()
-    }
+    // TODO: Implement `fn partial_complete()`
 
-    fn total_completions(&mut self, _line: &str, _pos: usize) -> usize {
-        self.0.max_values()
+    fn total_completions(&mut self, line: &str, _pos: usize) -> usize {
+        let parsed = parse_selection_char(line, SELECTION_CHAR);
+        let count = self
+            .0
+            .count(SearchQuery::all_that_contain_rev(
+                parsed.remainder.to_string(),
+            ))
+            .expect("todo: error handling");
+        count as usize
     }
 }
 

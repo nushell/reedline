@@ -15,12 +15,16 @@ jobs:
         rust:
           - stable
         # Define the feature sets that will be built here (for caching you define a separate name)
-        style: [bashisms, default]
+        style: [bashisms, default, sqlite, basqlite]
         include:
           - style: bashisms
             flags: "--features bashisms"
           - style: default
             flags: ""
+          - style: sqlite
+            flags: "--features sqlite"
+          - style: basqlite
+            flags: "--features bashisms,sqlite"
 
     runs-on: ${{ matrix.platform }}
 
