@@ -1188,7 +1188,7 @@ impl Reedline {
                         end_time: None,
                         start_id: None,
                         end_id: None,
-                        limit: None,
+                        limit: Some(index as i64), // fetch the latest n entries
                         filter: SearchFilter::anything(),
                     })
                     .unwrap_or_else(|_| Vec::new())
@@ -1208,7 +1208,7 @@ impl Reedline {
                         end_time: None,
                         start_id: None,
                         end_id: None,
-                        limit: None,
+                        limit: Some((index + 1) as i64), // fetch the oldest n entries
                         filter: SearchFilter::anything(),
                     })
                     .unwrap_or_else(|_| Vec::new())
@@ -1222,15 +1222,7 @@ impl Reedline {
                     }),
                 ParseAction::LastToken => self
                     .history
-                    .search(SearchQuery {
-                        direction: SearchDirection::Backward,
-                        start_time: None,
-                        end_time: None,
-                        start_id: None,
-                        end_id: None,
-                        limit: None,
-                        filter: SearchFilter::anything(),
-                    })
+                    .search(SearchQuery::last_with_search(SearchFilter::anything()))
                     .unwrap_or_else(|_| Vec::new())
                     .get(0)
                     .and_then(|history| history.command_line.split_whitespace().rev().next())
