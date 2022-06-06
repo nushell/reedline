@@ -31,13 +31,7 @@ impl<'menu> Completer for HistoryCompleter<'menu> {
             .collect()
     }
 
-    /*TODO: fn partial_complete(
-        &mut self,
-        line: &str,
-        pos: usize,
-        start: usize,
-        offset: usize,
-    ) -> Vec<Suggestion> {*/
+    // TODO: Implement `fn partial_complete()`
 
     fn total_completions(&mut self, line: &str, _pos: usize) -> usize {
         let parsed = parse_selection_char(line, SELECTION_CHAR);

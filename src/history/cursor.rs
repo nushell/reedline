@@ -575,13 +575,13 @@ mod tests {
         let actual: Vec<_> = get_all_entry_texts(reading_hist.as_ref());
 
         assert!(
-            actual.contains(&&format!("initial {}", capacity - 1)),
+            actual.contains(&format!("initial {}", capacity - 1)),
             "Overwrote entry from before threading test"
         );
 
         for i in 0..num_threads {
-            assert!(actual.contains(&&format!("A{}", i)),);
-            assert!(actual.contains(&&format!("B{}", i)),);
+            assert!(actual.contains(&format!("A{}", i)),);
+            assert!(actual.contains(&format!("B{}", i)),);
         }
 
         tmp.close().unwrap();

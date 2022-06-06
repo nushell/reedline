@@ -40,7 +40,7 @@ impl<'de> Deserialize<'de> for IgnoreAllExtraInfo {
 }
 impl HistoryItemExtraInfo for IgnoreAllExtraInfo {}
 /// Represents one run command with some optional additional context
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
     /// primary key, unique across one history
     pub id: Option<HistoryItemId>,

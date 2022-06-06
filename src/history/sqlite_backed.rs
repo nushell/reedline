@@ -55,9 +55,6 @@ fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem
 
 impl History for SqliteBackedHistory {
     fn save(&mut self, mut entry: HistoryItem) -> Result<HistoryItem> {
-        /*if entry.id.is_some() {
-            return Err("ID must be empty".to_string());
-        }*/
         let ret: i64 = self
             .db
             .prepare(
@@ -129,15 +126,6 @@ impl History for SqliteBackedHistory {
             .collect::<rusqlite::Result<Vec<HistoryItem>>>()
             .map_err(map_sqlite_err)?;
         Ok(results)
-        /* if let Some((next_id, next_command)) = next_id {
-            self.cursor.id = next_id;
-            self.cursor.command = Some(next_command);
-        } else {
-            if !backward {
-                // forward search resets to none, backwards search doesn't
-                self.cursor.command = None;
-            }
-        }*/
     }
 
     fn update(
@@ -180,78 +168,9 @@ impl History for SqliteBackedHistory {
                 .map_err(map_sqlite_err)?,
         ))
     }
-
-    /*fn iter_chronologic(&self) -> Box<(dyn DoubleEndedIterator<Item = std::string::String> + '_)> {
-        // todo: read in chunks or dynamically (?)
-        let fwd = self
-            .db
-            .prepare("select command from history order by id asc")
-            .unwrap()
-            .query_map(params![], |row| row.get(0))
-            .unwrap()
-            .collect::<rusqlite::Result<Vec<String>>>()
-            .unwrap();
-        return Box::new(fwd.into_iter());
-    }
-
-    fn back(&mut self) {
-        self.navigate_in_direction(true)
-        // self.cursor.id
-    }
-
-    fn forward(&mut self) {
-        self.navigate_in_direction(false)
-    }
-
-    fn string_at_cursor(&self) -> Option<String> {
-        self.cursor.command.clone()
-    }
-
-    fn set_navigation(&mut self, navigation: HistoryNavigationQuery) {
-        self.cursor.query = navigation;
-        self.reset_cursor();
-    }
-
-    fn get_navigation(&self) -> HistoryNavigationQuery {
-        self.cursor.query.clone()
-    }
-
-    fn query_entries(&self, search: &str) -> Vec<String> {
-        self.iter_chronologic()
-            .rev()
-            .filter(|entry| entry.contains(search))
-            .collect::<Vec<String>>()
-    }
-
-    fn max_values(&self) -> usize {
-        self.last_run_command_id.unwrap_or(0) as usize
-    }
-
-    /// Writes unwritten history contents to disk.
-    ///
-    /// If file would exceed `capacity` truncates the oldest entries.
-    fn sync(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-
-    /// Reset the internal browsing cursor
-    fn reset_cursor(&mut self) {
-        // if no command run yet, fetch last id from db
-        if self.last_run_command_id == None {
-            self.last_run_command_id = self
-                .db
-                .prepare("select coalesce(max(id), 0) from history")
-                .unwrap()
-                .query_row(params![], |e| e.get(0))
-                .optional()
-                .unwrap();
-        }
-        self.cursor.id = self.last_run_command_id.unwrap_or(0) + 1;
-        self.cursor.command = None;
-    }*/
 }
 fn map_sqlite_err(err: rusqlite::Error) -> ReedlineError {
-    // todo: better error mapping
+    // TODO: better error mapping
     ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!(
         "{:?}",
         err
@@ -336,7 +255,7 @@ impl SqliteBackedHistory {
         query: &'a SearchQuery,
         select_expression: &str,
     ) -> (String, BoxedNamedParams<'a>) {
-        // todo: this whole function could be done with less allocs
+        // TODO: this whole function could be done with less allocs
         let (is_asc, asc) = match query.direction {
             SearchDirection::Forward => (true, "asc"),
             SearchDirection::Backward => (false, "desc"),
@@ -383,7 +302,7 @@ impl SqliteBackedHistory {
             None => "",
         };
         if let Some(command_line) = &query.filter.command_line {
-            // todo: escape %
+            // TODO: escape %
             let command_line_like = match command_line {
                 CommandLineSearch::Exact(e) => e.to_string(),
                 CommandLineSearch::Prefix(prefix) => format!("{prefix}%"),
@@ -427,7 +346,6 @@ impl SqliteBackedHistory {
         {wheres}
         order by id {asc} {limit}"
         );
-        // aprintln!("query={query}");
         (query, params)
     }
 }

@@ -218,7 +218,7 @@ mod test {
     ) -> Result<()> {
         let wanted = wanted
             .iter()
-            .map(|id| Ok(history.load(HistoryItemId::new(*id))?))
+            .map(|id| history.load(HistoryItemId::new(*id)))
             .collect::<Result<Vec<HistoryItem>>>()?;
         assert_eq!(res, wanted);
         Ok(())
