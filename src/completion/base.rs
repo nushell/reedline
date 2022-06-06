@@ -56,7 +56,7 @@ pub trait Completer: Send {
 }
 
 /// Suggestion returned by the Completer
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Suggestion {
     /// String replacement that will be introduced to the the buffer
     pub value: String,

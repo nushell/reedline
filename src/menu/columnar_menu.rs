@@ -784,7 +784,7 @@ mod tests {
     impl FakeCompleter {
         fn new(completions: &[&str]) -> Self {
             Self {
-                completions: completions.into_iter().map(|c| c.to_string()).collect(),
+                completions: completions.iter().map(|c| c.to_string()).collect(),
             }
         }
     }

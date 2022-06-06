@@ -95,7 +95,16 @@ impl Painter {
     /// [`Painter::handle_resize()`] instead
     pub(crate) fn initialize_prompt_position(&mut self) -> Result<()> {
         // Update the terminal size
-        self.terminal_size = terminal::size()?;
+        self.terminal_size = {
+            let size = terminal::size()?;
+            // if reported size is 0, 0 -
+            // use a default size to avoid divide by 0 panics
+            if size == (0, 0) {
+                (80, 24)
+            } else {
+                size
+            }
+        };
         // Cursor positions are 0 based here.
         let (column, row) = cursor::position()?;
         // Assumption: if the cursor is not on the zeroth column,
