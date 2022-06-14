@@ -17,33 +17,51 @@ pub enum HistoryNavigationQuery {
     // Fuzzy Search
 }
 
+/// Ways to search for a particular command line in the [`History`]
 // todo: merge with [HistoryNavigationQuery]
 pub enum CommandLineSearch {
+    /// Command line starts with the same string
     Prefix(String),
+    /// Command line contains the string
     Substring(String),
+    /// Command line is the string.
+    ///
+    /// Useful to gather statistics
     Exact(String),
 }
 
+/// Defines how to traverse the history when executing a [`SearchQuery`]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SearchDirection {
+    /// From the most recent entry backward
     Backward,
+    /// From the least recent entry forward
     Forward,
 }
 
+/// Defines additional filters for querying the [`History`]
 pub struct SearchFilter {
+    /// Query for the command line content
     pub command_line: Option<CommandLineSearch>,
-    pub not_command_line: Option<String>, // to skip the currently shown value in up-arrow navigation
+    /// Considered implementation detail for now
+    pub(crate) not_command_line: Option<String>, // to skip the currently shown value in up-arrow navigation
+    /// Filter based on the executing systems hostname
     pub hostname: Option<String>,
+    /// Exact filter for the working directory
     pub cwd_exact: Option<String>,
+    /// Prefix filter for the working directory
     pub cwd_prefix: Option<String>,
+    /// Filter whether the command completed
     pub exit_successful: Option<bool>,
 }
 impl SearchFilter {
+    /// Create a search filter with a [`CommandLineSearch`]
     pub fn from_text_search(cmd: CommandLineSearch) -> SearchFilter {
         let mut s = SearchFilter::anything();
         s.command_line = Some(cmd);
         s
     }
+    /// No filter constraint
     pub fn anything() -> SearchFilter {
         SearchFilter {
             command_line: None,
@@ -56,18 +74,25 @@ impl SearchFilter {
     }
 }
 
+/// Query for search in the potentially rich [`History`]
 pub struct SearchQuery {
+    /// Direction to search in
     pub direction: SearchDirection,
     /// if given, only get results after/before this time (depending on direction)
     pub start_time: Option<chrono::DateTime<Utc>>,
+    /// if given, only get results after/before this time (depending on direction)
     pub end_time: Option<chrono::DateTime<Utc>>,
     /// if given, only get results after/before this id (depending on direction)
     pub start_id: Option<HistoryItemId>,
+    /// if given, only get results after/before this id (depending on direction)
     pub end_id: Option<HistoryItemId>,
+    /// How many results to get
     pub limit: Option<i64>,
+    /// Additional filters defined with [`SearchFilter`]
     pub filter: SearchFilter,
 }
-/// some utility functions
+
+/// Currently `pub` ways to construct a query
 impl SearchQuery {
     /// all that contain string in reverse chronological order
     pub fn all_that_contain_rev(contains: String) -> SearchQuery {
@@ -81,6 +106,7 @@ impl SearchQuery {
             filter: SearchFilter::from_text_search(CommandLineSearch::Substring(contains)),
         }
     }
+    /// Get the most recent entry matching [`SearchFilter`]
     pub fn last_with_search(filter: SearchFilter) -> SearchQuery {
         SearchQuery {
             direction: SearchDirection::Backward,
@@ -92,11 +118,13 @@ impl SearchQuery {
             filter,
         }
     }
+    /// Get the most recent entry starting with the `prefix`
     pub fn last_with_prefix(prefix: String) -> SearchQuery {
         SearchQuery::last_with_search(SearchFilter::from_text_search(CommandLineSearch::Prefix(
             prefix,
         )))
     }
+    /// Query to get all entries in the given [`SearchDirection`]
     pub fn everything(direction: SearchDirection) -> SearchQuery {
         SearchQuery {
             direction,
