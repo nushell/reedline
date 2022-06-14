@@ -222,7 +222,11 @@ pub(crate) use result::Result;
 mod history;
 #[cfg(feature = "sqlite")]
 pub use history::SqliteBackedHistory;
-pub use history::{FileBackedHistory, History, HistoryItem, HistoryNavigationQuery, HISTORY_SIZE};
+pub use history::{
+    CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemId,
+    HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchFilter, SearchQuery,
+    HISTORY_SIZE,
+};
 
 mod prompt;
 pub use prompt::{

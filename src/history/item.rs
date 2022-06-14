@@ -3,6 +3,7 @@ use std::time::Duration;
 use chrono::Utc;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
+/// Unique ID for the [`HistoryItem`]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct HistoryItemId(pub(crate) i64);
 impl HistoryItemId {
@@ -10,6 +11,8 @@ impl HistoryItemId {
         HistoryItemId(i)
     }
 }
+
+/// Unique ID for the session in which reedline was run to disambiguate different sessions
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct HistorySessionId(pub(crate) i64);
 impl HistorySessionId {
