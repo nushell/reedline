@@ -246,6 +246,21 @@ impl LineBuffer {
             .unwrap_or(0)
     }
 
+    /// Cursor position *in front of* the next WORD to the left
+    pub fn big_word_left_index(&self) -> usize {
+        self.lines[..self.insertion_point]
+            .split_word_bound_indices()
+            .fold(None, |last_word_index, (i, word)| {
+                match (last_word_index, is_whitespace_str(word)) {
+                    (None, true) => None,
+                    (None, false) => Some(i),
+                    (Some(_), true) => None,
+                    (Some(v), false) => Some(v),
+                }
+            })
+            .unwrap_or(0)
+    }
+
     /// Move cursor position *behind* the next unicode grapheme to the right
     pub fn move_right(&mut self) {
         self.insertion_point = self.grapheme_right_index();
@@ -259,6 +274,11 @@ impl LineBuffer {
     /// Move cursor position *in front of* the next word to the left
     pub fn move_word_left(&mut self) {
         self.insertion_point = self.word_left_index();
+    }
+
+    /// Move cursor position *in front of* the next WORD to the left
+    pub fn move_big_word_left(&mut self) {
+        self.insertion_point = self.big_word_left_index();
     }
 
     /// Move cursor position *behind* the next word to the right
@@ -1350,6 +1370,36 @@ mod test {
 
         assert_eq!(expected, line_buffer);
         line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 10, 8)]
+    #[case("abc def-ghi", 10, 8)]
+    #[case("abc def.ghi", 10, 4)]
+    fn test_word_left_index(#[case] input: &str, #[case] position: usize, #[case] expected: usize) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        let index = line_buffer.word_left_index();
+
+        assert_eq!(index, expected);
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 10, 8)]
+    #[case("abc def-ghi", 10, 4)]
+    #[case("abc def.ghi", 10, 4)]
+    fn test_big_word_left_index(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        let index = line_buffer.big_word_left_index();
+
+        assert_eq!(index, expected,);
     }
 
     #[rstest]

@@ -5,6 +5,14 @@ where
     I: Iterator<Item = &'iter char>,
 {
     match input.peek() {
+        Some('b') => {
+            let _ = input.next();
+            Some(Motion::PreviousWord)
+        }
+        Some('B') => {
+            let _ = input.next();
+            Some(Motion::PreviousBigWord)
+        }
         Some('w') => {
             let _ = input.next();
             Some(Motion::NextWord)
@@ -54,6 +62,8 @@ pub enum Motion {
     NextWord,
     NextBigWord,
     NextWordEnd,
+    PreviousWord,
+    PreviousBigWord,
     Line,
     Start,
     End,

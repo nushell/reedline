@@ -39,6 +39,9 @@ pub enum EditCommand {
     /// Move one word to the left
     MoveWordLeft,
 
+    /// Move one WORD to the left
+    MoveBigWordLeft,
+
     /// Move one word to the right
     MoveWordRight,
 
@@ -107,6 +110,9 @@ pub enum EditCommand {
 
     /// Cut the word left of the insertion point
     CutWordLeft,
+
+    /// Cut the WORD left of the insertion point
+    CutBigWordLeft,
 
     /// Cut the word right of the insertion point
     CutWordRight,
@@ -179,6 +185,7 @@ impl Display for EditCommand {
             EditCommand::MoveLeft => write!(f, "MoveLeft"),
             EditCommand::MoveRight => write!(f, "MoveRight"),
             EditCommand::MoveWordLeft => write!(f, "MoveWordLeft"),
+            EditCommand::MoveBigWordLeft => write!(f, "MoveBigWordLeft"),
             EditCommand::MoveWordRight => write!(f, "MoveWordRight"),
             EditCommand::MoveWordRightEnd => write!(f, "MoveWordRightEnd"),
             EditCommand::MoveWordRightStart => write!(f, "MoveWordRightStart"),
@@ -201,6 +208,7 @@ impl Display for EditCommand {
             EditCommand::CutToEnd => write!(f, "CutToEnd"),
             EditCommand::CutToLineEnd => write!(f, "CutToLineEnd"),
             EditCommand::CutWordLeft => write!(f, "CutWordLeft"),
+            EditCommand::CutBigWordLeft => write!(f, "CutBigWordLeft"),
             EditCommand::CutWordRight => write!(f, "CutWordRight"),
             EditCommand::CutWordRightToNext => write!(f, "CutWordRightToNext"),
             EditCommand::CutBigWordRightToNext => write!(f, "CutBigWordRightToNext"),
@@ -239,6 +247,7 @@ impl EditCommand {
             | EditCommand::MoveLeft
             | EditCommand::MoveRight
             | EditCommand::MoveWordLeft
+            | EditCommand::MoveBigWordLeft
             | EditCommand::MoveWordRight
             | EditCommand::MoveWordRightStart
             | EditCommand::MoveBigWordRightStart
@@ -268,6 +277,7 @@ impl EditCommand {
             | EditCommand::CutToLineEnd
             | EditCommand::CutToEnd
             | EditCommand::CutWordLeft
+            | EditCommand::CutBigWordLeft
             | EditCommand::CutWordRight
             | EditCommand::CutWordRightToNext
             | EditCommand::CutBigWordRightToNext

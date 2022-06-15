@@ -51,6 +51,10 @@ where
             let _ = input.next();
             Some(Command::MoveWordLeft)
         }
+        Some('B') => {
+            let _ = input.next();
+            Some(Command::MoveBigWordLeft)
+        }
         Some('i') => {
             let _ = input.next();
             Some(Command::EnterViInsert)
@@ -155,6 +159,7 @@ pub enum Command {
     MoveBigWordRightStart,
     MoveWordRightEnd,
     MoveWordLeft,
+    MoveBigWordLeft,
     MoveToLineStart,
     MoveToLineEnd,
     EnterViAppend,
@@ -183,6 +188,7 @@ impl Command {
             Self::MoveToLineStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
             Self::MoveToLineEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
             Self::MoveWordLeft => vec![ReedlineOption::Edit(EditCommand::MoveWordLeft)],
+            Self::MoveBigWordLeft => vec![ReedlineOption::Edit(EditCommand::MoveBigWordLeft)],
             Self::MoveWordRightStart => vec![ReedlineOption::Edit(EditCommand::MoveWordRightStart)],
             Self::MoveBigWordRightStart => {
                 vec![ReedlineOption::Edit(EditCommand::MoveBigWordRightStart)]
@@ -228,6 +234,10 @@ impl Command {
                     EditCommand::CutBigWordRightToNext,
                 )]),
                 Motion::NextWordEnd => Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)]),
+                Motion::PreviousWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWordLeft)]),
+                Motion::PreviousBigWord => {
+                    Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordLeft)])
+                }
                 Motion::RightUntil(c) => {
                     Some(vec![ReedlineOption::Edit(EditCommand::CutRightUntil(*c))])
                 }
@@ -262,6 +272,14 @@ impl Command {
                 ]),
                 Motion::NextWordEnd => Some(vec![
                     ReedlineOption::Edit(EditCommand::CutWordRight),
+                    ReedlineOption::Event(ReedlineEvent::Repaint),
+                ]),
+                Motion::PreviousWord => Some(vec![
+                    ReedlineOption::Edit(EditCommand::CutWordLeft),
+                    ReedlineOption::Event(ReedlineEvent::Repaint),
+                ]),
+                Motion::PreviousBigWord => Some(vec![
+                    ReedlineOption::Edit(EditCommand::CutBigWordLeft),
                     ReedlineOption::Event(ReedlineEvent::Repaint),
                 ]),
                 Motion::RightUntil(c) => Some(vec![
