@@ -273,6 +273,10 @@ mod tests {
     #[rstest]
     #[case(&['2', 'k'], ReedlineEvent::Multiple(vec![ReedlineEvent::Up, ReedlineEvent::Up]))]
     #[case(&['k'], ReedlineEvent::Multiple(vec![ReedlineEvent::Up]))]
+    #[case(&['w'],
+        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveWordRightStart])]))]
+    #[case(&['W'],
+        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveBigWordRightStart])]))]
     #[case(&['2', 'j'], ReedlineEvent::Multiple(vec![ReedlineEvent::Down, ReedlineEvent::Down]))]
     #[case(&['j'], ReedlineEvent::Multiple(vec![ReedlineEvent::Down]))]
     #[case(&['2', 'l'], ReedlineEvent::Multiple(vec![
@@ -301,6 +305,7 @@ mod tests {
     #[case(&['d', 'd'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
     #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext])]))]
+    #[case(&['d', 'W'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRightToNext])]))]
     #[case(&['d', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight])]))]
     fn test_reedline_move(#[case] input: &[char], #[case] expected: ReedlineEvent) {
         let res = vi_parse(input);

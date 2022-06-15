@@ -9,6 +9,10 @@ where
             let _ = input.next();
             Some(Motion::NextWord)
         }
+        Some('W') => {
+            let _ = input.next();
+            Some(Motion::NextBigWord)
+        }
         Some('e') => {
             let _ = input.next();
             Some(Motion::NextWordEnd)
@@ -48,6 +52,7 @@ where
 #[derive(Debug, PartialEq, Eq)]
 pub enum Motion {
     NextWord,
+    NextBigWord,
     NextWordEnd,
     Line,
     Start,

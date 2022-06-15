@@ -179,6 +179,20 @@ impl LineBuffer {
             .unwrap_or_else(|| self.lines.len())
     }
 
+    /// Cursor position *behind* the next word to the right
+    pub fn big_word_right_index(&self) -> usize {
+        let mut found_ws = false;
+
+        self.lines[self.insertion_point..]
+            .split_word_bound_indices()
+            .find(|(_, word)| {
+                found_ws = found_ws || is_whitespace_str(word);
+                found_ws && !is_whitespace_str(word)
+            })
+            .map(|(i, word)| self.insertion_point + i + word.len())
+            .unwrap_or_else(|| self.lines.len())
+    }
+
     /// Cursor position *at end of* the next word to the right
     pub fn word_right_end_index(&self) -> usize {
         self.lines[self.insertion_point..]
@@ -204,6 +218,20 @@ impl LineBuffer {
         self.lines[self.insertion_point..]
             .split_word_bound_indices()
             .find(|(i, word)| *i != 0 && !is_whitespace_str(word))
+            .map(|(i, _)| self.insertion_point + i)
+            .unwrap_or_else(|| self.lines.len())
+    }
+
+    /// Cursor position *in front of* the next WORD to the right
+    pub fn big_word_right_start_index(&self) -> usize {
+        let mut found_ws = false;
+
+        self.lines[self.insertion_point..]
+            .split_word_bound_indices()
+            .find(|(i, word)| {
+                found_ws = found_ws || *i != 0 && is_whitespace_str(word);
+                found_ws && *i != 0 && !is_whitespace_str(word)
+            })
             .map(|(i, _)| self.insertion_point + i)
             .unwrap_or_else(|| self.lines.len())
     }
@@ -241,6 +269,11 @@ impl LineBuffer {
     /// Move cursor position to the start of the next word
     pub fn move_word_right_start(&mut self) {
         self.insertion_point = self.word_right_start_index();
+    }
+
+    /// Move cursor position to the start of the next WORD
+    pub fn move_big_word_right_start(&mut self) {
+        self.insertion_point = self.big_word_right_start_index();
     }
 
     /// Move cursor position to the end of the next word
@@ -1317,5 +1350,39 @@ mod test {
 
         assert_eq!(expected, line_buffer);
         line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0, 4)]
+    #[case("abc-def ghi", 0, 3)]
+    #[case("abc.def ghi", 0, 8)]
+    fn test_word_right_start_index(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        let index = line_buffer.word_right_start_index();
+
+        assert_eq!(index, expected);
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0, 4)]
+    #[case("abc-def ghi", 0, 8)]
+    #[case("abc.def ghi", 0, 8)]
+    fn test_big_word_right_start_index(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        let index = line_buffer.big_word_right_start_index();
+
+        assert_eq!(index, expected);
     }
 }
