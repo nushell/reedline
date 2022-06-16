@@ -25,6 +25,10 @@ where
             let _ = input.next();
             Some(Motion::NextWordEnd)
         }
+        Some('E') => {
+            let _ = input.next();
+            Some(Motion::NextBigWordEnd)
+        }
         Some('d') => {
             let _ = input.next();
             Some(Motion::Line)
@@ -62,6 +66,7 @@ pub enum Motion {
     NextWord,
     NextBigWord,
     NextWordEnd,
+    NextBigWordEnd,
     PreviousWord,
     PreviousBigWord,
     Line,

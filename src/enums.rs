@@ -54,6 +54,9 @@ pub enum EditCommand {
     /// Move one word to the right, stop at end of word
     MoveWordRightEnd,
 
+    /// Move one WORD to the right, stop at end of WORD
+    MoveBigWordRightEnd,
+
     /// Move to position
     MoveToPosition(usize),
 
@@ -116,6 +119,9 @@ pub enum EditCommand {
 
     /// Cut the word right of the insertion point
     CutWordRight,
+
+    /// Cut the word right of the insertion point
+    CutBigWordRight,
 
     /// Cut the word right of the insertion point and any following space
     CutWordRightToNext,
@@ -188,6 +194,7 @@ impl Display for EditCommand {
             EditCommand::MoveBigWordLeft => write!(f, "MoveBigWordLeft"),
             EditCommand::MoveWordRight => write!(f, "MoveWordRight"),
             EditCommand::MoveWordRightEnd => write!(f, "MoveWordRightEnd"),
+            EditCommand::MoveBigWordRightEnd => write!(f, "MoveBigWordRightEnd"),
             EditCommand::MoveWordRightStart => write!(f, "MoveWordRightStart"),
             EditCommand::MoveBigWordRightStart => write!(f, "MoveBigWordRightStart"),
             EditCommand::MoveToPosition(_) => write!(f, "MoveToPosition  Value: <int>"),
@@ -210,6 +217,7 @@ impl Display for EditCommand {
             EditCommand::CutWordLeft => write!(f, "CutWordLeft"),
             EditCommand::CutBigWordLeft => write!(f, "CutBigWordLeft"),
             EditCommand::CutWordRight => write!(f, "CutWordRight"),
+            EditCommand::CutBigWordRight => write!(f, "CutBigWordRight"),
             EditCommand::CutWordRightToNext => write!(f, "CutWordRightToNext"),
             EditCommand::CutBigWordRightToNext => write!(f, "CutBigWordRightToNext"),
             EditCommand::PasteCutBufferBefore => write!(f, "PasteCutBufferBefore"),
@@ -252,6 +260,7 @@ impl EditCommand {
             | EditCommand::MoveWordRightStart
             | EditCommand::MoveBigWordRightStart
             | EditCommand::MoveWordRightEnd
+            | EditCommand::MoveBigWordRightEnd
             | EditCommand::MoveRightUntil(_)
             | EditCommand::MoveRightBefore(_)
             | EditCommand::MoveLeftUntil(_)
@@ -279,6 +288,7 @@ impl EditCommand {
             | EditCommand::CutWordLeft
             | EditCommand::CutBigWordLeft
             | EditCommand::CutWordRight
+            | EditCommand::CutBigWordRight
             | EditCommand::CutWordRightToNext
             | EditCommand::CutBigWordRightToNext
             | EditCommand::PasteCutBufferBefore
