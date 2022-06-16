@@ -44,9 +44,12 @@ impl Editor {
             EditCommand::MoveLeft => self.line_buffer.move_left(),
             EditCommand::MoveRight => self.line_buffer.move_right(),
             EditCommand::MoveWordLeft => self.line_buffer.move_word_left(),
+            EditCommand::MoveBigWordLeft => self.line_buffer.move_big_word_left(),
             EditCommand::MoveWordRight => self.line_buffer.move_word_right(),
             EditCommand::MoveWordRightStart => self.line_buffer.move_word_right_start(),
+            EditCommand::MoveBigWordRightStart => self.line_buffer.move_big_word_right_start(),
             EditCommand::MoveWordRightEnd => self.line_buffer.move_word_right_end(),
+            EditCommand::MoveBigWordRightEnd => self.line_buffer.move_big_word_right_end(),
             EditCommand::InsertChar(c) => self.insert_char(*c),
             EditCommand::InsertString(str) => self.line_buffer.insert_str(str),
             EditCommand::InsertNewline => self.line_buffer.insert_newline(),
@@ -64,8 +67,11 @@ impl Editor {
             EditCommand::CutToEnd => self.cut_from_end(),
             EditCommand::CutToLineEnd => self.cut_to_line_end(),
             EditCommand::CutWordLeft => self.cut_word_left(),
+            EditCommand::CutBigWordLeft => self.cut_big_word_left(),
             EditCommand::CutWordRight => self.cut_word_right(),
+            EditCommand::CutBigWordRight => self.cut_big_word_right(),
             EditCommand::CutWordRightToNext => self.cut_word_right_to_next(),
+            EditCommand::CutBigWordRightToNext => self.cut_big_word_right_to_next(),
             EditCommand::PasteCutBufferBefore => self.insert_cut_buffer_before(),
             EditCommand::PasteCutBufferAfter => self.insert_cut_buffer_after(),
             EditCommand::UppercaseWord => self.line_buffer.uppercase_word(),
@@ -262,6 +268,20 @@ impl Editor {
         }
     }
 
+    fn cut_big_word_left(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let left_index = self.line_buffer.big_word_left_index();
+        if left_index < insertion_offset {
+            let cut_range = left_index..insertion_offset;
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[cut_range.clone()],
+                ClipboardMode::Normal,
+            );
+            self.clear_range(cut_range);
+            self.line_buffer.set_insertion_point(left_index);
+        }
+    }
+
     fn cut_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let right_index = self.line_buffer.word_right_index();
@@ -275,9 +295,35 @@ impl Editor {
         }
     }
 
+    fn cut_big_word_right(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let right_index = self.line_buffer.next_whitespace();
+        if right_index > insertion_offset {
+            let cut_range = insertion_offset..right_index;
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[cut_range.clone()],
+                ClipboardMode::Normal,
+            );
+            self.clear_range(cut_range);
+        }
+    }
+
     fn cut_word_right_to_next(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let right_index = self.line_buffer.word_right_start_index();
+        if right_index > insertion_offset {
+            let cut_range = insertion_offset..right_index;
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[cut_range.clone()],
+                ClipboardMode::Normal,
+            );
+            self.clear_range(cut_range);
+        }
+    }
+
+    fn cut_big_word_right_to_next(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let right_index = self.line_buffer.big_word_right_start_index();
         if right_index > insertion_offset {
             let cut_range = insertion_offset..right_index;
             self.cut_buffer.set(
@@ -406,11 +452,43 @@ impl Editor {
 #[cfg(test)]
 mod test {
     use super::*;
+    use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     fn editor_with(buffer: &str) -> Editor {
         let mut editor = Editor::default();
         editor.line_buffer.set_buffer(buffer.to_string());
         editor
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 11, "abc def ")]
+    #[case("abc def-ghi", 11, "abc def-")]
+    #[case("abc def.ghi", 11, "abc ")]
+    fn test_cut_word_left(#[case] input: &str, #[case] position: usize, #[case] expected: &str) {
+        let mut editor = editor_with(input);
+        editor.set_insertion_point(position);
+
+        editor.cut_word_left();
+
+        assert_eq!(editor.get_buffer(), expected);
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 11, "abc def ")]
+    #[case("abc def-ghi", 11, "abc ")]
+    #[case("abc def.ghi", 11, "abc ")]
+    fn test_cut_big_word_left(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.set_insertion_point(position);
+
+        editor.cut_big_word_left();
+
+        assert_eq!(editor.get_buffer(), expected);
     }
 
     fn str_to_edit_commands(s: &str) -> Vec<EditCommand> {

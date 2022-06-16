@@ -1,4 +1,5 @@
 use {
+    itertools::Itertools,
     std::{convert::From, ops::Range},
     unicode_segmentation::UnicodeSegmentation,
 };
@@ -179,17 +180,55 @@ impl LineBuffer {
             .unwrap_or_else(|| self.lines.len())
     }
 
+    /// Cursor position *behind* the next WORD to the right
+    pub fn big_word_right_index(&self) -> usize {
+        let mut found_ws = false;
+
+        self.lines[self.insertion_point..]
+            .split_word_bound_indices()
+            .find(|(_, word)| {
+                found_ws = found_ws || is_whitespace_str(word);
+                found_ws && !is_whitespace_str(word)
+            })
+            .map(|(i, word)| self.insertion_point + i + word.len())
+            .unwrap_or_else(|| self.lines.len())
+    }
+
     /// Cursor position *at end of* the next word to the right
     pub fn word_right_end_index(&self) -> usize {
         self.lines[self.insertion_point..]
             .split_word_bound_indices()
-            .filter_map(|(i, word)| {
+            .find_map(|(i, word)| {
                 word.grapheme_indices(true)
                     .next_back()
                     .map(|x| self.insertion_point + x.0 + i)
                     .filter(|x| !is_whitespace_str(word) && *x != self.insertion_point)
             })
-            .next()
+            .unwrap_or_else(|| {
+                self.lines
+                    .grapheme_indices(true)
+                    .last()
+                    .map(|x| x.0)
+                    .unwrap_or(0)
+            })
+    }
+
+    /// Cursor position *at end of* the next WORD to the right
+    pub fn big_word_right_end_index(&self) -> usize {
+        self.lines[self.insertion_point..]
+            .split_word_bound_indices()
+            .tuple_windows()
+            .find_map(|((prev_i, prev_word), (_, word))| {
+                if is_whitespace_str(word) {
+                    prev_word
+                        .grapheme_indices(true)
+                        .next_back()
+                        .map(|x| self.insertion_point + x.0 + prev_i)
+                        .filter(|x| *x != self.insertion_point)
+                } else {
+                    None
+                }
+            })
             .unwrap_or_else(|| {
                 self.lines
                     .grapheme_indices(true)
@@ -208,6 +247,20 @@ impl LineBuffer {
             .unwrap_or_else(|| self.lines.len())
     }
 
+    /// Cursor position *in front of* the next WORD to the right
+    pub fn big_word_right_start_index(&self) -> usize {
+        let mut found_ws = false;
+
+        self.lines[self.insertion_point..]
+            .split_word_bound_indices()
+            .find(|(i, word)| {
+                found_ws = found_ws || *i != 0 && is_whitespace_str(word);
+                found_ws && *i != 0 && !is_whitespace_str(word)
+            })
+            .map(|(i, _)| self.insertion_point + i)
+            .unwrap_or_else(|| self.lines.len())
+    }
+
     /// Cursor position *in front of* the next word to the left
     pub fn word_left_index(&self) -> usize {
         self.lines[..self.insertion_point]
@@ -216,6 +269,30 @@ impl LineBuffer {
             .last()
             .map(|(i, _)| i)
             .unwrap_or(0)
+    }
+
+    /// Cursor position *in front of* the next WORD to the left
+    pub fn big_word_left_index(&self) -> usize {
+        self.lines[..self.insertion_point]
+            .split_word_bound_indices()
+            .fold(None, |last_word_index, (i, word)| {
+                match (last_word_index, is_whitespace_str(word)) {
+                    (None, true) => None,
+                    (None, false) => Some(i),
+                    (Some(_), true) => None,
+                    (Some(v), false) => Some(v),
+                }
+            })
+            .unwrap_or(0)
+    }
+
+    /// Cursor position on the next whitespace
+    pub fn next_whitespace(&self) -> usize {
+        self.lines[self.insertion_point..]
+            .split_word_bound_indices()
+            .find(|(i, word)| *i != 0 && is_whitespace_str(word))
+            .map(|(i, _)| self.insertion_point + i)
+            .unwrap_or_else(|| self.lines.len())
     }
 
     /// Move cursor position *behind* the next unicode grapheme to the right
@@ -233,6 +310,11 @@ impl LineBuffer {
         self.insertion_point = self.word_left_index();
     }
 
+    /// Move cursor position *in front of* the next WORD to the left
+    pub fn move_big_word_left(&mut self) {
+        self.insertion_point = self.big_word_left_index();
+    }
+
     /// Move cursor position *behind* the next word to the right
     pub fn move_word_right(&mut self) {
         self.insertion_point = self.word_right_index();
@@ -243,9 +325,19 @@ impl LineBuffer {
         self.insertion_point = self.word_right_start_index();
     }
 
+    /// Move cursor position to the start of the next WORD
+    pub fn move_big_word_right_start(&mut self) {
+        self.insertion_point = self.big_word_right_start_index();
+    }
+
     /// Move cursor position to the end of the next word
     pub fn move_word_right_end(&mut self) {
         self.insertion_point = self.word_right_end_index();
+    }
+
+    /// Move cursor position to the end of the next WORD
+    pub fn move_big_word_right_end(&mut self) {
+        self.insertion_point = self.big_word_right_end_index();
     }
 
     ///Insert a single character at the insertion point and move right
@@ -1317,5 +1409,125 @@ mod test {
 
         assert_eq!(expected, line_buffer);
         line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 10, 8)]
+    #[case("abc def-ghi", 10, 8)]
+    #[case("abc def.ghi", 10, 4)]
+    fn test_word_left_index(#[case] input: &str, #[case] position: usize, #[case] expected: usize) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        let index = line_buffer.word_left_index();
+
+        assert_eq!(index, expected);
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 10, 8)]
+    #[case("abc def-ghi", 10, 4)]
+    #[case("abc def.ghi", 10, 4)]
+    fn test_big_word_left_index(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        let index = line_buffer.big_word_left_index();
+
+        assert_eq!(index, expected,);
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0, 4)]
+    #[case("abc-def ghi", 0, 3)]
+    #[case("abc.def ghi", 0, 8)]
+    fn test_word_right_start_index(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        let index = line_buffer.word_right_start_index();
+
+        assert_eq!(index, expected);
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0, 4)]
+    #[case("abc-def ghi", 0, 8)]
+    #[case("abc.def ghi", 0, 8)]
+    fn test_big_word_right_start_index(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        let index = line_buffer.big_word_right_start_index();
+
+        assert_eq!(index, expected);
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0, 2)]
+    #[case("abc-def ghi", 0, 2)]
+    #[case("abc.def ghi", 0, 6)]
+    #[case("abc", 1, 2)]
+    #[case("abc", 2, 2)]
+    #[case("abc def", 2, 6)]
+    fn test_word_right_end_index(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        let index = line_buffer.word_right_end_index();
+
+        assert_eq!(index, expected);
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0, 2)]
+    #[case("abc-def ghi", 0, 6)]
+    #[case("abc-def ghi", 5, 6)]
+    #[case("abc-def ghi", 6, 10)]
+    #[case("abc.def ghi", 0, 6)]
+    #[case("abc", 1, 2)]
+    #[case("abc", 2, 2)]
+    #[case("abc def", 2, 6)]
+    #[case("abc-def", 6, 6)]
+    fn test_big_word_right_end_index(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        let index = line_buffer.big_word_right_end_index();
+
+        assert_eq!(index, expected);
+    }
+
+    #[rstest]
+    #[case("abc def", 0, 3)]
+    #[case("abc def ghi", 3, 7)]
+    #[case("abc", 1, 3)]
+    fn test_next_whitespace(#[case] input: &str, #[case] position: usize, #[case] expected: usize) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+
+        let index = line_buffer.next_whitespace();
+
+        assert_eq!(index, expected);
     }
 }

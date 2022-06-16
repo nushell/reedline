@@ -39,14 +39,23 @@ pub enum EditCommand {
     /// Move one word to the left
     MoveWordLeft,
 
+    /// Move one WORD to the left
+    MoveBigWordLeft,
+
     /// Move one word to the right
     MoveWordRight,
 
     /// Move one word to the right, stop at start of word
     MoveWordRightStart,
 
+    /// Move one WORD to the right, stop at start of WORD
+    MoveBigWordRightStart,
+
     /// Move one word to the right, stop at end of word
     MoveWordRightEnd,
+
+    /// Move one WORD to the right, stop at end of WORD
+    MoveBigWordRightEnd,
 
     /// Move to position
     MoveToPosition(usize),
@@ -105,11 +114,20 @@ pub enum EditCommand {
     /// Cut the word left of the insertion point
     CutWordLeft,
 
+    /// Cut the WORD left of the insertion point
+    CutBigWordLeft,
+
     /// Cut the word right of the insertion point
     CutWordRight,
 
+    /// Cut the word right of the insertion point
+    CutBigWordRight,
+
     /// Cut the word right of the insertion point and any following space
     CutWordRightToNext,
+
+    /// Cut the WORD right of the insertion point and any following space
+    CutBigWordRightToNext,
 
     /// Paste the cut buffer in front of the insertion point (Emacs, vi `P`)
     PasteCutBufferBefore,
@@ -173,9 +191,12 @@ impl Display for EditCommand {
             EditCommand::MoveLeft => write!(f, "MoveLeft"),
             EditCommand::MoveRight => write!(f, "MoveRight"),
             EditCommand::MoveWordLeft => write!(f, "MoveWordLeft"),
+            EditCommand::MoveBigWordLeft => write!(f, "MoveBigWordLeft"),
             EditCommand::MoveWordRight => write!(f, "MoveWordRight"),
             EditCommand::MoveWordRightEnd => write!(f, "MoveWordRightEnd"),
+            EditCommand::MoveBigWordRightEnd => write!(f, "MoveBigWordRightEnd"),
             EditCommand::MoveWordRightStart => write!(f, "MoveWordRightStart"),
+            EditCommand::MoveBigWordRightStart => write!(f, "MoveBigWordRightStart"),
             EditCommand::MoveToPosition(_) => write!(f, "MoveToPosition  Value: <int>"),
             EditCommand::InsertChar(_) => write!(f, "InsertChar  Value: <char>"),
             EditCommand::InsertString(_) => write!(f, "InsertString Value: <string>"),
@@ -194,8 +215,11 @@ impl Display for EditCommand {
             EditCommand::CutToEnd => write!(f, "CutToEnd"),
             EditCommand::CutToLineEnd => write!(f, "CutToLineEnd"),
             EditCommand::CutWordLeft => write!(f, "CutWordLeft"),
+            EditCommand::CutBigWordLeft => write!(f, "CutBigWordLeft"),
             EditCommand::CutWordRight => write!(f, "CutWordRight"),
+            EditCommand::CutBigWordRight => write!(f, "CutBigWordRight"),
             EditCommand::CutWordRightToNext => write!(f, "CutWordRightToNext"),
+            EditCommand::CutBigWordRightToNext => write!(f, "CutBigWordRightToNext"),
             EditCommand::PasteCutBufferBefore => write!(f, "PasteCutBufferBefore"),
             EditCommand::PasteCutBufferAfter => write!(f, "PasteCutBufferAfter"),
             EditCommand::UppercaseWord => write!(f, "UppercaseWord"),
@@ -231,9 +255,12 @@ impl EditCommand {
             | EditCommand::MoveLeft
             | EditCommand::MoveRight
             | EditCommand::MoveWordLeft
+            | EditCommand::MoveBigWordLeft
             | EditCommand::MoveWordRight
             | EditCommand::MoveWordRightStart
+            | EditCommand::MoveBigWordRightStart
             | EditCommand::MoveWordRightEnd
+            | EditCommand::MoveBigWordRightEnd
             | EditCommand::MoveRightUntil(_)
             | EditCommand::MoveRightBefore(_)
             | EditCommand::MoveLeftUntil(_)
@@ -259,8 +286,11 @@ impl EditCommand {
             | EditCommand::CutToLineEnd
             | EditCommand::CutToEnd
             | EditCommand::CutWordLeft
+            | EditCommand::CutBigWordLeft
             | EditCommand::CutWordRight
+            | EditCommand::CutBigWordRight
             | EditCommand::CutWordRightToNext
+            | EditCommand::CutBigWordRightToNext
             | EditCommand::PasteCutBufferBefore
             | EditCommand::PasteCutBufferAfter
             | EditCommand::UppercaseWord

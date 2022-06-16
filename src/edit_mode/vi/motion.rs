@@ -5,13 +5,29 @@ where
     I: Iterator<Item = &'iter char>,
 {
     match input.peek() {
+        Some('b') => {
+            let _ = input.next();
+            Some(Motion::PreviousWord)
+        }
+        Some('B') => {
+            let _ = input.next();
+            Some(Motion::PreviousBigWord)
+        }
         Some('w') => {
             let _ = input.next();
             Some(Motion::NextWord)
         }
+        Some('W') => {
+            let _ = input.next();
+            Some(Motion::NextBigWord)
+        }
         Some('e') => {
             let _ = input.next();
             Some(Motion::NextWordEnd)
+        }
+        Some('E') => {
+            let _ = input.next();
+            Some(Motion::NextBigWordEnd)
         }
         Some('d') => {
             let _ = input.next();
@@ -48,7 +64,11 @@ where
 #[derive(Debug, PartialEq, Eq)]
 pub enum Motion {
     NextWord,
+    NextBigWord,
     NextWordEnd,
+    NextBigWordEnd,
+    PreviousWord,
+    PreviousBigWord,
     Line,
     Start,
     End,
