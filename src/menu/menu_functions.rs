@@ -70,7 +70,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                 Some(&x) if x == marker => {
                     return ParseResult {
                         remainder: &buffer[0..index],
-                        index: Some(0),
+                        index: Some(1),
                         marker: Some(&buffer[index..index + 2]),
                         action: ParseAction::BackwardSearch,
                     }
@@ -267,7 +267,7 @@ mod tests {
         let res = parse_selection_char(input, '!');
 
         assert_eq!(res.remainder, "search");
-        assert_eq!(res.index, Some(0));
+        assert_eq!(res.index, Some(1));
         assert_eq!(res.marker, Some("!!"));
         assert!(matches!(res.action, ParseAction::BackwardSearch));
     }
