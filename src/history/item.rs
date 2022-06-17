@@ -1,7 +1,6 @@
-use std::time::Duration;
-
 use chrono::Utc;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::{fmt::Display, time::Duration};
 
 /// Unique ID for the [`HistoryItem`]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -9,6 +8,12 @@ pub struct HistoryItemId(pub(crate) i64);
 impl HistoryItemId {
     pub(crate) fn new(i: i64) -> HistoryItemId {
         HistoryItemId(i)
+    }
+}
+
+impl Display for HistoryItemId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -20,11 +25,20 @@ impl HistorySessionId {
         HistorySessionId(i)
     }
 }
+
+impl Display for HistorySessionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// This trait represents additional arbitrary context to be added to a history (optional, see [HistoryItem])
 pub trait HistoryItemExtraInfo: Serialize + DeserializeOwned + Default + Send {}
+
 #[derive(Default, Debug, PartialEq, Eq)]
 /// something that is serialized as null and deserialized by ignoring everything
 pub struct IgnoreAllExtraInfo;
+
 impl Serialize for IgnoreAllExtraInfo {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
@@ -33,6 +47,7 @@ impl Serialize for IgnoreAllExtraInfo {
         Option::<IgnoreAllExtraInfo>::None.serialize(serializer)
     }
 }
+
 impl<'de> Deserialize<'de> for IgnoreAllExtraInfo {
     fn deserialize<D>(d: D) -> std::result::Result<Self, D::Error>
     where
@@ -41,7 +56,9 @@ impl<'de> Deserialize<'de> for IgnoreAllExtraInfo {
         serde::de::IgnoredAny::deserialize(d).map(|_| IgnoreAllExtraInfo)
     }
 }
+
 impl HistoryItemExtraInfo for IgnoreAllExtraInfo {}
+
 /// Represents one run command with some optional additional context
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
