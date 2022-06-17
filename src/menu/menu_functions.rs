@@ -28,6 +28,8 @@ pub enum ParseAction {
     BackwardSearch,
     /// Last token
     LastToken,
+    /// Last executed command.
+    LastCommand,
 }
 
 /// Splits a string that contains a marker character
@@ -70,9 +72,9 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                 Some(&x) if x == marker => {
                     return ParseResult {
                         remainder: &buffer[0..index],
-                        index: Some(1),
+                        index: Some(0),
                         marker: Some(&buffer[index..index + 2]),
-                        action: ParseAction::BackwardSearch,
+                        action: ParseAction::LastCommand,
                     }
                 }
                 #[cfg(feature = "bashisms")]
@@ -269,7 +271,7 @@ mod tests {
         assert_eq!(res.remainder, "search");
         assert_eq!(res.index, Some(1));
         assert_eq!(res.marker, Some("!!"));
-        assert!(matches!(res.action, ParseAction::BackwardSearch));
+        assert!(matches!(res.action, ParseAction::LastCommand));
     }
 
     #[cfg(feature = "bashisms")]
