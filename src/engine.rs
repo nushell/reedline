@@ -1180,6 +1180,26 @@ impl Reedline {
             .index
             .zip(parsed.marker)
             .and_then(|(index, indicator)| match parsed.action {
+                ParseAction::LastCommand => self
+                    .history
+                    .search(SearchQuery {
+                        direction: SearchDirection::Backward,
+                        start_time: None,
+                        end_time: None,
+                        start_id: None,
+                        end_id: None,
+                        limit: Some(1), // fetch the latest one entries
+                        filter: SearchFilter::anything(),
+                    })
+                    .unwrap_or_else(|_| Vec::new())
+                    .get(index.saturating_sub(1))
+                    .map(|history| {
+                        (
+                            parsed.remainder.len(),
+                            indicator.len(),
+                            history.command_line.clone(),
+                        )
+                    }),
                 ParseAction::BackwardSearch => self
                     .history
                     .search(SearchQuery {
