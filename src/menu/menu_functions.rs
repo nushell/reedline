@@ -269,7 +269,7 @@ mod tests {
         let res = parse_selection_char(input, '!');
 
         assert_eq!(res.remainder, "search");
-        assert_eq!(res.index, Some(1));
+        assert_eq!(res.index, Some(0));
         assert_eq!(res.marker, Some("!!"));
         assert!(matches!(res.action, ParseAction::LastCommand));
     }
