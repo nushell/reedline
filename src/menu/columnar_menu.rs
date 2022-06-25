@@ -244,7 +244,7 @@ impl ColumnarMenu {
     fn move_left(&mut self) {
         self.col_pos = if let Some(row) = self.col_pos.checked_sub(1) {
             row
-        } else if self.index() == self.values.len() - 1 {
+        } else if self.index() + 1 == self.values.len() {
             0
         } else {
             self.get_cols().saturating_sub(1)
@@ -254,7 +254,7 @@ impl ColumnarMenu {
     /// Move menu cursor element
     fn move_right(&mut self) {
         let new_col = self.col_pos + 1;
-        self.col_pos = if new_col >= self.get_cols() || self.index() + 1 > self.values.len() - 1 {
+        self.col_pos = if new_col >= self.get_cols() || self.index() + 2 > self.values.len() {
             0
         } else {
             new_col
