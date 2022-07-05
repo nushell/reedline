@@ -72,7 +72,10 @@ pub enum EditCommand {
     /// - On Windows CRLF (`"\r\n"`)
     InsertNewline,
 
-    /// Repace characters with string
+    /// Replace a character
+    ReplaceChar(char),
+
+    /// Replace characters with string
     ReplaceChars(usize, String),
 
     /// Backspace delete from the current insertion point
@@ -201,6 +204,7 @@ impl Display for EditCommand {
             EditCommand::InsertChar(_) => write!(f, "InsertChar  Value: <char>"),
             EditCommand::InsertString(_) => write!(f, "InsertString Value: <string>"),
             EditCommand::InsertNewline => write!(f, "InsertNewline"),
+            EditCommand::ReplaceChar(_) => write!(f, "ReplaceChar <char>"),
             EditCommand::ReplaceChars(_, _) => write!(f, "ReplaceChars <int> <string>"),
             EditCommand::Backspace => write!(f, "Backspace"),
             EditCommand::Delete => write!(f, "Delete"),
@@ -275,6 +279,7 @@ impl EditCommand {
             | EditCommand::CutChar
             | EditCommand::InsertString(_)
             | EditCommand::InsertNewline
+            | EditCommand::ReplaceChar(_)
             | EditCommand::ReplaceChars(_, _)
             | EditCommand::BackspaceWord
             | EditCommand::DeleteWord

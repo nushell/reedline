@@ -87,6 +87,13 @@ where
             let _ = input.next();
             Some(Command::DeleteChar)
         }
+        Some('r') => {
+            let _ = input.next();
+            match input.peek() {
+                Some(c) => Some(Command::ReplaceChar(**c)),
+                None => Some(Command::Incomplete),
+            }
+        }
         Some('s') => {
             let _ = input.next();
             Some(Command::SubstituteCharWithInsert)
@@ -152,6 +159,7 @@ pub enum Command {
     Incomplete,
     Delete,
     DeleteChar,
+    ReplaceChar(char),
     SubstituteCharWithInsert,
     PasteAfter,
     PasteBefore,
@@ -219,6 +227,9 @@ impl Command {
             Self::MoveLeftUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftUntil(*c))],
             Self::MoveLeftBefore(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftBefore(*c))],
             Self::DeleteChar => vec![ReedlineOption::Edit(EditCommand::CutChar)],
+            Self::ReplaceChar(c) => {
+                vec![ReedlineOption::Edit(EditCommand::ReplaceChar(*c))]
+            }
             Self::SubstituteCharWithInsert => vec![ReedlineOption::Edit(EditCommand::CutChar)],
             Self::HistorySearch => vec![ReedlineOption::Event(ReedlineEvent::SearchHistory)],
             // Mark a command as incomplete whenever a motion is required to finish the command

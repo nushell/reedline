@@ -53,6 +53,7 @@ impl Editor {
             EditCommand::InsertChar(c) => self.insert_char(*c),
             EditCommand::InsertString(str) => self.line_buffer.insert_str(str),
             EditCommand::InsertNewline => self.line_buffer.insert_newline(),
+            EditCommand::ReplaceChar(chr) => self.replace_char(*chr),
             EditCommand::ReplaceChars(n_chars, str) => self.replace_chars(*n_chars, str),
             EditCommand::Backspace => self.line_buffer.delete_left_grapheme(),
             EditCommand::Delete => self.line_buffer.delete_right_grapheme(),
@@ -440,6 +441,12 @@ impl Editor {
         }
     }
 
+    fn replace_char(&mut self, character: char) {
+        self.line_buffer.delete_right_grapheme();
+
+        self.line_buffer.insert_char(character);
+    }
+
     fn replace_chars(&mut self, n_chars: usize, string: &str) {
         for _ in 0..n_chars {
             self.line_buffer.delete_right_grapheme();
@@ -487,6 +494,25 @@ mod test {
         editor.set_insertion_point(position);
 
         editor.cut_big_word_left();
+
+        assert_eq!(editor.get_buffer(), expected);
+    }
+
+    #[rstest]
+    #[case("abc", 1, 'X', "aXc")]
+    #[case("abc", 1, '🔄', "a🔄c")]
+    #[case("a🔄c", 1, 'X', "aXc")]
+    #[case("a🔄c", 1, '🔀', "a🔀c")]
+    fn test_replace_char(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] replacement: char,
+        #[case] expected: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.set_insertion_point(position);
+
+        editor.replace_char(replacement);
 
         assert_eq!(editor.get_buffer(), expected);
     }
