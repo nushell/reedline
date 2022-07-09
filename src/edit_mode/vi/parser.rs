@@ -1,6 +1,6 @@
 use super::command::{parse_command, Command};
 use super::motion::{parse_motion, Motion};
-use crate::{EditCommand, ReedlineEvent};
+use crate::{EditCommand, ReedlineEvent, Vi};
 use std::iter::Peekable;
 
 #[derive(Debug, Clone)]
@@ -113,12 +113,12 @@ where
     }
 }
 
-pub fn parse<'iter, I>(input: &mut Peekable<I>) -> ParseResult
+pub fn parse<'iter, I>(vi: &Vi, input: &mut Peekable<I>) -> ParseResult
 where
     I: Iterator<Item = &'iter char>,
 {
     let multiplier = parse_number(input);
-    let command = parse_command(input);
+    let command = parse_command(vi, input);
     let count = parse_number(input);
     let motion = parse_motion(input);
 
@@ -148,7 +148,8 @@ mod tests {
     use rstest::rstest;
 
     fn vi_parse(input: &[char]) -> ParseResult {
-        parse(&mut input.iter().peekable())
+        let vi = Vi::default();
+        parse(&vi, &mut input.iter().peekable())
     }
 
     #[test]

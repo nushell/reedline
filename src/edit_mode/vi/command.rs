@@ -1,8 +1,8 @@
-use super::{motion::Motion, parser::ReedlineOption};
-use crate::{EditCommand, ReedlineEvent};
+use super::{motion::Motion, parser::ReedlineOption, ViToTill};
+use crate::{EditCommand, ReedlineEvent, Vi};
 use std::iter::Peekable;
 
-pub fn parse_command<'iter, I>(input: &mut Peekable<I>) -> Option<Command>
+pub fn parse_command<'iter, I>(vi: &Vi, input: &mut Peekable<I>) -> Option<Command>
 where
     I: Iterator<Item = &'iter char>,
 {
@@ -148,6 +148,20 @@ where
             match input.peek() {
                 Some(c) => Some(Command::MoveLeftBefore(**c)),
                 None => Some(Command::Incomplete),
+            }
+        }
+        Some(';') => {
+            let _ = input.next();
+            match &vi.last_to_till {
+                Some(to_till) => Some(to_till.into()),
+                None => None,
+            }
+        }
+        Some(',') => {
+            let _ = input.next();
+            match &vi.last_to_till {
+                Some(to_till) => Some(to_till.reverse().into()),
+                None => None,
             }
         }
         _ => None,
@@ -338,5 +352,49 @@ impl Command {
             }),
             None => edits,
         }
+    }
+}
+
+impl From<ViToTill> for Command {
+    fn from(val: ViToTill) -> Self {
+        Command::from(&val)
+    }
+}
+
+impl From<&ViToTill> for Command {
+    fn from(val: &ViToTill) -> Self {
+        match val {
+            ViToTill::TillLeft(c) => Command::MoveLeftBefore(*c),
+            ViToTill::ToLeft(c) => Command::MoveLeftUntil(*c),
+            ViToTill::TillRight(c) => Command::MoveRightBefore(*c),
+            ViToTill::ToRight(c) => Command::MoveRightUntil(*c),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(';', None, None)]
+    #[case(',', None, None)]
+    #[case(';', Some(ViToTill::ToRight('X')), Some(Command::MoveRightUntil('X')))]
+    #[case(',', Some(ViToTill::ToRight('X')), Some(Command::MoveLeftUntil('X')))]
+    fn repeat_to_till(
+        #[case] input: char,
+        #[case] last_to_till: Option<ViToTill>,
+        #[case] expected: Option<Command>,
+    ) {
+        let mut vi = Vi::default();
+        vi.last_to_till = last_to_till;
+
+        let input = vec![input];
+
+        let result = parse_command(&vi, &mut input.iter().peekable());
+
+        assert_eq!(result, expected);
     }
 }
