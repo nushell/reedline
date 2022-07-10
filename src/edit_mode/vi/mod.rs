@@ -21,7 +21,7 @@ enum ViMode {
 
 /// Vi left-right motions to or till a character.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) enum ViToTill {
+pub enum ViToTill {
     /// f
     ToRight(char),
     /// F
@@ -138,17 +138,16 @@ impl EditMode for Vi {
 
                         // to_reedline_event() returned Multiple or None when this was written
                         if let ReedlineEvent::Multiple(ref events) = event {
-                            let last_to_till = events.iter().rev().find_map(|e| {
-                                if let ReedlineEvent::Edit(edit) = e {
-                                    if edit.len() == 1 {
+                            let last_to_till =
+                                if events.len() == 2 && events[0] == ReedlineEvent::RecordToTill {
+                                    if let ReedlineEvent::Edit(edit) = &events[1] {
                                         edit[0].clone().into()
                                     } else {
                                         None
                                     }
                                 } else {
                                     None
-                                }
-                            });
+                                };
 
                             if last_to_till.is_some() {
                                 self.last_to_till = last_to_till;
