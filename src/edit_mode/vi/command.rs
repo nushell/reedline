@@ -152,17 +152,15 @@ where
         }
         Some(';') => {
             let _ = input.next();
-            match &vi.last_to_till {
-                Some(to_till) => Some(Command::ReplayToTill(to_till.clone())),
-                _ => None,
-            }
+            vi.last_to_till
+                .as_ref()
+                .map(|to_till| Command::ReplayToTill(to_till.clone()))
         }
         Some(',') => {
             let _ = input.next();
-            match &vi.last_to_till {
-                Some(to_till) => Some(Command::ReverseToTill(to_till.clone())),
-                _ => None,
-            }
+            vi.last_to_till
+                .as_ref()
+                .map(|to_till| Command::ReverseToTill(to_till.clone()))
         }
         _ => None,
     }

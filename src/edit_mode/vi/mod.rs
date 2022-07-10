@@ -118,7 +118,7 @@ impl EditMode for Vi {
                             c
                         });
 
-                        let res = parse(&self, &mut self.cache.iter().peekable());
+                        let res = parse(self, &mut self.cache.iter().peekable());
 
                         if res.enter_insert_mode() {
                             self.mode = ViMode::Insert;
