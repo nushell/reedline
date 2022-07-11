@@ -1,8 +1,8 @@
-use super::{motion::Motion, parser::ReedlineOption};
-use crate::{EditCommand, ReedlineEvent};
+use super::{motion::Motion, parser::ReedlineOption, ViToTill};
+use crate::{EditCommand, ReedlineEvent, Vi};
 use std::iter::Peekable;
 
-pub fn parse_command<'iter, I>(input: &mut Peekable<I>) -> Option<Command>
+pub fn parse_command<'iter, I>(vi: &Vi, input: &mut Peekable<I>) -> Option<Command>
 where
     I: Iterator<Item = &'iter char>,
 {
@@ -150,6 +150,18 @@ where
                 None => Some(Command::Incomplete),
             }
         }
+        Some(';') => {
+            let _ = input.next();
+            vi.last_to_till
+                .as_ref()
+                .map(|to_till| Command::ReplayToTill(to_till.clone()))
+        }
+        Some(',') => {
+            let _ = input.next();
+            vi.last_to_till
+                .as_ref()
+                .map(|to_till| Command::ReverseToTill(to_till.clone()))
+        }
         _ => None,
     }
 }
@@ -188,6 +200,8 @@ pub enum Command {
     MoveRightBefore(char),
     MoveLeftUntil(char),
     MoveLeftBefore(char),
+    ReplayToTill(ViToTill),
+    ReverseToTill(ViToTill),
     HistorySearch,
 }
 
@@ -220,12 +234,26 @@ impl Command {
             Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
             Self::PrependToStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
             Self::RewriteCurrentLine => vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)],
-            Self::MoveRightUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveRightUntil(*c))],
+            Self::MoveRightUntil(c) => vec![
+                ReedlineOption::Event(ReedlineEvent::RecordToTill),
+                ReedlineOption::Edit(EditCommand::MoveRightUntil(*c)),
+            ],
             Self::MoveRightBefore(c) => {
-                vec![ReedlineOption::Edit(EditCommand::MoveRightBefore(*c))]
+                vec![
+                    ReedlineOption::Event(ReedlineEvent::RecordToTill),
+                    ReedlineOption::Edit(EditCommand::MoveRightBefore(*c)),
+                ]
             }
-            Self::MoveLeftUntil(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftUntil(*c))],
-            Self::MoveLeftBefore(c) => vec![ReedlineOption::Edit(EditCommand::MoveLeftBefore(*c))],
+            Self::MoveLeftUntil(c) => vec![
+                ReedlineOption::Event(ReedlineEvent::RecordToTill),
+                ReedlineOption::Edit(EditCommand::MoveLeftUntil(*c)),
+            ],
+            Self::MoveLeftBefore(c) => vec![
+                ReedlineOption::Event(ReedlineEvent::RecordToTill),
+                ReedlineOption::Edit(EditCommand::MoveLeftBefore(*c)),
+            ],
+            Self::ReplayToTill(to_till) => vec![ReedlineOption::Edit(to_till.into())],
+            Self::ReverseToTill(to_till) => vec![ReedlineOption::Edit(to_till.reverse().into())],
             Self::DeleteChar => vec![ReedlineOption::Edit(EditCommand::CutChar)],
             Self::ReplaceChar(c) => {
                 vec![ReedlineOption::Edit(EditCommand::ReplaceChar(*c))]
@@ -338,5 +366,57 @@ impl Command {
             }),
             None => edits,
         }
+    }
+}
+
+impl From<ViToTill> for EditCommand {
+    fn from(val: ViToTill) -> Self {
+        EditCommand::from(&val)
+    }
+}
+
+impl From<&ViToTill> for EditCommand {
+    fn from(val: &ViToTill) -> Self {
+        match val {
+            ViToTill::TillLeft(c) => EditCommand::MoveLeftBefore(*c),
+            ViToTill::ToLeft(c) => EditCommand::MoveLeftUntil(*c),
+            ViToTill::TillRight(c) => EditCommand::MoveRightBefore(*c),
+            ViToTill::ToRight(c) => EditCommand::MoveRightUntil(*c),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(';', None, None)]
+    #[case(',', None, None)]
+    #[case(
+        ';',
+        Some(ViToTill::ToRight('X')),
+        Some(Command::ReplayToTill(ViToTill::ToRight('X')))
+    )]
+    #[case(
+        ',',
+        Some(ViToTill::ToRight('X')),
+        Some(Command::ReverseToTill(ViToTill::ToRight('X')))
+    )]
+    fn repeat_to_till(
+        #[case] input: char,
+        #[case] last_to_till: Option<ViToTill>,
+        #[case] expected: Option<Command>,
+    ) {
+        let mut vi = Vi::default();
+        vi.last_to_till = last_to_till;
+
+        let input = vec![input];
+
+        let result = parse_command(&vi, &mut input.iter().peekable());
+
+        assert_eq!(result, expected);
     }
 }

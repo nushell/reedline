@@ -19,6 +19,43 @@ enum ViMode {
     Insert,
 }
 
+/// Vi left-right motions to or till a character.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum ViToTill {
+    /// f
+    ToRight(char),
+    /// F
+    ToLeft(char),
+    /// t
+    TillRight(char),
+    /// T
+    TillLeft(char),
+}
+
+impl ViToTill {
+    /// Swap the direction of the to or till for ','
+    pub fn reverse(&self) -> Self {
+        match self {
+            ViToTill::ToRight(c) => ViToTill::ToLeft(*c),
+            ViToTill::ToLeft(c) => ViToTill::ToRight(*c),
+            ViToTill::TillRight(c) => ViToTill::TillLeft(*c),
+            ViToTill::TillLeft(c) => ViToTill::TillRight(*c),
+        }
+    }
+}
+
+impl From<EditCommand> for Option<ViToTill> {
+    fn from(edit: EditCommand) -> Self {
+        match edit {
+            EditCommand::MoveLeftBefore(c) => Some(ViToTill::TillLeft(c)),
+            EditCommand::MoveLeftUntil(c) => Some(ViToTill::ToLeft(c)),
+            EditCommand::MoveRightBefore(c) => Some(ViToTill::TillRight(c)),
+            EditCommand::MoveRightUntil(c) => Some(ViToTill::ToRight(c)),
+            _ => None,
+        }
+    }
+}
+
 /// This parses incoming input `Event`s like a Vi-Style editor
 pub struct Vi {
     cache: Vec<char>,
@@ -26,6 +63,8 @@ pub struct Vi {
     normal_keybindings: Keybindings,
     mode: ViMode,
     previous: Option<ReedlineEvent>,
+    // last f, F, t, T motion for ; and ,
+    last_to_till: Option<ViToTill>,
 }
 
 impl Default for Vi {
@@ -36,6 +75,7 @@ impl Default for Vi {
             cache: Vec::new(),
             mode: ViMode::Insert,
             previous: None,
+            last_to_till: None,
         }
     }
 }
@@ -46,9 +86,7 @@ impl Vi {
         Self {
             insert_keybindings,
             normal_keybindings,
-            cache: Vec::new(),
-            mode: ViMode::Insert,
-            previous: None,
+            ..Default::default()
         }
     }
 }
@@ -80,7 +118,7 @@ impl EditMode for Vi {
                             c
                         });
 
-                        let res = parse(&mut self.cache.iter().peekable());
+                        let res = parse(self, &mut self.cache.iter().peekable());
 
                         if res.enter_insert_mode() {
                             self.mode = ViMode::Insert;
@@ -97,6 +135,24 @@ impl EditMode for Vi {
                                 self.cache.clear();
                             }
                         };
+
+                        // to_reedline_event() returned Multiple or None when this was written
+                        if let ReedlineEvent::Multiple(ref events) = event {
+                            let last_to_till =
+                                if events.len() == 2 && events[0] == ReedlineEvent::RecordToTill {
+                                    if let ReedlineEvent::Edit(edit) = &events[1] {
+                                        edit[0].clone().into()
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+
+                            if last_to_till.is_some() {
+                                self.last_to_till = last_to_till;
+                            }
+                        }
 
                         self.previous = Some(event.clone());
 
@@ -174,6 +230,7 @@ impl EditMode for Vi {
 mod test {
     use super::*;
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     #[test]
     fn esc_leads_to_normal_mode_test() {
@@ -203,9 +260,8 @@ mod test {
         let mut vi = Vi {
             insert_keybindings: default_vi_insert_keybindings(),
             normal_keybindings: keybindings,
-            cache: Vec::new(),
             mode: ViMode::Normal,
-            previous: None,
+            ..Default::default()
         };
 
         let esc = Event::Key(KeyEvent {
@@ -229,9 +285,8 @@ mod test {
         let mut vi = Vi {
             insert_keybindings: default_vi_insert_keybindings(),
             normal_keybindings: keybindings,
-            cache: Vec::new(),
             mode: ViMode::Normal,
-            previous: None,
+            ..Default::default()
         };
 
         let esc = Event::Key(KeyEvent {
@@ -249,9 +304,8 @@ mod test {
         let mut vi = Vi {
             insert_keybindings: default_vi_insert_keybindings(),
             normal_keybindings: keybindings,
-            cache: Vec::new(),
             mode: ViMode::Normal,
-            previous: None,
+            ..Default::default()
         };
 
         let esc = Event::Key(KeyEvent {
@@ -261,5 +315,33 @@ mod test {
         let result = vi.parse_event(esc);
 
         assert_eq!(result, ReedlineEvent::None);
+    }
+
+    #[rstest]
+    #[case('f', KeyModifiers::NONE, ViToTill::ToRight('X'))]
+    #[case('f', KeyModifiers::SHIFT, ViToTill::ToLeft('X'))]
+    #[case('t', KeyModifiers::NONE, ViToTill::TillRight('X'))]
+    #[case('t', KeyModifiers::SHIFT, ViToTill::TillLeft('X'))]
+    fn last_to_till(
+        #[case] code: char,
+        #[case] modifiers: KeyModifiers,
+        #[case] expected: ViToTill,
+    ) {
+        let mut vi = Vi::default();
+        vi.mode = ViMode::Normal;
+
+        let to_till = Event::Key(KeyEvent {
+            code: KeyCode::Char(code),
+            modifiers,
+        });
+        vi.parse_event(to_till);
+
+        let key_x = Event::Key(KeyEvent {
+            code: KeyCode::Char('x'),
+            modifiers: KeyModifiers::SHIFT,
+        });
+        vi.parse_event(key_x);
+
+        assert_eq!(vi.last_to_till, Some(expected));
     }
 }
