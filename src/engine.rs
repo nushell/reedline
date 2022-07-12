@@ -114,9 +114,6 @@ pub struct Reedline {
     hinter: Option<Box<dyn Hinter>>,
     hide_hints: bool,
 
-    // Is Some(n) read_line() should repaint prompt every `n` milliseconds
-    animate: bool,
-
     // Use ansi coloring or not
     use_ansi_coloring: bool,
 
@@ -171,7 +168,6 @@ impl Reedline {
             hinter,
             hide_hints: false,
             validator,
-            animate: false,
             use_ansi_coloring: true,
             menus: Vec::new(),
             buffer_editor: None,
@@ -251,14 +247,6 @@ impl Reedline {
     #[must_use]
     pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
         self.use_ansi_coloring = use_ansi_coloring;
-        self
-    }
-
-    /// A builder which enables or disables animations/automatic repainting of prompt.
-    /// If `repaint` is true, every second the prompt will be repainted and the clock updates
-    #[must_use]
-    pub fn with_animation(mut self, repaint: bool) -> Self {
-        self.animate = repaint;
         self
     }
 
@@ -516,8 +504,6 @@ impl Reedline {
                 if let Some(ec) = last_edit_commands {
                     reedline_events.push(ReedlineEvent::Edit(ec));
                 }
-            } else if self.animate && !self.painter.exceeds_screen_size() {
-                reedline_events.push(ReedlineEvent::Repaint);
             };
 
             for event in reedline_events.drain(..) {
@@ -610,7 +596,7 @@ impl Reedline {
             ReedlineEvent::Mouse => Ok(EventStatus::Handled),
             ReedlineEvent::Resize(width, height) => {
                 self.painter.handle_resize(width, height);
-                Ok(EventStatus::Handled)
+                Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::Repaint => {
                 // A handled Event causes a repaint
@@ -895,7 +881,7 @@ impl Reedline {
             ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),
             ReedlineEvent::Resize(width, height) => {
                 self.painter.handle_resize(width, height);
-                Ok(EventStatus::Handled)
+                Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::Repaint => {
                 // A handled Event causes a repaint
