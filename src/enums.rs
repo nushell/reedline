@@ -147,6 +147,9 @@ pub enum EditCommand {
     /// Capitalize the current character
     CapitalizeChar,
 
+    /// Switch the case of the current character
+    SwitchcaseChar,
+
     /// Swap the current word with the word to the right
     SwapWords,
 
@@ -228,6 +231,7 @@ impl Display for EditCommand {
             EditCommand::PasteCutBufferAfter => write!(f, "PasteCutBufferAfter"),
             EditCommand::UppercaseWord => write!(f, "UppercaseWord"),
             EditCommand::LowercaseWord => write!(f, "LowercaseWord"),
+            EditCommand::SwitchcaseChar => write!(f, "SwitchcaseChar"),
             EditCommand::CapitalizeChar => write!(f, "CapitalizeChar"),
             EditCommand::SwapWords => write!(f, "SwapWords"),
             EditCommand::SwapGraphemes => write!(f, "SwapGraphemes"),
@@ -300,6 +304,7 @@ impl EditCommand {
             | EditCommand::PasteCutBufferAfter
             | EditCommand::UppercaseWord
             | EditCommand::LowercaseWord
+            | EditCommand::SwitchcaseChar
             | EditCommand::CapitalizeChar
             | EditCommand::SwapWords
             | EditCommand::SwapGraphemes
