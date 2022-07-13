@@ -162,6 +162,10 @@ where
                 .as_ref()
                 .map(|to_till| Command::ReverseToTill(to_till.clone()))
         }
+        Some('~') => {
+            let _ = input.next();
+            Some(Command::Switchcase)
+        }
         _ => None,
     }
 }
@@ -203,6 +207,7 @@ pub enum Command {
     ReplayToTill(ViToTill),
     ReverseToTill(ViToTill),
     HistorySearch,
+    Switchcase,
 }
 
 impl Command {
@@ -260,6 +265,7 @@ impl Command {
             }
             Self::SubstituteCharWithInsert => vec![ReedlineOption::Edit(EditCommand::CutChar)],
             Self::HistorySearch => vec![ReedlineOption::Event(ReedlineEvent::SearchHistory)],
+            Self::Switchcase => vec![ReedlineOption::Edit(EditCommand::SwitchcaseChar)],
             // Mark a command as incomplete whenever a motion is required to finish the command
             Self::Delete | Self::Change | Self::Incomplete => vec![ReedlineOption::Incomplete],
         }

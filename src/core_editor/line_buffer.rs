@@ -467,6 +467,28 @@ impl LineBuffer {
         self.move_word_right();
     }
 
+    /// Switches the ASCII case of the current char
+    pub fn switchcase_char(&mut self) {
+        let insertion_offset = self.insertion_point();
+        let right_index = self.grapheme_right_index();
+
+        if right_index > insertion_offset {
+            let change_range = insertion_offset..right_index;
+            let swapped = self.get_buffer()[change_range.clone()]
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_uppercase() {
+                        c.to_ascii_lowercase()
+                    } else {
+                        c.to_ascii_uppercase()
+                    }
+                })
+                .collect::<String>();
+            self.replace_range(change_range, &swapped);
+            self.move_right();
+        }
+    }
+
     /// Counts the number of words in the buffer
     pub fn word_count(&self) -> usize {
         self.lines.split_whitespace().count()
@@ -949,6 +971,32 @@ mod test {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(in_location);
         line_buffer.lowercase_word();
+
+        let mut expected = buffer_with(output);
+        expected.set_insertion_point(out_location);
+
+        assert_eq!(expected, line_buffer);
+        line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("", 0, "", 0)]
+    #[case("a test", 2, "a Test", 3)]
+    #[case("a Test", 2, "a test", 3)]
+    #[case("test", 0, "Test", 1)]
+    #[case("Test", 0, "test", 1)]
+    #[case("test", 3, "tesT", 4)]
+    #[case("tesT", 3, "test", 4)]
+    #[case("ß", 0, "ß", 2)]
+    fn switchcase_char(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] output: &str,
+        #[case] out_location: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+        line_buffer.switchcase_char();
 
         let mut expected = buffer_with(output);
         expected.set_insertion_point(out_location);
