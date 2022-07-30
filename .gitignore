@@ -6,3 +6,6 @@ target-coverage/
 tarpaulin-report.html
 .vscode
 .helix
+
+# ignore the git mailmap file
+.mailmap
