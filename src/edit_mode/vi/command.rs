@@ -278,7 +278,7 @@ impl Command {
     ) -> Option<Vec<ReedlineOption>> {
         let edits = match self {
             Self::Delete => match motion {
-                Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CutToEnd)]),
+                Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)]),
                 Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)]),
                 Motion::NextWord => {
                     Some(vec![ReedlineOption::Edit(EditCommand::CutWordRightToNext)])
@@ -306,7 +306,7 @@ impl Command {
                 Motion::LeftBefore(c) => {
                     Some(vec![ReedlineOption::Edit(EditCommand::CutLeftBefore(*c))])
                 }
-                Motion::Start => None,
+                Motion::Start => Some(vec![ReedlineOption::Edit(EditCommand::CutFromLineStart)]),
             },
             Self::Change => match motion {
                 Motion::End => Some(vec![
@@ -358,7 +358,10 @@ impl Command {
                     ReedlineOption::Edit(EditCommand::CutLeftBefore(*c)),
                     ReedlineOption::Event(ReedlineEvent::Repaint),
                 ]),
-                Motion::Start => None,
+                Motion::Start => Some(vec![
+                    ReedlineOption::Edit(EditCommand::CutFromLineStart),
+                    ReedlineOption::Event(ReedlineEvent::Repaint),
+                ]),
             },
             _ => None,
         };
