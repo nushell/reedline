@@ -33,7 +33,7 @@ where
             let _ = input.next();
             Some(Motion::Line)
         }
-        Some('0') => {
+        Some('0' | '^') => {
             let _ = input.next();
             Some(Motion::Start)
         }
