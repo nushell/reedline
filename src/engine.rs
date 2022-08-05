@@ -858,7 +858,7 @@ impl Reedline {
                         }
                     }
 
-                    if self.editor.get_buffer().is_empty() {
+                    if self.editor.line_buffer().get_buffer().is_empty() {
                         menu.menu_event(MenuEvent::Deactivate);
                     } else {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
@@ -1109,7 +1109,7 @@ impl Reedline {
 
     fn up_command(&mut self) {
         // If we're at the top, then:
-        if self.editor.line_buffer().is_cursor_at_first_line() {
+        if self.editor.is_cursor_at_first_line() {
             // If we're at the top, move to previous history
             self.previous_history();
         } else {
