@@ -511,7 +511,6 @@ mod test {
 
     #[test]
     fn test_undo_insert_works_on_work_boundries() {
-        // Test insert
         let mut editor = editor_with("This is  a");
         for cmd in str_to_edit_commands(" test") {
             editor.run_edit_command(&cmd);
@@ -548,5 +547,49 @@ mod test {
         assert_eq!(editor.get_buffer(), "is a test");
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(editor.get_buffer(), "This  is a test");
+    }
+
+    #[test]
+    fn test_undo_insert_with_newline() {
+        let mut editor = editor_with("This is a");
+        for cmd in str_to_edit_commands(" \n test") {
+            editor.run_edit_command(&cmd);
+        }
+        assert_eq!(editor.get_buffer(), "This is a \n test");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This is a \n");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This is a");
+    }
+
+    #[test]
+    fn test_undo_backspace_with_newline() {
+        let mut editor = editor_with("This is a \n test");
+        for _ in 0..8 {
+            editor.run_edit_command(&EditCommand::Backspace);
+        }
+        assert_eq!(editor.get_buffer(), "This is ");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This is a");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This is a \n");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This is a \n test");
+    }
+
+    #[test]
+    fn test_undo_delete_with_newline() {
+        let mut editor = editor_with("This \n is a test");
+        editor.line_buffer.set_insertion_point(0);
+        for _ in 0..8 {
+            editor.run_edit_command(&EditCommand::Delete);
+        }
+        assert_eq!(editor.get_buffer(), "s a test");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "is a test");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "\n is a test");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This \n is a test");
     }
 }

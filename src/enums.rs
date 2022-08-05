@@ -364,11 +364,11 @@ impl UndoBehavior {
                 (*c_prev == '\n') || (!c_prev.is_whitespace() && c_new.is_whitespace())
             }
             (UB::Backspace(Some(c_prev)), UB::Backspace(Some(c_new))) => {
-                (*c_prev == '\n') || (c_prev.is_whitespace() && !c_new.is_whitespace())
+                (*c_new == '\n') || (c_prev.is_whitespace() && !c_new.is_whitespace())
             }
             (UB::Backspace(_), UB::Backspace(_)) => false,
             (UB::Delete(Some(c_prev)), UB::Delete(Some(c_new))) => {
-                (*c_prev == '\n') || (c_prev.is_whitespace() && !c_new.is_whitespace())
+                (*c_new == '\n') || (c_prev.is_whitespace() && !c_new.is_whitespace())
             }
             (UB::Delete(_), UB::Delete(_)) => false,
             (_, _) => true,
