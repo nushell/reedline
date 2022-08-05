@@ -997,7 +997,8 @@ impl Reedline {
             .expect("todo: error handling");
         self.update_buffer_from_history();
         self.editor.move_to_start(UndoBehavior::HistoryNavigation);
-        self.editor.move_to_line_end(UndoBehavior::HistoryNavigation);
+        self.editor
+            .move_to_line_end(UndoBehavior::HistoryNavigation);
     }
 
     fn next_history(&mut self) {

@@ -480,8 +480,7 @@ impl Menu for ColumnarMenu {
             let matching = &value[0..index];
 
             // make sure that the partial completion does not overwrite user entered input
-            let extends_input =
-                matching.starts_with(&editor.get_buffer()[span.start..span.end]);
+            let extends_input = matching.starts_with(&editor.get_buffer()[span.start..span.end]);
 
             if !matching.is_empty() && extends_input {
                 let mut line_buffer = editor.line_buffer().clone();
@@ -529,8 +528,7 @@ impl Menu for ColumnarMenu {
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         if self.only_buffer_difference {
             if let Some(old_string) = &self.input {
-                let (start, input) =
-                    string_difference(editor.get_buffer(), old_string);
+                let (start, input) = string_difference(editor.get_buffer(), old_string);
                 if !input.is_empty() {
                     self.values = completer.complete(input, start);
                     self.reset_position();
@@ -543,10 +541,7 @@ impl Menu for ColumnarMenu {
             // Also, by replacing the new line character with a space, the insert
             // position is maintain in the line buffer.
             let trimmed_buffer = editor.get_buffer().replace('\n', " ");
-            self.values = completer.complete(
-                trimmed_buffer.as_str(),
-                editor.insertion_point(),
-            );
+            self.values = completer.complete(trimmed_buffer.as_str(), editor.insertion_point());
             self.reset_position();
         }
     }
