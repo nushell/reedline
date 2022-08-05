@@ -252,7 +252,7 @@ impl Display for EditCommand {
 impl EditCommand {
     /// Determine if a certain operation should be undoable
     /// or if the operations should be coalesced for undoing
-    pub fn undo_behavior(&self) -> UndoBehavior {
+    pub fn edit_type(&self) -> EditType {
         match self {
             // Cursor moves
             EditCommand::MoveToStart
@@ -272,13 +272,11 @@ impl EditCommand {
             | EditCommand::MoveRightUntil(_)
             | EditCommand::MoveRightBefore(_)
             | EditCommand::MoveLeftUntil(_)
-            | EditCommand::MoveLeftBefore(_) => UndoBehavior::Full,
+            | EditCommand::MoveLeftBefore(_) => EditType::MoveCursor,
 
-            // Coalesceable insert
-            EditCommand::InsertChar(_) => UndoBehavior::Coalesce,
-
-            // Full edits
-            EditCommand::Backspace
+            // Text edits
+            EditCommand::InsertChar(_)
+            | EditCommand::Backspace
             | EditCommand::Delete
             | EditCommand::CutChar
             | EditCommand::InsertString(_)
@@ -311,25 +309,71 @@ impl EditCommand {
             | EditCommand::CutRightUntil(_)
             | EditCommand::CutRightBefore(_)
             | EditCommand::CutLeftUntil(_)
-            | EditCommand::CutLeftBefore(_) => UndoBehavior::Full,
+            | EditCommand::CutLeftBefore(_) => EditType::EditText,
 
-            EditCommand::Undo | EditCommand::Redo => UndoBehavior::Ignore,
+            EditCommand::Undo | EditCommand::Redo => EditType::UndoRedo,
         }
     }
 }
 
-/// Specifies how the (previously executed) operation should be treated in the Undo stack.
+/// Specifies the types of edit commands, used to simplify grouping edits
+/// to mark undo behavior
+#[derive(PartialEq)]
+pub enum EditType {
+    /// Cursor movement commands
+    MoveCursor,
+    /// Undo/Redo commands
+    UndoRedo,
+    /// Text editing commands
+    EditText,
+}
+
+/// Every line change should come with an UndoBehavior tag, which can be used to
+/// calculate how the change should be reflected on the undo stack
+#[derive(Debug)]
 pub enum UndoBehavior {
-    /// Operation is not affecting the LineBuffers content and should be ignored
-    ///
-    /// e.g. the undo commands themselves are not stored in the undo stack
-    Ignore,
-    /// The operation is one logical unit of work that should be stored in the undo stack
-    Full,
-    /// The operation is a single operation that should be best coalesced in logical units such as words
-    ///
-    /// e.g. insertion of characters by typing
-    Coalesce,
+    /// Character insertion, tracking the character inserted
+    InsertCharacter(char),
+    /// Backspace command, tracking the deleted character (left of cursor)
+    Backspace(Option<char>),
+    /// Delete command, tracking the deleted character (right of cursor)
+    Delete(Option<char>),
+    /// Move the cursor position
+    MoveCursor,
+    /// Navigated the history using up or down arrows
+    HistoryNavigation,
+    /// Catch-all for actions that should always form a unique undo point and never be
+    /// grouped with later edits
+    CreateUndoPoint,
+    /// Undo/Redo actions shouldn't be reflected on the edit stack
+    UndoRedo,
+}
+
+impl UndoBehavior {
+    /// Return if the current operation should start a new undo set, or be
+    /// combined with the previous operation
+    pub fn create_undo_point_after(&self, previous: &UndoBehavior) -> bool {
+        use UndoBehavior as UB;
+        match (previous, self) {
+            // Never start an undo set with cursor movement
+            (_, UB::MoveCursor) => false,
+            (UB::HistoryNavigation, UB::HistoryNavigation) => false,
+            // When inserting/deleting repeatedly, each undo set should encompass
+            // inserting/deleting a complete word and the associated whitespace
+            (UB::InsertCharacter(c_prev), UB::InsertCharacter(c_new)) => {
+                (*c_prev == '\n') || (!c_prev.is_whitespace() && c_new.is_whitespace())
+            }
+            (UB::Backspace(Some(c_prev)), UB::Backspace(Some(c_new))) => {
+                (*c_prev == '\n') || (c_prev.is_whitespace() && !c_new.is_whitespace())
+            }
+            (UB::Backspace(_), UB::Backspace(_)) => false,
+            (UB::Delete(Some(c_prev)), UB::Delete(Some(c_new))) => {
+                (*c_prev == '\n') || (c_prev.is_whitespace() && !c_new.is_whitespace())
+            }
+            (UB::Delete(_), UB::Delete(_)) => false,
+            (_, _) => true,
+        }
+    }
 }
 
 /// Reedline supported actions.

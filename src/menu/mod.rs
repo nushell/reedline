@@ -2,10 +2,9 @@ mod columnar_menu;
 mod list_menu;
 pub mod menu_functions;
 
+use crate::core_editor::Editor;
 use crate::History;
-use crate::{
-    completion::history::HistoryCompleter, painting::Painter, Completer, LineBuffer, Suggestion,
-};
+use crate::{completion::history::HistoryCompleter, painting::Painter, Completer, Suggestion};
 pub use columnar_menu::ColumnarMenu;
 pub use list_menu::ListMenu;
 use nu_ansi_term::{Color, Style};
@@ -82,7 +81,7 @@ pub trait Menu: Send {
     fn can_partially_complete(
         &mut self,
         values_updated: bool,
-        line_buffer: &mut LineBuffer,
+        editor: &mut Editor,
         completer: &mut dyn Completer,
     ) -> bool;
 
@@ -91,7 +90,7 @@ pub trait Menu: Send {
     /// activated or the `quick_completion` option is true, the len of the values
     /// is calculated to know if there is only one value so it can be selected
     /// immediately
-    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &mut dyn Completer);
+    fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer);
 
     /// The working details of a menu are values that could change based on
     /// the menu conditions before it being printed, such as the number or size
@@ -100,13 +99,13 @@ pub trait Menu: Send {
     /// it is called just before painting the menu
     fn update_working_details(
         &mut self,
-        line_buffer: &mut LineBuffer,
+        editor: &mut Editor,
         completer: &mut dyn Completer,
         painter: &Painter,
     );
 
     /// Indicates how to replace in the line buffer the selected value from the menu
-    fn replace_in_buffer(&self, line_buffer: &mut LineBuffer);
+    fn replace_in_buffer(&self, editor: &mut Editor);
 
     /// Calculates the real required lines for the menu considering how many lines
     /// wrap the terminal or if entries have multiple lines
@@ -157,66 +156,66 @@ impl ReedlineMenu {
     pub(crate) fn can_partially_complete(
         &mut self,
         values_updated: bool,
-        line_buffer: &mut LineBuffer,
+        editor: &mut Editor,
         completer: &mut dyn Completer,
         history: &dyn History,
     ) -> bool {
         match self {
             Self::EngineCompleter(menu) => {
-                menu.can_partially_complete(values_updated, line_buffer, completer)
+                menu.can_partially_complete(values_updated, editor, completer)
             }
             Self::HistoryMenu(menu) => {
                 let mut history_completer = HistoryCompleter::new(history);
-                menu.can_partially_complete(values_updated, line_buffer, &mut history_completer)
+                menu.can_partially_complete(values_updated, editor, &mut history_completer)
             }
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
-            } => menu.can_partially_complete(values_updated, line_buffer, own_completer.as_mut()),
+            } => menu.can_partially_complete(values_updated, editor, own_completer.as_mut()),
         }
     }
 
     pub(crate) fn update_values(
         &mut self,
-        line_buffer: &mut LineBuffer,
+        editor: &mut Editor,
         completer: &mut dyn Completer,
         history: &dyn History,
     ) {
         match self {
-            Self::EngineCompleter(menu) => menu.update_values(line_buffer, completer),
+            Self::EngineCompleter(menu) => menu.update_values(editor, completer),
             Self::HistoryMenu(menu) => {
                 let mut history_completer = HistoryCompleter::new(history);
-                menu.update_values(line_buffer, &mut history_completer);
+                menu.update_values(editor, &mut history_completer);
             }
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
             } => {
-                menu.update_values(line_buffer, own_completer.as_mut());
+                menu.update_values(editor, own_completer.as_mut());
             }
         }
     }
 
     pub(crate) fn update_working_details(
         &mut self,
-        line_buffer: &mut LineBuffer,
+        editor: &mut Editor,
         completer: &mut dyn Completer,
         history: &dyn History,
         painter: &Painter,
     ) {
         match self {
             Self::EngineCompleter(menu) => {
-                menu.update_working_details(line_buffer, completer, painter);
+                menu.update_working_details(editor, completer, painter);
             }
             Self::HistoryMenu(menu) => {
                 let mut history_completer = HistoryCompleter::new(history);
-                menu.update_working_details(line_buffer, &mut history_completer, painter);
+                menu.update_working_details(editor, &mut history_completer, painter);
             }
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
             } => {
-                menu.update_working_details(line_buffer, own_completer.as_mut(), painter);
+                menu.update_working_details(editor, own_completer.as_mut(), painter);
             }
         }
     }
@@ -246,55 +245,55 @@ impl Menu for ReedlineMenu {
     fn can_partially_complete(
         &mut self,
         values_updated: bool,
-        line_buffer: &mut LineBuffer,
+        editor: &mut Editor,
         completer: &mut dyn Completer,
     ) -> bool {
         match self {
             Self::EngineCompleter(menu) | Self::HistoryMenu(menu) => {
-                menu.can_partially_complete(values_updated, line_buffer, completer)
+                menu.can_partially_complete(values_updated, editor, completer)
             }
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
-            } => menu.can_partially_complete(values_updated, line_buffer, own_completer.as_mut()),
+            } => menu.can_partially_complete(values_updated, editor, own_completer.as_mut()),
         }
     }
 
-    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &mut dyn Completer) {
+    fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         match self {
             Self::EngineCompleter(menu) | Self::HistoryMenu(menu) => {
-                menu.update_values(line_buffer, completer);
+                menu.update_values(editor, completer);
             }
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
             } => {
-                menu.update_values(line_buffer, own_completer.as_mut());
+                menu.update_values(editor, own_completer.as_mut());
             }
         }
     }
 
     fn update_working_details(
         &mut self,
-        line_buffer: &mut LineBuffer,
+        editor: &mut Editor,
         completer: &mut dyn Completer,
         painter: &Painter,
     ) {
         match self {
             Self::EngineCompleter(menu) | Self::HistoryMenu(menu) => {
-                menu.update_working_details(line_buffer, completer, painter);
+                menu.update_working_details(editor, completer, painter);
             }
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
             } => {
-                menu.update_working_details(line_buffer, own_completer.as_mut(), painter);
+                menu.update_working_details(editor, own_completer.as_mut(), painter);
             }
         }
     }
 
-    fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
-        self.as_ref().replace_in_buffer(line_buffer);
+    fn replace_in_buffer(&self, editor: &mut Editor) {
+        self.as_ref().replace_in_buffer(editor);
     }
 
     fn menu_required_lines(&self, terminal_columns: u16) -> u16 {

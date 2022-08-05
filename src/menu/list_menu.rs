@@ -1,3 +1,5 @@
+use crate::{core_editor::Editor, UndoBehavior};
+
 use {
     super::{
         menu_functions::{parse_selection_char, string_difference},
@@ -5,7 +7,7 @@ use {
     },
     crate::{
         painting::{estimate_single_line_wraps, Painter},
-        Completer, LineBuffer, Suggestion,
+        Completer, Suggestion,
     },
     nu_ansi_term::{ansi::RESET, Style},
     std::iter::Sum,
@@ -371,7 +373,7 @@ impl Menu for ListMenu {
     fn can_partially_complete(
         &mut self,
         _values_updated: bool,
-        _line_buffer: &mut LineBuffer,
+        _editor: &mut Editor,
         _completer: &mut dyn Completer,
     ) -> bool {
         false
@@ -392,7 +394,8 @@ impl Menu for ListMenu {
     }
 
     /// Collecting the value from the completer to be shown in the menu
-    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &mut dyn Completer) {
+    fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
+        let line_buffer = editor.line_buffer();
         let (start, input) = if self.only_buffer_difference {
             match &self.input {
                 Some(old_string) => {
@@ -463,7 +466,7 @@ impl Menu for ListMenu {
     }
 
     /// The buffer gets cleared with the actual value
-    fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
+    fn replace_in_buffer(&self, editor: &mut Editor) {
         if let Some(Suggestion {
             mut value,
             span,
@@ -471,22 +474,25 @@ impl Menu for ListMenu {
             ..
         }) = self.get_value()
         {
-            let start = span.start.min(line_buffer.len());
-            let end = span.end.min(line_buffer.len());
+            let buffer_len = editor.line_buffer().len();
+            let start = span.start.min(buffer_len);
+            let end = span.end.min(buffer_len);
             if append_whitespace {
                 value.push(' ');
             }
-            line_buffer.replace(start..end, &value);
+            let mut line_buffer = editor.line_buffer().clone();
+            line_buffer.replace_range(start..end, &value);
 
             let mut offset = line_buffer.insertion_point();
             offset += value.len().saturating_sub(end.saturating_sub(start));
             line_buffer.set_insertion_point(offset);
+            editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
         }
     }
 
     fn update_working_details(
         &mut self,
-        line_buffer: &mut LineBuffer,
+        editor: &mut Editor,
         completer: &mut dyn Completer,
         painter: &Painter,
     ) {
@@ -496,12 +502,12 @@ impl Menu for ListMenu {
                     self.reset_position();
 
                     self.input = if self.only_buffer_difference {
-                        Some(line_buffer.get_buffer().to_string())
+                        Some(editor.get_buffer().to_string())
                     } else {
                         None
                     };
 
-                    self.update_values(line_buffer, completer);
+                    self.update_values(editor, completer);
 
                     self.pages.push(Page {
                         size: self.printable_entries(painter),
@@ -513,7 +519,7 @@ impl Menu for ListMenu {
                     self.input = None;
                 }
                 MenuEvent::Edit(_) => {
-                    self.update_values(line_buffer, completer);
+                    self.update_values(editor, completer);
                     self.pages.push(Page {
                         size: self.printable_entries(painter),
                         full: false,
@@ -525,7 +531,7 @@ impl Menu for ListMenu {
                     if let Some(page) = self.pages.get(self.page) {
                         if new_pos >= page.size as u16 {
                             self.event = Some(MenuEvent::NextPage);
-                            self.update_working_details(line_buffer, completer, painter);
+                            self.update_working_details(editor, completer, painter);
                         } else {
                             self.row_position = new_pos;
                         }
@@ -546,7 +552,7 @@ impl Menu for ListMenu {
                         }
 
                         self.event = Some(MenuEvent::PreviousPage);
-                        self.update_working_details(line_buffer, completer, painter);
+                        self.update_working_details(editor, completer, painter);
                     }
                 }
                 MenuEvent::NextPage => {
@@ -566,12 +572,12 @@ impl Menu for ListMenu {
                             }
                         }
 
-                        self.update_values(line_buffer, completer);
+                        self.update_values(editor, completer);
                         self.set_actual_page_size(self.printable_entries(painter));
                     } else {
                         self.row_position = 0;
                         self.page = 0;
-                        self.update_values(line_buffer, completer);
+                        self.update_values(editor, completer);
                     }
                 }
                 MenuEvent::PreviousPage => {
@@ -579,7 +585,7 @@ impl Menu for ListMenu {
                         Some(page_num) => self.page = page_num,
                         None => self.page = self.pages.len().saturating_sub(1),
                     }
-                    self.update_values(line_buffer, completer);
+                    self.update_values(editor, completer);
                 }
             }
 

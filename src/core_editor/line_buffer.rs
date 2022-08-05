@@ -25,11 +25,6 @@ impl LineBuffer {
         Self::default()
     }
 
-    /// Replaces the content between [`start`..`end`] with `text`
-    pub fn replace(&mut self, range: Range<usize>, text: &str) {
-        self.lines.replace_range(range, text);
-    }
-
     /// Check to see if the line buffer is empty
     pub fn is_empty(&self) -> bool {
         self.lines.is_empty()
@@ -71,6 +66,8 @@ impl LineBuffer {
     }
 
     /// Sets the current edit position
+    /// ## Unicode safety:
+    /// Not checked, inproper use may cause panics in following operations
     pub fn set_insertion_point(&mut self, offset: usize) {
         self.insertion_point = offset;
     }
@@ -415,11 +412,17 @@ impl LineBuffer {
 
     /// Checks to see if the current edit position is pointing to whitespace
     pub fn on_whitespace(&self) -> bool {
-        self.lines[self.insertion_point..]
-            .chars()
-            .next()
-            .map(char::is_whitespace)
-            .unwrap_or(false)
+        self.char_right().map(char::is_whitespace).unwrap_or(false)
+    }
+
+    /// Get the character immediately to the right of the cursor, if any
+    pub fn char_right(&self) -> Option<char> {
+        self.lines[self.insertion_point..].chars().next()
+    }
+
+    /// Get the character immediately to the left of the cursor, if any
+    pub fn char_left(&self) -> Option<char> {
+        self.lines[self.grapheme_left_index()..].chars().next()
     }
 
     /// Gets the range of the word the current edit position is pointing to
@@ -489,9 +492,22 @@ impl LineBuffer {
         }
     }
 
-    /// Counts the number of words in the buffer
-    pub fn word_count(&self) -> usize {
-        self.lines.split_whitespace().count()
+    /// Counts the number of word starts in the buffer
+    pub fn word_starts(&self) -> usize {
+        self.lines
+            .chars()
+            .tuple_windows::<(_, _)>()
+            .filter(|(cur, next)| (*cur == '\n') || (cur.is_whitespace() && !next.is_whitespace()))
+            .count()
+    }
+
+    /// Counts the number of word ends in the buffer
+    pub fn word_ends(&self) -> usize {
+        self.lines
+            .chars()
+            .tuple_windows::<(_, _)>()
+            .filter(|(cur, next)| (*next == '\n') || (!cur.is_whitespace() && next.is_whitespace()))
+            .count()
     }
 
     /// Capitalize the character at insertion point (or the first character
@@ -902,13 +918,25 @@ mod test {
     }
 
     #[rstest]
-    #[case("This is a te", 4)]
-    #[case("This is a test", 4)]
-    #[case("This      is a test", 4)]
-    fn word_count_works(#[case] input: &str, #[case] expected_count: usize) {
+    #[case("This is a test", 3)]
+    #[case("This is a test  ", 3)]
+    #[case("  This is a test", 4)]
+    #[case("This  \n    is a test", 4)]
+    fn word_start_works(#[case] input: &str, #[case] expected_count: usize) {
         let line_buffer = buffer_with(input);
 
-        assert_eq!(expected_count, line_buffer.word_count());
+        assert_eq!(expected_count, line_buffer.word_starts());
+        line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("This is a test", 3)]
+    #[case("This is a test  ", 4)]
+    #[case("  This is a test", 3)]
+    #[case("This  \n    is a test", 4)]
+    fn word_end_works(#[case] input: &str, #[case] expected_count: usize) {
+        let line_buffer = buffer_with(input);
+        assert_eq!(expected_count, line_buffer.word_ends());
         line_buffer.assert_valid();
     }
 

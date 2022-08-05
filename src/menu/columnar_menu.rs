@@ -1,6 +1,7 @@
 use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
 use crate::{
-    menu_functions::string_difference, painting::Painter, Completer, LineBuffer, Suggestion,
+    core_editor::Editor, menu_functions::string_difference, painting::Painter, Completer,
+    Suggestion, UndoBehavior,
 };
 use nu_ansi_term::{ansi::RESET, Style};
 
@@ -464,13 +465,13 @@ impl Menu for ColumnarMenu {
     fn can_partially_complete(
         &mut self,
         values_updated: bool,
-        line_buffer: &mut LineBuffer,
+        editor: &mut Editor,
         completer: &mut dyn Completer,
     ) -> bool {
         // If the values were already updated (e.g. quick completions are true)
         // there is no need to update the values from the menu
         if !values_updated {
-            self.update_values(line_buffer, completer);
+            self.update_values(editor, completer);
         }
 
         let values = self.get_values();
@@ -480,10 +481,11 @@ impl Menu for ColumnarMenu {
 
             // make sure that the partial completion does not overwrite user entered input
             let extends_input =
-                matching.starts_with(&line_buffer.get_buffer()[span.start..span.end]);
+                matching.starts_with(&editor.get_buffer()[span.start..span.end]);
 
             if !matching.is_empty() && extends_input {
-                line_buffer.replace(span.start..span.end, matching);
+                let mut line_buffer = editor.line_buffer().clone();
+                line_buffer.replace_range(span.start..span.end, matching);
 
                 let offset = if matching.len() < (span.end - span.start) {
                     line_buffer
@@ -494,10 +496,11 @@ impl Menu for ColumnarMenu {
                 };
 
                 line_buffer.set_insertion_point(offset);
+                editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
 
                 // The values need to be updated because the spans need to be
                 // recalculated for accurate replacement in the string
-                self.update_values(line_buffer, completer);
+                self.update_values(editor, completer);
 
                 true
             } else {
@@ -523,10 +526,11 @@ impl Menu for ColumnarMenu {
     }
 
     /// Updates menu values
-    fn update_values(&mut self, line_buffer: &mut LineBuffer, completer: &mut dyn Completer) {
+    fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         if self.only_buffer_difference {
             if let Some(old_string) = &self.input {
-                let (start, input) = string_difference(line_buffer.get_buffer(), old_string);
+                let (start, input) =
+                    string_difference(editor.get_buffer(), old_string);
                 if !input.is_empty() {
                     self.values = completer.complete(input, start);
                     self.reset_position();
@@ -538,9 +542,11 @@ impl Menu for ColumnarMenu {
             // editing a multiline buffer.
             // Also, by replacing the new line character with a space, the insert
             // position is maintain in the line buffer.
-            let trimmed_buffer = line_buffer.get_buffer().replace('\n', " ");
-            self.values =
-                completer.complete(trimmed_buffer.as_str(), line_buffer.insertion_point());
+            let trimmed_buffer = editor.get_buffer().replace('\n', " ");
+            self.values = completer.complete(
+                trimmed_buffer.as_str(),
+                editor.insertion_point(),
+            );
             self.reset_position();
         }
     }
@@ -549,7 +555,7 @@ impl Menu for ColumnarMenu {
     /// collected from the completer
     fn update_working_details(
         &mut self,
-        line_buffer: &mut LineBuffer,
+        editor: &mut Editor,
         completer: &mut dyn Completer,
         painter: &Painter,
     ) {
@@ -618,13 +624,13 @@ impl Menu for ColumnarMenu {
                     self.reset_position();
 
                     self.input = if self.only_buffer_difference {
-                        Some(line_buffer.get_buffer().to_string())
+                        Some(editor.get_buffer().to_string())
                     } else {
                         None
                     };
 
                     if !updated {
-                        self.update_values(line_buffer, completer);
+                        self.update_values(editor, completer);
                     }
                 }
                 MenuEvent::Deactivate => self.active = false,
@@ -632,7 +638,7 @@ impl Menu for ColumnarMenu {
                     self.reset_position();
 
                     if !updated {
-                        self.update_values(line_buffer, completer);
+                        self.update_values(editor, completer);
                     }
                 }
                 MenuEvent::NextElement => self.move_next(),
@@ -649,7 +655,7 @@ impl Menu for ColumnarMenu {
     }
 
     /// The buffer gets replaced in the Span location
-    fn replace_in_buffer(&self, line_buffer: &mut LineBuffer) {
+    fn replace_in_buffer(&self, editor: &mut Editor) {
         if let Some(Suggestion {
             mut value,
             span,
@@ -657,16 +663,18 @@ impl Menu for ColumnarMenu {
             ..
         }) = self.get_value()
         {
-            let start = span.start.min(line_buffer.len());
-            let end = span.end.min(line_buffer.len());
+            let start = span.start.min(editor.line_buffer().len());
+            let end = span.end.min(editor.line_buffer().len());
             if append_whitespace {
                 value.push(' ');
             }
-            line_buffer.replace(start..end, &value);
+            let mut line_buffer = editor.line_buffer().clone();
+            line_buffer.replace_range(start..end, &value);
 
             let mut offset = line_buffer.insertion_point();
             offset += value.len().saturating_sub(end.saturating_sub(start));
             line_buffer.set_insertion_point(offset);
+            editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
         }
     }
 
@@ -728,7 +736,7 @@ mod tests {
     macro_rules! partial_completion_tests {
         (name: $test_group_name:ident, completions: $completions:expr, test_cases: $($name:ident: $value:expr,)*) => {
             mod $test_group_name {
-                use crate::{menu::Menu, ColumnarMenu, LineBuffer};
+                use crate::{menu::Menu, ColumnarMenu, core_editor::Editor, enums::UndoBehavior};
                 use super::FakeCompleter;
 
                 $(
@@ -736,13 +744,13 @@ mod tests {
                     fn $name() {
                         let (input, expected) = $value;
                         let mut menu = ColumnarMenu::default();
-                        let mut line_buffer = LineBuffer::default();
-                        line_buffer.set_buffer(input.to_string());
+                        let mut editor = Editor::default();
+                        editor.set_buffer(input.to_string(), UndoBehavior::CreateUndoPoint);
                         let mut completer = FakeCompleter::new(&$completions);
 
-                        menu.can_partially_complete(false, &mut line_buffer, &mut completer);
+                        menu.can_partially_complete(false, &mut editor, &mut completer);
 
-                        assert_eq!(line_buffer.get_buffer(), expected);
+                        assert_eq!(editor.get_buffer(), expected);
                     }
                 )*
             }

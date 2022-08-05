@@ -1,5 +1,6 @@
 use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
-use crate::{core_editor::get_default_clipboard, EditCommand, UndoBehavior};
+use crate::enums::{EditType, UndoBehavior};
+use crate::{core_editor::get_default_clipboard, EditCommand};
 
 /// Stateful editor executing changes to the underlying [`LineBuffer`]
 ///
@@ -10,6 +11,7 @@ pub struct Editor {
     cut_buffer: Box<dyn Clipboard>,
 
     edit_stack: EditStack<LineBuffer>,
+    last_undo_behavior: UndoBehavior,
 }
 
 impl Default for Editor {
@@ -18,20 +20,19 @@ impl Default for Editor {
             line_buffer: LineBuffer::new(),
             cut_buffer: Box::new(get_default_clipboard()),
             edit_stack: EditStack::new(),
+            last_undo_behavior: UndoBehavior::CreateUndoPoint,
         }
     }
 }
 
 impl Editor {
-    pub fn line_buffer_immut(&self) -> &LineBuffer {
+    pub fn line_buffer(&self) -> &LineBuffer {
         &self.line_buffer
     }
-    pub fn line_buffer(&mut self) -> &mut LineBuffer {
-        &mut self.line_buffer
-    }
 
-    pub fn set_line_buffer(&mut self, line_buffer: LineBuffer) {
+    pub fn set_line_buffer(&mut self, line_buffer: LineBuffer, undo_behavior: UndoBehavior) {
         self.line_buffer = line_buffer;
+        self.update_undo_state(undo_behavior);
     }
 
     pub fn run_edit_command(&mut self, command: &EditCommand) {
@@ -92,19 +93,27 @@ impl Editor {
             EditCommand::MoveLeftUntil(c) => self.move_left_until_char(*c, false, true),
             EditCommand::MoveLeftBefore(c) => self.move_left_until_char(*c, true, true),
         }
-        match command.undo_behavior() {
-            UndoBehavior::Ignore => {}
-            UndoBehavior::Full => {
-                self.remember_undo_state(true);
+
+        let new_undo_behavior = match (command, command.edit_type()) {
+            (_, EditType::MoveCursor) => UndoBehavior::MoveCursor,
+            (EditCommand::InsertChar(c), EditType::EditText) => UndoBehavior::InsertCharacter(*c),
+            (EditCommand::Delete, EditType::EditText) => {
+                let deleted_char = self.edit_stack.current().char_right();
+                UndoBehavior::Delete(deleted_char)
             }
-            UndoBehavior::Coalesce => {
-                self.remember_undo_state(false);
+            (EditCommand::Backspace, EditType::EditText) => {
+                let deleted_char = self.edit_stack.current().char_left();
+                UndoBehavior::Backspace(deleted_char)
             }
-        }
+            (_, EditType::UndoRedo) => UndoBehavior::UndoRedo,
+            (_, _) => UndoBehavior::CreateUndoPoint,
+        };
+        self.update_undo_state(new_undo_behavior);
     }
 
     pub fn move_line_up(&mut self) {
         self.line_buffer.move_line_up();
+        self.update_undo_state(UndoBehavior::MoveCursor);
     }
 
     pub fn move_line_down(&mut self) {
@@ -121,14 +130,16 @@ impl Editor {
     /// Not checked, inproper use may cause panics in following operations
     pub(crate) fn set_insertion_point(&mut self, pos: usize) {
         self.line_buffer.set_insertion_point(pos);
+        self.update_undo_state(UndoBehavior::MoveCursor);
     }
 
     pub fn get_buffer(&self) -> &str {
         self.line_buffer.get_buffer()
     }
 
-    pub fn set_buffer(&mut self, buffer: String) {
+    pub fn set_buffer(&mut self, buffer: String, undo_behavior: UndoBehavior) {
         self.line_buffer.set_buffer(buffer);
+        self.update_undo_state(undo_behavior);
     }
 
     pub fn clear_to_end(&mut self) {
@@ -170,21 +181,25 @@ impl Editor {
         self.edit_stack.reset();
     }
 
-    pub fn move_to_start(&mut self) {
+    pub fn move_to_start(&mut self, undo_behavior: UndoBehavior) {
         self.line_buffer.move_to_start();
+        self.update_undo_state(undo_behavior);
     }
 
-    pub fn move_to_end(&mut self) {
+    pub fn move_to_end(&mut self, undo_behavior: UndoBehavior) {
         self.line_buffer.move_to_end();
+        self.update_undo_state(undo_behavior);
     }
 
     #[allow(dead_code)]
-    pub fn move_to_line_start(&mut self) {
+    pub fn move_to_line_start(&mut self, undo_behavior: UndoBehavior) {
         self.line_buffer.move_to_line_start();
+        self.update_undo_state(undo_behavior);
     }
 
-    pub fn move_to_line_end(&mut self) {
+    pub fn move_to_line_end(&mut self, undo_behavior: UndoBehavior) {
         self.line_buffer.move_to_line_end();
+        self.update_undo_state(undo_behavior);
     }
 
     fn undo(&mut self) {
@@ -197,13 +212,16 @@ impl Editor {
         self.line_buffer = val.clone();
     }
 
-    pub fn remember_undo_state(&mut self, is_after_action: bool) {
-        if self.edit_stack.current().word_count() == self.line_buffer.word_count()
-            && !is_after_action
-        {
+    fn update_undo_state(&mut self, undo_behavior: UndoBehavior) {
+        if matches!(undo_behavior, UndoBehavior::UndoRedo) {
+            self.last_undo_behavior = UndoBehavior::UndoRedo;
+            return;
+        }
+        if !undo_behavior.create_undo_point_after(&self.last_undo_behavior) {
             self.edit_stack.undo();
         }
         self.edit_stack.insert(self.line_buffer.clone());
+        self.last_undo_behavior = undo_behavior;
     }
 
     fn cut_current_line(&mut self) {
@@ -465,7 +483,7 @@ mod test {
 
     fn editor_with(buffer: &str) -> Editor {
         let mut editor = Editor::default();
-        editor.line_buffer.set_buffer(buffer.to_string());
+        editor.set_buffer(buffer.to_string(), UndoBehavior::CreateUndoPoint);
         editor
     }
 
@@ -523,26 +541,43 @@ mod test {
     }
 
     #[test]
-    fn test_undo_works_on_work_boundries() {
-        let mut editor = editor_with("This is a");
+    fn test_undo_insert_works_on_work_boundries() {
+        // Test insert
+        let mut editor = editor_with("This is  a");
         for cmd in str_to_edit_commands(" test") {
             editor.run_edit_command(&cmd);
         }
-        assert_eq!(editor.get_buffer(), "This is a test");
+        assert_eq!(editor.get_buffer(), "This is  a test");
         editor.run_edit_command(&EditCommand::Undo);
-        assert_eq!(editor.get_buffer(), "This is a ");
+        assert_eq!(editor.get_buffer(), "This is  a");
+        editor.run_edit_command(&EditCommand::Redo);
+        assert_eq!(editor.get_buffer(), "This is  a test");
     }
 
     #[test]
-    fn test_redo_works_on_word_boundries() {
-        let mut editor = editor_with("This is a");
-        for cmd in str_to_edit_commands(" test") {
-            editor.run_edit_command(&cmd);
+    fn test_undo_backspace_works_on_word_boundaries() {
+        let mut editor = editor_with("This is  a test");
+        for _ in 0..6 {
+            editor.run_edit_command(&EditCommand::Backspace);
         }
-        assert_eq!(editor.get_buffer(), "This is a test");
+        assert_eq!(editor.get_buffer(), "This is  ");
         editor.run_edit_command(&EditCommand::Undo);
-        assert_eq!(editor.get_buffer(), "This is a ");
-        editor.run_edit_command(&EditCommand::Redo);
-        assert_eq!(editor.get_buffer(), "This is a test");
+        assert_eq!(editor.get_buffer(), "This is  a");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This is  a test");
+    }
+
+    #[test]
+    fn test_undo_delete_works_on_word_boundaries() {
+        let mut editor = editor_with("This  is a test");
+        editor.line_buffer.set_insertion_point(0);
+        for _ in 0..7 {
+            editor.run_edit_command(&EditCommand::Delete);
+        }
+        assert_eq!(editor.get_buffer(), "s a test");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "is a test");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This  is a test");
     }
 }
