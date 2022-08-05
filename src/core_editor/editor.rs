@@ -51,7 +51,7 @@ impl Editor {
             EditCommand::MoveBigWordRightStart => self.line_buffer.move_big_word_right_start(),
             EditCommand::MoveWordRightEnd => self.line_buffer.move_word_right_end(),
             EditCommand::MoveBigWordRightEnd => self.line_buffer.move_big_word_right_end(),
-            EditCommand::InsertChar(c) => self.insert_char(*c),
+            EditCommand::InsertChar(c) => self.line_buffer.insert_char(*c),
             EditCommand::InsertString(str) => self.line_buffer.insert_str(str),
             EditCommand::InsertNewline => self.line_buffer.insert_newline(),
             EditCommand::ReplaceChar(chr) => self.replace_char(*chr),
@@ -118,18 +118,6 @@ impl Editor {
 
     pub fn move_line_down(&mut self) {
         self.line_buffer.move_line_down();
-    }
-
-    pub fn insert_char(&mut self, c: char) {
-        self.line_buffer.insert_char(c);
-    }
-
-    /// Directly change the cursor position measured in bytes in the buffer
-    ///
-    /// ## Unicode safety:
-    /// Not checked, inproper use may cause panics in following operations
-    pub(crate) fn set_insertion_point(&mut self, pos: usize) {
-        self.line_buffer.set_insertion_point(pos);
         self.update_undo_state(UndoBehavior::MoveCursor);
     }
 
@@ -142,31 +130,12 @@ impl Editor {
         self.update_undo_state(undo_behavior);
     }
 
-    pub fn clear_to_end(&mut self) {
-        self.line_buffer.clear_to_end();
-    }
-
-    fn clear_to_insertion_point(&mut self) {
-        self.line_buffer.clear_to_insertion_point();
-    }
-
-    fn clear_range<R>(&mut self, range: R)
-    where
-        R: std::ops::RangeBounds<usize>,
-    {
-        self.line_buffer.clear_range(range);
-    }
-
     pub fn insertion_point(&self) -> usize {
         self.line_buffer.insertion_point()
     }
 
     pub fn is_empty(&self) -> bool {
         self.line_buffer.is_empty()
-    }
-
-    pub fn is_cursor_at_first_line(&self) -> bool {
-        self.line_buffer.is_cursor_at_first_line()
     }
 
     pub fn is_cursor_at_last_line(&self) -> bool {
@@ -230,8 +199,8 @@ impl Editor {
         let cut_slice = &self.line_buffer.get_buffer()[deletion_range.clone()];
         if !cut_slice.is_empty() {
             self.cut_buffer.set(cut_slice, ClipboardMode::Lines);
-            self.set_insertion_point(deletion_range.start);
-            self.clear_range(deletion_range);
+            self.line_buffer.set_insertion_point(deletion_range.start);
+            self.line_buffer.clear_range(deletion_range);
         }
     }
 
@@ -242,7 +211,7 @@ impl Editor {
                 &self.line_buffer.get_buffer()[..insertion_offset],
                 ClipboardMode::Normal,
             );
-            self.clear_to_insertion_point();
+            self.line_buffer.clear_to_insertion_point();
         }
     }
 
@@ -257,11 +226,11 @@ impl Editor {
         }
     }
 
-    pub fn cut_from_end(&mut self) {
+    fn cut_from_end(&mut self) {
         let cut_slice = &self.line_buffer.get_buffer()[self.line_buffer.insertion_point()..];
         if !cut_slice.is_empty() {
             self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
-            self.clear_to_end();
+            self.line_buffer.clear_to_end();
         }
     }
 
@@ -283,7 +252,7 @@ impl Editor {
                 &self.line_buffer.get_buffer()[cut_range.clone()],
                 ClipboardMode::Normal,
             );
-            self.clear_range(cut_range);
+            self.line_buffer.clear_range(cut_range);
             self.line_buffer.set_insertion_point(left_index);
         }
     }
@@ -297,7 +266,7 @@ impl Editor {
                 &self.line_buffer.get_buffer()[cut_range.clone()],
                 ClipboardMode::Normal,
             );
-            self.clear_range(cut_range);
+            self.line_buffer.clear_range(cut_range);
             self.line_buffer.set_insertion_point(left_index);
         }
     }
@@ -311,7 +280,7 @@ impl Editor {
                 &self.line_buffer.get_buffer()[cut_range.clone()],
                 ClipboardMode::Normal,
             );
-            self.clear_range(cut_range);
+            self.line_buffer.clear_range(cut_range);
         }
     }
 
@@ -324,7 +293,7 @@ impl Editor {
                 &self.line_buffer.get_buffer()[cut_range.clone()],
                 ClipboardMode::Normal,
             );
-            self.clear_range(cut_range);
+            self.line_buffer.clear_range(cut_range);
         }
     }
 
@@ -337,7 +306,7 @@ impl Editor {
                 &self.line_buffer.get_buffer()[cut_range.clone()],
                 ClipboardMode::Normal,
             );
-            self.clear_range(cut_range);
+            self.line_buffer.clear_range(cut_range);
         }
     }
 
@@ -350,7 +319,7 @@ impl Editor {
                 &self.line_buffer.get_buffer()[cut_range.clone()],
                 ClipboardMode::Normal,
             );
-            self.clear_range(cut_range);
+            self.line_buffer.clear_range(cut_range);
         }
     }
 
@@ -363,7 +332,7 @@ impl Editor {
                 &self.line_buffer.get_buffer()[cut_range.clone()],
                 ClipboardMode::Normal,
             );
-            self.clear_range(cut_range);
+            self.line_buffer.clear_range(cut_range);
         }
     }
 
@@ -493,7 +462,7 @@ mod test {
     #[case("abc def.ghi", 11, "abc ")]
     fn test_cut_word_left(#[case] input: &str, #[case] position: usize, #[case] expected: &str) {
         let mut editor = editor_with(input);
-        editor.set_insertion_point(position);
+        editor.line_buffer.set_insertion_point(position);
 
         editor.cut_word_left();
 
@@ -510,7 +479,7 @@ mod test {
         #[case] expected: &str,
     ) {
         let mut editor = editor_with(input);
-        editor.set_insertion_point(position);
+        editor.line_buffer.set_insertion_point(position);
 
         editor.cut_big_word_left();
 
@@ -529,7 +498,7 @@ mod test {
         #[case] expected: &str,
     ) {
         let mut editor = editor_with(input);
-        editor.set_insertion_point(position);
+        editor.line_buffer.set_insertion_point(position);
 
         editor.replace_char(replacement);
 
