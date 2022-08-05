@@ -119,9 +119,6 @@ pub struct Reedline {
 
     // Text editor used to open the line buffer for editing
     buffer_editor: Option<BufferEditor>,
-
-    log: File,
-    count: usize,
 }
 
 struct BufferEditor {
@@ -170,8 +167,6 @@ impl Reedline {
             use_ansi_coloring: true,
             menus: Vec::new(),
             buffer_editor: None,
-            log: File::create("reedline_log.txt").unwrap(),
-            count: 0,
         }
     }
 
@@ -527,32 +522,7 @@ impl Reedline {
         }
     }
 
-    fn log_event(&mut self, event: &ReedlineEvent) {
-        if let ReedlineEvent::Multiple(events) = event {
-            writeln!(self.log, "{} {}", self.count, event).unwrap();
-            for event in events {
-                self.log_event(event)
-            }
-        } else if let ReedlineEvent::UntilFound(events) = event {
-            writeln!(self.log, "{} {}", self.count, event).unwrap();
-            for event in events {
-                self.log_event(event)
-            }
-        } else if let ReedlineEvent::Edit(commands) = &event {
-            for command in commands {
-                self.log_command(command)
-            }
-        } else {
-            writeln!(self.log, "{} {}", self.count, event).unwrap();
-        }
-    }
-    fn log_command(&mut self, command: &EditCommand) {
-        writeln!(self.log, "{} {}", self.count, command).unwrap();
-    }
-
     fn handle_event(&mut self, prompt: &dyn Prompt, event: ReedlineEvent) -> Result<EventStatus> {
-        self.log_event(&event);
-        self.count += 1;
         if self.input_mode == InputMode::HistorySearch {
             self.handle_history_search_event(prompt, event)
         } else {
