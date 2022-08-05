@@ -7,7 +7,7 @@ use crate::{
 use crate::result::{ReedlineError, ReedlineErrorVariants};
 use {
     crate::{
-        completion::{CircularCompletionHandler, Completer, DefaultCompleter},
+        completion::{Completer, DefaultCompleter},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
         enums::{EventStatus, ReedlineEvent},
@@ -104,9 +104,6 @@ pub struct Reedline {
     quick_completions: bool,
     partial_completions: bool,
 
-    // Performs bash style circular rotation through the available completions
-    circular_completion_handler: CircularCompletionHandler,
-
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
 
@@ -163,7 +160,6 @@ impl Reedline {
             completer,
             quick_completions: false,
             partial_completions: false,
-            circular_completion_handler: CircularCompletionHandler::default(),
             highlighter: buffer_highlighter,
             hinter,
             hide_hints: false,
@@ -627,7 +623,6 @@ impl Reedline {
             // TODO: Check if events should be handled
             ReedlineEvent::Right
             | ReedlineEvent::Left
-            | ReedlineEvent::ActionHandler
             | ReedlineEvent::Multiple(_)
             | ReedlineEvent::None
             | ReedlineEvent::HistoryHintWordComplete
@@ -767,12 +762,6 @@ impl Reedline {
                     }
                 }
                 Ok(EventStatus::Inapplicable)
-            }
-            ReedlineEvent::ActionHandler => {
-                let line_buffer = self.editor.line_buffer();
-                self.circular_completion_handler
-                    .handle(self.completer.as_mut(), line_buffer);
-                Ok(EventStatus::Handled)
             }
             ReedlineEvent::Esc => {
                 self.deactivate_menus();

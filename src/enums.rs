@@ -344,9 +344,6 @@ pub enum ReedlineEvent {
     /// Complete a single token/word of the history hint
     HistoryHintWordComplete,
 
-    /// Action event
-    ActionHandler,
-
     /// Handle EndOfLine event
     ///
     /// Expected Behavior:
@@ -462,7 +459,6 @@ impl Display for ReedlineEvent {
             ReedlineEvent::None => write!(f, "None"),
             ReedlineEvent::HistoryHintComplete => write!(f, "HistoryHintComplete"),
             ReedlineEvent::HistoryHintWordComplete => write!(f, "HistoryHintWordComplete"),
-            ReedlineEvent::ActionHandler => write!(f, "ActionHandler"),
             ReedlineEvent::CtrlD => write!(f, "CtrlD"),
             ReedlineEvent::CtrlC => write!(f, "CtrlC"),
             ReedlineEvent::ClearScreen => write!(f, "ClearScreen"),
