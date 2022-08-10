@@ -51,7 +51,6 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::CutToEnd));
     kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
     // Edits
-    kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
     kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
 
     // *** ALT ***
