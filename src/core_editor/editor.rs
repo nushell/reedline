@@ -98,11 +98,11 @@ impl Editor {
             (_, EditType::MoveCursor) => UndoBehavior::MoveCursor,
             (EditCommand::InsertChar(c), EditType::EditText) => UndoBehavior::InsertCharacter(*c),
             (EditCommand::Delete, EditType::EditText) => {
-                let deleted_char = self.edit_stack.current().char_right();
+                let deleted_char = self.edit_stack.current().grapheme_right().chars().next();
                 UndoBehavior::Delete(deleted_char)
             }
             (EditCommand::Backspace, EditType::EditText) => {
-                let deleted_char = self.edit_stack.current().char_left();
+                let deleted_char = self.edit_stack.current().grapheme_left().chars().next();
                 UndoBehavior::Backspace(deleted_char)
             }
             (_, EditType::UndoRedo) => UndoBehavior::UndoRedo,
@@ -609,6 +609,21 @@ mod test {
     }
 
     #[test]
+    fn test_undo_backspace_with_crlf() {
+        let mut editor = editor_with("This is a \r\n test");
+        for _ in 0..8 {
+            editor.run_edit_command(&EditCommand::Backspace);
+        }
+        assert_eq!(editor.get_buffer(), "This is ");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This is a");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This is a \r\n");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This is a \r\n test");
+    }
+
+    #[test]
     fn test_undo_delete_with_newline() {
         let mut editor = editor_with("This \n is a test");
         editor.line_buffer.set_insertion_point(0);
@@ -622,5 +637,23 @@ mod test {
         assert_eq!(editor.get_buffer(), "\n is a test");
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(editor.get_buffer(), "This \n is a test");
+    }
+
+    #[test]
+    fn test_undo_delete_with_crlf() {
+        // CLRF delete is a special case, since the first character of the
+        // grapheme is \r rather than \n
+        let mut editor = editor_with("This \r\n is a test");
+        editor.line_buffer.set_insertion_point(0);
+        for _ in 0..8 {
+            editor.run_edit_command(&EditCommand::Delete);
+        }
+        assert_eq!(editor.get_buffer(), "s a test");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "is a test");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "\r\n is a test");
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "This \r\n is a test");
     }
 }

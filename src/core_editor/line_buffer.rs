@@ -412,17 +412,21 @@ impl LineBuffer {
 
     /// Checks to see if the current edit position is pointing to whitespace
     pub fn on_whitespace(&self) -> bool {
-        self.char_right().map(char::is_whitespace).unwrap_or(false)
+        self.lines[self.insertion_point..]
+            .chars()
+            .next()
+            .map(char::is_whitespace)
+            .unwrap_or(false)
     }
 
-    /// Get the character immediately to the right of the cursor, if any
-    pub fn char_right(&self) -> Option<char> {
-        self.lines[self.insertion_point..].chars().next()
+    /// Get the grapheme immediately to the right of the cursor, if any
+    pub fn grapheme_right(&self) -> &str {
+        &self.lines[self.insertion_point..self.grapheme_right_index()]
     }
 
-    /// Get the character immediately to the left of the cursor, if any
-    pub fn char_left(&self) -> Option<char> {
-        self.lines[self.grapheme_left_index()..].chars().next()
+    /// Get the grapheme immediately to the left of the cursor, if any
+    pub fn grapheme_left(&self) -> &str {
+        &self.lines[self.grapheme_left_index()..self.insertion_point]
     }
 
     /// Gets the range of the word the current edit position is pointing to

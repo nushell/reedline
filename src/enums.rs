@@ -335,8 +335,10 @@ pub enum UndoBehavior {
     /// Character insertion, tracking the character inserted
     InsertCharacter(char),
     /// Backspace command, tracking the deleted character (left of cursor)
+    /// Warning: this does not track the whole grapheme, just the character
     Backspace(Option<char>),
     /// Delete command, tracking the deleted character (right of cursor)
+    /// Warning: this does not track the whole grapheme, just the character
     Delete(Option<char>),
     /// Move the cursor position
     MoveCursor,
@@ -361,14 +363,17 @@ impl UndoBehavior {
             // When inserting/deleting repeatedly, each undo set should encompass
             // inserting/deleting a complete word and the associated whitespace
             (UB::InsertCharacter(c_prev), UB::InsertCharacter(c_new)) => {
-                (*c_prev == '\n') || (!c_prev.is_whitespace() && c_new.is_whitespace())
+                (*c_prev == '\n' || *c_prev == '\r')
+                    || (!c_prev.is_whitespace() && c_new.is_whitespace())
             }
             (UB::Backspace(Some(c_prev)), UB::Backspace(Some(c_new))) => {
-                (*c_new == '\n') || (c_prev.is_whitespace() && !c_new.is_whitespace())
+                (*c_new == '\n' || *c_new == '\r')
+                    || (c_prev.is_whitespace() && !c_new.is_whitespace())
             }
             (UB::Backspace(_), UB::Backspace(_)) => false,
             (UB::Delete(Some(c_prev)), UB::Delete(Some(c_new))) => {
-                (*c_new == '\n') || (c_prev.is_whitespace() && !c_new.is_whitespace())
+                (*c_new == '\n' || *c_new == '\r')
+                    || (c_prev.is_whitespace() && !c_new.is_whitespace())
             }
             (UB::Delete(_), UB::Delete(_)) => false,
             (_, _) => true,
