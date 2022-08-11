@@ -318,7 +318,7 @@ impl EditCommand {
 
 /// Specifies the types of edit commands, used to simplify grouping edits
 /// to mark undo behavior
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum EditType {
     /// Cursor movement commands
     MoveCursor,
