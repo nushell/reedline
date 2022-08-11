@@ -26,16 +26,19 @@ impl Default for Editor {
 }
 
 impl Editor {
+    /// Get the current LineBuffer
     pub fn line_buffer(&self) -> &LineBuffer {
         &self.line_buffer
     }
 
+    /// Set the current LineBuffer.
+    /// Undo behavior specifies how this change should be reflected on the undo stack.
     pub fn set_line_buffer(&mut self, line_buffer: LineBuffer, undo_behavior: UndoBehavior) {
         self.line_buffer = line_buffer;
         self.update_undo_state(undo_behavior);
     }
 
-    pub fn run_edit_command(&mut self, command: &EditCommand) {
+    pub(crate) fn run_edit_command(&mut self, command: &EditCommand) {
         match command {
             EditCommand::MoveToStart => self.line_buffer.move_to_start(),
             EditCommand::MoveToLineStart => self.line_buffer.move_to_line_start(),
@@ -111,66 +114,69 @@ impl Editor {
         self.update_undo_state(new_undo_behavior);
     }
 
-    pub fn move_line_up(&mut self) {
+    pub(crate) fn move_line_up(&mut self) {
         self.line_buffer.move_line_up();
         self.update_undo_state(UndoBehavior::MoveCursor);
     }
 
-    pub fn move_line_down(&mut self) {
+    pub(crate) fn move_line_down(&mut self) {
         self.line_buffer.move_line_down();
         self.update_undo_state(UndoBehavior::MoveCursor);
     }
 
+    /// Get the text of the current LineBuffer
     pub fn get_buffer(&self) -> &str {
         self.line_buffer.get_buffer()
     }
 
+    /// Set the text of the current LineBuffer given the specified UndoBehavior
+    /// Insertion point update to the end of the buffer.
     pub fn set_buffer(&mut self, buffer: String, undo_behavior: UndoBehavior) {
         self.line_buffer.set_buffer(buffer);
         self.update_undo_state(undo_behavior);
     }
 
-    pub fn insertion_point(&self) -> usize {
+    pub(crate) fn insertion_point(&self) -> usize {
         self.line_buffer.insertion_point()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.line_buffer.is_empty()
     }
 
-    pub fn is_cursor_at_first_line(&self) -> bool {
+    pub(crate) fn is_cursor_at_first_line(&self) -> bool {
         self.line_buffer.is_cursor_at_first_line()
     }
 
-    pub fn is_cursor_at_last_line(&self) -> bool {
+    pub(crate) fn is_cursor_at_last_line(&self) -> bool {
         self.line_buffer.is_cursor_at_last_line()
     }
 
-    pub fn is_cursor_at_buffer_end(&self) -> bool {
+    pub(crate) fn is_cursor_at_buffer_end(&self) -> bool {
         self.line_buffer.insertion_point() == self.get_buffer().len()
     }
 
-    pub fn reset_undo_stack(&mut self) {
+    pub(crate) fn reset_undo_stack(&mut self) {
         self.edit_stack.reset();
     }
 
-    pub fn move_to_start(&mut self, undo_behavior: UndoBehavior) {
+    pub(crate) fn move_to_start(&mut self, undo_behavior: UndoBehavior) {
         self.line_buffer.move_to_start();
         self.update_undo_state(undo_behavior);
     }
 
-    pub fn move_to_end(&mut self, undo_behavior: UndoBehavior) {
+    pub(crate) fn move_to_end(&mut self, undo_behavior: UndoBehavior) {
         self.line_buffer.move_to_end();
         self.update_undo_state(undo_behavior);
     }
 
     #[allow(dead_code)]
-    pub fn move_to_line_start(&mut self, undo_behavior: UndoBehavior) {
+    pub(crate) fn move_to_line_start(&mut self, undo_behavior: UndoBehavior) {
         self.line_buffer.move_to_line_start();
         self.update_undo_state(undo_behavior);
     }
 
-    pub fn move_to_line_end(&mut self, undo_behavior: UndoBehavior) {
+    pub(crate) fn move_to_line_end(&mut self, undo_behavior: UndoBehavior) {
         self.line_buffer.move_to_line_end();
         self.update_undo_state(undo_behavior);
     }
