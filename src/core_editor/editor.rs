@@ -184,13 +184,11 @@ impl Editor {
     fn undo(&mut self) {
         let val = self.edit_stack.undo();
         self.line_buffer = val.clone();
-        self.update_undo_state(UndoBehavior::UndoRedo);
     }
 
     fn redo(&mut self) {
         let val = self.edit_stack.redo();
         self.line_buffer = val.clone();
-        self.update_undo_state(UndoBehavior::UndoRedo);
     }
 
     fn update_undo_state(&mut self, undo_behavior: UndoBehavior) {

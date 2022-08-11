@@ -496,24 +496,6 @@ impl LineBuffer {
         }
     }
 
-    /// Counts the number of word starts in the buffer
-    pub fn word_starts(&self) -> usize {
-        self.lines
-            .chars()
-            .tuple_windows::<(_, _)>()
-            .filter(|(cur, next)| (*cur == '\n') || (cur.is_whitespace() && !next.is_whitespace()))
-            .count()
-    }
-
-    /// Counts the number of word ends in the buffer
-    pub fn word_ends(&self) -> usize {
-        self.lines
-            .chars()
-            .tuple_windows::<(_, _)>()
-            .filter(|(cur, next)| (*next == '\n') || (!cur.is_whitespace() && next.is_whitespace()))
-            .count()
-    }
-
     /// Capitalize the character at insertion point (or the first character
     /// following the whitespace at the insertion point) and move the insertion
     /// point right one grapheme.
@@ -918,29 +900,6 @@ mod test {
         line_buffer.move_word_right_end();
 
         assert_eq!(line_buffer.insertion_point(), expected);
-        line_buffer.assert_valid();
-    }
-
-    #[rstest]
-    #[case("This is a test", 3)]
-    #[case("This is a test  ", 3)]
-    #[case("  This is a test", 4)]
-    #[case("This  \n    is a test", 4)]
-    fn word_start_works(#[case] input: &str, #[case] expected_count: usize) {
-        let line_buffer = buffer_with(input);
-
-        assert_eq!(expected_count, line_buffer.word_starts());
-        line_buffer.assert_valid();
-    }
-
-    #[rstest]
-    #[case("This is a test", 3)]
-    #[case("This is a test  ", 4)]
-    #[case("  This is a test", 3)]
-    #[case("This  \n    is a test", 4)]
-    fn word_end_works(#[case] input: &str, #[case] expected_count: usize) {
-        let line_buffer = buffer_with(input);
-        assert_eq!(expected_count, line_buffer.word_ends());
         line_buffer.assert_valid();
     }
 
