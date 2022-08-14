@@ -403,7 +403,7 @@ impl LineBuffer {
     /// Substitute text covered by `range` in the current line
     ///
     /// Safety: Does not change the insertion point/offset and is thus not unicode safe!
-    pub(crate) fn replace_range<R>(&mut self, range: R, replace_with: &str)
+    pub fn replace_range<R>(&mut self, range: R, replace_with: &str)
     where
         R: std::ops::RangeBounds<usize>,
     {

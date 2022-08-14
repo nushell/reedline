@@ -33,7 +33,7 @@ impl Editor {
 
     /// Set the current LineBuffer.
     /// Undo behavior specifies how this change should be reflected on the undo stack.
-    pub fn set_line_buffer(&mut self, line_buffer: LineBuffer, undo_behavior: UndoBehavior) {
+    pub(crate) fn set_line_buffer(&mut self, line_buffer: LineBuffer, undo_behavior: UndoBehavior) {
         self.line_buffer = line_buffer;
         self.update_undo_state(undo_behavior);
     }
@@ -129,9 +129,18 @@ impl Editor {
         self.line_buffer.get_buffer()
     }
 
+    /// Edit the line buffer in an undo-safe manner.
+    pub fn edit_buffer<F>(&mut self, func: F, undo_behavior: UndoBehavior)
+    where
+        F: FnOnce(&mut LineBuffer),
+    {
+        self.update_undo_state(undo_behavior);
+        func(&mut self.line_buffer);
+    }
+
     /// Set the text of the current LineBuffer given the specified UndoBehavior
     /// Insertion point update to the end of the buffer.
-    pub fn set_buffer(&mut self, buffer: String, undo_behavior: UndoBehavior) {
+    pub(crate) fn set_buffer(&mut self, buffer: String, undo_behavior: UndoBehavior) {
         self.line_buffer.set_buffer(buffer);
         self.update_undo_state(undo_behavior);
     }
