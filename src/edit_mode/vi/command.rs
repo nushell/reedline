@@ -419,8 +419,10 @@ mod test {
         #[case] last_to_till: Option<ViToTill>,
         #[case] expected: Option<Command>,
     ) {
-        let mut vi = Vi::default();
-        vi.last_to_till = last_to_till;
+        let vi = Vi {
+            last_to_till,
+            ..Vi::default()
+        };
 
         let input = vec![input];
 
