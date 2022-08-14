@@ -7,7 +7,7 @@ use crate::{
 use crate::result::{ReedlineError, ReedlineErrorVariants};
 use {
     crate::{
-        completion::{CircularCompletionHandler, Completer, DefaultCompleter},
+        completion::{Completer, DefaultCompleter},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
         enums::{EventStatus, ReedlineEvent},
@@ -21,7 +21,7 @@ use {
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         utils::text_manipulation,
         EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
-        PromptHistorySearch, ReedlineMenu, Signal, ValidationResult, Validator,
+        PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
     },
     crossterm::{
         event,
@@ -104,9 +104,6 @@ pub struct Reedline {
     quick_completions: bool,
     partial_completions: bool,
 
-    // Performs bash style circular rotation through the available completions
-    circular_completion_handler: CircularCompletionHandler,
-
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
 
@@ -163,7 +160,6 @@ impl Reedline {
             completer,
             quick_completions: false,
             partial_completions: false,
-            circular_completion_handler: CircularCompletionHandler::default(),
             highlighter: buffer_highlighter,
             hinter,
             hide_hints: false,
@@ -578,8 +574,8 @@ impl Reedline {
             }
             ReedlineEvent::Enter | ReedlineEvent::HistoryHintComplete => {
                 if let Some(string) = self.history_cursor.string_at_cursor() {
-                    self.editor.set_buffer(string);
-                    self.editor.remember_undo_state(true);
+                    self.editor
+                        .set_buffer(string, UndoBehavior::CreateUndoPoint);
                 }
 
                 self.input_mode = InputMode::Regular;
@@ -627,7 +623,6 @@ impl Reedline {
             // TODO: Check if events should be handled
             ReedlineEvent::Right
             | ReedlineEvent::Left
-            | ReedlineEvent::ActionHandler
             | ReedlineEvent::Multiple(_)
             | ReedlineEvent::None
             | ReedlineEvent::HistoryHintWordComplete
@@ -658,7 +653,7 @@ impl Reedline {
 
                         if self.quick_completions && menu.can_quick_complete() {
                             menu.update_values(
-                                self.editor.line_buffer(),
+                                &mut self.editor,
                                 self.completer.as_mut(),
                                 self.history.as_ref(),
                             );
@@ -671,7 +666,7 @@ impl Reedline {
                         if self.partial_completions
                             && menu.can_partially_complete(
                                 self.quick_completions,
-                                self.editor.line_buffer(),
+                                &mut self.editor,
                                 self.completer.as_mut(),
                                 self.history.as_ref(),
                             )
@@ -768,12 +763,6 @@ impl Reedline {
                 }
                 Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::ActionHandler => {
-                let line_buffer = self.editor.line_buffer();
-                self.circular_completion_handler
-                    .handle(self.completer.as_mut(), line_buffer);
-                Ok(EventStatus::Handled)
-            }
             ReedlineEvent::Esc => {
                 self.deactivate_menus();
                 Ok(EventStatus::Handled)
@@ -806,7 +795,7 @@ impl Reedline {
             ReedlineEvent::Enter => {
                 for menu in self.menus.iter_mut() {
                     if menu.is_active() {
-                        menu.replace_in_buffer(self.editor.line_buffer());
+                        menu.replace_in_buffer(&mut self.editor);
                         menu.menu_event(MenuEvent::Deactivate);
 
                         return Ok(EventStatus::Handled);
@@ -859,7 +848,7 @@ impl Reedline {
                     if self.quick_completions && menu.can_quick_complete() {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
                         menu.update_values(
-                            self.editor.line_buffer(),
+                            &mut self.editor,
                             self.completer.as_mut(),
                             self.history.as_ref(),
                         );
@@ -912,9 +901,6 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::SearchHistory => {
-                // Make sure we are able to undo the result of a reverse history search
-                self.editor.remember_undo_state(true);
-
                 self.enter_history_search();
                 Ok(EventStatus::Handled)
             }
@@ -980,8 +966,9 @@ impl Reedline {
             .back(self.history.as_ref())
             .expect("todo: error handling");
         self.update_buffer_from_history();
-        self.editor.move_to_start();
-        self.editor.move_to_line_end();
+        self.editor.move_to_start(UndoBehavior::HistoryNavigation);
+        self.editor
+            .move_to_line_end(UndoBehavior::HistoryNavigation);
     }
 
     fn next_history(&mut self) {
@@ -995,7 +982,7 @@ impl Reedline {
             .forward(self.history.as_ref())
             .expect("todo: error handling");
         self.update_buffer_from_history();
-        self.editor.move_to_end();
+        self.editor.move_to_end(UndoBehavior::HistoryNavigation);
     }
 
     /// Enable the search and navigation through the history from the line buffer prompt
@@ -1006,7 +993,7 @@ impl Reedline {
             // Perform bash-style basic up/down entry walking
             HistoryNavigationQuery::Normal(
                 // Hack: Tight coupling point to be able to restore previously typed input
-                self.editor.line_buffer_immut().clone(),
+                self.editor.line_buffer().clone(),
             )
         } else {
             // Prefix search like found in fish, zsh, etc.
@@ -1078,20 +1065,21 @@ impl Reedline {
         match self.history_cursor.get_navigation() {
             HistoryNavigationQuery::Normal(original) => {
                 if let Some(buffer_to_paint) = self.history_cursor.string_at_cursor() {
-                    self.editor.set_buffer(buffer_to_paint.clone());
-                    self.editor.set_insertion_point(buffer_to_paint.len());
+                    self.editor
+                        .set_buffer(buffer_to_paint, UndoBehavior::HistoryNavigation);
                 } else {
                     // Hack
-                    self.editor.set_line_buffer(original);
+                    self.editor
+                        .set_line_buffer(original, UndoBehavior::HistoryNavigation);
                 }
             }
             HistoryNavigationQuery::PrefixSearch(prefix) => {
                 if let Some(prefix_result) = self.history_cursor.string_at_cursor() {
-                    self.editor.set_buffer(prefix_result.clone());
-                    self.editor.set_insertion_point(prefix_result.len());
+                    self.editor
+                        .set_buffer(prefix_result, UndoBehavior::HistoryNavigation);
                 } else {
-                    self.editor.set_buffer(prefix.clone());
-                    self.editor.set_insertion_point(prefix.len());
+                    self.editor
+                        .set_buffer(prefix, UndoBehavior::HistoryNavigation);
                 }
             }
             HistoryNavigationQuery::SubstringSearch(_) => todo!(),
@@ -1106,7 +1094,8 @@ impl Reedline {
                 HistoryNavigationQuery::Normal(_)
             ) {
                 if let Some(string) = self.history_cursor.string_at_cursor() {
-                    self.editor.set_buffer(string);
+                    self.editor
+                        .set_buffer(string, UndoBehavior::HistoryNavigation);
                 }
             }
             self.input_mode = InputMode::Regular;
@@ -1273,7 +1262,7 @@ impl Reedline {
                 let res = std::fs::read_to_string(temp_file)?;
                 let res = res.trim_end().to_string();
 
-                self.editor.line_buffer().set_buffer(res);
+                self.editor.set_buffer(res, UndoBehavior::CreateUndoPoint);
 
                 Ok(())
             }
@@ -1369,7 +1358,7 @@ impl Reedline {
         for menu in self.menus.iter_mut() {
             if menu.is_active() {
                 menu.update_working_details(
-                    self.editor.line_buffer(),
+                    &mut self.editor,
                     self.completer.as_mut(),
                     self.history.as_ref(),
                     &self.painter,

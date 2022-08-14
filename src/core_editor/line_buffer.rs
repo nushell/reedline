@@ -25,11 +25,6 @@ impl LineBuffer {
         Self::default()
     }
 
-    /// Replaces the content between [`start`..`end`] with `text`
-    pub fn replace(&mut self, range: Range<usize>, text: &str) {
-        self.lines.replace_range(range, text);
-    }
-
     /// Check to see if the line buffer is empty
     pub fn is_empty(&self) -> bool {
         self.lines.is_empty()
@@ -71,6 +66,8 @@ impl LineBuffer {
     }
 
     /// Sets the current edit position
+    /// ## Unicode safety:
+    /// Not checked, inproper use may cause panics in following operations
     pub fn set_insertion_point(&mut self, offset: usize) {
         self.insertion_point = offset;
     }
@@ -406,7 +403,7 @@ impl LineBuffer {
     /// Substitute text covered by `range` in the current line
     ///
     /// Safety: Does not change the insertion point/offset and is thus not unicode safe!
-    pub(crate) fn replace_range<R>(&mut self, range: R, replace_with: &str)
+    pub fn replace_range<R>(&mut self, range: R, replace_with: &str)
     where
         R: std::ops::RangeBounds<usize>,
     {
@@ -420,6 +417,16 @@ impl LineBuffer {
             .next()
             .map(char::is_whitespace)
             .unwrap_or(false)
+    }
+
+    /// Get the grapheme immediately to the right of the cursor, if any
+    pub fn grapheme_right(&self) -> &str {
+        &self.lines[self.insertion_point..self.grapheme_right_index()]
+    }
+
+    /// Get the grapheme immediately to the left of the cursor, if any
+    pub fn grapheme_left(&self) -> &str {
+        &self.lines[self.grapheme_left_index()..self.insertion_point]
     }
 
     /// Gets the range of the word the current edit position is pointing to
@@ -487,11 +494,6 @@ impl LineBuffer {
             self.replace_range(change_range, &swapped);
             self.move_right();
         }
-    }
-
-    /// Counts the number of words in the buffer
-    pub fn word_count(&self) -> usize {
-        self.lines.split_whitespace().count()
     }
 
     /// Capitalize the character at insertion point (or the first character
@@ -898,17 +900,6 @@ mod test {
         line_buffer.move_word_right_end();
 
         assert_eq!(line_buffer.insertion_point(), expected);
-        line_buffer.assert_valid();
-    }
-
-    #[rstest]
-    #[case("This is a te", 4)]
-    #[case("This is a test", 4)]
-    #[case("This      is a test", 4)]
-    fn word_count_works(#[case] input: &str, #[case] expected_count: usize) {
-        let line_buffer = buffer_with(input);
-
-        assert_eq!(expected_count, line_buffer.word_count());
         line_buffer.assert_valid();
     }
 
