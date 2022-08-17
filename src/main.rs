@@ -3,8 +3,13 @@ use reedline::FileBackedHistory;
 
 use {
     crossterm::{
-        event::{poll, Event, KeyCode, KeyEvent, KeyModifiers},
-        terminal, Result,
+        event::{
+            poll, DisableBracketedPaste, DisableFocusChange, DisableMouseCapture,
+            EnableBracketedPaste, EnableFocusChange, EnableMouseCapture, Event, KeyCode, KeyEvent,
+            KeyEventKind, KeyEventState, KeyModifiers, KeyboardEnhancementFlags,
+            PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        },
+        execute, terminal, Result,
     },
     nu_ansi_term::{Color, Style},
     reedline::{
@@ -185,9 +190,31 @@ fn main() -> Result<()> {
 
 /// **For debugging purposes only:** Track the terminal events observed by [`Reedline`] and print them.
 pub fn print_events() -> Result<()> {
-    stdout().flush()?;
     terminal::enable_raw_mode()?;
+    let mut stdout = stdout();
+    // stdout().flush()?;
+    execute!(
+        stdout,
+        EnableBracketedPaste,
+        EnableFocusChange,
+        EnableMouseCapture,
+        PushKeyboardEnhancementFlags(
+            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+        )
+    )?;
+
     let result = print_events_helper();
+
+    execute!(
+        stdout,
+        DisableBracketedPaste,
+        PopKeyboardEnhancementFlags,
+        DisableFocusChange,
+        DisableMouseCapture
+    )?;
+
     terminal::disable_raw_mode()?;
 
     result
@@ -205,21 +232,29 @@ fn print_events_helper() -> Result<()> {
             // It's guaranteed that read() wont block if `poll` returns `Ok(true)`
             let event = crossterm::event::read()?;
 
-            if let Event::Key(KeyEvent { code, modifiers }) = event {
+            if let Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind,
+                state,
+            }) = event
+            {
                 match code {
                     KeyCode::Char(c) => {
                         println!(
-                            "Char: {} code: {:#08x}; Modifier {:?}; Flags {:#08b}\r",
+                            "Char: {} code: {:#08x}; Modifier {:?}; Flags {:#08b} Kind: {:?} State: {:?}\r",
                             c,
                             u32::from(c),
                             modifiers,
-                            modifiers
+                            modifiers,
+                            kind,
+                            state,
                         );
                     }
                     _ => {
                         println!(
-                            "Keycode: {:?}; Modifier {:?}; Flags {:#08b}\r",
-                            code, modifiers, modifiers
+                            "Keycode: {:?}; Modifier {:?}; Flags {:#08b} Kind: {:?} State: {:?}\r",
+                            code, modifiers, modifiers, kind, state,
                         );
                     }
                 }
@@ -244,6 +279,8 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
     keybindings.add_binding(
         KeyModifiers::CONTROL,
         KeyCode::Char('x'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::Menu("history_menu".to_string()),
             ReedlineEvent::MenuPageNext,
@@ -253,12 +290,16 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
     keybindings.add_binding(
         KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         KeyCode::Char('x'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::MenuPagePrevious,
     );
 
     keybindings.add_binding(
         KeyModifiers::NONE,
         KeyCode::Tab,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::Menu("completion_menu".to_string()),
             ReedlineEvent::MenuNext,
@@ -268,6 +309,8 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
     keybindings.add_binding(
         KeyModifiers::SHIFT,
         KeyCode::BackTab,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::MenuPrevious,
     );
 }
@@ -277,6 +320,8 @@ fn add_newline_keybinding(keybindings: &mut Keybindings) {
     keybindings.add_binding(
         KeyModifiers::ALT,
         KeyCode::Enter,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
     );
 }
@@ -309,10 +354,10 @@ fn get_all_keybinding_info() {
     }
 
     println!("\n--Default Keybindings--");
-    for (mode, modifier, code, event) in get_reedline_default_keybindings() {
+    for (mode, modifier, code, kind, state, event) in get_reedline_default_keybindings() {
         println!(
-            "mode: {}, keymodifiers: {}, keycode: {}, event: {}",
-            mode, modifier, code, event
+            "mode: {}, keymodifiers: {}, keycode: {}, kind: {}, state: {}, event: {}",
+            mode, modifier, code, kind, state, event
         );
     }
 }

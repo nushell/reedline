@@ -500,6 +500,15 @@ pub enum ReedlineEvent {
 
     /// Record vi to or till motion
     RecordToTill,
+
+    /// Focus gained event
+    FocusGained,
+
+    /// Focus lost event
+    FocusLost,
+
+    /// Paste event
+    Paste(String),
 }
 
 impl Display for ReedlineEvent {
@@ -542,6 +551,9 @@ impl Display for ReedlineEvent {
             ReedlineEvent::ExecuteHostCommand(_) => write!(f, "ExecuteHostCommand"),
             ReedlineEvent::OpenEditor => write!(f, "OpenEditor"),
             ReedlineEvent::RecordToTill => write!(f, "RecordToTill"),
+            ReedlineEvent::FocusGained => write!(f, "FocusGained"),
+            ReedlineEvent::FocusLost => write!(f, "FocusLost"),
+            ReedlineEvent::Paste(_) => write!(f, "Paste <string>"),
         }
     }
 }

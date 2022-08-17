@@ -94,7 +94,12 @@ impl Vi {
 impl EditMode for Vi {
     fn parse_event(&mut self, event: Event) -> ReedlineEvent {
         match event {
-            Event::Key(KeyEvent { code, modifiers }) => match (self.mode, modifiers, code) {
+            Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind,
+                state,
+            }) => match (self.mode, modifiers, code) {
                 (ViMode::Normal, modifier, KeyCode::Char(c)) => {
                     // The repeat character is the only character that is not managed
                     // by the parser since the last event is stored in the editor
@@ -106,10 +111,12 @@ impl EditMode for Vi {
 
                     let c = c.to_ascii_lowercase();
 
-                    if let Some(event) = self
-                        .normal_keybindings
-                        .find_binding(modifiers, KeyCode::Char(c))
-                    {
+                    if let Some(event) = self.normal_keybindings.find_binding(
+                        modifiers,
+                        KeyCode::Char(c),
+                        kind,
+                        state,
+                    ) {
                         event
                     } else if modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT {
                         self.cache.push(if modifier == KeyModifiers::SHIFT {
@@ -190,7 +197,7 @@ impl EditMode for Vi {
                         )])
                     } else {
                         self.insert_keybindings
-                            .find_binding(modifier, KeyCode::Char(c))
+                            .find_binding(modifier, KeyCode::Char(c), kind, state)
                             .unwrap_or(ReedlineEvent::None)
                     }
                 }
@@ -205,16 +212,19 @@ impl EditMode for Vi {
                 }
                 (ViMode::Normal, _, _) => self
                     .normal_keybindings
-                    .find_binding(modifiers, code)
+                    .find_binding(modifiers, code, kind, state)
                     .unwrap_or(ReedlineEvent::None),
                 (ViMode::Insert, _, _) => self
                     .insert_keybindings
-                    .find_binding(modifiers, code)
+                    .find_binding(modifiers, code, kind, state)
                     .unwrap_or(ReedlineEvent::None),
             },
 
             Event::Mouse(_) => ReedlineEvent::Mouse,
             Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
+            Event::FocusGained => ReedlineEvent::FocusGained,
+            Event::FocusLost => ReedlineEvent::FocusLost,
+            Event::Paste(s) => ReedlineEvent::Paste(s),
         }
     }
 
@@ -229,6 +239,7 @@ impl EditMode for Vi {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crossterm::event::{KeyEventKind, KeyEventState};
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -238,6 +249,8 @@ mod test {
         let esc = Event::Key(KeyEvent {
             modifiers: KeyModifiers::NONE,
             code: KeyCode::Esc,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
         });
         let result = vi.parse_event(esc);
 
@@ -255,6 +268,8 @@ mod test {
             KeyModifiers::NONE,
             KeyCode::Char('e'),
             ReedlineEvent::ClearScreen,
+            KeyEventKind::Press,
+            KeyEventState::NONE,
         );
 
         let mut vi = Vi {
@@ -267,6 +282,8 @@ mod test {
         let esc = Event::Key(KeyEvent {
             modifiers: KeyModifiers::NONE,
             code: KeyCode::Char('e'),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
         });
         let result = vi.parse_event(esc);
 
@@ -280,6 +297,8 @@ mod test {
             KeyModifiers::SHIFT,
             KeyCode::Char('$'),
             ReedlineEvent::CtrlD,
+            KeyEventKind::Press,
+            KeyEventState::NONE,
         );
 
         let mut vi = Vi {
@@ -292,6 +311,8 @@ mod test {
         let esc = Event::Key(KeyEvent {
             modifiers: KeyModifiers::SHIFT,
             code: KeyCode::Char('$'),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
         });
         let result = vi.parse_event(esc);
 
@@ -311,6 +332,8 @@ mod test {
         let esc = Event::Key(KeyEvent {
             modifiers: KeyModifiers::NONE,
             code: KeyCode::Char('q'),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
         });
         let result = vi.parse_event(esc);
 
@@ -335,12 +358,16 @@ mod test {
         let to_till = Event::Key(KeyEvent {
             code: KeyCode::Char(code),
             modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
         });
         vi.parse_event(to_till);
 
         let key_x = Event::Key(KeyEvent {
             code: KeyCode::Char('x'),
             modifiers: KeyModifiers::SHIFT,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
         });
         vi.parse_event(key_x);
 

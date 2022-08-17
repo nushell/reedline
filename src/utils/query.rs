@@ -2,14 +2,14 @@ use crate::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     EditCommand, Keybindings, PromptEditMode, ReedlineEvent,
 };
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, MediaKeyCode, ModifierKeyCode};
 use std::fmt::{Display, Formatter};
 use strum::IntoEnumIterator;
 
 struct ReedLineCrossTermKeyCode(crossterm::event::KeyCode);
 impl ReedLineCrossTermKeyCode {
     fn iterator() -> std::slice::Iter<'static, ReedLineCrossTermKeyCode> {
-        static KEYCODE: [ReedLineCrossTermKeyCode; 18] = [
+        static KEYCODE: [ReedLineCrossTermKeyCode; 27] = [
             ReedLineCrossTermKeyCode(KeyCode::Backspace),
             ReedLineCrossTermKeyCode(KeyCode::Enter),
             ReedLineCrossTermKeyCode(KeyCode::Left),
@@ -28,6 +28,15 @@ impl ReedLineCrossTermKeyCode {
             ReedLineCrossTermKeyCode(KeyCode::Char('a')),
             ReedLineCrossTermKeyCode(KeyCode::Null),
             ReedLineCrossTermKeyCode(KeyCode::Esc),
+            ReedLineCrossTermKeyCode(KeyCode::CapsLock),
+            ReedLineCrossTermKeyCode(KeyCode::ScrollLock),
+            ReedLineCrossTermKeyCode(KeyCode::NumLock),
+            ReedLineCrossTermKeyCode(KeyCode::PrintScreen),
+            ReedLineCrossTermKeyCode(KeyCode::Pause),
+            ReedLineCrossTermKeyCode(KeyCode::Menu),
+            ReedLineCrossTermKeyCode(KeyCode::KeypadBegin),
+            ReedLineCrossTermKeyCode(KeyCode::Media(MediaKeyCode::Play)),
+            ReedLineCrossTermKeyCode(KeyCode::Modifier(ModifierKeyCode::LeftHyper)),
         ];
         KEYCODE.iter()
     }
@@ -55,6 +64,15 @@ impl Display for ReedLineCrossTermKeyCode {
                 KeyCode::Char(_) => write!(f, "Char_<letter>"),
                 KeyCode::Null => write!(f, "Null"),
                 KeyCode::Esc => write!(f, "Esc"),
+                KeyCode::CapsLock => write!(f, "CapsLock"),
+                KeyCode::ScrollLock => write!(f, "ScrollLock"),
+                KeyCode::NumLock => write!(f, "NumLock"),
+                KeyCode::PrintScreen => write!(f, "PrintScreen"),
+                KeyCode::Pause => write!(f, "Pause"),
+                KeyCode::Menu => write!(f, "Menu"),
+                KeyCode::KeypadBegin => write!(f, "KeypadBegin"),
+                KeyCode::Media(_) => write!(f, "Media<code>"),
+                KeyCode::Modifier(_) => write!(f, "Modifier<code>"),
             },
         }
     }
@@ -62,10 +80,24 @@ impl Display for ReedLineCrossTermKeyCode {
 /// Return a `Vec` of the Reedline Keybinding Modifiers
 pub fn get_reedline_keybinding_modifiers() -> Vec<String> {
     vec![
-        "Alt".to_string(),
-        "Control".to_string(),
-        "Shift".to_string(),
+        // "Alt".to_string(),
+        // "Control".to_string(),
+        // "Shift".to_string(),
         "None".to_string(),
+        "LeftShift".to_string(),
+        "LeftControl".to_string(),
+        "LeftAlt".to_string(),
+        "LeftSuper".to_string(),
+        "LeftHyper".to_string(),
+        "LeftMeta".to_string(),
+        "RightShift".to_string(),
+        "RightControl".to_string(),
+        "RightAlt".to_string(),
+        "RightSuper".to_string(),
+        "RightHyper".to_string(),
+        "RightMeta".to_string(),
+        "IsoLevel3Shift".to_string(),
+        "IsoLevel5Shift".to_string(),
     ]
 }
 
@@ -94,7 +126,7 @@ pub fn get_reedline_edit_commands() -> Vec<String> {
 /// Get the default keybindings and return a `Vec<(String, String, String, String)>`
 /// where String 1 is `mode`, String 2 is `key_modifiers`, String 3 is `key_code`, and
 /// Sting 4 is `event`
-pub fn get_reedline_default_keybindings() -> Vec<(String, String, String, String)> {
+pub fn get_reedline_default_keybindings() -> Vec<(String, String, String, String, String, String)> {
     let options = vec![
         ("emacs", default_emacs_keybindings()),
         ("vi_normal", default_vi_normal_keybindings()),
@@ -110,8 +142,8 @@ pub fn get_reedline_default_keybindings() -> Vec<(String, String, String, String
 fn get_keybinding_strings(
     mode: &str,
     keybindings: &Keybindings,
-) -> Vec<(String, String, String, String)> {
-    let mut data: Vec<(String, String, String, String)> = keybindings
+) -> Vec<(String, String, String, String, String, String)> {
+    let mut data: Vec<(String, String, String, String, String, String)> = keybindings
         .get_keybindings()
         .iter()
         .map(|(combination, event)| {
@@ -119,6 +151,8 @@ fn get_keybinding_strings(
                 mode.to_string(),
                 format!("{:?}", combination.modifier),
                 format!("{:?}", combination.key_code),
+                format!("{:?}", combination.kind),
+                format!("{:?}", combination.state),
                 format!("{:?}", event),
             )
         })

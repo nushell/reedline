@@ -9,7 +9,7 @@ use crate::{
     enums::{EditCommand, ReedlineEvent},
     PromptEditMode,
 };
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
 /// Returns the current default emacs keybindings
 pub fn default_emacs_keybindings() -> Keybindings {
@@ -27,11 +27,15 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(
         KM::CONTROL,
         KC::Char('b'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left]),
     );
     kb.add_binding(
         KM::CONTROL,
         KC::Char('f'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintComplete,
             ReedlineEvent::MenuRight,
@@ -39,54 +43,146 @@ pub fn default_emacs_keybindings() -> Keybindings {
         ]),
     );
     // Undo/Redo
-    kb.add_binding(KM::CONTROL, KC::Char('g'), edit_bind(EC::Redo));
-    kb.add_binding(KM::CONTROL, KC::Char('z'), edit_bind(EC::Undo));
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('g'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::Redo),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('z'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::Undo),
+    );
     // Cutting
     kb.add_binding(
         KM::CONTROL,
         KC::Char('y'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         edit_bind(EC::PasteCutBufferBefore),
     );
-    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
-    kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::CutToEnd));
-    kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('w'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::CutWordLeft),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('k'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::CutToEnd),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('u'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::CutFromStart),
+    );
     // Edits
-    kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('t'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::SwapGraphemes),
+    );
 
     // *** ALT ***
     // Moves
-    kb.add_binding(KM::ALT, KC::Left, edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::ALT,
+        KC::Left,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::MoveWordLeft),
+    );
     kb.add_binding(
         KM::ALT,
         KC::Right,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
             edit_bind(EC::MoveWordRight),
         ]),
     );
-    kb.add_binding(KM::ALT, KC::Char('b'), edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('b'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::MoveWordLeft),
+    );
     kb.add_binding(
         KM::ALT,
         KC::Char('f'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
             edit_bind(EC::MoveWordRight),
         ]),
     );
     // Edits
-    kb.add_binding(KM::ALT, KC::Delete, edit_bind(EC::DeleteWord));
-    kb.add_binding(KM::ALT, KC::Backspace, edit_bind(EC::BackspaceWord));
+    kb.add_binding(
+        KM::ALT,
+        KC::Delete,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::DeleteWord),
+    );
+    kb.add_binding(
+        KM::ALT,
+        KC::Backspace,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::BackspaceWord),
+    );
     kb.add_binding(
         KM::ALT,
         KC::Char('m'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::Edit(vec![EditCommand::BackspaceWord]),
     );
     // Cutting
-    kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('d'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::CutWordRight),
+    );
     // Case changes
-    kb.add_binding(KM::ALT, KC::Char('u'), edit_bind(EC::UppercaseWord));
-    kb.add_binding(KM::ALT, KC::Char('l'), edit_bind(EC::LowercaseWord));
-    kb.add_binding(KM::ALT, KC::Char('c'), edit_bind(EC::CapitalizeChar));
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('u'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::UppercaseWord),
+    );
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('l'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::LowercaseWord),
+    );
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('c'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::CapitalizeChar),
+    );
 
     kb
 }
@@ -107,7 +203,12 @@ impl Default for Emacs {
 impl EditMode for Emacs {
     fn parse_event(&mut self, event: Event) -> ReedlineEvent {
         match event {
-            Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
+            Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind,
+                state,
+            }) => match (modifiers, code) {
                 (modifier, KeyCode::Char(c)) => {
                     // Note. The modifier can also be a combination of modifiers, for
                     // example:
@@ -137,19 +238,22 @@ impl EditMode for Emacs {
                         )])
                     } else {
                         self.keybindings
-                            .find_binding(modifier, KeyCode::Char(c))
+                            .find_binding(modifier, KeyCode::Char(c), kind, state)
                             .unwrap_or(ReedlineEvent::None)
                     }
                 }
                 (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                 _ => self
                     .keybindings
-                    .find_binding(modifiers, code)
+                    .find_binding(modifiers, code, kind, state)
                     .unwrap_or(ReedlineEvent::None),
             },
 
             Event::Mouse(_) => ReedlineEvent::Mouse,
             Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
+            Event::FocusGained => ReedlineEvent::FocusGained,
+            Event::FocusLost => ReedlineEvent::FocusLost,
+            Event::Paste(s) => ReedlineEvent::Paste(s),
         }
     }
 
@@ -168,6 +272,7 @@ impl Emacs {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crossterm::event::{KeyEventKind, KeyEventState};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -176,6 +281,8 @@ mod test {
         let ctrl_l = Event::Key(KeyEvent {
             modifiers: KeyModifiers::CONTROL,
             code: KeyCode::Char('l'),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
         });
         let result = emacs.parse_event(ctrl_l);
 
@@ -189,12 +296,16 @@ mod test {
             KeyModifiers::CONTROL,
             KeyCode::Char('l'),
             ReedlineEvent::HistoryHintComplete,
+            KeyEventKind::Press,
+            KeyEventState::NONE,
         );
 
         let mut emacs = Emacs::new(keybindings);
         let ctrl_l = Event::Key(KeyEvent {
             modifiers: KeyModifiers::CONTROL,
             code: KeyCode::Char('l'),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
         });
         let result = emacs.parse_event(ctrl_l);
 
@@ -207,6 +318,8 @@ mod test {
         let l = Event::Key(KeyEvent {
             modifiers: KeyModifiers::NONE,
             code: KeyCode::Char('l'),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
         });
         let result = emacs.parse_event(l);
 
@@ -223,6 +336,8 @@ mod test {
         let uppercase_l = Event::Key(KeyEvent {
             modifiers: KeyModifiers::SHIFT,
             code: KeyCode::Char('l'),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
         });
         let result = emacs.parse_event(uppercase_l);
 
@@ -240,6 +355,8 @@ mod test {
         let ctrl_l = Event::Key(KeyEvent {
             modifiers: KeyModifiers::CONTROL,
             code: KeyCode::Char('l'),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
         });
         let result = emacs.parse_event(ctrl_l);
 
@@ -253,6 +370,8 @@ mod test {
         let uppercase_l = Event::Key(KeyEvent {
             modifiers: KeyModifiers::SHIFT,
             code: KeyCode::Char('😀'),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
         });
         let result = emacs.parse_event(uppercase_l);
 

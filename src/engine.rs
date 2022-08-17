@@ -1,3 +1,5 @@
+use crossterm::event::{KeyEventKind, KeyEventState};
+
 #[cfg(feature = "bashisms")]
 use crate::{
     history::SearchFilter,
@@ -455,6 +457,8 @@ impl Reedline {
                         enter @ Event::Key(KeyEvent {
                             code: KeyCode::Enter,
                             modifiers: KeyModifiers::NONE,
+                            kind: KeyEventKind::Press,
+                            state: KeyEventState::NONE,
                         }) => {
                             crossterm_events.push(enter);
                             // Break early to check if the input is complete and
@@ -636,6 +640,9 @@ impl Reedline {
             | ReedlineEvent::MenuRight
             | ReedlineEvent::MenuPageNext
             | ReedlineEvent::MenuPagePrevious
+            | ReedlineEvent::FocusGained
+            | ReedlineEvent::FocusLost
+            | ReedlineEvent::Paste(_) // TODO: Should Paste be handled?
             | ReedlineEvent::RecordToTill => Ok(EventStatus::Inapplicable),
         }
     }
@@ -942,6 +949,9 @@ impl Reedline {
             ReedlineEvent::None | ReedlineEvent::Mouse | ReedlineEvent::RecordToTill => {
                 Ok(EventStatus::Inapplicable)
             }
+            ReedlineEvent::FocusGained => Ok(EventStatus::Handled),
+            ReedlineEvent::FocusLost => Ok(EventStatus::Handled),
+            ReedlineEvent::Paste(_) => Ok(EventStatus::Handled), // TODO: Handle Paste
         }
     }
 

@@ -1,3 +1,5 @@
+use crossterm::event::{KeyEventKind, KeyEventState};
+
 use {
     crate::{enums::ReedlineEvent, EditCommand},
     crossterm::event::{KeyCode, KeyModifiers},
@@ -9,6 +11,8 @@ use {
 pub struct KeyCombination {
     pub modifier: KeyModifiers,
     pub key_code: KeyCode,
+    pub kind: KeyEventKind,
+    pub state: KeyEventState,
 }
 
 /// Main definition of editor keybindings
@@ -46,6 +50,8 @@ impl Keybindings {
         &mut self,
         modifier: KeyModifiers,
         key_code: KeyCode,
+        kind: KeyEventKind,
+        state: KeyEventState,
         command: ReedlineEvent,
     ) {
         if let ReedlineEvent::UntilFound(subcommands) = &command {
@@ -55,13 +61,29 @@ impl Keybindings {
             );
         }
 
-        let key_combo = KeyCombination { modifier, key_code };
+        let key_combo = KeyCombination {
+            modifier,
+            key_code,
+            kind,
+            state,
+        };
         self.bindings.insert(key_combo, command);
     }
 
     /// Find a keybinding based on the modifier and keycode
-    pub fn find_binding(&self, modifier: KeyModifiers, key_code: KeyCode) -> Option<ReedlineEvent> {
-        let key_combo = KeyCombination { modifier, key_code };
+    pub fn find_binding(
+        &self,
+        modifier: KeyModifiers,
+        key_code: KeyCode,
+        kind: KeyEventKind,
+        state: KeyEventState,
+    ) -> Option<ReedlineEvent> {
+        let key_combo = KeyCombination {
+            modifier,
+            key_code,
+            kind,
+            state,
+        };
         self.bindings.get(&key_combo).cloned()
     }
 
@@ -72,8 +94,15 @@ impl Keybindings {
         &mut self,
         modifier: KeyModifiers,
         key_code: KeyCode,
+        kind: KeyEventKind,
+        state: KeyEventState,
     ) -> Option<ReedlineEvent> {
-        let key_combo = KeyCombination { modifier, key_code };
+        let key_combo = KeyCombination {
+            modifier,
+            key_code,
+            kind,
+            state,
+        };
         self.bindings.remove(&key_combo)
     }
 
@@ -96,12 +125,48 @@ pub fn add_common_control_bindings(kb: &mut Keybindings) {
     use KeyCode as KC;
     use KeyModifiers as KM;
 
-    kb.add_binding(KM::NONE, KC::Esc, ReedlineEvent::Esc);
-    kb.add_binding(KM::CONTROL, KC::Char('c'), ReedlineEvent::CtrlC);
-    kb.add_binding(KM::CONTROL, KC::Char('d'), ReedlineEvent::CtrlD);
-    kb.add_binding(KM::CONTROL, KC::Char('l'), ReedlineEvent::ClearScreen);
-    kb.add_binding(KM::CONTROL, KC::Char('r'), ReedlineEvent::SearchHistory);
-    kb.add_binding(KM::CONTROL, KC::Char('o'), ReedlineEvent::OpenEditor);
+    kb.add_binding(
+        KM::NONE,
+        KC::Esc,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        ReedlineEvent::Esc,
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('c'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        ReedlineEvent::CtrlC,
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('d'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        ReedlineEvent::CtrlD,
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('l'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        ReedlineEvent::ClearScreen,
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('r'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        ReedlineEvent::SearchHistory,
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('o'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        ReedlineEvent::OpenEditor,
+    );
 }
 /// Add the arrow navigation and its `Ctrl` variants
 pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
@@ -113,21 +178,29 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
     kb.add_binding(
         KM::NONE,
         KC::Up,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuUp, ReedlineEvent::Up]),
     );
     kb.add_binding(
         KM::NONE,
         KC::Down,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuDown, ReedlineEvent::Down]),
     );
     kb.add_binding(
         KM::NONE,
         KC::Left,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left]),
     );
     kb.add_binding(
         KM::NONE,
         KC::Right,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintComplete,
             ReedlineEvent::MenuRight,
@@ -136,21 +209,43 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
     );
 
     // Ctrl Left and Right
-    kb.add_binding(KM::CONTROL, KC::Left, edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Left,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::MoveWordLeft),
+    );
     kb.add_binding(
         KM::CONTROL,
         KC::Right,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
             edit_bind(EC::MoveWordRight),
         ]),
     );
     // Home/End & ctrl+a/ctrl+e
-    kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
-    kb.add_binding(KM::CONTROL, KC::Char('a'), edit_bind(EC::MoveToLineStart));
+    kb.add_binding(
+        KM::NONE,
+        KC::Home,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::MoveToLineStart),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('a'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::MoveToLineStart),
+    );
     kb.add_binding(
         KM::NONE,
         KC::End,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintComplete,
             edit_bind(EC::MoveToLineEnd),
@@ -159,23 +254,41 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
     kb.add_binding(
         KM::CONTROL,
         KC::Char('e'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintComplete,
             edit_bind(EC::MoveToLineEnd),
         ]),
     );
     // Ctrl Home/End
-    kb.add_binding(KM::CONTROL, KC::Home, edit_bind(EC::MoveToStart));
-    kb.add_binding(KM::CONTROL, KC::End, edit_bind(EC::MoveToEnd));
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Home,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::MoveToStart),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::End,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::MoveToEnd),
+    );
     // EMACS arrows
     kb.add_binding(
         KM::CONTROL,
         KC::Char('p'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuUp, ReedlineEvent::Up]),
     );
     kb.add_binding(
         KM::CONTROL,
         KC::Char('n'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
         ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuDown, ReedlineEvent::Down]),
     );
 }
@@ -187,11 +300,47 @@ pub fn add_common_edit_bindings(kb: &mut Keybindings) {
     use EditCommand as EC;
     use KeyCode as KC;
     use KeyModifiers as KM;
-    kb.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::Backspace));
-    kb.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
-    kb.add_binding(KM::CONTROL, KC::Backspace, edit_bind(EC::BackspaceWord));
-    kb.add_binding(KM::CONTROL, KC::Delete, edit_bind(EC::DeleteWord));
+    kb.add_binding(
+        KM::NONE,
+        KC::Backspace,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::Backspace),
+    );
+    kb.add_binding(
+        KM::NONE,
+        KC::Delete,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::Delete),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Backspace,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::BackspaceWord),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Delete,
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::DeleteWord),
+    );
     // Base commands should not affect cut buffer
-    kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
-    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::BackspaceWord));
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('h'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::Backspace),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('w'),
+        KeyEventKind::Press,
+        KeyEventState::NONE,
+        edit_bind(EC::BackspaceWord),
+    );
 }
