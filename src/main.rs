@@ -20,10 +20,7 @@ use {
         DefaultValidator, EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu,
         Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi,
     },
-    std::{
-        io::{stdout, Write},
-        time::Duration,
-    },
+    std::{io::stdout, time::Duration},
 };
 
 fn main() -> Result<()> {
