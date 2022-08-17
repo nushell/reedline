@@ -267,9 +267,9 @@ mod test {
         keybindings.add_binding(
             KeyModifiers::NONE,
             KeyCode::Char('e'),
-            ReedlineEvent::ClearScreen,
             KeyEventKind::Press,
             KeyEventState::NONE,
+            ReedlineEvent::ClearScreen,
         );
 
         let mut vi = Vi {
@@ -296,9 +296,9 @@ mod test {
         keybindings.add_binding(
             KeyModifiers::SHIFT,
             KeyCode::Char('$'),
-            ReedlineEvent::CtrlD,
             KeyEventKind::Press,
             KeyEventState::NONE,
+            ReedlineEvent::CtrlD,
         );
 
         let mut vi = Vi {

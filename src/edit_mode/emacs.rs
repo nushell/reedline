@@ -295,9 +295,9 @@ mod test {
         keybindings.add_binding(
             KeyModifiers::CONTROL,
             KeyCode::Char('l'),
-            ReedlineEvent::HistoryHintComplete,
             KeyEventKind::Press,
             KeyEventState::NONE,
+            ReedlineEvent::HistoryHintComplete,
         );
 
         let mut emacs = Emacs::new(keybindings);
