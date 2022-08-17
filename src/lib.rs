@@ -44,7 +44,7 @@
 //! //    crossterm = "*"
 //!
 //! use {
-//!   crossterm::event::{KeyCode, KeyModifiers},
+//!   crossterm::event::{KeyCode, KeyModifiers, KeyEventKind, KeyEventState},
 //!   reedline::{default_emacs_keybindings, EditCommand, Reedline, Emacs, ReedlineEvent},
 //! };
 //!
@@ -52,6 +52,8 @@
 //! keybindings.add_binding(
 //!     KeyModifiers::ALT,
 //!     KeyCode::Char('m'),
+//!     KeyEventKind::Press,
+//!     KeyEventState::NONE,
 //!     ReedlineEvent::Edit(vec![EditCommand::BackspaceWord]),
 //! );
 //! let edit_mode = Box::new(Emacs::new(keybindings));
