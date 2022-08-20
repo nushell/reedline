@@ -327,8 +327,10 @@ mod test {
         #[case] modifiers: KeyModifiers,
         #[case] expected: ViToTill,
     ) {
-        let mut vi = Vi::default();
-        vi.mode = ViMode::Normal;
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Vi::default()
+        };
 
         let to_till = Event::Key(KeyEvent {
             code: KeyCode::Char(code),
