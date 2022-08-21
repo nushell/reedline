@@ -14,15 +14,15 @@ It is currently primarily developed as the interactive editor for [nushell](http
 ## Outline
 
 - [Examples](#examples)
-  - [Quickstart example](#basic-example)
-  - [Keybinding configuration example](#integrate-with-custom-keybindings)
-  - [History example](#integrate-with-history)
-  - [Syntax highlighting example](#integrate-with-custom-syntax-highlighter)
-  - [Interactive tab-completion example](#integrate-with-custom-tab-completion)
-  - [Fish-style history autosuggestions](#integrate-with-hinter-for-fish-style-history-autosuggestions)
-  - [Line validation example](#integrate-with-custom-line-completion-validator)
-  - [Vi-style edit mode example](#integrate-with-custom-edit-mode)
-- [Development status](#are-we-prompt-yet-development-status)
+  - [Basic example](#basic-example)
+  - [Integrate with custom keybindings](#integrate-with-custom-keybindings)
+  - [Integrate with `History`](#integrate-with-history)
+  - [Integrate with custom syntax `Highlighter`](#integrate-with-custom-syntax-highlighter)
+  - [Integrate with custom tab completion](#integrate-with-custom-tab-completion)
+  - [Integrate with `Hinter` for fish-style history autosuggestions](#integrate-with-hinter-for-fish-style-history-autosuggestions)
+  - [Integrate with custom line completion `Validator`](#integrate-with-custom-line-completion-validator)
+  - [Use custom `EditMode`](#use-custom-editmode)
+- [Are we prompt yet? (Development status)](#are-we-prompt-yet-development-status)
 - [Contributing](./CONTRIBUTING.md)
 - [Alternatives](#alternatives)
 
@@ -81,7 +81,7 @@ keybindings.add_binding(
 let mut line_editor = Reedline::create().with_keybindings(keybindings);
 ```
 
-## Integrate with `History`
+### Integrate with `History`
 
 ```rust,no_run
 // Create a reedline object with history support, including history size limits
