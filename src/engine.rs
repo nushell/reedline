@@ -486,6 +486,13 @@ impl Reedline {
         loop {
             let mut paste_enter_state = false;
 
+            if let Some(ref external_printer) = self.external_printer {
+                if let Ok(line) = external_printer.receiver.try_recv() {
+                    self.painter.print_crlf();
+                    self.print_line(&line).unwrap_or_default();
+                }
+            }
+
             if event::poll(Duration::from_millis(1000))? {
                 let mut latest_resize = None;
 
@@ -512,15 +519,6 @@ impl Reedline {
                         }
                         x => {
                             crossterm_events.push(x);
-                        }
-                    }
-                    if let Some(ref external_printer) = self.external_printer {
-                        if let Ok(line) = external_printer.receiver.try_recv() {
-                            // todo:
-                            //  - go to the beginning of next line
-                            //  - self.print_line()
-                            self.painter.print_crlf();
-                            self.print_line(&line).unwrap_or_default();
                         }
                     }
                 }
