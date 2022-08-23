@@ -490,10 +490,11 @@ impl Reedline {
                 if let Ok(line) = external_printer.receiver.try_recv() {
                     self.painter.print_crlf();
                     self.print_line(&line).unwrap_or_default();
+                    self.repaint(prompt)?;
                 }
             }
 
-            if event::poll(Duration::from_millis(1000))? {
+            if event::poll(Duration::from_millis(100))? {
                 let mut latest_resize = None;
 
                 // There could be multiple events queued up!
