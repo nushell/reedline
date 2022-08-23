@@ -215,7 +215,7 @@ mod painting;
 pub use painting::{Painter, StyledText};
 
 mod engine;
-pub use engine::Reedline;
+pub use engine::{Reedline, ExternalPrinter};
 
 mod result;
 pub(crate) use result::Result;
