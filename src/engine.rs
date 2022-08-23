@@ -516,6 +516,10 @@ impl Reedline {
                     }
                     if let Some(ref external_printer) = self.external_printer {
                         if let Ok(line) = external_printer.receiver.try_recv() {
+                            // todo:
+                            //  - go to the beginning of next line
+                            //  - self.print_line()
+                            self.painter.print_crlf();
                             self.print_line(&line).unwrap_or_default();
                         }
                     }
