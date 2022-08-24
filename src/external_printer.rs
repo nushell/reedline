@@ -1,5 +1,5 @@
 #[cfg(feature = "external_printer")]
-use crossbeam::channel::{bounded, Receiver, Sender};
+use crossbeam::channel::{bounded, Receiver, Sender, SendError};
 
 /// An ExternalPrinter allows to print messages of text while editing a line.
 /// The message is printed as a new line, the line-edit will continue below the
@@ -28,16 +28,13 @@ impl ExternalPrinter {
     }
 
     /// Convenience method if the whole Printer is cloned, blocks if max_cap is reached.
-    pub fn print(&self, line: &str) {
-        self.sender.send(line.to_string()).unwrap_or_default();
+    ///
+    pub fn print(&self, line: &str) -> Result<(), SendError<String>> {
+        self.sender.send(line.to_string())
     }
 
     /// Convenience method to get a line if any, doesn´t block.
     pub fn get_line(&self) -> Option<String> {
-        if let Ok(line) = self.receiver.try_recv() {
-            Some(line)
-        } else {
-            None
-        }
+        self.receiver.try_recv().ok()
     }
 }
