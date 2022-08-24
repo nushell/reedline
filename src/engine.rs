@@ -5,7 +5,9 @@ use crate::{
 };
 
 #[cfg(feature = "external_printer")]
-use crate::external_printer::ExternalPrinter;
+use {crate::external_printer::ExternalPrinter,
+     crossbeam::channel::TryRecvError,
+};
 use crate::result::{ReedlineError, ReedlineErrorVariants};
 use {
     crate::{
@@ -458,9 +460,10 @@ impl Reedline {
 
             #[cfg(feature = "external_printer")]
             if let Some(ref external_printer) = self.external_printer {
-                if let Ok(line) = external_printer.receiver().try_recv() {
+                let messages = Self::external_messages(external_printer)?;
+                if !messages.is_empty() {
                     self.painter.print_crlf()?;
-                    self.print_line(&line)?;
+                    self.print_line(&messages)?;
                     self.repaint(prompt)?;
                 }
             }
@@ -477,9 +480,9 @@ impl Reedline {
                             latest_resize = Some((x, y));
                         }
                         enter @ Event::Key(KeyEvent {
-                            code: KeyCode::Enter,
-                            modifiers: KeyModifiers::NONE,
-                        }) => {
+                                               code: KeyCode::Enter,
+                                               modifiers: KeyModifiers::NONE,
+                                           }) => {
                             crossterm_events.push(enter);
                             // Break early to check if the input is complete and
                             // can be send to the hosting application. If
@@ -543,6 +546,26 @@ impl Reedline {
                     }
                 }
             }
+        }
+    }
+    #[cfg(feature = "external_printer")]
+    fn external_messages(external_printer: &ExternalPrinter) -> Result<String> {
+        let mut messages = Vec::new();
+        loop {
+            let result = external_printer.receiver().try_recv();
+            match result {
+                Ok(line) => { messages.push(line); }
+                Err(TryRecvError::Empty) => { break; }
+                Err(TryRecvError::Disconnected) => {
+                    return Err(Error::new(ErrorKind::NotConnected,
+                                          TryRecvError::Disconnected));
+                }
+            }
+        }
+        if !messages.is_empty() {
+            Ok(messages.join("\r\n"))
+        } else {
+            Ok(String::new())
         }
     }
 
@@ -689,11 +712,11 @@ impl Reedline {
 
                         if self.partial_completions
                             && menu.can_partially_complete(
-                                self.quick_completions,
-                                &mut self.editor,
-                                self.completer.as_mut(),
-                                self.history.as_ref(),
-                            )
+                            self.quick_completions,
+                            &mut self.editor,
+                            self.completer.as_mut(),
+                            self.history.as_ref(),
+                        )
                         {
                             return Ok(EventStatus::Handled);
                         }
