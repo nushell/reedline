@@ -5,8 +5,10 @@ use crate::{
 };
 
 #[cfg(feature = "external_printer")]
-use {crate::external_printer::ExternalPrinter,
-     crossbeam::channel::TryRecvError,
+use {
+    crate::external_printer::ExternalPrinter,
+    std::io::{Error, ErrorKind},
+    crossbeam::channel::TryRecvError,
 };
 use crate::result::{ReedlineError, ReedlineErrorVariants};
 use {
