@@ -4,6 +4,8 @@ use crate::{
     menu_functions::{parse_selection_char, ParseAction},
 };
 
+#[cfg(feature = "external_printer")]
+use crate::external_printer::ExternalPrinter;
 use crate::result::{ReedlineError, ReedlineErrorVariants};
 use {
     crate::{
@@ -23,7 +25,6 @@ use {
         EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
     },
-    crossbeam::channel::{bounded, Receiver, Sender},
     crossterm::{
         event,
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
@@ -31,40 +32,6 @@ use {
     },
     std::{borrow::Borrow, fs::File, io, io::Write, process::Command, time::Duration},
 };
-
-#[derive(Debug, Clone)]
-pub struct ExternalPrinter {
-    sender: Sender<String>,
-    receiver: Receiver<String>,
-}
-
-impl ExternalPrinter {
-    pub fn new(max_cap: usize) -> Self {
-        let (sender, receiver) = bounded::<String>(max_cap);
-        Self { sender, receiver }
-    }
-    /// Gets a Sender to use the printer externally by sending lines to it
-    pub fn sender(&self) -> Sender<String> {
-        self.sender.clone()
-    }
-    /// Receiver to get messages if any
-    pub fn receiver(&self) -> &Receiver<String> {
-        &self.receiver
-    }
-
-    /// Convenience method if the whole Printer is Cloned
-    pub fn print(&self, line: &str) {
-        self.sender.send(line.to_string()).unwrap_or_default();
-    }
-
-    /// Convenience method to get a lien if any
-    pub fn get_line(&self) -> Option<String> {
-        if let Ok(line) = self.receiver.try_recv() {
-            Some(line)
-        } else { None }
-    }
-}
-
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for
 // events, to accelerate the handling of paste or compound resize events. Having
@@ -156,6 +123,7 @@ pub struct Reedline {
     // Text editor used to open the line buffer for editing
     buffer_editor: Option<BufferEditor>,
 
+    #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter>,
 }
 
@@ -205,6 +173,7 @@ impl Reedline {
             use_ansi_coloring: true,
             menus: Vec::new(),
             buffer_editor: None,
+            #[cfg(feature = "external_printer")]
             external_printer: None,
         }
     }
@@ -262,6 +231,7 @@ impl Reedline {
     }
 
     /// Adds an external printer
+    #[cfg(feature = "external_printer")]
     pub fn with_external_printer(mut self, printer: ExternalPrinter) -> Self {
         self.external_printer = Some(printer);
         self
@@ -486,10 +456,11 @@ impl Reedline {
         loop {
             let mut paste_enter_state = false;
 
+            #[cfg(feature = "external_printer")]
             if let Some(ref external_printer) = self.external_printer {
-                if let Ok(line) = external_printer.receiver.try_recv() {
-                    self.painter.print_crlf();
-                    self.print_line(&line).unwrap_or_default();
+                if let Ok(line) = external_printer.receiver().try_recv() {
+                    self.painter.print_crlf()?;
+                    self.print_line(&line)?;
                     self.repaint(prompt)?;
                 }
             }
@@ -506,9 +477,9 @@ impl Reedline {
                             latest_resize = Some((x, y));
                         }
                         enter @ Event::Key(KeyEvent {
-                                               code: KeyCode::Enter,
-                                               modifiers: KeyModifiers::NONE,
-                                           }) => {
+                            code: KeyCode::Enter,
+                            modifiers: KeyModifiers::NONE,
+                        }) => {
                             crossterm_events.push(enter);
                             // Break early to check if the input is complete and
                             // can be send to the hosting application. If
@@ -718,11 +689,11 @@ impl Reedline {
 
                         if self.partial_completions
                             && menu.can_partially_complete(
-                            self.quick_completions,
-                            &mut self.editor,
-                            self.completer.as_mut(),
-                            self.history.as_ref(),
-                        )
+                                self.quick_completions,
+                                &mut self.editor,
+                                self.completer.as_mut(),
+                                self.history.as_ref(),
+                            )
                         {
                             return Ok(EventStatus::Handled);
                         }
