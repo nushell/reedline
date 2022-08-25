@@ -4,13 +4,13 @@ use crate::{
     menu_functions::{parse_selection_char, ParseAction},
 };
 
+use crate::result::{ReedlineError, ReedlineErrorVariants};
 #[cfg(feature = "external_printer")]
 use {
     crate::external_printer::ExternalPrinter,
-    std::io::{Error, ErrorKind},
     crossbeam::channel::TryRecvError,
+    std::io::{Error, ErrorKind},
 };
-use crate::result::{ReedlineError, ReedlineErrorVariants};
 use {
     crate::{
         completion::{Completer, DefaultCompleter},
@@ -482,9 +482,9 @@ impl Reedline {
                             latest_resize = Some((x, y));
                         }
                         enter @ Event::Key(KeyEvent {
-                                               code: KeyCode::Enter,
-                                               modifiers: KeyModifiers::NONE,
-                                           }) => {
+                            code: KeyCode::Enter,
+                            modifiers: KeyModifiers::NONE,
+                        }) => {
                             crossterm_events.push(enter);
                             // Break early to check if the input is complete and
                             // can be send to the hosting application. If
@@ -556,11 +556,17 @@ impl Reedline {
         loop {
             let result = external_printer.receiver().try_recv();
             match result {
-                Ok(line) => { messages.push(line); }
-                Err(TryRecvError::Empty) => { break; }
+                Ok(line) => {
+                    messages.push(line);
+                }
+                Err(TryRecvError::Empty) => {
+                    break;
+                }
                 Err(TryRecvError::Disconnected) => {
-                    return Err(Error::new(ErrorKind::NotConnected,
-                                          TryRecvError::Disconnected));
+                    return Err(Error::new(
+                        ErrorKind::NotConnected,
+                        TryRecvError::Disconnected,
+                    ));
                 }
             }
         }
@@ -714,11 +720,11 @@ impl Reedline {
 
                         if self.partial_completions
                             && menu.can_partially_complete(
-                            self.quick_completions,
-                            &mut self.editor,
-                            self.completer.as_mut(),
-                            self.history.as_ref(),
-                        )
+                                self.quick_completions,
+                                &mut self.editor,
+                                self.completer.as_mut(),
+                                self.history.as_ref(),
+                            )
                         {
                             return Ok(EventStatus::Handled);
                         }

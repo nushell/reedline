@@ -1,5 +1,5 @@
 #[cfg(feature = "external_printer")]
-use crossbeam::channel::{bounded, Receiver, Sender, SendError};
+use crossbeam::channel::{bounded, Receiver, SendError, Sender};
 
 /// An ExternalPrinter allows to print messages of text while editing a line.
 /// The message is printed as a new line, the line-edit will continue below the
