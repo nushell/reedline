@@ -178,6 +178,25 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
         KC::Char('n'),
         ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuDown, ReedlineEvent::Down]),
     );
+    // EMACS word moves
+    kb.add_binding(KM::ALT, KC::Left, edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::ALT,
+        KC::Right,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::HistoryHintWordComplete,
+            edit_bind(EC::MoveWordRight),
+        ]),
+    );
+    kb.add_binding(KM::ALT, KC::Char('b'), edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('f'),
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::HistoryHintWordComplete,
+            edit_bind(EC::MoveWordRight),
+        ]),
+    );
 }
 
 /// Add basic functionality to edit
@@ -194,4 +213,16 @@ pub fn add_common_edit_bindings(kb: &mut Keybindings) {
     // Base commands should not affect cut buffer
     kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
     kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::BackspaceWord));
+
+    // Cutting
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('y'),
+        edit_bind(EC::PasteCutBufferBefore),
+    );
+    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
+    kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::CutToEnd));
+    kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
+    // Edits
+    kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
 }

@@ -41,38 +41,8 @@ pub fn default_emacs_keybindings() -> Keybindings {
     // Undo/Redo
     kb.add_binding(KM::CONTROL, KC::Char('g'), edit_bind(EC::Redo));
     kb.add_binding(KM::CONTROL, KC::Char('z'), edit_bind(EC::Undo));
-    // Cutting
-    kb.add_binding(
-        KM::CONTROL,
-        KC::Char('y'),
-        edit_bind(EC::PasteCutBufferBefore),
-    );
-    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
-    kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::CutToEnd));
-    kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
-    // Edits
-    kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
 
     // *** ALT ***
-    // Moves
-    kb.add_binding(KM::ALT, KC::Left, edit_bind(EC::MoveWordLeft));
-    kb.add_binding(
-        KM::ALT,
-        KC::Right,
-        ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWordRight),
-        ]),
-    );
-    kb.add_binding(KM::ALT, KC::Char('b'), edit_bind(EC::MoveWordLeft));
-    kb.add_binding(
-        KM::ALT,
-        KC::Char('f'),
-        ReedlineEvent::UntilFound(vec![
-            ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWordRight),
-        ]),
-    );
     // Edits
     kb.add_binding(KM::ALT, KC::Delete, edit_bind(EC::DeleteWord));
     kb.add_binding(KM::ALT, KC::Backspace, edit_bind(EC::BackspaceWord));
