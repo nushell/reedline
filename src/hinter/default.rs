@@ -24,7 +24,11 @@ impl Hinter for DefaultHinter {
                 .expect("todo: error handling")
                 .get(0)
                 .map_or_else(String::new, |entry| {
-                    entry.command_line[line.len()..].to_string()
+                    entry
+                        .command_line
+                        .get(line.len()..)
+                        .unwrap_or_default()
+                        .to_string()
                 })
         } else {
             String::new()
