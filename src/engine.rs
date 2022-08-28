@@ -234,13 +234,6 @@ impl Reedline {
         self
     }
 
-    /// Adds an external printer
-    #[cfg(feature = "external_printer")]
-    pub fn with_external_printer(mut self, printer: ExternalPrinter) -> Self {
-        self.external_printer = Some(printer);
-        self
-    }
-
     /// Turn on quick completions. These completions will auto-select if the completer
     /// ever narrows down to a single entry.
     #[must_use]
@@ -548,32 +541,6 @@ impl Reedline {
                     }
                 }
             }
-        }
-    }
-    #[cfg(feature = "external_printer")]
-    fn external_messages(external_printer: &ExternalPrinter) -> Result<String> {
-        let mut messages = Vec::new();
-        loop {
-            let result = external_printer.receiver().try_recv();
-            match result {
-                Ok(line) => {
-                    messages.push(line);
-                }
-                Err(TryRecvError::Empty) => {
-                    break;
-                }
-                Err(TryRecvError::Disconnected) => {
-                    return Err(Error::new(
-                        ErrorKind::NotConnected,
-                        TryRecvError::Disconnected,
-                    ));
-                }
-            }
-        }
-        if !messages.is_empty() {
-            Ok(messages.join("\r\n"))
-        } else {
-            Ok(String::new())
         }
     }
 
@@ -1426,6 +1393,41 @@ impl Reedline {
         self.painter
             .repaint_buffer(prompt, &lines, menu, self.use_ansi_coloring)
     }
+
+    /// Adds an external printer
+    #[cfg(feature = "external_printer")]
+    pub fn with_external_printer(mut self, printer: ExternalPrinter) -> Self {
+        self.external_printer = Some(printer);
+        self
+    }
+
+    #[cfg(feature = "external_printer")]
+    fn external_messages(external_printer: &ExternalPrinter) -> Result<String> {
+        let mut messages = Vec::new();
+        loop {
+            let result = external_printer.receiver().try_recv();
+            match result {
+                Ok(line) => {
+                    messages.push(line);
+                }
+                Err(TryRecvError::Empty) => {
+                    break;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    return Err(Error::new(
+                        ErrorKind::NotConnected,
+                        TryRecvError::Disconnected,
+                    ));
+                }
+            }
+        }
+        if !messages.is_empty() {
+            Ok(messages.join("\r\n"))
+        } else {
+            Ok(String::new())
+        }
+    }
+
 }
 
 #[test]
