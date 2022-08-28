@@ -1427,7 +1427,6 @@ impl Reedline {
             Ok(String::new())
         }
     }
-
 }
 
 #[test]
