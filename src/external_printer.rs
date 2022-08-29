@@ -1,6 +1,10 @@
+//! To print messages while editing a line
+//! See example:
+//! cargo run --example external_printer --features=external_printer
 #[cfg(feature = "external_printer")]
 use crossbeam::channel::{bounded, Receiver, SendError, Sender};
 
+#[cfg(feature = "external_printer")]
 pub const EXTERNAL_PRINTER_DEFAULT_CAPACITY: usize = 20;
 
 /// An ExternalPrinter allows to print messages of text while editing a line.

@@ -455,10 +455,11 @@ impl Reedline {
 
             #[cfg(feature = "external_printer")]
             if let Some(ref external_printer) = self.external_printer {
+                // get messages from printer as crlf separated "lines"
                 let messages = Self::external_messages(external_printer)?;
                 if !messages.is_empty() {
-                    self.painter.print_crlf()?;
-                    self.print_line(&messages)?;
+                    // print the message(s)
+                    self.painter.print_external_message(&messages)?;
                     self.repaint(prompt)?;
                 }
             }

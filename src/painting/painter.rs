@@ -452,6 +452,28 @@ impl Painter {
 
         self.stdout.flush()
     }
+
+    /// Prints an external message
+    pub fn print_external_message(&mut self, msg: &str) -> Result<()> {
+        let lines = match msg.lines().count() as u16 {
+            // if there is a message, it has at least one line, one line is added for the crlf
+            0 => 2,
+            // one line is added for the crlf
+            val => val + 1,
+        };
+
+        // calculate prompt row position
+        let new_start = self.prompt_start_row.saturating_add(lines);
+        if new_start >= self.screen_height() {
+            self.prompt_start_row = self.screen_height() - 1;
+        } else {
+            self.prompt_start_row = new_start;
+        }
+        // Start output in a new line at the beginning
+        self.print_crlf()?;
+        self.paint_line(msg)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
