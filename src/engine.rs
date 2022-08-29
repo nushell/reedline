@@ -128,7 +128,7 @@ pub struct Reedline {
     buffer_editor: Option<BufferEditor>,
 
     #[cfg(feature = "external_printer")]
-    external_printer: Option<ExternalPrinter>,
+    external_printer: Option<ExternalPrinter<String>>,
 }
 
 struct BufferEditor {
@@ -1397,13 +1397,13 @@ impl Reedline {
 
     /// Adds an external printer
     #[cfg(feature = "external_printer")]
-    pub fn with_external_printer(mut self, printer: ExternalPrinter) -> Self {
+    pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
         self.external_printer = Some(printer);
         self
     }
 
     #[cfg(feature = "external_printer")]
-    fn external_messages(external_printer: &ExternalPrinter) -> Result<String> {
+    fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<String> {
         let mut messages = Vec::new();
         loop {
             let result = external_printer.receiver().try_recv();
