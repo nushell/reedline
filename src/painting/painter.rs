@@ -1,3 +1,4 @@
+use crate::LineBuffer;
 use {
     super::utils::{coerce_crlf, line_width},
     crate::{
@@ -13,7 +14,6 @@ use {
     },
     std::io::Write,
 };
-use crate::LineBuffer;
 
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
@@ -541,7 +541,7 @@ mod tests {
             "sentence1\nsentence2",
         );
 
-        assert_eq!(skip_buffer_lines(string, 0, Some(0)), "sentence1", );
-        assert_eq!(skip_buffer_lines(string, 1, Some(0)), "sentence2", );
+        assert_eq!(skip_buffer_lines(string, 0, Some(0)), "sentence1",);
+        assert_eq!(skip_buffer_lines(string, 1, Some(0)), "sentence2",);
     }
 }
