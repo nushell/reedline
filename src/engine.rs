@@ -459,7 +459,7 @@ impl Reedline {
                 let messages = Self::external_messages(external_printer)?;
                 if !messages.is_empty() {
                     // print the message(s)
-                    self.painter.print_external_message(&messages)?;
+                    self.painter.print_external_message(&messages, self.editor.line_buffer())?;
                     self.repaint(prompt)?;
                 }
             }
@@ -476,9 +476,9 @@ impl Reedline {
                             latest_resize = Some((x, y));
                         }
                         enter @ Event::Key(KeyEvent {
-                            code: KeyCode::Enter,
-                            modifiers: KeyModifiers::NONE,
-                        }) => {
+                                               code: KeyCode::Enter,
+                                               modifiers: KeyModifiers::NONE,
+                                           }) => {
                             crossterm_events.push(enter);
                             // Break early to check if the input is complete and
                             // can be send to the hosting application. If
@@ -688,11 +688,11 @@ impl Reedline {
 
                         if self.partial_completions
                             && menu.can_partially_complete(
-                                self.quick_completions,
-                                &mut self.editor,
-                                self.completer.as_mut(),
-                                self.history.as_ref(),
-                            )
+                            self.quick_completions,
+                            &mut self.editor,
+                            self.completer.as_mut(),
+                            self.history.as_ref(),
+                        )
                         {
                             return Ok(EventStatus::Handled);
                         }

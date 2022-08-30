@@ -13,6 +13,7 @@ use {
     },
     std::io::Write,
 };
+use crate::LineBuffer;
 
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
@@ -454,14 +455,26 @@ impl Painter {
     }
 
     /// Prints an external message
-    pub fn print_external_message(&mut self, msg: &str) -> Result<()> {
+    pub fn print_external_message(&mut self, msg: &str, line_buffer: &LineBuffer) -> Result<()> {
+        let buffer_lines: Vec<_> = line_buffer.get_buffer().lines().collect();
+        // start with the "nomal" line-count
+        let mut b_num_lines = buffer_lines.len() as u16;
+        // check how many screen-lines each "line" will take
+        for b_line in buffer_lines {
+            let screen_lines = (b_line.len() as u16) / self.screen_width();
+            if screen_lines > 1 {
+                // one line was already counted
+                b_num_lines += screen_lines - 1
+            }
+        }
+
         let lines = match msg.lines().count() as u16 {
             // if there is a message, it has at least one line, one line is added for the crlf
             0 => 2,
             // one line is added for the crlf
             val => val + 1,
         };
-
+        let lines = lines + b_num_lines;
         // calculate prompt row position
         let new_start = self.prompt_start_row.saturating_add(lines);
         if new_start >= self.screen_height() {
@@ -528,7 +541,7 @@ mod tests {
             "sentence1\nsentence2",
         );
 
-        assert_eq!(skip_buffer_lines(string, 0, Some(0)), "sentence1",);
-        assert_eq!(skip_buffer_lines(string, 1, Some(0)), "sentence2",);
+        assert_eq!(skip_buffer_lines(string, 0, Some(0)), "sentence1", );
+        assert_eq!(skip_buffer_lines(string, 1, Some(0)), "sentence2", );
     }
 }
