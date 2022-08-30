@@ -456,17 +456,18 @@ impl Painter {
 
     /// Prints an external message
     pub fn print_external_message(&mut self, msg: &str, line_buffer: &LineBuffer) -> Result<()> {
-        let buffer_lines: Vec<_> = line_buffer.get_buffer().lines().collect();
-        // start with the "nomal" line-count
-        let mut b_num_lines = buffer_lines.len() as u16;
-        // check how many screen-lines each "line" will take
-        for b_line in buffer_lines {
-            let screen_lines = (b_line.len() as u16) / self.screen_width();
-            if screen_lines > 1 {
-                // one line was already counted
-                b_num_lines += screen_lines - 1
-            }
-        }
+        let b_num_lines = line_buffer
+            .get_buffer()
+            .lines()
+            .fold(0, |mut sum: u16, line| {
+                let screen_lines = (line.len() as u16) / self.screen_width();
+                if screen_lines > 1 {
+                    sum += screen_lines
+                } else {
+                    sum += 1
+                }
+                sum
+            });
 
         let lines = match msg.lines().count() as u16 {
             // if there is a message, it has at least one line, one line is added for the crlf
