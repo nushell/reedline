@@ -459,8 +459,11 @@ impl Reedline {
                 let messages = Self::external_messages(external_printer)?;
                 if !messages.is_empty() {
                     // print the message(s)
-                    self.painter
-                        .print_external_message(&messages, self.editor.line_buffer())?;
+                    self.painter.print_external_message(
+                        messages,
+                        self.editor.line_buffer(),
+                        prompt,
+                    )?;
                     self.repaint(prompt)?;
                 }
             }
@@ -1404,7 +1407,7 @@ impl Reedline {
     }
 
     #[cfg(feature = "external_printer")]
-    fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<String> {
+    fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<Vec<String>> {
         let mut messages = Vec::new();
         loop {
             let result = external_printer.receiver().try_recv();
@@ -1423,11 +1426,7 @@ impl Reedline {
                 }
             }
         }
-        if !messages.is_empty() {
-            Ok(messages.join("\r\n"))
-        } else {
-            Ok(String::new())
-        }
+        Ok(messages)
     }
 }
 

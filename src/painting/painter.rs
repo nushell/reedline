@@ -1,13 +1,12 @@
-use crate::LineBuffer;
 use {
     super::utils::{coerce_crlf, line_width},
     crate::{
         menu::{Menu, ReedlineMenu},
         painting::PromptLines,
-        Prompt,
+        LineBuffer, Prompt,
     },
     crossterm::{
-        cursor::{self, MoveTo, RestorePosition, SavePosition},
+        cursor::{self, MoveTo, MoveUp, RestorePosition, SavePosition},
         style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor},
         terminal::{self, Clear, ClearType, ScrollUp},
         QueueableCommand, Result,
@@ -455,37 +454,47 @@ impl Painter {
     }
 
     /// Prints an external message
-    pub fn print_external_message(&mut self, msg: &str, line_buffer: &LineBuffer) -> Result<()> {
-        let b_num_lines = line_buffer
-            .get_buffer()
-            .lines()
-            .fold(0, |mut sum: u16, line| {
-                let screen_lines = (line.len() as u16) / self.screen_width();
-                if screen_lines > 1 {
-                    sum += screen_lines
-                } else {
-                    sum += 1
+    pub fn print_external_message(
+        &mut self,
+        messages: Vec<String>,
+        line_buffer: &LineBuffer,
+        prompt: &dyn Prompt,
+    ) -> Result<()> {
+        // adding 3 seems to be right for first line-wrap
+        let prompt_len = prompt.render_prompt_right().len() + 3;
+        let mut buffer_num_lines = 0_u16;
+        for (i, line) in line_buffer.get_buffer().lines().enumerate() {
+            let screen_lines = match i {
+                0 => {
+                    // the first line has to deal with the prompt
+                    let first_line_len = line.len() + prompt_len;
+                    // at least, it is one line
+                    ((first_line_len as u16) / (self.screen_width())) + 1
                 }
-                sum
-            });
-
-        let lines = match msg.lines().count() as u16 {
-            // if there is a message, it has at least one line, one line is added for the crlf
-            0 => 2,
-            // one line is added for the crlf
-            val => val + 1,
-        };
-        let lines = lines + b_num_lines;
-        // calculate prompt row position
-        let new_start = self.prompt_start_row.saturating_add(lines);
-        if new_start >= self.screen_height() {
-            self.prompt_start_row = self.screen_height() - 1;
-        } else {
-            self.prompt_start_row = new_start;
+                _ => {
+                    // the n-th line, no prompt, at least, it is one line
+                    ((line.len() as u16) / self.screen_width()) + 1
+                }
+            };
+            // count up screen-lines
+            buffer_num_lines = buffer_num_lines.saturating_add(screen_lines);
         }
-        // Start output in a new line at the beginning
-        self.print_crlf()?;
-        self.paint_line(msg)?;
+        // move upward to start print if the line-buffer is more than one screen-line
+        if buffer_num_lines > 1 {
+            self.stdout.queue(MoveUp(buffer_num_lines - 1))?;
+        }
+        let erase_line = format!("\r{}\r", " ".repeat(self.screen_width().into()));
+        for line in messages {
+            self.stdout.queue(Print(&erase_line))?;
+            self.paint_line(&line)?;
+            let new_start = self.prompt_start_row.saturating_add(1);
+            let height = self.screen_height();
+            if new_start >= height {
+                self.prompt_start_row = height - 1;
+            } else {
+                self.prompt_start_row = new_start;
+            }
+        }
         Ok(())
     }
 }
