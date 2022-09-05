@@ -377,6 +377,14 @@ impl Reedline {
         self.history.sync()
     }
 
+    /// Check if any commands have been run.
+    ///
+    /// When no commands have been run, calling [`Self::update_last_command_context`]
+    /// does not make sense and is guaranteed to fail with a "No command run" error.
+    pub fn has_last_command_context(&self) -> bool {
+        self.history_last_run_id.is_some()
+    }
+
     /// update the last history item with more information
     pub fn update_last_command_context(
         &mut self,
