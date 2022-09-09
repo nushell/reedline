@@ -415,6 +415,11 @@ impl Reedline {
         result
     }
 
+    /// Returns the current contents of the input buffer.
+    pub fn current_buffer_contents(&self) -> &str {
+        self.editor.get_buffer()
+    }
+
     /// Writes `msg` to the terminal with a following carriage return and newline
     fn print_line(&mut self, msg: &str) -> Result<()> {
         self.painter.paint_line(msg)
@@ -1095,7 +1100,7 @@ impl Reedline {
     }
 
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
-    fn run_edit_commands(&mut self, commands: &[EditCommand]) {
+    pub fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         if self.input_mode == InputMode::HistoryTraversal {
             if matches!(
                 self.history_cursor.get_navigation(),
