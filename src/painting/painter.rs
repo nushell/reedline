@@ -81,6 +81,13 @@ impl Painter {
         self.screen_height() - self.prompt_start_row
     }
 
+    /// Check if the currently painted content exceeds the size of the screen
+    /// and thus should not be repainted without reason (disable animation
+    /// repaint)
+    pub(crate) fn exceeds_screen_size(&self) -> bool {
+        self.large_buffer
+    }
+
     /// Sets the prompt origin position and screen size for a new line editor
     /// invocation
     ///
