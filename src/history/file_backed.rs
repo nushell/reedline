@@ -310,6 +310,7 @@ impl FileBackedHistory {
             cwd: None,
             duration: None,
             exit_status: None,
+            duplicate: 0,
             more_info: None,
         }
     }

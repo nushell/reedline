@@ -189,6 +189,7 @@ mod test {
             cwd: Some(cwd.to_string()),
             duration: Some(Duration::from_millis(1000)),
             exit_status: Some(exit_status),
+            duplicate: 0,
             more_info: None,
         }
     }

@@ -38,6 +38,7 @@ fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem
             .get::<&str, Option<i64>>("duration_ms")?
             .map(|e| Duration::from_millis(e as u64)),
         exit_status: row.get("exit_status")?,
+        duplicate: row.get("duplicate")?,
         more_info: x
             .map(|x| {
                 serde_json::from_str(&x).map_err(|e| {
@@ -59,8 +60,8 @@ impl History for SqliteBackedHistory {
             .db
             .prepare(
                 "insert into history
-                               (id,  start_timestamp,  command_line,  session_id,  hostname,  cwd,  duration_ms,  exit_status,  more_info)
-                        values (:id, :start_timestamp, :command_line, :session_id, :hostname, :cwd, :duration_ms, :exit_status, :more_info)
+                               (id,  start_timestamp,  command_line,  session_id,  hostname,  cwd,  duration_ms,  exit_status, duplicate,  more_info)
+                        values (:id, :start_timestamp, :command_line, :session_id, :hostname, :cwd, :duration_ms, :exit_status, :duplicate, :more_info)
                     on conflict (history.id) do update set
                         start_timestamp = excluded.start_timestamp,
                         command_line = excluded.command_line,
@@ -69,6 +70,7 @@ impl History for SqliteBackedHistory {
                         cwd = excluded.cwd,
                         duration_ms = excluded.duration_ms,
                         exit_status = excluded.exit_status,
+                        duplicate = excluded.duplicate,
                         more_info = excluded.more_info
                     returning id",
             )
@@ -83,6 +85,7 @@ impl History for SqliteBackedHistory {
                     ":cwd": entry.cwd,
                     ":duration_ms": entry.duration.map(|e| e.as_millis() as i64),
                     ":exit_status": entry.exit_status,
+                    ":duplicate": entry.duplicate,
                     ":more_info": entry.more_info.as_ref().map(|e| serde_json::to_string(e).unwrap())
                 },
                 |row| row.get(0),
@@ -237,6 +240,7 @@ impl SqliteBackedHistory {
             cwd text,
             duration_ms integer,
             exit_status integer,
+            duplicate integer,
             more_info text
         ) strict;
         create index if not exists idx_history_time on history(start_timestamp);

@@ -79,6 +79,8 @@ pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
     pub duration: Option<Duration>,
     /// the exit status of the command
     pub exit_status: Option<i64>,
+    /// the bit flags of the duplicated command
+    pub duplicate: u8,
     /// arbitrary additional information that might be interesting
     pub more_info: Option<ExtraInfo>,
 }
@@ -95,6 +97,7 @@ impl HistoryItem {
             cwd: None,
             duration: None,
             exit_status: None,
+            duplicate: 0,
             more_info: None,
         }
     }
