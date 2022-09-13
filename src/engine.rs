@@ -504,8 +504,6 @@ impl Reedline {
                 if let Some(ec) = last_edit_commands {
                     reedline_events.push(ReedlineEvent::Edit(ec));
                 }
-            } else if !self.painter.exceeds_screen_size() {
-                reedline_events.push(ReedlineEvent::Repaint);
             };
 
             for event in reedline_events.drain(..) {
