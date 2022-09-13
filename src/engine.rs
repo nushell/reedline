@@ -1,10 +1,9 @@
 #[cfg(feature = "bashisms")]
+use crate::menu_functions::{parse_selection_char, ParseAction};
 use crate::{
-    history::SearchFilter,
-    menu_functions::{parse_selection_char, ParseAction},
+    result::{ReedlineError, ReedlineErrorVariants},
+    CommandLineSearch, SearchFilter,
 };
-
-use crate::result::{ReedlineError, ReedlineErrorVariants};
 use {
     crate::{
         completion::{Completer, DefaultCompleter},
@@ -504,7 +503,9 @@ impl Reedline {
                             last_ecs.extend(ec);
                         }
                         (ref mut a @ Some(_), other_event) => {
-                            reedline_events.push(ReedlineEvent::Edit(a.take().unwrap()));
+                            reedline_events.push(ReedlineEvent::Edit(
+                                a.take().expect("cannot take out from last command"),
+                            ));
 
                             reedline_events.push(other_event);
                         }
@@ -829,15 +830,28 @@ impl Reedline {
                         let buf = self.editor.get_buffer();
                         if !buf.is_empty() {
                             let mut entry = HistoryItem::from_command_line(buf);
-                            // todo: in theory there's a race condition here because another shell might get the next session id at the same time
-                            entry.session_id =
-                                Some(*self.history_session_id.get_or_insert_with(|| {
-                                    self.history
-                                        .next_session_id()
-                                        .expect("todo: error handling")
-                                }));
-                            let entry = self.history.save(entry).expect("todo: error handling");
-                            self.history_last_run_id = entry.id;
+
+                            // check if the command has been seen in the history, if so, discard
+                            // the save entry in history.
+                            if let Ok(dup) = self.history.search(SearchQuery {
+                                filter: SearchFilter::from_text_search(CommandLineSearch::Exact(
+                                    entry.command_line.clone(),
+                                )),
+                                ..SearchQuery::everything(SearchDirection::Backward)
+                            }) {
+                                if dup.is_empty() {
+                                    // todo: in theory there's a race condition here because another shell might get the next session id at the same time
+                                    entry.session_id =
+                                        Some(*self.history_session_id.get_or_insert_with(|| {
+                                            self.history
+                                                .next_session_id()
+                                                .expect("todo: error handling")
+                                        }));
+                                    let entry =
+                                        self.history.save(entry).expect("todo: error handling");
+                                    self.history_last_run_id = entry.id;
+                                }
+                            }
                         }
                         self.run_edit_commands(&[EditCommand::Clear]);
                         self.editor.reset_undo_stack();
