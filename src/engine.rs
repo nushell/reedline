@@ -113,6 +113,9 @@ pub struct Reedline {
     // Use ansi coloring or not
     use_ansi_coloring: bool,
 
+    // Discard duplicate command in history or not
+    discard_duplicate_command: bool,
+
     // Engine Menus
     menus: Vec<ReedlineMenu>,
 
@@ -164,6 +167,7 @@ impl Reedline {
             hide_hints: false,
             validator,
             use_ansi_coloring: true,
+            discard_duplicate_command: true,
             menus: Vec::new(),
             buffer_editor: None,
         }
@@ -242,6 +246,13 @@ impl Reedline {
     #[must_use]
     pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
         self.use_ansi_coloring = use_ansi_coloring;
+        self
+    }
+
+    /// A build which enables or disables the discard of duplicate commands in the history
+    #[must_use]
+    pub fn with_discard_duplicate_command(mut self, discard_duplicate_command: bool) -> Self {
+        self.discard_duplicate_command = discard_duplicate_command;
         self
     }
 
@@ -839,7 +850,7 @@ impl Reedline {
                                 )),
                                 ..SearchQuery::everything(SearchDirection::Backward)
                             }) {
-                                if dup.is_empty() {
+                                if dup.is_empty() && !self.discard_duplicate_command {
                                     // todo: in theory there's a race condition here because another shell might get the next session id at the same time
                                     entry.session_id =
                                         Some(*self.history_session_id.get_or_insert_with(|| {
