@@ -5,6 +5,12 @@ use crate::{
 };
 
 use crate::result::{ReedlineError, ReedlineErrorVariants};
+#[cfg(feature = "external_printer")]
+use {
+    crate::external_printer::ExternalPrinter,
+    crossbeam::channel::TryRecvError,
+    std::io::{Error, ErrorKind},
+};
 use {
     crate::{
         completion::{Completer, DefaultCompleter},
@@ -86,7 +92,8 @@ pub struct Reedline {
     // History
     history: Box<dyn History>,
     history_cursor: HistoryCursor,
-    history_session_id: Option<HistorySessionId>, // none if history doesn't support this
+    history_session_id: Option<HistorySessionId>,
+    // none if history doesn't support this
     history_last_run_id: Option<HistoryItemId>,
     input_mode: InputMode,
 
@@ -119,6 +126,9 @@ pub struct Reedline {
 
     // Text editor used to open the line buffer for editing
     buffer_editor: Option<BufferEditor>,
+
+    #[cfg(feature = "external_printer")]
+    external_printer: Option<ExternalPrinter<String>>,
 }
 
 struct BufferEditor {
@@ -167,6 +177,8 @@ impl Reedline {
             use_ansi_coloring: true,
             menus: Vec::new(),
             buffer_editor: None,
+            #[cfg(feature = "external_printer")]
+            external_printer: None,
         }
     }
 
@@ -454,7 +466,22 @@ impl Reedline {
         loop {
             let mut paste_enter_state = false;
 
-            if event::poll(Duration::from_millis(1000))? {
+            #[cfg(feature = "external_printer")]
+            if let Some(ref external_printer) = self.external_printer {
+                // get messages from printer as crlf separated "lines"
+                let messages = Self::external_messages(external_printer)?;
+                if !messages.is_empty() {
+                    // print the message(s)
+                    self.painter.print_external_message(
+                        messages,
+                        self.editor.line_buffer(),
+                        prompt,
+                    )?;
+                    self.repaint(prompt)?;
+                }
+            }
+
+            if event::poll(Duration::from_millis(100))? {
                 let mut latest_resize = None;
 
                 // There could be multiple events queued up!
@@ -1383,6 +1410,36 @@ impl Reedline {
 
         self.painter
             .repaint_buffer(prompt, &lines, menu, self.use_ansi_coloring)
+    }
+
+    /// Adds an external printer
+    #[cfg(feature = "external_printer")]
+    pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
+        self.external_printer = Some(printer);
+        self
+    }
+
+    #[cfg(feature = "external_printer")]
+    fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<Vec<String>> {
+        let mut messages = Vec::new();
+        loop {
+            let result = external_printer.receiver().try_recv();
+            match result {
+                Ok(line) => {
+                    messages.push(line);
+                }
+                Err(TryRecvError::Empty) => {
+                    break;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    return Err(Error::new(
+                        ErrorKind::NotConnected,
+                        TryRecvError::Disconnected,
+                    ));
+                }
+            }
+        }
+        Ok(messages)
     }
 }
 

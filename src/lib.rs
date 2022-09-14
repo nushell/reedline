@@ -259,6 +259,8 @@ pub use menu::{
 };
 
 mod utils;
+
+mod external_printer;
 pub use utils::{
     get_reedline_default_keybindings, get_reedline_edit_commands,
     get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
@@ -267,3 +269,5 @@ pub use utils::{
 
 // Reexport the key types to be independent from an explicit crossterm dependency.
 pub use crossterm::event::{KeyCode, KeyModifiers};
+#[cfg(feature = "external_printer")]
+pub use external_printer::ExternalPrinter;
