@@ -2,7 +2,7 @@ use chrono::Utc;
 
 use crate::{core_editor::LineBuffer, HistoryItem, Result};
 
-use super::{HistoryItemId, HistorySessionId};
+use super::HistoryItemId;
 
 /// Browsing modes for a [`History`]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,7 +149,6 @@ pub trait History: Send {
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem>;
 
     /// retrieves the next unused session id
-    fn next_session_id(&mut self) -> Result<HistorySessionId>;
 
     /// count the results of a query
     fn count(&self, query: SearchQuery) -> Result<i64>;

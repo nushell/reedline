@@ -29,6 +29,7 @@ use {
         EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
     },
+    chrono::{DateTime, NaiveDate, Utc},
     crossterm::{
         event,
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
@@ -155,6 +156,7 @@ impl Reedline {
         let hinter = None;
         let validator = None;
         let edit_mode = Box::new(Emacs::default());
+        let hist_session_id = Self::get_history_session_id();
 
         Reedline {
             editor: Editor::default(),
@@ -162,7 +164,7 @@ impl Reedline {
             history_cursor: HistoryCursor::new(HistoryNavigationQuery::Normal(
                 LineBuffer::default(),
             )),
-            history_session_id: None,
+            history_session_id: hist_session_id,
             history_last_run_id: None,
             input_mode: InputMode::Regular,
             painter,
@@ -180,6 +182,25 @@ impl Reedline {
             #[cfg(feature = "external_printer")]
             external_printer: None,
         }
+    }
+
+    /// Get a new history session id based on the current time and the first commit datetime of reedline
+    fn get_history_session_id() -> Option<HistorySessionId> {
+        //Sun Feb 28 22:42:07 2021 +1300
+        let first_commit_date_time_naive = NaiveDate::from_ymd(2021, 2, 28).and_hms(22, 42, 7);
+        let first_commit_date_time_utc =
+            DateTime::<Utc>::from_utc(first_commit_date_time_naive, Utc);
+        let now = chrono::offset::Utc::now();
+        let duration_since_first_commit = now - first_commit_date_time_utc;
+        let nanoseconds_since_first_commit =
+            duration_since_first_commit.num_nanoseconds().unwrap_or(0);
+
+        eprintln!(
+            "nanoseconds_since_first_commit: {}",
+            nanoseconds_since_first_commit
+        );
+
+        Some(HistorySessionId::new(nanoseconds_since_first_commit))
     }
 
     /// A builder to include a [`Hinter`] in your instance of the Reedline engine
@@ -856,13 +877,7 @@ impl Reedline {
                         let buf = self.editor.get_buffer();
                         if !buf.is_empty() {
                             let mut entry = HistoryItem::from_command_line(buf);
-                            // todo: in theory there's a race condition here because another shell might get the next session id at the same time
-                            entry.session_id =
-                                Some(*self.history_session_id.get_or_insert_with(|| {
-                                    self.history
-                                        .next_session_id()
-                                        .expect("todo: error handling")
-                                }));
+                            entry.session_id = self.history_session_id;
                             let entry = self.history.save(entry).expect("todo: error handling");
                             self.history_last_run_id = entry.id;
                         }
