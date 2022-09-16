@@ -178,6 +178,8 @@ mod test {
     #[cfg(not(feature = "sqlite"))]
     const IS_FILE_BASED: bool = true;
 
+    use crate::HistorySessionId;
+
     fn create_item(session: i64, cwd: &str, cmd: &str, exit_status: i64) -> HistoryItem {
         HistoryItem {
             id: None,
