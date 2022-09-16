@@ -156,7 +156,7 @@ impl Reedline {
         let hinter = None;
         let validator = None;
         let edit_mode = Box::new(Emacs::default());
-        let hist_session_id = Self::get_history_session_id();
+        let hist_session_id = Self::create_history_session_id();
 
         Reedline {
             editor: Editor::default(),
@@ -185,7 +185,7 @@ impl Reedline {
     }
 
     /// Get a new history session id based on the current time and the first commit datetime of reedline
-    fn get_history_session_id() -> Option<HistorySessionId> {
+    fn create_history_session_id() -> Option<HistorySessionId> {
         //Sun Feb 28 22:42:07 2021 +1300
         let first_commit_date_time_naive = NaiveDate::from_ymd(2021, 2, 28).and_hms(22, 42, 7);
         let first_commit_date_time_utc =
@@ -195,12 +195,12 @@ impl Reedline {
         let nanoseconds_since_first_commit =
             duration_since_first_commit.num_nanoseconds().unwrap_or(0);
 
-        std::env::set_var(
-            "REEDLINE_SESSION_ID",
-            nanoseconds_since_first_commit.to_string(),
-        );
-
         Some(HistorySessionId::new(nanoseconds_since_first_commit))
+    }
+
+    /// Return the previously generated history session id
+    pub fn get_history_session_id(&self) -> Option<HistorySessionId> {
+        self.history_session_id
     }
 
     /// A builder to include a [`Hinter`] in your instance of the Reedline engine
