@@ -3,8 +3,6 @@ use crate::{
     history::SearchFilter,
     menu_functions::{parse_selection_char, ParseAction},
 };
-
-use crate::result::{ReedlineError, ReedlineErrorVariants};
 #[cfg(feature = "external_printer")]
 use {
     crate::external_printer::ExternalPrinter,
@@ -25,17 +23,19 @@ use {
         },
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
+        result::{ReedlineError, ReedlineErrorVariants},
         utils::text_manipulation,
         EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
     },
-    chrono::{DateTime, NaiveDate, Utc},
     crossterm::{
         event,
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, Result,
     },
-    std::{borrow::Borrow, fs::File, io, io::Write, process::Command, time::Duration},
+    std::{
+        borrow::Borrow, fs::File, io, io::Write, process::Command, time::Duration, time::SystemTime,
+    },
 };
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for
@@ -186,16 +186,12 @@ impl Reedline {
 
     /// Get a new history session id based on the current time and the first commit datetime of reedline
     fn create_history_session_id() -> Option<HistorySessionId> {
-        //Sun Feb 28 22:42:07 2021 +1300
-        let first_commit_date_time_naive = NaiveDate::from_ymd(2021, 2, 28).and_hms(22, 42, 7);
-        let first_commit_date_time_utc =
-            DateTime::<Utc>::from_utc(first_commit_date_time_naive, Utc);
-        let now = chrono::offset::Utc::now();
-        let duration_since_first_commit = now - first_commit_date_time_utc;
-        let nanoseconds_since_first_commit =
-            duration_since_first_commit.num_nanoseconds().unwrap_or(0);
+        let nanos = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(n) => n.as_nanos() as i64,
+            Err(_) => 0,
+        };
 
-        Some(HistorySessionId::new(nanoseconds_since_first_commit))
+        Some(HistorySessionId::new(nanos))
     }
 
     /// Return the previously generated history session id
