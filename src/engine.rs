@@ -195,9 +195,9 @@ impl Reedline {
         let nanoseconds_since_first_commit =
             duration_since_first_commit.num_nanoseconds().unwrap_or(0);
 
-        eprintln!(
-            "nanoseconds_since_first_commit: {}",
-            nanoseconds_since_first_commit
+        std::env::set_var(
+            "REEDLINE_SESSION_ID",
+            nanoseconds_since_first_commit.to_string(),
         );
 
         Some(HistorySessionId::new(nanoseconds_since_first_commit))
