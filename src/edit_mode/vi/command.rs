@@ -320,61 +320,53 @@ impl Command {
                 }
                 Motion::Start => Some(vec![ReedlineOption::Edit(EditCommand::CutFromLineStart)]),
             },
-            Self::Change => match motion {
-                Motion::End => Some(vec![
-                    ReedlineOption::Edit(EditCommand::ClearToLineEnd),
-                    ReedlineOption::Event(ReedlineEvent::Repaint),
-                ]),
-                Motion::Line => Some(vec![
-                    ReedlineOption::Edit(EditCommand::MoveToStart),
-                    ReedlineOption::Edit(EditCommand::ClearToLineEnd),
-                    ReedlineOption::Event(ReedlineEvent::Repaint),
-                ]),
-                Motion::NextWord => Some(vec![
-                    ReedlineOption::Edit(EditCommand::CutWordRightToNext),
-                    ReedlineOption::Event(ReedlineEvent::Repaint),
-                ]),
-                Motion::NextBigWord => Some(vec![
-                    ReedlineOption::Edit(EditCommand::CutBigWordRightToNext),
-                    ReedlineOption::Event(ReedlineEvent::Repaint),
-                ]),
-                Motion::NextWordEnd => Some(vec![
-                    ReedlineOption::Edit(EditCommand::CutWordRight),
-                    ReedlineOption::Event(ReedlineEvent::Repaint),
-                ]),
-                Motion::NextBigWordEnd => Some(vec![
-                    ReedlineOption::Edit(EditCommand::CutBigWordRight),
-                    ReedlineOption::Event(ReedlineEvent::Repaint),
-                ]),
-                Motion::PreviousWord => Some(vec![
-                    ReedlineOption::Edit(EditCommand::CutWordLeft),
-                    ReedlineOption::Event(ReedlineEvent::Repaint),
-                ]),
-                Motion::PreviousBigWord => Some(vec![
-                    ReedlineOption::Edit(EditCommand::CutBigWordLeft),
-                    ReedlineOption::Event(ReedlineEvent::Repaint),
-                ]),
-                Motion::RightUntil(c) => Some(vec![
-                    ReedlineOption::Edit(EditCommand::CutRightUntil(*c)),
-                    ReedlineOption::Event(ReedlineEvent::Repaint),
-                ]),
-                Motion::RightBefore(c) => Some(vec![
-                    ReedlineOption::Edit(EditCommand::CutRightBefore(*c)),
-                    ReedlineOption::Event(ReedlineEvent::Repaint),
-                ]),
-                Motion::LeftUntil(c) => Some(vec![
-                    ReedlineOption::Edit(EditCommand::CutLeftUntil(*c)),
-                    ReedlineOption::Event(ReedlineEvent::Repaint),
-                ]),
-                Motion::LeftBefore(c) => Some(vec![
-                    ReedlineOption::Edit(EditCommand::CutLeftBefore(*c)),
-                    ReedlineOption::Event(ReedlineEvent::Repaint),
-                ]),
-                Motion::Start => Some(vec![
-                    ReedlineOption::Edit(EditCommand::CutFromLineStart),
-                    ReedlineOption::Event(ReedlineEvent::Repaint),
-                ]),
-            },
+            Self::Change => {
+                let op = match motion {
+                    Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::ClearToLineEnd)]),
+                    Motion::Line => Some(vec![
+                        ReedlineOption::Edit(EditCommand::MoveToStart),
+                        ReedlineOption::Edit(EditCommand::ClearToLineEnd),
+                    ]),
+                    Motion::NextWord => {
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutWordRightToNext)])
+                    }
+                    Motion::NextBigWord => Some(vec![ReedlineOption::Edit(
+                        EditCommand::CutBigWordRightToNext,
+                    )]),
+                    Motion::NextWordEnd => {
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)])
+                    }
+                    Motion::NextBigWordEnd => {
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordRight)])
+                    }
+                    Motion::PreviousWord => {
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutWordLeft)])
+                    }
+                    Motion::PreviousBigWord => {
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordLeft)])
+                    }
+                    Motion::RightUntil(c) => {
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutRightUntil(*c))])
+                    }
+                    Motion::RightBefore(c) => {
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutRightBefore(*c))])
+                    }
+                    Motion::LeftUntil(c) => {
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutLeftUntil(*c))])
+                    }
+                    Motion::LeftBefore(c) => {
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutLeftBefore(*c))])
+                    }
+                    Motion::Start => {
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutFromLineStart)])
+                    }
+                };
+                // Semihack: Append `Repaint` to ensure the mode change gets displayed
+                op.map(|mut vec| {
+                    vec.push(ReedlineOption::Event(ReedlineEvent::Repaint));
+                    vec
+                })
+            }
             _ => None,
         };
 
