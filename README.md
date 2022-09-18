@@ -22,6 +22,7 @@ It is currently primarily developed as the interactive editor for [nushell](http
   - [Integrate with `Hinter` for fish-style history autosuggestions](#integrate-with-hinter-for-fish-style-history-autosuggestions)
   - [Integrate with custom line completion `Validator`](#integrate-with-custom-line-completion-validator)
   - [Use custom `EditMode`](#use-custom-editmode)
+- [Crate features](#crate-features)
 - [Are we prompt yet? (Development status)](#are-we-prompt-yet-development-status)
 - [Contributing](./CONTRIBUTING.md)
 - [Alternatives](#alternatives)
@@ -181,6 +182,14 @@ let mut line_editor = Reedline::create().with_edit_mode(Box::new(Vi::new(
     default_vi_normal_keybindings(),
 )));
 ```
+
+## Crate features
+
+- `clipboard`: Enable support to use the `SystemClipboard`. Enabling this feature will return a `SystemClipboard` instead of a local clipboard when calling `get_default_clipboard()`.
+- `bashisms`: Enable support for special text sequences that recall components from the history. e.g. `!!` and `!$`. For use in shells like `bash` or [`nushell`](https://nushell.sh).
+- `sqlite`: Provides the `SqliteBackedHistory` to store richer information in the history. Statically links the required sqlite version.
+- `sqlite-dynlib`: Alternative to the feature `sqlite`. Will not statically link. Requires `sqlite >= 3.38` to link dynamically!
+- `external_printer`: **Experimental:** Thread-safe `ExternalPrinter` handle to print lines from concurrently running threads.
 
 ## Are we prompt yet? (Development status)
 
