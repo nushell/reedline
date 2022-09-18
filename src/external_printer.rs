@@ -1,6 +1,10 @@
 //! To print messages while editing a line
+//!
 //! See example:
+//!
+//! ``` shell
 //! cargo run --example external_printer --features=external_printer
+//! ```
 #[cfg(feature = "external_printer")]
 use {
     crossbeam::channel::{bounded, Receiver, SendError, Sender},

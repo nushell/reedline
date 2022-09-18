@@ -32,7 +32,7 @@ impl Display for HistorySessionId {
     }
 }
 
-/// This trait represents additional arbitrary context to be added to a history (optional, see [HistoryItem])
+/// This trait represents additional arbitrary context to be added to a history (optional, see [`HistoryItem`])
 pub trait HistoryItemExtraInfo: Serialize + DeserializeOwned + Default + Send {}
 
 #[derive(Default, Debug, PartialEq, Eq)]
