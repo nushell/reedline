@@ -3,8 +3,6 @@ use crate::{
     history::SearchFilter,
     menu_functions::{parse_selection_char, ParseAction},
 };
-
-use crate::result::{ReedlineError, ReedlineErrorVariants};
 #[cfg(feature = "external_printer")]
 use {
     crate::external_printer::ExternalPrinter,
@@ -25,6 +23,7 @@ use {
         },
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
+        result::{ReedlineError, ReedlineErrorVariants},
         utils::text_manipulation,
         EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
@@ -34,7 +33,9 @@ use {
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, Result,
     },
-    std::{borrow::Borrow, fs::File, io, io::Write, process::Command, time::Duration},
+    std::{
+        borrow::Borrow, fs::File, io, io::Write, process::Command, time::Duration, time::SystemTime,
+    },
 };
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for
@@ -155,6 +156,7 @@ impl Reedline {
         let hinter = None;
         let validator = None;
         let edit_mode = Box::new(Emacs::default());
+        let hist_session_id = Self::create_history_session_id();
 
         Reedline {
             editor: Editor::default(),
@@ -162,7 +164,7 @@ impl Reedline {
             history_cursor: HistoryCursor::new(HistoryNavigationQuery::Normal(
                 LineBuffer::default(),
             )),
-            history_session_id: None,
+            history_session_id: hist_session_id,
             history_last_run_id: None,
             input_mode: InputMode::Regular,
             painter,
@@ -180,6 +182,21 @@ impl Reedline {
             #[cfg(feature = "external_printer")]
             external_printer: None,
         }
+    }
+
+    /// Get a new history session id based on the current time and the first commit datetime of reedline
+    fn create_history_session_id() -> Option<HistorySessionId> {
+        let nanos = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(n) => n.as_nanos() as i64,
+            Err(_) => 0,
+        };
+
+        Some(HistorySessionId::new(nanos))
+    }
+
+    /// Return the previously generated history session id
+    pub fn get_history_session_id(&self) -> Option<HistorySessionId> {
+        self.history_session_id
     }
 
     /// A builder to include a [`Hinter`] in your instance of the Reedline engine
@@ -856,13 +873,7 @@ impl Reedline {
                         let buf = self.editor.get_buffer();
                         if !buf.is_empty() {
                             let mut entry = HistoryItem::from_command_line(buf);
-                            // todo: in theory there's a race condition here because another shell might get the next session id at the same time
-                            entry.session_id =
-                                Some(*self.history_session_id.get_or_insert_with(|| {
-                                    self.history
-                                        .next_session_id()
-                                        .expect("todo: error handling")
-                                }));
+                            entry.session_id = self.history_session_id;
                             let entry = self.history.save(entry).expect("todo: error handling");
                             self.history_last_run_id = entry.id;
                         }

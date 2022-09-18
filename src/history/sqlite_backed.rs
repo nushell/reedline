@@ -1,6 +1,3 @@
-use chrono::{TimeZone, Utc};
-use rusqlite::{named_params, params, Connection, ToSql};
-
 use super::{
     base::{CommandLineSearch, SearchDirection, SearchQuery},
     History, HistoryItem, HistoryItemId, HistorySessionId,
@@ -9,10 +6,10 @@ use crate::{
     result::{ReedlineError, ReedlineErrorVariants},
     Result,
 };
-
-const SQLITE_APPLICATION_ID: i32 = 1151497937;
-
+use chrono::{TimeZone, Utc};
+use rusqlite::{named_params, params, Connection, ToSql};
 use std::{path::PathBuf, time::Duration};
+const SQLITE_APPLICATION_ID: i32 = 1151497937;
 
 /// A history that stores the values to an SQLite database.
 /// In addition to storing the command, the history can store an additional arbitrary HistoryEntryContext,
@@ -155,18 +152,6 @@ impl History for SqliteBackedHistory {
     fn sync(&mut self) -> std::io::Result<()> {
         // no-op (todo?)
         Ok(())
-    }
-
-    fn next_session_id(&mut self) -> Result<HistorySessionId> {
-        Ok(HistorySessionId::new(
-            self.db
-                .query_row(
-                    "select coalesce(max(session_id), 0) + 1 from history",
-                    params![],
-                    |r| r.get(0),
-                )
-                .map_err(map_sqlite_err)?,
-        ))
     }
 }
 fn map_sqlite_err(err: rusqlite::Error) -> ReedlineError {
