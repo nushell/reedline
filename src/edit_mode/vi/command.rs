@@ -125,28 +125,40 @@ where
         Some('f') => {
             let _ = input.next();
             match input.peek() {
-                Some(c) => Some(Command::MoveRightUntil(**c)),
+                Some(&c) => {
+                    input.next();
+                    Some(Command::MoveRightUntil(*c))
+                }
                 None => Some(Command::Incomplete),
             }
         }
         Some('t') => {
             let _ = input.next();
             match input.peek() {
-                Some(c) => Some(Command::MoveRightBefore(**c)),
+                Some(&c) => {
+                    input.next();
+                    Some(Command::MoveRightBefore(*c))
+                }
                 None => Some(Command::Incomplete),
             }
         }
         Some('F') => {
             let _ = input.next();
             match input.peek() {
-                Some(c) => Some(Command::MoveLeftUntil(**c)),
+                Some(&c) => {
+                    input.next();
+                    Some(Command::MoveLeftUntil(*c))
+                }
                 None => Some(Command::Incomplete),
             }
         }
         Some('T') => {
             let _ = input.next();
             match input.peek() {
-                Some(c) => Some(Command::MoveLeftBefore(**c)),
+                Some(&c) => {
+                    input.next();
+                    Some(Command::MoveLeftBefore(*c))
+                }
                 None => Some(Command::Incomplete),
             }
         }

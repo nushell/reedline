@@ -43,19 +43,43 @@ where
         }
         Some('f') => {
             let _ = input.next();
-            input.peek().map(|c| Motion::RightUntil(**c))
+            match input.peek() {
+                Some(&x) => {
+                    input.next();
+                    Some(Motion::RightUntil(*x))
+                }
+                None => None,
+            }
         }
         Some('t') => {
             let _ = input.next();
-            input.peek().map(|c| Motion::RightBefore(**c))
+            match input.peek() {
+                Some(&x) => {
+                    input.next();
+                    Some(Motion::RightBefore(*x))
+                }
+                None => None,
+            }
         }
         Some('F') => {
             let _ = input.next();
-            input.peek().map(|c| Motion::LeftUntil(**c))
+            match input.peek() {
+                Some(&x) => {
+                    input.next();
+                    Some(Motion::LeftUntil(*x))
+                }
+                None => None,
+            }
         }
         Some('T') => {
             let _ = input.next();
-            input.peek().map(|c| Motion::LeftBefore(**c))
+            match input.peek() {
+                Some(&x) => {
+                    input.next();
+                    Some(Motion::LeftBefore(*x))
+                }
+                None => None,
+            }
         }
         _ => None,
     }
