@@ -238,6 +238,23 @@ mod tests {
     }
 
     #[test]
+    fn test_find_action() {
+        let input = ['d', 't', 'd'];
+        let output = vi_parse(&input);
+
+        assert_eq!(
+            output,
+            ParseResult {
+                multiplier: None,
+                command: Some(Command::Delete),
+                count: None,
+                motion: Some(Motion::RightBefore('d')),
+                valid: true
+            }
+        );
+    }
+
+    #[test]
     fn test_has_garbage() {
         let input = ['2', 'd', 'm'];
         let output = vi_parse(&input);
@@ -250,6 +267,23 @@ mod tests {
                 count: None,
                 motion: None,
                 valid: false
+            }
+        );
+    }
+
+    #[test]
+    fn test_find_motion() {
+        let input = ['2', 'f', 'f'];
+        let output = vi_parse(&input);
+
+        assert_eq!(
+            output,
+            ParseResult {
+                multiplier: Some(2),
+                command: Some(Command::MoveRightUntil('f')),
+                count: None,
+                motion: None,
+                valid: true
             }
         );
     }
