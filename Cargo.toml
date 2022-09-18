@@ -42,5 +42,7 @@ rstest = { version = "0.15.0", default-features = false }
 [features]
 system_clipboard = ["clipboard"]
 bashisms = []
-sqlite = ["rusqlite", "serde_json", "gethostname"]
 external_printer = ["crossbeam"]
+sqlite = ["rusqlite/bundled", "serde_json", "gethostname"]
+sqlite-dynlib = ["rusqlite", "serde_json", "gethostname"]
+
