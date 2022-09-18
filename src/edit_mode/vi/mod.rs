@@ -6,6 +6,8 @@ mod vi_keybindings;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
+use self::motion::ViToTill;
+
 use super::EditMode;
 use crate::{
     edit_mode::{keybindings::Keybindings, vi::parser::parse},
@@ -17,43 +19,6 @@ use crate::{
 enum ViMode {
     Normal,
     Insert,
-}
-
-/// Vi left-right motions to or till a character.
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum ViToTill {
-    /// f
-    ToRight(char),
-    /// F
-    ToLeft(char),
-    /// t
-    TillRight(char),
-    /// T
-    TillLeft(char),
-}
-
-impl ViToTill {
-    /// Swap the direction of the to or till for ','
-    pub fn reverse(&self) -> Self {
-        match self {
-            ViToTill::ToRight(c) => ViToTill::ToLeft(*c),
-            ViToTill::ToLeft(c) => ViToTill::ToRight(*c),
-            ViToTill::TillRight(c) => ViToTill::TillLeft(*c),
-            ViToTill::TillLeft(c) => ViToTill::TillRight(*c),
-        }
-    }
-}
-
-impl From<EditCommand> for Option<ViToTill> {
-    fn from(edit: EditCommand) -> Self {
-        match edit {
-            EditCommand::MoveLeftBefore(c) => Some(ViToTill::TillLeft(c)),
-            EditCommand::MoveLeftUntil(c) => Some(ViToTill::ToLeft(c)),
-            EditCommand::MoveRightBefore(c) => Some(ViToTill::TillRight(c)),
-            EditCommand::MoveRightUntil(c) => Some(ViToTill::ToRight(c)),
-            _ => None,
-        }
-    }
 }
 
 /// This parses incoming input `Event`s like a Vi-Style editor

@@ -1,4 +1,4 @@
-use super::{motion::Motion, parser::ReedlineOption, ViToTill};
+use super::{motion::Motion, motion::ViToTill, parser::ReedlineOption};
 use crate::{EditCommand, ReedlineEvent, Vi};
 use std::iter::Peekable;
 

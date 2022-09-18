@@ -1,5 +1,7 @@
 use std::iter::Peekable;
 
+use crate::EditCommand;
+
 pub fn parse_motion<'iter, I>(input: &mut Peekable<I>) -> Option<Motion>
 where
     I: Iterator<Item = &'iter char>,
@@ -100,4 +102,41 @@ pub enum Motion {
     RightBefore(char),
     LeftUntil(char),
     LeftBefore(char),
+}
+
+/// Vi left-right motions to or till a character.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum ViToTill {
+    /// f
+    ToRight(char),
+    /// F
+    ToLeft(char),
+    /// t
+    TillRight(char),
+    /// T
+    TillLeft(char),
+}
+
+impl ViToTill {
+    /// Swap the direction of the to or till for ','
+    pub fn reverse(&self) -> Self {
+        match self {
+            ViToTill::ToRight(c) => ViToTill::ToLeft(*c),
+            ViToTill::ToLeft(c) => ViToTill::ToRight(*c),
+            ViToTill::TillRight(c) => ViToTill::TillLeft(*c),
+            ViToTill::TillLeft(c) => ViToTill::TillRight(*c),
+        }
+    }
+}
+
+impl From<EditCommand> for Option<ViToTill> {
+    fn from(edit: EditCommand) -> Self {
+        match edit {
+            EditCommand::MoveLeftBefore(c) => Some(ViToTill::TillLeft(c)),
+            EditCommand::MoveLeftUntil(c) => Some(ViToTill::ToLeft(c)),
+            EditCommand::MoveRightBefore(c) => Some(ViToTill::TillRight(c)),
+            EditCommand::MoveRightUntil(c) => Some(ViToTill::ToRight(c)),
+            _ => None,
+        }
+    }
 }
