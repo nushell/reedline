@@ -32,6 +32,12 @@ impl Display for HistorySessionId {
     }
 }
 
+impl From<HistorySessionId> for i64 {
+    fn from(id: HistorySessionId) -> Self {
+        id.0
+    }
+}
+
 /// This trait represents additional arbitrary context to be added to a history (optional, see [`HistoryItem`])
 pub trait HistoryItemExtraInfo: Serialize + DeserializeOwned + Default + Send {}
 
