@@ -10,6 +10,16 @@ pub enum ReedlineOption {
     Incomplete,
 }
 
+impl ReedlineOption {
+    pub fn into_reedline_event(self) -> Option<ReedlineEvent> {
+        match self {
+            ReedlineOption::Event(event) => Some(event),
+            ReedlineOption::Edit(edit) => Some(ReedlineEvent::Edit(vec![edit])),
+            ReedlineOption::Incomplete => None,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct ParseResult {
     multiplier: Option<usize>,
@@ -22,6 +32,36 @@ pub struct ParseResult {
 impl ParseResult {
     pub fn is_valid(&self) -> bool {
         self.valid
+    }
+
+    /// Combine `multiplier` and `count` as vim only considers the product
+    ///
+    /// Default return value: 1
+    ///
+    /// ### Note:
+    ///
+    /// https://github.com/vim/vim/blob/140f6d0eda7921f2f0b057ec38ed501240903fc3/runtime/doc/motion.txt#L64-L70
+    fn total_multiplier(&self) -> usize {
+        self.multiplier.unwrap_or(1) * self.count.unwrap_or(1)
+    }
+
+    fn apply_multiplier(&self, raw_events: Option<Vec<ReedlineOption>>) -> ReedlineEvent {
+        if let Some(raw_events) = raw_events {
+            let events = std::iter::repeat(raw_events)
+                .take(self.total_multiplier())
+                .flatten()
+                .filter_map(ReedlineOption::into_reedline_event)
+                .collect::<Vec<ReedlineEvent>>();
+
+            if events.is_empty() || events.contains(&ReedlineEvent::None) {
+                // TODO: Clarify if the `contains(ReedlineEvent::None)` path is relevant
+                ReedlineEvent::None
+            } else {
+                ReedlineEvent::Multiple(events)
+            }
+        } else {
+            ReedlineEvent::None
+        }
     }
 
     pub fn enter_insert_mode(&self) -> bool {
@@ -41,48 +81,10 @@ impl ParseResult {
 
     pub fn to_reedline_event(&self) -> ReedlineEvent {
         match (&self.multiplier, &self.command, &self.count, &self.motion) {
-            // Movements with h,j,k,l are always single char or a number followed
-            // by a single command (char)
-            (multiplier, Some(command), None, None) => {
-                let events = command.to_reedline().into_iter().map(|event| match event {
-                    ReedlineOption::Edit(e) => ReedlineEvent::Edit(vec![e]),
-                    ReedlineOption::Event(e) => e,
-                    ReedlineOption::Incomplete => ReedlineEvent::None,
-                });
-
-                let multiplier = multiplier.unwrap_or(1);
-                let events = std::iter::repeat(events)
-                    .take(multiplier)
-                    .flatten()
-                    .collect::<Vec<ReedlineEvent>>();
-
-                if events.contains(&ReedlineEvent::None) {
-                    ReedlineEvent::None
-                } else {
-                    ReedlineEvent::Multiple(events)
-                }
-            }
+            (_, Some(command), None, None) => self.apply_multiplier(Some(command.to_reedline())),
             // This case handles all combinations of commands and motions that could exist
-            // The option count is used to multiply the actions that should be done with the motion
-            // and the multiplier repeats the whole chain x number of time
-            (multiplier, Some(command), count, Some(motion)) => {
-                match command.to_reedline_with_motion(motion, count) {
-                    Some(events) => {
-                        let multiplier = multiplier.unwrap_or(1);
-                        let events = std::iter::repeat(events)
-                            .take(multiplier)
-                            .flatten()
-                            .map(|option| match option {
-                                ReedlineOption::Edit(edit) => ReedlineEvent::Edit(vec![edit]),
-                                ReedlineOption::Event(event) => event,
-                                ReedlineOption::Incomplete => ReedlineEvent::None,
-                            })
-                            .collect::<Vec<ReedlineEvent>>();
-
-                        ReedlineEvent::Multiple(events)
-                    }
-                    None => ReedlineEvent::None,
-                }
+            (_, Some(command), _, Some(motion)) => {
+                self.apply_multiplier(command.to_reedline_with_motion(motion))
             }
             _ => ReedlineEvent::None,
         }
