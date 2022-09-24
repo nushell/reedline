@@ -283,12 +283,8 @@ impl Command {
         }
     }
 
-    pub fn to_reedline_with_motion(
-        &self,
-        motion: &Motion,
-        count: &Option<usize>,
-    ) -> Option<Vec<ReedlineOption>> {
-        let edits = match self {
+    pub fn to_reedline_with_motion(&self, motion: &Motion) -> Option<Vec<ReedlineOption>> {
+        match self {
             Self::Delete => match motion {
                 Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)]),
                 Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)]),
@@ -368,16 +364,6 @@ impl Command {
                 })
             }
             _ => None,
-        };
-
-        match count {
-            Some(count) => edits.map(|edits| {
-                std::iter::repeat(edits)
-                    .take(*count)
-                    .flatten()
-                    .collect::<Vec<ReedlineOption>>()
-            }),
-            None => edits,
         }
     }
 }
