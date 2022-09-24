@@ -506,6 +506,32 @@ mod test {
     }
 
     #[rstest]
+    #[case("hello world", 0, 'l', 1, false, "lo world")]
+    #[case("hello world", 0, 'l', 1, true, "llo world")]
+    #[ignore = "Deleting two consecutives is not implemented correctly and needs the multiplier explicitly."]
+    #[case("hello world", 0, 'l', 2, false, "o world")]
+    #[case("hello world", 0, 'h', 1, false, "hello world")]
+    #[case("hello world", 0, 'l', 3, true, "ld")]
+    #[case("hello world", 4, 'o', 1, true, "hellorld")]
+    #[case("hello world", 4, 'w', 1, false, "hellorld")]
+    #[case("hello world", 4, 'o', 1, false, "hellrld")]
+    fn test_cut_right_until_char(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] search_char: char,
+        #[case] repeat: usize,
+        #[case] before_char: bool,
+        #[case] expected: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.line_buffer.set_insertion_point(position);
+        for _ in 0..repeat {
+            editor.cut_right_until_char(search_char, before_char, true);
+        }
+        assert_eq!(editor.get_buffer(), expected);
+    }
+
+    #[rstest]
     #[case("abc", 1, 'X', "aXc")]
     #[case("abc", 1, '🔄', "a🔄c")]
     #[case("a🔄c", 1, 'X', "aXc")]
