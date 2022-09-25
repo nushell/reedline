@@ -6,7 +6,7 @@ mod vi_keybindings;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
-use self::motion::ViToTill;
+use self::motion::ViCharSearch;
 
 use super::EditMode;
 use crate::{
@@ -29,7 +29,7 @@ pub struct Vi {
     mode: ViMode,
     previous: Option<ReedlineEvent>,
     // last f, F, t, T motion for ; and ,
-    last_to_till: Option<ViToTill>,
+    last_char_search: Option<ViCharSearch>,
 }
 
 impl Default for Vi {
@@ -40,7 +40,7 @@ impl Default for Vi {
             cache: Vec::new(),
             mode: ViMode::Insert,
             previous: None,
-            last_to_till: None,
+            last_char_search: None,
         }
     }
 }
@@ -61,14 +61,6 @@ impl EditMode for Vi {
         match event {
             Event::Key(KeyEvent { code, modifiers }) => match (self.mode, modifiers, code) {
                 (ViMode::Normal, modifier, KeyCode::Char(c)) => {
-                    // The repeat character is the only character that is not managed
-                    // by the parser since the last event is stored in the editor
-                    if c == '.' {
-                        if let Some(event) = &self.previous {
-                            return event.clone();
-                        }
-                    }
-
                     let c = c.to_ascii_lowercase();
 
                     if let Some(event) = self
@@ -83,45 +75,22 @@ impl EditMode for Vi {
                             c
                         });
 
-                        let res = parse(self, &mut self.cache.iter().peekable());
+                        let res = parse(&mut self.cache.iter().peekable());
 
-                        if res.enter_insert_mode() {
-                            self.mode = ViMode::Insert;
+                        if !res.is_valid() {
+                            self.cache.clear();
+                            ReedlineEvent::None
+                        } else if res.is_complete() {
+                            if res.enters_insert_mode() {
+                                self.mode = ViMode::Insert;
+                            }
+
+                            let event = res.to_reedline_event(self);
+                            self.cache.clear();
+                            event
+                        } else {
+                            ReedlineEvent::None
                         }
-
-                        let event = res.to_reedline_event();
-                        match event {
-                            ReedlineEvent::None => {
-                                if !res.is_valid() {
-                                    self.cache.clear();
-                                }
-                            }
-                            _ => {
-                                self.cache.clear();
-                            }
-                        };
-
-                        // to_reedline_event() returned Multiple or None when this was written
-                        if let ReedlineEvent::Multiple(ref events) = event {
-                            let last_to_till =
-                                if events.len() == 2 && events[0] == ReedlineEvent::RecordToTill {
-                                    if let ReedlineEvent::Edit(edit) = &events[1] {
-                                        edit[0].clone().into()
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                };
-
-                            if last_to_till.is_some() {
-                                self.last_to_till = last_to_till;
-                            }
-                        }
-
-                        self.previous = Some(event.clone());
-
-                        event
                     } else {
                         ReedlineEvent::None
                     }
@@ -195,7 +164,6 @@ impl EditMode for Vi {
 mod test {
     use super::*;
     use pretty_assertions::assert_eq;
-    use rstest::rstest;
 
     #[test]
     fn esc_leads_to_normal_mode_test() {
@@ -280,35 +248,5 @@ mod test {
         let result = vi.parse_event(esc);
 
         assert_eq!(result, ReedlineEvent::None);
-    }
-
-    #[rstest]
-    #[case('f', KeyModifiers::NONE, ViToTill::ToRight('X'))]
-    #[case('f', KeyModifiers::SHIFT, ViToTill::ToLeft('X'))]
-    #[case('t', KeyModifiers::NONE, ViToTill::TillRight('X'))]
-    #[case('t', KeyModifiers::SHIFT, ViToTill::TillLeft('X'))]
-    fn last_to_till(
-        #[case] code: char,
-        #[case] modifiers: KeyModifiers,
-        #[case] expected: ViToTill,
-    ) {
-        let mut vi = Vi {
-            mode: ViMode::Normal,
-            ..Vi::default()
-        };
-
-        let to_till = Event::Key(KeyEvent {
-            code: KeyCode::Char(code),
-            modifiers,
-        });
-        vi.parse_event(to_till);
-
-        let key_x = Event::Key(KeyEvent {
-            code: KeyCode::Char('x'),
-            modifiers: KeyModifiers::SHIFT,
-        });
-        vi.parse_event(key_x);
-
-        assert_eq!(vi.last_to_till, Some(expected));
     }
 }

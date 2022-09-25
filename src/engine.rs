@@ -692,8 +692,7 @@ impl Reedline {
             | ReedlineEvent::MenuLeft
             | ReedlineEvent::MenuRight
             | ReedlineEvent::MenuPageNext
-            | ReedlineEvent::MenuPagePrevious
-            | ReedlineEvent::RecordToTill => Ok(EventStatus::Inapplicable),
+            | ReedlineEvent::MenuPagePrevious => Ok(EventStatus::Inapplicable),
         }
     }
 
@@ -990,9 +989,7 @@ impl Reedline {
                 // Exhausting the event handlers is still considered handled
                 Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::None | ReedlineEvent::Mouse | ReedlineEvent::RecordToTill => {
-                Ok(EventStatus::Inapplicable)
-            }
+            ReedlineEvent::None | ReedlineEvent::Mouse => Ok(EventStatus::Inapplicable),
         }
     }
 
