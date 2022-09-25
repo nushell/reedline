@@ -1,7 +1,7 @@
 [package]
 name = "reedline"
-version = "0.11.0"
 authors = ["JT <jonathan.d.turner@gmail.com>"]
+version = "0.12.0"
 edition = "2021"
 description = "A readline-like crate for CLI text input"
 license = "MIT"
