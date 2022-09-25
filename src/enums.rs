@@ -497,9 +497,6 @@ pub enum ReedlineEvent {
 
     /// Open text editor
     OpenEditor,
-
-    /// Record vi to or till motion
-    RecordToTill,
 }
 
 impl Display for ReedlineEvent {
@@ -541,7 +538,6 @@ impl Display for ReedlineEvent {
             ReedlineEvent::MenuPagePrevious => write!(f, "MenuPagePrevious"),
             ReedlineEvent::ExecuteHostCommand(_) => write!(f, "ExecuteHostCommand"),
             ReedlineEvent::OpenEditor => write!(f, "OpenEditor"),
-            ReedlineEvent::RecordToTill => write!(f, "RecordToTill"),
         }
     }
 }
