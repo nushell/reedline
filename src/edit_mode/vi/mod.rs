@@ -272,38 +272,4 @@ mod test {
 
         assert_eq!(result, ReedlineEvent::None);
     }
-
-    #[rstest]
-    #[case('f', KeyModifiers::NONE, ViToTill::ToRight('X'))]
-    #[case('f', KeyModifiers::SHIFT, ViToTill::ToLeft('X'))]
-    #[case('t', KeyModifiers::NONE, ViToTill::TillRight('X'))]
-    #[case('t', KeyModifiers::SHIFT, ViToTill::TillLeft('X'))]
-    fn last_to_till(
-        #[case] code: char,
-        #[case] modifiers: KeyModifiers,
-        #[case] expected: ViToTill,
-    ) {
-        let mut vi = Vi {
-            mode: ViMode::Normal,
-            ..Vi::default()
-        };
-
-        let to_till = Event::Key(KeyEvent {
-            code: KeyCode::Char(code),
-            modifiers,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        });
-        vi.parse_event(to_till);
-
-        let key_x = Event::Key(KeyEvent {
-            code: KeyCode::Char('x'),
-            modifiers: KeyModifiers::SHIFT,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        });
-        vi.parse_event(key_x);
-
-        assert_eq!(vi.last_to_till, Some(expected));
-    }
 }
