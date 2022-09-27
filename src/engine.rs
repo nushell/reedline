@@ -5,8 +5,12 @@ use crate::{
     history::SearchFilter,
     menu_functions::{parse_selection_char, ParseAction},
 };
-
-use crate::result::{ReedlineError, ReedlineErrorVariants};
+#[cfg(feature = "external_printer")]
+use {
+    crate::external_printer::ExternalPrinter,
+    crossbeam::channel::TryRecvError,
+    std::io::{Error, ErrorKind},
+};
 use {
     crate::{
         completion::{Completer, DefaultCompleter},
@@ -21,6 +25,7 @@ use {
         },
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
+        result::{ReedlineError, ReedlineErrorVariants},
         utils::text_manipulation,
         EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
@@ -30,7 +35,9 @@ use {
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, Result,
     },
-    std::{borrow::Borrow, fs::File, io, io::Write, process::Command, time::Duration},
+    std::{
+        borrow::Borrow, fs::File, io, io::Write, process::Command, time::Duration, time::SystemTime,
+    },
 };
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for
@@ -88,7 +95,8 @@ pub struct Reedline {
     // History
     history: Box<dyn History>,
     history_cursor: HistoryCursor,
-    history_session_id: Option<HistorySessionId>, // none if history doesn't support this
+    history_session_id: Option<HistorySessionId>,
+    // none if history doesn't support this
     history_last_run_id: Option<HistoryItemId>,
     input_mode: InputMode,
 
@@ -121,6 +129,9 @@ pub struct Reedline {
 
     // Text editor used to open the line buffer for editing
     buffer_editor: Option<BufferEditor>,
+
+    #[cfg(feature = "external_printer")]
+    external_printer: Option<ExternalPrinter<String>>,
 }
 
 struct BufferEditor {
@@ -147,6 +158,7 @@ impl Reedline {
         let hinter = None;
         let validator = None;
         let edit_mode = Box::new(Emacs::default());
+        let hist_session_id = Self::create_history_session_id();
 
         Reedline {
             editor: Editor::default(),
@@ -154,7 +166,7 @@ impl Reedline {
             history_cursor: HistoryCursor::new(HistoryNavigationQuery::Normal(
                 LineBuffer::default(),
             )),
-            history_session_id: None,
+            history_session_id: hist_session_id,
             history_last_run_id: None,
             input_mode: InputMode::Regular,
             painter,
@@ -169,7 +181,24 @@ impl Reedline {
             use_ansi_coloring: true,
             menus: Vec::new(),
             buffer_editor: None,
+            #[cfg(feature = "external_printer")]
+            external_printer: None,
         }
+    }
+
+    /// Get a new history session id based on the current time and the first commit datetime of reedline
+    fn create_history_session_id() -> Option<HistorySessionId> {
+        let nanos = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(n) => n.as_nanos() as i64,
+            Err(_) => 0,
+        };
+
+        Some(HistorySessionId::new(nanos))
+    }
+
+    /// Return the previously generated history session id
+    pub fn get_history_session_id(&self) -> Option<HistorySessionId> {
+        self.history_session_id
     }
 
     /// A builder to include a [`Hinter`] in your instance of the Reedline engine
@@ -379,6 +408,14 @@ impl Reedline {
         self.history.sync()
     }
 
+    /// Check if any commands have been run.
+    ///
+    /// When no commands have been run, calling [`Self::update_last_command_context`]
+    /// does not make sense and is guaranteed to fail with a "No command run" error.
+    pub fn has_last_command_context(&self) -> bool {
+        self.history_last_run_id.is_some()
+    }
+
     /// update the last history item with more information
     pub fn update_last_command_context(
         &mut self,
@@ -407,6 +444,11 @@ impl Reedline {
         terminal::disable_raw_mode()?;
 
         result
+    }
+
+    /// Returns the current contents of the input buffer.
+    pub fn current_buffer_contents(&self) -> &str {
+        self.editor.get_buffer()
     }
 
     /// Writes `msg` to the terminal with a following carriage return and newline
@@ -443,7 +485,22 @@ impl Reedline {
         loop {
             let mut paste_enter_state = false;
 
-            if event::poll(Duration::from_millis(1000))? {
+            #[cfg(feature = "external_printer")]
+            if let Some(ref external_printer) = self.external_printer {
+                // get messages from printer as crlf separated "lines"
+                let messages = Self::external_messages(external_printer)?;
+                if !messages.is_empty() {
+                    // print the message(s)
+                    self.painter.print_external_message(
+                        messages,
+                        self.editor.line_buffer(),
+                        prompt,
+                    )?;
+                    self.repaint(prompt)?;
+                }
+            }
+
+            if event::poll(Duration::from_millis(100))? {
                 let mut latest_resize = None;
 
                 // There could be multiple events queued up!
@@ -823,13 +880,7 @@ impl Reedline {
                         let buf = self.editor.get_buffer();
                         if !buf.is_empty() {
                             let mut entry = HistoryItem::from_command_line(buf);
-                            // todo: in theory there's a race condition here because another shell might get the next session id at the same time
-                            entry.session_id =
-                                Some(*self.history_session_id.get_or_insert_with(|| {
-                                    self.history
-                                        .next_session_id()
-                                        .expect("todo: error handling")
-                                }));
+                            entry.session_id = self.history_session_id;
                             let entry = self.history.save(entry).expect("todo: error handling");
                             self.history_last_run_id = entry.id;
                         }
@@ -1097,7 +1148,7 @@ impl Reedline {
     }
 
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
-    fn run_edit_commands(&mut self, commands: &[EditCommand]) {
+    pub fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         if self.input_mode == InputMode::HistoryTraversal {
             if matches!(
                 self.history_cursor.get_navigation(),
@@ -1380,6 +1431,36 @@ impl Reedline {
 
         self.painter
             .repaint_buffer(prompt, &lines, menu, self.use_ansi_coloring)
+    }
+
+    /// Adds an external printer
+    #[cfg(feature = "external_printer")]
+    pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
+        self.external_printer = Some(printer);
+        self
+    }
+
+    #[cfg(feature = "external_printer")]
+    fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<Vec<String>> {
+        let mut messages = Vec::new();
+        loop {
+            let result = external_printer.receiver().try_recv();
+            match result {
+                Ok(line) => {
+                    messages.push(line);
+                }
+                Err(TryRecvError::Empty) => {
+                    break;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    return Err(Error::new(
+                        ErrorKind::NotConnected,
+                        TryRecvError::Disconnected,
+                    ));
+                }
+            }
+        }
+        Ok(messages)
     }
 }
 

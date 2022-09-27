@@ -328,7 +328,7 @@ pub enum EditType {
     EditText,
 }
 
-/// Every line change should come with an UndoBehavior tag, which can be used to
+/// Every line change should come with an `UndoBehavior` tag, which can be used to
 /// calculate how the change should be reflected on the undo stack
 #[derive(Debug)]
 pub enum UndoBehavior {

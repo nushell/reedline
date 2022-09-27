@@ -1,6 +1,6 @@
 [package]
 name = "reedline"
-version = "0.10.0"
+version = "0.11.0"
 authors = ["JT <jonathan.d.turner@gmail.com>"]
 edition = "2021"
 description = "A readline-like crate for CLI text input"
@@ -28,18 +28,21 @@ strip-ansi-escapes = "0.1.1"
 strum = "0.24"
 strum_macros = "0.24"
 fd-lock = "3.0.3"
-rusqlite = { version = "0.28.0", optional = true, features = ["bundled"] }
+rusqlite = { version = "0.28.0", optional = true }
 serde_json = { version = "1.0.79", optional = true }
 gethostname = { version = "0.2.3", optional = true }
 thiserror = "1.0.31"
+crossbeam = { version = "0.8.2", optional = true }
 
 [dev-dependencies]
 tempfile = "3.3.0"
 pretty_assertions = "1.1.0"
-rstest = {version = "0.15.0", default-features = false}
+rstest = { version = "0.15.0", default-features = false }
 
 [features]
 system_clipboard = ["clipboard"]
 bashisms = []
-sqlite = ["rusqlite", "serde_json", "gethostname"]
+external_printer = ["crossbeam"]
+sqlite = ["rusqlite/bundled", "serde_json", "gethostname"]
+sqlite-dynlib = ["rusqlite", "serde_json", "gethostname"]
 

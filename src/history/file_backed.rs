@@ -1,6 +1,5 @@
 use super::{
-    base::CommandLineSearch, History, HistoryItem, HistoryItemId, HistorySessionId,
-    SearchDirection, SearchQuery,
+    base::CommandLineSearch, History, HistoryItem, HistoryItemId, SearchDirection, SearchQuery,
 };
 use crate::{
     result::{ReedlineError, ReedlineErrorVariants},
@@ -255,11 +254,6 @@ impl History for FileBackedHistory {
             self.len_on_disk = self.entries.len();
         }
         Ok(())
-    }
-
-    fn next_session_id(&mut self) -> Result<HistorySessionId> {
-        // doesn't support separating out different sessions
-        Ok(HistorySessionId::new(0))
     }
 }
 

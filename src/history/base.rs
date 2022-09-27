@@ -2,7 +2,7 @@ use chrono::Utc;
 
 use crate::{core_editor::LineBuffer, HistoryItem, Result};
 
-use super::{HistoryItemId, HistorySessionId};
+use super::HistoryItemId;
 
 /// Browsing modes for a [`History`]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,7 +139,7 @@ impl SearchQuery {
 }
 
 /// Represents a history file or database
-/// Data could be stored e.g. in a plain text file, in a JSONL file, in a SQLite database
+/// Data could be stored e.g. in a plain text file, in a `JSONL` file, in a `SQLite` database
 pub trait History: Send {
     /// save a history item to the database
     /// if given id is None, a new id is created and set in the return value
@@ -149,7 +149,6 @@ pub trait History: Send {
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem>;
 
     /// retrieves the next unused session id
-    fn next_session_id(&mut self) -> Result<HistorySessionId>;
 
     /// count the results of a query
     fn count(&self, query: SearchQuery) -> Result<i64>;
@@ -178,6 +177,8 @@ mod test {
     const IS_FILE_BASED: bool = false;
     #[cfg(not(feature = "sqlite"))]
     const IS_FILE_BASED: bool = true;
+
+    use crate::HistorySessionId;
 
     fn create_item(session: i64, cwd: &str, cmd: &str, exit_status: i64) -> HistoryItem {
         HistoryItem {

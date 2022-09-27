@@ -163,6 +163,14 @@
 //! )));
 //! ```
 //!
+//! ## Crate features
+//!
+//! - `clipboard`: Enable support to use the `SystemClipboard`. Enabling this feature will return a `SystemClipboard` instead of a local clipboard when calling `get_default_clipboard()`.
+//! - `bashisms`: Enable support for special text sequences that recall components from the history. e.g. `!!` and `!$`. For use in shells like `bash` or [`nushell`](https://nushell.sh).
+//! - `sqlite`: Provides the `SqliteBackedHistory` to store richer information in the history. Statically links the required sqlite version.
+//! - `sqlite-dynlib`: Alternative to the feature `sqlite`. Will not statically link. Requires `sqlite >= 3.38` to link dynamically!
+//! - `external_printer`: **Experimental:** Thread-safe `ExternalPrinter` handle to print lines from concurrently running threads.
+//!
 //! ## Are we prompt yet? (Development status)
 //!
 //! Nushell has now all the basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
@@ -261,6 +269,8 @@ pub use menu::{
 };
 
 mod utils;
+
+mod external_printer;
 pub use utils::{
     get_reedline_default_keybindings, get_reedline_edit_commands,
     get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
@@ -269,3 +279,5 @@ pub use utils::{
 
 // Reexport the key types to be independent from an explicit crossterm dependency.
 pub use crossterm::event::{KeyCode, KeyModifiers};
+#[cfg(feature = "external_printer")]
+pub use external_printer::ExternalPrinter;
