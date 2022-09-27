@@ -9,7 +9,7 @@ use strum::IntoEnumIterator;
 struct ReedLineCrossTermKeyCode(crossterm::event::KeyCode);
 impl ReedLineCrossTermKeyCode {
     fn iterator() -> std::slice::Iter<'static, ReedLineCrossTermKeyCode> {
-        static KEYCODE: [ReedLineCrossTermKeyCode; 27] = [
+        static KEYCODE: [ReedLineCrossTermKeyCode; 28] = [
             ReedLineCrossTermKeyCode(KeyCode::Backspace),
             ReedLineCrossTermKeyCode(KeyCode::Enter),
             ReedLineCrossTermKeyCode(KeyCode::Left),
