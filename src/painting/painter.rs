@@ -457,7 +457,7 @@ impl Painter {
     ///
     /// This function doesn't flush the buffer. So buffer should be flushed
     /// afterwards perhaps by repainting the prompt via `repaint_buffer()`.
-    pub fn print_external_message(
+    pub(crate) fn print_external_message(
         &mut self,
         messages: Vec<String>,
         line_buffer: &LineBuffer,
