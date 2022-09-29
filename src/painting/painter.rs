@@ -454,6 +454,9 @@ impl Painter {
     }
 
     /// Prints an external message
+    ///
+    /// This function doesn't flush the buffer. So buffer should be flushed
+    /// afterwards perhaps by repainting the prompt via `repaint_buffer()`.
     pub fn print_external_message(
         &mut self,
         messages: Vec<String>,
@@ -486,7 +489,11 @@ impl Painter {
         let erase_line = format!("\r{}\r", " ".repeat(self.screen_width().into()));
         for line in messages {
             self.stdout.queue(Print(&erase_line))?;
-            self.paint_line(&line)?;
+            // Note: we don't use `print_line` here because we don't want to
+            // flush right now. The subsequent repaint of the prompt will cause
+            // immediate flush anyways. And if we flush here, every external
+            // print causes visible flicker.
+            self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
             let new_start = self.prompt_start_row.saturating_add(1);
             let height = self.screen_height();
             if new_start >= height {
