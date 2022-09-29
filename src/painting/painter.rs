@@ -3,16 +3,18 @@ use {
     crate::{
         menu::{Menu, ReedlineMenu},
         painting::PromptLines,
-        LineBuffer, Prompt,
+        Prompt,
     },
     crossterm::{
-        cursor::{self, MoveTo, MoveUp, RestorePosition, SavePosition},
+        cursor::{self, MoveTo, RestorePosition, SavePosition},
         style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor},
         terminal::{self, Clear, ClearType, ScrollUp},
         QueueableCommand, Result,
     },
     std::io::Write,
 };
+#[cfg(feature = "external_printer")]
+use {crate::LineBuffer, crossterm::cursor::MoveUp};
 
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
@@ -454,7 +456,11 @@ impl Painter {
     }
 
     /// Prints an external message
-    pub fn print_external_message(
+    ///
+    /// This function doesn't flush the buffer. So buffer should be flushed
+    /// afterwards perhaps by repainting the prompt via `repaint_buffer()`.
+    #[cfg(feature = "external_printer")]
+    pub(crate) fn print_external_message(
         &mut self,
         messages: Vec<String>,
         line_buffer: &LineBuffer,
@@ -486,7 +492,11 @@ impl Painter {
         let erase_line = format!("\r{}\r", " ".repeat(self.screen_width().into()));
         for line in messages {
             self.stdout.queue(Print(&erase_line))?;
-            self.paint_line(&line)?;
+            // Note: we don't use `print_line` here because we don't want to
+            // flush right now. The subsequent repaint of the prompt will cause
+            // immediate flush anyways. And if we flush here, every external
+            // print causes visible flicker.
+            self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
             let new_start = self.prompt_start_row.saturating_add(1);
             let height = self.screen_height();
             if new_start >= height {

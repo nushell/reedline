@@ -15,10 +15,12 @@ jobs:
         rust:
           - stable
         # Define the feature sets that will be built here (for caching you define a separate name)
-        style: [bashisms, default, sqlite, basqlite]
+        style: [bashisms, default, sqlite, basqlite, external_printer]
         include:
           - style: bashisms
             flags: "--features bashisms"
+          - style: external_printer
+            flags: "--features external_printer"
           - style: default
             flags: ""
           - style: sqlite
