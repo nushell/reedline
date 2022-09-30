@@ -928,8 +928,20 @@ impl Reedline {
                                     self.completer.as_mut(),
                                     self.history.as_ref(),
                                 );
-                                if menu.get_values().len() == 1 {
-                                    return self.handle_editor_event(prompt, ReedlineEvent::Enter);
+                                if let Some(&EditCommand::Complete) = commands.first() {
+                                    if menu.get_values().len() == 1 {
+                                        return self
+                                            .handle_editor_event(prompt, ReedlineEvent::Enter);
+                                    } else if self.partial_completions
+                                        && menu.can_partially_complete(
+                                            self.quick_completions,
+                                            &mut self.editor,
+                                            self.completer.as_mut(),
+                                            self.history.as_ref(),
+                                        )
+                                    {
+                                        return Ok(EventStatus::Handled);
+                                    }
                                 }
                                 if self.editor.line_buffer().get_buffer().is_empty() {
                                     menu.menu_event(MenuEvent::Deactivate);

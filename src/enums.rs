@@ -99,6 +99,9 @@ pub enum EditCommand {
     /// Clear to the end of the current line
     ClearToLineEnd,
 
+    /// Insert completion: entire completion if there is only one possibility, or else up to shared prefix.
+    Complete,
+
     /// Cut the current line
     CutCurrentLine,
 
@@ -216,6 +219,7 @@ impl Display for EditCommand {
             EditCommand::DeleteWord => write!(f, "DeleteWord"),
             EditCommand::Clear => write!(f, "Clear"),
             EditCommand::ClearToLineEnd => write!(f, "ClearToLineEnd"),
+            EditCommand::Complete => write!(f, "Complete"),
             EditCommand::CutCurrentLine => write!(f, "CutCurrentLine"),
             EditCommand::CutFromStart => write!(f, "CutFromStart"),
             EditCommand::CutFromLineStart => write!(f, "CutFromLineStart"),
@@ -287,6 +291,7 @@ impl EditCommand {
             | EditCommand::DeleteWord
             | EditCommand::Clear
             | EditCommand::ClearToLineEnd
+            | EditCommand::Complete
             | EditCommand::CutCurrentLine
             | EditCommand::CutFromStart
             | EditCommand::CutFromLineStart
