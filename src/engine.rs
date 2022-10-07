@@ -629,7 +629,10 @@ impl Reedline {
                 self.painter.clear_scrollback()?;
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::Enter | ReedlineEvent::HistoryHintComplete => {
+            ReedlineEvent::Enter
+            | ReedlineEvent::HistoryHintComplete
+            | ReedlineEvent::Submit
+            | ReedlineEvent::SubmitOrNewline => {
                 if let Some(string) = self.history_cursor.string_at_cursor() {
                     self.editor
                         .set_buffer(string, UndoBehavior::CreateUndoPoint);
@@ -848,7 +851,9 @@ impl Reedline {
                 self.painter.clear_scrollback()?;
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::Enter => {
+            ReedlineEvent::Enter | ReedlineEvent::Submit | ReedlineEvent::SubmitOrNewline
+                if self.menus.iter().any(|menu| menu.is_active()) =>
+            {
                 for menu in self.menus.iter_mut() {
                     if menu.is_active() {
                         menu.replace_in_buffer(&mut self.editor);
@@ -857,7 +862,9 @@ impl Reedline {
                         return Ok(EventStatus::Handled);
                     }
                 }
-
+                unreachable!()
+            }
+            ReedlineEvent::Enter => {
                 #[cfg(feature = "bashisms")]
                 if let Some(event) = self.parse_bang_command() {
                     return self.handle_editor_event(prompt, event);
@@ -865,22 +872,34 @@ impl Reedline {
 
                 let buffer = self.editor.get_buffer().to_string();
                 match self.validator.as_mut().map(|v| v.validate(&buffer)) {
-                    None | Some(ValidationResult::Complete) => {
-                        self.hide_hints = true;
-                        // Additional repaint to show the content without hints etc.
-                        self.repaint(prompt)?;
-                        let buf = self.editor.get_buffer();
-                        if !buf.is_empty() {
-                            let mut entry = HistoryItem::from_command_line(buf);
-                            entry.session_id = self.history_session_id;
-                            let entry = self.history.save(entry).expect("todo: error handling");
-                            self.history_last_run_id = entry.id;
-                        }
-                        self.run_edit_commands(&[EditCommand::Clear]);
-                        self.editor.reset_undo_stack();
+                    None | Some(ValidationResult::Complete) => Ok(self.submit_buffer(prompt)?),
+                    Some(ValidationResult::Incomplete) => {
+                        self.run_edit_commands(&[EditCommand::InsertNewline]);
 
-                        Ok(EventStatus::Exits(Signal::Success(buffer)))
+                        Ok(EventStatus::Handled)
                     }
+                }
+            }
+            ReedlineEvent::Submit => {
+                #[cfg(feature = "bashisms")]
+                if let Some(event) = self.parse_bang_command() {
+                    return self.handle_editor_event(prompt, event);
+                }
+                Ok(self.submit_buffer(prompt)?)
+            }
+            ReedlineEvent::SubmitOrNewline => {
+                #[cfg(feature = "bashisms")]
+                if let Some(event) = self.parse_bang_command() {
+                    return self.handle_editor_event(prompt, event);
+                }
+                let cursor_position_in_buffer = self.editor.insertion_point();
+                let buffer = self.editor.get_buffer().to_string();
+                if cursor_position_in_buffer < buffer.len() {
+                    self.run_edit_commands(&[EditCommand::InsertNewline]);
+                    return Ok(EventStatus::Handled);
+                }
+                match self.validator.as_mut().map(|v| v.validate(&buffer)) {
+                    None | Some(ValidationResult::Complete) => Ok(self.submit_buffer(prompt)?),
                     Some(ValidationResult::Incomplete) => {
                         self.run_edit_commands(&[EditCommand::InsertNewline]);
 
@@ -1448,6 +1467,23 @@ impl Reedline {
             }
         }
         Ok(messages)
+    }
+
+    fn submit_buffer(&mut self, prompt: &dyn Prompt) -> io::Result<EventStatus> {
+        let buffer = self.editor.get_buffer().to_string();
+        self.hide_hints = true;
+        // Additional repaint to show the content without hints etc.
+        self.repaint(prompt)?;
+        if !buffer.is_empty() {
+            let mut entry = HistoryItem::from_command_line(&buffer);
+            entry.session_id = self.history_session_id;
+            let entry = self.history.save(entry).expect("todo: error handling");
+            self.history_last_run_id = entry.id;
+        }
+        self.run_edit_commands(&[EditCommand::Clear]);
+        self.editor.reset_undo_stack();
+
+        Ok(EventStatus::Exits(Signal::Success(buffer)))
     }
 }
 
