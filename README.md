@@ -37,22 +37,22 @@ For the full documentation visit <https://docs.rs/reedline>. The examples should
 // Create a default reedline object to handle user input
 
 use reedline::{DefaultPrompt, Reedline, Signal};
-use std::io;
 
-fn main() -> io::Result<()> {
-    let mut line_editor = Reedline::create()?;
-    let prompt = DefaultPrompt::default();
+let mut line_editor = Reedline::create();
+let prompt = DefaultPrompt::default();
 
-    loop {
-        let sig = line_editor.read_line(&prompt)?;
-        match sig {
-            Signal::Success(buffer) => {
-                println!("We processed: {}", buffer);
-            }
-            Signal::CtrlD | Signal::CtrlC => {
-                println!("\nAborted!");
-                break Ok(());
-            }
+loop {
+    let sig = line_editor.read_line(&prompt);
+    match sig {
+        Ok(Signal::Success(buffer)) => {
+            println!("We processed: {}", buffer);
+        }
+        Ok(Signal::CtrlD) | Ok(Signal::CtrlC) => {
+            println!("\nAborted!");
+            break;
+        }
+        x => {
+            println!("Event: {:?}", x);
         }
     }
 }
@@ -64,22 +64,23 @@ fn main() -> io::Result<()> {
 // Configure reedline with custom keybindings
 
 //Cargo.toml
-//  [dependencies]
-//  crossterm = "*"
+//    [dependencies]
+//    crossterm = "*"
 
 use {
   crossterm::event::{KeyCode, KeyModifiers},
-  reedline::{default_emacs_keybindings, EditCommand, Reedline},
+  reedline::{default_emacs_keybindings, EditCommand, Reedline, Emacs, ReedlineEvent},
 };
 
 let mut keybindings = default_emacs_keybindings();
 keybindings.add_binding(
-  KeyModifiers::ALT,
-  KeyCode::Char('m'),
-  vec![EditCommand::BackspaceWord],
+    KeyModifiers::ALT,
+    KeyCode::Char('m'),
+    ReedlineEvent::Edit(vec![EditCommand::BackspaceWord]),
 );
+let edit_mode = Box::new(Emacs::new(keybindings));
 
-let mut line_editor = Reedline::create().with_keybindings(keybindings);
+let mut line_editor = Reedline::create().with_edit_mode(edit_mode);
 ```
 
 ### Integrate with `History`
