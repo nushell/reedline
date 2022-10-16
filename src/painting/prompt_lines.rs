@@ -14,6 +14,7 @@ pub(crate) struct PromptLines<'prompt> {
     pub(crate) before_cursor: Cow<'prompt, str>,
     pub(crate) after_cursor: Cow<'prompt, str>,
     pub(crate) hint: Cow<'prompt, str>,
+    pub(crate) right_prompt_on_last_line: bool,
 }
 
 impl<'prompt> PromptLines<'prompt> {
@@ -39,6 +40,7 @@ impl<'prompt> PromptLines<'prompt> {
         let before_cursor = coerce_crlf(before_cursor);
         let after_cursor = coerce_crlf(after_cursor);
         let hint = coerce_crlf(hint);
+        let right_prompt_on_last_line = prompt.right_prompt_on_last_line();
 
         Self {
             prompt_str_left,
@@ -47,6 +49,7 @@ impl<'prompt> PromptLines<'prompt> {
             before_cursor,
             after_cursor,
             hint,
+            right_prompt_on_last_line,
         }
     }
 

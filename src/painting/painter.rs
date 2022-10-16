@@ -183,16 +183,19 @@ impl Painter {
             .screen_width()
             .saturating_sub(prompt_length_right as u16);
         let input_width = lines.estimate_first_input_line_width();
-        let screen_width = self.screen_width();
-        let required_lines = lines.required_lines(screen_width, None);
+
+        let mut row = self.prompt_start_row;
+        if lines.right_prompt_on_last_line {
+            let screen_width = self.screen_width();
+            let required_lines = lines.required_lines(screen_width, None);
+
+            row += required_lines.saturating_sub(1);
+        }
 
         if input_width <= start_position {
             self.stdout
                 .queue(SavePosition)?
-                .queue(cursor::MoveTo(
-                    start_position,
-                    self.prompt_start_row + required_lines.saturating_sub(1),
-                ))?
+                .queue(cursor::MoveTo(start_position, row))?
                 .queue(Print(&coerce_crlf(&lines.prompt_str_right)))?
                 .queue(RestorePosition)?;
         }
