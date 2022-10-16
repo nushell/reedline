@@ -120,7 +120,7 @@ Reedline::create().with_highlighter(Box::new(ExampleHighlighter::new(commands)))
 ```rust
 // Create a reedline object with tab completions support
 
-use reedline::{ColumnarMenu, DefaultCompleter, Reedline, ReedlineMenu};
+use reedline::{default_emacs_keybindings, ColumnarMenu, DefaultCompleter, Emacs, KeyCode, KeyModifiers, Reedline, ReedlineEvent, ReedlineMenu};
 
 let commands = vec![
   "test".into(),
@@ -131,9 +131,23 @@ let commands = vec![
 let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 // Use the interactive menu to select options from the completer
 let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu"));
+// Set up the required keybindings
+let mut keybindings = default_emacs_keybindings();
+keybindings.add_binding(
+    KeyModifiers::NONE,
+    KeyCode::Tab,
+    ReedlineEvent::UntilFound(vec![
+        ReedlineEvent::Menu("completion_menu".to_string()),
+        ReedlineEvent::MenuNext,
+    ]),
+);
 
-let mut line_editor =
-Reedline::create().with_completer(completer).with_menu(ReedlineMenu::EngineCompleter(completion_menu));
+let edit_mode = Box::new(Emacs::new(keybindings));
+
+let mut line_editor = Reedline::create()
+    .with_completer(completer)
+    .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
+    .with_edit_mode(edit_mode);
 ```
 
 ### Integrate with `Hinter` for fish-style history autosuggestions
