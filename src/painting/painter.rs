@@ -1,3 +1,5 @@
+use crate::PromptEditMode;
+
 use {
     super::utils::{coerce_crlf, line_width},
     crate::{
@@ -132,6 +134,7 @@ impl Painter {
         &mut self,
         prompt: &dyn Prompt,
         lines: &PromptLines,
+        prompt_mode: PromptEditMode,
         menu: Option<&ReedlineMenu>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
@@ -172,7 +175,13 @@ impl Painter {
         // can print without overwriting the things written during the painting
         self.last_required_lines = required_lines;
 
-        self.stdout.queue(RestorePosition)?.queue(cursor::Show)?;
+        self.stdout
+            .queue(RestorePosition)?
+            .queue(cursor::SetCursorShape(match prompt_mode {
+                PromptEditMode::Vi(crate::PromptViMode::Insert) => cursor::CursorShape::Line,
+                _ => cursor::CursorShape::Block,
+            }))?
+            .queue(cursor::Show)?;
 
         self.stdout.flush()
     }

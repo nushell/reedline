@@ -1354,8 +1354,13 @@ impl Reedline {
                 "",
             );
 
-            self.painter
-                .repaint_buffer(prompt, &lines, None, self.use_ansi_coloring)?;
+            self.painter.repaint_buffer(
+                prompt,
+                &lines,
+                self.prompt_edit_mode(),
+                None,
+                self.use_ansi_coloring,
+            )?;
         }
 
         Ok(())
@@ -1416,8 +1421,13 @@ impl Reedline {
 
         let menu = self.menus.iter().find(|menu| menu.is_active());
 
-        self.painter
-            .repaint_buffer(prompt, &lines, menu, self.use_ansi_coloring)
+        self.painter.repaint_buffer(
+            prompt,
+            &lines,
+            self.prompt_edit_mode(),
+            menu,
+            self.use_ansi_coloring,
+        )
     }
 
     /// Adds an external printer
