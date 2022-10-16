@@ -22,6 +22,7 @@ use {
 };
 
 fn main() -> Result<()> {
+    println!("Ctrl-D to quit");
     // quick command like parameter handling
     let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
     let args: Vec<String> = std::env::args().collect();
