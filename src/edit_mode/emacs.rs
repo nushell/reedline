@@ -22,6 +22,9 @@ pub fn default_emacs_keybindings() -> Keybindings {
     add_common_navigation_bindings(&mut kb);
     add_common_edit_bindings(&mut kb);
 
+    // This could be in common, but in Vi it also changes the mode
+    kb.add_binding(KM::NONE, KC::Enter, ReedlineEvent::Enter);
+
     // *** CTRL ***
     // Moves
     kb.add_binding(
@@ -141,7 +144,6 @@ impl EditMode for Emacs {
                             .unwrap_or(ReedlineEvent::None)
                     }
                 }
-                (KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                 _ => self
                     .keybindings
                     .find_binding(modifiers, code)
