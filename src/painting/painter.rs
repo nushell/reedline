@@ -182,13 +182,12 @@ impl Painter {
         let start_position = self
             .screen_width()
             .saturating_sub(prompt_length_right as u16);
-        let input_width = lines.estimate_first_input_line_width();
+        let screen_width = self.screen_width();
+        let input_width = lines.estimate_right_prompt_line_width(screen_width);
 
         let mut row = self.prompt_start_row;
         if lines.right_prompt_on_last_line {
-            let screen_width = self.screen_width();
             let required_lines = lines.required_lines(screen_width, None);
-
             row += required_lines.saturating_sub(1);
         }
 
