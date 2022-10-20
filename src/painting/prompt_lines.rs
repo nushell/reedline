@@ -14,6 +14,7 @@ pub(crate) struct PromptLines<'prompt> {
     pub(crate) before_cursor: Cow<'prompt, str>,
     pub(crate) after_cursor: Cow<'prompt, str>,
     pub(crate) hint: Cow<'prompt, str>,
+    pub(crate) right_prompt_on_last_line: bool,
 }
 
 impl<'prompt> PromptLines<'prompt> {
@@ -39,6 +40,7 @@ impl<'prompt> PromptLines<'prompt> {
         let before_cursor = coerce_crlf(before_cursor);
         let after_cursor = coerce_crlf(after_cursor);
         let hint = coerce_crlf(hint);
+        let right_prompt_on_last_line = prompt.right_prompt_on_last_line();
 
         Self {
             prompt_str_left,
@@ -47,6 +49,7 @@ impl<'prompt> PromptLines<'prompt> {
             before_cursor,
             after_cursor,
             hint,
+            right_prompt_on_last_line,
         }
     }
 
@@ -91,8 +94,9 @@ impl<'prompt> PromptLines<'prompt> {
         lines.saturating_sub(1) as u16
     }
 
-    /// Estimated width of the actual input
-    pub(crate) fn estimate_first_input_line_width(&self) -> u16 {
+    /// Estimated width of the line where right prompt will be rendered
+    pub(crate) fn estimate_right_prompt_line_width(&self, terminal_columns: u16) -> u16 {
+        let first_line_left_prompt = self.prompt_str_left.lines().next();
         let last_line_left_prompt = self.prompt_str_left.lines().last();
 
         let prompt_lines_total = self.before_cursor.to_string() + &self.after_cursor + &self.hint;
@@ -100,14 +104,30 @@ impl<'prompt> PromptLines<'prompt> {
 
         let mut estimate = 0; // space in front of the input
 
-        if let Some(last_line_left_prompt) = last_line_left_prompt {
-            estimate += line_width(last_line_left_prompt);
-        }
+        if self.right_prompt_on_last_line {
+            if let Some(last_line_left_prompt) = last_line_left_prompt {
+                estimate += line_width(last_line_left_prompt);
+                estimate += line_width(&self.prompt_indicator);
 
-        estimate += line_width(&self.prompt_indicator);
+                if let Some(prompt_lines_first) = prompt_lines_first {
+                    estimate += line_width(prompt_lines_first);
+                }
+            }
+        } else {
+            // Render right prompt on the first line
+            let required_lines = estimate_required_lines(&self.prompt_str_left, terminal_columns);
+            if let Some(first_line_left_prompt) = first_line_left_prompt {
+                estimate += line_width(first_line_left_prompt);
+            }
 
-        if let Some(prompt_lines_first) = prompt_lines_first {
-            estimate += line_width(prompt_lines_first);
+            // A single line
+            if required_lines == 1 {
+                estimate += line_width(&self.prompt_indicator);
+
+                if let Some(prompt_lines_first) = prompt_lines_first {
+                    estimate += line_width(prompt_lines_first);
+                }
+            }
         }
 
         if estimate > u16::MAX as usize {

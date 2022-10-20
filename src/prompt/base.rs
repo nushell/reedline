@@ -113,4 +113,9 @@ pub trait Prompt: Send {
     fn get_prompt_right_color(&self) -> Color {
         DEFAULT_PROMPT_RIGHT_COLOR
     }
+
+    /// Whether to render right prompt on the last line
+    fn right_prompt_on_last_line(&self) -> bool {
+        false
+    }
 }
