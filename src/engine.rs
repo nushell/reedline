@@ -943,13 +943,13 @@ impl Reedline {
                                         return Ok(EventStatus::Handled);
                                     }
                                 }
-                                if self.editor.line_buffer().get_buffer().is_empty() {
-                                    menu.menu_event(MenuEvent::Deactivate);
-                                } else {
-                                    menu.menu_event(MenuEvent::Edit(self.quick_completions));
-                                }
                             }
                         }
+                    }
+                    if self.editor.line_buffer().get_buffer().is_empty() {
+                        menu.menu_event(MenuEvent::Deactivate);
+                    } else {
+                        menu.menu_event(MenuEvent::Edit(self.quick_completions));
                     }
                 }
                 Ok(EventStatus::Handled)
