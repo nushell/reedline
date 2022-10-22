@@ -915,25 +915,43 @@ impl Reedline {
                 self.run_edit_commands(&commands);
                 if let Some(menu) = self.menus.iter_mut().find(|men| men.is_active()) {
                     if self.quick_completions && menu.can_quick_complete() {
-                        menu.menu_event(MenuEvent::Edit(self.quick_completions));
-                        menu.update_values(
-                            &mut self.editor,
-                            self.completer.as_mut(),
-                            self.history.as_ref(),
-                        );
-
-                        if menu.get_values().len() == 1 {
-                            return self.handle_editor_event(prompt, ReedlineEvent::Enter);
+                        match commands.first() {
+                            Some(&EditCommand::Backspace)
+                            | Some(&EditCommand::BackspaceWord)
+                            | Some(&EditCommand::MoveToLineStart) => {
+                                menu.menu_event(MenuEvent::Deactivate)
+                            }
+                            _ => {
+                                menu.menu_event(MenuEvent::Edit(self.quick_completions));
+                                menu.update_values(
+                                    &mut self.editor,
+                                    self.completer.as_mut(),
+                                    self.history.as_ref(),
+                                );
+                                if let Some(&EditCommand::Complete) = commands.first() {
+                                    if menu.get_values().len() == 1 {
+                                        return self
+                                            .handle_editor_event(prompt, ReedlineEvent::Enter);
+                                    } else if self.partial_completions
+                                        && menu.can_partially_complete(
+                                            self.quick_completions,
+                                            &mut self.editor,
+                                            self.completer.as_mut(),
+                                            self.history.as_ref(),
+                                        )
+                                    {
+                                        return Ok(EventStatus::Handled);
+                                    }
+                                }
+                            }
                         }
                     }
-
                     if self.editor.line_buffer().get_buffer().is_empty() {
                         menu.menu_event(MenuEvent::Deactivate);
                     } else {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
                     }
                 }
-
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),

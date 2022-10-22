@@ -55,6 +55,7 @@ impl Editor {
             EditCommand::MoveWordRightEnd => self.line_buffer.move_word_right_end(),
             EditCommand::MoveBigWordRightEnd => self.line_buffer.move_big_word_right_end(),
             EditCommand::InsertChar(c) => self.line_buffer.insert_char(*c),
+            EditCommand::Complete => {}
             EditCommand::InsertString(str) => self.line_buffer.insert_str(str),
             EditCommand::InsertNewline => self.line_buffer.insert_newline(),
             EditCommand::ReplaceChar(chr) => self.replace_char(*chr),
