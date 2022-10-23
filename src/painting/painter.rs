@@ -196,8 +196,7 @@ impl Painter {
 
         let mut row = self.prompt_start_row;
         if lines.right_prompt_on_last_line {
-            let required_lines = lines.required_lines(screen_width, None);
-            row += required_lines.saturating_sub(1);
+            row += lines.prompt_lines_with_wrap(screen_width);
         }
 
         if input_width <= start_position {
