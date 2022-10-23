@@ -6,10 +6,10 @@
 // Pressing [Enter] will in other cases give you a multi-line prompt.
 
 use reedline::{
-    DefaultValidator, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
-    Reedline, Signal, ValidationResult, Validator,
+    Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline, Signal,
+    ValidationResult, Validator,
 };
-use std::{borrow::Cow, cell::Cell, env, io};
+use std::{borrow::Cow, cell::Cell, io};
 
 struct CustomValidator;
 
@@ -47,8 +47,8 @@ impl Prompt for CustomPrompt {
         }
     }
 
-    fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<str> {
-        format!(">").into()
+    fn render_prompt_indicator(&self, _edit_mode: PromptEditMode) -> Cow<str> {
+        Cow::Owned(">".to_string())
     }
 
     fn render_prompt_multiline_indicator(&self) -> Cow<str> {
