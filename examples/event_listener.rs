@@ -13,7 +13,7 @@ fn main() -> Result<()> {
     println!("Ready to print events (Abort with ESC):");
     print_events()?;
     println!();
-    return Ok(());
+    Ok(())
 }
 
 /// **For debugging purposes only:** Track the terminal events observed by [`Reedline`] and print them.

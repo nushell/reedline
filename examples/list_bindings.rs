@@ -10,7 +10,7 @@ use {
 fn main() -> Result<()> {
     get_all_keybinding_info();
     println!();
-    return Ok(());
+    Ok(())
 }
 
 /// List all keybinding information
