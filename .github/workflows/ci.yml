@@ -31,48 +31,42 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       - name: Setup Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: actions-rs/toolchain@v1.0.6
         with:
           profile: minimal
           toolchain: ${{ matrix.rust }}
           override: true
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.style }}v1 # increment this to bust the cache if needed
 
       - name: Rustfmt
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/cargo@v1.0.1
         with:
           command: fmt
           args: --all -- --check
 
-      - name: Build reedline
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: ${{ matrix.flags }}
-
       - name: Clippy
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/cargo@v1.0.1
         with:
           command: clippy
-          args: ${{ matrix.flags }} -- -D warnings
+          args: ${{ matrix.flags }} --all -- -D warnings
 
       - uses: taiki-e/install-action@nextest
 
       - name: Tests
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/cargo@v1.0.1
         with:
           command: nextest
           args: run --all ${{ matrix.flags }}
 
       - name: Doctests
-        uses: actions-rs/cargo@v1
+        uses: actions-rs/cargo@v1.0.1
         with:
           command: test
           args: --doc ${{ matrix.flags }}
