@@ -173,9 +173,9 @@ pub trait History: Send {
 
 #[cfg(test)]
 mod test {
-    #[cfg(feature = "sqlite")]
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     const IS_FILE_BASED: bool = false;
-    #[cfg(not(feature = "sqlite"))]
+    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
     const IS_FILE_BASED: bool = true;
 
     use crate::HistorySessionId;
@@ -197,11 +197,11 @@ mod test {
 
     use super::*;
     fn create_filled_example_history() -> Result<Box<dyn History>> {
-        #[cfg(feature = "sqlite")]
+        #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
         let mut history = crate::SqliteBackedHistory::in_memory()?;
-        #[cfg(not(feature = "sqlite"))]
+        #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
         let mut history = crate::FileBackedHistory::default();
-        #[cfg(not(feature = "sqlite"))]
+        #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
         history.save(create_item(1, "/", "dummy", 0))?; // add dummy item so ids start with 1
         history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
         history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
@@ -219,7 +219,7 @@ mod test {
         Ok(Box::new(history))
     }
 
-    #[cfg(feature = "sqlite")]
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     #[test]
     fn update_item() -> Result<()> {
         let mut history = create_filled_example_history()?;
