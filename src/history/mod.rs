@@ -2,9 +2,9 @@ mod base;
 mod cursor;
 mod file_backed;
 mod item;
-#[cfg(feature = "sqlite")]
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 mod sqlite_backed;
-#[cfg(feature = "sqlite")]
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 pub use sqlite_backed::SqliteBackedHistory;
 
 pub use base::{

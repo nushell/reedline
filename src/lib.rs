@@ -243,7 +243,7 @@ mod result;
 pub(crate) use result::Result;
 
 mod history;
-#[cfg(feature = "sqlite")]
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 pub use history::SqliteBackedHistory;
 pub use history::{
     CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemId,

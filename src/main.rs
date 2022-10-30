@@ -1,4 +1,4 @@
-#[cfg(not(feature = "sqlite"))]
+#[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
 use reedline::FileBackedHistory;
 
 use {
@@ -39,12 +39,12 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    #[cfg(feature = "sqlite")]
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     let history = Box::new(
         reedline::SqliteBackedHistory::with_file("history.sqlite3".into())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
     );
-    #[cfg(not(feature = "sqlite"))]
+    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
     let commands = vec![
         "test".into(),
@@ -131,10 +131,10 @@ fn main() -> Result<()> {
                 break;
             }
             Ok(Signal::Success(buffer)) => {
-                #[cfg(feature = "sqlite")]
+                #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
                 let start = std::time::Instant::now();
                 // save timestamp, cwd, hostname to history
-                #[cfg(feature = "sqlite")]
+                #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
                 if !buffer.is_empty() {
                     line_editor
                         .update_last_command_context(&|mut c: reedline::HistoryItem| {
@@ -160,7 +160,7 @@ fn main() -> Result<()> {
                     continue;
                 }
                 println!("Our buffer: {}", buffer);
-                #[cfg(feature = "sqlite")]
+                #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
                 if !buffer.is_empty() {
                     line_editor
                         .update_last_command_context(&|mut c| {
