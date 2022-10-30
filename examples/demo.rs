@@ -1,43 +1,24 @@
-#[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
-use reedline::FileBackedHistory;
-
 use {
     crossterm::{
-        event::{poll, Event, KeyCode, KeyEvent, KeyModifiers},
-        terminal, Result,
+        event::{KeyCode, KeyModifiers},
+        Result,
     },
     nu_ansi_term::{Color, Style},
     reedline::{
         default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-        get_reedline_default_keybindings, get_reedline_edit_commands,
-        get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
-        get_reedline_reedline_events, ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt,
-        DefaultValidator, EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu,
-        Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi,
-    },
-    std::{
-        io::{stdout, Write},
-        time::Duration,
+        ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, DefaultValidator,
+        EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline,
+        ReedlineEvent, ReedlineMenu, Signal, Vi,
     },
 };
+
+#[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+use reedline::FileBackedHistory;
 
 fn main() -> Result<()> {
     println!("Ctrl-D to quit");
     // quick command like parameter handling
     let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
-    let args: Vec<String> = std::env::args().collect();
-    // if -k is passed, show the events
-    if args.len() > 1 && args[1] == "-k" {
-        println!("Ready to print events (Abort with ESC):");
-        print_events()?;
-        println!();
-        return Ok(());
-    };
-    if args.len() > 1 && args[1] == "--list" {
-        get_all_keybinding_info();
-        println!();
-        return Ok(());
-    }
 
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     let history = Box::new(
@@ -184,63 +165,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// **For debugging purposes only:** Track the terminal events observed by [`Reedline`] and print them.
-pub fn print_events() -> Result<()> {
-    stdout().flush()?;
-    terminal::enable_raw_mode()?;
-    let result = print_events_helper();
-    terminal::disable_raw_mode()?;
-
-    result
-}
-
-// this fn is totally ripped off from crossterm's examples
-// it's really a diagnostic routine to see if crossterm is
-// even seeing the events. if you press a key and no events
-// are printed, it's a good chance your terminal is eating
-// those events.
-fn print_events_helper() -> Result<()> {
-    loop {
-        // Wait up to 5s for another event
-        if poll(Duration::from_millis(5_000))? {
-            // It's guaranteed that read() wont block if `poll` returns `Ok(true)`
-            let event = crossterm::event::read()?;
-
-            if let Event::Key(KeyEvent { code, modifiers }) = event {
-                match code {
-                    KeyCode::Char(c) => {
-                        println!(
-                            "Char: {} code: {:#08x}; Modifier {:?}; Flags {:#08b}\r",
-                            c,
-                            u32::from(c),
-                            modifiers,
-                            modifiers
-                        );
-                    }
-                    _ => {
-                        println!(
-                            "Keycode: {:?}; Modifier {:?}; Flags {:#08b}\r",
-                            code, modifiers, modifiers
-                        );
-                    }
-                }
-            } else {
-                println!("Event::{:?}\r", event);
-            }
-
-            // hit the esc key to git out
-            if event == Event::Key(KeyCode::Esc.into()) {
-                break;
-            }
-        } else {
-            // Timeout expired, no event for 5s
-            println!("Waiting for you to type...\r");
-        }
-    }
-
-    Ok(())
-}
-
 fn add_menu_keybindings(keybindings: &mut Keybindings) {
     keybindings.add_binding(
         KeyModifiers::CONTROL,
@@ -280,40 +204,4 @@ fn add_newline_keybinding(keybindings: &mut Keybindings) {
         KeyCode::Enter,
         ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
     );
-}
-
-/// List all keybinding information
-fn get_all_keybinding_info() {
-    println!("--Key Modifiers--");
-    for mods in get_reedline_keybinding_modifiers().iter() {
-        println!("{}", mods);
-    }
-
-    println!("\n--Modes--");
-    for modes in get_reedline_prompt_edit_modes().iter() {
-        println!("{}", modes);
-    }
-
-    println!("\n--Key Codes--");
-    for kcs in get_reedline_keycodes().iter() {
-        println!("{}", kcs);
-    }
-
-    println!("\n--Reedline Events--");
-    for rle in get_reedline_reedline_events().iter() {
-        println!("{}", rle);
-    }
-
-    println!("\n--Edit Commands--");
-    for edit in get_reedline_edit_commands().iter() {
-        println!("{}", edit);
-    }
-
-    println!("\n--Default Keybindings--");
-    for (mode, modifier, code, event) in get_reedline_default_keybindings() {
-        println!(
-            "mode: {}, keymodifiers: {}, keycode: {}, event: {}",
-            mode, modifier, code, event
-        );
-    }
 }
