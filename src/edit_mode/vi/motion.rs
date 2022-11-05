@@ -143,10 +143,23 @@ pub enum Motion {
 impl Motion {
     pub fn to_reedline(&self, vi_state: &mut Vi) -> Vec<ReedlineOption> {
         match self {
-            Motion::Left => vec![ReedlineOption::Event(ReedlineEvent::Left)],
-            Motion::Right => vec![ReedlineOption::Event(ReedlineEvent::Right)],
-            Motion::Up => vec![ReedlineOption::Event(ReedlineEvent::Up)],
-            Motion::Down => vec![ReedlineOption::Event(ReedlineEvent::Down)],
+            Motion::Left => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::MenuLeft,
+                ReedlineEvent::Left,
+            ]))],
+            Motion::Right => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::HistoryHintComplete,
+                ReedlineEvent::MenuRight,
+                ReedlineEvent::Right,
+            ]))],
+            Motion::Up => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::MenuUp,
+                ReedlineEvent::Up,
+            ]))],
+            Motion::Down => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::MenuDown,
+                ReedlineEvent::Down,
+            ]))],
             Motion::NextWord => vec![ReedlineOption::Edit(EditCommand::MoveWordRightStart)],
             Motion::NextBigWord => vec![ReedlineOption::Edit(EditCommand::MoveBigWordRightStart)],
             Motion::NextWordEnd => vec![ReedlineOption::Edit(EditCommand::MoveWordRightEnd)],

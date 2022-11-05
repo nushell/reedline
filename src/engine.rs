@@ -581,21 +581,17 @@ impl Reedline {
 
     fn handle_event(&mut self, prompt: &dyn Prompt, event: ReedlineEvent) -> Result<EventStatus> {
         if self.input_mode == InputMode::HistorySearch {
-            self.handle_history_search_event(prompt, event)
+            self.handle_history_search_event(event)
         } else {
             self.handle_editor_event(prompt, event)
         }
     }
 
-    fn handle_history_search_event(
-        &mut self,
-        prompt: &dyn Prompt,
-        event: ReedlineEvent,
-    ) -> io::Result<EventStatus> {
+    fn handle_history_search_event(&mut self, event: ReedlineEvent) -> io::Result<EventStatus> {
         match event {
             ReedlineEvent::UntilFound(events) => {
                 for event in events {
-                    match self.handle_history_search_event(prompt, event)? {
+                    match self.handle_history_search_event(event)? {
                         EventStatus::Inapplicable => {
                             // Try again with the next event handler
                         }

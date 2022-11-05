@@ -406,24 +406,36 @@ mod tests {
     }
 
     #[rstest]
-    #[case(&['2', 'k'], ReedlineEvent::Multiple(vec![ReedlineEvent::Up, ReedlineEvent::Up]))]
-    #[case(&['k'], ReedlineEvent::Multiple(vec![ReedlineEvent::Up]))]
+    #[case(&['2', 'k'], ReedlineEvent::Multiple(vec![ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::MenuUp,
+                ReedlineEvent::Up,
+            ]), ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::MenuUp,
+                ReedlineEvent::Up,
+            ])]))]
+    #[case(&['k'], ReedlineEvent::Multiple(vec![ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::MenuUp,
+                ReedlineEvent::Up,
+            ])]))]
     #[case(&['w'],
         ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveWordRightStart])]))]
     #[case(&['W'],
         ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveBigWordRightStart])]))]
-    #[case(&['2', 'j'], ReedlineEvent::Multiple(vec![ReedlineEvent::Down, ReedlineEvent::Down]))]
-    #[case(&['j'], ReedlineEvent::Multiple(vec![ReedlineEvent::Down]))]
     #[case(&['2', 'l'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Right,
-        ReedlineEvent::Right
-        ]))]
-    #[case(&['l'], ReedlineEvent::Multiple(vec![ReedlineEvent::Right]))]
-    #[case(&['2', 'h'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Left,
-        ReedlineEvent::Left,
-        ]))]
-    #[case(&['h'], ReedlineEvent::Multiple(vec![ReedlineEvent::Left]))]
+        ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::HistoryHintComplete,
+                ReedlineEvent::MenuRight,
+                ReedlineEvent::Right,
+            ]),ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::HistoryHintComplete,
+                ReedlineEvent::MenuRight,
+                ReedlineEvent::Right,
+            ]) ]))]
+    #[case(&['l'], ReedlineEvent::Multiple(vec![ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::HistoryHintComplete,
+                ReedlineEvent::MenuRight,
+                ReedlineEvent::Right,
+            ])]))]
     #[case(&['0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart])]))]
     #[case(&['$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd])]))]
     #[case(&['i'], ReedlineEvent::Multiple(vec![ReedlineEvent::Repaint]))]
