@@ -149,13 +149,13 @@ impl Reedline {
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     #[must_use]
     pub fn create() -> Self {
-        let history = Box::new(FileBackedHistory::default());
+        let history = Box::<FileBackedHistory>::default();
         let painter = Painter::new(std::io::BufWriter::new(std::io::stderr()));
-        let buffer_highlighter = Box::new(ExampleHighlighter::default());
-        let completer = Box::new(DefaultCompleter::default());
+        let buffer_highlighter = Box::<ExampleHighlighter>::default();
+        let completer = Box::<DefaultCompleter>::default();
         let hinter = None;
         let validator = None;
-        let edit_mode = Box::new(Emacs::default());
+        let edit_mode = Box::<Emacs>::default();
         let hist_session_id = Self::create_history_session_id();
 
         Reedline {
