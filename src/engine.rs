@@ -128,6 +128,9 @@ pub struct Reedline {
     // Text editor used to open the line buffer for editing
     buffer_editor: Option<BufferEditor>,
 
+    // If reedline should set the cursor shape based on the current mode
+    handle_cursor_shape: bool,
+
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
 }
@@ -179,6 +182,7 @@ impl Reedline {
             use_ansi_coloring: true,
             menus: Vec::new(),
             buffer_editor: None,
+            handle_cursor_shape: false,
             #[cfg(feature = "external_printer")]
             external_printer: None,
         }
@@ -374,6 +378,14 @@ impl Reedline {
     #[must_use]
     pub fn clear_menus(mut self) -> Self {
         self.menus = Vec::new();
+        self
+    }
+
+    /// A builder which enables or disables reedline changing the cursor shape based on the current editing mode.
+    /// The current implementation sets the cursor shape when drawing the prompt.
+    /// Do not enable this if the cursor shape is set elsewhere, e.g. in the terminal or by ansi escape sequences.
+    pub fn with_cursor_shape(mut self, handle_cursor_shape: bool) -> Self {
+        self.handle_cursor_shape = handle_cursor_shape;
         self
     }
 
@@ -1393,6 +1405,7 @@ impl Reedline {
                 self.prompt_edit_mode(),
                 None,
                 self.use_ansi_coloring,
+                self.handle_cursor_shape,
             )?;
         }
 
@@ -1460,6 +1473,7 @@ impl Reedline {
             self.prompt_edit_mode(),
             menu,
             self.use_ansi_coloring,
+            self.handle_cursor_shape,
         )
     }
 

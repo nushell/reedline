@@ -137,6 +137,7 @@ impl Painter {
         prompt_mode: PromptEditMode,
         menu: Option<&ReedlineMenu>,
         use_ansi_coloring: bool,
+        handle_cursor_shape: bool,
     ) -> Result<()> {
         self.stdout.queue(cursor::Hide)?;
 
@@ -175,13 +176,15 @@ impl Painter {
         // can print without overwriting the things written during the painting
         self.last_required_lines = required_lines;
 
-        self.stdout
-            .queue(RestorePosition)?
-            .queue(cursor::SetCursorShape(match prompt_mode {
-                PromptEditMode::Vi(crate::PromptViMode::Insert) => cursor::CursorShape::Line,
-                _ => cursor::CursorShape::Block,
-            }))?
-            .queue(cursor::Show)?;
+        self.stdout.queue(RestorePosition)?;
+        if handle_cursor_shape {
+            self.stdout
+                .queue(cursor::SetCursorShape(match prompt_mode {
+                    PromptEditMode::Vi(crate::PromptViMode::Insert) => cursor::CursorShape::Line,
+                    _ => cursor::CursorShape::Block,
+                }))?;
+        }
+        self.stdout.queue(cursor::Show)?;
 
         self.stdout.flush()
     }
