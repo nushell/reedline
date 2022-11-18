@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+
+use crossterm::cursor::CursorShape;
+
 use crate::PromptEditMode;
 
 use {
@@ -137,7 +141,7 @@ impl Painter {
         prompt_mode: PromptEditMode,
         menu: Option<&ReedlineMenu>,
         use_ansi_coloring: bool,
-        handle_cursor_shape: bool,
+        cursor_shapes: &Option<HashMap<PromptEditMode, CursorShape>>,
     ) -> Result<()> {
         self.stdout.queue(cursor::Hide)?;
 
@@ -177,12 +181,11 @@ impl Painter {
         self.last_required_lines = required_lines;
 
         self.stdout.queue(RestorePosition)?;
-        if handle_cursor_shape {
-            self.stdout
-                .queue(cursor::SetCursorShape(match prompt_mode {
-                    PromptEditMode::Vi(crate::PromptViMode::Insert) => cursor::CursorShape::Line,
-                    _ => cursor::CursorShape::Block,
-                }))?;
+
+        if let Some(shapes) = cursor_shapes {
+            if let Some(shape) = shapes.get(&prompt_mode) {
+                self.stdout.queue(cursor::SetCursorShape(*shape))?;
+            }
         }
         self.stdout.queue(cursor::Show)?;
 

@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+
+use crossterm::cursor::CursorShape;
+
 #[cfg(feature = "bashisms")]
 use crate::{
     history::SearchFilter,
@@ -128,8 +132,8 @@ pub struct Reedline {
     // Text editor used to open the line buffer for editing
     buffer_editor: Option<BufferEditor>,
 
-    // If reedline should set the cursor shape based on the current mode
-    handle_cursor_shape: bool,
+    // Use different cursors depending on the current edit mode
+    cursor_shapes: Option<HashMap<PromptEditMode, CursorShape>>,
 
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
@@ -182,7 +186,7 @@ impl Reedline {
             use_ansi_coloring: true,
             menus: Vec::new(),
             buffer_editor: None,
-            handle_cursor_shape: false,
+            cursor_shapes: None,
             #[cfg(feature = "external_printer")]
             external_printer: None,
         }
@@ -381,11 +385,14 @@ impl Reedline {
         self
     }
 
-    /// A builder which enables or disables reedline changing the cursor shape based on the current editing mode.
+    /// A builder that enables reedline changing the cursor shape based on the current edit mode.
     /// The current implementation sets the cursor shape when drawing the prompt.
-    /// Do not enable this if the cursor shape is set elsewhere, e.g. in the terminal or by ansi escape sequences.
-    pub fn with_cursor_shape(mut self, handle_cursor_shape: bool) -> Self {
-        self.handle_cursor_shape = handle_cursor_shape;
+    /// Do not use this if the cursor shape is set elsewhere, e.g. in the terminal settings or by ansi escape sequences.
+    pub fn with_cursor_shapes(
+        mut self,
+        cursor_shapes: HashMap<PromptEditMode, CursorShape>,
+    ) -> Self {
+        self.cursor_shapes = Some(cursor_shapes);
         self
     }
 
@@ -1405,7 +1412,7 @@ impl Reedline {
                 self.prompt_edit_mode(),
                 None,
                 self.use_ansi_coloring,
-                self.handle_cursor_shape,
+                &self.cursor_shapes,
             )?;
         }
 
@@ -1473,7 +1480,7 @@ impl Reedline {
             self.prompt_edit_mode(),
             menu,
             self.use_ansi_coloring,
-            self.handle_cursor_shape,
+            &self.cursor_shapes,
         )
     }
 
