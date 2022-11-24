@@ -96,6 +96,8 @@ pub struct Reedline {
     history_session_id: Option<HistorySessionId>,
     // none if history doesn't support this
     history_last_run_id: Option<HistoryItemId>,
+    // if Some(s), buffers starting with `s` will not be saved in history
+    history_exclusion_prefix: Option<String>,
     input_mode: InputMode,
 
     // Validator
@@ -166,6 +168,7 @@ impl Reedline {
             )),
             history_session_id: hist_session_id,
             history_last_run_id: None,
+            history_exclusion_prefix: None,
             input_mode: InputMode::Regular,
             painter,
             edit_mode,
@@ -314,6 +317,27 @@ impl Reedline {
     #[must_use]
     pub fn with_history(mut self, history: Box<dyn History>) -> Self {
         self.history = history;
+        self
+    }
+
+    /// A builder which configures history exclusion for your instance of the Reedline engine
+    /// # Example
+    /// ```rust,no_run
+    /// // Create a reedline instance with history that will *not* include commands starting with a space
+    ///
+    /// use reedline::{FileBackedHistory, Reedline};
+    ///
+    /// let history = Box::new(
+    /// FileBackedHistory::with_file(5, "history.txt".into())
+    ///     .expect("Error configuring history with file"),
+    /// );
+    /// let mut line_editor = Reedline::create()
+    ///     .with_history(history)
+    ///     .with_history_exclusion_prefix(Some(" ".into()));
+    /// ```
+    #[must_use]
+    pub fn with_history_exclusion_prefix(mut self, ignore_prefix: Option<String>) -> Self {
+        self.history_exclusion_prefix = ignore_prefix;
         self
     }
 
@@ -1498,12 +1522,22 @@ impl Reedline {
         self.hide_hints = true;
         // Additional repaint to show the content without hints etc.
         self.repaint(prompt)?;
-        if !buffer.is_empty() {
-            let mut entry = HistoryItem::from_command_line(&buffer);
-            entry.session_id = self.history_session_id;
-            let entry = self.history.save(entry).expect("todo: error handling");
-            self.history_last_run_id = entry.id;
+
+        if !buffer.is_empty()  {
+            // Support the Bash HISTCONTROL thing of skipping history saving if command starts with a certain string
+            let skip_history_save = match &self.history_exclusion_prefix {
+                Some(s) => buffer.starts_with(s),
+                None => false,
+            };
+
+            if !skip_history_save {
+                let mut entry = HistoryItem::from_command_line(&buffer);
+                entry.session_id = self.history_session_id;
+                let entry = self.history.save(entry).expect("todo: error handling");
+                self.history_last_run_id = entry.id;
+            }
         }
+
         self.run_edit_commands(&[EditCommand::Clear]);
         self.editor.reset_undo_stack();
 
