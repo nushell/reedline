@@ -60,6 +60,7 @@ fn main() -> Result<()> {
 
     let mut line_editor = Reedline::create()
         .with_history(history)
+        .with_history_exclusion_prefix(Some(" ".to_string()))
         .with_completer(completer)
         .with_quick_completions(true)
         .with_partial_completions(true)
