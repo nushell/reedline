@@ -1523,7 +1523,7 @@ impl Reedline {
         // Additional repaint to show the content without hints etc.
         self.repaint(prompt)?;
 
-        if !buffer.is_empty()  {
+        if !buffer.is_empty() {
             // Support the Bash HISTCONTROL thing of skipping history saving if command starts with a certain string
             let skip_history_save = match &self.history_exclusion_prefix {
                 Some(s) => buffer.starts_with(s),
