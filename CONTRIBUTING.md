@@ -23,7 +23,7 @@ This is no different than other Rust projects.
 git clone https://github.com/nushell/reedline
 cd reedline
 # To try our example program
-cargo run
+cargo run --example basic
 ```
 
 ### Code style
