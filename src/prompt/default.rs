@@ -11,23 +11,52 @@ pub static DEFAULT_VI_INSERT_PROMPT_INDICATOR: &str = ": ";
 pub static DEFAULT_VI_NORMAL_PROMPT_INDICATOR: &str = "〉";
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 
-/// Simple two-line [`Prompt`] displaying the current working directory and the time above the entry line.
+/// Simple [`Prompt`] displaying a configurable left and a right prompt.
+/// For more fine-tuned configuration, implement the [`Prompt`] trait.
+/// For the default configuration, use [`DefaultPrompt::default()`]
 #[derive(Clone)]
-pub struct DefaultPrompt;
+pub struct DefaultPrompt {
+    /// What segment should be rendered in the left (main) prompt
+    pub left_prompt: DefaultPromptSegment,
+    /// What segment should be rendered in the right prompt
+    pub right_prompt: DefaultPromptSegment,
+}
+
+/// A struct to control the appearance of the left or right prompt in a [`DefaultPrompt`]
+#[derive(Clone)]
+pub enum DefaultPromptSegment {
+    /// A basic user-defined prompt (i.e. just text)
+    Basic(String),
+    /// The path of the current working directory
+    WorkingDirectory,
+    /// The current date and time
+    CurrentDateTime,
+    /// An empty prompt segment
+    Empty
+}
+
+/// Given a prompt segment, render it to a Cow<str> that we can use to
+/// easily implement [`Prompt`]'s `render_prompt_left` and `render_prompt_right`
+/// functions.
+fn render_prompt_segment(prompt: &DefaultPromptSegment) -> Cow<str> {
+    match &prompt {
+        DefaultPromptSegment::Basic(s) => Cow::Borrowed(&s),
+        DefaultPromptSegment::WorkingDirectory => {
+            let prompt = get_working_dir().unwrap_or_else(|_| String::from("no path"));
+            Cow::Owned(prompt)
+        },
+        DefaultPromptSegment::CurrentDateTime => Cow::Owned(get_now()),
+        DefaultPromptSegment::Empty => Cow::Borrowed(""),
+    }
+}
 
 impl Prompt for DefaultPrompt {
     fn render_prompt_left(&self) -> Cow<str> {
-        {
-            let left_prompt = get_working_dir().unwrap_or_else(|_| String::from("no path"));
-
-            Cow::Owned(left_prompt)
-        }
+        render_prompt_segment(&self.left_prompt)
     }
 
     fn render_prompt_right(&self) -> Cow<str> {
-        {
-            Cow::Owned(get_now())
-        }
+        render_prompt_segment(&self.right_prompt)
     }
 
     fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<str> {
@@ -64,14 +93,22 @@ impl Prompt for DefaultPrompt {
 
 impl Default for DefaultPrompt {
     fn default() -> Self {
-        DefaultPrompt::new()
+        DefaultPrompt {
+            left_prompt: DefaultPromptSegment::WorkingDirectory,
+            right_prompt: DefaultPromptSegment::CurrentDateTime,
+        }
     }
 }
 
 impl DefaultPrompt {
-    /// Constructor for the default prompt, which takes the amount of spaces required between the left and right-hand sides of the prompt
-    pub fn new() -> DefaultPrompt {
-        DefaultPrompt {}
+    /// Constructor for the default prompt, which takes a configurable left and right prompt.
+    /// For less customization, use [`DefaultPrompt::default`].
+    /// For more fine-tuned configuration, implement the [`Prompt`] trait.
+    pub fn new(left_prompt: DefaultPromptSegment, right_prompt: DefaultPromptSegment) -> DefaultPrompt {
+        DefaultPrompt {
+            left_prompt,
+            right_prompt,
+        }
     }
 }
 
