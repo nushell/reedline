@@ -32,7 +32,7 @@ pub enum DefaultPromptSegment {
     /// The current date and time
     CurrentDateTime,
     /// An empty prompt segment
-    Empty
+    Empty,
 }
 
 /// Given a prompt segment, render it to a Cow<str> that we can use to
@@ -40,11 +40,11 @@ pub enum DefaultPromptSegment {
 /// functions.
 fn render_prompt_segment(prompt: &DefaultPromptSegment) -> Cow<str> {
     match &prompt {
-        DefaultPromptSegment::Basic(s) => Cow::Borrowed(&s),
+        DefaultPromptSegment::Basic(s) => Cow::Borrowed(s),
         DefaultPromptSegment::WorkingDirectory => {
             let prompt = get_working_dir().unwrap_or_else(|_| String::from("no path"));
             Cow::Owned(prompt)
-        },
+        }
         DefaultPromptSegment::CurrentDateTime => Cow::Owned(get_now()),
         DefaultPromptSegment::Empty => Cow::Borrowed(""),
     }
@@ -104,7 +104,10 @@ impl DefaultPrompt {
     /// Constructor for the default prompt, which takes a configurable left and right prompt.
     /// For less customization, use [`DefaultPrompt::default`].
     /// For more fine-tuned configuration, implement the [`Prompt`] trait.
-    pub fn new(left_prompt: DefaultPromptSegment, right_prompt: DefaultPromptSegment) -> DefaultPrompt {
+    pub fn new(
+        left_prompt: DefaultPromptSegment,
+        right_prompt: DefaultPromptSegment,
+    ) -> DefaultPrompt {
         DefaultPrompt {
             left_prompt,
             right_prompt,

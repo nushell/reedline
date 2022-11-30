@@ -102,7 +102,7 @@ fn main() -> Result<()> {
     // Adding vi as text editor
     line_editor = line_editor.with_buffer_editor("vi".into(), "nu".into());
 
-    let prompt = DefaultPrompt::new();
+    let prompt = DefaultPrompt::default();
 
     loop {
         let sig = line_editor.read_line(&prompt);
