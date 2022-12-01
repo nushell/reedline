@@ -5,4 +5,4 @@ pub use base::{
     Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode,
 };
 
-pub use default::DefaultPrompt;
+pub use default::{DefaultPrompt, DefaultPromptSegment};
