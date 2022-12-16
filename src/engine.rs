@@ -1,7 +1,4 @@
-use std::collections::HashMap;
-
-use crossterm::cursor::CursorShape;
-
+use crate::CursorConfig;
 #[cfg(feature = "bashisms")]
 use crate::{
     history::SearchFilter,
@@ -133,7 +130,7 @@ pub struct Reedline {
     buffer_editor: Option<BufferEditor>,
 
     // Use different cursors depending on the current edit mode
-    cursor_shapes: Option<HashMap<PromptEditMode, CursorShape>>,
+    cursor_shapes: Option<CursorConfig>,
 
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
@@ -388,10 +385,7 @@ impl Reedline {
     /// A builder that enables reedline changing the cursor shape based on the current edit mode.
     /// The current implementation sets the cursor shape when drawing the prompt.
     /// Do not use this if the cursor shape is set elsewhere, e.g. in the terminal settings or by ansi escape sequences.
-    pub fn with_cursor_shapes(
-        mut self,
-        cursor_shapes: HashMap<PromptEditMode, CursorShape>,
-    ) -> Self {
+    pub fn with_cursor_config(mut self, cursor_shapes: CursorConfig) -> Self {
         self.cursor_shapes = Some(cursor_shapes);
         self
     }

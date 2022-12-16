@@ -12,12 +12,10 @@ use {
     },
 };
 
-use std::collections::HashMap;
-
 use crossterm::cursor::CursorShape;
+use reedline::CursorConfig;
 #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
 use reedline::FileBackedHistory;
-use reedline::PromptEditMode;
 
 fn main() -> Result<()> {
     println!("Ctrl-D to quit");
@@ -62,23 +60,18 @@ fn main() -> Result<()> {
 
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
-    let cursor_shapes = HashMap::from([
-        (
-            PromptEditMode::Vi(reedline::PromptViMode::Insert),
-            CursorShape::Line,
-        ),
-        (
-            PromptEditMode::Vi(reedline::PromptViMode::Normal),
-            CursorShape::Block,
-        ),
-    ]);
+    let cursor_config = CursorConfig {
+        vi_insert: Some(CursorShape::Line),
+        vi_normal: Some(CursorShape::Block),
+        emacs: None,
+    };
 
     let mut line_editor = Reedline::create()
         .with_history(history)
         .with_completer(completer)
         .with_quick_completions(true)
         .with_partial_completions(true)
-        .with_cursor_shapes(cursor_shapes)
+        .with_cursor_config(cursor_config)
         .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
         .with_hinter(Box::new(
             DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)),
