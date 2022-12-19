@@ -42,7 +42,7 @@ impl PromptHistorySearch {
 }
 
 /// Modes that the prompt can be in
-#[derive(Serialize, Deserialize, Clone, Debug, EnumIter, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Clone, Debug, EnumIter)]
 pub enum PromptEditMode {
     /// The default mode
     Default,
@@ -58,7 +58,7 @@ pub enum PromptEditMode {
 }
 
 /// The vi-specific modes that the prompt can be in
-#[derive(Serialize, Deserialize, Clone, Debug, EnumIter, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Clone, Debug, EnumIter)]
 pub enum PromptViMode {
     /// The default mode
     Normal,
