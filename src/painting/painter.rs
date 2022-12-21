@@ -1,4 +1,4 @@
-use crate::PromptEditMode;
+use crate::{CursorConfig, PromptEditMode, PromptViMode};
 
 use {
     super::utils::{coerce_crlf, line_width},
@@ -137,6 +137,7 @@ impl Painter {
         prompt_mode: PromptEditMode,
         menu: Option<&ReedlineMenu>,
         use_ansi_coloring: bool,
+        cursor_config: &Option<CursorConfig>,
     ) -> Result<()> {
         self.stdout.queue(cursor::Hide)?;
 
@@ -175,13 +176,20 @@ impl Painter {
         // can print without overwriting the things written during the painting
         self.last_required_lines = required_lines;
 
-        self.stdout
-            .queue(RestorePosition)?
-            .queue(cursor::SetCursorShape(match prompt_mode {
-                PromptEditMode::Vi(crate::PromptViMode::Insert) => cursor::CursorShape::Line,
-                _ => cursor::CursorShape::Block,
-            }))?
-            .queue(cursor::Show)?;
+        self.stdout.queue(RestorePosition)?;
+
+        if let Some(shapes) = cursor_config {
+            let shape = match &prompt_mode {
+                PromptEditMode::Emacs => shapes.emacs,
+                PromptEditMode::Vi(PromptViMode::Insert) => shapes.vi_insert,
+                PromptEditMode::Vi(PromptViMode::Normal) => shapes.vi_normal,
+                _ => None,
+            };
+            if let Some(shape) = shape {
+                self.stdout.queue(cursor::SetCursorShape(shape))?;
+            }
+        }
+        self.stdout.queue(cursor::Show)?;
 
         self.stdout.flush()
     }

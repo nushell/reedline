@@ -1,3 +1,4 @@
+use crate::CursorConfig;
 #[cfg(feature = "bashisms")]
 use crate::{
     history::SearchFilter,
@@ -128,6 +129,9 @@ pub struct Reedline {
     // Text editor used to open the line buffer for editing
     buffer_editor: Option<BufferEditor>,
 
+    // Use different cursors depending on the current edit mode
+    cursor_shapes: Option<CursorConfig>,
+
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
 }
@@ -179,6 +183,7 @@ impl Reedline {
             use_ansi_coloring: true,
             menus: Vec::new(),
             buffer_editor: None,
+            cursor_shapes: None,
             #[cfg(feature = "external_printer")]
             external_printer: None,
         }
@@ -374,6 +379,14 @@ impl Reedline {
     #[must_use]
     pub fn clear_menus(mut self) -> Self {
         self.menus = Vec::new();
+        self
+    }
+
+    /// A builder that enables reedline changing the cursor shape based on the current edit mode.
+    /// The current implementation sets the cursor shape when drawing the prompt.
+    /// Do not use this if the cursor shape is set elsewhere, e.g. in the terminal settings or by ansi escape sequences.
+    pub fn with_cursor_config(mut self, cursor_shapes: CursorConfig) -> Self {
+        self.cursor_shapes = Some(cursor_shapes);
         self
     }
 
@@ -1393,6 +1406,7 @@ impl Reedline {
                 self.prompt_edit_mode(),
                 None,
                 self.use_ansi_coloring,
+                &self.cursor_shapes,
             )?;
         }
 
@@ -1460,6 +1474,7 @@ impl Reedline {
             self.prompt_edit_mode(),
             menu,
             self.use_ansi_coloring,
+            &self.cursor_shapes,
         )
     }
 
