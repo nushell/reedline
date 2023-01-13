@@ -34,9 +34,7 @@ use {
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, Result,
     },
-    std::{
-        borrow::Borrow, fs::File, io, io::Write, process::Command, time::Duration, time::SystemTime,
-    },
+    std::{fs::File, io, io::Write, process::Command, time::Duration, time::SystemTime},
 };
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for

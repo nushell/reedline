@@ -1,5 +1,3 @@
-use std::borrow::Borrow;
-
 use nu_ansi_term::Style;
 
 use crate::Prompt;
