@@ -106,7 +106,7 @@ pub trait Prompt: Send {
     fn get_prompt_color(&self) -> Color {
         DEFAULT_PROMPT_COLOR
     }
-    /// Get the default right prompt color
+    /// Get the default multilince prompt color
     fn get_prompt_multiline_color(&self) -> nu_ansi_term::Color {
         DEFAULT_PROMPT_MULTILINE_COLOR
     }
