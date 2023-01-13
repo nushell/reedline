@@ -10,6 +10,7 @@ use {
 
 /// The default color for the prompt, indicator, and right prompt
 pub static DEFAULT_PROMPT_COLOR: Color = Color::Green;
+pub static DEFAULT_PROMPT_MULTILINE_COLOR: nu_ansi_term::Color = nu_ansi_term::Color::LightBlue;
 pub static DEFAULT_INDICATOR_COLOR: Color = Color::Cyan;
 pub static DEFAULT_PROMPT_RIGHT_COLOR: Color = Color::AnsiValue(5);
 
@@ -104,6 +105,10 @@ pub trait Prompt: Send {
     /// Get the default prompt color
     fn get_prompt_color(&self) -> Color {
         DEFAULT_PROMPT_COLOR
+    }
+    /// Get the default right prompt color
+    fn get_prompt_multiline_color(&self) -> nu_ansi_term::Color {
+        DEFAULT_PROMPT_MULTILINE_COLOR
     }
     /// Get the default indicator color
     fn get_indicator_color(&self) -> Color {

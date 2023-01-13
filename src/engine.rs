@@ -1425,7 +1425,7 @@ impl Reedline {
             .highlight(buffer_to_paint, cursor_position_in_buffer)
             .render_around_insertion_point(
                 cursor_position_in_buffer,
-                prompt.render_prompt_multiline_indicator().borrow(),
+                prompt,
                 self.use_ansi_coloring,
             );
 
