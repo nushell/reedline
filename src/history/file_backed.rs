@@ -226,7 +226,7 @@ impl History for FileBackedHistory {
             {
                 let mut writer = BufWriter::new(writer_guard.deref_mut());
                 if truncate {
-                    writer.seek(SeekFrom::Start(0))?;
+                    writer.rewind()?;
 
                     for line in &foreign_entries {
                         writer.write_all(encode_entry(line).as_bytes())?;

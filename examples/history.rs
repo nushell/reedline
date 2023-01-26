@@ -22,7 +22,7 @@ fn main() -> io::Result<()> {
         let sig = line_editor.read_line(&prompt)?;
         match sig {
             Signal::Success(buffer) => {
-                println!("We processed: {}", buffer);
+                println!("We processed: {buffer}");
             }
             Signal::CtrlD | Signal::CtrlC => {
                 println!("\nAborted!");

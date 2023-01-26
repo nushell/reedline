@@ -80,7 +80,7 @@ impl Display for PromptEditMode {
             PromptEditMode::Default => write!(f, "Default"),
             PromptEditMode::Emacs => write!(f, "Emacs"),
             PromptEditMode::Vi(_) => write!(f, "Vi_Normal\nVi_Insert"),
-            PromptEditMode::Custom(s) => write!(f, "Custom_{}", s),
+            PromptEditMode::Custom(s) => write!(f, "Custom_{s}"),
         }
     }
 }

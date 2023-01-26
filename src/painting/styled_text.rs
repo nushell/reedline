@@ -100,7 +100,7 @@ fn render_as_string(
     multiline_prompt: &str,
 ) -> String {
     let mut rendered = String::new();
-    let formatted_multiline_prompt = format!("\n{}", multiline_prompt);
+    let formatted_multiline_prompt = format!("\n{multiline_prompt}");
     for (line_number, line) in renderable.1.split('\n').enumerate() {
         if line_number != 0 {
             rendered.push_str(&prompt_style.paint(&formatted_multiline_prompt).to_string());

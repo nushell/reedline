@@ -557,10 +557,10 @@ mod tests {
                 let hfile = histfile.clone();
                 std::thread::spawn(move || {
                     let (mut hist, _) = create_history_at(cap, &hfile);
-                    hist.save(HistoryItem::from_command_line(&format!("A{}", i)))
+                    hist.save(HistoryItem::from_command_line(format!("A{i}")))
                         .unwrap();
                     hist.sync().unwrap();
-                    hist.save(HistoryItem::from_command_line(&format!("B{}", i)))
+                    hist.save(HistoryItem::from_command_line(format!("B{i}")))
                         .unwrap();
                 })
             })
@@ -580,8 +580,8 @@ mod tests {
         );
 
         for i in 0..num_threads {
-            assert!(actual.contains(&format!("A{}", i)),);
-            assert!(actual.contains(&format!("B{}", i)),);
+            assert!(actual.contains(&format!("A{i}")),);
+            assert!(actual.contains(&format!("B{i}")),);
         }
 
         tmp.close().unwrap();

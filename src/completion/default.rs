@@ -83,7 +83,7 @@ impl Completer for DefaultCompleter {
                     if span_line.is_empty() {
                         span_line = s.to_string();
                     } else {
-                        span_line = format!("{} {}", s, span_line);
+                        span_line = format!("{s} {span_line}");
                     }
                     if let Some(mut extensions) = self.root.complete(span_line.chars()) {
                         extensions.sort();
@@ -97,7 +97,7 @@ impl Completer for DefaultCompleter {
                                     );
 
                                     Suggestion {
-                                        value: format!("{}{}", span_line, ext),
+                                        value: format!("{span_line}{ext}"),
                                         description: None,
                                         extra: None,
                                         span,

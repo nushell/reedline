@@ -79,7 +79,7 @@ pub fn get_reedline_prompt_edit_modes() -> Vec<String> {
 /// Return a `Vec<String>` of the Reedline `KeyCode`s
 pub fn get_reedline_keycodes() -> Vec<String> {
     ReedLineCrossTermKeyCode::iterator()
-        .map(|kc| format!("{}", kc))
+        .map(|kc| format!("{kc}"))
         .collect()
 }
 
@@ -121,7 +121,7 @@ fn get_keybinding_strings(
                 mode.to_string(),
                 format!("{:?}", combination.modifier),
                 format!("{:?}", combination.key_code),
-                format!("{:?}", event),
+                format!("{event:?}"),
             )
         })
         .collect();

@@ -319,7 +319,7 @@ impl ListMenu {
                     RESET
                 )
             } else {
-                format!("({}) ", desc)
+                format!("({desc}) ")
             }
         });
 
@@ -339,7 +339,7 @@ impl ListMenu {
             let line_str = if index == self.index() {
                 format!("{}{}>{}", row_number, description, line.to_uppercase())
             } else {
-                format!("{}{}{}", row_number, description, line)
+                format!("{row_number}{description}{line}")
             };
 
             // Final string with formatting

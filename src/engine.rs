@@ -1336,7 +1336,7 @@ impl Reedline {
             None => Ok(()),
             Some(BufferEditor { editor, extension }) => {
                 let temp_directory = std::env::temp_dir();
-                let temp_file = temp_directory.join(format!("reedline_buffer.{}", extension));
+                let temp_file = temp_directory.join(format!("reedline_buffer.{extension}"));
 
                 {
                     let mut file = File::create(temp_file.clone())?;

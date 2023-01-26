@@ -66,7 +66,7 @@ impl Prompt for DefaultPrompt {
                 PromptViMode::Normal => DEFAULT_VI_NORMAL_PROMPT_INDICATOR.into(),
                 PromptViMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
             },
-            PromptEditMode::Custom(str) => format!("({})", str).into(),
+            PromptEditMode::Custom(str) => format!("({str})").into(),
         }
     }
 

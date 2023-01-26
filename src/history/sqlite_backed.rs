@@ -157,8 +157,7 @@ impl History for SqliteBackedHistory {
 fn map_sqlite_err(err: rusqlite::Error) -> ReedlineError {
     // TODO: better error mapping
     ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!(
-        "{:?}",
-        err
+        "{err:?}"
     )))
 }
 
@@ -174,8 +173,7 @@ impl SqliteBackedHistory {
         if let Some(base_dir) = file.parent() {
             std::fs::create_dir_all(base_dir).map_err(|e| {
                 ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!(
-                    "{}",
-                    e
+                    "{e}"
                 )))
             })?;
         }
