@@ -42,8 +42,6 @@ fn get_all_keybinding_info() {
 
     println!("\n--Default Keybindings--");
     for (mode, modifier, code, event) in get_reedline_default_keybindings() {
-        println!(
-            "mode: {mode}, keymodifiers: {modifier}, keycode: {code}, event: {event}"
-        );
+        println!("mode: {mode}, keymodifiers: {modifier}, keycode: {code}, event: {event}");
     }
 }

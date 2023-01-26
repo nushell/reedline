@@ -172,9 +172,7 @@ impl SqliteBackedHistory {
     pub fn with_file(file: PathBuf) -> Result<Self> {
         if let Some(base_dir) = file.parent() {
             std::fs::create_dir_all(base_dir).map_err(|e| {
-                ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!(
-                    "{e}"
-                )))
+                ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!("{e}")))
             })?;
         }
         let db = Connection::open(&file).map_err(map_sqlite_err)?;
