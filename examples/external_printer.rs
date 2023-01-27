@@ -24,7 +24,7 @@ fn main() {
         let mut i = 1;
         loop {
             sleep(Duration::from_secs(1));
-            assert!(p_clone.print(format!("Message {} delivered.", i)).is_ok());
+            assert!(p_clone.print(format!("Message {i} delivered.")).is_ok());
             i += 1;
         }
     });
@@ -34,7 +34,7 @@ fn main() {
         sleep(Duration::from_secs(3));
         for _ in 0..10 {
             sleep(Duration::from_millis(1));
-            assert!(p_sender.send(format!("Fast Hello !")).is_ok());
+            assert!(p_sender.send("Fast Hello !".to_string()).is_ok());
         }
     });
 
@@ -45,7 +45,7 @@ fn main() {
         if let Ok(sig) = line_editor.read_line(&prompt) {
             match sig {
                 Signal::Success(buffer) => {
-                    println!("We processed: {}", buffer);
+                    println!("We processed: {buffer}");
                 }
                 Signal::CtrlD | Signal::CtrlC => {
                     println!("\nAborted!");

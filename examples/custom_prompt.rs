@@ -26,7 +26,7 @@ impl Prompt for CustomPrompt {
         {
             let old = self.0.get();
             self.0.set(old + 1);
-            Cow::Owned(format!("[{}]", old))
+            Cow::Owned(format!("[{old}]"))
         }
     }
 
@@ -64,7 +64,7 @@ fn main() -> io::Result<()> {
         let sig = line_editor.read_line(&prompt)?;
         match sig {
             Signal::Success(buffer) => {
-                println!("We processed: {}", buffer);
+                println!("We processed: {buffer}");
             }
             Signal::CtrlD | Signal::CtrlC => {
                 println!("\nAborted!");

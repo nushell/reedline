@@ -1,5 +1,8 @@
+use nu_ansi_term::Style;
+
+use crate::Prompt;
+
 use super::utils::strip_ansi;
-use nu_ansi_term::{Color, Style};
 
 /// A representation of a buffer with styling, used for doing syntax highlighting
 pub struct StyledText {
@@ -34,18 +37,22 @@ impl StyledText {
     pub fn render_around_insertion_point(
         &self,
         insertion_point: usize,
-        multiline_prompt: &str,
+        prompt: &dyn Prompt,
+        // multiline_prompt: &str,
         use_ansi_coloring: bool,
     ) -> (String, String) {
         let mut current_idx = 0;
         let mut left_string = String::new();
         let mut right_string = String::new();
-        let prompt_style = Style::new().fg(Color::LightBlue);
+
+        let multiline_prompt = prompt.render_prompt_multiline_indicator();
+        let prompt_style = Style::new().fg(prompt.get_prompt_multiline_color());
+
         for pair in &self.buffer {
             if current_idx >= insertion_point {
-                right_string.push_str(&render_as_string(pair, &prompt_style, multiline_prompt));
+                right_string.push_str(&render_as_string(pair, &prompt_style, &multiline_prompt));
             } else if pair.1.len() + current_idx <= insertion_point {
-                left_string.push_str(&render_as_string(pair, &prompt_style, multiline_prompt));
+                left_string.push_str(&render_as_string(pair, &prompt_style, &multiline_prompt));
             } else if pair.1.len() + current_idx > insertion_point {
                 let offset = insertion_point - current_idx;
 
@@ -55,12 +62,12 @@ impl StyledText {
                 left_string.push_str(&render_as_string(
                     &(pair.0, left_side),
                     &prompt_style,
-                    multiline_prompt,
+                    &multiline_prompt,
                 ));
                 right_string.push_str(&render_as_string(
                     &(pair.0, right_side),
                     &prompt_style,
-                    multiline_prompt,
+                    &multiline_prompt,
                 ));
             }
             current_idx += pair.1.len();
@@ -93,7 +100,7 @@ fn render_as_string(
     multiline_prompt: &str,
 ) -> String {
     let mut rendered = String::new();
-    let formatted_multiline_prompt = format!("\n{}", multiline_prompt);
+    let formatted_multiline_prompt = format!("\n{multiline_prompt}");
     for (line_number, line) in renderable.1.split('\n').enumerate() {
         if line_number != 0 {
             rendered.push_str(&prompt_style.paint(&formatted_multiline_prompt).to_string());

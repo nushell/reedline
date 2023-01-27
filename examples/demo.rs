@@ -149,7 +149,7 @@ fn main() -> Result<()> {
                     line_editor.print_history()?;
                     continue;
                 }
-                println!("Our buffer: {}", buffer);
+                println!("Our buffer: {buffer}");
                 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
                 if !buffer.is_empty() {
                     line_editor
@@ -165,7 +165,7 @@ fn main() -> Result<()> {
                 // Prompt has been cleared and should start on the next line
             }
             Err(err) => {
-                println!("Error: {:?}", err);
+                println!("Error: {err:?}");
             }
         }
     }

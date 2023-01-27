@@ -34,9 +34,7 @@ use {
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, Result,
     },
-    std::{
-        borrow::Borrow, fs::File, io, io::Write, process::Command, time::Duration, time::SystemTime,
-    },
+    std::{fs::File, io, io::Write, process::Command, time::Duration, time::SystemTime},
 };
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for
@@ -1338,7 +1336,7 @@ impl Reedline {
             None => Ok(()),
             Some(BufferEditor { editor, extension }) => {
                 let temp_directory = std::env::temp_dir();
-                let temp_file = temp_directory.join(format!("reedline_buffer.{}", extension));
+                let temp_file = temp_directory.join(format!("reedline_buffer.{extension}"));
 
                 {
                     let mut file = File::create(temp_file.clone())?;
@@ -1425,7 +1423,7 @@ impl Reedline {
             .highlight(buffer_to_paint, cursor_position_in_buffer)
             .render_around_insertion_point(
                 cursor_position_in_buffer,
-                prompt.render_prompt_multiline_indicator().borrow(),
+                prompt,
                 self.use_ansi_coloring,
             );
 

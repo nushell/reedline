@@ -51,13 +51,12 @@ fn print_events_helper() -> Result<()> {
                     }
                     _ => {
                         println!(
-                            "Keycode: {:?}; Modifier {:?}; Flags {:#08b}\r",
-                            code, modifiers, modifiers
+                            "Keycode: {code:?}; Modifier {modifiers:?}; Flags {modifiers:#08b}\r"
                         );
                     }
                 }
             } else {
-                println!("Event::{:?}\r", event);
+                println!("Event::{event:?}\r");
             }
 
             // hit the esc key to git out
