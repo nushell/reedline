@@ -667,7 +667,8 @@ impl Menu for ColumnarMenu {
             line_buffer.replace_range(start..end, &value);
 
             let mut offset = line_buffer.insertion_point();
-            offset += value.len().saturating_sub(end.saturating_sub(start));
+            offset += value.len();
+            offset -= end.saturating_sub(start);
             line_buffer.set_insertion_point(offset);
             editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
         }
@@ -809,5 +810,26 @@ mod tests {
             span: Span { start: 0, end: pos },
             append_whitespace: false,
         }
+    }
+
+    #[test]
+    fn test_menu_replace_backtick() {
+        // https://github.com/nushell/nushell/issues/7885
+        let mut completer = FakeCompleter::new(&["file1.txt", "file2.txt"]);
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+
+        // backtick at the end of the line
+        editor.set_buffer("file1.txt`".to_string(), UndoBehavior::CreateUndoPoint);
+
+        menu.update_values(&mut editor, &mut completer);
+
+        menu.replace_in_buffer(&mut editor);
+
+        // After replacing the editor, make sure insertion_point is at the right spot
+        assert!(
+            editor.is_cursor_at_buffer_end(),
+            "cursor should be at the end after completion"
+        );
     }
 }
