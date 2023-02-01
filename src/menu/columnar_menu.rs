@@ -667,8 +667,8 @@ impl Menu for ColumnarMenu {
             line_buffer.replace_range(start..end, &value);
 
             let mut offset = line_buffer.insertion_point();
-            offset += value.len();
-            offset -= end.saturating_sub(start);
+            offset = offset.saturating_add(value.len());
+            offset = offset.saturating_sub(end.saturating_sub(start));
             line_buffer.set_insertion_point(offset);
             editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
         }
