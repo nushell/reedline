@@ -136,6 +136,14 @@ impl History for SqliteBackedHistory {
         Ok(())
     }
 
+    fn clear(&mut self) -> Result<()> {
+        self.db
+            .execute("delete from history", params![])
+            .map_err(map_sqlite_err)?;
+
+        Ok(())
+    }
+
     fn delete(&mut self, h: HistoryItemId) -> Result<()> {
         let changed = self
             .db

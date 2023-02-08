@@ -165,6 +165,8 @@ pub trait History: Send {
         id: HistoryItemId,
         updater: &dyn Fn(HistoryItem) -> HistoryItem,
     ) -> Result<()>;
+    /// delete all history items
+    fn clear(&mut self) -> Result<()>;
     /// remove an item from this history
     fn delete(&mut self, h: HistoryItemId) -> Result<()>;
     /// ensure that this history is written to disk
@@ -319,6 +321,16 @@ mod test {
             ..SearchQuery::everything(SearchDirection::Forward)
         })?;
         search_returned(&*history, res, vec![1, 4])?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn clear_history() -> Result<()> {
+        let mut history = create_filled_example_history()?;
+        assert_ne!(history.count_all()?, 0);
+        history.clear().unwrap();
+        assert_eq!(history.count_all()?, 0);
 
         Ok(())
     }

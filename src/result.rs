@@ -15,6 +15,8 @@ pub(crate) enum ReedlineErrorVariants {
         history: &'static str,
         feature: &'static str,
     },
+    #[error("I/O error: {0}")]
+    IOError(std::io::Error),
 }
 
 /// separate struct to not expose anything to the public (for now)
