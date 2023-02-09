@@ -165,6 +165,8 @@ pub trait History: Send {
         id: HistoryItemId,
         updater: &dyn Fn(HistoryItem) -> HistoryItem,
     ) -> Result<()>;
+    /// delete all history items
+    fn clear(&mut self) -> Result<()>;
     /// remove an item from this history
     fn delete(&mut self, h: HistoryItemId) -> Result<()>;
     /// ensure that this history is written to disk
@@ -319,6 +321,54 @@ mod test {
             ..SearchQuery::everything(SearchDirection::Forward)
         })?;
         search_returned(&*history, res, vec![1, 4])?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn clear_history() -> Result<()> {
+        let mut history = create_filled_example_history()?;
+        assert_ne!(history.count_all()?, 0);
+        history.clear().unwrap();
+        assert_eq!(history.count_all()?, 0);
+
+        Ok(())
+    }
+
+    // test that clear() works as expected across multiple instances of History
+    #[test]
+    fn clear_history_with_backing_file() -> Result<()> {
+        #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+        fn open_history() -> Box<dyn History> {
+            Box::new(
+                crate::SqliteBackedHistory::with_file("target/test-history.db".into()).unwrap(),
+            )
+        }
+
+        #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+        fn open_history() -> Box<dyn History> {
+            Box::new(
+                crate::FileBackedHistory::with_file(100, "target/test-history.txt".into()).unwrap(),
+            )
+        }
+
+        // create history, add a few entries
+        let mut history = open_history();
+        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
+        history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
+        assert_eq!(history.count_all()?, 2);
+        drop(history);
+
+        // open it again and clear it
+        let mut history = open_history();
+        assert_eq!(history.count_all()?, 2);
+        history.clear().unwrap();
+        assert_eq!(history.count_all()?, 0);
+        drop(history);
+
+        // open it once more and confirm that the cleared data is gone forever
+        let history = open_history();
+        assert_eq!(history.count_all()?, 0);
 
         Ok(())
     }
