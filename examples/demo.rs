@@ -149,6 +149,13 @@ fn main() -> Result<()> {
                     line_editor.print_history()?;
                     continue;
                 }
+                if buffer.trim() == "clear-history" {
+                    let hstry = Box::new(line_editor.history_mut());
+                    hstry
+                        .clear()
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                    continue;
+                }
                 println!("Our buffer: {buffer}");
                 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
                 if !buffer.is_empty() {

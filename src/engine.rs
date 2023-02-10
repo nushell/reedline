@@ -411,6 +411,11 @@ impl Reedline {
         &*self.history
     }
 
+    /// Mutable view of the history
+    pub fn history_mut(&mut self) -> &mut dyn History {
+        &mut *self.history
+    }
+
     /// Update the underlying [`History`] to/from disk
     pub fn sync_history(&mut self) -> std::io::Result<()> {
         // TODO: check for interactions in the non-submitting events
