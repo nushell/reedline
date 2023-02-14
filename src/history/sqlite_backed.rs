@@ -141,6 +141,12 @@ impl History for SqliteBackedHistory {
             .execute("delete from history", params![])
             .map_err(map_sqlite_err)?;
 
+        // VACUUM to ensure that sensitive data is completely erased
+        // instead of being marked as available for reuse
+        self.db
+            .execute("VACUUM", params![])
+            .map_err(map_sqlite_err)?;
+
         Ok(())
     }
 
