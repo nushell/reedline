@@ -164,10 +164,10 @@ pub fn find_common_string(values: &[Suggestion]) -> (Option<&Suggestion>, Option
                     let (rhsi, _) = rhs;
                     match index {
                         Some(_) => index.min(Some(lhsi)).min(Some(rhsi)),
-                        None => Some(lhsi.min(rhsi))
+                        None => Some(lhsi.min(rhsi)),
                     }
-                },
-                None => index
+                }
+                None => index,
             }
         })
     });
@@ -449,16 +449,32 @@ mod tests {
     fn find_common_string_with_ansi() {
         use crate::Span;
 
-        let input: Vec<_> = ["qml", "qmake", "qmltc", "qmlls", "qmldom", "qmake6", "qmltime", "qmllint", "qmlscene", "qmlformat", "qmleasing", "qmlpreview", "qmlprofiler", "qmlplugindump", "qmltestrunner"]
-            .into_iter()
-            .map(|s| Suggestion {
-                value: s.into(),
-                description: None,
-                extra: None,
-                span: Span::new(0, s.len()),
-                append_whitespace: false,
-            })
-            .collect();
+        let input: Vec<_> = [
+            "qml",
+            "qmake",
+            "qmltc",
+            "qmlls",
+            "qmldom",
+            "qmake6",
+            "qmltime",
+            "qmllint",
+            "qmlscene",
+            "qmlformat",
+            "qmleasing",
+            "qmlpreview",
+            "qmlprofiler",
+            "qmlplugindump",
+            "qmltestrunner",
+        ]
+        .into_iter()
+        .map(|s| Suggestion {
+            value: s.into(),
+            description: None,
+            extra: None,
+            span: Span::new(0, s.len()),
+            append_whitespace: false,
+        })
+        .collect();
         let res = find_common_string(&input);
 
         assert!(matches!(res, (Some(elem), Some(2))
