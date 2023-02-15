@@ -147,29 +147,27 @@ pub fn find_common_string(values: &[Suggestion]) -> (Option<&Suggestion>, Option
 
     let index = first.and_then(|first| {
         values.iter().skip(1).fold(None, |index, suggestion| {
-            if suggestion.value.starts_with(&first.value) {
-                Some(first.value.len())
-            } else {
-                first
-                    .value
-                    .char_indices()
-                    .zip(suggestion.value.char_indices())
-                    .find(|((_, mut lhs), (_, mut rhs))| {
-                        lhs.make_ascii_lowercase();
-                        rhs.make_ascii_lowercase();
+            let x = first
+                .value
+                .char_indices()
+                .zip(suggestion.value.char_indices())
+                .find(|((_, mut lhs), (_, mut rhs))| {
+                    lhs.make_ascii_lowercase();
+                    rhs.make_ascii_lowercase();
 
-                        lhs != rhs
-                    })
-                    .map(|((new_index, _), _)| match index {
-                        Some(index) => {
-                            if index <= new_index {
-                                index
-                            } else {
-                                new_index
-                            }
-                        }
-                        None => new_index,
-                    })
+                    lhs != rhs
+                });
+
+            match x {
+                Some((lhs, rhs)) => {
+                    let (lhsi, _) = lhs;
+                    let (rhsi, _) = rhs;
+                    match index {
+                        Some(_) => index.min(Some(lhsi)).min(Some(rhsi)),
+                        None => Some(lhsi.min(rhsi))
+                    }
+                },
+                None => index
             }
         })
     });
@@ -451,7 +449,7 @@ mod tests {
     fn find_common_string_with_ansi() {
         use crate::Span;
 
-        let input: Vec<_> = ["nushell", "null"]
+        let input: Vec<_> = ["qml", "qmake", "qmltc", "qmlls", "qmldom", "qmake6", "qmltime", "qmllint", "qmlscene", "qmlformat", "qmleasing", "qmlpreview", "qmlprofiler", "qmlplugindump", "qmltestrunner"]
             .into_iter()
             .map(|s| Suggestion {
                 value: s.into(),
@@ -463,7 +461,8 @@ mod tests {
             .collect();
         let res = find_common_string(&input);
 
-        assert!(matches!(res, (Some(elem), Some(2)) if elem == &input[0]));
+        assert!(matches!(res, (Some(elem), Some(2))
+            if elem.value.chars().take(2).collect::<String>() == input[0].value.chars().take(2).collect::<String>()));
     }
 
     #[test]
