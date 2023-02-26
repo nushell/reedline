@@ -1348,7 +1348,7 @@ impl Reedline {
                     write!(file, "{}", self.editor.get_buffer())?;
                 }
 
-                let mut ed = editor.split(" ");
+                let mut ed = editor.split(' ');
                 let command = ed.next();
 
                 {
