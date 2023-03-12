@@ -60,19 +60,17 @@ pub enum PromptEditMode {
 
 /// The vi-specific modes that the prompt can be in
 #[derive(Serialize, Deserialize, Clone, Debug, EnumIter)]
+#[derive(Default)]
 pub enum PromptViMode {
     /// The default mode
+    #[default]
     Normal,
 
     /// Insertion mode
     Insert,
 }
 
-impl Default for PromptViMode {
-    fn default() -> Self {
-        PromptViMode::Normal
-    }
-}
+
 
 impl Display for PromptEditMode {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {

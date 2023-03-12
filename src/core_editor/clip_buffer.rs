@@ -17,18 +17,16 @@ pub trait Clipboard: Send {
 
 /// Determines how the content in the clipboard should be inserted
 #[derive(Copy, Clone, Debug)]
+#[derive(Default)]
 pub enum ClipboardMode {
     /// As direct content at the current cursor position
+    #[default]
     Normal,
     /// As new lines below or above
     Lines,
 }
 
-impl Default for ClipboardMode {
-    fn default() -> Self {
-        ClipboardMode::Normal
-    }
-}
+
 
 /// Simple buffer that provides a clipboard only usable within the application/library.
 #[derive(Default)]
