@@ -1348,8 +1348,12 @@ impl Reedline {
                     write!(file, "{}", self.editor.get_buffer())?;
                 }
 
+                let mut ed = editor.split(' ');
+                let command = ed.next();
+
                 {
-                    let mut process = Command::new(editor);
+                    let mut process = Command::new(command.unwrap_or(editor));
+                    process.args(ed);
                     process.arg(temp_file.as_path());
 
                     let mut child = process.spawn()?;
