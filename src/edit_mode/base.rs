@@ -1,5 +1,5 @@
 use crate::{enums::ReedlineEvent, PromptEditMode};
-use crossterm::event::Event;
+pub use crossterm::event::Event;
 
 /// Define the style of parsing for the edit events
 /// Available default options:
