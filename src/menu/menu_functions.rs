@@ -124,13 +124,10 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                         action,
                     }
                 }
-                _ => {
-                    index += 1;
-                    continue;
-                }
+                _ => {}
             }
         }
-        index += 1;
+        index += char.len_utf8();
     }
 
     ParseResult {
