@@ -67,13 +67,13 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
     let mut action = ParseAction::ForwardSearch;
     while let Some(char) = input.next() {
         if char == marker {
-            match input.peek() {
+            match input.peek() {                
                 #[cfg(feature = "bashisms")]
                 Some(&x) if x == marker => {
                     return ParseResult {
                         remainder: &buffer[0..index],
                         index: Some(0),
-                        marker: Some(&buffer[index..index + 2]),
+                        marker: Some(&buffer[index..index + 2 * marker.len_utf8()]),
                         action: ParseAction::LastCommand,
                     }
                 }
@@ -88,7 +88,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                 }
                 Some(&x) if x.is_ascii_digit() || x == '-' => {
                     let mut count: usize = 0;
-                    let mut size: usize = 1;
+                    let mut size: usize = marker.len_utf8();
                     while let Some(&c) = input.peek() {
                         if c == '-' {
                             let _ = input.next();
@@ -260,6 +260,25 @@ mod tests {
     }
 
     #[cfg(feature = "bashisms")]
+    #[test]
+    fn handles_multi_byte_char_as_marker() {
+        let buffer = "Testは4!";
+        let parse_result = parse_selection_char(buffer, 'は');
+
+        assert_eq!(parse_result.remainder, "Test");
+        assert_eq!(parse_result.index, Some(4));
+        assert_eq!(parse_result.marker, Some("は4"));
+
+        let other_buffer = "Testはは";
+        let other_parse_result = parse_selection_char(other_buffer, 'は');
+
+        assert_eq!(other_parse_result.remainder, "Test");
+        assert_eq!(other_parse_result.index, Some(0));
+        assert_eq!(other_parse_result.marker, Some("はは"));
+        assert!(matches!(other_parse_result.action, ParseAction::LastCommand));
+    }
+
+    
     #[test]
     fn parse_double_char() {
         let input = "search!!";
