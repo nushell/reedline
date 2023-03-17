@@ -268,9 +268,8 @@ mod tests {
         assert_eq!(parse_result.remainder, "Test");
         assert_eq!(parse_result.index, Some(4));
         assert_eq!(parse_result.marker, Some("は4"));
-
     }
-    
+
     #[cfg(feature = "bashisms")]
     #[test]
     fn handles_multi_byte_char_as_double_marker() {
@@ -294,7 +293,8 @@ mod tests {
         assert_eq!(parse_result.marker, Some("!!"));
         assert!(matches!(parse_result.action, ParseAction::LastCommand));
     }
-    
+
+    #[cfg(feature = "bashisms")]
     #[test]
     fn parse_double_char() {
         let input = "search!!";
