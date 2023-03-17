@@ -67,7 +67,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
     let mut action = ParseAction::ForwardSearch;
     while let Some(char) = input.next() {
         if char == marker {
-            match input.peek() {                
+            match input.peek() {
                 #[cfg(feature = "bashisms")]
                 Some(&x) if x == marker => {
                     return ParseResult {
