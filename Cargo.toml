@@ -3,6 +3,7 @@ name = "reedline"
 version = "0.17.0"
 authors = ["The Nushell Project Developers", "JT <jonathan.d.turner@gmail.com>"]
 edition = "2021"
+rust-version = "1.62.1"
 description = "A readline-like crate for CLI text input"
 license = "MIT"
 repository = "https://github.com/nushell/reedline"
@@ -42,4 +43,3 @@ bashisms = []
 external_printer = ["crossbeam"]
 sqlite = ["rusqlite/bundled", "serde_json"]
 sqlite-dynlib = ["rusqlite", "serde_json"]
-
