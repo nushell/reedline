@@ -262,12 +262,12 @@ mod tests {
     #[cfg(feature = "bashisms")]
     #[test]
     fn handles_multi_byte_char_as_marker_and_number() {
-        let buffer = "Testは4!";
+        let buffer = "searchは6";
         let parse_result = parse_selection_char(buffer, 'は');
 
-        assert_eq!(parse_result.remainder, "Test");
-        assert_eq!(parse_result.index, Some(4));
-        assert_eq!(parse_result.marker, Some("は4"));
+        assert_eq!(parse_result.remainder, "search");
+        assert_eq!(parse_result.index, Some(6));
+        assert_eq!(parse_result.marker, Some("は6"));
     }
 
     #[cfg(feature = "bashisms")]
@@ -285,10 +285,10 @@ mod tests {
     #[cfg(feature = "bashisms")]
     #[test]
     fn handles_multi_byte_char_as_remainder() {
-        let buffer = "は!!";
+        let buffer = "Testは!!";
         let parse_result = parse_selection_char(buffer, '!');
 
-        assert_eq!(parse_result.remainder, "は");
+        assert_eq!(parse_result.remainder, "Testは");
         assert_eq!(parse_result.index, Some(0));
         assert_eq!(parse_result.marker, Some("!!"));
         assert!(matches!(parse_result.action, ParseAction::LastCommand));
