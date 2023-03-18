@@ -108,8 +108,9 @@ impl SearchQuery {
             filter: SearchFilter::from_text_search(CommandLineSearch::Substring(contains)),
         }
     }
+
     /// Get the most recent entry matching [`SearchFilter`]
-    pub fn last_with_search(filter: SearchFilter) -> SearchQuery {
+    pub const fn last_with_search(filter: SearchFilter) -> SearchQuery {
         SearchQuery {
             direction: SearchDirection::Backward,
             start_time: None,
@@ -120,14 +121,16 @@ impl SearchQuery {
             filter,
         }
     }
+
     /// Get the most recent entry starting with the `prefix`
     pub fn last_with_prefix(prefix: String) -> SearchQuery {
         SearchQuery::last_with_search(SearchFilter::from_text_search(CommandLineSearch::Prefix(
             prefix,
         )))
     }
+
     /// Query to get all entries in the given [`SearchDirection`]
-    pub fn everything(direction: SearchDirection) -> SearchQuery {
+    pub const fn everything(direction: SearchDirection) -> SearchQuery {
         SearchQuery {
             direction,
             start_time: None,
