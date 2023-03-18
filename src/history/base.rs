@@ -54,6 +54,7 @@ pub struct SearchFilter {
     /// Filter whether the command completed
     pub exit_successful: Option<bool>,
 }
+
 impl SearchFilter {
     /// Create a search filter with a [`CommandLineSearch`]
     pub fn from_text_search(cmd: CommandLineSearch) -> SearchFilter {
@@ -61,8 +62,9 @@ impl SearchFilter {
         s.command_line = Some(cmd);
         s
     }
+
     /// No filter constraint
-    pub fn anything() -> SearchFilter {
+    pub const fn anything() -> SearchFilter {
         SearchFilter {
             command_line: None,
             not_command_line: None,
