@@ -162,7 +162,7 @@ impl EditMode for Emacs {
 
 impl Emacs {
     /// Emacs style input parsing constructor if you want to use custom keybindings
-    pub fn new(keybindings: Keybindings) -> Self {
+    pub const fn new(keybindings: Keybindings) -> Self {
         Emacs { keybindings }
     }
 }

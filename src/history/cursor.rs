@@ -16,7 +16,7 @@ pub struct HistoryCursor {
 }
 
 impl HistoryCursor {
-    pub fn new(query: HistoryNavigationQuery) -> HistoryCursor {
+    pub const fn new(query: HistoryNavigationQuery) -> HistoryCursor {
         HistoryCursor {
             query,
             current: None,
