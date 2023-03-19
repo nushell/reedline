@@ -67,7 +67,7 @@ impl LineBuffer {
 
     /// Sets the current edit position
     /// ## Unicode safety:
-    /// Not checked, inproper use may cause panics in following operations
+    /// Not checked, improper use may cause panics in following operations
     pub fn set_insertion_point(&mut self, offset: usize) {
         self.insertion_point = offset;
     }
@@ -998,7 +998,7 @@ mod test {
 
     #[rstest]
     #[case("This is a test", 13, "This is a tets", 14)]
-    #[case("This is a test", 14, "This is a tets", 14)] // NOTE: Swaping works in opposite direction at last index
+    #[case("This is a test", 14, "This is a tets", 14)] // NOTE: Swapping works in opposite direction at last index
     #[case("This is a test", 4, "Thi sis a test", 5)] // NOTE: Swaps space, moves right
     #[case("This is a test", 0, "hTis is a test", 2)]
     fn swap_graphemes_work(

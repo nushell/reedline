@@ -72,10 +72,10 @@ impl Completer for DefaultCompleter {
         let mut span_line_whitespaces = 0;
         let mut completions = vec![];
         if !line.is_empty() {
-            let mut splitted = line[0..pos].split(' ').rev();
+            let mut split = line[0..pos].split(' ').rev();
             let mut span_line: String = String::new();
-            for _ in 0..splitted.clone().count() {
-                if let Some(s) = splitted.next() {
+            for _ in 0..split.clone().count() {
+                if let Some(s) = split.next() {
                     if s.is_empty() {
                         span_line_whitespaces += 1;
                         continue;

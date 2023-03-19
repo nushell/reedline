@@ -61,7 +61,7 @@ pub struct Suggestion {
     /// Optional description for the replacement
     pub description: Option<String>,
     /// Optional vector of strings in the suggestion. These can be used to
-    /// represent examples comming from a suggestion
+    /// represent examples coming from a suggestion
     pub extra: Option<Vec<String>>,
     /// Replacement span in the buffer
     pub span: Span,
