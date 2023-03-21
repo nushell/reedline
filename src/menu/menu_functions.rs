@@ -73,7 +73,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                     return ParseResult {
                         remainder: &buffer[0..index],
                         index: Some(0),
-                        marker: Some(&buffer[index..index + 2]),
+                        marker: Some(&buffer[index..index + 2 * marker.len_utf8()]),
                         action: ParseAction::LastCommand,
                     }
                 }
@@ -88,7 +88,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                 }
                 Some(&x) if x.is_ascii_digit() || x == '-' => {
                     let mut count: usize = 0;
-                    let mut size: usize = 1;
+                    let mut size: usize = marker.len_utf8();
                     while let Some(&c) = input.peek() {
                         if c == '-' {
                             let _ = input.next();
@@ -257,6 +257,41 @@ mod tests {
         assert_eq!(res.remainder, "search");
         assert_eq!(res.index, Some(6));
         assert_eq!(res.marker, Some(":6"));
+    }
+
+    #[cfg(feature = "bashisms")]
+    #[test]
+    fn handles_multi_byte_char_as_marker_and_number() {
+        let buffer = "searchは6";
+        let parse_result = parse_selection_char(buffer, 'は');
+
+        assert_eq!(parse_result.remainder, "search");
+        assert_eq!(parse_result.index, Some(6));
+        assert_eq!(parse_result.marker, Some("は6"));
+    }
+
+    #[cfg(feature = "bashisms")]
+    #[test]
+    fn handles_multi_byte_char_as_double_marker() {
+        let buffer = "Testはは";
+        let parse_result = parse_selection_char(buffer, 'は');
+
+        assert_eq!(parse_result.remainder, "Test");
+        assert_eq!(parse_result.index, Some(0));
+        assert_eq!(parse_result.marker, Some("はは"));
+        assert!(matches!(parse_result.action, ParseAction::LastCommand));
+    }
+
+    #[cfg(feature = "bashisms")]
+    #[test]
+    fn handles_multi_byte_char_as_remainder() {
+        let buffer = "Testは!!";
+        let parse_result = parse_selection_char(buffer, '!');
+
+        assert_eq!(parse_result.remainder, "Testは");
+        assert_eq!(parse_result.index, Some(0));
+        assert_eq!(parse_result.marker, Some("!!"));
+        assert!(matches!(parse_result.action, ParseAction::LastCommand));
     }
 
     #[cfg(feature = "bashisms")]
