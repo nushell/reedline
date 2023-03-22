@@ -18,7 +18,7 @@ impl Default for StyledText {
 
 impl StyledText {
     /// Construct a new `StyledText`
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { buffer: vec![] }
     }
 
