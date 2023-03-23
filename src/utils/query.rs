@@ -61,6 +61,7 @@ impl Display for ReedLineCrossTermKeyCode {
         }
     }
 }
+
 /// Return a `Vec` of the Reedline Keybinding Modifiers
 pub fn get_reedline_keybinding_modifiers() -> Vec<String> {
     vec![
@@ -68,6 +69,14 @@ pub fn get_reedline_keybinding_modifiers() -> Vec<String> {
         "Control".to_string(),
         "Shift".to_string(),
         "None".to_string(),
+        "Shift_Alt".to_string(),
+        "Alt_Shift".to_string(),
+        "Control_Shift".to_string(),
+        "Shift_Control".to_string(),
+        "Control_Alt".to_string(),
+        "Alt_Control".to_string(),
+        "Control_Alt_Shift".to_string(),
+        "Control_Shift_Alt".to_string(),
     ]
 }
 
