@@ -530,7 +530,7 @@ impl Reedline {
                             modifiers: KeyModifiers::NONE,
                             ..
                         }) => {
-                            let enter = ReedlineRawEvent::from(enter);
+                            let enter = ReedlineRawEvent::convert_from(enter);
                             match enter {
                                 Some(enter) => {
                                     crossterm_events.push(enter);
@@ -546,7 +546,7 @@ impl Reedline {
                             }
                         }
                         x => {
-                            let raw_event = ReedlineRawEvent::from(x);
+                            let raw_event = ReedlineRawEvent::convert_from(x);
                             match raw_event {
                                 Some(evt) => crossterm_events.push(evt),
                                 None => continue,

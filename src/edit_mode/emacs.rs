@@ -180,7 +180,7 @@ mod test {
     #[test]
     fn ctrl_l_leads_to_clear_screen_event() {
         let mut emacs = Emacs::default();
-        let ctrl_l = ReedlineRawEvent::from(Event::Key(KeyEvent::new(
+        let ctrl_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
             KeyCode::Char('l'),
             KeyModifiers::CONTROL,
         )))
@@ -200,7 +200,7 @@ mod test {
         );
 
         let mut emacs = Emacs::new(keybindings);
-        let ctrl_l = ReedlineRawEvent::from(Event::Key(KeyEvent::new(
+        let ctrl_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
             KeyCode::Char('l'),
             KeyModifiers::CONTROL,
         )))
@@ -213,7 +213,7 @@ mod test {
     #[test]
     fn inserting_character_works() {
         let mut emacs = Emacs::default();
-        let l = ReedlineRawEvent::from(Event::Key(KeyEvent::new(
+        let l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
             KeyCode::Char('l'),
             KeyModifiers::NONE,
         )))
@@ -230,7 +230,7 @@ mod test {
     fn inserting_capital_character_works() {
         let mut emacs = Emacs::default();
 
-        let uppercase_l = ReedlineRawEvent::from(Event::Key(KeyEvent::new(
+        let uppercase_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
             KeyCode::Char('l'),
             KeyModifiers::SHIFT,
         )))
@@ -248,7 +248,7 @@ mod test {
         let keybindings = Keybindings::default();
 
         let mut emacs = Emacs::new(keybindings);
-        let ctrl_l = ReedlineRawEvent::from(Event::Key(KeyEvent::new(
+        let ctrl_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
             KeyCode::Char('l'),
             KeyModifiers::CONTROL,
         )))
@@ -262,7 +262,7 @@ mod test {
     fn inserting_capital_character_for_non_ascii_remains_as_is() {
         let mut emacs = Emacs::default();
 
-        let uppercase_l = ReedlineRawEvent::from(Event::Key(KeyEvent::new(
+        let uppercase_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
             KeyCode::Char('😀'),
             KeyModifiers::SHIFT,
         )))

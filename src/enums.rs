@@ -572,7 +572,7 @@ pub struct ReedlineRawEvent {
 
 impl ReedlineRawEvent {
     /// It will return None if `evt` is released Key.
-    pub fn from(evt: Event) -> Option<Self> {
+    pub fn convert_from(evt: Event) -> Option<Self> {
         match evt {
             Event::Key(KeyEvent {
                 kind: KeyEventKind::Release,
@@ -594,10 +594,9 @@ impl ReedlineRawEvent {
             other => Some(Self { inner: other }),
         }
     }
-}
 
-impl Into<Event> for ReedlineRawEvent {
-    fn into(self) -> Event {
+    /// Consume and get crossterm event object.
+    pub fn into(self) -> Event {
         self.inner
     }
 }
