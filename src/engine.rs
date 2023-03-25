@@ -548,12 +548,15 @@ impl Reedline {
                     reedline_events.push(ReedlineEvent::Resize(x, y));
                 }
 
+                let input = self.editor.get_buffer();
+                let offset = self.editor.insertion_point();
+
                 // Accelerate pasted text by fusing `EditCommand`s
                 //
                 // (Text should only be `EditCommand::InsertChar`s)
                 let mut last_edit_commands = None;
                 for event in crossterm_events.drain(..) {
-                    match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
+                    match (&mut last_edit_commands, self.edit_mode.parse_event(event, input, offset)) {
                         (None, ReedlineEvent::Edit(ec)) => {
                             last_edit_commands = Some(ec);
                         }

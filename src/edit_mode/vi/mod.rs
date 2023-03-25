@@ -57,7 +57,7 @@ impl Vi {
 }
 
 impl EditMode for Vi {
-    fn parse_event(&mut self, event: Event) -> ReedlineEvent {
+    fn parse_event(&mut self, event: Event, _line: &str, _offset: usize) -> ReedlineEvent {
         match event {
             Event::Key(KeyEvent { code, modifiers }) => match (self.mode, modifiers, code) {
                 (ViMode::Normal, modifier, KeyCode::Char(c)) => {
@@ -172,7 +172,7 @@ mod test {
             modifiers: KeyModifiers::NONE,
             code: KeyCode::Esc,
         });
-        let result = vi.parse_event(esc);
+        let result = vi.parse_event(esc, "", 0);
 
         assert_eq!(
             result,
@@ -201,7 +201,7 @@ mod test {
             modifiers: KeyModifiers::NONE,
             code: KeyCode::Char('e'),
         });
-        let result = vi.parse_event(esc);
+        let result = vi.parse_event(esc, "", 0);
 
         assert_eq!(result, ReedlineEvent::ClearScreen);
     }
@@ -226,7 +226,7 @@ mod test {
             modifiers: KeyModifiers::SHIFT,
             code: KeyCode::Char('$'),
         });
-        let result = vi.parse_event(esc);
+        let result = vi.parse_event(esc, "", 0);
 
         assert_eq!(result, ReedlineEvent::CtrlD);
     }
@@ -245,7 +245,7 @@ mod test {
             modifiers: KeyModifiers::NONE,
             code: KeyCode::Char('q'),
         });
-        let result = vi.parse_event(esc);
+        let result = vi.parse_event(esc, "", 0);
 
         assert_eq!(result, ReedlineEvent::None);
     }

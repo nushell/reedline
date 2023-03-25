@@ -108,7 +108,7 @@ impl Default for Emacs {
 }
 
 impl EditMode for Emacs {
-    fn parse_event(&mut self, event: Event) -> ReedlineEvent {
+    fn parse_event(&mut self, event: Event, _line: &str, _offset: usize) -> ReedlineEvent {
         match event {
             Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
                 (modifier, KeyCode::Char(c)) => {
@@ -179,7 +179,7 @@ mod test {
             modifiers: KeyModifiers::CONTROL,
             code: KeyCode::Char('l'),
         });
-        let result = emacs.parse_event(ctrl_l);
+        let result = emacs.parse_event(ctrl_l, "", 0);
 
         assert_eq!(result, ReedlineEvent::ClearScreen);
     }
@@ -198,7 +198,7 @@ mod test {
             modifiers: KeyModifiers::CONTROL,
             code: KeyCode::Char('l'),
         });
-        let result = emacs.parse_event(ctrl_l);
+        let result = emacs.parse_event(ctrl_l, "", 0);
 
         assert_eq!(result, ReedlineEvent::HistoryHintComplete);
     }
@@ -210,7 +210,7 @@ mod test {
             modifiers: KeyModifiers::NONE,
             code: KeyCode::Char('l'),
         });
-        let result = emacs.parse_event(l);
+        let result = emacs.parse_event(l, "", 0);
 
         assert_eq!(
             result,
@@ -226,7 +226,7 @@ mod test {
             modifiers: KeyModifiers::SHIFT,
             code: KeyCode::Char('l'),
         });
-        let result = emacs.parse_event(uppercase_l);
+        let result = emacs.parse_event(uppercase_l, "", 0);
 
         assert_eq!(
             result,
@@ -243,7 +243,7 @@ mod test {
             modifiers: KeyModifiers::CONTROL,
             code: KeyCode::Char('l'),
         });
-        let result = emacs.parse_event(ctrl_l);
+        let result = emacs.parse_event(ctrl_l, "", 0);
 
         assert_eq!(result, ReedlineEvent::None);
     }
@@ -256,7 +256,7 @@ mod test {
             modifiers: KeyModifiers::SHIFT,
             code: KeyCode::Char('😀'),
         });
-        let result = emacs.parse_event(uppercase_l);
+        let result = emacs.parse_event(uppercase_l, "", 0);
 
         assert_eq!(
             result,
