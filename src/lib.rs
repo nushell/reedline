@@ -230,7 +230,7 @@ pub use core_editor::Editor;
 pub use core_editor::LineBuffer;
 
 mod enums;
-pub use enums::{EditCommand, ReedlineEvent, Signal, UndoBehavior};
+pub use enums::{EditCommand, ReedlineEvent, ReedlineRawEvent, Signal, UndoBehavior};
 
 mod painting;
 pub use painting::{Painter, StyledText};
@@ -259,7 +259,7 @@ pub use prompt::{
 mod edit_mode;
 pub use edit_mode::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-    CursorConfig, EditMode, Emacs, Event, Keybindings, Vi,
+    CursorConfig, EditMode, Emacs, Keybindings, Vi,
 };
 
 mod highlighter;

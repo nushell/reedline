@@ -38,11 +38,17 @@ fn print_events_helper() -> Result<()> {
             // It's guaranteed that read() wont block if `poll` returns `Ok(true)`
             let event = crossterm::event::read()?;
 
-            if let Event::Key(KeyEvent { code, modifiers }) = event {
+            if let Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind,
+                state,
+            }) = event
+            {
                 match code {
                     KeyCode::Char(c) => {
                         println!(
-                            "Char: {} code: {:#08x}; Modifier {:?}; Flags {:#08b}\r",
+                            "Char: {} code: {:#08x}; Modifier {:?}; Flags {:#08b}; Kind {kind:?}; state {state:?}\r",
                             c,
                             u32::from(c),
                             modifiers,
@@ -51,7 +57,7 @@ fn print_events_helper() -> Result<()> {
                     }
                     _ => {
                         println!(
-                            "Keycode: {code:?}; Modifier {modifiers:?}; Flags {modifiers:#08b}\r"
+                            "Keycode: {code:?}; Modifier {modifiers:?}; Flags {modifiers:#08b}; Kind {kind:?}; state {state:?}\r"
                         );
                     }
                 }

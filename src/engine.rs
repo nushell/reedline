@@ -1,4 +1,4 @@
-use crate::CursorConfig;
+use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
 use crate::{
     history::SearchFilter,
@@ -493,7 +493,7 @@ impl Reedline {
 
         self.repaint(prompt)?;
 
-        let mut crossterm_events: Vec<Event> = vec![];
+        let mut crossterm_events: Vec<ReedlineRawEvent> = vec![];
         let mut reedline_events: Vec<ReedlineEvent> = vec![];
 
         loop {
@@ -528,18 +528,29 @@ impl Reedline {
                         enter @ Event::Key(KeyEvent {
                             code: KeyCode::Enter,
                             modifiers: KeyModifiers::NONE,
+                            ..
                         }) => {
-                            crossterm_events.push(enter);
-                            // Break early to check if the input is complete and
-                            // can be send to the hosting application. If
-                            // multiple complete entries are submitted, events
-                            // are still in the crossterm queue for us to
-                            // process.
-                            paste_enter_state = crossterm_events.len() > EVENTS_THRESHOLD;
-                            break;
+                            let enter = ReedlineRawEvent::from(enter);
+                            match enter {
+                                Some(enter) => {
+                                    crossterm_events.push(enter);
+                                    // Break early to check if the input is complete and
+                                    // can be send to the hosting application. If
+                                    // multiple complete entries are submitted, events
+                                    // are still in the crossterm queue for us to
+                                    // process.
+                                    paste_enter_state = crossterm_events.len() > EVENTS_THRESHOLD;
+                                    break;
+                                }
+                                None => continue,
+                            }
                         }
                         x => {
-                            crossterm_events.push(x);
+                            let raw_event = ReedlineRawEvent::from(x);
+                            match raw_event {
+                                Some(evt) => crossterm_events.push(evt),
+                                None => continue,
+                            }
                         }
                     }
                 }
