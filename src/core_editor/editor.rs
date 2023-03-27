@@ -27,7 +27,7 @@ impl Default for Editor {
 
 impl Editor {
     /// Get the current [`LineBuffer`]
-    pub fn line_buffer(&self) -> &LineBuffer {
+    pub const fn line_buffer(&self) -> &LineBuffer {
         &self.line_buffer
     }
 

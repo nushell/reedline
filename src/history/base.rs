@@ -54,6 +54,7 @@ pub struct SearchFilter {
     /// Filter on the session id
     pub session: Option<HistorySessionId>,
 }
+
 impl SearchFilter {
     /// Create a search filter with a [`CommandLineSearch`]
     pub fn from_text_search(
@@ -111,8 +112,9 @@ impl SearchQuery {
             filter: SearchFilter::from_text_search(CommandLineSearch::Substring(contains), None),
         }
     }
+
     /// Get the most recent entry matching [`SearchFilter`]
-    pub fn last_with_search(filter: SearchFilter) -> SearchQuery {
+    pub const fn last_with_search(filter: SearchFilter) -> SearchQuery {
         SearchQuery {
             direction: SearchDirection::Backward,
             start_time: None,
@@ -123,6 +125,7 @@ impl SearchQuery {
             filter,
         }
     }
+
     /// Get the most recent entry starting with the `prefix`
     pub fn last_with_prefix(prefix: String, session: Option<HistorySessionId>) -> SearchQuery {
         SearchQuery::last_with_search(SearchFilter::from_text_search(

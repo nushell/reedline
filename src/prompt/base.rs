@@ -34,7 +34,7 @@ pub struct PromptHistorySearch {
 
 impl PromptHistorySearch {
     /// A constructor to create a history search
-    pub fn new(status: PromptHistorySearchStatus, search_term: String) -> Self {
+    pub const fn new(status: PromptHistorySearchStatus, search_term: String) -> Self {
         PromptHistorySearch {
             status,
             term: search_term,

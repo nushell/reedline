@@ -7,7 +7,7 @@ use std::{fmt::Display, time::Duration};
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct HistoryItemId(pub(crate) i64);
 impl HistoryItemId {
-    pub(crate) fn new(i: i64) -> HistoryItemId {
+    pub(crate) const fn new(i: i64) -> HistoryItemId {
         HistoryItemId(i)
     }
 }
@@ -22,7 +22,7 @@ impl Display for HistoryItemId {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct HistorySessionId(pub(crate) i64);
 impl HistorySessionId {
-    pub(crate) fn new(i: i64) -> HistorySessionId {
+    pub(crate) const fn new(i: i64) -> HistorySessionId {
         HistorySessionId(i)
     }
 }

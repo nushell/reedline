@@ -104,7 +104,7 @@ impl DefaultPrompt {
     /// Constructor for the default prompt, which takes a configurable left and right prompt.
     /// For less customization, use [`DefaultPrompt::default`].
     /// For more fine-tuned configuration, implement the [`Prompt`] trait.
-    pub fn new(
+    pub const fn new(
         left_prompt: DefaultPromptSegment,
         right_prompt: DefaultPromptSegment,
     ) -> DefaultPrompt {
