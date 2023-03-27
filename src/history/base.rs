@@ -1,8 +1,6 @@
-use chrono::Utc;
-
-use crate::{core_editor::LineBuffer, HistoryItem, Result};
-
 use super::HistoryItemId;
+use crate::{core_editor::LineBuffer, HistoryItem, HistorySessionId, Result};
+use chrono::Utc;
 
 /// Browsing modes for a [`History`]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,16 +51,22 @@ pub struct SearchFilter {
     pub cwd_prefix: Option<String>,
     /// Filter whether the command completed
     pub exit_successful: Option<bool>,
+    /// Filter on the session id
+    pub session: Option<HistorySessionId>,
 }
 impl SearchFilter {
     /// Create a search filter with a [`CommandLineSearch`]
-    pub fn from_text_search(cmd: CommandLineSearch) -> SearchFilter {
-        let mut s = SearchFilter::anything();
+    pub fn from_text_search(
+        cmd: CommandLineSearch,
+        session: Option<HistorySessionId>,
+    ) -> SearchFilter {
+        let mut s = SearchFilter::anything(session);
         s.command_line = Some(cmd);
         s
     }
-    /// No filter constraint
-    pub fn anything() -> SearchFilter {
+
+    /// anything within this session
+    pub fn anything(session: Option<HistorySessionId>) -> SearchFilter {
         SearchFilter {
             command_line: None,
             not_command_line: None,
@@ -70,6 +74,7 @@ impl SearchFilter {
             cwd_exact: None,
             cwd_prefix: None,
             exit_successful: None,
+            session,
         }
     }
 }
@@ -103,7 +108,7 @@ impl SearchQuery {
             start_id: None,
             end_id: None,
             limit: None,
-            filter: SearchFilter::from_text_search(CommandLineSearch::Substring(contains)),
+            filter: SearchFilter::from_text_search(CommandLineSearch::Substring(contains), None),
         }
     }
     /// Get the most recent entry matching [`SearchFilter`]
@@ -119,13 +124,18 @@ impl SearchQuery {
         }
     }
     /// Get the most recent entry starting with the `prefix`
-    pub fn last_with_prefix(prefix: String) -> SearchQuery {
-        SearchQuery::last_with_search(SearchFilter::from_text_search(CommandLineSearch::Prefix(
-            prefix,
-        )))
+    pub fn last_with_prefix(prefix: String, session: Option<HistorySessionId>) -> SearchQuery {
+        SearchQuery::last_with_search(SearchFilter::from_text_search(
+            CommandLineSearch::Prefix(prefix),
+            session,
+        ))
     }
+
     /// Query to get all entries in the given [`SearchDirection`]
-    pub fn everything(direction: SearchDirection) -> SearchQuery {
+    pub fn everything(
+        direction: SearchDirection,
+        session: Option<HistorySessionId>,
+    ) -> SearchQuery {
         SearchQuery {
             direction,
             start_time: None,
@@ -133,7 +143,7 @@ impl SearchQuery {
             start_id: None,
             end_id: None,
             limit: None,
-            filter: SearchFilter::anything(),
+            filter: SearchFilter::anything(session),
         }
     }
 }
@@ -154,7 +164,7 @@ pub trait History: Send {
     fn count(&self, query: SearchQuery) -> Result<i64>;
     /// return the total number of history items
     fn count_all(&self) -> Result<i64> {
-        self.count(SearchQuery::everything(SearchDirection::Forward))
+        self.count(SearchQuery::everything(SearchDirection::Forward, None))
     }
     /// return the results of a query
     fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>>;
@@ -171,6 +181,8 @@ pub trait History: Send {
     fn delete(&mut self, h: HistoryItemId) -> Result<()>;
     /// ensure that this history is written to disk
     fn sync(&mut self) -> std::io::Result<()>;
+    /// get the history session id
+    fn session(&self) -> Option<HistorySessionId>;
 }
 
 #[cfg(test)]
@@ -260,7 +272,7 @@ mod test {
         let history = create_filled_example_history()?;
         println!(
             "{:#?}",
-            history.search(SearchQuery::everything(SearchDirection::Forward))
+            history.search(SearchQuery::everything(SearchDirection::Forward, None))
         );
 
         assert_eq!(history.count_all()?, if IS_FILE_BASED { 13 } else { 12 });
@@ -270,7 +282,7 @@ mod test {
     #[test]
     fn get_latest() -> Result<()> {
         let history = create_filled_example_history()?;
-        let res = history.search(SearchQuery::last_with_search(SearchFilter::anything()))?;
+        let res = history.search(SearchQuery::last_with_search(SearchFilter::anything(None)))?;
 
         search_returned(&*history, res, vec![12])?;
         Ok(())
@@ -281,7 +293,7 @@ mod test {
         let history = create_filled_example_history()?;
         let res = history.search(SearchQuery {
             limit: Some(1),
-            ..SearchQuery::everything(SearchDirection::Forward)
+            ..SearchQuery::everything(SearchDirection::Forward, None)
         })?;
         search_returned(&*history, res, vec![if IS_FILE_BASED { 0 } else { 1 }])?;
         Ok(())
@@ -291,8 +303,11 @@ mod test {
     fn search_prefix() -> Result<()> {
         let history = create_filled_example_history()?;
         let res = history.search(SearchQuery {
-            filter: SearchFilter::from_text_search(CommandLineSearch::Prefix("ls ".to_string())),
-            ..SearchQuery::everything(SearchDirection::Backward)
+            filter: SearchFilter::from_text_search(
+                CommandLineSearch::Prefix("ls ".to_string()),
+                None,
+            ),
+            ..SearchQuery::everything(SearchDirection::Backward, None)
         })?;
         search_returned(&*history, res, vec![9, 6])?;
 
@@ -303,10 +318,11 @@ mod test {
     fn search_includes() -> Result<()> {
         let history = create_filled_example_history()?;
         let res = history.search(SearchQuery {
-            filter: SearchFilter::from_text_search(CommandLineSearch::Substring(
-                "foo.zip".to_string(),
-            )),
-            ..SearchQuery::everything(SearchDirection::Forward)
+            filter: SearchFilter::from_text_search(
+                CommandLineSearch::Substring("foo.zip".to_string()),
+                None,
+            ),
+            ..SearchQuery::everything(SearchDirection::Forward, None)
         })?;
         search_returned(&*history, res, vec![2, 3])?;
         Ok(())
@@ -316,9 +332,12 @@ mod test {
     fn search_includes_limit() -> Result<()> {
         let history = create_filled_example_history()?;
         let res = history.search(SearchQuery {
-            filter: SearchFilter::from_text_search(CommandLineSearch::Substring("c".to_string())),
+            filter: SearchFilter::from_text_search(
+                CommandLineSearch::Substring("c".to_string()),
+                None,
+            ),
             limit: Some(2),
-            ..SearchQuery::everything(SearchDirection::Forward)
+            ..SearchQuery::everything(SearchDirection::Forward, None)
         })?;
         search_returned(&*history, res, vec![1, 4])?;
 

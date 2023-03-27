@@ -158,14 +158,15 @@ impl Reedline {
         let hinter = None;
         let validator = None;
         let edit_mode = Box::<Emacs>::default();
-        let hist_session_id = Self::create_history_session_id();
+        let hist_session_id = None;
 
         Reedline {
             editor: Editor::default(),
             history,
-            history_cursor: HistoryCursor::new(HistoryNavigationQuery::Normal(
-                LineBuffer::default(),
-            )),
+            history_cursor: HistoryCursor::new(
+                HistoryNavigationQuery::Normal(LineBuffer::default()),
+                hist_session_id,
+            ),
             history_session_id: hist_session_id,
             history_last_run_id: None,
             input_mode: InputMode::Regular,
@@ -188,7 +189,7 @@ impl Reedline {
     }
 
     /// Get a new history session id based on the current time and the first commit datetime of reedline
-    fn create_history_session_id() -> Option<HistorySessionId> {
+    pub fn create_history_session_id() -> Option<HistorySessionId> {
         let nanos = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
             Ok(n) => n.as_nanos() as i64,
             Err(_) => 0,
@@ -200,6 +201,14 @@ impl Reedline {
     /// Return the previously generated history session id
     pub fn get_history_session_id(&self) -> Option<HistorySessionId> {
         self.history_session_id
+    }
+
+    /// Set a new history session id
+    /// This should be used in situations where the user initially did not have a history_session_id
+    /// and then later relized they want to have one without restarting the application.
+    pub fn set_history_session_id(&mut self, session: Option<HistorySessionId>) -> Result<()> {
+        self.history_session_id = session;
+        Ok(())
     }
 
     /// A builder to include a [`Hinter`] in your instance of the Reedline engine
@@ -380,6 +389,13 @@ impl Reedline {
         self
     }
 
+    /// A builder that adds the history item id
+    #[must_use]
+    pub fn with_history_session_id(mut self, session: Option<HistorySessionId>) -> Self {
+        self.history_session_id = session;
+        self
+    }
+
     /// A builder that enables reedline changing the cursor shape based on the current edit mode.
     /// The current implementation sets the cursor shape when drawing the prompt.
     /// Do not use this if the cursor shape is set elsewhere, e.g. in the terminal settings or by ansi escape sequences.
@@ -397,12 +413,46 @@ impl Reedline {
     pub fn print_history(&mut self) -> Result<()> {
         let history: Vec<_> = self
             .history
-            .search(SearchQuery::everything(SearchDirection::Forward))
+            .search(SearchQuery::everything(SearchDirection::Forward, None))
             .expect("todo: error handling");
 
         for (i, entry) in history.iter().enumerate() {
             self.print_line(&format!("{}\t{}", i, entry.command_line))?;
         }
+        Ok(())
+    }
+
+    /// Output the complete [`History`] for this session, chronologically with numbering to the terminal
+    pub fn print_history_session(&mut self) -> Result<()> {
+        let history: Vec<_> = self
+            .history
+            .search(SearchQuery::everything(
+                SearchDirection::Forward,
+                self.get_history_session_id(),
+            ))
+            .expect("todo: error handling");
+
+        for (i, entry) in history.iter().enumerate() {
+            self.print_line(&format!("{}\t{}", i, entry.command_line))?;
+        }
+        Ok(())
+    }
+
+    /// Print the history session id
+    pub fn print_history_session_id(&mut self) -> Result<()> {
+        println!("History Session Id: {:?}", self.get_history_session_id());
+        Ok(())
+    }
+
+    /// Toggle between having a history that uses the history session id and one that does not
+    pub fn toggle_history_session_matching(
+        &mut self,
+        session: Option<HistorySessionId>,
+    ) -> Result<()> {
+        self.history_session_id = match self.get_history_session_id() {
+            Some(_) => None,
+            None => session,
+        };
         Ok(())
     }
 
@@ -1055,8 +1105,10 @@ impl Reedline {
     fn previous_history(&mut self) {
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
-            self.history_cursor =
-                HistoryCursor::new(self.get_history_navigation_based_on_line_buffer());
+            self.history_cursor = HistoryCursor::new(
+                self.get_history_navigation_based_on_line_buffer(),
+                self.get_history_session_id(),
+            );
         }
 
         self.history_cursor
@@ -1071,8 +1123,10 @@ impl Reedline {
     fn next_history(&mut self) {
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
-            self.history_cursor =
-                HistoryCursor::new(self.get_history_navigation_based_on_line_buffer());
+            self.history_cursor = HistoryCursor::new(
+                self.get_history_navigation_based_on_line_buffer(),
+                self.get_history_session_id(),
+            );
         }
 
         self.history_cursor
@@ -1107,8 +1161,10 @@ impl Reedline {
     ///
     /// This mode uses a separate prompt and handles keybindings slightly differently!
     fn enter_history_search(&mut self) {
-        self.history_cursor =
-            HistoryCursor::new(HistoryNavigationQuery::SubstringSearch("".to_string()));
+        self.history_cursor = HistoryCursor::new(
+            HistoryNavigationQuery::SubstringSearch("".to_string()),
+            self.get_history_session_id(),
+        );
         self.input_mode = InputMode::HistorySearch;
     }
 
@@ -1122,11 +1178,14 @@ impl Reedline {
                     let navigation = self.history_cursor.get_navigation();
                     if let HistoryNavigationQuery::SubstringSearch(mut substring) = navigation {
                         substring.push(*c);
-                        self.history_cursor =
-                            HistoryCursor::new(HistoryNavigationQuery::SubstringSearch(substring));
+                        self.history_cursor = HistoryCursor::new(
+                            HistoryNavigationQuery::SubstringSearch(substring),
+                            self.get_history_session_id(),
+                        );
                     } else {
                         self.history_cursor = HistoryCursor::new(
                             HistoryNavigationQuery::SubstringSearch(String::from(*c)),
+                            self.get_history_session_id(),
                         );
                     }
                     self.history_cursor
@@ -1141,6 +1200,7 @@ impl Reedline {
 
                         self.history_cursor = HistoryCursor::new(
                             HistoryNavigationQuery::SubstringSearch(new_substring.to_string()),
+                            self.get_history_session_id(),
                         );
                         self.history_cursor
                             .back(self.history.as_mut())
@@ -1264,7 +1324,7 @@ impl Reedline {
                         start_id: None,
                         end_id: None,
                         limit: Some(1), // fetch the latest one entries
-                        filter: SearchFilter::anything(),
+                        filter: SearchFilter::anything(self.get_history_session_id()),
                     })
                     .unwrap_or_else(|_| Vec::new())
                     .get(index.saturating_sub(1))
@@ -1284,7 +1344,7 @@ impl Reedline {
                         start_id: None,
                         end_id: None,
                         limit: Some(index as i64), // fetch the latest n entries
-                        filter: SearchFilter::anything(),
+                        filter: SearchFilter::anything(self.get_history_session_id()),
                     })
                     .unwrap_or_else(|_| Vec::new())
                     .get(index.saturating_sub(1))
@@ -1304,7 +1364,7 @@ impl Reedline {
                         start_id: None,
                         end_id: None,
                         limit: Some((index + 1) as i64), // fetch the oldest n entries
-                        filter: SearchFilter::anything(),
+                        filter: SearchFilter::anything(self.get_history_session_id()),
                     })
                     .unwrap_or_else(|_| Vec::new())
                     .get(index)
@@ -1317,7 +1377,9 @@ impl Reedline {
                     }),
                 ParseAction::LastToken => self
                     .history
-                    .search(SearchQuery::last_with_search(SearchFilter::anything()))
+                    .search(SearchQuery::last_with_search(SearchFilter::anything(
+                        self.get_history_session_id(),
+                    )))
                     .unwrap_or_else(|_| Vec::new())
                     .get(0)
                     .and_then(|history| history.command_line.split_whitespace().rev().next())
@@ -1522,7 +1584,7 @@ impl Reedline {
         self.repaint(prompt)?;
         if !buffer.is_empty() {
             let mut entry = HistoryItem::from_command_line(&buffer);
-            entry.session_id = self.history_session_id;
+            entry.session_id = self.get_history_session_id();
             let entry = self.history.save(entry).expect("todo: error handling");
             self.history_last_run_id = entry.id;
         }

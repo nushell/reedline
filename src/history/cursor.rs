@@ -1,4 +1,4 @@
-use crate::{History, HistoryNavigationQuery};
+use crate::{History, HistoryNavigationQuery, HistorySessionId};
 
 use super::base::CommandLineSearch;
 use super::base::SearchDirection;
@@ -13,14 +13,16 @@ pub struct HistoryCursor {
     query: HistoryNavigationQuery,
     current: Option<HistoryItem>,
     skip_dupes: bool,
+    session: Option<HistorySessionId>,
 }
 
 impl HistoryCursor {
-    pub fn new(query: HistoryNavigationQuery) -> HistoryCursor {
+    pub fn new(query: HistoryNavigationQuery, session: Option<HistorySessionId>) -> HistoryCursor {
         HistoryCursor {
             query,
             current: None,
             skip_dupes: true,
+            session,
         }
     }
 
@@ -38,13 +40,14 @@ impl HistoryCursor {
 
     fn get_search_filter(&self) -> SearchFilter {
         let filter = match self.query.clone() {
-            HistoryNavigationQuery::Normal(_) => SearchFilter::anything(),
+            HistoryNavigationQuery::Normal(_) => SearchFilter::anything(self.session),
             HistoryNavigationQuery::PrefixSearch(prefix) => {
-                SearchFilter::from_text_search(CommandLineSearch::Prefix(prefix))
+                SearchFilter::from_text_search(CommandLineSearch::Prefix(prefix), self.session)
             }
-            HistoryNavigationQuery::SubstringSearch(substring) => {
-                SearchFilter::from_text_search(CommandLineSearch::Substring(substring))
-            }
+            HistoryNavigationQuery::SubstringSearch(substring) => SearchFilter::from_text_search(
+                CommandLineSearch::Substring(substring),
+                self.session,
+            ),
         };
         if let (true, Some(current)) = (self.skip_dupes, &self.current) {
             SearchFilter {
@@ -112,20 +115,20 @@ mod tests {
         let hist = Box::<FileBackedHistory>::default();
         (
             hist,
-            HistoryCursor::new(HistoryNavigationQuery::Normal(LineBuffer::default())),
+            HistoryCursor::new(HistoryNavigationQuery::Normal(LineBuffer::default()), None),
         )
     }
     fn create_history_at(cap: usize, path: &Path) -> (Box<dyn History>, HistoryCursor) {
         let hist = Box::new(FileBackedHistory::with_file(cap, path.to_owned()).unwrap());
         (
             hist,
-            HistoryCursor::new(HistoryNavigationQuery::Normal(LineBuffer::default())),
+            HistoryCursor::new(HistoryNavigationQuery::Normal(LineBuffer::default()), None),
         )
     }
 
     fn get_all_entry_texts(hist: &dyn History) -> Vec<String> {
         let res = hist
-            .search(SearchQuery::everything(SearchDirection::Forward))
+            .search(SearchQuery::everything(SearchDirection::Forward, None))
             .unwrap();
         let actual: Vec<_> = res.iter().map(|e| e.command_line.to_string()).collect();
         actual
@@ -207,8 +210,10 @@ mod tests {
         hist.save(HistoryItem::from_command_line("test"))?;
         hist.save(HistoryItem::from_command_line("find me"))?;
 
-        let mut cursor =
-            HistoryCursor::new(HistoryNavigationQuery::PrefixSearch("find".to_string()));
+        let mut cursor = HistoryCursor::new(
+            HistoryNavigationQuery::PrefixSearch("find".to_string()),
+            None,
+        );
 
         cursor.back(&*hist)?;
         assert_eq!(cursor.string_at_cursor(), Some("find me".to_string()));
@@ -227,8 +232,10 @@ mod tests {
         hist.save(HistoryItem::from_command_line("test"))?;
         hist.save(HistoryItem::from_command_line("find me"))?;
 
-        let mut cursor =
-            HistoryCursor::new(HistoryNavigationQuery::PrefixSearch("find".to_string()));
+        let mut cursor = HistoryCursor::new(
+            HistoryNavigationQuery::PrefixSearch("find".to_string()),
+            None,
+        );
         cursor.back(&*hist)?;
         assert_eq!(cursor.string_at_cursor(), Some("find me".to_string()));
         cursor.back(&*hist)?;
@@ -253,8 +260,10 @@ mod tests {
         hist.save(HistoryItem::from_command_line("test"))?;
         hist.save(HistoryItem::from_command_line("find me"))?;
 
-        let mut cursor =
-            HistoryCursor::new(HistoryNavigationQuery::PrefixSearch("find".to_string()));
+        let mut cursor = HistoryCursor::new(
+            HistoryNavigationQuery::PrefixSearch("find".to_string()),
+            None,
+        );
         cursor.back(&*hist)?;
         assert_eq!(cursor.string_at_cursor(), Some("find me".to_string()));
         cursor.back(&*hist)?;
@@ -279,8 +288,10 @@ mod tests {
         hist.save(HistoryItem::from_command_line("test"))?;
         hist.save(HistoryItem::from_command_line("find me once"))?;
 
-        let mut cursor =
-            HistoryCursor::new(HistoryNavigationQuery::PrefixSearch("find".to_string()));
+        let mut cursor = HistoryCursor::new(
+            HistoryNavigationQuery::PrefixSearch("find".to_string()),
+            None,
+        );
         cursor.back(&*hist)?;
         assert_eq!(cursor.string_at_cursor(), Some("find me once".to_string()));
         cursor.back(&*hist)?;
@@ -299,8 +310,10 @@ mod tests {
         hist.save(HistoryItem::from_command_line("find me once"))?;
         hist.save(HistoryItem::from_command_line("find me as well"))?;
 
-        let mut cursor =
-            HistoryCursor::new(HistoryNavigationQuery::PrefixSearch("find".to_string()));
+        let mut cursor = HistoryCursor::new(
+            HistoryNavigationQuery::PrefixSearch("find".to_string()),
+            None,
+        );
         cursor.back(&*hist)?;
         assert_eq!(
             cursor.string_at_cursor(),
@@ -328,9 +341,10 @@ mod tests {
         hist.save(HistoryItem::from_command_line("don't find me"))?;
         hist.save(HistoryItem::from_command_line("prefix substring suffix"))?;
 
-        let mut cursor = HistoryCursor::new(HistoryNavigationQuery::SubstringSearch(
-            "substring".to_string(),
-        ));
+        let mut cursor = HistoryCursor::new(
+            HistoryNavigationQuery::SubstringSearch("substring".to_string()),
+            None,
+        );
         cursor.back(&*hist)?;
         assert_eq!(
             cursor.string_at_cursor(),
@@ -351,7 +365,10 @@ mod tests {
         let (mut hist, _) = create_history();
         hist.save(HistoryItem::from_command_line("substring"))?;
 
-        let cursor = HistoryCursor::new(HistoryNavigationQuery::SubstringSearch("".to_string()));
+        let cursor = HistoryCursor::new(
+            HistoryNavigationQuery::SubstringSearch("".to_string()),
+            None,
+        );
 
         assert_eq!(cursor.string_at_cursor(), None);
         Ok(())

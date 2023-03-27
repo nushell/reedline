@@ -3,7 +3,7 @@ use super::{
 };
 use crate::{
     result::{ReedlineError, ReedlineErrorVariants},
-    Result,
+    HistorySessionId, Result,
 };
 
 use std::{
@@ -30,6 +30,7 @@ pub struct FileBackedHistory {
     entries: VecDeque<String>,
     file: Option<PathBuf>,
     len_on_disk: usize, // Keep track what was previously written to disk
+    session: Option<HistorySessionId>,
 }
 
 impl Default for FileBackedHistory {
@@ -268,6 +269,10 @@ impl History for FileBackedHistory {
         }
         Ok(())
     }
+
+    fn session(&self) -> Option<HistorySessionId> {
+        self.session
+    }
 }
 
 impl FileBackedHistory {
@@ -285,6 +290,7 @@ impl FileBackedHistory {
             entries: VecDeque::new(),
             file: None,
             len_on_disk: 0,
+            session: None,
         }
     }
 

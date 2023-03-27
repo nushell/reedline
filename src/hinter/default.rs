@@ -20,7 +20,10 @@ impl Hinter for DefaultHinter {
     ) -> String {
         self.current_hint = if line.chars().count() >= self.min_chars {
             history
-                .search(SearchQuery::last_with_prefix(line.to_string()))
+                .search(SearchQuery::last_with_prefix(
+                    line.to_string(),
+                    history.session(),
+                ))
                 .expect("todo: error handling")
                 .get(0)
                 .map_or_else(String::new, |entry| {
