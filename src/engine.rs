@@ -205,7 +205,7 @@ impl Reedline {
 
     /// Set a new history session id
     /// This should be used in situations where the user initially did not have a history_session_id
-    /// and then later relized they want to have one without restarting the application.
+    /// and then later realized they want to have one without restarting the application.
     pub fn set_history_session_id(&mut self, session: Option<HistorySessionId>) -> Result<()> {
         self.history_session_id = session;
         Ok(())
