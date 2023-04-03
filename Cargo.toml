@@ -1,6 +1,6 @@
 [package]
 name = "reedline"
-version = "0.17.0"
+version = "0.18.0"
 authors = ["The Nushell Project Developers", "JT <jonathan.d.turner@gmail.com>"]
 edition = "2021"
 rust-version = "1.62.1"
