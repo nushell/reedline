@@ -470,6 +470,9 @@ pub enum ReedlineEvent {
     /// Search the history for a string
     SearchHistory,
 
+    /// Delete currently selected history item
+    DeleteHistoryItem,
+
     /// In vi mode multiple reedline events can be chained while parsing the
     /// command or movement characters
     Multiple(Vec<ReedlineEvent>),
@@ -539,6 +542,7 @@ impl Display for ReedlineEvent {
             ReedlineEvent::Left => write!(f, "Left"),
             ReedlineEvent::NextHistory => write!(f, "NextHistory"),
             ReedlineEvent::SearchHistory => write!(f, "SearchHistory"),
+            ReedlineEvent::DeleteHistoryItem => write!(f, "DeleteHistoryItem"),
             ReedlineEvent::Multiple(_) => write!(f, "Multiple[ {{ ReedLineEvents, }} ]"),
             ReedlineEvent::UntilFound(_) => write!(f, "UntilFound [ {{ ReedLineEvents, }} ]"),
             ReedlineEvent::Menu(_) => write!(f, "Menu Name: <string>"),

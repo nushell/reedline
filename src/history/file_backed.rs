@@ -192,13 +192,26 @@ impl History for FileBackedHistory {
         Ok(())
     }
 
-    fn delete(&mut self, _h: super::HistoryItemId) -> Result<()> {
-        Err(ReedlineError(
-            ReedlineErrorVariants::HistoryFeatureUnsupported {
-                history: "FileBackedHistory",
-                feature: "removing entries",
-            },
-        ))
+    fn delete(&mut self, h: super::HistoryItemId) -> Result<()> {
+        let id = usize::try_from(h.0).map_err(|_| {
+            ReedlineError(ReedlineErrorVariants::OtherHistoryError(
+                "Invalid ID (not usize)",
+            ))
+        })?;
+        if self.len_on_disk <= id {
+            self.entries.remove(id);
+            Ok(())
+        } else {
+            // Since no ID is written to disk, it's not possible to delete them.
+            // E.g. consider another instance having deleted entries, after this instance
+            // loaded the file.
+            Err(ReedlineError(
+                ReedlineErrorVariants::HistoryFeatureUnsupported {
+                    history: "FileBackedHistory",
+                    feature: "removing entries",
+                },
+            ))
+        }
     }
 
     /// Writes unwritten history contents to disk.

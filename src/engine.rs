@@ -764,6 +764,16 @@ impl Reedline {
                 // A handled Event causes a repaint
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::DeleteHistoryItem => {
+                match self
+                    .history_cursor
+                    .delete_item_at_cursor(self.history.as_mut())
+                {
+                    Some(Ok(())) => Ok(EventStatus::Handled),
+                    None => Ok(EventStatus::Inapplicable),
+                    Some(Err(_)) => Ok(EventStatus::Inapplicable),
+                }
+            }
             ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
                 self.history_cursor
                     .back(self.history.as_ref())
@@ -1096,6 +1106,27 @@ impl Reedline {
             ReedlineEvent::SearchHistory => {
                 self.enter_history_search();
                 Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::DeleteHistoryItem => {
+                if self.input_mode == InputMode::HistoryTraversal {
+                    match self
+                        .history_cursor
+                        .delete_item_at_cursor(self.history.as_mut())
+                    {
+                        Some(Ok(())) => {
+                            self.update_buffer_from_history();
+                            // are these needed/correct?
+                            self.editor.move_to_start(UndoBehavior::HistoryNavigation);
+                            self.editor
+                                .move_to_line_end(UndoBehavior::HistoryNavigation);
+                            Ok(EventStatus::Handled)
+                        }
+                        None => Ok(EventStatus::Inapplicable),
+                        Some(Err(_)) => Ok(EventStatus::Inapplicable),
+                    }
+                } else {
+                    Ok(EventStatus::Inapplicable)
+                }
             }
             ReedlineEvent::Multiple(events) => {
                 let mut latest_signal = EventStatus::Inapplicable;

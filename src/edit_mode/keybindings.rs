@@ -101,6 +101,7 @@ pub fn add_common_control_bindings(kb: &mut Keybindings) {
     kb.add_binding(KM::CONTROL, KC::Char('d'), ReedlineEvent::CtrlD);
     kb.add_binding(KM::CONTROL, KC::Char('l'), ReedlineEvent::ClearScreen);
     kb.add_binding(KM::CONTROL, KC::Char('r'), ReedlineEvent::SearchHistory);
+    kb.add_binding(KM::SHIFT, KC::Delete, ReedlineEvent::DeleteHistoryItem);
     kb.add_binding(KM::CONTROL, KC::Char('o'), ReedlineEvent::OpenEditor);
 }
 /// Add the arrow navigation and its `Ctrl` variants
