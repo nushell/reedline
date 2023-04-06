@@ -93,7 +93,7 @@ pub struct SearchQuery {
     /// if given, only get results after/before this id (depending on direction)
     pub end_id: Option<HistoryItemId>,
     /// How many results to get
-    pub limit: Option<i64>,
+    pub limit: Option<usize>,
     /// Additional filters defined with [`SearchFilter`]
     pub filter: SearchFilter,
 }
@@ -186,6 +186,45 @@ pub trait History: Send {
     fn sync(&mut self) -> std::io::Result<()>;
     /// get the history session id
     fn session(&self) -> Option<HistorySessionId>;
+}
+
+impl<T: History + ?Sized> History for Box<T> {
+    fn save(&mut self, h: HistoryItem) -> Result<HistoryItem> {
+        (**self).save(h)
+    }
+
+    fn load(&self, id: HistoryItemId) -> Result<HistoryItem> {
+        (**self).load(id)
+    }
+
+    // should this be changed?
+    fn count(&self, query: SearchQuery) -> Result<i64> {
+        (**self).count(query)
+    }
+
+    fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>> {
+        (**self).search(query)
+    }
+
+    fn update(
+        &mut self,
+        id: HistoryItemId,
+        updater: &dyn Fn(HistoryItem) -> HistoryItem,
+    ) -> Result<()> {
+        (**self).update(id, updater)
+    }
+
+    fn clear(&mut self) -> Result<()> {
+        (**self).clear()
+    }
+
+    fn delete(&mut self, h: HistoryItemId) -> Result<()> {
+        (**self).delete(h)
+    }
+
+    fn sync(&mut self) -> std::io::Result<()> {
+        (**self).sync()
+    }
 }
 
 #[cfg(test)]
@@ -391,6 +430,48 @@ mod test {
         // open it once more and confirm that the cleared data is gone forever
         let history = open_history();
         assert_eq!(history.count_all()?, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn filter() -> Result<()> {
+        use crate::history::HistoryFilter;
+
+        let history = create_filled_example_history()?;
+        let mut history = HistoryFilter::new(history);
+        let count = history.count_all()?;
+
+        let item = history.save(create_item(1, "/home/me", " cd /etc/nginx", 0))?;
+        assert_eq!(history.count_all()?, count + 1);
+        let res = history.search(SearchQuery::last_with_search(SearchFilter::anything()))?;
+        assert_eq!(res[0].command_line, item.command_line);
+        search_returned(&history, res, vec![item.id.unwrap().0])?;
+
+        history.set_exclusion_prefix(Some(" ".to_string()));
+        let filtered_item = history.save(create_item(1, "/home/me", " cd /etc/", 0))?;
+        // Count doesn't include filtered item
+        assert_eq!(history.count_all()?, count + 1);
+        let res = history.search(SearchQuery::last_with_search(SearchFilter::anything()))?;
+        assert_eq!(res[0].command_line, filtered_item.command_line);
+        search_returned(&history, res, vec![filtered_item.id.unwrap().0])?;
+
+        let next_filtered_item = history.save(create_item(1, "/home/me", " cd /bin/", 0))?;
+        assert_eq!(history.count_all()?, count + 1);
+        let res = history.search(SearchQuery::last_with_search(SearchFilter::anything()))?;
+        assert_eq!(res[0].command_line, next_filtered_item.command_line);
+        search_returned(&history, res, vec![next_filtered_item.id.unwrap().0])?;
+
+        let next_item = history.save(create_item(1, "/home/me", "cd /home/", 0))?;
+        assert_eq!(history.count_all()?, count + 2);
+        let res = history.search(SearchQuery::last_with_search(SearchFilter::anything()))?;
+        assert_eq!(res[0].command_line, next_item.command_line);
+        search_returned(&history, res, vec![next_item.id.unwrap().0])?;
+
+        history.clear().unwrap();
+        assert_eq!(history.count_all()?, 0);
+        let res = history.search(SearchQuery::last_with_search(SearchFilter::anything()))?;
+        assert!(res.is_empty());
 
         Ok(())
     }

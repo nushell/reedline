@@ -78,7 +78,12 @@ impl History for FileBackedHistory {
     fn load(&self, id: HistoryItemId) -> Result<super::HistoryItem> {
         Ok(FileBackedHistory::construct_entry(
             Some(id),
-            self.entries[id.0 as usize].clone(),
+            self.entries
+                .get(id.0 as usize)
+                .ok_or(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
+                    "Item does not exist",
+                )))?
+                .clone(),
         ))
     }
 
@@ -129,7 +134,7 @@ impl History for FileBackedHistory {
         }
         let intrinsic_limit = max_id - min_id + 1;
         let limit = if let Some(given_limit) = query.limit {
-            std::cmp::min(intrinsic_limit, given_limit) as usize
+            std::cmp::min(usize::try_from(intrinsic_limit).unwrap(), given_limit)
         } else {
             intrinsic_limit as usize
         };
