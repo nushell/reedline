@@ -99,13 +99,12 @@ impl HistoryCursor {
                 Ok(()) => {
                     // Cursor must be moved *after* deletion, as deleting may
                     // alter which entry a `HistoryItemId` points to.
-                    if self.back(history).is_err()
+                    if (self.back(history).is_err()
                         || self.current.is_none()
-                        || self.current.as_ref().unwrap().id == Some(id)
+                        || self.current.as_ref().unwrap().id == Some(id))
+                        && self.forward(history).is_err()
                     {
-                        if self.forward(history).is_err() {
-                            self.current = None;
-                        }
+                        self.current = None;
                     }
                     Some(Ok(()))
                 }

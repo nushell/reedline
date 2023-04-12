@@ -770,8 +770,7 @@ impl Reedline {
                     .delete_item_at_cursor(self.history.as_mut())
                 {
                     Some(Ok(())) => Ok(EventStatus::Handled),
-                    None => Ok(EventStatus::Inapplicable),
-                    Some(Err(_)) => Ok(EventStatus::Inapplicable),
+                    Some(Err(_)) | None => Ok(EventStatus::Inapplicable),
                 }
             }
             ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
@@ -1108,24 +1107,22 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::DeleteHistoryItem => {
-                if self.input_mode == InputMode::HistoryTraversal {
-                    match self
-                        .history_cursor
-                        .delete_item_at_cursor(self.history.as_mut())
-                    {
-                        Some(Ok(())) => {
-                            self.update_buffer_from_history();
-                            // are these needed/correct?
-                            self.editor.move_to_start(UndoBehavior::HistoryNavigation);
-                            self.editor
-                                .move_to_line_end(UndoBehavior::HistoryNavigation);
-                            Ok(EventStatus::Handled)
-                        }
-                        None => Ok(EventStatus::Inapplicable),
-                        Some(Err(_)) => Ok(EventStatus::Inapplicable),
+                if self.input_mode != InputMode::HistoryTraversal {
+                    return Ok(EventStatus::Inapplicable);
+                }
+                match self
+                    .history_cursor
+                    .delete_item_at_cursor(self.history.as_mut())
+                {
+                    Some(Ok(())) => {
+                        self.update_buffer_from_history();
+                        // TODO: are these needed/correct?
+                        self.editor.move_to_start(UndoBehavior::HistoryNavigation);
+                        self.editor
+                            .move_to_line_end(UndoBehavior::HistoryNavigation);
+                        Ok(EventStatus::Handled)
                     }
-                } else {
-                    Ok(EventStatus::Inapplicable)
+                    Some(Err(_)) | None => Ok(EventStatus::Inapplicable),
                 }
             }
             ReedlineEvent::Multiple(events) => {
@@ -1314,7 +1311,7 @@ impl Reedline {
                         .set_buffer(prefix, UndoBehavior::HistoryNavigation);
                 }
             }
-            HistoryNavigationQuery::SubstringSearch(_) => todo!(),
+            HistoryNavigationQuery::SubstringSearch(x) => todo!("{:?}", x),
         }
     }
 
