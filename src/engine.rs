@@ -1313,7 +1313,7 @@ impl Reedline {
                         .set_buffer(prefix, UndoBehavior::HistoryNavigation);
                 }
             }
-            HistoryNavigationQuery::SubstringSearch(x) => todo!("{:?}", x),
+            HistoryNavigationQuery::SubstringSearch(_) => todo!(),
         }
     }
 
