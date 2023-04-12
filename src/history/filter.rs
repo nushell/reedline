@@ -6,8 +6,8 @@ use crate::{
 /// A history that wraps another history, and does not forward values beginning with `exclusion_prefix` (if present).
 /// If an item is filtered, it is stored in memory and able to be retrieved, until the next item is inserted.
 #[derive(Debug)]
-pub struct HistoryFilter<T> {
-    wrapped: T,
+pub(crate) struct HistoryFilter<T> {
+    pub wrapped: T,
     // if Some(s), buffers starting with `s` will not be saved in history
     exclusion_prefix: Option<String>,
     excluded_last_item: Option<HistoryItem>,
@@ -28,11 +28,6 @@ impl<T> HistoryFilter<T> {
     /// Change or remove prefix used to filter items. Existing entries are not modified.
     pub fn set_exclusion_prefix(&mut self, exclusion_prefix: Option<String>) {
         self.exclusion_prefix = exclusion_prefix;
-    }
-
-    /// Change history being wrapped. Existing entries are not modified according to the filter.
-    pub fn set_wrapped(&mut self, wrapped: T) {
-        self.wrapped = wrapped;
     }
 }
 
@@ -111,7 +106,10 @@ impl<T: History> History for HistoryFilter<T> {
         let limit = query.limit;
         let mut res = self.wrapped.search(query)?;
         if let Some(append) = append {
-            if limit.map(|limit| res.len() < limit).unwrap_or(true) {
+            if limit
+                .map(|limit| i64::try_from(res.len()).unwrap() < limit)
+                .unwrap_or(true)
+            {
                 if matches!(direction, SearchDirection::Forward) {
                     res.push(append);
                 } else {

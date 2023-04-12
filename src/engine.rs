@@ -354,7 +354,7 @@ impl Reedline {
     /// ```
     #[must_use]
     pub fn with_history(mut self, history: Box<dyn History>) -> Self {
-        self.history.set_wrapped(history);
+        self.history.wrapped = history;
         self
     }
 

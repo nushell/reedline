@@ -134,7 +134,7 @@ impl History for FileBackedHistory {
         }
         let intrinsic_limit = max_id - min_id + 1;
         let limit = if let Some(given_limit) = query.limit {
-            std::cmp::min(usize::try_from(intrinsic_limit).unwrap(), given_limit)
+            std::cmp::min(intrinsic_limit, given_limit) as usize
         } else {
             intrinsic_limit as usize
         };

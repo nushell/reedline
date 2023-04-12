@@ -93,7 +93,7 @@ pub struct SearchQuery {
     /// if given, only get results after/before this id (depending on direction)
     pub end_id: Option<HistoryItemId>,
     /// How many results to get
-    pub limit: Option<usize>,
+    pub limit: Option<i64>,
     /// Additional filters defined with [`SearchFilter`]
     pub filter: SearchFilter,
 }
