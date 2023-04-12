@@ -1108,7 +1108,8 @@ impl Reedline {
             }
             ReedlineEvent::DeleteHistoryItem => {
                 if self.input_mode != InputMode::HistoryTraversal {
-                    return Ok(EventStatus::Inapplicable);
+                    self.run_edit_commands(&[EditCommand::Clear]);
+                    return Ok(EventStatus::Handled);
                 }
                 match self
                     .history_cursor
