@@ -1117,7 +1117,7 @@ impl Reedline {
                 {
                     Some(Ok(())) => {
                         self.update_buffer_from_history();
-                        // TODO: are these needed/correct?
+                        // Move to end of first line, see `Self::previous_history()`.
                         self.editor.move_to_start(UndoBehavior::HistoryNavigation);
                         self.editor
                             .move_to_line_end(UndoBehavior::HistoryNavigation);
@@ -1188,6 +1188,7 @@ impl Reedline {
             .back(self.history.as_ref())
             .expect("todo: error handling");
         self.update_buffer_from_history();
+        // Move to end of *first* line, so that pressing up again goes directly to previous item.
         self.editor.move_to_start(UndoBehavior::HistoryNavigation);
         self.editor
             .move_to_line_end(UndoBehavior::HistoryNavigation);
