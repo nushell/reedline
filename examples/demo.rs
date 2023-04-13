@@ -12,7 +12,7 @@ use {
     },
 };
 
-use crossterm::cursor::CursorShape;
+use crossterm::cursor::SetCursorStyle;
 use reedline::CursorConfig;
 #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
 use reedline::FileBackedHistory;
@@ -61,8 +61,8 @@ fn main() -> Result<()> {
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
     let cursor_config = CursorConfig {
-        vi_insert: Some(CursorShape::Line),
-        vi_normal: Some(CursorShape::Block),
+        vi_insert: Some(SetCursorStyle::BlinkingBar),
+        vi_normal: Some(SetCursorStyle::SteadyBlock),
         emacs: None,
     };
 

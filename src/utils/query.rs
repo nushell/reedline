@@ -57,6 +57,15 @@ impl Display for ReedLineCrossTermKeyCode {
                 KeyCode::Char(_) => write!(f, "Char_<letter>"),
                 KeyCode::Null => write!(f, "Null"),
                 KeyCode::Esc => write!(f, "Esc"),
+                KeyCode::CapsLock => write!(f, "CapsLock"),
+                KeyCode::ScrollLock => write!(f, "ScrollLock"),
+                KeyCode::NumLock => write!(f, "NumLock"),
+                KeyCode::PrintScreen => write!(f, "PrintScreen"),
+                KeyCode::Pause => write!(f, "Pause"),
+                KeyCode::Menu => write!(f, "Menu"),
+                KeyCode::KeypadBegin => write!(f, "KeypadBegin"),
+                KeyCode::Media(_) => write!(f, "Media<media>"),
+                KeyCode::Modifier(_) => write!(f, "Modifier<modifier>"),
             },
         }
     }

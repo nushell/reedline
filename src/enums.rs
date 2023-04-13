@@ -1,3 +1,4 @@
+use crossterm::event::{Event, KeyEvent, KeyEventKind};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use strum_macros::EnumIter;
@@ -559,4 +560,43 @@ pub(crate) enum EventStatus {
     Handled,
     Inapplicable,
     Exits(Signal),
+}
+
+/// A simple wrapper for [crossterm::event::Event]
+///
+/// Which will make sure that the given event doesn't contain [KeyEventKind::Release]
+/// and convert from [KeyEventKind::Repeat] to [KeyEventKind::Press]
+pub struct ReedlineRawEvent {
+    inner: Event,
+}
+
+impl ReedlineRawEvent {
+    /// It will return None if `evt` is released Key.
+    pub fn convert_from(evt: Event) -> Option<Self> {
+        match evt {
+            Event::Key(KeyEvent {
+                kind: KeyEventKind::Release,
+                ..
+            }) => None,
+            Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind: KeyEventKind::Repeat,
+                state,
+            }) => Some(Self {
+                inner: Event::Key(KeyEvent {
+                    code,
+                    modifiers,
+                    kind: KeyEventKind::Press,
+                    state,
+                }),
+            }),
+            other => Some(Self { inner: other }),
+        }
+    }
+
+    /// Consume and get crossterm event object.
+    pub fn into(self) -> Event {
+        self.inner
+    }
 }

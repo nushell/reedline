@@ -186,7 +186,7 @@ impl Painter {
                 _ => None,
             };
             if let Some(shape) = shape {
-                self.stdout.queue(cursor::SetCursorShape(shape))?;
+                self.stdout.queue(shape)?;
             }
         }
         self.stdout.queue(cursor::Show)?;

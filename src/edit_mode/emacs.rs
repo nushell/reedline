@@ -6,7 +6,7 @@ use crate::{
         },
         EditMode,
     },
-    enums::{EditCommand, ReedlineEvent},
+    enums::{EditCommand, ReedlineEvent, ReedlineRawEvent},
     PromptEditMode,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -108,9 +108,11 @@ impl Default for Emacs {
 }
 
 impl EditMode for Emacs {
-    fn parse_event(&mut self, event: Event) -> ReedlineEvent {
-        match event {
-            Event::Key(KeyEvent { code, modifiers }) => match (modifiers, code) {
+    fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
+        match event.into() {
+            Event::Key(KeyEvent {
+                code, modifiers, ..
+            }) => match (modifiers, code) {
                 (modifier, KeyCode::Char(c)) => {
                     // Note. The modifier can also be a combination of modifiers, for
                     // example:
@@ -152,6 +154,9 @@ impl EditMode for Emacs {
 
             Event::Mouse(_) => ReedlineEvent::Mouse,
             Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
+            Event::FocusGained => ReedlineEvent::None,
+            Event::FocusLost => ReedlineEvent::None,
+            Event::Paste(_) => ReedlineEvent::None,
         }
     }
 
@@ -175,10 +180,11 @@ mod test {
     #[test]
     fn ctrl_l_leads_to_clear_screen_event() {
         let mut emacs = Emacs::default();
-        let ctrl_l = Event::Key(KeyEvent {
-            modifiers: KeyModifiers::CONTROL,
-            code: KeyCode::Char('l'),
-        });
+        let ctrl_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('l'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
         let result = emacs.parse_event(ctrl_l);
 
         assert_eq!(result, ReedlineEvent::ClearScreen);
@@ -194,10 +200,11 @@ mod test {
         );
 
         let mut emacs = Emacs::new(keybindings);
-        let ctrl_l = Event::Key(KeyEvent {
-            modifiers: KeyModifiers::CONTROL,
-            code: KeyCode::Char('l'),
-        });
+        let ctrl_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('l'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
         let result = emacs.parse_event(ctrl_l);
 
         assert_eq!(result, ReedlineEvent::HistoryHintComplete);
@@ -206,10 +213,11 @@ mod test {
     #[test]
     fn inserting_character_works() {
         let mut emacs = Emacs::default();
-        let l = Event::Key(KeyEvent {
-            modifiers: KeyModifiers::NONE,
-            code: KeyCode::Char('l'),
-        });
+        let l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('l'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
         let result = emacs.parse_event(l);
 
         assert_eq!(
@@ -222,10 +230,11 @@ mod test {
     fn inserting_capital_character_works() {
         let mut emacs = Emacs::default();
 
-        let uppercase_l = Event::Key(KeyEvent {
-            modifiers: KeyModifiers::SHIFT,
-            code: KeyCode::Char('l'),
-        });
+        let uppercase_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('l'),
+            KeyModifiers::SHIFT,
+        )))
+        .unwrap();
         let result = emacs.parse_event(uppercase_l);
 
         assert_eq!(
@@ -239,10 +248,11 @@ mod test {
         let keybindings = Keybindings::default();
 
         let mut emacs = Emacs::new(keybindings);
-        let ctrl_l = Event::Key(KeyEvent {
-            modifiers: KeyModifiers::CONTROL,
-            code: KeyCode::Char('l'),
-        });
+        let ctrl_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('l'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
         let result = emacs.parse_event(ctrl_l);
 
         assert_eq!(result, ReedlineEvent::None);
@@ -252,10 +262,11 @@ mod test {
     fn inserting_capital_character_for_non_ascii_remains_as_is() {
         let mut emacs = Emacs::default();
 
-        let uppercase_l = Event::Key(KeyEvent {
-            modifiers: KeyModifiers::SHIFT,
-            code: KeyCode::Char('😀'),
-        });
+        let uppercase_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('😀'),
+            KeyModifiers::SHIFT,
+        )))
+        .unwrap();
         let result = emacs.parse_event(uppercase_l);
 
         assert_eq!(
