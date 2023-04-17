@@ -169,9 +169,6 @@ impl Reedline {
         let edit_mode = Box::<Emacs>::default();
         let hist_session_id = Self::create_history_session_id();
 
-        // Just tried to enable BracketedPaste feature.
-        let _ = execute!(io::stdout(), EnableBracketedPaste);
-
         Reedline {
             editor: Editor::default(),
             history,
