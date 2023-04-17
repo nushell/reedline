@@ -58,11 +58,6 @@ fn main() -> Result<()> {
         "こんにちは世界".into(),
         "こんばんは世界".into(),
     ];
-    let res = execute!(stdout(), EnableBracketedPaste);
-    let bracketed_paste_enabled = res.is_ok();
-    if !bracketed_paste_enabled {
-        println!("Warn: failed to enable bracketed paste mode: {res:?}");
-    }
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
     let cursor_config = CursorConfig {
@@ -83,6 +78,11 @@ fn main() -> Result<()> {
         ))
         .with_validator(Box::new(DefaultValidator))
         .with_ansi_colors(true);
+    let res = line_editor.enable_bracketed_paste();
+    let bracketed_paste_enabled = res.is_ok();
+    if !bracketed_paste_enabled {
+        println!("Warn: failed to enable bracketed paste mode: {res:?}");
+    }
 
     // Adding default menus for the compiled reedline
     line_editor = line_editor
