@@ -1,7 +1,7 @@
 use {
     crossterm::{
         cursor::SetCursorStyle,
-        event::{DisableBracketedPaste, EnableBracketedPaste, KeyCode, KeyModifiers},
+        event::{DisableBracketedPaste, KeyCode, KeyModifiers},
         execute, Result,
     },
     nu_ansi_term::{Color, Style},
