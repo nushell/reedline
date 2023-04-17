@@ -156,7 +156,7 @@ impl EditMode for Emacs {
             Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
             Event::FocusGained => ReedlineEvent::None,
             Event::FocusLost => ReedlineEvent::None,
-            Event::Paste(_) => ReedlineEvent::None,
+            Event::Paste(body) => ReedlineEvent::Edit(vec![EditCommand::InsertString(body)]),
         }
     }
 
