@@ -66,7 +66,17 @@ fn main() -> Result<()> {
         emacs: None,
     };
 
+    // Setting history_per_session to true will allow the history to be isolated to the current session
+    // Setting history_per_session to false will allow the history to be shared across all sessions
+    let history_per_session = false;
+    let mut history_session_id = if history_per_session {
+        Reedline::create_history_session_id()
+    } else {
+        None
+    };
+
     let mut line_editor = Reedline::create()
+        .with_history_session_id(history_session_id)
         .with_history(history)
         .with_completer(completer)
         .with_quick_completions(true)
@@ -145,8 +155,32 @@ fn main() -> Result<()> {
                     line_editor.clear_scrollback()?;
                     continue;
                 }
+                // Get the full history
                 if buffer.trim() == "history" {
                     line_editor.print_history()?;
+                    continue;
+                }
+                // Get the history only pertinent to the current session
+                if buffer.trim() == "history session" {
+                    line_editor.print_history_session()?;
+                    continue;
+                }
+                // Get this history session identifier
+                if buffer.trim() == "history sessionid" {
+                    line_editor.print_history_session_id()?;
+                    continue;
+                }
+                // Toggle between the full history and the history pertinent to the current session
+                if buffer.trim() == "toggle history_session" {
+                    let hist_session_id = if history_session_id.is_none() {
+                        // If we never created a history session ID, create one now
+                        let sesh = Reedline::create_history_session_id();
+                        history_session_id = sesh;
+                        sesh
+                    } else {
+                        history_session_id
+                    };
+                    line_editor.toggle_history_session_matching(hist_session_id)?;
                     continue;
                 }
                 if buffer.trim() == "clear-history" {

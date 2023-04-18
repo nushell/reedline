@@ -1,4 +1,6 @@
 use chrono::Utc;
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+use rusqlite::ToSql;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Display, time::Duration};
 
@@ -29,6 +31,15 @@ impl HistorySessionId {
 impl Display for HistorySessionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+impl ToSql for HistorySessionId {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(rusqlite::types::ToSqlOutput::Owned(
+            rusqlite::types::Value::Integer(self.0),
+        ))
     }
 }
 

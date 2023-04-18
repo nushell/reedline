@@ -16,6 +16,7 @@ const SQLITE_APPLICATION_ID: i32 = 1151497937;
 /// to add information such as a timestamp, running directory, result...
 pub struct SqliteBackedHistory {
     db: rusqlite::Connection,
+    session: Option<HistorySessionId>,
 }
 
 fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem> {
@@ -167,6 +168,10 @@ impl History for SqliteBackedHistory {
         // no-op (todo?)
         Ok(())
     }
+
+    fn session(&self) -> Option<HistorySessionId> {
+        self.session
+    }
 }
 fn map_sqlite_err(err: rusqlite::Error) -> ReedlineError {
     // TODO: better error mapping
@@ -243,8 +248,9 @@ impl SqliteBackedHistory {
         ",
         )
         .map_err(map_sqlite_err)?;
-        Ok(SqliteBackedHistory { db })
+        Ok(SqliteBackedHistory { db, session: None })
     }
+
     fn construct_query<'a>(
         &self,
         query: &'a SearchQuery,
@@ -330,6 +336,10 @@ impl SqliteBackedHistory {
             } else {
                 wheres.push("exit_status != 0");
             }
+        }
+        if let Some(session_id) = query.filter.session {
+            wheres.push("session_id = :session_id");
+            params.push((":session_id", Box::new(session_id)));
         }
         let mut wheres = wheres.join(" and ");
         if wheres.is_empty() {
