@@ -289,6 +289,9 @@ pub use utils::{
 };
 
 // Reexport the key types to be independent from an explicit crossterm dependency.
-pub use crossterm::event::{KeyCode, KeyModifiers};
+pub use crossterm::{
+    event::{KeyCode, KeyModifiers},
+    style::Color,
+};
 #[cfg(feature = "external_printer")]
 pub use external_printer::ExternalPrinter;
