@@ -30,9 +30,10 @@ use {
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
     },
     crossterm::{
+        cursor::{SetCursorStyle, Show},
         event,
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
-        terminal, Result,
+        terminal, QueueableCommand, Result,
     },
     std::{fs::File, io, io::Write, process::Command, time::Duration, time::SystemTime},
 };
@@ -141,6 +142,14 @@ struct BufferEditor {
 
 impl Drop for Reedline {
     fn drop(&mut self) {
+        if self.cursor_shapes.is_some() {
+            let _ignore = terminal::enable_raw_mode();
+            let mut stdout = std::io::stdout();
+            let _ignore = stdout.queue(SetCursorStyle::DefaultUserShape);
+            let _ignore = stdout.queue(Show);
+            let _ignore = stdout.flush();
+        }
+
         // Ensures that the terminal is in a good state if we panic semigracefully
         // Calling `disable_raw_mode()` twice is fine with Linux
         let _ignore = terminal::disable_raw_mode();
