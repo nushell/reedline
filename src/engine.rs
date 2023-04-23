@@ -510,6 +510,11 @@ impl Reedline {
         result
     }
 
+    /// Returns the current insertion point of the input buffer.
+    pub fn current_insertion_point(&self) -> usize {
+        self.editor.insertion_point()
+    }
+
     /// Returns the current contents of the input buffer.
     pub fn current_buffer_contents(&self) -> &str {
         self.editor.get_buffer()
