@@ -1,7 +1,8 @@
 use {
     crossterm::{
-        event::{KeyCode, KeyModifiers},
-        Result,
+        cursor::SetCursorStyle,
+        event::{DisableBracketedPaste, KeyCode, KeyModifiers},
+        execute, Result,
     },
     nu_ansi_term::{Color, Style},
     reedline::{
@@ -10,9 +11,9 @@ use {
         EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline,
         ReedlineEvent, ReedlineMenu, Signal, Vi,
     },
+    std::io::stdout,
 };
 
-use crossterm::cursor::SetCursorStyle;
 use reedline::CursorConfig;
 #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
 use reedline::FileBackedHistory;
@@ -57,7 +58,6 @@ fn main() -> Result<()> {
         "こんにちは世界".into(),
         "こんばんは世界".into(),
     ];
-
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
     let cursor_config = CursorConfig {
@@ -88,6 +88,11 @@ fn main() -> Result<()> {
         ))
         .with_validator(Box::new(DefaultValidator))
         .with_ansi_colors(true);
+    let res = line_editor.enable_bracketed_paste();
+    let bracketed_paste_enabled = res.is_ok();
+    if !bracketed_paste_enabled {
+        println!("Warn: failed to enable bracketed paste mode: {res:?}");
+    }
 
     // Adding default menus for the compiled reedline
     line_editor = line_editor
@@ -211,6 +216,9 @@ fn main() -> Result<()> {
         }
     }
 
+    if bracketed_paste_enabled {
+        let _ = execute!(stdout(), DisableBracketedPaste);
+    }
     println!();
     Ok(())
 }

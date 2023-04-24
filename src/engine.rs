@@ -1,3 +1,6 @@
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+use crossterm::execute;
+
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
 use crate::{
@@ -130,6 +133,9 @@ pub struct Reedline {
     // Use different cursors depending on the current edit mode
     cursor_shapes: Option<CursorConfig>,
 
+    // Indicate if global terminal have enabled BracketedPaste
+    bracket_paste_enabled: bool,
+
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
 }
@@ -144,6 +150,9 @@ impl Drop for Reedline {
         // Ensures that the terminal is in a good state if we panic semigracefully
         // Calling `disable_raw_mode()` twice is fine with Linux
         let _ignore = terminal::disable_raw_mode();
+        if self.bracket_paste_enabled {
+            let _ = execute!(io::stdout(), DisableBracketedPaste);
+        }
     }
 }
 
@@ -183,6 +192,7 @@ impl Reedline {
             menus: Vec::new(),
             buffer_editor: None,
             cursor_shapes: None,
+            bracket_paste_enabled: false,
             #[cfg(feature = "external_printer")]
             external_printer: None,
         }
@@ -196,6 +206,15 @@ impl Reedline {
         };
 
         Some(HistorySessionId::new(nanos))
+    }
+
+    /// Enable BracketedPaste feature.
+    pub fn enable_bracketed_paste(&mut self) -> Result<()> {
+        let res = execute!(io::stdout(), EnableBracketedPaste);
+        if res.is_ok() {
+            self.bracket_paste_enabled = true;
+        }
+        res
     }
 
     /// Return the previously generated history session id
