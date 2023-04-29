@@ -413,8 +413,9 @@ impl Painter {
             // Note: you can't just subtract the offset from the origin,
             // as we could be shrinking so fast that the offset we read back from
             // crossterm is past where it would have been.
-            let prompt_height = prev_terminal_size.1 - prev_prompt_row;
-            self.prompt_start_row = height - prompt_height;
+            let prompt_height = prev_terminal_size.1.saturating_sub(prev_prompt_row);
+            let prompt_height = prompt_height.max(1);
+            self.prompt_start_row = height.saturating_sub(prompt_height);
         } else if prev_terminal_size.1 < height {
             // Terminal is growing down, so move the prompt down the same amount to make space
             // for history that's on the screen
