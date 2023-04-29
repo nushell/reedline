@@ -188,45 +188,6 @@ pub trait History: Send {
     fn session(&self) -> Option<HistorySessionId>;
 }
 
-impl<T: History + ?Sized> History for Box<T> {
-    fn save(&mut self, h: HistoryItem) -> Result<HistoryItem> {
-        (**self).save(h)
-    }
-
-    fn load(&self, id: HistoryItemId) -> Result<HistoryItem> {
-        (**self).load(id)
-    }
-
-    // should this be changed?
-    fn count(&self, query: SearchQuery) -> Result<i64> {
-        (**self).count(query)
-    }
-
-    fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>> {
-        (**self).search(query)
-    }
-
-    fn update(
-        &mut self,
-        id: HistoryItemId,
-        updater: &dyn Fn(HistoryItem) -> HistoryItem,
-    ) -> Result<()> {
-        (**self).update(id, updater)
-    }
-
-    fn clear(&mut self) -> Result<()> {
-        (**self).clear()
-    }
-
-    fn delete(&mut self, h: HistoryItemId) -> Result<()> {
-        (**self).delete(h)
-    }
-
-    fn sync(&mut self) -> std::io::Result<()> {
-        (**self).sync()
-    }
-}
-
 #[cfg(test)]
 mod test {
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]

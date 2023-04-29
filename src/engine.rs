@@ -515,12 +515,12 @@ impl Reedline {
 
     /// Read-only view of the history
     pub fn history(&self) -> &dyn History {
-        &self.history
+        &*self.history
     }
 
     /// Mutable view of the history
     pub fn history_mut(&mut self) -> &mut dyn History {
-        &mut self.history
+        &mut *self.history
     }
 
     /// Update the underlying [`History`] to/from disk
@@ -797,18 +797,18 @@ impl Reedline {
             }
             ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
                 self.history_cursor
-                    .back(&self.history)
+                    .back(self.history.as_ref())
                     .expect("todo: error handling");
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::NextHistory | ReedlineEvent::Down => {
                 self.history_cursor
-                    .forward(&self.history)
+                    .forward(self.history.as_ref())
                     .expect("todo: error handling");
                 // Hacky way to ensure that we don't fall of into failed search going forward
                 if self.history_cursor.string_at_cursor().is_none() {
                     self.history_cursor
-                        .back(&self.history)
+                        .back(self.history.as_ref())
                         .expect("todo: error handling");
                 }
                 Ok(EventStatus::Handled)
@@ -851,7 +851,7 @@ impl Reedline {
                             menu.update_values(
                                 &mut self.editor,
                                 self.completer.as_mut(),
-                                &self.history,
+                                self.history.as_ref(),
                             );
 
                             if menu.get_values().len() == 1 {
@@ -864,7 +864,7 @@ impl Reedline {
                                 self.quick_completions,
                                 &mut self.editor,
                                 self.completer.as_mut(),
-                                &self.history,
+                                self.history.as_ref(),
                             )
                         {
                             return Ok(EventStatus::Handled);
@@ -1063,7 +1063,7 @@ impl Reedline {
                                 menu.update_values(
                                     &mut self.editor,
                                     self.completer.as_mut(),
-                                    &self.history,
+                                    self.history.as_ref(),
                                 );
                                 if let Some(&EditCommand::Complete) = commands.first() {
                                     if menu.get_values().len() == 1 {
@@ -1074,7 +1074,7 @@ impl Reedline {
                                             self.quick_completions,
                                             &mut self.editor,
                                             self.completer.as_mut(),
-                                            &self.history,
+                                            self.history.as_ref(),
                                         )
                                     {
                                         return Ok(EventStatus::Handled);
@@ -1195,7 +1195,7 @@ impl Reedline {
 
         if !self.history_cursor_on_excluded {
             self.history_cursor
-                .back(&self.history)
+                .back(self.history.as_ref())
                 .expect("todo: error handling");
         }
         self.update_buffer_from_history();
@@ -1218,7 +1218,7 @@ impl Reedline {
         } else {
             let cursor_was_on_item = self.history_cursor.string_at_cursor().is_some();
             self.history_cursor
-                .forward(&self.history)
+                .forward(self.history.as_ref())
                 .expect("todo: error handling");
 
             if cursor_was_on_item
@@ -1289,7 +1289,7 @@ impl Reedline {
                         );
                     }
                     self.history_cursor
-                        .back(&self.history)
+                        .back(self.history.as_mut())
                         .expect("todo: error handling");
                 }
                 EditCommand::Backspace => {
@@ -1303,7 +1303,7 @@ impl Reedline {
                             self.get_history_session_id(),
                         );
                         self.history_cursor
-                            .back(&self.history)
+                            .back(self.history.as_mut())
                             .expect("todo: error handling");
                     }
                 }
@@ -1611,7 +1611,7 @@ impl Reedline {
                 hinter.handle(
                     buffer_to_paint,
                     cursor_position_in_buffer,
-                    &self.history,
+                    self.history.as_ref(),
                     self.use_ansi_coloring,
                 )
             })
@@ -1637,7 +1637,7 @@ impl Reedline {
                 menu.update_working_details(
                     &mut self.editor,
                     self.completer.as_mut(),
-                    &self.history,
+                    self.history.as_ref(),
                     &self.painter,
                 );
             }
