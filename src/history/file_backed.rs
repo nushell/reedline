@@ -198,89 +198,29 @@ impl History for FileBackedHistory {
                 "Invalid ID (not usize)",
             ))
         })?;
-        if self.len_on_disk <= id {
-            self.entries.remove(id);
-            Ok(())
-        } else {
-            // Since no ID is written to disk, it's not possible to delete them.
-            // E.g. consider another instance having deleted entries, after this instance
-            // loaded the file.
-            Err(ReedlineError(
-                ReedlineErrorVariants::HistoryFeatureUnsupported {
-                    history: "FileBackedHistory",
-                    feature: "removing entries",
-                },
-            ))
+
+        let delete = self.entries[id].clone();
+        let mut i = 0;
+        while i < self.entries.len() {
+            if self.entries[i] == delete {
+                self.entries.remove(i);
+                if i < self.len_on_disk {
+                    self.len_on_disk -= 1;
+                }
+            } else {
+                i += 1;
+            }
         }
+
+        self.sync_and_delete_item(Some(&delete))
+            .map_err(|e| ReedlineError(ReedlineErrorVariants::IOError(e)))
     }
 
     /// Writes unwritten history contents to disk.
     ///
     /// If file would exceed `capacity` truncates the oldest entries.
     fn sync(&mut self) -> std::io::Result<()> {
-        if let Some(fname) = &self.file {
-            // The unwritten entries
-            let own_entries = self.entries.range(self.len_on_disk..);
-
-            if let Some(base_dir) = fname.parent() {
-                std::fs::create_dir_all(base_dir)?;
-            }
-
-            let mut f_lock = fd_lock::RwLock::new(
-                OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .read(true)
-                    .open(fname)?,
-            );
-            let mut writer_guard = f_lock.write()?;
-            let (mut foreign_entries, truncate) = {
-                let reader = BufReader::new(writer_guard.deref());
-                let mut from_file = reader
-                    .lines()
-                    .map(|o| o.map(|i| decode_entry(&i)))
-                    .collect::<std::io::Result<VecDeque<_>>>()?;
-                if from_file.len() + own_entries.len() > self.capacity {
-                    (
-                        from_file.split_off(from_file.len() - (self.capacity - own_entries.len())),
-                        true,
-                    )
-                } else {
-                    (from_file, false)
-                }
-            };
-
-            {
-                let mut writer = BufWriter::new(writer_guard.deref_mut());
-                if truncate {
-                    writer.rewind()?;
-
-                    for line in &foreign_entries {
-                        writer.write_all(encode_entry(line).as_bytes())?;
-                        writer.write_all("\n".as_bytes())?;
-                    }
-                } else {
-                    writer.seek(SeekFrom::End(0))?;
-                }
-                for line in own_entries {
-                    writer.write_all(encode_entry(line).as_bytes())?;
-                    writer.write_all("\n".as_bytes())?;
-                }
-                writer.flush()?;
-            }
-            if truncate {
-                let file = writer_guard.deref_mut();
-                let file_len = file.stream_position()?;
-                file.set_len(file_len)?;
-            }
-
-            let own_entries = self.entries.drain(self.len_on_disk..);
-            foreign_entries.extend(own_entries);
-            self.entries = foreign_entries;
-
-            self.len_on_disk = self.entries.len();
-        }
-        Ok(())
+        self.sync_and_delete_item(None)
     }
 
     fn session(&self) -> Option<HistorySessionId> {
@@ -338,6 +278,85 @@ impl FileBackedHistory {
             exit_status: None,
             more_info: None,
         }
+    }
+
+    /// Writes unwritten history contents to disk, and optionally deletes
+    /// all occurences of the provided item.
+    ///
+    /// If file would exceed `capacity` truncates the oldest entries.
+    fn sync_and_delete_item(&mut self, delete: Option<&str>) -> std::io::Result<()> {
+        if let Some(fname) = &self.file {
+            // The unwritten entries
+            let own_entries = self.entries.range(self.len_on_disk..);
+
+            if let Some(base_dir) = fname.parent() {
+                std::fs::create_dir_all(base_dir)?;
+            }
+
+            let mut f_lock = fd_lock::RwLock::new(
+                OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .read(true)
+                    .open(fname)?,
+            );
+            let mut writer_guard = f_lock.write()?;
+            let (mut foreign_entries, truncate) = {
+                let reader = BufReader::new(writer_guard.deref());
+                let mut deletions = false;
+                let mut from_file = reader
+                    .lines()
+                    .map(|o| o.map(|i| decode_entry(&i)))
+                    .filter(|x| {
+                        if x.as_deref().ok() == delete {
+                            deletions = true;
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .collect::<std::io::Result<VecDeque<_>>>()?;
+                if from_file.len() + own_entries.len() > self.capacity {
+                    (
+                        from_file.split_off(from_file.len() - (self.capacity - own_entries.len())),
+                        true,
+                    )
+                } else {
+                    (from_file, deletions)
+                }
+            };
+
+            {
+                let mut writer = BufWriter::new(writer_guard.deref_mut());
+                if truncate {
+                    writer.rewind()?;
+
+                    for line in &foreign_entries {
+                        writer.write_all(encode_entry(line).as_bytes())?;
+                        writer.write_all("\n".as_bytes())?;
+                    }
+                } else {
+                    writer.seek(SeekFrom::End(0))?;
+                }
+                for line in own_entries {
+                    writer.write_all(encode_entry(line).as_bytes())?;
+                    writer.write_all("\n".as_bytes())?;
+                }
+                writer.flush()?;
+            }
+            if truncate {
+                let file = writer_guard.deref_mut();
+                let file_len = file.stream_position()?;
+                file.set_len(file_len)?;
+            }
+
+            let own_entries = self.entries.drain(self.len_on_disk..);
+            foreign_entries.extend(own_entries);
+            self.entries = foreign_entries;
+
+            self.len_on_disk = self.entries.len();
+        }
+        Ok(())
     }
 }
 
