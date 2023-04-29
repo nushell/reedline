@@ -1,9 +1,7 @@
 mod base;
 mod cursor;
 mod file_backed;
-mod filter;
 mod item;
-pub(crate) use filter::HistoryFilter;
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 mod sqlite_backed;
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]

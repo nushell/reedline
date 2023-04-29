@@ -433,46 +433,4 @@ mod test {
 
         Ok(())
     }
-
-    #[test]
-    fn filter() -> Result<()> {
-        use crate::history::HistoryFilter;
-
-        let history = create_filled_example_history()?;
-        let mut history = HistoryFilter::new(history);
-        let count = history.count_all()?;
-
-        let item = history.save(create_item(1, "/home/me", " cd /etc/nginx", 0))?;
-        assert_eq!(history.count_all()?, count + 1);
-        let res = history.search(SearchQuery::last_with_search(SearchFilter::anything()))?;
-        assert_eq!(res[0].command_line, item.command_line);
-        search_returned(&history, res, vec![item.id.unwrap().0])?;
-
-        history.set_exclusion_prefix(Some(" ".to_string()));
-        let filtered_item = history.save(create_item(1, "/home/me", " cd /etc/", 0))?;
-        // Count doesn't include filtered item
-        assert_eq!(history.count_all()?, count + 1);
-        let res = history.search(SearchQuery::last_with_search(SearchFilter::anything()))?;
-        assert_eq!(res[0].command_line, filtered_item.command_line);
-        search_returned(&history, res, vec![filtered_item.id.unwrap().0])?;
-
-        let next_filtered_item = history.save(create_item(1, "/home/me", " cd /bin/", 0))?;
-        assert_eq!(history.count_all()?, count + 1);
-        let res = history.search(SearchQuery::last_with_search(SearchFilter::anything()))?;
-        assert_eq!(res[0].command_line, next_filtered_item.command_line);
-        search_returned(&history, res, vec![next_filtered_item.id.unwrap().0])?;
-
-        let next_item = history.save(create_item(1, "/home/me", "cd /home/", 0))?;
-        assert_eq!(history.count_all()?, count + 2);
-        let res = history.search(SearchQuery::last_with_search(SearchFilter::anything()))?;
-        assert_eq!(res[0].command_line, next_item.command_line);
-        search_returned(&history, res, vec![next_item.id.unwrap().0])?;
-
-        history.clear().unwrap();
-        assert_eq!(history.count_all()?, 0);
-        let res = history.search(SearchQuery::last_with_search(SearchFilter::anything()))?;
-        assert!(res.is_empty());
-
-        Ok(())
-    }
 }

@@ -1,7 +1,6 @@
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
 
-use crate::history::HistoryFilter;
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
 use crate::{
@@ -95,11 +94,12 @@ pub struct Reedline {
     editor: Editor,
 
     // History
-    history: HistoryFilter<Box<dyn History>>,
+    history: Box<dyn History>,
     history_cursor: HistoryCursor,
     history_session_id: Option<HistorySessionId>,
     // none if history doesn't support this
     history_last_run_id: Option<HistoryItemId>,
+    history_exclusion_prefix: Option<String>,
     input_mode: InputMode,
 
     // Validator
@@ -167,6 +167,8 @@ impl Drop for Reedline {
 }
 
 impl Reedline {
+    const FILTERED_ITEM_ID: HistoryItemId = HistoryItemId(i64::MAX);
+
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     #[must_use]
     pub fn create() -> Self {
@@ -181,13 +183,14 @@ impl Reedline {
 
         Reedline {
             editor: Editor::default(),
-            history: HistoryFilter::new(history),
+            history,
             history_cursor: HistoryCursor::new(
                 HistoryNavigationQuery::Normal(LineBuffer::default()),
                 hist_session_id,
             ),
             history_session_id: hist_session_id,
             history_last_run_id: None,
+            history_exclusion_prefix: None,
             input_mode: InputMode::Regular,
             painter,
             edit_mode,
@@ -354,7 +357,7 @@ impl Reedline {
     /// ```
     #[must_use]
     pub fn with_history(mut self, history: Box<dyn History>) -> Self {
-        self.history.wrapped = history;
+        self.history = history;
         self
     }
 
@@ -375,7 +378,7 @@ impl Reedline {
     /// ```
     #[must_use]
     pub fn with_history_exclusion_prefix(mut self, ignore_prefix: Option<String>) -> Self {
-        self.history.set_exclusion_prefix(ignore_prefix);
+        self.history_exclusion_prefix = ignore_prefix;
         self
     }
 
@@ -535,14 +538,13 @@ impl Reedline {
         &mut self,
         f: &dyn Fn(HistoryItem) -> HistoryItem,
     ) -> crate::Result<()> {
-        if let Some(r) = &self.history_last_run_id {
-            self.history.update(*r, f)?;
-        } else {
-            return Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
+        match &self.history_last_run_id {
+            Some(Self::FILTERED_ITEM_ID) => Ok(()),
+            Some(r) => self.history.update(*r, f),
+            None => Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
                 "No command run",
-            )));
+            ))),
         }
-        Ok(())
     }
 
     /// Wait for input and provide the user with a specified [`Prompt`].
@@ -1649,10 +1651,19 @@ impl Reedline {
         // Additional repaint to show the content without hints etc.
         self.repaint(prompt)?;
         if !buffer.is_empty() {
-            let mut entry = HistoryItem::from_command_line(&buffer);
-            entry.session_id = self.get_history_session_id();
-            let entry = self.history.save(entry).expect("todo: error handling");
-            self.history_last_run_id = entry.id;
+            if self
+                .history_exclusion_prefix
+                .as_ref()
+                .map(|prefix| buffer.starts_with(prefix))
+                .unwrap_or(false)
+            {
+                self.history_last_run_id = Some(Self::FILTERED_ITEM_ID);
+            } else {
+                let mut entry = HistoryItem::from_command_line(&buffer);
+                entry.session_id = self.get_history_session_id();
+                let entry = self.history.save(entry).expect("todo: error handling");
+                self.history_last_run_id = entry.id;
+            }
         }
         self.run_edit_commands(&[EditCommand::Clear]);
         self.editor.reset_undo_stack();
