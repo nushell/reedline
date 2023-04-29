@@ -407,22 +407,12 @@ impl Painter {
         self.terminal_size = (width, height);
         // TODO properly adjusting prompt_origin on resizing while lines > 1
 
-        if prev_prompt_row >= height {
-            // Terminal is shrinking up
-            // FIXME: use actual prompt size at some point
-            // Note: you can't just subtract the offset from the origin,
-            // as we could be shrinking so fast that the offset we read back from
-            // crossterm is past where it would have been.
-            let prompt_height = prev_terminal_size.1.saturating_sub(prev_prompt_row);
-            let prompt_height = prompt_height.max(1);
-            self.prompt_start_row = height.saturating_sub(prompt_height);
-        } else if prev_terminal_size.1 < height {
-            // Terminal is growing down, so move the prompt down the same amount to make space
-            // for history that's on the screen
-            // Note: if the terminal doesn't have sufficient history, this will leave a trail
-            // of previous prompts currently.
-            self.prompt_start_row = prev_prompt_row + (height - prev_terminal_size.1);
-        }
+        let prompt_height = prev_terminal_size.1.saturating_sub(prev_prompt_row);
+        let prompt_height = prompt_height.max(1);
+
+        // Note: if the terminal doesn't have sufficient history, this will leave a trail
+        // of previous prompts currently.
+        self.prompt_start_row = height.saturating_sub(prompt_height);
     }
 
     /// Writes `line` to the terminal with a following carriage return and newline
