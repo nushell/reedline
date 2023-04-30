@@ -415,20 +415,12 @@ impl Painter {
         // - The terminal got larger
         //   - Note: if the terminal doesn't have sufficient history, this will leave a trail
         //     of previous prompts currently.
+        //   - Note: if the the prompt contains multiple lines, this will leave a trail of
+        //     previous prompts currently.
         // - The terminal got smaller and the whole prompt is no longer visible
-        //   - FIXME: Reproducing steps:
-        //     1. Make sure the input prompt is at the bottom
-        //     2. Type something every long so that it wraps
-        //     3. Press enter to make it a completion suggestion in the future
-        //     4. Perform the operations at the same time:
-        //        - Shrink the terminal height
-        //        - Type the same command again without wrapping it but still trigger the
-        //          wrapping completion suggestion
-        //     5. The prompt may eat the previous line
-        let prompt_height = prev_terminal_size.1.saturating_sub(prev_prompt_row);
-        let prompt_height = prompt_height.max(1);
-        let prompt_height = prompt_height.min(self.last_required_lines.max(1));
-        self.prompt_start_row = height.saturating_sub(prompt_height);
+        //   - Note: if the the prompt contains multiple lines, this will leave a trail of
+        //     previous prompts currently.
+        self.prompt_start_row = height.saturating_sub(1);
     }
 
     /// Writes `line` to the terminal with a following carriage return and newline
