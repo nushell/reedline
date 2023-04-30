@@ -406,20 +406,25 @@ impl Painter {
 
         self.terminal_size = (width, height);
 
-        if prev_prompt_row < height && height <= prev_terminal_size.1 {
-            // The terminal got smaller but the start of the prompt is still visible
+        if prev_prompt_row < height
+            && height <= prev_terminal_size.1
+            && width == prev_terminal_size.0
+        {
+            // The terminal got smaller in height but the start of the prompt is still visible
+            // The width didn't change
             return;
         }
 
         // Either:
-        // - The terminal got larger
+        // - The terminal got larger in height
         //   - Note: if the terminal doesn't have sufficient history, this will leave a trail
         //     of previous prompts currently.
         //   - Note: if the the prompt contains multiple lines, this will leave a trail of
         //     previous prompts currently.
-        // - The terminal got smaller and the whole prompt is no longer visible
+        // - The terminal got smaller in height and the whole prompt is no longer visible
         //   - Note: if the the prompt contains multiple lines, this will leave a trail of
         //     previous prompts currently.
+        // - The width changed
         self.prompt_start_row = height.saturating_sub(1);
     }
 
