@@ -405,13 +405,29 @@ impl Painter {
         let prev_prompt_row = self.prompt_start_row;
 
         self.terminal_size = (width, height);
-        // TODO properly adjusting prompt_origin on resizing while lines > 1
 
+        if prev_prompt_row < height && height <= prev_terminal_size.1 {
+            // The terminal got smaller but the start of the prompt is still visible
+            return;
+        }
+
+        // Either:
+        // - The terminal got larger
+        //   - Note: if the terminal doesn't have sufficient history, this will leave a trail
+        //     of previous prompts currently.
+        // - The terminal got smaller and the whole prompt is no longer visible
+        //   - FIXME: Reproducing steps:
+        //     1. Make sure the input prompt is at the bottom
+        //     2. Type something every long so that it wraps
+        //     3. Press enter to make it a completion suggestion in the future
+        //     4. Perform the operations at the same time:
+        //        - Shrink the terminal height
+        //        - Type the same command again without wrapping it but still trigger the
+        //          wrapping completion suggestion
+        //     5. The prompt may eat the previous line
         let prompt_height = prev_terminal_size.1.saturating_sub(prev_prompt_row);
         let prompt_height = prompt_height.max(1);
-
-        // Note: if the terminal doesn't have sufficient history, this will leave a trail
-        // of previous prompts currently.
+        let prompt_height = prompt_height.min(self.last_required_lines.max(1));
         self.prompt_start_row = height.saturating_sub(prompt_height);
     }
 
