@@ -4,7 +4,7 @@ use rusqlite::ToSql;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Display, time::Duration};
 
-/// Unique ID for the [`HistoryItem`]
+/// Unique ID for the [`HistoryItem`]. More recent items have higher ids than older ones.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct HistoryItemId(pub(crate) i64);
 impl HistoryItemId {
@@ -52,7 +52,7 @@ impl From<HistorySessionId> for i64 {
 /// This trait represents additional arbitrary context to be added to a history (optional, see [`HistoryItem`])
 pub trait HistoryItemExtraInfo: Serialize + DeserializeOwned + Default + Send {}
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 /// something that is serialized as null and deserialized by ignoring everything
 pub struct IgnoreAllExtraInfo;
 

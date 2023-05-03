@@ -99,6 +99,9 @@ pub struct Reedline {
     history_session_id: Option<HistorySessionId>,
     // none if history doesn't support this
     history_last_run_id: Option<HistoryItemId>,
+    history_exclusion_prefix: Option<String>,
+    history_excluded_item: Option<HistoryItem>,
+    history_cursor_on_excluded: bool,
     input_mode: InputMode,
 
     // Validator
@@ -166,6 +169,8 @@ impl Drop for Reedline {
 }
 
 impl Reedline {
+    const FILTERED_ITEM_ID: HistoryItemId = HistoryItemId(i64::MAX);
+
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     #[must_use]
     pub fn create() -> Self {
@@ -187,6 +192,9 @@ impl Reedline {
             ),
             history_session_id: hist_session_id,
             history_last_run_id: None,
+            history_exclusion_prefix: None,
+            history_excluded_item: None,
+            history_cursor_on_excluded: false,
             input_mode: InputMode::Regular,
             painter,
             edit_mode,
@@ -357,6 +365,27 @@ impl Reedline {
         self
     }
 
+    /// A builder which configures history exclusion for your instance of the Reedline engine
+    /// # Example
+    /// ```rust,no_run
+    /// // Create a reedline instance with history that will *not* include commands starting with a space
+    ///
+    /// use reedline::{FileBackedHistory, Reedline};
+    ///
+    /// let history = Box::new(
+    /// FileBackedHistory::with_file(5, "history.txt".into())
+    ///     .expect("Error configuring history with file"),
+    /// );
+    /// let mut line_editor = Reedline::create()
+    ///     .with_history(history)
+    ///     .with_history_exclusion_prefix(Some(" ".into()));
+    /// ```
+    #[must_use]
+    pub fn with_history_exclusion_prefix(mut self, ignore_prefix: Option<String>) -> Self {
+        self.history_exclusion_prefix = ignore_prefix;
+        self
+    }
+
     /// A builder that configures the validator for your instance of the Reedline engine
     /// # Example
     /// ```rust
@@ -513,14 +542,16 @@ impl Reedline {
         &mut self,
         f: &dyn Fn(HistoryItem) -> HistoryItem,
     ) -> crate::Result<()> {
-        if let Some(r) = &self.history_last_run_id {
-            self.history.update(*r, f)?;
-        } else {
-            return Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
+        match &self.history_last_run_id {
+            Some(Self::FILTERED_ITEM_ID) => {
+                self.history_excluded_item = Some(f(self.history_excluded_item.take().unwrap()));
+                Ok(())
+            }
+            Some(r) => self.history.update(*r, f),
+            None => Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
                 "No command run",
-            )));
+            ))),
         }
-        Ok(())
     }
 
     /// Wait for input and provide the user with a specified [`Prompt`].
@@ -1147,17 +1178,26 @@ impl Reedline {
     }
 
     fn previous_history(&mut self) {
+        if self.history_cursor_on_excluded {
+            self.history_cursor_on_excluded = false;
+        }
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
             self.history_cursor = HistoryCursor::new(
                 self.get_history_navigation_based_on_line_buffer(),
                 self.get_history_session_id(),
             );
+
+            if self.history_excluded_item.is_some() {
+                self.history_cursor_on_excluded = true;
+            }
         }
 
-        self.history_cursor
-            .back(self.history.as_ref())
-            .expect("todo: error handling");
+        if !self.history_cursor_on_excluded {
+            self.history_cursor
+                .back(self.history.as_ref())
+                .expect("todo: error handling");
+        }
         self.update_buffer_from_history();
         self.editor.move_to_start(UndoBehavior::HistoryNavigation);
         self.editor
@@ -1173,9 +1213,25 @@ impl Reedline {
             );
         }
 
-        self.history_cursor
-            .forward(self.history.as_ref())
-            .expect("todo: error handling");
+        if self.history_cursor_on_excluded {
+            self.history_cursor_on_excluded = false;
+        } else {
+            let cursor_was_on_item = self.history_cursor.string_at_cursor().is_some();
+            self.history_cursor
+                .forward(self.history.as_ref())
+                .expect("todo: error handling");
+
+            if cursor_was_on_item
+                && self.history_cursor.string_at_cursor().is_none()
+                && self.history_excluded_item.is_some()
+            {
+                self.history_cursor_on_excluded = true;
+            }
+        }
+
+        if self.history_cursor.string_at_cursor().is_none() && !self.history_cursor_on_excluded {
+            self.input_mode = InputMode::Regular;
+        }
         self.update_buffer_from_history();
         self.editor.move_to_end(UndoBehavior::HistoryNavigation);
     }
@@ -1264,6 +1320,14 @@ impl Reedline {
     /// Not used for the separate modal reverse search!
     fn update_buffer_from_history(&mut self) {
         match self.history_cursor.get_navigation() {
+            _ if self.history_cursor_on_excluded => self.editor.set_buffer(
+                self.history_excluded_item
+                    .as_ref()
+                    .unwrap()
+                    .command_line
+                    .clone(),
+                UndoBehavior::HistoryNavigation,
+            ),
             HistoryNavigationQuery::Normal(original) => {
                 if let Some(buffer_to_paint) = self.history_cursor.string_at_cursor() {
                     self.editor
@@ -1629,8 +1693,21 @@ impl Reedline {
         if !buffer.is_empty() {
             let mut entry = HistoryItem::from_command_line(&buffer);
             entry.session_id = self.get_history_session_id();
-            let entry = self.history.save(entry).expect("todo: error handling");
-            self.history_last_run_id = entry.id;
+
+            if self
+                .history_exclusion_prefix
+                .as_ref()
+                .map(|prefix| buffer.starts_with(prefix))
+                .unwrap_or(false)
+            {
+                entry.id = Some(Self::FILTERED_ITEM_ID);
+                self.history_last_run_id = entry.id;
+                self.history_excluded_item = Some(entry);
+            } else {
+                entry = self.history.save(entry).expect("todo: error handling");
+                self.history_last_run_id = entry.id;
+                self.history_excluded_item = None;
+            }
         }
         self.run_edit_commands(&[EditCommand::Clear]);
         self.editor.reset_undo_stack();

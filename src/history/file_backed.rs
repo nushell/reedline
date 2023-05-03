@@ -78,7 +78,12 @@ impl History for FileBackedHistory {
     fn load(&self, id: HistoryItemId) -> Result<super::HistoryItem> {
         Ok(FileBackedHistory::construct_entry(
             Some(id),
-            self.entries[id.0 as usize].clone(),
+            self.entries
+                .get(id.0 as usize)
+                .ok_or(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
+                    "Item does not exist",
+                )))?
+                .clone(),
         ))
     }
 
