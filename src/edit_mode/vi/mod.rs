@@ -111,24 +111,28 @@ impl EditMode for Vi {
                         _ => c.to_ascii_lowercase(),
                     };
 
-                    if modifier == KeyModifiers::NONE
-                        || modifier == KeyModifiers::SHIFT
-                        || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
-                        || modifier
-                            == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
-                    {
-                        ReedlineEvent::Edit(vec![EditCommand::InsertChar(
-                            if modifier == KeyModifiers::SHIFT {
-                                c.to_ascii_uppercase()
+                    self.insert_keybindings
+                        .find_binding(modifier, KeyCode::Char(c))
+                        .unwrap_or_else(|| {
+                            if modifier == KeyModifiers::NONE
+                                || modifier == KeyModifiers::SHIFT
+                                || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
+                                || modifier
+                                    == KeyModifiers::CONTROL
+                                        | KeyModifiers::ALT
+                                        | KeyModifiers::SHIFT
+                            {
+                                ReedlineEvent::Edit(vec![EditCommand::InsertChar(
+                                    if modifier == KeyModifiers::SHIFT {
+                                        c.to_ascii_uppercase()
+                                    } else {
+                                        c
+                                    },
+                                )])
                             } else {
-                                c
-                            },
-                        )])
-                    } else {
-                        self.insert_keybindings
-                            .find_binding(modifier, KeyCode::Char(c))
-                            .unwrap_or(ReedlineEvent::None)
-                    }
+                                ReedlineEvent::None
+                            }
+                        })
                 }
                 (_, KeyModifiers::NONE, KeyCode::Esc) => {
                     self.cache.clear();
