@@ -44,6 +44,8 @@ pub struct ColumnarMenu {
     name: String,
     /// Columnar menu active status
     active: bool,
+    /// Quick input mode
+    quick_input: bool,
     /// Menu coloring
     color: MenuTextStyle,
     /// Default column details that are set when creating the menu
@@ -78,6 +80,7 @@ impl Default for ColumnarMenu {
         Self {
             name: "columnar_menu".to_string(),
             active: false,
+            quick_input: false,
             color: MenuTextStyle::default(),
             default_details: DefaultColumnDetails::default(),
             min_rows: 3,
@@ -100,6 +103,12 @@ impl ColumnarMenu {
     #[must_use]
     pub fn with_name(mut self, name: &str) -> Self {
         self.name = name.into();
+        self
+    }
+
+    /// Set quick input mode
+    pub fn with_quick_input(mut self) -> Self {
+        self.quick_input = true;
         self
     }
 
@@ -450,9 +459,14 @@ impl Menu for ColumnarMenu {
         self.marker.as_str()
     }
 
-    /// Deactivates context menu
+    /// Return the status of context menu
     fn is_active(&self) -> bool {
         self.active
+    }
+
+    /// If user selects an item, execute the command directly instead of waiting for user to Enter
+    fn is_quick_input(&self) -> bool {
+        self.quick_input
     }
 
     /// The columnar menu can to quick complete if there is only one element

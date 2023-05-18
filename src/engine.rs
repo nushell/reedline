@@ -702,7 +702,17 @@ impl Reedline {
 
             for event in reedline_events.drain(..) {
                 match self.handle_event(prompt, event)? {
-                    EventStatus::Exits(signal) => {
+                    EventStatus::Exits(signal, quick_input) => {
+                        // In quick input mode, if the user selects an item
+                        // execute the command directly instead of waiting for Enter
+                        if quick_input {
+                            if !paste_enter_state {
+                                self.repaint(prompt)?;
+                            }
+
+                            self.run_edit_commands(&[EditCommand::Clear]);
+                        }
+
                         // Move the cursor below the input area, for external commands or new read_line call
                         self.painter.move_cursor_to_end()?;
                         return Ok(signal);
@@ -748,7 +758,7 @@ impl Reedline {
                 if self.editor.is_empty() {
                     self.input_mode = InputMode::Regular;
                     self.editor.reset_undo_stack();
-                    Ok(EventStatus::Exits(Signal::CtrlD))
+                    Ok(EventStatus::Exits(Signal::CtrlD, false))
                 } else {
                     self.run_history_commands(&[EditCommand::Delete]);
                     Ok(EventStatus::Handled)
@@ -756,7 +766,7 @@ impl Reedline {
             }
             ReedlineEvent::CtrlC => {
                 self.input_mode = InputMode::Regular;
-                Ok(EventStatus::Exits(Signal::CtrlC))
+                Ok(EventStatus::Exits(Signal::CtrlC, false))
             }
             ReedlineEvent::ClearScreen => {
                 self.painter.clear_screen()?;
@@ -780,7 +790,7 @@ impl Reedline {
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
                 // TODO: Decide if we need to do something special to have a nicer painter state on the next go
-                Ok(EventStatus::Exits(Signal::Success(host_command)))
+                Ok(EventStatus::Exits(Signal::Success(host_command), false))
             }
             ReedlineEvent::Edit(commands) => {
                 self.run_history_commands(&commands);
@@ -966,7 +976,7 @@ impl Reedline {
             ReedlineEvent::CtrlD => {
                 if self.editor.is_empty() {
                     self.editor.reset_undo_stack();
-                    Ok(EventStatus::Exits(Signal::CtrlD))
+                    Ok(EventStatus::Exits(Signal::CtrlD, false))
                 } else {
                     self.run_edit_commands(&[EditCommand::Delete]);
                     Ok(EventStatus::Handled)
@@ -976,7 +986,7 @@ impl Reedline {
                 self.deactivate_menus();
                 self.run_edit_commands(&[EditCommand::Clear]);
                 self.editor.reset_undo_stack();
-                Ok(EventStatus::Exits(Signal::CtrlC))
+                Ok(EventStatus::Exits(Signal::CtrlC, false))
             }
             ReedlineEvent::ClearScreen => {
                 self.deactivate_menus();
@@ -996,7 +1006,14 @@ impl Reedline {
                         menu.replace_in_buffer(&mut self.editor);
                         menu.menu_event(MenuEvent::Deactivate);
 
-                        return Ok(EventStatus::Handled);
+                        if menu.is_quick_input() {
+                            return Ok(EventStatus::Exits(
+                                Signal::Success(self.editor.get_buffer().to_string()),
+                                menu.is_quick_input(),
+                            ));
+                        } else {
+                            return Ok(EventStatus::Handled);
+                        }
                     }
                 }
                 unreachable!()
@@ -1046,7 +1063,7 @@ impl Reedline {
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
                 // TODO: Decide if we need to do something special to have a nicer painter state on the next go
-                Ok(EventStatus::Exits(Signal::Success(host_command)))
+                Ok(EventStatus::Exits(Signal::Success(host_command), false))
             }
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands);
@@ -1138,11 +1155,11 @@ impl Reedline {
                         EventStatus::Inapplicable => {
                             // NO OP
                         }
-                        EventStatus::Exits(signal) => {
+                        EventStatus::Exits(signal, _) => {
                             // TODO: Check if we want to allow execution to
                             // proceed if there are more events after the
                             // terminating
-                            return Ok(EventStatus::Exits(signal));
+                            return Ok(EventStatus::Exits(signal, false));
                         }
                     }
                 }
@@ -1712,7 +1729,7 @@ impl Reedline {
         self.run_edit_commands(&[EditCommand::Clear]);
         self.editor.reset_undo_stack();
 
-        Ok(EventStatus::Exits(Signal::Success(buffer)))
+        Ok(EventStatus::Exits(Signal::Success(buffer), false))
     }
 }
 

@@ -52,6 +52,9 @@ pub struct ListMenu {
     marker: String,
     /// Menu active status
     active: bool,
+    /// Quick input mode
+    /// If user selects an item, execute the command directly instead of waiting for user to Enter
+    quick_input: bool,
     /// Cached values collected when querying the completer.
     /// When collecting chronological values, the menu only caches at least
     /// page_size records.
@@ -86,6 +89,7 @@ impl Default for ListMenu {
             color: MenuTextStyle::default(),
             page_size: 10,
             active: false,
+            quick_input: false,
             values: Vec::new(),
             row_position: 0,
             page: 0,
@@ -358,9 +362,14 @@ impl Menu for ListMenu {
         self.marker.as_str()
     }
 
-    /// Deactivates context menu
+    /// Return the status of context menu
     fn is_active(&self) -> bool {
         self.active
+    }
+
+    /// If user selects an item, execute the command directly instead of waiting for user to Enter
+    fn is_quick_input(&self) -> bool {
+        self.quick_input
     }
 
     /// There is no use for quick complete for the menu

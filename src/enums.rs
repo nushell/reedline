@@ -559,7 +559,7 @@ impl Display for ReedlineEvent {
 pub(crate) enum EventStatus {
     Handled,
     Inapplicable,
-    Exits(Signal),
+    Exits(Signal, bool),
 }
 
 /// A simple wrapper for [crossterm::event::Event]

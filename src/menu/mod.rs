@@ -69,6 +69,10 @@ pub trait Menu: Send {
     /// Checks if the menu is active
     fn is_active(&self) -> bool;
 
+    /// Checks if the menu is quick input mode
+    /// If the user selects an item, execute the command directly
+    fn is_quick_input(&self) -> bool;
+
     /// Selects what type of event happened with the menu
     fn menu_event(&mut self, event: MenuEvent);
 
@@ -232,6 +236,10 @@ impl Menu for ReedlineMenu {
 
     fn is_active(&self) -> bool {
         self.as_ref().is_active()
+    }
+
+    fn is_quick_input(&self) -> bool {
+        self.as_ref().is_quick_input()
     }
 
     fn menu_event(&mut self, event: MenuEvent) {
