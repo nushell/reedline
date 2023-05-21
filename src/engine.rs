@@ -1354,15 +1354,6 @@ impl Reedline {
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
     pub fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         if self.input_mode == InputMode::HistoryTraversal {
-            if matches!(
-                self.history_cursor.get_navigation(),
-                HistoryNavigationQuery::Normal(_)
-            ) {
-                if let Some(string) = self.history_cursor.string_at_cursor() {
-                    self.editor
-                        .set_buffer(string, UndoBehavior::HistoryNavigation);
-                }
-            }
             self.input_mode = InputMode::Regular;
         }
 
