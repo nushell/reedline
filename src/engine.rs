@@ -1710,11 +1710,11 @@ impl Reedline {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::result::Result;
-    use std::error::Error;
     use crate::DefaultPrompt;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
+    use std::error::Error;
+    use std::result::Result;
 
     #[test]
     fn thread_safe() {
@@ -1725,12 +1725,15 @@ mod test {
     #[rstest]
     #[case("")]
     #[case("line of text")]
-    #[case("longgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line of text")]
+    #[case(
+        "longgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line of text"
+    )]
     fn test_move_to_line_start(#[case] input: &str) -> Result<(), Box<dyn Error>> {
         let mut reedline = Reedline::create();
         let prompt = DefaultPrompt::default();
 
-        let insert_input_event = ReedlineEvent::Edit(vec![EditCommand::InsertString(input.to_string())]);
+        let insert_input_event =
+            ReedlineEvent::Edit(vec![EditCommand::InsertString(input.to_string())]);
         let move_to_line_start_event = ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart]);
 
         // Have to resize, or painting.utils.estimate_single_line_wraps panics with divide-by-zero.
@@ -1761,11 +1764,11 @@ mod test {
         #[case] second_line_start: usize,
         #[case] last_line_start: usize,
     ) -> Result<(), Box<dyn Error>> {
-
         let mut reedline = Reedline::create();
         let prompt = DefaultPrompt::default();
 
-        let insert_input_event = ReedlineEvent::Edit(vec![EditCommand::InsertString(input.to_string())]);
+        let insert_input_event =
+            ReedlineEvent::Edit(vec![EditCommand::InsertString(input.to_string())]);
         let move_to_line_start_event = ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart]);
         let move_to_end_event = ReedlineEvent::Edit(vec![EditCommand::MoveToEnd]);
 
@@ -1775,7 +1778,10 @@ mod test {
         // Write the string, and then move to the start of the last line.
         reedline.handle_event(&prompt, insert_input_event)?;
         reedline.handle_event(&prompt, move_to_line_start_event.clone())?;
-        assert_eq!(reedline.editor.line_buffer().insertion_point(), last_line_start);
+        assert_eq!(
+            reedline.editor.line_buffer().insertion_point(),
+            last_line_start
+        );
 
         // Enter the string into history, then scroll back up and move to the start of the first line.
         reedline.handle_event(&prompt, ReedlineEvent::Enter)?;
@@ -1789,7 +1795,10 @@ mod test {
         reedline.handle_event(&prompt, ReedlineEvent::Up)?;
         reedline.handle_event(&prompt, ReedlineEvent::Down)?;
         reedline.handle_event(&prompt, move_to_line_start_event.clone())?;
-        assert_eq!(reedline.editor.line_buffer().insertion_point(), second_line_start);
+        assert_eq!(
+            reedline.editor.line_buffer().insertion_point(),
+            second_line_start
+        );
 
         // Enter the string again, then scroll up in history, move to the end of the text,
         // and move to the start of the last line.
@@ -1797,9 +1806,11 @@ mod test {
         reedline.handle_event(&prompt, ReedlineEvent::Up)?;
         reedline.handle_event(&prompt, move_to_end_event)?;
         reedline.handle_event(&prompt, move_to_line_start_event)?;
-        assert_eq!(reedline.editor.line_buffer().insertion_point(), last_line_start);
+        assert_eq!(
+            reedline.editor.line_buffer().insertion_point(),
+            last_line_start
+        );
 
         Ok(())
     }
 }
-
