@@ -1716,8 +1716,99 @@ impl Reedline {
     }
 }
 
-#[test]
-fn thread_safe() {
-    fn f<S: Send>(_: S) {}
-    f(Reedline::create());
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::result::Result;
+    use std::error::Error;
+    use crate::DefaultPrompt;
+    use pretty_assertions::assert_eq;
+    use rstest::rstest;
+
+    #[test]
+    fn thread_safe() {
+        fn f<S: Send>(_: S) {}
+        f(Reedline::create());
+    }
+
+    #[rstest]
+    #[case("")]
+    #[case("line of text")]
+    #[case("longgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line of text")]
+    fn test_move_to_line_start(#[case] input: &str) -> Result<(), Box<dyn Error>> {
+        let mut reedline = Reedline::create();
+        let prompt = DefaultPrompt::default();
+
+        let insert_input_event = ReedlineEvent::Edit(vec![EditCommand::InsertString(input.to_string())]);
+        let move_to_line_start_event = ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart]);
+
+        // Have to resize, or painting.utils.estimate_single_line_wraps panics with divide-by-zero.
+        reedline.handle_event(&prompt, ReedlineEvent::Resize(u16::MAX, u16::MAX))?;
+
+        // Write the string, and then move to the start of the line.
+        reedline.handle_event(&prompt, insert_input_event)?;
+        reedline.handle_event(&prompt, move_to_line_start_event.clone())?;
+        assert_eq!(reedline.editor.line_buffer().insertion_point(), 0);
+
+        // Enter the string into history, then scroll back up and move to the start of the line.
+        reedline.handle_event(&prompt, ReedlineEvent::Enter)?;
+        reedline.handle_event(&prompt, ReedlineEvent::Up)?;
+        reedline.handle_event(&prompt, move_to_line_start_event)?;
+        assert_eq!(reedline.editor.line_buffer().insertion_point(), 0);
+
+        Ok(())
+    }
+
+    #[rstest]
+    // Each input must be >=2 lines.
+    // Up/Down commands move in text/history depending on the number of lines.
+    #[case("a\nb", 2, 2)]
+    #[case("123456789\n123456789\n123456789", 10, 20)]
+    #[case("0\n1\n2\n3\n4\n5\n6\n7\n8\n9", 2, 18)]
+    fn test_move_to_line_start_multiline(
+        #[case] input: &str,
+        #[case] second_line_start: usize,
+        #[case] last_line_start: usize,
+    ) -> Result<(), Box<dyn Error>> {
+
+        let mut reedline = Reedline::create();
+        let prompt = DefaultPrompt::default();
+
+        let insert_input_event = ReedlineEvent::Edit(vec![EditCommand::InsertString(input.to_string())]);
+        let move_to_line_start_event = ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart]);
+        let move_to_end_event = ReedlineEvent::Edit(vec![EditCommand::MoveToEnd]);
+
+        // Have to resize, or painting.utils.estimate_single_line_wraps panics with divide-by-zero.
+        reedline.handle_event(&prompt, ReedlineEvent::Resize(u16::MAX, u16::MAX))?;
+
+        // Write the string, and then move to the start of the last line.
+        reedline.handle_event(&prompt, insert_input_event)?;
+        reedline.handle_event(&prompt, move_to_line_start_event.clone())?;
+        assert_eq!(reedline.editor.line_buffer().insertion_point(), last_line_start);
+
+        // Enter the string into history, then scroll back up and move to the start of the first line.
+        reedline.handle_event(&prompt, ReedlineEvent::Enter)?;
+        reedline.handle_event(&prompt, ReedlineEvent::Up)?;
+        reedline.handle_event(&prompt, move_to_line_start_event.clone())?;
+        assert_eq!(reedline.editor.line_buffer().insertion_point(), 0);
+
+        // Enter the string again, then scroll up in history, move down one line,
+        // and move to the start of the second line.
+        reedline.handle_event(&prompt, ReedlineEvent::Enter)?;
+        reedline.handle_event(&prompt, ReedlineEvent::Up)?;
+        reedline.handle_event(&prompt, ReedlineEvent::Down)?;
+        reedline.handle_event(&prompt, move_to_line_start_event.clone())?;
+        assert_eq!(reedline.editor.line_buffer().insertion_point(), second_line_start);
+
+        // Enter the string again, then scroll up in history, move to the end of the text,
+        // and move to the start of the last line.
+        reedline.handle_event(&prompt, ReedlineEvent::Enter)?;
+        reedline.handle_event(&prompt, ReedlineEvent::Up)?;
+        reedline.handle_event(&prompt, move_to_end_event)?;
+        reedline.handle_event(&prompt, move_to_line_start_event)?;
+        assert_eq!(reedline.editor.line_buffer().insertion_point(), last_line_start);
+
+        Ok(())
+    }
 }
+
