@@ -23,9 +23,12 @@ fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem
     let x: Option<String> = row.get("more_info")?;
     Ok(HistoryItem {
         id: Some(HistoryItemId::new(row.get("id")?)),
-        start_timestamp: row
-            .get::<&str, Option<i64>>("start_timestamp")?
-            .map(|e| Utc.timestamp_millis(e)),
+        start_timestamp: row.get::<&str, Option<i64>>("start_timestamp")?.map(|e| {
+            match Utc.timestamp_millis_opt(e) {
+                chrono::LocalResult::Single(e) => e,
+                _ => chrono::Utc::now(),
+            }
+        }),
         command_line: row.get("command_line")?,
         session_id: row
             .get::<&str, Option<i64>>("session_id")?
