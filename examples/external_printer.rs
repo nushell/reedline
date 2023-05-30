@@ -24,7 +24,7 @@ fn main() {
         let mut i = 1;
         loop {
             sleep(Duration::from_secs(1));
-            assert!(p_clone.print(format!("Message {i} delivered.")).is_ok());
+            assert!(p_clone.print(format!("Message {i} delivered.\nWith two lines!")).is_ok());
             i += 1;
         }
     });
