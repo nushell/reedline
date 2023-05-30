@@ -1669,7 +1669,8 @@ impl Reedline {
             let result = external_printer.receiver().try_recv();
             match result {
                 Ok(line) => {
-                    messages.push(line);
+                    let lines = line.lines().map(String::from).collect::<Vec<_>>();
+                    messages.extend(lines);
                 }
                 Err(TryRecvError::Empty) => {
                     break;
