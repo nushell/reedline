@@ -405,22 +405,27 @@ impl Painter {
         let prev_prompt_row = self.prompt_start_row;
 
         self.terminal_size = (width, height);
-        // TODO properly adjusting prompt_origin on resizing while lines > 1
 
-        if prev_prompt_row >= (height - 1) {
-            // Terminal is shrinking up
-            // FIXME: use actual prompt size at some point
-            // Note: you can't just subtract the offset from the origin,
-            // as we could be shrinking so fast that the offset we read back from
-            // crossterm is past where it would have been.
-            self.prompt_start_row = height - 2;
-        } else if prev_terminal_size.1 < height {
-            // Terminal is growing down, so move the prompt down the same amount to make space
-            // for history that's on the screen
-            // Note: if the terminal doesn't have sufficient history, this will leave a trail
-            // of previous prompts currently.
-            self.prompt_start_row = prev_prompt_row + (height - prev_terminal_size.1);
+        if prev_prompt_row < height
+            && height <= prev_terminal_size.1
+            && width == prev_terminal_size.0
+        {
+            // The terminal got smaller in height but the start of the prompt is still visible
+            // The width didn't change
+            return;
         }
+
+        // Either:
+        // - The terminal got larger in height
+        //   - Note: if the terminal doesn't have sufficient history, this will leave a trail
+        //     of previous prompts currently.
+        //   - Note: if the the prompt contains multiple lines, this will leave a trail of
+        //     previous prompts currently.
+        // - The terminal got smaller in height and the whole prompt is no longer visible
+        //   - Note: if the the prompt contains multiple lines, this will leave a trail of
+        //     previous prompts currently.
+        // - The width changed
+        self.prompt_start_row = height.saturating_sub(1);
     }
 
     /// Writes `line` to the terminal with a following carriage return and newline
