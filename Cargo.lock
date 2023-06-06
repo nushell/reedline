@@ -611,7 +611,7 @@ dependencies = [
 
 [[package]]
 name = "reedline"
-version = "0.19.2"
+version = "0.20.0"
 dependencies = [
  "chrono",
  "clipboard",
