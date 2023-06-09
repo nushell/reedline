@@ -440,7 +440,7 @@ pub enum ReedlineEvent {
     /// Mouse
     Mouse, // Fill in details later
 
-    /// trigger termimal resize
+    /// trigger terminal resize
     Resize(u16, u16),
 
     /// Run these commands in the editor
