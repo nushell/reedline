@@ -4,3 +4,5 @@ extend-exclude = ["src/core_editor/line_buffer.rs"]
 [default.extend-words]
 # Ignore false-positives
 iterm = "iterm"
+# For testing completion of the word build
+bui = "bui"
