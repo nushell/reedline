@@ -234,6 +234,15 @@ impl Reedline {
         res
     }
 
+    /// Disable BracketedPaste feature.
+    pub fn disable_bracketed_paste(&mut self) -> Result<()> {
+        let res = execute!(io::stdout(), DisableBracketedPaste);
+        if res.is_ok() {
+            self.bracket_paste_enabled = false;
+        }
+        res
+    }
+
     /// Return the previously generated history session id
     pub fn get_history_session_id(&self) -> Option<HistorySessionId> {
         self.history_session_id
