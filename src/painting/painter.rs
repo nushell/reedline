@@ -10,7 +10,7 @@ use {
     crossterm::{
         cursor::{self, MoveTo, RestorePosition, SavePosition},
         style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor},
-        terminal::{self, Clear, ClearType, ScrollUp},
+        terminal::{self, Clear, ClearType},
         QueueableCommand, Result,
     },
     std::io::Write,
@@ -156,7 +156,7 @@ impl Painter {
             self.prompt_start_row = 0;
         } else if required_lines >= remaining_lines {
             let extra = required_lines.saturating_sub(remaining_lines);
-            self.stdout.queue(ScrollUp(extra))?;
+            self.queue_universal_scroll(extra)?;
             self.prompt_start_row = self.prompt_start_row.saturating_sub(extra);
         }
 
@@ -475,7 +475,7 @@ impl Painter {
         let final_row = self.prompt_start_row + self.last_required_lines;
         let scroll = final_row.saturating_sub(self.screen_height() - 1);
         if scroll != 0 {
-            self.stdout.queue(ScrollUp(scroll))?;
+            self.queue_universal_scroll(scroll)?;
         }
         self.stdout
             .queue(MoveTo(0, final_row.min(self.screen_height() - 1)))?;
@@ -532,6 +532,28 @@ impl Painter {
             } else {
                 self.prompt_start_row = new_start;
             }
+        }
+        Ok(())
+    }
+
+    /// Queue scroll of `num` lines to `self.stdout`.
+    ///
+    /// On some platforms and terminals (e.g. windows terminal, alacritty on windows and linux)
+    /// using special escape sequence '\[e<num>S' (provided by [`ScrollUp`]) does not put lines
+    /// that go offscreen in scrollback history. This method prints newlines near the edge of screen
+    /// (which always works) instead. See [here](https://github.com/nushell/nushell/issues/9166)
+    /// for more info on subject.
+    ///
+    /// ## Note
+    /// This method does not return cursor to the original position and leaves it at the first
+    /// column of last line. **Be sure to use [`MoveTo`] afterwards if this is not the desired
+    /// location**
+    fn queue_universal_scroll(&mut self, num: u16) -> Result<()> {
+        // If cursor is not near end of screen printing new will not scroll terminal.
+        // Move it to the last line to ensure that every newline results in scroll
+        self.stdout.queue(MoveTo(0, self.screen_height() - 1))?;
+        for _ in 0..num {
+            self.stdout.queue(Print(&coerce_crlf("\n")))?;
         }
         Ok(())
     }
