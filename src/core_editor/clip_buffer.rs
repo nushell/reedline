@@ -76,9 +76,9 @@ pub fn get_default_clipboard() -> LocalClipboard {
 #[cfg(feature = "system_clipboard")]
 mod system_clipboard {
     use super::*;
-    use clipboard::{ClipboardContext, ClipboardProvider};
+    use copypasta::{ClipboardContext, ClipboardProvider};
 
-    /// Wrapper around [`clipboard`](https://docs.rs/clipboard) crate
+    /// Wrapper around [`copypasta`](https://docs.rs/copypasta) crate
     ///
     /// Requires that the feature `system_clipboard` is enabled
     pub struct SystemClipboard {
@@ -89,7 +89,7 @@ mod system_clipboard {
 
     impl SystemClipboard {
         pub fn new() -> Self {
-            let cb = ClipboardProvider::new().unwrap();
+            let cb = ClipboardContext::new().unwrap();
             SystemClipboard {
                 cb,
                 local_copy: String::new(),
