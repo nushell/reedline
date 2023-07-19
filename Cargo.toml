@@ -14,7 +14,7 @@ doctest = true
 
 [dependencies]
 chrono = { version = "0.4.19", default-features = false, features = ["clock"] }
-copypasta = { version = "0.8.2", optional = true }
+copypasta = { version = "0.8.2", default-features = false, features = ["x11"], optional = true }
 crossbeam = { version = "0.8.2", optional = true }
 crossterm = { version = "0.26.1", features = ["serde"] }
 fd-lock = "3.0.3"
