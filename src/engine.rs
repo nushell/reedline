@@ -967,6 +967,11 @@ impl Reedline {
                             return Ok(EventStatus::Handled);
                         }
 
+                        if menu.get_values().len() == 0 {
+                            menu.menu_event(MenuEvent::Deactivate);
+                            return Ok(EventStatus::Inapplicable);
+                        }
+
                         return Ok(EventStatus::Handled);
                     }
                 }
