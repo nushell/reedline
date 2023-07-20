@@ -493,6 +493,7 @@ mod test {
     #[case("abc def ghi", 11, "abc def ")]
     #[case("abc def-ghi", 11, "abc ")]
     #[case("abc def.ghi", 11, "abc ")]
+    #[case("abc def gh ", 11, "abc def ")]
     fn test_cut_big_word_left(
         #[case] input: &str,
         #[case] position: usize,
