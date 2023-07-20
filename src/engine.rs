@@ -1500,7 +1500,7 @@ impl Reedline {
                     )))
                     .unwrap_or_else(|_| Vec::new())
                     .get(0)
-                    .and_then(|history| history.command_line.split_whitespace().rev().next())
+                    .and_then(|history| history.command_line.split_whitespace().next_back())
                     .map(|token| (parsed.remainder.len(), indicator.len(), token.to_string())),
             });
 
