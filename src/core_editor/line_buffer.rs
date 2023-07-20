@@ -276,7 +276,13 @@ impl LineBuffer {
                 match (last_word_index, is_whitespace_str(word)) {
                     (None, true) => None,
                     (None, false) => Some(i),
-                    (Some(_), true) => None,
+                    (Some(v), true) => {
+                        if is_whitespace_str(&self.lines[i..self.insertion_point]) {
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    }
                     (Some(v), false) => Some(v),
                 }
             })
@@ -1467,6 +1473,7 @@ mod test {
     #[case("abc def ghi", 10, 8)]
     #[case("abc def-ghi", 10, 4)]
     #[case("abc def.ghi", 10, 4)]
+    #[case("abc def   i", 10, 4)]
     fn test_big_word_left_index(
         #[case] input: &str,
         #[case] position: usize,
