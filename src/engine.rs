@@ -967,7 +967,10 @@ impl Reedline {
                             return Ok(EventStatus::Handled);
                         }
 
-                        if menu.get_values().is_empty() {
+                        if self.quick_completions
+                            && menu.can_quick_complete()
+                            && menu.get_values().is_empty()
+                        {
                             menu.menu_event(MenuEvent::Deactivate);
                             return Ok(EventStatus::Inapplicable);
                         }
