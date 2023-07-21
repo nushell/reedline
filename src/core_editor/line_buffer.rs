@@ -161,7 +161,8 @@ impl LineBuffer {
 
     /// Cursor position *in front of* the next unicode grapheme to the left
     pub fn grapheme_left_index(&self) -> usize {
-        self.lines[..self.insertion_point]
+        let index = std::cmp::min(self.insertion_point, self.lines.len());
+        self.lines[..index]
             .grapheme_indices(true)
             .last()
             .map(|(i, _)| i)
