@@ -168,9 +168,6 @@ impl Drop for Reedline {
         if self.bracket_paste_enabled {
             let _ = execute!(io::stdout(), DisableBracketedPaste);
         }
-        if self.use_kitty_protocol {
-            let _ = execute!(io::stdout(), event::PopKeyboardEnhancementFlags);
-        }
     }
 }
 
@@ -766,6 +763,9 @@ impl Reedline {
             for event in reedline_events.drain(..) {
                 match self.handle_event(prompt, event)? {
                     EventStatus::Exits(signal) => {
+                        if self.use_kitty_protocol {
+                            let _ = execute!(io::stdout(), event::PopKeyboardEnhancementFlags);
+                        }
                         // Move the cursor below the input area, for external commands or new read_line call
                         self.painter.move_cursor_to_end()?;
                         return Ok(signal);
