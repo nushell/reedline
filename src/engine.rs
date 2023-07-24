@@ -168,6 +168,9 @@ impl Drop for Reedline {
         if self.bracket_paste_enabled {
             let _ = execute!(io::stdout(), DisableBracketedPaste);
         }
+        if self.use_kitty_protocol {
+            let _ = execute!(io::stdout(), event::PopKeyboardEnhancementFlags);
+        }
     }
 }
 
