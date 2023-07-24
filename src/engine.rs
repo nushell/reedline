@@ -260,15 +260,13 @@ impl Reedline {
     }
 
     /// Enable keyboard enhancement to disambiguate escape code
-    pub fn enable_kitty_protocol(&mut self) -> Result<()> {
+    pub fn enable_kitty_protocol(&mut self) {
         self.use_kitty_protocol = true;
-        Ok(())
     }
 
     /// Disable keyboard enhancement to disambiguate escape code
-    pub fn disable_kitty_protocol(&mut self) -> Result<()> {
+    pub fn disable_kitty_protocol(&mut self) {
         self.use_kitty_protocol = false;
-        Ok(())
     }
 
     /// Return the previously generated history session id
