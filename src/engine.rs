@@ -601,6 +601,11 @@ impl Reedline {
 
         #[cfg(not(target_os = "windows"))]
         self.disable_bracketed_paste()?;
+
+        if self.use_kitty_protocol {
+            let _ = execute!(io::stdout(), event::PopKeyboardEnhancementFlags);
+        }
+
         terminal::disable_raw_mode()?;
         result
     }
@@ -764,9 +769,6 @@ impl Reedline {
             for event in reedline_events.drain(..) {
                 match self.handle_event(prompt, event)? {
                     EventStatus::Exits(signal) => {
-                        if self.use_kitty_protocol {
-                            let _ = execute!(io::stdout(), event::PopKeyboardEnhancementFlags);
-                        }
                         // Move the cursor below the input area, for external commands or new read_line call
                         self.painter.move_cursor_to_end()?;
                         return Ok(signal);
