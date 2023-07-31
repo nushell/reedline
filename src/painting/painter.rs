@@ -256,8 +256,7 @@ impl Painter {
         // print our prompt with color
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_color()))?
-                .queue(SetAttribute(Attribute::Bold))?;
+                .queue(SetForegroundColor(prompt.get_prompt_color()))?;
         }
 
         self.stdout
@@ -270,22 +269,22 @@ impl Painter {
 
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_indicator_color()))?
-                .queue(SetAttribute(Attribute::Bold))?;
+                .queue(SetForegroundColor(prompt.get_indicator_color()))?;
         }
 
         self.stdout.queue(Print(&coerce_crlf(prompt_indicator)))?;
 
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_right_color()))?
-                .queue(SetAttribute(Attribute::Bold))?;
+                .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
         }
 
         self.print_right_prompt(lines)?;
 
         if use_ansi_coloring {
-            self.stdout.queue(ResetColor)?;
+            self.stdout
+                .queue(SetAttribute(Attribute::Reset))?
+                .queue(ResetColor)?;
         }
 
         self.stdout
