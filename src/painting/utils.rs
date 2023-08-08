@@ -36,9 +36,8 @@ pub(crate) fn coerce_crlf(input: &str) -> Cow<str> {
 ///
 /// If parsing fails silently returns the input string
 pub(crate) fn strip_ansi(string: &str) -> String {
-    strip_ansi_escapes::strip(string)
+    String::from_utf8(strip_ansi_escapes::strip(string))
         .map_err(|_| ())
-        .and_then(|x| String::from_utf8(x).map_err(|_| ()))
         .unwrap_or_else(|_| string.to_owned())
 }
 
