@@ -716,9 +716,13 @@ impl Reedline {
                         if prompt.repaint_on_enter() {
                             if let Some(id) = self.history_last_run_id {
                                 if let Ok(last) = self.history.load(id) {
-                                    self.editor.edit_buffer(|buf| buf.insert_str(&last.command_line), UndoBehavior::UndoRedo);
+                                    self.editor.edit_buffer(
+                                        |buf| buf.insert_str(&last.command_line),
+                                        UndoBehavior::UndoRedo,
+                                    );
                                     self.repaint(prompt)?;
-                                    self.editor.edit_buffer(|buf| buf.clear(), UndoBehavior::UndoRedo);
+                                    self.editor
+                                        .edit_buffer(|buf| buf.clear(), UndoBehavior::UndoRedo);
                                 }
                             }
                         }
