@@ -714,7 +714,6 @@ impl Reedline {
                 match self.handle_event(prompt, event)? {
                     EventStatus::Exits(signal) => {
                         if prompt.repaint_on_enter() {
-                            println!("{:?}", self.editor.line_buffer());
                             if let Some(id) = self.history_last_run_id {
                                 if let Ok(last) = self.history.load(id) {
                                     self.editor.edit_buffer(|buf| buf.insert_str(&last.command_line), UndoBehavior::UndoRedo);
