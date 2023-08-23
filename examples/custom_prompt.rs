@@ -13,25 +13,42 @@ use std::{borrow::Cow, cell::Cell, io};
 // This example displays the number of keystrokes
 // or rather increments each time the prompt is rendered.
 #[derive(Clone)]
-pub struct CustomPrompt(Cell<u32>, &'static str);
+pub struct CustomPrompt {
+    count: Cell<u32>,
+    left_prompt: &'static str,
+    show_transient: Cell<bool>,
+}
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
+pub static TRANSIENT_PROMPT: &str = "!";
 impl Prompt for CustomPrompt {
     fn render_prompt_left(&self) -> Cow<str> {
         {
-            Cow::Owned(self.1.to_string())
+            if self.show_transient.get() {
+                Cow::Owned(String::new())
+            } else {
+                Cow::Owned(self.left_prompt.to_string())
+            }
         }
     }
 
     fn render_prompt_right(&self) -> Cow<str> {
         {
-            let old = self.0.get();
-            self.0.set(old + 1);
-            Cow::Owned(format!("[{old}]"))
+            if self.show_transient.get() {
+                Cow::Owned(String::new())
+            } else {
+                let old = self.count.get();
+                self.count.set(old + 1);
+                Cow::Owned(format!("[{old}]"))
+            }
         }
     }
 
     fn render_prompt_indicator(&self, _edit_mode: PromptEditMode) -> Cow<str> {
-        Cow::Owned(">".to_string())
+        if self.show_transient.get() {
+            Cow::Owned(TRANSIENT_PROMPT.to_string())
+        } else {
+            Cow::Owned(">".to_string())
+        }
     }
 
     fn render_prompt_multiline_indicator(&self) -> Cow<str> {
@@ -54,6 +71,7 @@ impl Prompt for CustomPrompt {
     }
 
     fn repaint_on_enter(&self) -> bool {
+        self.show_transient.set(true);
         true
     }
 }
@@ -62,9 +80,14 @@ fn main() -> io::Result<()> {
     println!("Custom prompt demo:\nAbort with Ctrl-C or Ctrl-D");
     let mut line_editor = Reedline::create();
 
-    let prompt = CustomPrompt(Cell::new(0), "Custom Prompt");
+    let prompt = CustomPrompt {
+        count: Cell::new(0),
+        left_prompt: "Custom Prompt",
+        show_transient: Cell::new(false),
+    };
 
     loop {
+        prompt.show_transient.set(false);
         let sig = line_editor.read_line(&prompt)?;
         match sig {
             Signal::Success(buffer) => {
