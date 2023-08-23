@@ -3,6 +3,8 @@
 //
 // Prompts for previous lines will be replaced with a shorter prompt
 
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+use reedline::SqliteBackedHistory;
 use reedline::{
     Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline, Signal,
 };
@@ -73,6 +75,10 @@ impl Prompt for TransientPrompt {
 fn main() -> io::Result<()> {
     println!("Transient prompt demo:\nAbort with Ctrl-C or Ctrl-D");
     let mut line_editor = Reedline::create();
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    {
+        line_editor = line_editor.with_history(Box::new(SqliteBackedHistory::in_memory().unwrap()));
+    }
 
     let prompt = TransientPrompt {
         show_transient: Cell::new(false),
