@@ -3,10 +3,12 @@
 //
 // Prompts for previous lines will be replaced with a shorter prompt
 
+use nu_ansi_term::{Color, Style};
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 use reedline::SqliteBackedHistory;
 use reedline::{
-    Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline, Signal,
+    ColumnarMenu, DefaultCompleter, DefaultHinter, Prompt, PromptEditMode, PromptHistorySearch,
+    PromptHistorySearchStatus, Reedline, ReedlineMenu, Signal, ExampleHighlighter, default_emacs_keybindings, Keybindings, KeyModifiers, KeyCode, ReedlineEvent, Emacs,
 };
 use std::{borrow::Cow, cell::Cell, io};
 
@@ -72,9 +74,43 @@ impl Prompt for TransientPrompt {
     }
 }
 
+// This is copied from the completions example
+fn add_menu_keybindings(keybindings: &mut Keybindings) {
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Tab,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Menu("completion_menu".to_string()),
+            ReedlineEvent::MenuNext,
+        ]),
+    );
+}
+
 fn main() -> io::Result<()> {
     println!("Transient prompt demo:\nAbort with Ctrl-C or Ctrl-D");
-    let mut line_editor = Reedline::create();
+    let commands = vec![
+        "test".into(),
+        "hello world".into(),
+        "hello world reedline".into(),
+        "this is the reedline crate".into(),
+    ];
+    let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
+    // Use the interactive menu to select options from the completer
+    let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu"));
+
+    let mut keybindings = default_emacs_keybindings();
+    add_menu_keybindings(&mut keybindings);
+
+    let edit_mode = Box::new(Emacs::new(keybindings));
+
+    let mut line_editor = Reedline::create()
+        .with_hinter(Box::new(
+            DefaultHinter::default().with_style(Style::new().fg(Color::LightGray)),
+        ))
+        .with_completer(completer)
+        .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
+        .with_edit_mode(edit_mode)
+        .with_highlighter(Box::new(ExampleHighlighter::new(commands)));
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     {
         line_editor = line_editor.with_history(Box::new(SqliteBackedHistory::in_memory().unwrap()));
