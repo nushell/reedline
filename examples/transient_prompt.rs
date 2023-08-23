@@ -7,8 +7,10 @@ use nu_ansi_term::{Color, Style};
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 use reedline::SqliteBackedHistory;
 use reedline::{
-    ColumnarMenu, DefaultCompleter, DefaultHinter, Prompt, PromptEditMode, PromptHistorySearch,
-    PromptHistorySearchStatus, Reedline, ReedlineMenu, Signal, ExampleHighlighter, default_emacs_keybindings, Keybindings, KeyModifiers, KeyCode, ReedlineEvent, Emacs, Validator, ValidationResult,
+    default_emacs_keybindings, ColumnarMenu, DefaultCompleter, DefaultHinter, Emacs,
+    ExampleHighlighter, KeyCode, KeyModifiers, Keybindings, Prompt, PromptEditMode,
+    PromptHistorySearch, PromptHistorySearchStatus, Reedline, ReedlineEvent, ReedlineMenu, Signal,
+    ValidationResult, Validator,
 };
 use std::{borrow::Cow, cell::Cell, io};
 
