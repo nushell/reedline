@@ -12,10 +12,13 @@ use std::{borrow::Cow, cell::Cell, io};
 //
 // This example displays the number of keystrokes
 // or rather increments each time the prompt is rendered.
+// It also replaces the prompt for old lines with "!" as an
+// example of a transient prompt.
 #[derive(Clone)]
 pub struct CustomPrompt {
     count: Cell<u32>,
     left_prompt: &'static str,
+    /// Whether to show the transient prompt indicator instead of the normal one
     show_transient: Cell<bool>,
 }
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
@@ -71,6 +74,8 @@ impl Prompt for CustomPrompt {
     }
 
     fn repaint_on_enter(&self) -> bool {
+        // This method is called whenever the user hits enter to go to the next
+        // line, so we want it to repaint and display the transient prompt
         self.show_transient.set(true);
         true
     }
@@ -87,6 +92,7 @@ fn main() -> io::Result<()> {
     };
 
     loop {
+        // We're on a new line, so make sure we're showing the normal prompt
         prompt.show_transient.set(false);
         let sig = line_editor.read_line(&prompt)?;
         match sig {

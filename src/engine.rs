@@ -716,11 +716,14 @@ impl Reedline {
                         if prompt.repaint_on_enter() {
                             if let Some(id) = self.history_last_run_id {
                                 if let Ok(last) = self.history.load(id) {
+                                    // Set the line buffer to the last entered line so that we can
+                                    // re-render it with the new prompt
                                     self.editor.edit_buffer(
                                         |buf| buf.insert_str(&last.command_line),
                                         UndoBehavior::UndoRedo,
                                     );
                                     self.repaint(prompt)?;
+                                    // Clear the buffer again so that the next line can be typed
                                     self.editor
                                         .edit_buffer(|buf| buf.clear(), UndoBehavior::UndoRedo);
                                 }

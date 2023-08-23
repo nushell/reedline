@@ -97,7 +97,7 @@ pub trait Prompt: Send {
         &self,
         history_search: PromptHistorySearch,
     ) -> Cow<str>;
-    /// Whether to repaint the prompt after the user hits enter
+    /// Whether to repaint the prompt after the user hits enter (for transient prompts)
     fn repaint_on_enter(&self) -> bool {
         false
     }
