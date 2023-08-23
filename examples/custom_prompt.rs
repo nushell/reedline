@@ -52,6 +52,10 @@ impl Prompt for CustomPrompt {
             prefix, history_search.term
         ))
     }
+
+    fn repaint_on_enter(&self) -> bool {
+        true
+    }
 }
 
 fn main() -> io::Result<()> {

@@ -97,6 +97,10 @@ pub trait Prompt: Send {
         &self,
         history_search: PromptHistorySearch,
     ) -> Cow<str>;
+    /// Whether to repaint the prompt after the user hits enter
+    fn repaint_on_enter(&self) -> bool {
+        false
+    }
     /// Get the default prompt color
     fn get_prompt_color(&self) -> Color {
         DEFAULT_PROMPT_COLOR
