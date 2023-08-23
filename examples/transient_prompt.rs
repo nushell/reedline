@@ -8,7 +8,7 @@ use nu_ansi_term::{Color, Style};
 use reedline::SqliteBackedHistory;
 use reedline::{
     ColumnarMenu, DefaultCompleter, DefaultHinter, Prompt, PromptEditMode, PromptHistorySearch,
-    PromptHistorySearchStatus, Reedline, ReedlineMenu, Signal, ExampleHighlighter, default_emacs_keybindings, Keybindings, KeyModifiers, KeyCode, ReedlineEvent, Emacs,
+    PromptHistorySearchStatus, Reedline, ReedlineMenu, Signal, ExampleHighlighter, default_emacs_keybindings, Keybindings, KeyModifiers, KeyCode, ReedlineEvent, Emacs, Validator, ValidationResult,
 };
 use std::{borrow::Cow, cell::Cell, io};
 
@@ -74,6 +74,19 @@ impl Prompt for TransientPrompt {
     }
 }
 
+// To test multiline input. Only goes to the next line if the line ends with a ?
+struct CustomValidator;
+
+impl Validator for CustomValidator {
+    fn validate(&self, line: &str) -> ValidationResult {
+        if line.ends_with("?") {
+            ValidationResult::Complete
+        } else {
+            ValidationResult::Incomplete
+        }
+    }
+}
+
 // This is copied from the completions example
 fn add_menu_keybindings(keybindings: &mut Keybindings) {
     keybindings.add_binding(
@@ -110,7 +123,8 @@ fn main() -> io::Result<()> {
         .with_completer(completer)
         .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
         .with_edit_mode(edit_mode)
-        .with_highlighter(Box::new(ExampleHighlighter::new(commands)));
+        .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
+        .with_validator(Box::new(CustomValidator {}));
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     {
         line_editor = line_editor.with_history(Box::new(SqliteBackedHistory::in_memory().unwrap()));
