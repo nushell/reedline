@@ -1702,7 +1702,7 @@ impl Reedline {
         // Additional repaint to show the content without hints etc.
         match prompt.get_transient_prompt() {
             Some(transient_prompt) => self.repaint(transient_prompt.as_ref())?,
-            None => self.repaint(prompt)?
+            None => self.repaint(prompt)?,
         }
         if !buffer.is_empty() {
             let mut entry = HistoryItem::from_command_line(&buffer);
