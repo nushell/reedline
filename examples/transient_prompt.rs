@@ -16,22 +16,21 @@ use std::{borrow::Cow, io};
 
 // For custom prompt, implement the Prompt trait
 //
-// This example replaces the prompt for old lines with "!" as an
-// example of a transient prompt.
+// This example replaces the prompt for old lines with "!" as an example of a
+// transient prompt.
 #[derive(Clone)]
+pub struct CustomPrompt;
+
 pub struct TransientPrompt;
 
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 pub static NORMAL_PROMPT: &str = "(transient_prompt example)";
 pub static TRANSIENT_PROMPT: &str = "! ";
 pub static TRANSIENT_MULTILINE_INDICATOR: &str = ": ";
-impl Prompt for TransientPrompt {
+
+impl Prompt for CustomPrompt {
     fn render_prompt_left(&self) -> Cow<str> {
         Cow::Borrowed(NORMAL_PROMPT)
-    }
-
-    fn render_prompt_left_post_submit(&self) -> Cow<str> {
-        Cow::Owned(String::new())
     }
 
     fn render_prompt_right(&self) -> Cow<str> {
@@ -42,15 +41,44 @@ impl Prompt for TransientPrompt {
         Cow::Owned(">".to_string())
     }
 
-    fn render_prompt_indicator_post_submit(&self, _prompt_mode: PromptEditMode) -> Cow<str> {
-        Cow::Borrowed(TRANSIENT_PROMPT)
-    }
-
     fn render_prompt_multiline_indicator(&self) -> Cow<str> {
         Cow::Borrowed(DEFAULT_MULTILINE_INDICATOR)
     }
 
-    fn render_prompt_multiline_indicator_post_submit(&self) -> Cow<str> {
+    fn render_prompt_history_search_indicator(
+        &self,
+        history_search: PromptHistorySearch,
+    ) -> Cow<str> {
+        let prefix = match history_search.status {
+            PromptHistorySearchStatus::Passing => "",
+            PromptHistorySearchStatus::Failing => "failing ",
+        };
+
+        Cow::Owned(format!(
+            "({}reverse-search: {}) ",
+            prefix, history_search.term
+        ))
+    }
+
+    fn get_transient_prompt(&self) -> Option<Box<dyn Prompt>> {
+        Some(Box::new(TransientPrompt {}))
+    }
+}
+
+impl Prompt for TransientPrompt {
+    fn render_prompt_left(&self) -> Cow<str> {
+        Cow::Owned(String::new())
+    }
+
+    fn render_prompt_right(&self) -> Cow<str> {
+        Cow::Owned(String::new())
+    }
+
+    fn render_prompt_indicator(&self, _prompt_mode: PromptEditMode) -> Cow<str> {
+        Cow::Borrowed(TRANSIENT_PROMPT)
+    }
+
+    fn render_prompt_multiline_indicator(&self) -> Cow<str> {
         Cow::Borrowed(TRANSIENT_MULTILINE_INDICATOR)
     }
 
@@ -128,7 +156,7 @@ fn main() -> io::Result<()> {
         line_editor = line_editor.with_history(Box::new(SqliteBackedHistory::in_memory().unwrap()));
     }
 
-    let prompt = TransientPrompt {};
+    let prompt = CustomPrompt {};
 
     loop {
         let sig = line_editor.read_line(&prompt)?;

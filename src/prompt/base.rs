@@ -86,28 +86,12 @@ impl Display for PromptEditMode {
 pub trait Prompt: Send {
     /// Provide content of the left full prompt
     fn render_prompt_left(&self) -> Cow<str>;
-    /// Provide content of the left full prompt (after submitting)
-    fn render_prompt_left_post_submit(&self) -> Cow<str> {
-        self.render_prompt_left()
-    }
     /// Provide content of the right full prompt
     fn render_prompt_right(&self) -> Cow<str>;
-    /// Provide content of the right full prompt (after submitting)
-    fn render_prompt_right_post_submit(&self) -> Cow<str> {
-        self.render_prompt_right()
-    }
     /// Render the prompt indicator (Last part of the prompt that changes based on the editor mode)
     fn render_prompt_indicator(&self, prompt_mode: PromptEditMode) -> Cow<str>;
-    /// Render the prompt indicator (after submitting)
-    fn render_prompt_indicator_post_submit(&self, prompt_mode: PromptEditMode) -> Cow<str> {
-        self.render_prompt_indicator(prompt_mode)
-    }
     /// Indicator to show before explicit new lines
     fn render_prompt_multiline_indicator(&self) -> Cow<str>;
-    /// Indicator to show before explicit new lines (after submitting)
-    fn render_prompt_multiline_indicator_post_submit(&self) -> Cow<str> {
-        self.render_prompt_multiline_indicator()
-    }
     /// Render the prompt indicator for `Ctrl-R` history search
     fn render_prompt_history_search_indicator(
         &self,
@@ -133,5 +117,10 @@ pub trait Prompt: Send {
     /// Whether to render right prompt on the last line
     fn right_prompt_on_last_line(&self) -> bool {
         false
+    }
+
+    /// Prompt to display after submitting a line
+    fn get_transient_prompt(&self) -> Option<Box<dyn Prompt>> {
+        None
     }
 }
