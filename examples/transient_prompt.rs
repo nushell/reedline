@@ -25,7 +25,8 @@ pub struct TransientPrompt {
 }
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 pub static NORMAL_PROMPT: &str = "(transient_prompt example)";
-pub static TRANSIENT_PROMPT: &str = "!";
+pub static TRANSIENT_PROMPT: &str = "! ";
+pub static TRANSIENT_MULTILINE_INDICATOR: &str = ": ";
 impl Prompt for TransientPrompt {
     fn render_prompt_left(&self) -> Cow<str> {
         {
@@ -50,7 +51,11 @@ impl Prompt for TransientPrompt {
     }
 
     fn render_prompt_multiline_indicator(&self) -> Cow<str> {
-        Cow::Borrowed(DEFAULT_MULTILINE_INDICATOR)
+        if self.show_transient.get() {
+            Cow::Borrowed(TRANSIENT_MULTILINE_INDICATOR)
+        } else {
+            Cow::Borrowed(DEFAULT_MULTILINE_INDICATOR)
+        }
     }
 
     fn render_prompt_history_search_indicator(
@@ -76,15 +81,15 @@ impl Prompt for TransientPrompt {
     }
 }
 
-// To test multiline input. Only goes to the next line if the line ends with a ?
+// To test multiline input. Treats as multiline if input ends with a '\'
 struct CustomValidator;
 
 impl Validator for CustomValidator {
     fn validate(&self, line: &str) -> ValidationResult {
-        if line.ends_with("?") {
-            ValidationResult::Complete
-        } else {
+        if line.ends_with("\\") {
             ValidationResult::Incomplete
+        } else {
+            ValidationResult::Complete
         }
     }
 }
