@@ -131,7 +131,9 @@ fn main() -> io::Result<()> {
         .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
         .with_edit_mode(edit_mode)
         .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
-        .with_validator(Box::new(CustomValidator {}));
+        .with_validator(Box::new(CustomValidator {}))
+        .with_ansi_colors(true)
+        .with_history_exclusion_prefix(Some(String::from(" ")));
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     {
         line_editor = line_editor.with_history(Box::new(SqliteBackedHistory::in_memory().unwrap()));
