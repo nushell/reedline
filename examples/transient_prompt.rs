@@ -12,50 +12,46 @@ use reedline::{
     PromptHistorySearch, PromptHistorySearchStatus, Reedline, ReedlineEvent, ReedlineMenu, Signal,
     ValidationResult, Validator,
 };
-use std::{borrow::Cow, cell::Cell, io};
+use std::{borrow::Cow, io};
 
 // For custom prompt, implement the Prompt trait
 //
 // This example replaces the prompt for old lines with "!" as an
 // example of a transient prompt.
 #[derive(Clone)]
-pub struct TransientPrompt {
-    /// Whether to show the transient prompt indicator instead of the normal one
-    show_transient: Cell<bool>,
-}
+pub struct TransientPrompt;
+
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 pub static NORMAL_PROMPT: &str = "(transient_prompt example)";
 pub static TRANSIENT_PROMPT: &str = "! ";
 pub static TRANSIENT_MULTILINE_INDICATOR: &str = ": ";
 impl Prompt for TransientPrompt {
     fn render_prompt_left(&self) -> Cow<str> {
-        {
-            if self.show_transient.get() {
-                Cow::Owned(String::new())
-            } else {
-                Cow::Borrowed(NORMAL_PROMPT)
-            }
-        }
+        Cow::Borrowed(NORMAL_PROMPT)
+    }
+
+    fn render_prompt_left_post_submit(&self) -> Cow<str> {
+        Cow::Owned(String::new())
     }
 
     fn render_prompt_right(&self) -> Cow<str> {
         Cow::Owned(String::new())
     }
 
-    fn render_prompt_indicator(&self, _edit_mode: PromptEditMode) -> Cow<str> {
-        if self.show_transient.get() {
-            Cow::Borrowed(TRANSIENT_PROMPT)
-        } else {
-            Cow::Owned(">".to_string())
-        }
+    fn render_prompt_indicator(&self, _prompt_mode: PromptEditMode) -> Cow<str> {
+        Cow::Owned(">".to_string())
+    }
+
+    fn render_prompt_indicator_post_submit(&self, _prompt_mode: PromptEditMode) -> Cow<str> {
+        Cow::Borrowed(TRANSIENT_PROMPT)
     }
 
     fn render_prompt_multiline_indicator(&self) -> Cow<str> {
-        if self.show_transient.get() {
-            Cow::Borrowed(TRANSIENT_MULTILINE_INDICATOR)
-        } else {
-            Cow::Borrowed(DEFAULT_MULTILINE_INDICATOR)
-        }
+        Cow::Borrowed(DEFAULT_MULTILINE_INDICATOR)
+    }
+
+    fn render_prompt_multiline_indicator_post_submit(&self) -> Cow<str> {
+        Cow::Borrowed(TRANSIENT_MULTILINE_INDICATOR)
     }
 
     fn render_prompt_history_search_indicator(
@@ -71,13 +67,6 @@ impl Prompt for TransientPrompt {
             "({}reverse-search: {}) ",
             prefix, history_search.term
         ))
-    }
-
-    fn repaint_on_enter(&self) -> bool {
-        // This method is called whenever the user hits enter to go to the next
-        // line, so we want it to repaint and display the transient prompt
-        self.show_transient.set(true);
-        true
     }
 }
 
@@ -139,13 +128,9 @@ fn main() -> io::Result<()> {
         line_editor = line_editor.with_history(Box::new(SqliteBackedHistory::in_memory().unwrap()));
     }
 
-    let prompt = TransientPrompt {
-        show_transient: Cell::new(false),
-    };
+    let prompt = TransientPrompt {};
 
     loop {
-        // We're on a new line, so make sure we're showing the normal prompt
-        prompt.show_transient.set(false);
         let sig = line_editor.read_line(&prompt)?;
         match sig {
             Signal::Success(buffer) => {

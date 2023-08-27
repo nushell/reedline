@@ -713,22 +713,6 @@ impl Reedline {
             for event in reedline_events.drain(..) {
                 match self.handle_event(prompt, event)? {
                     EventStatus::Exits(signal) => {
-                        if prompt.repaint_on_enter() {
-                            if let Some(id) = self.history_last_run_id {
-                                if let Ok(last) = self.history.load(id) {
-                                    // Set the line buffer to the last entered line so that we can
-                                    // re-render it with the new prompt
-                                    self.editor.edit_buffer(
-                                        |buf| buf.insert_str(&last.command_line),
-                                        UndoBehavior::UndoRedo,
-                                    );
-                                    self.repaint(prompt)?;
-                                    // Clear the buffer again so that the next line can be typed
-                                    self.editor
-                                        .edit_buffer(|buf| buf.clear(), UndoBehavior::UndoRedo);
-                                }
-                            }
-                        }
                         // Move the cursor below the input area, for external commands or new read_line call
                         self.painter.move_cursor_to_end()?;
                         return Ok(signal);

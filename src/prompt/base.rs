@@ -84,23 +84,35 @@ impl Display for PromptEditMode {
 /// Implementors have to provide [`str`]-based content which will be
 /// displayed before the `LineBuffer` is drawn.
 pub trait Prompt: Send {
-    /// Provide content off the right full prompt
+    /// Provide content of the left full prompt
     fn render_prompt_left(&self) -> Cow<str>;
-    /// Provide content off the left full prompt
+    /// Provide content of the left full prompt (after submitting)
+    fn render_prompt_left_post_submit(&self) -> Cow<str> {
+        self.render_prompt_left()
+    }
+    /// Provide content of the right full prompt
     fn render_prompt_right(&self) -> Cow<str>;
+    /// Provide content of the right full prompt (after submitting)
+    fn render_prompt_right_post_submit(&self) -> Cow<str> {
+        self.render_prompt_right()
+    }
     /// Render the prompt indicator (Last part of the prompt that changes based on the editor mode)
     fn render_prompt_indicator(&self, prompt_mode: PromptEditMode) -> Cow<str>;
+    /// Render the prompt indicator (after submitting)
+    fn render_prompt_indicator_post_submit(&self, prompt_mode: PromptEditMode) -> Cow<str> {
+        self.render_prompt_indicator(prompt_mode)
+    }
     /// Indicator to show before explicit new lines
     fn render_prompt_multiline_indicator(&self) -> Cow<str>;
+    /// Indicator to show before explicit new lines (after submitting)
+    fn render_prompt_multiline_indicator_post_submit(&self) -> Cow<str> {
+        self.render_prompt_multiline_indicator()
+    }
     /// Render the prompt indicator for `Ctrl-R` history search
     fn render_prompt_history_search_indicator(
         &self,
         history_search: PromptHistorySearch,
     ) -> Cow<str>;
-    /// Whether to repaint the prompt after the user hits enter (for transient prompts)
-    fn repaint_on_enter(&self) -> bool {
-        false
-    }
     /// Get the default prompt color
     fn get_prompt_color(&self) -> Color {
         DEFAULT_PROMPT_COLOR
