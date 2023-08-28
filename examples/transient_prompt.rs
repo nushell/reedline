@@ -7,7 +7,7 @@ use nu_ansi_term::{Color, Style};
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 use reedline::SqliteBackedHistory;
 use reedline::{
-    default_emacs_keybindings, ColumnarMenu, DefaultCompleter, DefaultHinter, Emacs,
+    default_emacs_keybindings, ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, Emacs,
     ExampleHighlighter, KeyCode, KeyModifiers, Keybindings, Prompt, PromptEditMode,
     PromptHistorySearch, PromptHistorySearchStatus, Reedline, ReedlineEvent, ReedlineMenu, Signal,
     ValidationResult, Validator,
@@ -18,52 +18,10 @@ use std::{borrow::Cow, io};
 //
 // This example replaces the prompt for old lines with "!" as an example of a
 // transient prompt.
-#[derive(Clone)]
-pub struct CustomPrompt;
-
 pub struct TransientPrompt;
 
-pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
-pub static NORMAL_PROMPT: &str = "(transient_prompt example)";
 pub static TRANSIENT_PROMPT: &str = "! ";
 pub static TRANSIENT_MULTILINE_INDICATOR: &str = ": ";
-
-impl Prompt for CustomPrompt {
-    fn render_prompt_left(&self) -> Cow<str> {
-        Cow::Borrowed(NORMAL_PROMPT)
-    }
-
-    fn render_prompt_right(&self) -> Cow<str> {
-        Cow::Owned(String::new())
-    }
-
-    fn render_prompt_indicator(&self, _prompt_mode: PromptEditMode) -> Cow<str> {
-        Cow::Owned(">".to_string())
-    }
-
-    fn render_prompt_multiline_indicator(&self) -> Cow<str> {
-        Cow::Borrowed(DEFAULT_MULTILINE_INDICATOR)
-    }
-
-    fn render_prompt_history_search_indicator(
-        &self,
-        history_search: PromptHistorySearch,
-    ) -> Cow<str> {
-        let prefix = match history_search.status {
-            PromptHistorySearchStatus::Passing => "",
-            PromptHistorySearchStatus::Failing => "failing ",
-        };
-
-        Cow::Owned(format!(
-            "({}reverse-search: {}) ",
-            prefix, history_search.term
-        ))
-    }
-
-    fn get_transient_prompt(&self) -> Option<Box<dyn Prompt>> {
-        Some(Box::new(TransientPrompt {}))
-    }
-}
 
 impl Prompt for TransientPrompt {
     fn render_prompt_left(&self) -> Cow<str> {
@@ -150,13 +108,14 @@ fn main() -> io::Result<()> {
         .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
         .with_validator(Box::new(CustomValidator {}))
         .with_ansi_colors(true)
-        .with_history_exclusion_prefix(Some(String::from(" ")));
+        .with_history_exclusion_prefix(Some(String::from(" ")))
+        .with_transient_prompt(Box::new(TransientPrompt {}));
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     {
         line_editor = line_editor.with_history(Box::new(SqliteBackedHistory::in_memory().unwrap()));
     }
 
-    let prompt = CustomPrompt {};
+    let prompt = DefaultPrompt::default();
 
     loop {
         let sig = line_editor.read_line(&prompt)?;

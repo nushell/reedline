@@ -118,9 +118,4 @@ pub trait Prompt: Send {
     fn right_prompt_on_last_line(&self) -> bool {
         false
     }
-
-    /// Prompt to display after submitting a line
-    fn get_transient_prompt(&self) -> Option<Box<dyn Prompt>> {
-        None
-    }
 }

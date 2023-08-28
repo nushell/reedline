@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
 
@@ -110,6 +112,8 @@ pub struct Reedline {
     // Stdout
     painter: Painter,
 
+    transient_prompt: Option<Rc<dyn Prompt>>,
+
     // Edit Mode: Vi, Emacs
     edit_mode: Box<dyn EditMode>,
 
@@ -197,6 +201,7 @@ impl Reedline {
             history_cursor_on_excluded: false,
             input_mode: InputMode::Regular,
             painter,
+            transient_prompt: None,
             edit_mode,
             completer,
             quick_completions: false,
@@ -431,6 +436,13 @@ impl Reedline {
     #[must_use]
     pub fn disable_validator(mut self) -> Self {
         self.validator = None;
+        self
+    }
+
+    /// Set a different prompt to be used after submitting each line
+    #[must_use]
+    pub fn with_transient_prompt(mut self, transient_prompt: Box<dyn Prompt>) -> Self {
+        self.transient_prompt = Some(Rc::from(transient_prompt));
         self
     }
 
@@ -1700,8 +1712,11 @@ impl Reedline {
         let buffer = self.editor.get_buffer().to_string();
         self.hide_hints = true;
         // Additional repaint to show the content without hints etc.
-        match prompt.get_transient_prompt() {
-            Some(transient_prompt) => self.repaint(transient_prompt.as_ref())?,
+        match &mut self.transient_prompt {
+            Some(transient_prompt) => {
+                let prompt = transient_prompt.clone();
+                self.repaint(prompt.as_ref())?
+            }
             None => self.repaint(prompt)?,
         }
         if !buffer.is_empty() {
