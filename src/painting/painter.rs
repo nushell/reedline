@@ -11,9 +11,9 @@ use {
         cursor::{self, MoveTo, RestorePosition, SavePosition},
         style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor},
         terminal::{self, Clear, ClearType},
-        QueueableCommand, Result,
+        QueueableCommand,
     },
-    std::io::Write,
+    std::io::{Result, Write},
 };
 #[cfg(feature = "external_printer")]
 use {crate::LineBuffer, crossterm::cursor::MoveUp};

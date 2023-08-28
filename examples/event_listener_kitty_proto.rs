@@ -5,10 +5,10 @@ use crossterm::execute;
 use {
     crossterm::{
         event::{poll, Event, KeyCode, KeyEvent},
-        terminal, Result,
+        terminal,
     },
     std::{
-        io::{stdout, Write},
+        io::{stdout, Result, Write},
         time::Duration,
     },
 };

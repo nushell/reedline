@@ -1,7 +1,7 @@
 use {
     crossterm::{
         event::{poll, Event, KeyCode, KeyEvent},
-        terminal, Result,
+        terminal,
     },
     std::{
         io::{stdout, Write},
@@ -9,7 +9,7 @@ use {
     },
 };
 
-fn main() -> Result<()> {
+fn main() -> std::io::Result<()> {
     println!("Ready to print events (Abort with ESC):");
     print_events()?;
     println!();
@@ -17,7 +17,7 @@ fn main() -> Result<()> {
 }
 
 /// **For debugging purposes only:** Track the terminal events observed by [`Reedline`] and print them.
-pub fn print_events() -> Result<()> {
+pub fn print_events() -> std::io::Result<()> {
     stdout().flush()?;
     terminal::enable_raw_mode()?;
     let result = print_events_helper();
@@ -31,7 +31,7 @@ pub fn print_events() -> Result<()> {
 // even seeing the events. if you press a key and no events
 // are printed, it's a good chance your terminal is eating
 // those events.
-fn print_events_helper() -> Result<()> {
+fn print_events_helper() -> std::io::Result<()> {
     loop {
         // Wait up to 5s for another event
         if poll(Duration::from_millis(5_000))? {

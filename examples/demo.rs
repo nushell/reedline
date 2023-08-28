@@ -2,7 +2,7 @@ use {
     crossterm::{
         cursor::SetCursorStyle,
         event::{DisableBracketedPaste, KeyCode, KeyModifiers},
-        execute, Result,
+        execute,
     },
     nu_ansi_term::{Color, Style},
     reedline::{
@@ -18,7 +18,7 @@ use reedline::CursorConfig;
 #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
 use reedline::FileBackedHistory;
 
-fn main() -> Result<()> {
+fn main() -> std::io::Result<()> {
     println!("Ctrl-D to quit");
     // quick command like parameter handling
     let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
