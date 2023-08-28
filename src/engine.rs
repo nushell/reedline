@@ -1712,12 +1712,10 @@ impl Reedline {
         let buffer = self.editor.get_buffer().to_string();
         self.hide_hints = true;
         // Additional repaint to show the content without hints etc.
-        match &mut self.transient_prompt {
-            Some(transient_prompt) => {
-                let prompt = transient_prompt.clone();
-                self.repaint(prompt.as_ref())?
-            }
-            None => self.repaint(prompt)?,
+        if let Some(transient_prompt) = &self.transient_prompt {
+            self.repaint(transient_prompt.clone().as_ref())?
+        } else {
+            self.repaint(prompt)?;
         }
         if !buffer.is_empty() {
             let mut entry = HistoryItem::from_command_line(&buffer);
