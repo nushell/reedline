@@ -1713,7 +1713,15 @@ impl Reedline {
         self.hide_hints = true;
         // Additional repaint to show the content without hints etc.
         if let Some(transient_prompt) = &self.transient_prompt {
-            self.repaint(transient_prompt.clone().lock().unwrap().as_ref())?
+            match transient_prompt.clone().lock() {
+                Ok(transient_prompt) => {
+                    self.repaint(transient_prompt.as_ref())?;
+                }
+                Err(_) => {
+                    // TODO log error
+                    self.repaint(prompt)?;
+                }
+            }
         } else {
             self.repaint(prompt)?;
         }
