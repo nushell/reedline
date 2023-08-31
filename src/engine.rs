@@ -1,5 +1,3 @@
-use std::cell::Cell;
-
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
 
@@ -112,7 +110,7 @@ pub struct Reedline {
     // Stdout
     painter: Painter,
 
-    transient_prompt: Cell<Option<Box<dyn Prompt>>>,
+    transient_prompt: Option<Box<dyn Prompt>>,
 
     // Edit Mode: Vi, Emacs
     edit_mode: Box<dyn EditMode>,
@@ -201,7 +199,7 @@ impl Reedline {
             history_cursor_on_excluded: false,
             input_mode: InputMode::Regular,
             painter,
-            transient_prompt: Cell::new(None),
+            transient_prompt: None,
             edit_mode,
             completer,
             quick_completions: false,
@@ -441,8 +439,8 @@ impl Reedline {
 
     /// Set a different prompt to be used after submitting each line
     #[must_use]
-    pub fn with_transient_prompt(self, transient_prompt: Box<dyn Prompt>) -> Self {
-        self.transient_prompt.set(Some(transient_prompt));
+    pub fn with_transient_prompt(mut self, transient_prompt: Box<dyn Prompt>) -> Self {
+        self.transient_prompt = Some(transient_prompt);
         self
     }
 
@@ -1712,9 +1710,9 @@ impl Reedline {
         let buffer = self.editor.get_buffer().to_string();
         self.hide_hints = true;
         // Additional repaint to show the content without hints etc.
-        if let Some(transient_prompt) = self.transient_prompt.take() {
+        if let Some(transient_prompt) = std::mem::replace(&mut self.transient_prompt, None) {
             self.repaint(transient_prompt.as_ref())?;
-            self.transient_prompt.set(Some(transient_prompt));
+            self.transient_prompt = Some(transient_prompt);
         } else {
             self.repaint(prompt)?;
         }
