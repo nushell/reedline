@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::cell::Cell;
 
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
@@ -112,7 +112,7 @@ pub struct Reedline {
     // Stdout
     painter: Painter,
 
-    transient_prompt: Option<Arc<Mutex<Box<dyn Prompt>>>>,
+    transient_prompt: Cell<Option<Box<dyn Prompt>>>,
 
     // Edit Mode: Vi, Emacs
     edit_mode: Box<dyn EditMode>,
@@ -201,7 +201,7 @@ impl Reedline {
             history_cursor_on_excluded: false,
             input_mode: InputMode::Regular,
             painter,
-            transient_prompt: None,
+            transient_prompt: Cell::new(None),
             edit_mode,
             completer,
             quick_completions: false,
@@ -441,8 +441,8 @@ impl Reedline {
 
     /// Set a different prompt to be used after submitting each line
     #[must_use]
-    pub fn with_transient_prompt(mut self, transient_prompt: Box<dyn Prompt>) -> Self {
-        self.transient_prompt = Some(Arc::from(Mutex::from(transient_prompt)));
+    pub fn with_transient_prompt(self, transient_prompt: Box<dyn Prompt>) -> Self {
+        self.transient_prompt.set(Some(transient_prompt));
         self
     }
 
@@ -1712,16 +1712,9 @@ impl Reedline {
         let buffer = self.editor.get_buffer().to_string();
         self.hide_hints = true;
         // Additional repaint to show the content without hints etc.
-        if let Some(transient_prompt) = &self.transient_prompt {
-            match transient_prompt.clone().lock() {
-                Ok(transient_prompt) => {
-                    self.repaint(transient_prompt.as_ref())?;
-                }
-                Err(_) => {
-                    // TODO log error
-                    self.repaint(prompt)?;
-                }
-            }
+        if let Some(transient_prompt) = self.transient_prompt.take() {
+            self.repaint(transient_prompt.as_ref())?;
+            self.transient_prompt.set(Some(transient_prompt));
         } else {
             self.repaint(prompt)?;
         }
