@@ -151,6 +151,7 @@ pub struct Reedline {
 
 struct BufferEditor {
     editor: String,
+    arguments: Vec<String>,
     extension: String,
 }
 
@@ -447,11 +448,40 @@ impl Reedline {
     /// use reedline::{DefaultValidator, Reedline};
     ///
     /// let mut line_editor =
+    /// Reedline::create().with_argumented_buffer_editor("vim".into(), vec!["-e".into()], "nu".into());
+    /// ```
+    #[must_use]
+    pub fn with_argumented_buffer_editor(
+        mut self,
+        editor: String,
+        arguments: Vec<String>,
+        extension: String,
+    ) -> Self {
+        self.buffer_editor = Some(BufferEditor {
+            editor,
+            arguments,
+            extension,
+        });
+        self
+    }
+
+    /// A builder that configures the text editor used to edit the line buffer
+    /// # Example
+    /// ```rust,no_run
+    /// // Create a reedline object with vim as editor
+    ///
+    /// use reedline::{DefaultValidator, Reedline};
+    ///
+    /// let mut line_editor =
     /// Reedline::create().with_buffer_editor("vim".into(), "nu".into());
     /// ```
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: String, extension: String) -> Self {
-        self.buffer_editor = Some(BufferEditor { editor, extension });
+        self.buffer_editor = Some(BufferEditor {
+            editor,
+            arguments: Vec::new(),
+            extension,
+        });
         self
     }
 
@@ -1575,8 +1605,11 @@ impl Reedline {
 
     fn open_editor(&mut self) -> Result<()> {
         match &self.buffer_editor {
-            None => Ok(()),
-            Some(BufferEditor { editor, extension }) => {
+            Some(BufferEditor {
+                editor,
+                arguments,
+                extension,
+            }) if !editor.is_empty() => {
                 let temp_directory = std::env::temp_dir();
                 let temp_file = temp_directory.join(format!("reedline_buffer.{extension}"));
 
@@ -1584,13 +1617,9 @@ impl Reedline {
                     let mut file = File::create(temp_file.clone())?;
                     write!(file, "{}", self.editor.get_buffer())?;
                 }
-
-                let mut ed = editor.split(' ');
-                let command = ed.next();
-
                 {
-                    let mut process = Command::new(command.unwrap_or(editor));
-                    process.args(ed);
+                    let mut process = Command::new(editor);
+                    process.args(arguments);
                     process.arg(temp_file.as_path());
 
                     let mut child = process.spawn()?;
@@ -1604,6 +1633,7 @@ impl Reedline {
 
                 Ok(())
             }
+            _ => Ok(()),
         }
     }
 
