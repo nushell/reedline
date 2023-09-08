@@ -449,10 +449,11 @@ impl Reedline {
     /// use reedline::{DefaultValidator, Reedline};
     /// use std::process::Command;
     /// let mut command = Command::new("vim");
-    /// command.args(vec!["-e"]);
+    /// // Command should contain full arguments including the path of temp_file
+    /// command.args(vec!["-e", "temp.nu"]);
     ///
     /// let mut line_editor =
-    /// Reedline::create().with_buffer_editor_command(command, "nu".into());
+    /// Reedline::create().with_buffer_editor_command(command, "temp.nu".into());
     /// ```
     #[must_use]
     pub fn with_buffer_editor_command(
