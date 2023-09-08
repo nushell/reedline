@@ -13,6 +13,8 @@ use {
     },
     std::io::stdout,
 };
+use std::env::temp_dir;
+use std::process::Command;
 
 use reedline::CursorConfig;
 #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
@@ -125,7 +127,10 @@ fn main() -> std::io::Result<()> {
     line_editor = line_editor.with_edit_mode(edit_mode);
 
     // Adding vi as text editor
-    line_editor = line_editor.with_buffer_editor("vi".into(), "nu".into());
+    let temp_file = temp_dir().join("temp_file.nu");
+    let mut command = Command::new("vi");
+    command.arg(&temp_file);
+    line_editor = line_editor.with_buffer_editor_command(command, temp_file);
 
     let prompt = DefaultPrompt::default();
 

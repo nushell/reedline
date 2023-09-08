@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
 
@@ -150,9 +152,8 @@ pub struct Reedline {
 }
 
 struct BufferEditor {
-    editor: String,
-    arguments: Vec<String>,
-    extension: String,
+    command: Command,
+    temp_file: PathBuf,
 }
 
 impl Drop for Reedline {
@@ -446,21 +447,22 @@ impl Reedline {
     /// // Create a reedline object with vim as editor
     ///
     /// use reedline::{DefaultValidator, Reedline};
+    /// use std::process::Command;
+    /// let mut command = Command::new("vim");
+    /// command.args(vec!["-e"]);
     ///
     /// let mut line_editor =
-    /// Reedline::create().with_argumented_buffer_editor("vim".into(), vec!["-e".into()], "nu".into());
+    /// Reedline::create().with_buffer_editor_command(command, "nu".into());
     /// ```
     #[must_use]
-    pub fn with_argumented_buffer_editor(
+    pub fn with_buffer_editor_command(
         mut self,
-        editor: String,
-        arguments: Vec<String>,
-        extension: String,
+        command: Command,
+        temp_file: PathBuf,
     ) -> Self {
         self.buffer_editor = Some(BufferEditor {
-            editor,
-            arguments,
-            extension,
+            command,
+            temp_file,
         });
         self
     }
@@ -476,11 +478,11 @@ impl Reedline {
     /// Reedline::create().with_buffer_editor("vim".into(), "nu".into());
     /// ```
     #[must_use]
+    #[deprecated = "use `with_buffer_editor_command` instead"]
     pub fn with_buffer_editor(mut self, editor: String, extension: String) -> Self {
         self.buffer_editor = Some(BufferEditor {
-            editor,
-            arguments: Vec::new(),
-            extension,
+            command: Command::new(editor),
+            temp_file: std::env::temp_dir().join(format!("reedline_buffer.{extension}")),
         });
         self
     }
@@ -1604,25 +1606,17 @@ impl Reedline {
     }
 
     fn open_editor(&mut self) -> Result<()> {
-        match &self.buffer_editor {
+        match &mut self.buffer_editor {
             Some(BufferEditor {
-                editor,
-                arguments,
-                extension,
-            }) if !editor.is_empty() => {
-                let temp_directory = std::env::temp_dir();
-                let temp_file = temp_directory.join(format!("reedline_buffer.{extension}"));
-
+                ref mut command,
+                temp_file,
+            }) => {
                 {
-                    let mut file = File::create(temp_file.clone())?;
+                    let mut file = File::create(&temp_file)?;
                     write!(file, "{}", self.editor.get_buffer())?;
                 }
                 {
-                    let mut process = Command::new(editor);
-                    process.args(arguments);
-                    process.arg(temp_file.as_path());
-
-                    let mut child = process.spawn()?;
+                    let mut child = command.spawn()?;
                     child.wait()?;
                 }
 
