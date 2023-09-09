@@ -1,4 +1,4 @@
-use std::ops::Range;
+
 use std::slice::SliceIndex;
 
 use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
