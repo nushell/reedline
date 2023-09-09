@@ -217,123 +217,99 @@ impl Editor {
     }
 
     // Only updates the cut buffer if the range is not empty.
-    // returns true if the cut buffer was updated.
-    fn maybe_update_cut_buffer<T>(&mut self, range: T, mode: ClipboardMode) -> bool
+    fn maybe_cut<T>(&mut self, cut_range: T, mode: ClipboardMode)
     where
-        T: SliceIndex<str, Output = str>,
+        T: SliceIndex<str, Output = str> + std::ops::RangeBounds<usize> + Clone,
     {
-        let cut_slice = &self.line_buffer.get_buffer()[range];
+        let cut_slice = &self.line_buffer.get_buffer()[cut_range.clone()];
         if !cut_slice.is_empty() {
             self.cut_buffer.set(cut_slice, mode);
-            true
-        } else {
-            false
+
+            let start = match cut_range.start_bound() {
+                std::ops::Bound::Included(start) => *start,
+                std::ops::Bound::Excluded(start) => *start + 1,
+                std::ops::Bound::Unbounded => 0,
+            };
+            self.line_buffer.set_insertion_point(start);
+            self.line_buffer.clear_range(cut_range);
         }
     }
 
     fn cut_current_line(&mut self) {
         let deletion_range = self.line_buffer.current_line_range();
 
-        if self.maybe_update_cut_buffer(deletion_range.clone(), ClipboardMode::Lines) {
-            self.line_buffer.set_insertion_point(deletion_range.start);
-            self.line_buffer.clear_range(deletion_range);
-        }
+        self.maybe_cut(deletion_range.clone(), ClipboardMode::Lines);
     }
 
     fn cut_from_start(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        if self.maybe_update_cut_buffer(0..insertion_offset, ClipboardMode::Normal) {
-            self.line_buffer.clear_to_insertion_point();
-        }
+        self.maybe_cut(0..insertion_offset, ClipboardMode::Normal);
     }
 
     fn cut_from_line_start(&mut self) {
         let previous_offset = self.line_buffer.insertion_point();
         self.line_buffer.move_to_line_start();
         let deletion_range = self.line_buffer.insertion_point()..previous_offset;
-        if self.maybe_update_cut_buffer(deletion_range.clone(), ClipboardMode::Normal) {
-            self.line_buffer.clear_range(deletion_range);
-        }
+        self.maybe_cut(deletion_range.clone(), ClipboardMode::Normal);
     }
 
     fn cut_from_end(&mut self) {
-        if self.maybe_update_cut_buffer(self.line_buffer.insertion_point().., ClipboardMode::Normal)
-        {
-            self.line_buffer.clear_to_end();
-        }
+        self.maybe_cut(self.line_buffer.insertion_point().., ClipboardMode::Normal);
     }
 
     fn cut_to_line_end(&mut self) {
         let cut_range =
             self.line_buffer.insertion_point()..self.line_buffer.find_current_line_end();
-        if self.maybe_update_cut_buffer(cut_range, ClipboardMode::Normal) {
-            self.line_buffer.clear_to_line_end();
-        }
+        self.maybe_cut(cut_range, ClipboardMode::Normal);
     }
 
     fn cut_word_left(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let left_index = self.line_buffer.word_left_index();
         let cut_range = left_index..insertion_offset;
-        if self.maybe_update_cut_buffer(cut_range.clone(), ClipboardMode::Normal) {
-            self.line_buffer.clear_range(cut_range);
-            self.line_buffer.set_insertion_point(left_index);
-        }
+        self.maybe_cut(cut_range.clone(), ClipboardMode::Normal);
     }
 
     fn cut_big_word_left(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let left_index = self.line_buffer.big_word_left_index();
         let cut_range = left_index..insertion_offset;
-        if self.maybe_update_cut_buffer(cut_range.clone(), ClipboardMode::Normal) {
-            self.line_buffer.clear_range(cut_range);
-            self.line_buffer.set_insertion_point(left_index);
-        }
+        self.maybe_cut(cut_range.clone(), ClipboardMode::Normal);
     }
 
     fn cut_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let right_index = self.line_buffer.word_right_index();
         let cut_range = insertion_offset..right_index;
-        if self.maybe_update_cut_buffer(cut_range.clone(), ClipboardMode::Normal) {
-            self.line_buffer.clear_range(cut_range);
-        }
+        self.maybe_cut(cut_range.clone(), ClipboardMode::Normal);
     }
 
     fn cut_big_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let right_index = self.line_buffer.next_whitespace();
         let cut_range = insertion_offset..right_index;
-        if self.maybe_update_cut_buffer(cut_range.clone(), ClipboardMode::Normal) {
-            self.line_buffer.clear_range(cut_range);
-        }
+        self.maybe_cut(cut_range.clone(), ClipboardMode::Normal);
     }
 
     fn cut_word_right_to_next(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let right_index = self.line_buffer.word_right_start_index();
         let cut_range = insertion_offset..right_index;
-        if self.maybe_update_cut_buffer(cut_range.clone(), ClipboardMode::Normal) {
-            self.line_buffer.clear_range(cut_range);
-        }
+        self.maybe_cut(cut_range.clone(), ClipboardMode::Normal);
     }
 
     fn cut_big_word_right_to_next(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let right_index = self.line_buffer.big_word_right_start_index();
         let cut_range = insertion_offset..right_index;
-        if self.maybe_update_cut_buffer(cut_range.clone(), ClipboardMode::Normal) {
-            self.line_buffer.clear_range(cut_range);
-        }
+        self.maybe_cut(cut_range.clone(), ClipboardMode::Normal);
     }
 
     fn cut_char(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let right_index = self.line_buffer.grapheme_right_index();
         let cut_range = insertion_offset..right_index;
-        if self.maybe_update_cut_buffer(cut_range.clone(), ClipboardMode::Normal) {
-            self.line_buffer.clear_range(cut_range);
-        }
+        self.maybe_cut(cut_range.clone(), ClipboardMode::Normal);
     }
 
     fn insert_cut_buffer_before(&mut self) {
@@ -396,13 +372,7 @@ impl Editor {
             let extra = if before_char { 0 } else { c.len_utf8() };
             let cut_range = self.line_buffer.insertion_point()..index + extra;
 
-            if self.maybe_update_cut_buffer(cut_range, ClipboardMode::Normal) {
-                if before_char {
-                    self.line_buffer.delete_right_before_char(c, current_line);
-                } else {
-                    self.line_buffer.delete_right_until_char(c, current_line);
-                }
-            }
+            self.maybe_cut(cut_range, ClipboardMode::Normal);
         }
     }
 
@@ -413,13 +383,7 @@ impl Editor {
             let extra = if before_char { c.len_utf8() } else { 0 };
             let cut_range = index + extra..self.line_buffer.insertion_point();
 
-            if self.maybe_update_cut_buffer(cut_range, ClipboardMode::Normal) {
-                if before_char {
-                    self.line_buffer.delete_left_before_char(c, current_line);
-                } else {
-                    self.line_buffer.delete_left_until_char(c, current_line);
-                }
-            }
+            self.maybe_cut(cut_range, ClipboardMode::Normal);
         }
     }
 
