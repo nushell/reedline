@@ -6,10 +6,12 @@ use crate::{core_editor::get_default_clipboard, EditCommand};
 
 // Determines how we update the cut buffer when we next cut
 enum LastCutCommand {
-    // We are currently
-    ThisCommand,
-    LastCommand,
-    BeforeLastCommand,
+    // We are currently running a command that includes a cut command.
+    This,
+    // We have just run a command that includes a cut command.
+    Last,
+    // We have not recently run a cut command. Replace the cut buffer if another cut happens.
+    BeforeLast,
 }
 
 // Which direction are we cutting in?
@@ -36,7 +38,7 @@ impl Default for Editor {
         Editor {
             line_buffer: LineBuffer::new(),
             cut_buffer: Box::new(get_default_clipboard()),
-            last_cut_command: LastCutCommand::BeforeLastCommand,
+            last_cut_command: LastCutCommand::BeforeLast,
             edit_stack: EditStack::new(),
             last_undo_behavior: UndoBehavior::CreateUndoPoint,
         }
@@ -117,10 +119,8 @@ impl Editor {
         }
 
         self.last_cut_command = match self.last_cut_command {
-            LastCutCommand::ThisCommand => LastCutCommand::LastCommand,
-            LastCutCommand::LastCommand | LastCutCommand::BeforeLastCommand => {
-                LastCutCommand::BeforeLastCommand
-            }
+            LastCutCommand::This => LastCutCommand::Last,
+            LastCutCommand::Last | LastCutCommand::BeforeLast => LastCutCommand::BeforeLast,
         };
 
         let new_undo_behavior = match (command, command.edit_type()) {
@@ -249,7 +249,7 @@ impl Editor {
             // Otherwise, replace what's in the cut buffer.
             let buf;
             let cut_slice = match (&self.last_cut_command, direction) {
-                (LastCutCommand::BeforeLastCommand, _) => cut_slice,
+                (LastCutCommand::BeforeLast, _) => cut_slice,
                 (_, CutDirection::Left) => {
                     let existing = self.cut_buffer.get().0;
                     buf = format!("{cut_slice}{existing}");
@@ -272,7 +272,7 @@ impl Editor {
             self.line_buffer.set_insertion_point(start);
             self.line_buffer.clear_range(cut_range);
         }
-        self.last_cut_command = LastCutCommand::ThisCommand;
+        self.last_cut_command = LastCutCommand::This;
     }
 
     fn cut_current_line(&mut self) {
