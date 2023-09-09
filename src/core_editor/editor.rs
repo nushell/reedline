@@ -5,6 +5,13 @@ use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 use crate::enums::{EditType, UndoBehavior};
 use crate::{core_editor::get_default_clipboard, EditCommand};
 
+// Determines how we update the cut buffer when we next cut
+enum LastCutCommand {
+    ThisCommand,
+    LastCommand,
+    BeforeLastCommand,
+}
+
 /// Stateful editor executing changes to the underlying [`LineBuffer`]
 ///
 /// In comparison to the state-less [`LineBuffer`] the [`Editor`] keeps track of
@@ -12,6 +19,7 @@ use crate::{core_editor::get_default_clipboard, EditCommand};
 pub struct Editor {
     line_buffer: LineBuffer,
     cut_buffer: Box<dyn Clipboard>,
+    last_cut_command: LastCutCommand,
 
     edit_stack: EditStack<LineBuffer>,
     last_undo_behavior: UndoBehavior,
@@ -22,6 +30,7 @@ impl Default for Editor {
         Editor {
             line_buffer: LineBuffer::new(),
             cut_buffer: Box::new(get_default_clipboard()),
+            last_cut_command: LastCutCommand::BeforeLastCommand,
             edit_stack: EditStack::new(),
             last_undo_behavior: UndoBehavior::CreateUndoPoint,
         }
@@ -100,6 +109,13 @@ impl Editor {
             EditCommand::MoveLeftUntil(c) => self.move_left_until_char(*c, false, true),
             EditCommand::MoveLeftBefore(c) => self.move_left_until_char(*c, true, true),
         }
+
+        self.last_cut_command = match self.last_cut_command {
+            LastCutCommand::ThisCommand => LastCutCommand::LastCommand,
+            LastCutCommand::LastCommand | LastCutCommand::BeforeLastCommand => {
+                LastCutCommand::BeforeLastCommand
+            }
+        };
 
         let new_undo_behavior = match (command, command.edit_type()) {
             (_, EditType::MoveCursor) => UndoBehavior::MoveCursor,
@@ -233,6 +249,7 @@ impl Editor {
             self.line_buffer.set_insertion_point(start);
             self.line_buffer.clear_range(cut_range);
         }
+        self.last_cut_command = LastCutCommand::ThisCommand;
     }
 
     fn cut_current_line(&mut self) {
