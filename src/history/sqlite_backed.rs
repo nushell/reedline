@@ -341,7 +341,15 @@ impl SqliteBackedHistory {
             }
         }
         if let Some(session_id) = query.filter.session {
-            wheres.push("session_id = :session_id");
+            // Filter so that we get rows:
+            // - that have the same session_id, or
+            // - have a lower id than the first command with our session_id, or
+            // - if there's no command with our session_id, take the whole history.
+            wheres.push(
+                "(session_id = :session_id OR \
+                  id < (SELECT MIN(id) FROM history WHERE session_id = :session_id) OR \
+                  COALESCE((SELECT MIN(id) FROM history WHERE session_id = :session_id), -1) = -1)",
+            );
             params.push((":session_id", Box::new(session_id)));
         }
         let mut wheres = wheres.join(" and ");
