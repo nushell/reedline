@@ -359,7 +359,7 @@ mod tests {
 
         let mut completions = DefaultCompleter::default();
         completions.insert(
-            vec!["ｎｕｓｈｅｌｌ", "ｎｕｌｌ", "ｎｕｍｂｅｒ"]
+            ["ｎｕｓｈｅｌｌ", "ｎｕｌｌ", "ｎｕｍｂｅｒ"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
@@ -367,7 +367,7 @@ mod tests {
 
         assert_eq!(
             completions.complete("ｎ", 3),
-            vec![
+            [
                 Suggestion {
                     value: "ｎｕｌｌ".into(),
                     description: None,
