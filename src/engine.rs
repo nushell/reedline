@@ -1710,7 +1710,7 @@ impl Reedline {
         let buffer = self.editor.get_buffer().to_string();
         self.hide_hints = true;
         // Additional repaint to show the content without hints etc.
-        if let Some(transient_prompt) = std::mem::replace(&mut self.transient_prompt, None) {
+        if let Some(transient_prompt) = self.transient_prompt.take() {
             self.repaint(transient_prompt.as_ref())?;
             self.transient_prompt = Some(transient_prompt);
         } else {
