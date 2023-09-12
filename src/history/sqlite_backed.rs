@@ -191,21 +191,21 @@ impl SqliteBackedHistory {
     ///
     /// **Side effects:** creates all nested directories to the file
     ///
-    pub fn with_file(file: PathBuf) -> Result<Self> {
+    pub fn with_file(file: PathBuf, session: Option<HistorySessionId>) -> Result<Self> {
         if let Some(base_dir) = file.parent() {
             std::fs::create_dir_all(base_dir).map_err(|e| {
                 ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!("{e}")))
             })?;
         }
         let db = Connection::open(&file).map_err(map_sqlite_err)?;
-        Self::from_connection(db)
+        Self::from_connection(db, session)
     }
     /// Creates a new history in memory
     pub fn in_memory() -> Result<Self> {
-        Self::from_connection(Connection::open_in_memory().map_err(map_sqlite_err)?)
+        Self::from_connection(Connection::open_in_memory().map_err(map_sqlite_err)?, None)
     }
     /// initialize a new database / migrate an existing one
-    fn from_connection(db: Connection) -> Result<Self> {
+    fn from_connection(db: Connection, session: Option<HistorySessionId>) -> Result<Self> {
         // https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
         db.pragma_update(None, "journal_mode", "wal")
             .map_err(map_sqlite_err)?;
@@ -251,7 +251,7 @@ impl SqliteBackedHistory {
         ",
         )
         .map_err(map_sqlite_err)?;
-        Ok(SqliteBackedHistory { db, session: None })
+        Ok(SqliteBackedHistory { db, session })
     }
 
     fn construct_query<'a>(

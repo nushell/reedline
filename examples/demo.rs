@@ -23,9 +23,18 @@ fn main() -> std::io::Result<()> {
     // quick command like parameter handling
     let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
 
+    // Setting history_per_session to true will allow the history to be isolated to the current session
+    // Setting history_per_session to false will allow the history to be shared across all sessions
+    let history_per_session = true;
+    let mut history_session_id = if history_per_session {
+        Reedline::create_history_session_id()
+    } else {
+        None
+    };
+
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     let history = Box::new(
-        reedline::SqliteBackedHistory::with_file("history.sqlite3".into())
+        reedline::SqliteBackedHistory::with_file("history.sqlite3".into(), history_session_id)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
     );
     #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
@@ -64,15 +73,6 @@ fn main() -> std::io::Result<()> {
         vi_insert: Some(SetCursorStyle::BlinkingBar),
         vi_normal: Some(SetCursorStyle::SteadyBlock),
         emacs: None,
-    };
-
-    // Setting history_per_session to true will allow the history to be isolated to the current session
-    // Setting history_per_session to false will allow the history to be shared across all sessions
-    let history_per_session = false;
-    let mut history_session_id = if history_per_session {
-        Reedline::create_history_session_id()
-    } else {
-        None
     };
 
     let mut line_editor = Reedline::create()
