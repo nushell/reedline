@@ -363,7 +363,7 @@ mod test {
         #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
         fn open_history() -> Box<dyn History> {
             Box::new(
-                crate::SqliteBackedHistory::with_file("target/test-history.db".into(), None)
+                crate::SqliteBackedHistory::with_file("target/test-history.db".into(), None, None)
                     .unwrap(),
             )
         }
