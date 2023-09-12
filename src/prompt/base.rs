@@ -84,9 +84,9 @@ impl Display for PromptEditMode {
 /// Implementors have to provide [`str`]-based content which will be
 /// displayed before the `LineBuffer` is drawn.
 pub trait Prompt: Send {
-    /// Provide content off the right full prompt
+    /// Provide content of the left full prompt
     fn render_prompt_left(&self) -> Cow<str>;
-    /// Provide content off the left full prompt
+    /// Provide content of the right full prompt
     fn render_prompt_right(&self) -> Cow<str>;
     /// Render the prompt indicator (Last part of the prompt that changes based on the editor mode)
     fn render_prompt_indicator(&self, prompt_mode: PromptEditMode) -> Cow<str>;
