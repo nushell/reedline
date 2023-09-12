@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
 
@@ -112,7 +110,7 @@ pub struct Reedline {
     // Stdout
     painter: Painter,
 
-    transient_prompt: Option<Arc<Mutex<Box<dyn Prompt>>>>,
+    transient_prompt: Option<Box<dyn Prompt>>,
 
     // Edit Mode: Vi, Emacs
     edit_mode: Box<dyn EditMode>,
@@ -442,7 +440,7 @@ impl Reedline {
     /// Set a different prompt to be used after submitting each line
     #[must_use]
     pub fn with_transient_prompt(mut self, transient_prompt: Box<dyn Prompt>) -> Self {
-        self.transient_prompt = Some(Arc::from(Mutex::from(transient_prompt)));
+        self.transient_prompt = Some(transient_prompt);
         self
     }
 
@@ -1712,16 +1710,9 @@ impl Reedline {
         let buffer = self.editor.get_buffer().to_string();
         self.hide_hints = true;
         // Additional repaint to show the content without hints etc.
-        if let Some(transient_prompt) = &self.transient_prompt {
-            match transient_prompt.clone().lock() {
-                Ok(transient_prompt) => {
-                    self.repaint(transient_prompt.as_ref())?;
-                }
-                Err(_) => {
-                    // TODO log error
-                    self.repaint(prompt)?;
-                }
-            }
+        if let Some(transient_prompt) = self.transient_prompt.take() {
+            self.repaint(transient_prompt.as_ref())?;
+            self.transient_prompt = Some(transient_prompt);
         } else {
             self.repaint(prompt)?;
         }
