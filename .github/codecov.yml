@@ -1,0 +1,16 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 50%
+        threshold: 2%
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: reach, diff, files
+  behavior: default
+  require_base: yes
+  require_head: yes
+  after_n_builds: 5 # Our test matrix currently has 5 configurations
