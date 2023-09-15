@@ -456,15 +456,8 @@ impl Reedline {
     /// Reedline::create().with_buffer_editor_command(command, "temp.nu".into());
     /// ```
     #[must_use]
-    pub fn with_buffer_editor_command(
-        mut self,
-        command: Command,
-        temp_file: PathBuf,
-    ) -> Self {
-        self.buffer_editor = Some(BufferEditor {
-            command,
-            temp_file,
-        });
+    pub fn with_buffer_editor_command(mut self, command: Command, temp_file: PathBuf) -> Self {
+        self.buffer_editor = Some(BufferEditor { command, temp_file });
         self
     }
 

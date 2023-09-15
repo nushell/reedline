@@ -1,3 +1,5 @@
+use std::env::temp_dir;
+use std::process::Command;
 use {
     crossterm::{
         cursor::SetCursorStyle,
@@ -13,8 +15,6 @@ use {
     },
     std::io::stdout,
 };
-use std::env::temp_dir;
-use std::process::Command;
 
 use reedline::CursorConfig;
 #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
