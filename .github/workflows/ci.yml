@@ -41,26 +41,17 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Rustfmt
-        uses: actions-rs/cargo@v1.0.1
-        with:
-          command: fmt
-          args: --all -- --check
+        run: cargo fmt --all -- --check
 
       - name: Clippy
-        uses: actions-rs/cargo@v1.0.1
-        with:
-          command: clippy
-          args: ${{ matrix.flags }} --all -- -D warnings
+        run: cargo clippy ${{ matrix.flags }} --all -- -D warnings
 
 
       - name: Tests
         run: cargo llvm-cov nextest --all ${{ matrix.flags }} --lcov --output-path lcov.info
 
       - name: Doctests
-        uses: actions-rs/cargo@v1.0.1
-        with:
-          command: test
-          args: --doc ${{ matrix.flags }}
+        run: cargo test --doc ${{ matrix.flags }}
 
       - name: Upload coverage
         uses: codecov/codecov-action@v3
