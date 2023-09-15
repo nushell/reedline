@@ -264,15 +264,15 @@ impl SqliteBackedHistory {
             SearchDirection::Forward => (true, "asc"),
             SearchDirection::Backward => (false, "desc"),
         };
-        let mut wheres: Vec<&str> = vec![];
-        let mut params: BoxedNamedParams = vec![];
+        let mut wheres = Vec::new();
+        let mut params: BoxedNamedParams = Vec::new();
         if let Some(start) = query.start_time {
             wheres.push(if is_asc {
                 "timestamp_start > :start_time"
             } else {
                 "timestamp_start < :start_time"
             });
-            params.push((":start_time", Box::new(start.timestamp_millis())))
+            params.push((":start_time", Box::new(start.timestamp_millis())));
         }
         if let Some(end) = query.end_time {
             wheres.push(if is_asc {
@@ -288,7 +288,7 @@ impl SqliteBackedHistory {
             } else {
                 "id < :start_id"
             });
-            params.push((":start_id", Box::new(start.0)))
+            params.push((":start_id", Box::new(start.0)));
         }
         if let Some(end) = query.end_id {
             wheres.push(if is_asc {
@@ -349,10 +349,11 @@ impl SqliteBackedHistory {
             wheres = "true".to_string();
         }
         let query = format!(
-            "select {select_expression} from history
-        where
-        {wheres}
-        order by id {asc} {limit}"
+            "SELECT {select_expression} \
+             FROM history \
+             WHERE ({wheres}) \
+             ORDER BY id {asc} \
+             {limit}"
         );
         (query, params)
     }

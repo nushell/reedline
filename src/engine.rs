@@ -114,6 +114,8 @@ pub struct Reedline {
     // Stdout
     painter: Painter,
 
+    transient_prompt: Option<Box<dyn Prompt>>,
+
     // Edit Mode: Vi, Emacs
     edit_mode: Box<dyn EditMode>,
 
@@ -207,6 +209,7 @@ impl Reedline {
             history_cursor_on_excluded: false,
             input_mode: InputMode::Regular,
             painter,
+            transient_prompt: None,
             edit_mode,
             completer,
             quick_completions: false,
@@ -485,6 +488,13 @@ impl Reedline {
     #[must_use]
     pub fn disable_validator(mut self) -> Self {
         self.validator = None;
+        self
+    }
+
+    /// Set a different prompt to be used after submitting each line
+    #[must_use]
+    pub fn with_transient_prompt(mut self, transient_prompt: Box<dyn Prompt>) -> Self {
+        self.transient_prompt = Some(transient_prompt);
         self
     }
 
@@ -1775,7 +1785,12 @@ impl Reedline {
         let buffer = self.editor.get_buffer().to_string();
         self.hide_hints = true;
         // Additional repaint to show the content without hints etc.
-        self.repaint(prompt)?;
+        if let Some(transient_prompt) = self.transient_prompt.take() {
+            self.repaint(transient_prompt.as_ref())?;
+            self.transient_prompt = Some(transient_prompt);
+        } else {
+            self.repaint(prompt)?;
+        }
         if !buffer.is_empty() {
             let mut entry = HistoryItem::from_command_line(&buffer);
             entry.session_id = self.get_history_session_id();

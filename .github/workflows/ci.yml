@@ -35,9 +35,10 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1.3.4
-
       - name: Setup nextest
         uses: taiki-e/install-action@nextest
+      - name: Setup cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Rustfmt
         uses: actions-rs/cargo@v1.0.1
@@ -53,13 +54,16 @@ jobs:
 
 
       - name: Tests
-        uses: actions-rs/cargo@v1.0.1
-        with:
-          command: nextest
-          args: run --all ${{ matrix.flags }}
+        run: cargo llvm-cov nextest --all ${{ matrix.flags }} --lcov --output-path lcov.info
 
       - name: Doctests
         uses: actions-rs/cargo@v1.0.1
         with:
           command: test
           args: --doc ${{ matrix.flags }}
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: lcov.info
+          
