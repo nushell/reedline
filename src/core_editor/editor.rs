@@ -116,6 +116,7 @@ impl Editor {
             EditCommand::CutLeftBefore(c) => self.cut_left_until_char(*c, true, true),
             EditCommand::MoveLeftUntil(c) => self.move_left_until_char(*c, false, true),
             EditCommand::MoveLeftBefore(c) => self.move_left_until_char(*c, true, true),
+            EditCommand::StopCutting => self.last_cut_command = LastCutCommand::BeforeLast,
         }
 
         self.last_cut_command = match self.last_cut_command {

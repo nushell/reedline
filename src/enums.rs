@@ -189,6 +189,9 @@ pub enum EditCommand {
 
     /// CutUntil left before char
     MoveLeftBefore(char),
+
+    /// Stop emacs-style cut buffer growth. Next cut command will make a new cut buffer.
+    StopCutting,
 }
 
 impl Display for EditCommand {
@@ -250,6 +253,7 @@ impl Display for EditCommand {
             EditCommand::CutLeftBefore(_) => write!(f, "CutLeftBefore Value: <char>"),
             EditCommand::MoveLeftUntil(_) => write!(f, "MoveLeftUntil Value: <char>"),
             EditCommand::MoveLeftBefore(_) => write!(f, "MoveLeftBefore Value: <char>"),
+            EditCommand::StopCutting => write!(f, "StopCutting"),
         }
     }
 }
@@ -277,7 +281,8 @@ impl EditCommand {
             | EditCommand::MoveRightUntil(_)
             | EditCommand::MoveRightBefore(_)
             | EditCommand::MoveLeftUntil(_)
-            | EditCommand::MoveLeftBefore(_) => EditType::MoveCursor,
+            | EditCommand::MoveLeftBefore(_)
+            | EditCommand::StopCutting => EditType::MoveCursor,
 
             // Text edits
             EditCommand::InsertChar(_)

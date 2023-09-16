@@ -91,6 +91,20 @@ impl ParsedViSequence {
         }
     }
 
+    fn add_stop_cutting_event(event: ReedlineEvent) -> ReedlineEvent {
+        match event {
+            ReedlineEvent::Edit(mut edits) => {
+                edits.push(EditCommand::StopCutting);
+                ReedlineEvent::Edit(edits)
+            }
+            ReedlineEvent::Multiple(mut edits) => {
+                edits.push(ReedlineEvent::Edit(vec![EditCommand::StopCutting]));
+                ReedlineEvent::Multiple(edits)
+            }
+            _ => event,
+        }
+    }
+
     pub fn enters_insert_mode(&self) -> bool {
         matches!(
             (&self.command, &self.motion),
@@ -117,7 +131,7 @@ impl ParsedViSequence {
                     ReedlineEvent::None => {}
                     event => vi_state.previous = Some(event.clone()),
                 }
-                events
+                Self::add_stop_cutting_event(events)
             }
             // This case handles all combinations of commands and motions that could exist
             (_, Some(command), _, ParseResult::Valid(motion)) => {
@@ -127,7 +141,7 @@ impl ParsedViSequence {
                     ReedlineEvent::None => {}
                     event => vi_state.previous = Some(event.clone()),
                 }
-                events
+                Self::add_stop_cutting_event(events)
             }
             (_, None, _, ParseResult::Valid(motion)) => {
                 self.apply_multiplier(Some(motion.to_reedline(vi_state)))
