@@ -452,24 +452,52 @@ mod tests {
             ])]))]
     #[case(&['0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart])]))]
     #[case(&['$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd])]))]
-    #[case(&['i'], ReedlineEvent::Multiple(vec![ReedlineEvent::Repaint]))]
-    #[case(&['p'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter])]))]
+    #[case(&['i'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Repaint,
+        ReedlineEvent::Edit(vec![EditCommand::StopCutting]),
+        ]))]
+    #[case(&['p'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter]),
+        ReedlineEvent::Edit(vec![EditCommand::StopCutting]),
+        ]))]
     #[case(&['2', 'p'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter]),
-        ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter])
+        ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter]),
+        ReedlineEvent::Edit(vec![EditCommand::StopCutting]),
         ]))]
-    #[case(&['u'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Undo])]))]
+    #[case(&['u'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::Undo]),
+        ReedlineEvent::Edit(vec![EditCommand::StopCutting]),
+        ]))]
     #[case(&['2', 'u'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::Edit(vec![EditCommand::Undo]),
-        ReedlineEvent::Edit(vec![EditCommand::Undo])
+        ReedlineEvent::Edit(vec![EditCommand::Undo]),
+        ReedlineEvent::Edit(vec![EditCommand::StopCutting]),
         ]))]
     #[case(&['d', 'd'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
-    #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext])]))]
-    #[case(&['d', 'W'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRightToNext])]))]
-    #[case(&['d', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight])]))]
-    #[case(&['d', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordLeft])]))]
-    #[case(&['d', 'B'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordLeft])]))]
+        ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine]),
+        ReedlineEvent::Edit(vec![EditCommand::StopCutting]),
+        ]))]
+    #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext]),
+        ReedlineEvent::Edit(vec![EditCommand::StopCutting]),
+        ]))]
+    #[case(&['d', 'W'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::CutBigWordRightToNext]),
+        ReedlineEvent::Edit(vec![EditCommand::StopCutting]),
+        ]))]
+    #[case(&['d', 'e'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::CutWordRight]),
+        ReedlineEvent::Edit(vec![EditCommand::StopCutting]),
+        ]))]
+    #[case(&['d', 'b'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::CutWordLeft]),
+        ReedlineEvent::Edit(vec![EditCommand::StopCutting]),
+        ]))]
+    #[case(&['d', 'B'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::CutBigWordLeft]),
+        ReedlineEvent::Edit(vec![EditCommand::StopCutting]),
+        ]))]
     fn test_reedline_move(#[case] input: &[char], #[case] expected: ReedlineEvent) {
         let mut vi = Vi::default();
         let res = vi_parse(input);
