@@ -287,6 +287,10 @@ mod test {
         #[case::edit_dw_P(&["^", "dw", "P"])]
         #[case::edit_3dw_P(&["^", "3dw", "P"])]
         #[case::edit_d3w_P(&["^", "d3w", "P"])]
+        #[case::edit_dtz_P(&["^", "dtz", "P"])]
+        #[case::edit_dTz_P(&["dTz", "P"])]
+        #[case::edit_dfz_P(&["^", "dfz", "P"])]
+        #[case::edit_dFz_P(&["dFz", "P"])]
         #[case::edit_dw_dw_P(&[
             // duplicate the first word, because dw dw P should drop the first word
             "^", "dw", "P", "P", "b",
@@ -311,17 +315,23 @@ mod test {
             };
 
             let mut reedline = Reedline::create();
+            let mut has_changed = false;
             reedline.run_edit_commands(&[EditCommand::InsertString(initial_input.into())]);
 
             for command in commands {
                 let command: Vec<char> = command.chars().collect();
                 let parsed = parse(&mut command.iter().peekable());
                 let commands = unwrap_edits(parsed.to_reedline_event(&mut vi));
+                has_changed |= initial_input != reedline.current_buffer_contents().trim_end();
 
                 reedline.run_edit_commands(&commands)
             }
 
             assert_eq!(initial_input, reedline.current_buffer_contents().trim_end());
+            assert!(
+                has_changed,
+                "The sequence of commands should change the input and then restore it"
+            )
         }
     }
 }
