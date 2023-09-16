@@ -268,7 +268,7 @@ mod test {
     #[allow(non_snake_case)]
     mod integration {
         use super::*;
-        use crate::{Editor, ReedlineEvent, UndoBehavior};
+        use crate::{Reedline, ReedlineEvent};
         use pretty_assertions::assert_eq;
         use rstest::rstest;
 
@@ -279,7 +279,7 @@ mod test {
                 ReedlineEvent::Multiple(events) => {
                     events.into_iter().flat_map(unwrap_edits).collect()
                 }
-                other => panic!("unexpected event ${other}"),
+                other => panic!("unexpected event {other:#?}"),
             }
         }
 
@@ -292,9 +292,16 @@ mod test {
             "^", "dw", "P", "P", "b",
             // run the actual test, and it should put us back where we started.
             "dw", "dw", "P"])]
-        #[case::edit_ddu(&["dd", "u"])]
+        #[case::edit_dd_u(&["dd", "u"])]
+        // not actually a no-op because it adds a newline, but we .trim_end()
+        #[case::edit_dd_p(&["dd", "p"])]
+        #[case::edit_dd_P_uu(&["dd", "P", "u", "u"])]
+        // FIXME: this happens on the second line, so doesn't actually delete two lines
+        // I can't work out how to use "k" to go to the line above because it generates an
+        // UntilFound([MenuUp, Up]) event, and I'm not sure how to handle that.
+        #[case::edit_d2d_p(&["d2d", "p"])]
         fn sum_to_zero(#[case] commands: &[&str]) {
-            let initial_input = "the quick brown fox jumps over the lazy dog";
+            let initial_input = "the quick brown fox\njumps over the lazy dog";
             let keybindings = default_vi_normal_keybindings();
             let mut vi = Vi {
                 insert_keybindings: default_vi_insert_keybindings(),
@@ -303,21 +310,18 @@ mod test {
                 ..Default::default()
             };
 
-            let mut editor = Editor::default();
-            editor.set_buffer(initial_input.to_string(), UndoBehavior::CreateUndoPoint);
+            let mut reedline = Reedline::create();
+            reedline.run_edit_commands(&[EditCommand::InsertString(initial_input.into())]);
 
             for command in commands {
                 let command: Vec<char> = command.chars().collect();
                 let parsed = parse(&mut command.iter().peekable());
                 let commands = unwrap_edits(parsed.to_reedline_event(&mut vi));
-                // FIXME: use run_edit_commands() instead
-                for command in commands {
-                    editor.run_edit_command(&command)
-                }
+
+                reedline.run_edit_commands(&commands)
             }
 
-            // FIXME: use Engine::current_buffer_contents()
-            assert_eq!(initial_input, editor.get_buffer());
+            assert_eq!(initial_input, reedline.current_buffer_contents().trim_end());
         }
     }
 }
