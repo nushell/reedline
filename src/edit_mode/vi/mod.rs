@@ -264,4 +264,60 @@ mod test {
 
         assert_eq!(result, ReedlineEvent::None);
     }
+
+    #[allow(non_snake_case)]
+    mod integration {
+        use super::*;
+        use crate::{Editor, ReedlineEvent, UndoBehavior};
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        fn unwrap_edits(event: ReedlineEvent) -> Vec<EditCommand> {
+            match event {
+                ReedlineEvent::Edit(c) => c,
+                // It's not clear what the difference is between these, but vi mode often returns Multiple
+                ReedlineEvent::Multiple(events) => {
+                    events.into_iter().flat_map(unwrap_edits).collect()
+                }
+                other => panic!("unexpected event ${other}"),
+            }
+        }
+
+        #[rstest]
+        #[case::edit_dw_P(&["^", "dw", "P"])]
+        #[case::edit_3dw_P(&["^", "3dw", "P"])]
+        #[case::edit_d3w_P(&["^", "d3w", "P"])]
+        #[case::edit_dw_dw_P(&[
+            // duplicate the first word, because dw dw P should drop the first word
+            "^", "dw", "P", "P", "b",
+            // run the actual test, and it should put us back where we started.
+            "dw", "dw", "P"])]
+        #[case::edit_ddu(&["dd", "u"])]
+        fn sum_to_zero(#[case] commands: &[&str]) {
+            let initial_input = "the quick brown fox jumps over the lazy dog";
+            let keybindings = default_vi_normal_keybindings();
+            let mut vi = Vi {
+                insert_keybindings: default_vi_insert_keybindings(),
+                normal_keybindings: keybindings,
+                mode: ViMode::Normal,
+                ..Default::default()
+            };
+
+            let mut editor = Editor::default();
+            editor.set_buffer(initial_input.to_string(), UndoBehavior::CreateUndoPoint);
+
+            for command in commands {
+                let command: Vec<char> = command.chars().collect();
+                let parsed = parse(&mut command.iter().peekable());
+                let commands = unwrap_edits(parsed.to_reedline_event(&mut vi));
+                // FIXME: use run_edit_commands() instead
+                for command in commands {
+                    editor.run_edit_command(&command)
+                }
+            }
+
+            // FIXME: use Engine::current_buffer_contents()
+            assert_eq!(initial_input, editor.get_buffer());
+        }
+    }
 }
