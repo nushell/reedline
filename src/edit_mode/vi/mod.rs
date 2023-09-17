@@ -285,6 +285,9 @@ mod test {
 
         #[rstest]
         #[case::edit_dw_P(&["^", "dw", "P"])]
+        #[case::edit_db_P(&["db", "P"])]
+        #[case::edit_dW_P(&["^", "dW", "P"])]
+        #[case::edit_dB_P(&["dB", "P"])]
         #[case::edit_3dw_P(&["^", "3dw", "P"])]
         #[case::edit_d3w_P(&["^", "d3w", "P"])]
         #[case::edit_dtz_P(&["^", "dtz", "P"])]
@@ -293,9 +296,14 @@ mod test {
         #[case::edit_dFz_P(&["dFz", "P"])]
         #[case::edit_dw_dw_P(&[
             // duplicate the first word, because dw dw P should drop the first word
-            "^", "dw", "P", "P", "b",
+            "^", "dw", "P", "P", "Fj",
             // run the actual test, and it should put us back where we started.
             "dw", "dw", "P"])]
+        #[case::edit_dW_dW_P(&[
+            // duplicate the first word, because dW dW P should drop the first word
+            "^", "dW", "P", "P", "B",
+            // run the actual test, and it should put us back where we started.
+            "dW", "dW", "P"])]
         #[case::edit_dd_u(&["dd", "u"])]
         // not actually a no-op because it adds a newline, but we .trim_end()
         #[case::edit_dd_p(&["dd", "p"])]
@@ -305,7 +313,7 @@ mod test {
         // UntilFound([MenuUp, Up]) event, and I'm not sure how to handle that.
         #[case::edit_d2d_p(&["d2d", "p"])]
         fn sum_to_zero(#[case] commands: &[&str]) {
-            let initial_input = "the quick brown fox\njumps over the lazy dog";
+            let initial_input = "the quick brown fox\njumps-over the lazy-dog";
             let keybindings = default_vi_normal_keybindings();
             let mut vi = Vi {
                 insert_keybindings: default_vi_insert_keybindings(),
@@ -322,9 +330,11 @@ mod test {
                 let command: Vec<char> = command.chars().collect();
                 let parsed = parse(&mut command.iter().peekable());
                 let commands = unwrap_edits(parsed.to_reedline_event(&mut vi));
-                has_changed |= initial_input != reedline.current_buffer_contents().trim_end();
 
-                reedline.run_edit_commands(&commands)
+                reedline.run_edit_commands(&commands);
+
+                dbg!(command);
+                has_changed |= initial_input != dbg!(reedline.current_buffer_contents().trim_end());
             }
 
             assert_eq!(initial_input, reedline.current_buffer_contents().trim_end());
