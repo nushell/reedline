@@ -17,6 +17,7 @@ const SQLITE_APPLICATION_ID: i32 = 1151497937;
 pub struct SqliteBackedHistory {
     db: rusqlite::Connection,
     session: Option<HistorySessionId>,
+    session_timestamp: Option<chrono::DateTime<Utc>>,
 }
 
 fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem> {
@@ -191,21 +192,33 @@ impl SqliteBackedHistory {
     ///
     /// **Side effects:** creates all nested directories to the file
     ///
-    pub fn with_file(file: PathBuf) -> Result<Self> {
+    pub fn with_file(
+        file: PathBuf,
+        session: Option<HistorySessionId>,
+        session_timestamp: Option<chrono::DateTime<Utc>>,
+    ) -> Result<Self> {
         if let Some(base_dir) = file.parent() {
             std::fs::create_dir_all(base_dir).map_err(|e| {
                 ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!("{e}")))
             })?;
         }
         let db = Connection::open(&file).map_err(map_sqlite_err)?;
-        Self::from_connection(db)
+        Self::from_connection(db, session, session_timestamp)
     }
     /// Creates a new history in memory
     pub fn in_memory() -> Result<Self> {
-        Self::from_connection(Connection::open_in_memory().map_err(map_sqlite_err)?)
+        Self::from_connection(
+            Connection::open_in_memory().map_err(map_sqlite_err)?,
+            None,
+            None,
+        )
     }
     /// initialize a new database / migrate an existing one
-    fn from_connection(db: Connection) -> Result<Self> {
+    fn from_connection(
+        db: Connection,
+        session: Option<HistorySessionId>,
+        session_timestamp: Option<chrono::DateTime<Utc>>,
+    ) -> Result<Self> {
         // https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
         db.pragma_update(None, "journal_mode", "wal")
             .map_err(map_sqlite_err)?;
@@ -251,7 +264,11 @@ impl SqliteBackedHistory {
         ",
         )
         .map_err(map_sqlite_err)?;
-        Ok(SqliteBackedHistory { db, session: None })
+        Ok(SqliteBackedHistory {
+            db,
+            session,
+            session_timestamp,
+        })
     }
 
     fn construct_query<'a>(
@@ -340,9 +357,18 @@ impl SqliteBackedHistory {
                 wheres.push("exit_status != 0");
             }
         }
-        if let Some(session_id) = query.filter.session {
-            wheres.push("session_id = :session_id");
+        if let (Some(session_id), Some(session_timestamp)) =
+            (query.filter.session, self.session_timestamp)
+        {
+            // Filter so that we get rows:
+            // - that have the same session_id, or
+            // - were executed before our session started
+            wheres.push("(session_id = :session_id OR start_timestamp < :session_timestamp)");
             params.push((":session_id", Box::new(session_id)));
+            params.push((
+                ":session_timestamp",
+                Box::new(session_timestamp.timestamp_millis()),
+            ));
         }
         let mut wheres = wheres.join(" and ");
         if wheres.is_empty() {
