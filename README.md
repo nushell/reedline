@@ -1,4 +1,4 @@
-# A readline replacement written in Rust
+# A feature-rich line editor - powering Nushell
 
 ![GitHub](https://img.shields.io/github/license/nushell/reedline)
 [![Crates.io](https://img.shields.io/crates/v/reedline)](https://crates.io/crates/reedline)
