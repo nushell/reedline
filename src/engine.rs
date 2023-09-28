@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
+use itertools::Itertools;
 
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
@@ -444,42 +445,35 @@ impl Reedline {
         self
     }
 
-    /// A builder that configures the text editor used to edit the line buffer
+    /// A builder that configures the alternate text editor used to edit the line buffer
+    ///
+    /// You are responsible for providing a file path that is unique to this reedline session
+    ///
     /// # Example
     /// ```rust,no_run
     /// // Create a reedline object with vim as editor
     ///
-    /// use reedline::{DefaultValidator, Reedline};
+    /// use reedline::Reedline;
+    /// use std::env::temp_dir;
     /// use std::process::Command;
+    ///
+    /// let temp_file = std::env::temp_dir().join("my-random-unique.file");
     /// let mut command = Command::new("vim");
-    /// // Command should contain full arguments including the path of temp_file
-    /// command.args(vec!["-e", "temp.nu"]);
-    ///
+    /// // you can provide additional flags:
+    /// command.arg("-p"); // open in a vim tab (just for demonstration)
+    /// // you don't have to pass the filename to the command
     /// let mut line_editor =
-    /// Reedline::create().with_buffer_editor_command(command, "temp.nu".into());
+    /// Reedline::create().with_buffer_editor("vim".into(), temp_file);
     /// ```
     #[must_use]
-    pub fn with_buffer_editor_command(mut self, command: Command, temp_file: PathBuf) -> Self {
-        self.buffer_editor = Some(BufferEditor { command, temp_file });
-        self
-    }
-
-    /// A builder that configures the text editor used to edit the line buffer
-    /// # Example
-    /// ```rust,no_run
-    /// // Create a reedline object with vim as editor
-    ///
-    /// use reedline::{DefaultValidator, Reedline};
-    ///
-    /// let mut line_editor =
-    /// Reedline::create().with_buffer_editor("vim".into(), "nu".into());
-    /// ```
-    #[must_use]
-    #[deprecated = "use `with_buffer_editor_command` instead"]
-    pub fn with_buffer_editor(mut self, editor: String, extension: String) -> Self {
+    pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
+        let mut editor = editor;
+        if !editor.get_args().contains(&temp_file.as_os_str()) {
+            editor.arg(&temp_file);
+        }
         self.buffer_editor = Some(BufferEditor {
-            command: Command::new(editor),
-            temp_file: std::env::temp_dir().join(format!("reedline_buffer.{extension}")),
+            command: editor,
+            temp_file,
         });
         self
     }
