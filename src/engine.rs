@@ -463,7 +463,7 @@ impl Reedline {
     /// command.arg("-p"); // open in a vim tab (just for demonstration)
     /// // you don't have to pass the filename to the command
     /// let mut line_editor =
-    /// Reedline::create().with_buffer_editor("vim".into(), temp_file);
+    /// Reedline::create().with_buffer_editor(command, temp_file);
     /// ```
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
