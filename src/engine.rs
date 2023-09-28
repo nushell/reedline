@@ -1,5 +1,8 @@
+use std::path::PathBuf;
+
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
+use itertools::Itertools;
 
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
@@ -152,8 +155,8 @@ pub struct Reedline {
 }
 
 struct BufferEditor {
-    editor: String,
-    extension: String,
+    command: Command,
+    temp_file: PathBuf,
 }
 
 impl Drop for Reedline {
@@ -442,19 +445,36 @@ impl Reedline {
         self
     }
 
-    /// A builder that configures the text editor used to edit the line buffer
+    /// A builder that configures the alternate text editor used to edit the line buffer
+    ///
+    /// You are responsible for providing a file path that is unique to this reedline session
+    ///
     /// # Example
     /// ```rust,no_run
     /// // Create a reedline object with vim as editor
     ///
-    /// use reedline::{DefaultValidator, Reedline};
+    /// use reedline::Reedline;
+    /// use std::env::temp_dir;
+    /// use std::process::Command;
     ///
+    /// let temp_file = std::env::temp_dir().join("my-random-unique.file");
+    /// let mut command = Command::new("vim");
+    /// // you can provide additional flags:
+    /// command.arg("-p"); // open in a vim tab (just for demonstration)
+    /// // you don't have to pass the filename to the command
     /// let mut line_editor =
-    /// Reedline::create().with_buffer_editor("vim".into(), "nu".into());
+    /// Reedline::create().with_buffer_editor(command, temp_file);
     /// ```
     #[must_use]
-    pub fn with_buffer_editor(mut self, editor: String, extension: String) -> Self {
-        self.buffer_editor = Some(BufferEditor { editor, extension });
+    pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
+        let mut editor = editor;
+        if !editor.get_args().contains(&temp_file.as_os_str()) {
+            editor.arg(&temp_file);
+        }
+        self.buffer_editor = Some(BufferEditor {
+            command: editor,
+            temp_file,
+        });
         self
     }
 
@@ -1584,26 +1604,17 @@ impl Reedline {
     }
 
     fn open_editor(&mut self) -> Result<()> {
-        match &self.buffer_editor {
-            None => Ok(()),
-            Some(BufferEditor { editor, extension }) => {
-                let temp_directory = std::env::temp_dir();
-                let temp_file = temp_directory.join(format!("reedline_buffer.{extension}"));
-
+        match &mut self.buffer_editor {
+            Some(BufferEditor {
+                ref mut command,
+                temp_file,
+            }) => {
                 {
-                    let mut file = File::create(temp_file.clone())?;
+                    let mut file = File::create(&temp_file)?;
                     write!(file, "{}", self.editor.get_buffer())?;
                 }
-
-                let mut ed = editor.split(' ');
-                let command = ed.next();
-
                 {
-                    let mut process = Command::new(command.unwrap_or(editor));
-                    process.args(ed);
-                    process.arg(temp_file.as_path());
-
-                    let mut child = process.spawn()?;
+                    let mut child = command.spawn()?;
                     child.wait()?;
                 }
 
@@ -1614,6 +1625,7 @@ impl Reedline {
 
                 Ok(())
             }
+            _ => Ok(()),
         }
     }
 
