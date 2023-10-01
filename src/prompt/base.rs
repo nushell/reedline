@@ -54,8 +54,22 @@ pub enum PromptEditMode {
     /// A vi-specific mode
     Vi(PromptViMode),
 
+    /// A hx-specific mode
+    Hx(PromptHxMode),
+
     /// A custom mode
     Custom(String),
+}
+
+/// The hx-specific modes that the prompt can be in
+#[derive(Serialize, Deserialize, Clone, Debug, EnumIter, Default)]
+pub enum PromptHxMode {
+    /// The default mode
+    #[default]
+    Normal,
+
+    /// Insertion mode
+    Insert,
 }
 
 /// The vi-specific modes that the prompt can be in
@@ -75,6 +89,7 @@ impl Display for PromptEditMode {
             PromptEditMode::Default => write!(f, "Default"),
             PromptEditMode::Emacs => write!(f, "Emacs"),
             PromptEditMode::Vi(_) => write!(f, "Vi_Normal\nVi_Insert"),
+            PromptEditMode::Hx(_) => write!(f, "Hx_Normal\nHx_Insert"),
             PromptEditMode::Custom(s) => write!(f, "Custom_{s}"),
         }
     }
