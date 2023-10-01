@@ -42,12 +42,15 @@ pub struct ParsedHxSequence {
     multiplier: Option<usize>,
     command: Option<Command>,
     count: Option<usize>,
-    motion: ParseResult<Motion>,
+    motion: Option<ParseResult<Motion>>,
 }
 
 impl ParsedHxSequence {
     pub fn is_valid(&self) -> bool {
-        !self.motion.is_invalid()
+        match self.motion {
+            Some(parse_res) => !parse_res.is_invalid(),
+            None => false,
+        }
     }
 
     pub fn is_complete(&self) -> bool {
@@ -94,43 +97,37 @@ impl ParsedHxSequence {
     pub fn enters_insert_mode(&self) -> bool {
         matches!(
             (&self.command, &self.motion),
-            (Some(Command::EnterHxInsert), ParseResult::Incomplete)
-                | (Some(Command::EnterHxAppend), ParseResult::Incomplete)
-                | (Some(Command::ChangeToLineEnd), ParseResult::Incomplete)
-                | (Some(Command::AppendToEnd), ParseResult::Incomplete)
-                | (Some(Command::PrependToStart), ParseResult::Incomplete)
-                | (Some(Command::RewriteCurrentLine), ParseResult::Incomplete)
-                | (
-                    Some(Command::SubstituteCharWithInsert),
-                    ParseResult::Incomplete
-                )
-                | (Some(Command::HistorySearch), ParseResult::Incomplete)
-                | (Some(Command::Change), ParseResult::Valid(_))
+            (Some(Command::EnterHxInsert), Some(ParseResult::Incomplete))
+                | (Some(Command::EnterHxAppend), Some(ParseResult::Incomplete))
+                | (Some(Command::AppendToEnd), Some(ParseResult::Incomplete))
+                | (Some(Command::PrependToStart), Some(ParseResult::Incomplete))
+                | (Some(Command::HistorySearch), Some(ParseResult::Incomplete))
+                | (Some(Command::Change), Some(ParseResult::Valid(_)))
         )
     }
 
-    pub fn to_reedline_event(&self, vi_state: &mut Hx) -> ReedlineEvent {
+    pub fn to_reedline_event(&self, hx_state: &mut Hx) -> ReedlineEvent {
         match (&self.multiplier, &self.command, &self.count, &self.motion) {
-            (_, Some(command), None, ParseResult::Incomplete) => {
-                let events = self.apply_multiplier(Some(command.to_reedline(vi_state)));
+            (_, Some(command), None, Some(ParseResult::Incomplete)) => {
+                let events = self.apply_multiplier(Some(command.to_reedline(hx_state)));
                 match &events {
                     ReedlineEvent::None => {}
-                    event => vi_state.previous = Some(event.clone()),
+                    event => hx_state.previous = Some(event.clone()),
                 }
                 events
             }
             // This case handles all combinations of commands and motions that could exist
             (_, Some(command), _, ParseResult::Valid(motion)) => {
                 let events =
-                    self.apply_multiplier(command.to_reedline_with_motion(motion, vi_state));
+                    self.apply_multiplier(command.to_reedline_with_motion(motion, hx_state));
                 match &events {
                     ReedlineEvent::None => {}
-                    event => vi_state.previous = Some(event.clone()),
+                    event => hx_state.previous = Some(event.clone()),
                 }
                 events
             }
             (_, None, _, ParseResult::Valid(motion)) => {
-                self.apply_multiplier(Some(motion.to_reedline(vi_state)))
+                self.apply_multiplier(Some(motion.to_reedline(hx_state)))
             }
             _ => ReedlineEvent::None,
         }
@@ -190,14 +187,14 @@ mod tests {
 
     #[test]
     fn test_delete_word() {
-        let input = ['d', 'w'];
+        let input = ['w'];
         let output = hx_parse(&input);
 
         assert_eq!(
             output,
             ParsedHxSequence {
                 multiplier: None,
-                command: Some(Command::Delete),
+                command: None,
                 count: None,
                 motion: ParseResult::Valid(Motion::NextWord),
             }
@@ -208,16 +205,16 @@ mod tests {
 
     #[test]
     fn test_two_delete_word() {
-        let input = ['2', 'd', 'w'];
+        let input = ['d'];
         let output = hx_parse(&input);
 
         assert_eq!(
             output,
             ParsedHxSequence {
-                multiplier: Some(2),
+                multiplier: None,
                 command: Some(Command::Delete),
                 count: None,
-                motion: ParseResult::Valid(Motion::NextWord),
+                motion: None,
             }
         );
         assert_eq!(output.is_valid(), true);
@@ -225,33 +222,15 @@ mod tests {
     }
 
     #[test]
-    fn test_two_delete_two_word() {
-        let input = ['2', 'd', '2', 'w'];
+    fn test_delete_twenty_word() {
+        let input = ['2', '0', 'w'];
         let output = hx_parse(&input);
 
         assert_eq!(
             output,
             ParsedHxSequence {
-                multiplier: Some(2),
-                command: Some(Command::Delete),
-                count: Some(2),
-                motion: ParseResult::Valid(Motion::NextWord),
-            }
-        );
-        assert_eq!(output.is_valid(), true);
-        assert_eq!(output.is_complete(), true);
-    }
-
-    #[test]
-    fn test_two_delete_twenty_word() {
-        let input = ['2', 'd', '2', '0', 'w'];
-        let output = hx_parse(&input);
-
-        assert_eq!(
-            output,
-            ParsedHxSequence {
-                multiplier: Some(2),
-                command: Some(Command::Delete),
+                multiplier: None,
+                command: None,
                 count: Some(20),
                 motion: ParseResult::Valid(Motion::NextWord),
             }
@@ -261,33 +240,15 @@ mod tests {
     }
 
     #[test]
-    fn test_two_delete_two_lines() {
-        let input = ['2', 'd', 'd'];
-        let output = hx_parse(&input);
-
-        assert_eq!(
-            output,
-            ParsedHxSequence {
-                multiplier: Some(2),
-                command: Some(Command::Delete),
-                count: None,
-                motion: ParseResult::Valid(Motion::Line),
-            }
-        );
-        assert_eq!(output.is_valid(), true);
-        assert_eq!(output.is_complete(), true);
-    }
-
-    #[test]
     fn test_find_action() {
-        let input = ['d', 't', 'd'];
+        let input = ['t', 'd'];
         let output = hx_parse(&input);
 
         assert_eq!(
             output,
             ParsedHxSequence {
                 multiplier: None,
-                command: Some(Command::Delete),
+                command: None,
                 count: None,
                 motion: ParseResult::Valid(Motion::RightBefore('d')),
             }
@@ -297,17 +258,17 @@ mod tests {
     }
 
     #[test]
-    fn test_has_garbage() {
-        let input = ['2', 'd', 'm'];
+    fn test_select_around_paren() {
+        let input = ['m', 'a', '('];
         let output = hx_parse(&input);
 
         assert_eq!(
             output,
             ParsedHxSequence {
-                multiplier: Some(2),
-                command: Some(Command::Delete),
+                multiplier: None,
+                command: None,
                 count: None,
-                motion: ParseResult::Invalid,
+                motion: ParseResult::SelectOuterPair,
             }
         );
         assert_eq!(output.is_valid(), false);

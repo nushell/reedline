@@ -52,14 +52,6 @@ where
             let _ = input.next();
             ParseResult::Valid(Motion::NextBigWordEnd)
         }
-        Some('0' | '^') => {
-            let _ = input.next();
-            ParseResult::Valid(Motion::Start)
-        }
-        Some('$') => {
-            let _ = input.next();
-            ParseResult::Valid(Motion::End)
-        }
         Some('f') => {
             let _ = input.next();
             match input.peek() {
@@ -100,14 +92,6 @@ where
                 None => ParseResult::Incomplete,
             }
         }
-        Some(';') => {
-            let _ = input.next();
-            ParseResult::Valid(Motion::ReplayCharSearch)
-        }
-        Some(',') => {
-            let _ = input.next();
-            ParseResult::Valid(Motion::ReverseCharSearch)
-        }
         ch if ch == command_char.as_ref().as_ref() && command_char.is_some() => {
             let _ = input.next();
             ParseResult::Valid(Motion::Line)
@@ -136,8 +120,6 @@ pub enum Motion {
     RightBefore(char),
     LeftUntil(char),
     LeftBefore(char),
-    ReplayCharSearch,
-    ReverseCharSearch,
 }
 
 impl Motion {
@@ -184,20 +166,6 @@ impl Motion {
             Motion::LeftBefore(ch) => {
                 hx_state.last_char_search = Some(HxCharSearch::TillLeft(*ch));
                 vec![ReedlineOption::Edit(EditCommand::MoveLeftBefore(*ch))]
-            }
-            Motion::ReplayCharSearch => {
-                if let Some(char_search) = hx_state.last_char_search.as_ref() {
-                    vec![ReedlineOption::Edit(char_search.to_move())]
-                } else {
-                    vec![]
-                }
-            }
-            Motion::ReverseCharSearch => {
-                if let Some(char_search) = hx_state.last_char_search.as_ref() {
-                    vec![ReedlineOption::Edit(char_search.reverse().to_move())]
-                } else {
-                    vec![]
-                }
             }
         }
     }

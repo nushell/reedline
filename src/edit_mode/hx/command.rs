@@ -31,36 +31,21 @@ where
             let _ = input.next();
             Some(Command::Undo)
         }
+        Some('U') => {
+            let _ = input.next();
+            Some(Command::Redo)
+        }
         Some('c') => {
             let _ = input.next();
             Some(Command::Change)
         }
         Some('x') => {
             let _ = input.next();
-            Some(Command::DeleteChar)
-        }
-        Some('r') => {
-            let _ = input.next();
-            match input.next() {
-                Some(c) => Some(Command::ReplaceChar(*c)),
-                None => Some(Command::Incomplete),
-            }
-        }
-        Some('s') => {
-            let _ = input.next();
-            Some(Command::SubstituteCharWithInsert)
+            Some(Command::SelectLine)
         }
         Some('?') => {
             let _ = input.next();
             Some(Command::HistorySearch)
-        }
-        Some('C') => {
-            let _ = input.next();
-            Some(Command::ChangeToLineEnd)
-        }
-        Some('D') => {
-            let _ = input.next();
-            Some(Command::DeleteToEnd)
         }
         Some('I') => {
             let _ = input.next();
@@ -70,17 +55,17 @@ where
             let _ = input.next();
             Some(Command::AppendToEnd)
         }
-        Some('S') => {
-            let _ = input.next();
-            Some(Command::RewriteCurrentLine)
-        }
         Some('~') => {
             let _ = input.next();
             Some(Command::Switchcase)
         }
+        Some('-') => {
+            let _ = input.next();
+            Some(Command::TrimSelection)
+        }
         Some('.') => {
             let _ = input.next();
-            Some(Command::RepeatLastAction)
+            Some(Command::RepeatLastInsertion)
         }
         _ => None,
     }
@@ -92,21 +77,20 @@ pub enum Command {
     Delete,
     DeleteChar,
     ReplaceChar(char),
-    SubstituteCharWithInsert,
     PasteAfter,
     PasteBefore,
     EnterHxAppend,
     EnterHxInsert,
     Undo,
-    ChangeToLineEnd,
-    DeleteToEnd,
+    Redo,
+    SelectLine,
+    TrimSelection,
     AppendToEnd,
     PrependToStart,
-    RewriteCurrentLine,
     Change,
     HistorySearch,
     Switchcase,
-    RepeatLastAction,
+    RepeatLastInsertion,
 }
 
 impl Command {
@@ -129,24 +113,23 @@ impl Command {
             Self::PasteAfter => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferAfter)],
             Self::PasteBefore => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferBefore)],
             Self::Undo => vec![ReedlineOption::Edit(EditCommand::Undo)],
-            Self::ChangeToLineEnd => vec![ReedlineOption::Edit(EditCommand::ClearToLineEnd)],
-            Self::DeleteToEnd => vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)],
             Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
             Self::PrependToStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
-            Self::RewriteCurrentLine => vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)],
             Self::DeleteChar => vec![ReedlineOption::Edit(EditCommand::CutChar)],
             Self::ReplaceChar(c) => {
                 vec![ReedlineOption::Edit(EditCommand::ReplaceChar(*c))]
             }
-            Self::SubstituteCharWithInsert => vec![ReedlineOption::Edit(EditCommand::CutChar)],
             Self::HistorySearch => vec![ReedlineOption::Event(ReedlineEvent::SearchHistory)],
             Self::Switchcase => vec![ReedlineOption::Edit(EditCommand::SwitchcaseChar)],
             // Mark a command as incomplete whenever a motion is required to finish the command
             Self::Delete | Self::Change | Self::Incomplete => vec![ReedlineOption::Incomplete],
-            Command::RepeatLastAction => match &hx_state.previous {
+            Self::RepeatLastInsertion => match &hx_state.previous {
                 Some(event) => vec![ReedlineOption::Event(event.clone())],
                 None => vec![],
             },
+            Self::Redo => todo!(),
+            Self::SelectLine => todo!(),
+            Self::TrimSelection => todo!(),
         }
     }
 
@@ -194,14 +177,6 @@ impl Command {
                 Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
                 Motion::Up => None,
                 Motion::Down => None,
-                Motion::ReplayCharSearch => hx_state
-                    .last_char_search
-                    .as_ref()
-                    .map(|char_search| vec![ReedlineOption::Edit(char_search.to_cut())]),
-                Motion::ReverseCharSearch => hx_state
-                    .last_char_search
-                    .as_ref()
-                    .map(|char_search| vec![ReedlineOption::Edit(char_search.reverse().to_cut())]),
             },
             Self::Change => {
                 let op = match motion {
@@ -251,15 +226,6 @@ impl Command {
                     Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
                     Motion::Up => None,
                     Motion::Down => None,
-                    Motion::ReplayCharSearch => hx_state
-                        .last_char_search
-                        .as_ref()
-                        .map(|char_search| vec![ReedlineOption::Edit(char_search.to_cut())]),
-                    Motion::ReverseCharSearch => {
-                        hx_state.last_char_search.as_ref().map(|char_search| {
-                            vec![ReedlineOption::Edit(char_search.reverse().to_cut())]
-                        })
-                    }
                 };
                 // Semihack: Append `Repaint` to ensure the mode change gets displayed
                 op.map(|mut vec| {

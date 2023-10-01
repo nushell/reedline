@@ -29,7 +29,6 @@ pub struct Hx {
     normal_keybindings: Keybindings,
     mode: HxMode,
     previous: Option<ReedlineEvent>,
-    // last f, F, t, T motion for ; and ,
     last_char_search: Option<HxCharSearch>,
 }
 
