@@ -1,16 +1,15 @@
-use crate::{core_editor::Editor, UndoBehavior};
-
 use {
     super::{
         menu_functions::{parse_selection_char, string_difference},
         Menu, MenuEvent, MenuTextStyle,
     },
     crate::{
+        core_editor::Editor,
         painting::{estimate_single_line_wraps, Painter},
-        Completer, Suggestion,
+        Completer, Suggestion, UndoBehavior,
     },
     nu_ansi_term::{ansi::RESET, Style},
-    std::iter::Sum,
+    std::{fmt::Write, iter::Sum},
     unicode_width::UnicodeWidthStr,
 };
 
@@ -625,11 +624,17 @@ impl Menu for ListMenu {
                         // Final string with colors
                         let line = &suggestion.value;
                         let line = if line.lines().count() > self.max_lines as usize {
-                            let lines = line
-                                .lines()
-                                .take(self.max_lines as usize)
-                                .map(|string| format!("{}\r\n{}", string, self.multiline_marker))
-                                .collect::<String>();
+                            let lines = line.lines().take(self.max_lines as usize).fold(
+                                String::new(),
+                                |mut out_string, string| {
+                                    let _ = write!(
+                                        out_string,
+                                        "{}\r\n{}",
+                                        string, self.multiline_marker
+                                    );
+                                    out_string
+                                },
+                            );
 
                             lines + "..."
                         } else {
