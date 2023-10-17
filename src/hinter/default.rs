@@ -1,9 +1,7 @@
 use crate::{history::SearchQuery, Hinter, History};
 use nu_ansi_term::{Color, Style};
 
-/// A hinter that use the completions or the history to show a hint to the user
-///
-/// Similar to `fish` autosuggestins
+/// A hinter that uses the completions or the history to show a hint to the user
 pub struct DefaultHinter {
     style: Style,
     current_hint: String,

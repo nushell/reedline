@@ -1,5 +1,6 @@
 mod cwd_aware;
 mod default;
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 pub use cwd_aware::CwdAwareHinter;
 pub use default::DefaultHinter;
 

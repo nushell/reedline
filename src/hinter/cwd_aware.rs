@@ -1,15 +1,19 @@
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 use crate::{history::SearchQuery, Hinter, History};
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 use nu_ansi_term::{Color, Style};
 
-/// A hinter that use the completions or the history to show a hint to the user
+/// A hinter that uses the completions or the history to show a hint to the user
 ///
 /// Similar to `fish` autosuggestins
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 pub struct CwdAwareHinter {
     style: Style,
     current_hint: String,
     min_chars: usize,
 }
 
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 impl Hinter for CwdAwareHinter {
     fn handle(
         &mut self,
@@ -67,6 +71,7 @@ impl Hinter for CwdAwareHinter {
     }
 }
 
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 impl Default for CwdAwareHinter {
     fn default() -> Self {
         CwdAwareHinter {
@@ -77,6 +82,7 @@ impl Default for CwdAwareHinter {
     }
 }
 
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 impl CwdAwareHinter {
     /// A builder that sets the style applied to the hint as part of the buffer
     #[must_use]

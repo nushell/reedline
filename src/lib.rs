@@ -269,7 +269,9 @@ mod completion;
 pub use completion::{Completer, DefaultCompleter, Span, Suggestion};
 
 mod hinter;
-pub use hinter::{CwdAwareHinter, DefaultHinter, Hinter};
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+pub use hinter::CwdAwareHinter;
+pub use hinter::{DefaultHinter, Hinter};
 
 mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
