@@ -1,4 +1,6 @@
+mod cwd_aware;
 mod default;
+pub use cwd_aware::CwdAwareHinter;
 pub use default::DefaultHinter;
 
 use crate::History;

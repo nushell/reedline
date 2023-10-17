@@ -66,6 +66,18 @@ impl SearchFilter {
         s
     }
 
+    /// Create a search filter with a [`CommandLineSearch`] and `cwd`
+    pub fn from_text_search_cwd(
+        cwd: String,
+        cmd: CommandLineSearch,
+        session: Option<HistorySessionId>,
+    ) -> SearchFilter {
+        let mut s = SearchFilter::anything(session);
+        s.command_line = Some(cmd);
+        s.cwd_exact = Some(cwd);
+        s
+    }
+
     /// anything within this session
     pub fn anything(session: Option<HistorySessionId>) -> SearchFilter {
         SearchFilter {
@@ -129,6 +141,21 @@ impl SearchQuery {
     /// Get the most recent entry starting with the `prefix`
     pub fn last_with_prefix(prefix: String, session: Option<HistorySessionId>) -> SearchQuery {
         SearchQuery::last_with_search(SearchFilter::from_text_search(
+            CommandLineSearch::Prefix(prefix),
+            session,
+        ))
+    }
+
+    /// Get the most recent entry starting with the `prefix` and `cwd` same as the current cwd
+    pub fn last_with_prefix_and_cwd(
+        prefix: String,
+        session: Option<HistorySessionId>,
+    ) -> SearchQuery {
+        SearchQuery::last_with_search(SearchFilter::from_text_search_cwd(
+            std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
             CommandLineSearch::Prefix(prefix),
             session,
         ))
