@@ -151,14 +151,19 @@ impl SearchQuery {
         prefix: String,
         session: Option<HistorySessionId>,
     ) -> SearchQuery {
-        SearchQuery::last_with_search(SearchFilter::from_text_search_cwd(
-            std::env::current_dir()
-                .unwrap()
-                .to_string_lossy()
-                .to_string(),
-            CommandLineSearch::Prefix(prefix),
-            session,
-        ))
+        let cwd = std::env::current_dir();
+        if let Ok(cwd) = cwd {
+            SearchQuery::last_with_search(SearchFilter::from_text_search_cwd(
+                cwd.to_string_lossy().to_string(),
+                CommandLineSearch::Prefix(prefix),
+                session,
+            ))
+        } else {
+            SearchQuery::last_with_search(SearchFilter::from_text_search(
+                CommandLineSearch::Prefix(prefix),
+                session,
+            ))
+        }
     }
 
     /// Query to get all entries in the given [`SearchDirection`]
