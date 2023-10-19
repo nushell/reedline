@@ -4,7 +4,7 @@ use crate::{history::SearchQuery, Hinter, History};
 use nu_ansi_term::{Color, Style};
 
 /// A hinter that uses the completions or the history to show a hint to the user
-///
+/// NOTE: Only use this with `SqliteBackedHistory`!
 /// Similar to `fish` autosuggestins
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 pub struct CwdAwareHinter {
