@@ -269,6 +269,7 @@ mod completion;
 pub use completion::{Completer, DefaultCompleter, Span, Suggestion};
 
 mod hinter;
+pub use hinter::CwdAwareHinter;
 pub use hinter::{DefaultHinter, Hinter};
 
 mod validator;

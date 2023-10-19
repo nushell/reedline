@@ -1,14 +1,20 @@
-use crate::{history::SearchQuery, Hinter, History};
+use crate::{
+    history::SearchQuery,
+    result::{ReedlineError, ReedlineErrorVariants::HistoryFeatureUnsupported},
+    Hinter, History,
+};
 use nu_ansi_term::{Color, Style};
 
 /// A hinter that uses the completions or the history to show a hint to the user
-pub struct DefaultHinter {
+///
+/// Similar to `fish` autosuggestions
+pub struct CwdAwareHinter {
     style: Style,
     current_hint: String,
     min_chars: usize,
 }
 
-impl Hinter for DefaultHinter {
+impl Hinter for CwdAwareHinter {
     fn handle(
         &mut self,
         line: &str,
@@ -18,10 +24,20 @@ impl Hinter for DefaultHinter {
     ) -> String {
         self.current_hint = if line.chars().count() >= self.min_chars {
             history
-                .search(SearchQuery::last_with_prefix(
+                .search(SearchQuery::last_with_prefix_and_cwd(
                     line.to_string(),
                     history.session(),
                 ))
+                .or_else(|err| {
+                    if let ReedlineError(HistoryFeatureUnsupported { .. }) = err {
+                        history.search(SearchQuery::last_with_prefix(
+                            line.to_string(),
+                            history.session(),
+                        ))
+                    } else {
+                        Err(err)
+                    }
+                })
                 .expect("todo: error handling")
                 .get(0)
                 .map_or_else(String::new, |entry| {
@@ -65,9 +81,9 @@ impl Hinter for DefaultHinter {
     }
 }
 
-impl Default for DefaultHinter {
+impl Default for CwdAwareHinter {
     fn default() -> Self {
-        DefaultHinter {
+        CwdAwareHinter {
             style: Style::new().fg(Color::LightGray),
             current_hint: String::new(),
             min_chars: 1,
@@ -75,7 +91,7 @@ impl Default for DefaultHinter {
     }
 }
 
-impl DefaultHinter {
+impl CwdAwareHinter {
     /// A builder that sets the style applied to the hint as part of the buffer
     #[must_use]
     pub fn with_style(mut self, style: Style) -> Self {
