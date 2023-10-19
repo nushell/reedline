@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Create a reedline object with in-line hint support.
 // cargo run --example cwd_aware_hinter
 //
@@ -5,9 +6,8 @@
 // assuming history ["abc", "ade"]
 // pressing "a" hints to abc.
 // Up/Down or Ctrl p/n, to select next/previous match
-use std::io;
 
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+use std::io;
 fn create_item(cwd: &str, cmd: &str, exit_status: i64) -> reedline::HistoryItem {
     use std::time::Duration;
 

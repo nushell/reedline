@@ -1,19 +1,19 @@
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
-use crate::{history::SearchQuery, Hinter, History};
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+use crate::{
+    history::SearchQuery,
+    result::{ReedlineError, ReedlineErrorVariants::HistoryFeatureUnsupported},
+    Hinter, History,
+};
 use nu_ansi_term::{Color, Style};
 
 /// A hinter that uses the completions or the history to show a hint to the user
-/// NOTE: Only use this with `SqliteBackedHistory`!
-/// Similar to `fish` autosuggestins
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+///
+/// Similar to `fish` autosuggestions
 pub struct CwdAwareHinter {
     style: Style,
     current_hint: String,
     min_chars: usize,
 }
 
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 impl Hinter for CwdAwareHinter {
     fn handle(
         &mut self,
@@ -28,6 +28,16 @@ impl Hinter for CwdAwareHinter {
                     line.to_string(),
                     history.session(),
                 ))
+                .or_else(|err| {
+                    if let ReedlineError(HistoryFeatureUnsupported { .. }) = err {
+                        history.search(SearchQuery::last_with_prefix(
+                            line.to_string(),
+                            history.session(),
+                        ))
+                    } else {
+                        Err(err)
+                    }
+                })
                 .expect("todo: error handling")
                 .get(0)
                 .map_or_else(String::new, |entry| {
@@ -71,7 +81,6 @@ impl Hinter for CwdAwareHinter {
     }
 }
 
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 impl Default for CwdAwareHinter {
     fn default() -> Self {
         CwdAwareHinter {
@@ -82,7 +91,6 @@ impl Default for CwdAwareHinter {
     }
 }
 
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 impl CwdAwareHinter {
     /// A builder that sets the style applied to the hint as part of the buffer
     #[must_use]
