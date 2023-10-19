@@ -8,7 +8,6 @@
 
 use std::io;
 
-use reedline::FileBackedHistory;
 fn create_item(cwd: &str, cmd: &str, exit_status: i64) -> reedline::HistoryItem {
     use std::time::Duration;
 
@@ -29,9 +28,10 @@ fn create_item(cwd: &str, cmd: &str, exit_status: i64) -> reedline::HistoryItem 
 fn create_filled_example_history(home_dir: &str, orig_dir: &str) -> Box<dyn reedline::History> {
     use reedline::History;
     #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
-    let mut history = FileBackedHistory::new(100);
+    let mut history = Box::new(reedline::FileBackedHistory::new(100));
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
-    let mut history = SqliteBackedHistory::in_memory().unwrap();
+    let mut history = Box::new(reedline::SqliteBackedHistory::in_memory().unwrap());
+
     history.save(create_item(orig_dir, "dummy", 0)).unwrap(); // add dummy item so ids start with 1
     history.save(create_item(orig_dir, "ls /usr", 0)).unwrap();
     history.save(create_item(orig_dir, "pwd", 0)).unwrap();
@@ -39,7 +39,8 @@ fn create_filled_example_history(home_dir: &str, orig_dir: &str) -> Box<dyn reed
     history.save(create_item(home_dir, "cat foo", 0)).unwrap();
     history.save(create_item(home_dir, "ls bar", 0)).unwrap();
     history.save(create_item(home_dir, "rm baz", 0)).unwrap();
-    Box::new(history)
+
+    history
 }
 
 fn main() -> io::Result<()> {
