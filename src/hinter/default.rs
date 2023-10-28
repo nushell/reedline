@@ -1,5 +1,10 @@
 use crate::{history::SearchQuery, Hinter, History};
 use nu_ansi_term::{Color, Style};
+use unicode_segmentation::UnicodeSegmentation;
+
+pub fn is_whitespace_str(s: &str) -> bool {
+    s.chars().all(char::is_whitespace)
+}
 
 /// A hinter that uses the completions or the history to show a hint to the user
 pub struct DefaultHinter {
@@ -50,17 +55,18 @@ impl Hinter for DefaultHinter {
         let mut reached_content = false;
         let result: String = self
             .current_hint
-            .chars()
-            .take_while(|c| match (c.is_whitespace(), reached_content) {
-                (true, true) => false,
+            .split_word_bounds()
+            .take_while(|word| match (is_whitespace_str(word), reached_content) {
+                (_, true) => false,
                 (true, false) => true,
-                (false, true) => true,
                 (false, false) => {
                     reached_content = true;
                     true
                 }
             })
-            .collect();
+            .collect::<Vec<&str>>()
+            .join("")
+            .to_string();
         result
     }
 }
