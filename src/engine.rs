@@ -725,77 +725,78 @@ impl Reedline {
                 }
             }
 
-            if event::poll(Duration::from_millis(100))? {
-                let mut latest_resize = None;
+            let mut latest_resize = None;
+            loop {
+                match event::read()? {
+                    Event::Resize(x, y) => {
+                        latest_resize = Some((x, y));
+                    }
+                    enter @ Event::Key(KeyEvent {
+                        code: KeyCode::Enter,
+                        modifiers: KeyModifiers::NONE,
+                        ..
+                    }) => {
+                        let enter = ReedlineRawEvent::convert_from(enter);
+                        match enter {
+                            Some(enter) => {
+                                crossterm_events.push(enter);
+                                // Break early to check if the input is complete and
+                                // can be send to the hosting application. If
+                                // multiple complete entries are submitted, events
+                                // are still in the crossterm queue for us to
+                                // process.
+                                paste_enter_state = crossterm_events.len() > EVENTS_THRESHOLD;
+                                break;
+                            }
+                            None => (),
+                        }
+                    }
+                    x => {
+                        let raw_event = ReedlineRawEvent::convert_from(x);
+                        match raw_event {
+                            Some(evt) => crossterm_events.push(evt),
+                            None => (),
+                        }
+                    }
+                }
 
                 // There could be multiple events queued up!
                 // pasting text, resizes, blocking this thread (e.g. during debugging)
                 // We should be able to handle all of them as quickly as possible without causing unnecessary output steps.
-                while event::poll(Duration::from_millis(POLL_WAIT))? {
-                    match event::read()? {
-                        Event::Resize(x, y) => {
-                            latest_resize = Some((x, y));
-                        }
-                        enter @ Event::Key(KeyEvent {
-                            code: KeyCode::Enter,
-                            modifiers: KeyModifiers::NONE,
-                            ..
-                        }) => {
-                            let enter = ReedlineRawEvent::convert_from(enter);
-                            match enter {
-                                Some(enter) => {
-                                    crossterm_events.push(enter);
-                                    // Break early to check if the input is complete and
-                                    // can be send to the hosting application. If
-                                    // multiple complete entries are submitted, events
-                                    // are still in the crossterm queue for us to
-                                    // process.
-                                    paste_enter_state = crossterm_events.len() > EVENTS_THRESHOLD;
-                                    break;
-                                }
-                                None => continue,
-                            }
-                        }
-                        x => {
-                            let raw_event = ReedlineRawEvent::convert_from(x);
-                            match raw_event {
-                                Some(evt) => crossterm_events.push(evt),
-                                None => continue,
-                            }
-                        }
+                if !event::poll(Duration::from_millis(POLL_WAIT))? {
+                    break;
+                }
+            }
+
+            if let Some((x, y)) = latest_resize {
+                reedline_events.push(ReedlineEvent::Resize(x, y));
+            }
+
+            // Accelerate pasted text by fusing `EditCommand`s
+            //
+            // (Text should only be `EditCommand::InsertChar`s)
+            let mut last_edit_commands = None;
+            for event in crossterm_events.drain(..) {
+                match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
+                    (None, ReedlineEvent::Edit(ec)) => {
+                        last_edit_commands = Some(ec);
+                    }
+                    (None, other_event) => {
+                        reedline_events.push(other_event);
+                    }
+                    (Some(ref mut last_ecs), ReedlineEvent::Edit(ec)) => {
+                        last_ecs.extend(ec);
+                    }
+                    (ref mut a @ Some(_), other_event) => {
+                        reedline_events.push(ReedlineEvent::Edit(a.take().unwrap()));
+
+                        reedline_events.push(other_event);
                     }
                 }
-
-                if let Some((x, y)) = latest_resize {
-                    reedline_events.push(ReedlineEvent::Resize(x, y));
-                }
-
-                // Accelerate pasted text by fusing `EditCommand`s
-                //
-                // (Text should only be `EditCommand::InsertChar`s)
-                let mut last_edit_commands = None;
-                for event in crossterm_events.drain(..) {
-                    match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
-                        (None, ReedlineEvent::Edit(ec)) => {
-                            last_edit_commands = Some(ec);
-                        }
-                        (None, other_event) => {
-                            reedline_events.push(other_event);
-                        }
-                        (Some(ref mut last_ecs), ReedlineEvent::Edit(ec)) => {
-                            last_ecs.extend(ec);
-                        }
-                        (ref mut a @ Some(_), other_event) => {
-                            reedline_events.push(ReedlineEvent::Edit(a.take().unwrap()));
-
-                            reedline_events.push(other_event);
-                        }
-                    }
-                }
-                if let Some(ec) = last_edit_commands {
-                    reedline_events.push(ReedlineEvent::Edit(ec));
-                }
-            };
+            }
+            if let Some(ec) = last_edit_commands {
+                reedline_events.push(ReedlineEvent::Edit(ec));
+            }
 
             for event in reedline_events.drain(..) {
                 match self.handle_event(prompt, event)? {
