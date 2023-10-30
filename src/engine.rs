@@ -737,25 +737,21 @@ impl Reedline {
                         ..
                     }) => {
                         let enter = ReedlineRawEvent::convert_from(enter);
-                        match enter {
-                            Some(enter) => {
-                                crossterm_events.push(enter);
-                                // Break early to check if the input is complete and
-                                // can be send to the hosting application. If
-                                // multiple complete entries are submitted, events
-                                // are still in the crossterm queue for us to
-                                // process.
-                                paste_enter_state = crossterm_events.len() > EVENTS_THRESHOLD;
-                                break;
-                            }
-                            None => (),
+                        if let Some(enter) = enter {
+                            crossterm_events.push(enter);
+                            // Break early to check if the input is complete and
+                            // can be send to the hosting application. If
+                            // multiple complete entries are submitted, events
+                            // are still in the crossterm queue for us to
+                            // process.
+                            paste_enter_state = crossterm_events.len() > EVENTS_THRESHOLD;
+                            break;
                         }
                     }
                     x => {
                         let raw_event = ReedlineRawEvent::convert_from(x);
-                        match raw_event {
-                            Some(evt) => crossterm_events.push(evt),
-                            None => (),
+                        if let Some(evt) = raw_event {
+                            crossterm_events.push(evt);
                         }
                     }
                 }
