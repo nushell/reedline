@@ -10,6 +10,7 @@ use crate::{
     PromptEditMode,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use regex::Regex;
 
 /// Returns the current default emacs keybindings
 pub fn default_emacs_keybindings() -> Keybindings {
@@ -160,9 +161,28 @@ impl EditMode for Emacs {
             Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
             Event::FocusGained => ReedlineEvent::None,
             Event::FocusLost => ReedlineEvent::None,
-            Event::Paste(body) => ReedlineEvent::Edit(vec![EditCommand::InsertString(
-                body.replace("\r\n", "\n").replace('\r', "\n"),
-            )]),
+            Event::Paste(body) => {
+                let clean = body.replace("\r\n", "\n").replace('\r', "\n");
+                let posix_paste = true;
+                let posix_str = if posix_paste {
+                    // let env_vars =
+                    //     r"(?P<exp>^export )?(?P<envname>[A-Z-_0-9]+)=(?P<var>[A-Za-z0-9]+)";
+                    let env_vars = r"(?P<envname>[A-Z-_0-9]+)=(?P<var>[A-Za-z0-9]+)";
+                    let lines = r"(?m)(?P<lines> \\$)";
+                    let re = Regex::new(env_vars).unwrap();
+                    // .replace_all(&clean, "$$env.$envname = $var")
+                    let clean_env = re
+                        .replace_all(&clean, "$$env.$envname = $var")
+                        .to_string()
+                        .replace("export", "");
+                    let re = Regex::new(lines).unwrap();
+                    let clean_lines = re.replace_all(&clean_env, "").to_string();
+                    clean_lines
+                } else {
+                    clean
+                };
+                ReedlineEvent::Edit(vec![EditCommand::InsertString(posix_str)])
+            }
         }
     }
 
