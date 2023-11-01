@@ -1,4 +1,4 @@
-use crate::{history::SearchQuery, Hinter, History};
+use crate::{hinter::get_first_token, history::SearchQuery, Hinter, History};
 use nu_ansi_term::{Color, Style};
 
 /// A hinter that uses the completions or the history to show a hint to the user
@@ -47,21 +47,7 @@ impl Hinter for DefaultHinter {
     }
 
     fn next_hint_token(&self) -> String {
-        let mut reached_content = false;
-        let result: String = self
-            .current_hint
-            .chars()
-            .take_while(|c| match (c.is_whitespace(), reached_content) {
-                (true, true) => false,
-                (true, false) => true,
-                (false, true) => true,
-                (false, false) => {
-                    reached_content = true;
-                    true
-                }
-            })
-            .collect();
-        result
+        get_first_token(&self.current_hint)
     }
 }
 

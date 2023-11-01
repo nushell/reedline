@@ -1,4 +1,5 @@
 use crate::{
+    hinter::get_first_token,
     history::SearchQuery,
     result::{ReedlineError, ReedlineErrorVariants::HistoryFeatureUnsupported},
     Hinter, History,
@@ -63,21 +64,7 @@ impl Hinter for CwdAwareHinter {
     }
 
     fn next_hint_token(&self) -> String {
-        let mut reached_content = false;
-        let result: String = self
-            .current_hint
-            .chars()
-            .take_while(|c| match (c.is_whitespace(), reached_content) {
-                (true, true) => false,
-                (true, false) => true,
-                (false, true) => true,
-                (false, false) => {
-                    reached_content = true;
-                    true
-                }
-            })
-            .collect();
-        result
+        get_first_token(&self.current_hint)
     }
 }
 
