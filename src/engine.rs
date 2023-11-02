@@ -774,12 +774,10 @@ impl Reedline {
                         busy = false;
                         break;
                     }
+                } else if event::poll(Duration::from_millis(0))? {
+                    busy = true;
                 } else {
-                    if event::poll(Duration::from_millis(0))? {
-                        busy = true;
-                    } else {
-                        break;
-                    }
+                    break;
                 }
             }
 
