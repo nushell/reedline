@@ -47,16 +47,13 @@ use {
 };
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for
-// events, to accelerate the handling of paste or compound resize events. Having
-// a POLL_WAIT of zero means that every single event is treated as soon as it
-// arrives. This doesn't allow for the possibility of more than 1 event
-// happening at the same time.
-const POLL_WAIT: u64 = 10;
-// Since a paste event is multiple Event::Key events happening at the same time, we specify
-// how many events should be in the crossterm_events vector before it is considered
-// a paste. 10 events in 10 milliseconds is conservative enough (unlikely somebody
-// will type more than 10 characters in 10 milliseconds)
-const EVENTS_THRESHOLD: usize = 10;
+// events when we're "busy", that is, when we think we're in the middle of a
+// paste or a resize burst, so that we don't do lots of work painting output
+// that's about to be discarded.
+//
+// The value 100 here was chosen by looking at how quickly window a burst of
+// resize events coming from a window manager seem to arrive in practice.
+const POLL_WAIT: u64 = 100;
 
 /// Determines if inputs should be used to extend the regular line buffer,
 /// traverse the history in the standard prompt or edit the search string in the
@@ -679,6 +676,7 @@ impl Reedline {
 
         self.repaint(prompt)?;
 
+        let mut busy = false;
         let mut crossterm_events: Vec<ReedlineRawEvent> = vec![];
         let mut reedline_events: Vec<ReedlineEvent> = vec![];
 
@@ -708,8 +706,6 @@ impl Reedline {
         }
 
         loop {
-            let mut paste_enter_state = false;
-
             #[cfg(feature = "external_printer")]
             if let Some(ref external_printer) = self.external_printer {
                 // get messages from printer as crlf separated "lines"
@@ -730,6 +726,10 @@ impl Reedline {
                 match event::read()? {
                     Event::Resize(x, y) => {
                         latest_resize = Some((x, y));
+                        // Resizes can be a lot of work, and some window
+                        // managers send bursts of resizes, so wait before
+                        // processing to see if we get further resizes.
+                        busy = true;
                     }
                     enter @ Event::Key(KeyEvent {
                         code: KeyCode::Enter,
@@ -739,12 +739,6 @@ impl Reedline {
                         let enter = ReedlineRawEvent::convert_from(enter);
                         if let Some(enter) = enter {
                             crossterm_events.push(enter);
-                            // Break early to check if the input is complete and
-                            // can be send to the hosting application. If
-                            // multiple complete entries are submitted, events
-                            // are still in the crossterm queue for us to
-                            // process.
-                            paste_enter_state = crossterm_events.len() > EVENTS_THRESHOLD;
                             break;
                         }
                     }
@@ -756,11 +750,36 @@ impl Reedline {
                     }
                 }
 
-                // There could be multiple events queued up!
-                // pasting text, resizes, blocking this thread (e.g. during debugging)
-                // We should be able to handle all of them as quickly as possible without causing unnecessary output steps.
-                if !event::poll(Duration::from_millis(POLL_WAIT))? {
-                    break;
+                // Normally, we're not "busy", and we do a zero-timeout poll.
+                // On a normal key event, there will typically be no further
+                // events immediately ready, and we can process the event
+                // without waiting and remain not "busy".
+                //
+                // On a paste, there will typically be further events
+                // immediately ready. If it's a large paste, there may also be
+                // additional events beyond that which aren't immediately
+                // ready, but are likely to be ready pretty quickly. So when
+                // our zero-timeout poll sees further events immediately ready,
+                // we guess it's a paste and switch to being "busy" to try to
+                // avoid processing events until the paste is done.
+                //
+                // On a resize, we also switch to being "busy"; see above.
+                //
+                // When we're "busy", we wait up to `POLL_WAIT` milliseconds
+                // before processing events. If we didn't get any events in
+                // that time, the paste or resize burst is likely done, and we
+                // can switch to being not "busy".
+                if busy {
+                    if !event::poll(Duration::from_millis(POLL_WAIT))? {
+                        busy = false;
+                        break;
+                    }
+                } else {
+                    if event::poll(Duration::from_millis(0))? {
+                        busy = true;
+                    } else {
+                        break;
+                    }
                 }
             }
 
@@ -802,9 +821,7 @@ impl Reedline {
                         return Ok(signal);
                     }
                     EventStatus::Handled => {
-                        if !paste_enter_state {
-                            self.repaint(prompt)?;
-                        }
+                        self.repaint(prompt)?;
                     }
                     EventStatus::Inapplicable => {
                         // Nothing changed, no need to repaint
