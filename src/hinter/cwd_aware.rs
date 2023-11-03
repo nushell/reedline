@@ -24,7 +24,7 @@ impl Hinter for CwdAwareHinter {
         use_ansi_coloring: bool,
     ) -> String {
         self.current_hint = if line.chars().count() >= self.min_chars {
-            history
+            let with_cwd = history
                 .search(SearchQuery::last_with_prefix_and_cwd(
                     line.to_string(),
                     history.session(),
@@ -39,15 +39,29 @@ impl Hinter for CwdAwareHinter {
                         Err(err)
                     }
                 })
-                .expect("todo: error handling")
-                .get(0)
-                .map_or_else(String::new, |entry| {
-                    entry
-                        .command_line
-                        .get(line.len()..)
-                        .unwrap_or_default()
-                        .to_string()
-                })
+                .expect("todo: error handling");
+            if !with_cwd.is_empty() {
+                with_cwd[0]
+                    .command_line
+                    .get(line.len()..)
+                    .unwrap_or_default()
+                    .to_string()
+            } else {
+                history
+                    .search(SearchQuery::last_with_prefix(
+                        line.to_string(),
+                        history.session(),
+                    ))
+                    .expect("todo: error handling")
+                    .get(0)
+                    .map_or_else(String::new, |entry| {
+                        entry
+                            .command_line
+                            .get(line.len()..)
+                            .unwrap_or_default()
+                            .to_string()
+                    })
+            }
         } else {
             String::new()
         };
