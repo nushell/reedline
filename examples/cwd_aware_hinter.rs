@@ -58,7 +58,7 @@ fn main() -> io::Result<()> {
 
     let mut line_editor = Reedline::create()
         .with_hinter(Box::new(
-            CwdAwareHinter::default().with_style(Style::new().italic().fg(Color::Yellow)),
+            CwdAwareHinter::default().with_style(Style::new().bold().italic().fg(Color::Yellow)),
         ))
         .with_history(history);
 
