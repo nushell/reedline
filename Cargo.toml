@@ -42,3 +42,11 @@ external_printer = ["crossbeam"]
 sqlite = ["rusqlite/bundled", "serde_json"]
 sqlite-dynlib = ["rusqlite", "serde_json"]
 system_clipboard = ["clipboard"]
+
+[[example]]
+name = "cwd_aware_hinter"
+required-features = ["sqlite"]
+
+[[example]]
+name = "external_printer"
+required-features = ["external_printer"]

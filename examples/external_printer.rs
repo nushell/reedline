@@ -2,7 +2,6 @@
 // to run:
 // cargo run --example external_printer --features=external_printer
 
-#[cfg(feature = "external_printer")]
 use {
     reedline::ExternalPrinter,
     reedline::{DefaultPrompt, Reedline, Signal},
@@ -11,7 +10,6 @@ use {
     std::time::Duration,
 };
 
-#[cfg(feature = "external_printer")]
 fn main() {
     let printer = ExternalPrinter::default();
     // make a clone to use it in a different thread
@@ -58,9 +56,4 @@ fn main() {
         }
         break;
     }
-}
-
-#[cfg(not(feature = "external_printer"))]
-fn main() {
-    println!("Please enable the feature: ‘external_printer‘")
 }
