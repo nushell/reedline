@@ -630,9 +630,6 @@ impl Reedline {
 
         let result = self.read_line_helper(prompt);
 
-        #[cfg(not(target_os = "windows"))]
-        self.disable_bracketed_paste()?;
-
         if self.use_kitty_protocol {
             let _ = execute!(io::stdout(), event::PopKeyboardEnhancementFlags);
         }
