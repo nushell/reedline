@@ -280,6 +280,8 @@ pub use menu::{
     menu_functions, ColumnarMenu, ListMenu, Menu, MenuEvent, MenuTextStyle, ReedlineMenu,
 };
 
+mod terminal_extensions;
+
 mod utils;
 
 mod external_printer;
