@@ -3,8 +3,7 @@ use std::process::Command;
 use {
     crossterm::{
         cursor::SetCursorStyle,
-        event::{DisableBracketedPaste, KeyCode, KeyModifiers},
-        execute,
+        event::{KeyCode, KeyModifiers},
     },
     nu_ansi_term::{Color, Style},
     reedline::{
@@ -13,7 +12,6 @@ use {
         EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline,
         ReedlineEvent, ReedlineMenu, Signal, Vi,
     },
-    std::io::stdout,
 };
 
 use reedline::CursorConfig;
@@ -95,11 +93,7 @@ fn main() -> std::io::Result<()> {
         ))
         .with_validator(Box::new(DefaultValidator))
         .with_ansi_colors(true);
-    let res = line_editor.enable_bracketed_paste();
-    let bracketed_paste_enabled = res.is_ok();
-    if !bracketed_paste_enabled {
-        println!("Warn: failed to enable bracketed paste mode: {res:?}");
-    }
+    let _ = line_editor.enable_bracketed_paste();
 
     // Adding default menus for the compiled reedline
     line_editor = line_editor
@@ -226,9 +220,6 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    if bracketed_paste_enabled {
-        let _ = execute!(stdout(), DisableBracketedPaste);
-    }
     println!();
     Ok(())
 }
