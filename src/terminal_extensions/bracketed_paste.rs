@@ -1,4 +1,4 @@
-use crossterm::{execute, event};
+use crossterm::{event, execute};
 
 /// Helper managing proper setup and teardown of bracketed paste mode
 ///
@@ -34,4 +34,3 @@ impl Drop for BracketedPasteGuard {
         }
     }
 }
-

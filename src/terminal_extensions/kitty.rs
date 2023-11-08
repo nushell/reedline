@@ -25,12 +25,12 @@ impl KittyProtocolGuard {
     }
     pub fn enter(&mut self) {
         if self.enabled && !self.active {
-                let _ = execute!(
-                    std::io::stdout(),
-                    event::PushKeyboardEnhancementFlags(
-                        event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    )
-                );
+            let _ = execute!(
+                std::io::stdout(),
+                event::PushKeyboardEnhancementFlags(
+                    event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                )
+            );
 
             self.active = true;
         }
