@@ -30,5 +30,5 @@ impl Display for ReedlineError {
 }
 impl std::error::Error for ReedlineError {}
 
-// for now don't expose the above error type to the public
+/// Standard [`std::result::Result`], with [`ReedlineError`] as the error variant
 pub type Result<T> = std::result::Result<T, ReedlineError>;
