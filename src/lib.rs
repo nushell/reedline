@@ -281,6 +281,7 @@ pub use menu::{
 };
 
 mod terminal_extensions;
+pub use terminal_extensions::kitty_protocol_available;
 
 mod utils;
 

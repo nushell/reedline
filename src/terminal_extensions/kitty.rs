@@ -20,8 +20,7 @@ pub(crate) struct KittyProtocolGuard {
 
 impl KittyProtocolGuard {
     pub fn set(&mut self, enable: bool) {
-        self.enabled =
-            enable && crossterm::terminal::supports_keyboard_enhancement().unwrap_or_default();
+        self.enabled = enable && super::kitty_protocol_available();
     }
     pub fn enter(&mut self) {
         if self.enabled && !self.active {
