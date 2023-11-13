@@ -233,6 +233,30 @@ impl Reedline {
         Some(HistorySessionId::new(nanos))
     }
 
+    /// Toggle whether reedline enables bracketed paste to reed copied content
+    ///
+    /// This currently alters the behavior for multiline pastes as pasting of regular text will
+    /// execute after every complete new line as determined by the [`Validator`]. With enabled
+    /// bracketed paste all lines will appear in the buffer and can then be submitted with a
+    /// separate enter.
+    ///
+    /// At this point most terminals should support it or ignore the setting of the necessary
+    /// flags. For full compatibillity, keep it disabled.
+    pub fn use_bracketed_paste(mut self, enable: bool) -> Self {
+        self.bracketed_paste.set(enable);
+        self
+    }
+
+    /// Toggle whether reedline uses the kitty keyboard enhancement protocol
+    ///
+    /// This allows us to disambiguate more events than the traditional standard
+    /// Only available with a few terminal emulators.
+    /// You can check for that with [`crate::kitty_protocol_available`]
+    /// `Reedline` will perform this check internally
+    pub fn use_kitty_keyboard_enhancement(mut self, enable: bool) -> Self {
+        self.kitty_protocol.set(enable);
+        self
+    }
     /// Enable BracketedPaste feature.
     pub fn enable_bracketed_paste(&mut self) -> Result<()> {
         self.bracketed_paste.set(true);
