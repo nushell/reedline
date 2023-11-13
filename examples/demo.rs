@@ -88,6 +88,7 @@ fn main() -> std::io::Result<()> {
         .with_partial_completions(true)
         .with_cursor_config(cursor_config)
         .use_bracketed_paste(true)
+        .use_kitty_keyboard_enhancement(true)
         .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
         .with_hinter(Box::new(
             DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)),
