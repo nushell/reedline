@@ -245,15 +245,6 @@ impl Reedline {
         Ok(())
     }
 
-    /// Return terminal support on keyboard enhancement
-    pub fn can_use_kitty_protocol(&mut self) -> bool {
-        if let Ok(b) = crossterm::terminal::supports_keyboard_enhancement() {
-            b
-        } else {
-            false
-        }
-    }
-
     /// Enable keyboard enhancement to disambiguate escape code
     pub fn enable_kitty_protocol(&mut self) {
         self.kitty_protocol.set(true);
