@@ -241,7 +241,7 @@ impl Reedline {
     /// separate enter.
     ///
     /// At this point most terminals should support it or ignore the setting of the necessary
-    /// flags. For full compatibillity, keep it disabled.
+    /// flags. For full compatibility, keep it disabled.
     pub fn use_bracketed_paste(mut self, enable: bool) -> Self {
         self.bracketed_paste.set(enable);
         self
