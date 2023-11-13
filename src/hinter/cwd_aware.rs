@@ -39,7 +39,7 @@ impl Hinter for CwdAwareHinter {
                         Err(err)
                     }
                 })
-                .expect("todo: error handling");
+                .unwrap_or_default();
             if !with_cwd.is_empty() {
                 with_cwd[0]
                     .command_line
@@ -52,7 +52,7 @@ impl Hinter for CwdAwareHinter {
                         line.to_string(),
                         history.session(),
                     ))
-                    .expect("todo: error handling")
+                    .unwrap_or_default()
                     .get(0)
                     .map_or_else(String::new, |entry| {
                         entry
