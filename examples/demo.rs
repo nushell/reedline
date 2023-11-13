@@ -87,13 +87,13 @@ fn main() -> std::io::Result<()> {
         .with_quick_completions(true)
         .with_partial_completions(true)
         .with_cursor_config(cursor_config)
+        .use_bracketed_paste(true)
         .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
         .with_hinter(Box::new(
             DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)),
         ))
         .with_validator(Box::new(DefaultValidator))
         .with_ansi_colors(true);
-    let _ = line_editor.enable_bracketed_paste();
 
     // Adding default menus for the compiled reedline
     line_editor = line_editor
