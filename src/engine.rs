@@ -259,27 +259,6 @@ impl Reedline {
         self.kitty_protocol.set(enable);
         self
     }
-    /// Enable BracketedPaste feature.
-    pub fn enable_bracketed_paste(&mut self) -> Result<()> {
-        self.bracketed_paste.set(true);
-        Ok(())
-    }
-
-    /// Disable BracketedPaste feature.
-    pub fn disable_bracketed_paste(&mut self) -> Result<()> {
-        self.bracketed_paste.set(false);
-        Ok(())
-    }
-
-    /// Enable keyboard enhancement to disambiguate escape code
-    pub fn enable_kitty_protocol(&mut self) {
-        self.kitty_protocol.set(true);
-    }
-
-    /// Disable keyboard enhancement to disambiguate escape code
-    pub fn disable_kitty_protocol(&mut self) {
-        self.kitty_protocol.set(false);
-    }
 
     /// Return the previously generated history session id
     pub fn get_history_session_id(&self) -> Option<HistorySessionId> {
