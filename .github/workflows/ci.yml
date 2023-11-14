@@ -44,7 +44,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy ${{ matrix.flags }} --examples --all -- -D warnings
+        run: cargo clippy ${{ matrix.flags }} --all-targets --all -- -D warnings
 
 
       - name: Tests
