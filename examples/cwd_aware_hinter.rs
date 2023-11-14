@@ -52,8 +52,8 @@ fn main() -> io::Result<()> {
     let home_dir = std::env::home_dir().unwrap();
 
     let history = create_filled_example_history(
-        &home_dir.to_string_lossy().to_string(),
-        &orig_dir.to_string_lossy().to_string(),
+        home_dir.to_string_lossy().as_ref(),
+        orig_dir.to_string_lossy().as_ref(),
     );
 
     let mut line_editor = Reedline::create()
