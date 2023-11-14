@@ -3,8 +3,7 @@ use std::process::Command;
 use {
     crossterm::{
         cursor::SetCursorStyle,
-        event::{DisableBracketedPaste, KeyCode, KeyModifiers},
-        execute,
+        event::{KeyCode, KeyModifiers},
     },
     nu_ansi_term::{Color, Style},
     reedline::{
@@ -13,7 +12,6 @@ use {
         EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline,
         ReedlineEvent, ReedlineMenu, Signal, Vi,
     },
-    std::io::stdout,
 };
 
 use reedline::CursorConfig;
@@ -89,17 +87,14 @@ fn main() -> std::io::Result<()> {
         .with_quick_completions(true)
         .with_partial_completions(true)
         .with_cursor_config(cursor_config)
+        .use_bracketed_paste(true)
+        .use_kitty_keyboard_enhancement(true)
         .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
         .with_hinter(Box::new(
             DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)),
         ))
         .with_validator(Box::new(DefaultValidator))
         .with_ansi_colors(true);
-    let res = line_editor.enable_bracketed_paste();
-    let bracketed_paste_enabled = res.is_ok();
-    if !bracketed_paste_enabled {
-        println!("Warn: failed to enable bracketed paste mode: {res:?}");
-    }
 
     // Adding default menus for the compiled reedline
     line_editor = line_editor
@@ -226,9 +221,6 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    if bracketed_paste_enabled {
-        let _ = execute!(stdout(), DisableBracketedPaste);
-    }
     println!();
     Ok(())
 }

@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
-use crossterm::execute;
 use itertools::Itertools;
 
 use crate::{enums::ReedlineRawEvent, CursorConfig};
@@ -31,6 +29,7 @@ use {
         painting::{Painter, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
+        terminal_extensions::{bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard},
         utils::text_manipulation,
         EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
@@ -144,11 +143,11 @@ pub struct Reedline {
     // Use different cursors depending on the current edit mode
     cursor_shapes: Option<CursorConfig>,
 
-    // Indicate if global terminal have enabled BracketedPaste
-    bracket_paste_enabled: bool,
+    // Manage bracketed paste mode
+    bracketed_paste: BracketedPasteGuard,
 
-    // Use kitty protocol to handle escape code input or not
-    use_kitty_protocol: bool,
+    // Manage optional kitty protocol
+    kitty_protocol: KittyProtocolGuard,
 
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
@@ -172,12 +171,6 @@ impl Drop for Reedline {
         // Ensures that the terminal is in a good state if we panic semigracefully
         // Calling `disable_raw_mode()` twice is fine with Linux
         let _ignore = terminal::disable_raw_mode();
-        if self.bracket_paste_enabled {
-            let _ = execute!(io::stdout(), DisableBracketedPaste);
-        }
-        if self.use_kitty_protocol {
-            let _ = execute!(io::stdout(), event::PopKeyboardEnhancementFlags);
-        }
     }
 }
 
@@ -223,8 +216,8 @@ impl Reedline {
             menus: Vec::new(),
             buffer_editor: None,
             cursor_shapes: None,
-            bracket_paste_enabled: false,
-            use_kitty_protocol: false,
+            bracketed_paste: BracketedPasteGuard::default(),
+            kitty_protocol: KittyProtocolGuard::default(),
             #[cfg(feature = "external_printer")]
             external_printer: None,
         }
@@ -240,41 +233,31 @@ impl Reedline {
         Some(HistorySessionId::new(nanos))
     }
 
-    /// Enable BracketedPaste feature.
-    pub fn enable_bracketed_paste(&mut self) -> Result<()> {
-        let res = execute!(io::stdout(), EnableBracketedPaste);
-        if res.is_ok() {
-            self.bracket_paste_enabled = true;
-        }
-        res
+    /// Toggle whether reedline enables bracketed paste to reed copied content
+    ///
+    /// This currently alters the behavior for multiline pastes as pasting of regular text will
+    /// execute after every complete new line as determined by the [`Validator`]. With enabled
+    /// bracketed paste all lines will appear in the buffer and can then be submitted with a
+    /// separate enter.
+    ///
+    /// At this point most terminals should support it or ignore the setting of the necessary
+    /// flags. For full compatibility, keep it disabled.
+    pub fn use_bracketed_paste(mut self, enable: bool) -> Self {
+        self.bracketed_paste.set(enable);
+        self
     }
 
-    /// Disable BracketedPaste feature.
-    pub fn disable_bracketed_paste(&mut self) -> Result<()> {
-        let res = execute!(io::stdout(), DisableBracketedPaste);
-        if res.is_ok() {
-            self.bracket_paste_enabled = false;
-        }
-        res
-    }
-
-    /// Return terminal support on keyboard enhancement
-    pub fn can_use_kitty_protocol(&mut self) -> bool {
-        if let Ok(b) = crossterm::terminal::supports_keyboard_enhancement() {
-            b
-        } else {
-            false
-        }
-    }
-
-    /// Enable keyboard enhancement to disambiguate escape code
-    pub fn enable_kitty_protocol(&mut self) {
-        self.use_kitty_protocol = true;
-    }
-
-    /// Disable keyboard enhancement to disambiguate escape code
-    pub fn disable_kitty_protocol(&mut self) {
-        self.use_kitty_protocol = false;
+    /// Toggle whether reedline uses the kitty keyboard enhancement protocol
+    ///
+    /// This allows us to disambiguate more events than the traditional standard
+    /// Only available with a few terminal emulators.
+    /// You can check for that with [`crate::kitty_protocol_available`]
+    /// `Reedline` will perform this check internally
+    ///
+    /// Read more: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+    pub fn use_kitty_keyboard_enhancement(mut self, enable: bool) -> Self {
+        self.kitty_protocol.set(enable);
+        self
     }
 
     /// Return the previously generated history session id
@@ -627,13 +610,13 @@ impl Reedline {
     /// and the `Ok` variant wraps a [`Signal`] which handles user inputs.
     pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
         terminal::enable_raw_mode()?;
+        self.bracketed_paste.enter();
+        self.kitty_protocol.enter();
 
         let result = self.read_line_helper(prompt);
 
-        if self.use_kitty_protocol {
-            let _ = execute!(io::stdout(), event::PopKeyboardEnhancementFlags);
-        }
-
+        self.bracketed_paste.exit();
+        self.kitty_protocol.exit();
         terminal::disable_raw_mode()?;
         result
     }
@@ -678,31 +661,6 @@ impl Reedline {
 
         let mut crossterm_events: Vec<ReedlineRawEvent> = vec![];
         let mut reedline_events: Vec<ReedlineEvent> = vec![];
-
-        if self.use_kitty_protocol {
-            if let Ok(true) = crossterm::terminal::supports_keyboard_enhancement() {
-                // enable kitty protocol
-                //
-                // Note that, currently, only the following support this protocol:
-                // * [kitty terminal](https://sw.kovidgoyal.net/kitty/)
-                // * [foot terminal](https://codeberg.org/dnkl/foot/issues/319)
-                // * [WezTerm terminal](https://wezfurlong.org/wezterm/config/lua/config/enable_kitty_keyboard.html)
-                // * [notcurses library](https://github.com/dankamongmen/notcurses/issues/2131)
-                // * [neovim text editor](https://github.com/neovim/neovim/pull/18181)
-                // * [kakoune text editor](https://github.com/mawww/kakoune/issues/4103)
-                // * [dte text editor](https://gitlab.com/craigbarnes/dte/-/issues/138)
-                //
-                // Refer to https://sw.kovidgoyal.net/kitty/keyboard-protocol/ if you're curious.
-                let _ = execute!(
-                    io::stdout(),
-                    event::PushKeyboardEnhancementFlags(
-                        event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    )
-                );
-            } else {
-                // TODO: Log or warning
-            }
-        }
 
         loop {
             let mut paste_enter_state = false;
