@@ -210,12 +210,10 @@ impl Command {
                         ReedlineOption::Edit(EditCommand::MoveToStart),
                         ReedlineOption::Edit(EditCommand::ClearToLineEnd),
                     ]),
-                    Motion::NextWord => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutWordRightToNext)])
+                    Motion::NextWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)]),
+                    Motion::NextBigWord => {
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordRight)])
                     }
-                    Motion::NextBigWord => Some(vec![ReedlineOption::Edit(
-                        EditCommand::CutBigWordRightToNext,
-                    )]),
                     Motion::NextWordEnd => {
                         Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)])
                     }
