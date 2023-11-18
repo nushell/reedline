@@ -166,12 +166,13 @@
 //! // Create a reedline object with custom edit mode
 //! // This can define a keybinding setting or enable vi-emulation
 //! use reedline::{
-//!     default_vi_insert_keybindings, default_vi_normal_keybindings, EditMode, Reedline, Vi,
+//!     default_vi_insert_keybindings, default_vi_normal_keybindings, EditMode, Reedline, Vi, KeyCode
 //! };
 //!
 //! let mut line_editor = Reedline::create().with_edit_mode(Box::new(Vi::new(
 //!     default_vi_insert_keybindings(),
 //!     default_vi_normal_keybindings(),
+//!     (KeyCode::Null, KeyCode::Null),
 //! )));
 //! ```
 //!
