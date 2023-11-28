@@ -447,6 +447,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nix"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
+dependencies = [
+ "bitflags 2.3.3",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -576,6 +587,7 @@ dependencies = [
  "fd-lock",
  "gethostname",
  "itertools",
+ "nix",
  "nu-ansi-term",
  "pretty_assertions",
  "rstest",
