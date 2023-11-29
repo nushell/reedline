@@ -50,3 +50,7 @@ required-features = ["sqlite"]
 [[example]]
 name = "external_printer"
 required-features = ["external_printer"]
+
+[package.metadata.docs.rs]
+# Whether to pass `--all-features` to Cargo (default: false)
+all-features = true
