@@ -37,7 +37,6 @@ fn main() -> std::io::Result<()> {
         reedline::SqliteBackedHistory::with_file(
             "history.sqlite3".into(),
             history_session_id,
-            Some(chrono::Utc::now()),
         )
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
     );

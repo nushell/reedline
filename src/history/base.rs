@@ -218,6 +218,9 @@ pub trait History: Send {
     fn sync(&mut self) -> std::io::Result<()>;
     /// get the history session id
     fn session(&self) -> Option<HistorySessionId>;
+    // Dev comment: This has been implemented due to the `history session --set` command which couldn't get done so this is commented
+    // /// updates the history session id
+    // fn update_session(&mut self, history_session: Option<HistorySessionId>);
 }
 
 #[cfg(test)]
@@ -395,7 +398,7 @@ mod test {
         #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
         fn open_history() -> Box<dyn History> {
             Box::new(
-                crate::SqliteBackedHistory::with_file("target/test-history.db".into(), None, None)
+                crate::SqliteBackedHistory::with_file("target/test-history.db".into(), None)
                     .unwrap(),
             )
         }

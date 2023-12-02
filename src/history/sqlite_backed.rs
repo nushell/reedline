@@ -176,6 +176,11 @@ impl History for SqliteBackedHistory {
     fn session(&self) -> Option<HistorySessionId> {
         self.session
     }
+
+    // fn update_session(&mut self, history_session: Option<HistorySessionId>) {
+    //     self.session = history_session;
+    //     self.session_timestamp = history_session.map(|hs| chrono::Utc.timestamp_nanos(hs.0))
+    // }
 }
 fn map_sqlite_err(err: rusqlite::Error) -> ReedlineError {
     // TODO: better error mapping
@@ -195,7 +200,6 @@ impl SqliteBackedHistory {
     pub fn with_file(
         file: PathBuf,
         session: Option<HistorySessionId>,
-        session_timestamp: Option<chrono::DateTime<Utc>>,
     ) -> Result<Self> {
         if let Some(base_dir) = file.parent() {
             std::fs::create_dir_all(base_dir).map_err(|e| {
@@ -203,7 +207,7 @@ impl SqliteBackedHistory {
             })?;
         }
         let db = Connection::open(&file).map_err(map_sqlite_err)?;
-        Self::from_connection(db, session, session_timestamp)
+        Self::from_connection(db, session, session.map(|s| chrono::Utc.timestamp_nanos(s.0)))
     }
     /// Creates a new history in memory
     pub fn in_memory() -> Result<Self> {
@@ -357,6 +361,7 @@ impl SqliteBackedHistory {
                 wheres.push("exit_status != 0");
             }
         }
+
         if let (Some(session_id), Some(session_timestamp)) =
             (query.filter.session, self.session_timestamp)
         {
@@ -374,6 +379,7 @@ impl SqliteBackedHistory {
         if wheres.is_empty() {
             wheres = "true".to_string();
         }
+
         let query = format!(
             "SELECT {select_expression} \
              FROM history \
