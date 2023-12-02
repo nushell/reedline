@@ -1,10 +1,12 @@
+use std::{fmt::Display, time::Duration};
+
 use chrono::Utc;
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 use rusqlite::ToSql;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{fmt::Display, time::Duration};
 
-/// Unique ID for the [`HistoryItem`]. More recent items have higher ids than older ones.
+/// Unique ID for the [`HistoryItem`]. More recent items have higher ids than
+/// older ones.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HistoryItemId(pub(crate) i64);
 impl HistoryItemId {
@@ -19,7 +21,8 @@ impl Display for HistoryItemId {
     }
 }
 
-/// Unique ID for the session in which reedline was run to disambiguate different sessions
+/// Unique ID for the session in which reedline was run to disambiguate
+/// different sessions
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct HistorySessionId(pub(crate) i64);
 impl HistorySessionId {
@@ -49,7 +52,8 @@ impl From<HistorySessionId> for i64 {
     }
 }
 
-/// This trait represents additional arbitrary context to be added to a history (optional, see [`HistoryItem`])
+/// This trait represents additional arbitrary context to be added to a history
+/// (optional, see [`HistoryItem`])
 pub trait HistoryItemExtraInfo: Serialize + DeserializeOwned + Default + Send {}
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
@@ -101,7 +105,8 @@ pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
 }
 
 impl HistoryItem {
-    /// create a history item purely from the command line with everything else set to None
+    /// create a history item purely from the command line with everything else
+    /// set to None
     pub fn from_command_line(cmd: impl Into<String>) -> HistoryItem {
         HistoryItem {
             id: None,

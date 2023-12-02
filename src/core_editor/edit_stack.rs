@@ -26,7 +26,8 @@ where
         &self.internal_list[self.index]
     }
 
-    /// Go forward one point in the undo stack. If present on the last edit do nothing
+    /// Go forward one point in the undo stack. If present on the last edit do
+    /// nothing
     pub(super) fn redo(&mut self) -> &T {
         self.index = if self.index == self.internal_list.len() - 1 {
             self.index
@@ -37,8 +38,8 @@ where
     }
 
     /// Insert a new entry to the undo stack.
-    /// NOTE: (IMP): If we have hit undo a few times then discard all the other values that come
-    /// after the current point
+    /// NOTE: (IMP): If we have hit undo a few times then discard all the other
+    /// values that come after the current point
     pub(super) fn insert(&mut self, value: T) {
         if self.index < self.internal_list.len() - 1 {
             self.internal_list.resize_with(self.index + 1, || {
@@ -63,9 +64,10 @@ where
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
+
+    use super::*;
 
     fn edit_stack<T>(values: &[T], index: usize) -> EditStack<T>
     where

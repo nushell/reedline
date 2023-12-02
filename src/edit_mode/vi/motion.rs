@@ -1,8 +1,7 @@
 use std::iter::Peekable;
 
-use crate::{EditCommand, ReedlineEvent, Vi};
-
 use super::parser::{ParseResult, ReedlineOption};
+use crate::{EditCommand, ReedlineEvent, Vi};
 
 pub fn parse_motion<'iter, I>(
     input: &mut Peekable<I>,

@@ -1,10 +1,10 @@
 use nu_ansi_term::Style;
 
+use super::utils::strip_ansi;
 use crate::Prompt;
 
-use super::utils::strip_ansi;
-
-/// A representation of a buffer with styling, used for doing syntax highlighting
+/// A representation of a buffer with styling, used for doing syntax
+/// highlighting
 pub struct StyledText {
     /// The component, styled parts of the text
     pub buffer: Vec<(Style, String)>,
@@ -27,11 +27,11 @@ impl StyledText {
         self.buffer.push(styled_string);
     }
 
-    /// Render the styled string. We use the insertion point to render around so that
-    /// we can properly write out the styled string to the screen and find the correct
-    /// place to put the cursor. This assumes a logic that prints the first part of the
-    /// string, saves the cursor position, prints the second half, and then restores
-    /// the cursor position
+    /// Render the styled string. We use the insertion point to render around so
+    /// that we can properly write out the styled string to the screen and
+    /// find the correct place to put the cursor. This assumes a logic that
+    /// prints the first part of the string, saves the cursor position,
+    /// prints the second half, and then restores the cursor position
     ///
     /// Also inserts the multiline continuation prompt
     pub fn render_around_insertion_point(

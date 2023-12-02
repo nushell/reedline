@@ -1,5 +1,6 @@
-use crate::{hinter::get_first_token, history::SearchQuery, Hinter, History};
 use nu_ansi_term::{Color, Style};
+
+use crate::{hinter::get_first_token, history::SearchQuery, Hinter, History};
 
 /// A hinter that uses the completions or the history to show a hint to the user
 pub struct DefaultHinter {
@@ -69,7 +70,8 @@ impl DefaultHinter {
         self
     }
 
-    /// A builder that sets the number of characters that have to be present to enable history hints
+    /// A builder that sets the number of characters that have to be present to
+    /// enable history hints
     #[must_use]
     pub fn with_min_chars(mut self, min_chars: usize) -> Self {
         self.min_chars = min_chars;

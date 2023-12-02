@@ -2,8 +2,9 @@
 // cargo run --example highlighter
 //
 // unmatched input is marked red, matched input is marked green
-use reedline::{DefaultPrompt, ExampleHighlighter, Reedline, Signal};
 use std::io;
+
+use reedline::{DefaultPrompt, ExampleHighlighter, Reedline, Signal};
 
 fn main() -> io::Result<()> {
     let commands = vec![

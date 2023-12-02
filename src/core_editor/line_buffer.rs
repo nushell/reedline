@@ -1,10 +1,10 @@
-use {
-    itertools::Itertools,
-    std::{convert::From, ops::Range},
-    unicode_segmentation::UnicodeSegmentation,
-};
+use std::{convert::From, ops::Range};
 
-/// In memory representation of the entered line(s) including a cursor position to facilitate cursor based editing.
+use itertools::Itertools;
+use unicode_segmentation::UnicodeSegmentation;
+
+/// In memory representation of the entered line(s) including a cursor position
+/// to facilitate cursor based editing.
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct LineBuffer {
     lines: String,
@@ -30,7 +30,8 @@ impl LineBuffer {
         self.lines.is_empty()
     }
 
-    /// Check if the line buffer is valid utf-8 and the cursor sits on a valid grapheme boundary
+    /// Check if the line buffer is valid utf-8 and the cursor sits on a valid
+    /// grapheme boundary
     pub fn is_valid(&self) -> bool {
         self.lines.is_char_boundary(self.insertion_point())
             && (self
@@ -77,7 +78,8 @@ impl LineBuffer {
         &self.lines
     }
 
-    /// Set to a single line of `buffer` and reset the `InsertionPoint` cursor to the end
+    /// Set to a single line of `buffer` and reset the `InsertionPoint` cursor
+    /// to the end
     pub fn set_buffer(&mut self, buffer: String) {
         self.lines = buffer;
         self.insertion_point = self.lines.len();
@@ -343,7 +345,7 @@ impl LineBuffer {
         self.insertion_point = self.big_word_right_end_index();
     }
 
-    ///Insert a single character at the insertion point and move right
+    /// Insert a single character at the insertion point and move right
     pub fn insert_char(&mut self, c: char) {
         self.lines.insert(self.insertion_point, c);
         self.move_right();
@@ -398,7 +400,8 @@ impl LineBuffer {
 
     /// Clear text covered by `range` in the current line
     ///
-    /// Safety: Does not change the insertion point/offset and is thus not unicode safe!
+    /// Safety: Does not change the insertion point/offset and is thus not
+    /// unicode safe!
     pub(crate) fn clear_range<R>(&mut self, range: R)
     where
         R: std::ops::RangeBounds<usize>,
@@ -408,7 +411,8 @@ impl LineBuffer {
 
     /// Substitute text covered by `range` in the current line
     ///
-    /// Safety: Does not change the insertion point/offset and is thus not unicode safe!
+    /// Safety: Does not change the insertion point/offset and is thus not
+    /// unicode safe!
     pub fn replace_range<R>(&mut self, range: R, replace_with: &str)
     where
         R: std::ops::RangeBounds<usize>,
@@ -755,9 +759,10 @@ fn is_whitespace_str(s: &str) -> bool {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
+
+    use super::*;
 
     fn buffer_with(content: &str) -> LineBuffer {
         let mut line_buffer = LineBuffer::new();

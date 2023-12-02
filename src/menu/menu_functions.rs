@@ -49,7 +49,6 @@ pub enum ParseAction {
 ///         action: ParseAction::ForwardSearch
 ///     }
 /// )
-///
 /// ```
 pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
     if buffer.is_empty() {

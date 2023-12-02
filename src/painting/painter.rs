@@ -1,22 +1,20 @@
-use crate::{CursorConfig, PromptEditMode, PromptViMode};
+use std::io::{Result, Write};
 
-use {
-    super::utils::{coerce_crlf, line_width},
-    crate::{
-        menu::{Menu, ReedlineMenu},
-        painting::PromptLines,
-        Prompt,
-    },
-    crossterm::{
-        cursor::{self, MoveTo, RestorePosition, SavePosition},
-        style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor},
-        terminal::{self, Clear, ClearType},
-        QueueableCommand,
-    },
-    std::io::{Result, Write},
+use crossterm::{
+    cursor::{self, MoveTo, RestorePosition, SavePosition},
+    style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor},
+    terminal::{self, Clear, ClearType},
+    QueueableCommand,
 };
 #[cfg(feature = "external_printer")]
 use {crate::LineBuffer, crossterm::cursor::MoveUp};
+
+use super::utils::{coerce_crlf, line_width};
+use crate::{
+    menu::{Menu, ReedlineMenu},
+    painting::PromptLines,
+    CursorConfig, Prompt, PromptEditMode, PromptViMode,
+};
 
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
@@ -128,8 +126,8 @@ impl Painter {
     /// prompt should scroll up and how much space is required to print all the
     /// lines for the buffer
     ///
-    /// Note. The `ScrollUp` operation in `crossterm` deletes lines from the top of
-    /// the screen.
+    /// Note. The `ScrollUp` operation in `crossterm` deletes lines from the top
+    /// of the screen.
     pub(crate) fn repaint_buffer(
         &mut self,
         prompt: &dyn Prompt,
@@ -151,7 +149,8 @@ impl Painter {
         // Marking the painter state as larger buffer to avoid animations
         self.large_buffer = required_lines >= screen_height;
 
-        // Moving the start position of the cursor based on the size of the required lines
+        // Moving the start position of the cursor based on the size of the required
+        // lines
         if self.large_buffer {
             self.prompt_start_row = 0;
         } else if required_lines >= remaining_lines {
@@ -314,8 +313,9 @@ impl Painter {
         let remaining_lines = screen_height.saturating_sub(cursor_distance);
 
         // Calculating the total lines before the cursor
-        // The -1 in the total_lines_before is there because the at least one line of the prompt
-        // indicator is printed in the same line as the first line of the buffer
+        // The -1 in the total_lines_before is there because the at least one line of
+        // the prompt indicator is printed in the same line as the first line of
+        // the buffer
         let prompt_lines = lines.prompt_lines_with_wrap(screen_width) as usize;
 
         let prompt_indicator = match menu {
@@ -327,7 +327,8 @@ impl Painter {
         let before_cursor_lines = lines.before_cursor.lines().count();
         let total_lines_before = prompt_lines + prompt_indicator_lines + before_cursor_lines - 1;
 
-        // Extra rows represent how many rows are "above" the visible area in the terminal
+        // Extra rows represent how many rows are "above" the visible area in the
+        // terminal
         let extra_rows = (total_lines_before).saturating_sub(screen_height as usize);
 
         // print our prompt with color
@@ -355,9 +356,9 @@ impl Painter {
             self.stdout.queue(ResetColor)?;
         }
 
-        // The minimum number of lines from the menu are removed from the buffer if there is no more
-        // space to print the menu. This will only happen if the cursor is at the last line and
-        // it is a large buffer
+        // The minimum number of lines from the menu are removed from the buffer if
+        // there is no more space to print the menu. This will only happen if
+        // the cursor is at the last line and it is a large buffer
         let offset = menu.and_then(|menu| {
             if cursor_distance >= screen_height.saturating_sub(1) {
                 let rows = lines
@@ -383,9 +384,10 @@ impl Painter {
             self.print_menu(menu, lines, use_ansi_coloring)?;
         } else {
             // Selecting lines for the hint
-            // The -1 subtraction is done because the remaining lines consider the line where the
-            // cursor is located as a remaining line. That has to be removed to get the correct offset
-            // for the after-cursor and hint lines
+            // The -1 subtraction is done because the remaining lines consider the line
+            // where the cursor is located as a remaining line. That has to be
+            // removed to get the correct offset for the after-cursor and hint
+            // lines
             let offset = remaining_lines.saturating_sub(1) as usize;
             // Selecting lines after the cursor
             let after_cursor_skipped = skip_buffer_lines(&lines.after_cursor, 0, Some(offset));
@@ -409,25 +411,27 @@ impl Painter {
             && height <= prev_terminal_size.1
             && width == prev_terminal_size.0
         {
-            // The terminal got smaller in height but the start of the prompt is still visible
-            // The width didn't change
+            // The terminal got smaller in height but the start of the prompt is still
+            // visible The width didn't change
             return;
         }
 
         // Either:
         // - The terminal got larger in height
-        //   - Note: if the terminal doesn't have sufficient history, this will leave a trail
+        //   - Note: if the terminal doesn't have sufficient history, this will leave a
+        //     trail of previous prompts currently.
+        //   - Note: if the the prompt contains multiple lines, this will leave a trail
         //     of previous prompts currently.
-        //   - Note: if the the prompt contains multiple lines, this will leave a trail of
-        //     previous prompts currently.
-        // - The terminal got smaller in height and the whole prompt is no longer visible
-        //   - Note: if the the prompt contains multiple lines, this will leave a trail of
-        //     previous prompts currently.
+        // - The terminal got smaller in height and the whole prompt is no longer
+        //   visible
+        //   - Note: if the the prompt contains multiple lines, this will leave a trail
+        //     of previous prompts currently.
         // - The width changed
         self.prompt_start_row = height.saturating_sub(1);
     }
 
-    /// Writes `line` to the terminal with a following carriage return and newline
+    /// Writes `line` to the terminal with a following carriage return and
+    /// newline
     pub(crate) fn paint_line(&mut self, line: &str) -> Result<()> {
         self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
 
@@ -468,8 +472,8 @@ impl Painter {
     }
 
     // The prompt is moved to the end of the buffer after the event was handled
-    // If the prompt is in the middle of a multiline buffer, then the output to stdout
-    // could overwrite the buffer writing
+    // If the prompt is in the middle of a multiline buffer, then the output to
+    // stdout could overwrite the buffer writing
     pub(crate) fn move_cursor_to_end(&mut self) -> Result<()> {
         let final_row = self.prompt_start_row + self.last_required_lines;
         let scroll = final_row.saturating_sub(self.screen_height() - 1);
@@ -537,16 +541,16 @@ impl Painter {
 
     /// Queue scroll of `num` lines to `self.stdout`.
     ///
-    /// On some platforms and terminals (e.g. windows terminal, alacritty on windows and linux)
-    /// using special escape sequence '\[e<num>S' (provided by [`ScrollUp`]) does not put lines
-    /// that go offscreen in scrollback history. This method prints newlines near the edge of screen
-    /// (which always works) instead. See [here](https://github.com/nushell/nushell/issues/9166)
+    /// On some platforms and terminals (e.g. windows terminal, alacritty on
+    /// windows and linux) using special escape sequence '\[e<num>S'
+    /// (provided by [`ScrollUp`]) does not put lines that go offscreen in
+    /// scrollback history. This method prints newlines near the edge of screen (which always works) instead. See [here](https://github.com/nushell/nushell/issues/9166)
     /// for more info on subject.
     ///
     /// ## Note
-    /// This method does not return cursor to the original position and leaves it at the first
-    /// column of last line. **Be sure to use [`MoveTo`] afterwards if this is not the desired
-    /// location**
+    /// This method does not return cursor to the original position and leaves
+    /// it at the first column of last line. **Be sure to use [`MoveTo`]
+    /// afterwards if this is not the desired location**
     fn queue_universal_scroll(&mut self, num: u16) -> Result<()> {
         // If cursor is not near end of screen printing new will not scroll terminal.
         // Move it to the last line to ensure that every newline results in scroll
@@ -560,8 +564,9 @@ impl Painter {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[test]
     fn test_skip_lines() {

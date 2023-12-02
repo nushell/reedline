@@ -1,6 +1,10 @@
-use super::{motion::Motion, motion::ViCharSearch, parser::ReedlineOption};
-use crate::{EditCommand, ReedlineEvent, Vi};
 use std::iter::Peekable;
+
+use super::{
+    motion::{Motion, ViCharSearch},
+    parser::ReedlineOption,
+};
+use crate::{EditCommand, ReedlineEvent, Vi};
 
 pub fn parse_command<'iter, I>(input: &mut Peekable<I>) -> Option<Command>
 where
@@ -122,7 +126,7 @@ impl Command {
         matches!(self, Command::Delete | Command::Change)
     }
 
-    pub fn to_reedline(&self, vi_state: &mut Vi) -> Vec<ReedlineOption> {
+    pub fn to_reedline(&self, vi_state: &Vi) -> Vec<ReedlineOption> {
         match self {
             Self::EnterViInsert => vec![ReedlineOption::Event(ReedlineEvent::Repaint)],
             Self::EnterViAppend => vec![ReedlineOption::Edit(EditCommand::MoveRight)],

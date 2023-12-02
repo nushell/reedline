@@ -1,9 +1,8 @@
-use crate::{Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode};
+use std::{borrow::Cow, env};
 
-use {
-    chrono::Local,
-    std::{borrow::Cow, env},
-};
+use chrono::Local;
+
+use crate::{Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode};
 
 /// The default prompt indicator
 pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
@@ -22,7 +21,8 @@ pub struct DefaultPrompt {
     pub right_prompt: DefaultPromptSegment,
 }
 
-/// A struct to control the appearance of the left or right prompt in a [`DefaultPrompt`]
+/// A struct to control the appearance of the left or right prompt in a
+/// [`DefaultPrompt`]
 #[derive(Clone)]
 pub enum DefaultPromptSegment {
     /// A basic user-defined prompt (i.e. just text)
@@ -82,8 +82,8 @@ impl Prompt for DefaultPrompt {
             PromptHistorySearchStatus::Passing => "",
             PromptHistorySearchStatus::Failing => "failing ",
         };
-        // NOTE: magic strings, given there is logic on how these compose I am not sure if it
-        // is worth extracting in to static constant
+        // NOTE: magic strings, given there is logic on how these compose I am not sure
+        // if it is worth extracting in to static constant
         Cow::Owned(format!(
             "({}reverse-search: {}) ",
             prefix, history_search.term
@@ -101,9 +101,10 @@ impl Default for DefaultPrompt {
 }
 
 impl DefaultPrompt {
-    /// Constructor for the default prompt, which takes a configurable left and right prompt.
-    /// For less customization, use [`DefaultPrompt::default`].
-    /// For more fine-tuned configuration, implement the [`Prompt`] trait.
+    /// Constructor for the default prompt, which takes a configurable left and
+    /// right prompt. For less customization, use
+    /// [`DefaultPrompt::default`]. For more fine-tuned configuration,
+    /// implement the [`Prompt`] trait.
     pub const fn new(
         left_prompt: DefaultPromptSegment,
         right_prompt: DefaultPromptSegment,

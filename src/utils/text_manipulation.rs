@@ -12,8 +12,9 @@ pub fn remove_last_grapheme(string: &str) -> &str {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[test]
     fn remove_last_char_works_with_empty_string() {

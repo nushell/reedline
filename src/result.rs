@@ -1,4 +1,5 @@
 use std::fmt::Display;
+
 use thiserror::Error;
 
 /// non-public (for now)
@@ -30,5 +31,6 @@ impl Display for ReedlineError {
 }
 impl std::error::Error for ReedlineError {}
 
-/// Standard [`std::result::Result`], with [`ReedlineError`] as the error variant
+/// Standard [`std::result::Result`], with [`ReedlineError`] as the error
+/// variant
 pub type Result<T> = std::result::Result<T, ReedlineError>;

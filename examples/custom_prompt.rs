@@ -3,10 +3,11 @@
 //
 // Pressing keys will increase the right prompt value
 
+use std::{borrow::Cow, cell::Cell, io};
+
 use reedline::{
     Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline, Signal,
 };
-use std::{borrow::Cow, cell::Cell, io};
 
 // For custom prompt, implement the Prompt trait
 //

@@ -1,12 +1,11 @@
-use {
-    crossterm::{
-        event::{poll, Event, KeyCode, KeyEvent},
-        terminal,
-    },
-    std::{
-        io::{stdout, Write},
-        time::Duration,
-    },
+use std::{
+    io::{stdout, Write},
+    time::Duration,
+};
+
+use crossterm::{
+    event::{poll, Event, KeyCode, KeyEvent},
+    terminal,
 };
 
 fn main() -> std::io::Result<()> {
@@ -16,7 +15,8 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-/// **For debugging purposes only:** Track the terminal events observed by [`Reedline`] and print them.
+/// **For debugging purposes only:** Track the terminal events observed by
+/// [`Reedline`] and print them.
 pub fn print_events() -> std::io::Result<()> {
     stdout().flush()?;
     terminal::enable_raw_mode()?;
@@ -48,7 +48,8 @@ fn print_events_helper() -> std::io::Result<()> {
                 match code {
                     KeyCode::Char(c) => {
                         println!(
-                            "Char: {} code: {:#08x}; Modifier {:?}; Flags {:#08b}; Kind {kind:?}; state {state:?}\r",
+                            "Char: {} code: {:#08x}; Modifier {:?}; Flags {:#08b}; Kind {kind:?}; \
+                             state {state:?}\r",
                             c,
                             u32::from(c),
                             modifiers,
@@ -57,7 +58,8 @@ fn print_events_helper() -> std::io::Result<()> {
                     }
                     _ => {
                         println!(
-                            "Keycode: {code:?}; Modifier {modifiers:?}; Flags {modifiers:#08b}; Kind {kind:?}; state {state:?}\r"
+                            "Keycode: {code:?}; Modifier {modifiers:?}; Flags {modifiers:#08b}; \
+                             Kind {kind:?}; state {state:?}\r"
                         );
                     }
                 }

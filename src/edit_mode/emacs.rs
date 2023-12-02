@@ -1,3 +1,5 @@
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
 use crate::{
     edit_mode::{
         keybindings::{
@@ -9,7 +11,6 @@ use crate::{
     enums::{EditCommand, ReedlineEvent, ReedlineRawEvent},
     PromptEditMode,
 };
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 /// Returns the current default emacs keybindings
 pub fn default_emacs_keybindings() -> Keybindings {
@@ -172,7 +173,8 @@ impl EditMode for Emacs {
 }
 
 impl Emacs {
-    /// Emacs style input parsing constructor if you want to use custom keybindings
+    /// Emacs style input parsing constructor if you want to use custom
+    /// keybindings
     pub const fn new(keybindings: Keybindings) -> Self {
         Emacs { keybindings }
     }
@@ -180,8 +182,9 @@ impl Emacs {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[test]
     fn ctrl_l_leads_to_clear_screen_event() {

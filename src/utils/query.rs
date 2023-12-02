@@ -1,10 +1,12 @@
+use std::fmt::{Display, Formatter};
+
+use crossterm::event::KeyCode;
+use strum::IntoEnumIterator;
+
 use crate::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     EditCommand, Keybindings, PromptEditMode, ReedlineEvent,
 };
-use crossterm::event::KeyCode;
-use std::fmt::{Display, Formatter};
-use strum::IntoEnumIterator;
 
 struct ReedLineCrossTermKeyCode(crossterm::event::KeyCode);
 impl ReedLineCrossTermKeyCode {
@@ -111,9 +113,9 @@ pub fn get_reedline_edit_commands() -> Vec<String> {
     EditCommand::iter().map(|edit| edit.to_string()).collect()
 }
 
-/// Get the default keybindings and return a `Vec<(String, String, String, String)>`
-/// where String 1 is `mode`, String 2 is `key_modifiers`, String 3 is `key_code`, and
-/// Sting 4 is `event`
+/// Get the default keybindings and return a `Vec<(String, String, String,
+/// String)>` where String 1 is `mode`, String 2 is `key_modifiers`, String 3 is
+/// `key_code`, and Sting 4 is `event`
 pub fn get_reedline_default_keybindings() -> Vec<(String, String, String, String)> {
     let options = vec![
         ("emacs", default_emacs_keybindings()),

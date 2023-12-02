@@ -1,6 +1,6 @@
-use crate::highlighter::Highlighter;
-use crate::StyledText;
 use nu_ansi_term::{Color, Style};
+
+use crate::{highlighter::Highlighter, StyledText};
 
 /// Highlight all matches for a given search string in a line
 ///

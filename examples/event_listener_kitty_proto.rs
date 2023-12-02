@@ -1,16 +1,14 @@
-use crossterm::event::{
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+use std::{
+    io::{stdout, Result, Write},
+    time::Duration,
 };
-use crossterm::execute;
-use {
-    crossterm::{
-        event::{poll, Event, KeyCode, KeyEvent},
-        terminal,
+
+use crossterm::{
+    event::{
+        poll, Event, KeyCode, KeyEvent, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     },
-    std::{
-        io::{stdout, Result, Write},
-        time::Duration,
-    },
+    execute, terminal,
 };
 
 fn main() -> Result<()> {
@@ -20,7 +18,8 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// **For debugging purposes only:** Track the terminal events observed by [`Reedline`] and print them.
+/// **For debugging purposes only:** Track the terminal events observed by
+/// [`Reedline`] and print them.
 pub fn print_events() -> Result<()> {
     stdout().flush()?;
     terminal::enable_raw_mode()?;
@@ -73,7 +72,8 @@ fn print_events_helper() -> Result<()> {
                 match code {
                     KeyCode::Char(c) => {
                         println!(
-                            "Char: {} code: {:#08x}; Modifier {:?}; Flags {:#08b}; Kind {kind:?}; state {state:?}\r",
+                            "Char: {} code: {:#08x}; Modifier {:?}; Flags {:#08b}; Kind {kind:?}; \
+                             state {state:?}\r",
                             c,
                             u32::from(c),
                             modifiers,
@@ -82,7 +82,8 @@ fn print_events_helper() -> Result<()> {
                     }
                     _ => {
                         println!(
-                            "Keycode: {code:?}; Modifier {modifiers:?}; Flags {modifiers:#08b}; Kind {kind:?}; state {state:?}\r"
+                            "Keycode: {code:?}; Modifier {modifiers:?}; Flags {modifiers:#08b}; \
+                             Kind {kind:?}; state {state:?}\r"
                         );
                     }
                 }

@@ -1,6 +1,7 @@
+use std::fmt::{Display, Formatter};
+
 use crossterm::event::{Event, KeyEvent, KeyEventKind};
 use serde::{Deserialize, Serialize};
-use std::fmt::{Display, Formatter};
 use strum_macros::EnumIter;
 
 /// Valid ways how `Reedline::read_line()` can return
@@ -10,7 +11,8 @@ pub enum Signal {
     Success(String),
     /// Entry was aborted with `Ctrl+C`
     CtrlC, // Interrupt current editing
-    /// Abort with `Ctrl+D` signalling `EOF` or abort of a whole interactive session
+    /// Abort with `Ctrl+D` signalling `EOF` or abort of a whole interactive
+    /// session
     CtrlD, // End terminal session
 }
 
@@ -100,7 +102,8 @@ pub enum EditCommand {
     /// Clear to the end of the current line
     ClearToLineEnd,
 
-    /// Insert completion: entire completion if there is only one possibility, or else up to shared prefix.
+    /// Insert completion: entire completion if there is only one possibility,
+    /// or else up to shared prefix.
     Complete,
 
     /// Cut the current line
@@ -334,8 +337,8 @@ pub enum EditType {
     EditText,
 }
 
-/// Every line change should come with an `UndoBehavior` tag, which can be used to
-/// calculate how the change should be reflected on the undo stack
+/// Every line change should come with an `UndoBehavior` tag, which can be used
+/// to calculate how the change should be reflected on the undo stack
 #[derive(Debug)]
 pub enum UndoBehavior {
     /// Character insertion, tracking the character inserted
@@ -350,8 +353,8 @@ pub enum UndoBehavior {
     MoveCursor,
     /// Navigated the history using up or down arrows
     HistoryNavigation,
-    /// Catch-all for actions that should always form a unique undo point and never be
-    /// grouped with later edits
+    /// Catch-all for actions that should always form a unique undo point and
+    /// never be grouped with later edits
     CreateUndoPoint,
     /// Undo/Redo actions shouldn't be reflected on the edit stack
     UndoRedo,
@@ -452,10 +455,12 @@ pub enum ReedlineEvent {
     /// Navigate to the previous historic buffer
     PreviousHistory,
 
-    /// Move up to the previous line, if multiline, or up into the historic buffers
+    /// Move up to the previous line, if multiline, or up into the historic
+    /// buffers
     Up,
 
-    /// Move down to the next line, if multiline, or down through the historic buffers
+    /// Move down to the next line, if multiline, or down through the historic
+    /// buffers
     Down,
 
     /// Move right to the next column, completion entry, or complete hint
@@ -504,7 +509,8 @@ pub enum ReedlineEvent {
     /// Move to the previous history page
     MenuPagePrevious,
 
-    /// Way to bind the execution of a whole command (directly returning from [`crate::Reedline::read_line()`]) to a keybinding
+    /// Way to bind the execution of a whole command (directly returning from
+    /// [`crate::Reedline::read_line()`]) to a keybinding
     ExecuteHostCommand(String),
 
     /// Open text editor
@@ -564,8 +570,9 @@ pub(crate) enum EventStatus {
 
 /// A simple wrapper for [crossterm::event::Event]
 ///
-/// Which will make sure that the given event doesn't contain [KeyEventKind::Release]
-/// and convert from [KeyEventKind::Repeat] to [KeyEventKind::Press]
+/// Which will make sure that the given event doesn't contain
+/// [KeyEventKind::Release] and convert from [KeyEventKind::Repeat] to
+/// [KeyEventKind::Press]
 pub struct ReedlineRawEvent {
     inner: Event,
 }

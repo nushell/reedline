@@ -1,6 +1,7 @@
 /// Defines an interface to interact with a Clipboard for cut and paste.
 ///
-/// Mutable reference requirements are stricter than always necessary, but the currently used system clipboard API demands them for exclusive access.
+/// Mutable reference requirements are stricter than always necessary, but the
+/// currently used system clipboard API demands them for exclusive access.
 pub trait Clipboard: Send {
     fn set(&mut self, content: &str, mode: ClipboardMode);
 
@@ -25,7 +26,8 @@ pub enum ClipboardMode {
     Lines,
 }
 
-/// Simple buffer that provides a clipboard only usable within the application/library.
+/// Simple buffer that provides a clipboard only usable within the
+/// application/library.
 #[derive(Default)]
 pub struct LocalClipboard {
     content: String,
@@ -58,7 +60,8 @@ pub use system_clipboard::SystemClipboard;
 ///
 /// Enabled -> [`SystemClipboard`], which talks to the system
 ///
-/// Disabled -> [`LocalClipboard`], which supports cutting and pasting limited to the [`crate::Reedline`] instance
+/// Disabled -> [`LocalClipboard`], which supports cutting and pasting limited
+/// to the [`crate::Reedline`] instance
 pub fn get_default_clipboard() -> SystemClipboard {
     SystemClipboard::new()
 }
@@ -68,15 +71,17 @@ pub fn get_default_clipboard() -> SystemClipboard {
 ///
 /// Enabled -> `SystemClipboard`, which talks to the system
 ///
-/// Disabled -> [`LocalClipboard`], which supports cutting and pasting limited to the [`crate::Reedline`] instance
+/// Disabled -> [`LocalClipboard`], which supports cutting and pasting limited
+/// to the [`crate::Reedline`] instance
 pub fn get_default_clipboard() -> LocalClipboard {
     LocalClipboard::new()
 }
 
 #[cfg(feature = "system_clipboard")]
 mod system_clipboard {
-    use super::*;
     use clipboard::{ClipboardContext, ClipboardProvider};
+
+    use super::*;
 
     /// Wrapper around [`clipboard`](https://docs.rs/clipboard) crate
     ///
@@ -108,7 +113,8 @@ mod system_clipboard {
         fn get(&mut self) -> (String, ClipboardMode) {
             let system_content = self.cb.get_contents().unwrap_or_default();
             if system_content == self.local_copy {
-                // We assume the content was yanked inside the line editor and the last yank determined the mode.
+                // We assume the content was yanked inside the line editor and the last yank
+                // determined the mode.
                 (system_content, self.mode)
             } else {
                 // Content has changed, default to direct insertion.

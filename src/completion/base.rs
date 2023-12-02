@@ -24,15 +24,17 @@ impl Span {
     }
 }
 
-/// A trait that defines how to convert a line and position to a list of potential completions in that position.
+/// A trait that defines how to convert a line and position to a list of
+/// potential completions in that position.
 pub trait Completer: Send {
-    /// the action that will take the line and position and convert it to a vector of completions, which include the
-    /// span to replace and the contents of that replacement
+    /// the action that will take the line and position and convert it to a
+    /// vector of completions, which include the span to replace and the
+    /// contents of that replacement
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion>;
 
     /// action that will return a partial section of available completions
-    /// this command comes handy when trying to avoid to pull all the data at once
-    /// from the completer
+    /// this command comes handy when trying to avoid to pull all the data at
+    /// once from the completer
     fn partial_complete(
         &mut self,
         line: &str,

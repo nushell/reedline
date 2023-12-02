@@ -1,3 +1,8 @@
+use std::{path::PathBuf, time::Duration};
+
+use chrono::{TimeZone, Utc};
+use rusqlite::{named_params, params, Connection, ToSql};
+
 use super::{
     base::{CommandLineSearch, SearchDirection, SearchQuery},
     History, HistoryItem, HistoryItemId, HistorySessionId,
@@ -6,14 +11,12 @@ use crate::{
     result::{ReedlineError, ReedlineErrorVariants},
     Result,
 };
-use chrono::{TimeZone, Utc};
-use rusqlite::{named_params, params, Connection, ToSql};
-use std::{path::PathBuf, time::Duration};
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
 
 /// A history that stores the values to an SQLite database.
-/// In addition to storing the command, the history can store an additional arbitrary HistoryEntryContext,
-/// to add information such as a timestamp, running directory, result...
+/// In addition to storing the command, the history can store an additional
+/// arbitrary HistoryEntryContext, to add information such as a timestamp,
+/// running directory, result...
 pub struct SqliteBackedHistory {
     db: rusqlite::Connection,
     session: Option<HistorySessionId>,
@@ -179,8 +182,8 @@ impl History for SqliteBackedHistory {
 
     // fn update_session(&mut self, history_session: Option<HistorySessionId>) {
     //     self.session = history_session;
-    //     self.session_timestamp = history_session.map(|hs| chrono::Utc.timestamp_nanos(hs.0))
-    // }
+    //     self.session_timestamp = history_session.map(|hs|
+    // chrono::Utc.timestamp_nanos(hs.0)) }
 }
 fn map_sqlite_err(err: rusqlite::Error) -> ReedlineError {
     // TODO: better error mapping
@@ -196,19 +199,20 @@ impl SqliteBackedHistory {
     ///
     ///
     /// **Side effects:** creates all nested directories to the file
-    ///
-    pub fn with_file(
-        file: PathBuf,
-        session: Option<HistorySessionId>,
-    ) -> Result<Self> {
+    pub fn with_file(file: PathBuf, session: Option<HistorySessionId>) -> Result<Self> {
         if let Some(base_dir) = file.parent() {
             std::fs::create_dir_all(base_dir).map_err(|e| {
                 ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!("{e}")))
             })?;
         }
         let db = Connection::open(&file).map_err(map_sqlite_err)?;
-        Self::from_connection(db, session, session.map(|s| chrono::Utc.timestamp_nanos(s.0)))
+        Self::from_connection(
+            db,
+            session,
+            session.map(|s| chrono::Utc.timestamp_nanos(s.0)),
+        )
     }
+
     /// Creates a new history in memory
     pub fn in_memory() -> Result<Self> {
         Self::from_connection(
@@ -217,6 +221,7 @@ impl SqliteBackedHistory {
             None,
         )
     }
+
     /// initialize a new database / migrate an existing one
     fn from_connection(
         db: Connection,
@@ -381,11 +386,7 @@ impl SqliteBackedHistory {
         }
 
         let query = format!(
-            "SELECT {select_expression} \
-             FROM history \
-             WHERE ({wheres}) \
-             ORDER BY id {asc} \
-             {limit}"
+            "SELECT {select_expression} FROM history WHERE ({wheres}) ORDER BY id {asc} {limit}"
         );
         (query, params)
     }

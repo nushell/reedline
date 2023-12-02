@@ -1,16 +1,16 @@
-use {
-    super::{
-        menu_functions::{parse_selection_char, string_difference},
-        Menu, MenuEvent, MenuTextStyle,
-    },
-    crate::{
-        core_editor::Editor,
-        painting::{estimate_single_line_wraps, Painter},
-        Completer, Suggestion, UndoBehavior,
-    },
-    nu_ansi_term::{ansi::RESET, Style},
-    std::{fmt::Write, iter::Sum},
-    unicode_width::UnicodeWidthStr,
+use std::{fmt::Write, iter::Sum};
+
+use nu_ansi_term::{ansi::RESET, Style};
+use unicode_width::UnicodeWidthStr;
+
+use super::{
+    menu_functions::{parse_selection_char, string_difference},
+    Menu, MenuEvent, MenuTextStyle,
+};
+use crate::{
+    core_editor::Editor,
+    painting::{estimate_single_line_wraps, Painter},
+    Completer, Suggestion, UndoBehavior,
 };
 
 const SELECTION_CHAR: char = '!';
@@ -592,8 +592,9 @@ impl Menu for ListMenu {
         }
     }
 
-    /// Calculates the real required lines for the menu considering how many lines
-    /// wrap the terminal and if an entry is larger than the remaining lines
+    /// Calculates the real required lines for the menu considering how many
+    /// lines wrap the terminal and if an entry is larger than the remaining
+    /// lines
     fn menu_required_lines(&self, terminal_columns: u16) -> u16 {
         let mut entry_index = 0;
         self.get_values().iter().fold(0, |total_lines, suggestion| {
@@ -610,7 +611,8 @@ impl Menu for ListMenu {
         }) + 1
     }
 
-    /// Creates the menu representation as a string which will be painted by the painter
+    /// Creates the menu representation as a string which will be painted by the
+    /// painter
     fn menu_string(&self, _available_lines: u16, use_ansi_coloring: bool) -> String {
         let values_before_page = self.pages.iter().take(self.page).sum::<Page>().size;
         match self.pages.get(self.page) {

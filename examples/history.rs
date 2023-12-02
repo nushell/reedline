@@ -6,8 +6,9 @@
 //
 // Browse history by Up/Down arrows or Ctrl-n/p
 
-use reedline::{DefaultPrompt, FileBackedHistory, Reedline, Signal};
 use std::io;
+
+use reedline::{DefaultPrompt, FileBackedHistory, Reedline, Signal};
 
 fn main() -> io::Result<()> {
     let history = Box::new(
