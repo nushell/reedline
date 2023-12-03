@@ -82,7 +82,7 @@ impl Painter {
 
     /// Returns the available lines from the prompt down
     pub fn remaining_lines(&self) -> u16 {
-        self.screen_height() - self.prompt_start_row
+        self.screen_height().saturating_sub(self.prompt_start_row)
     }
 
     /// Sets the prompt origin position and screen size for a new line editor
@@ -400,31 +400,16 @@ impl Painter {
 
     /// Updates prompt origin and offset to handle a screen resize event
     pub(crate) fn handle_resize(&mut self, width: u16, height: u16) {
-        let prev_terminal_size = self.terminal_size;
-        let prev_prompt_row = self.prompt_start_row;
-
         self.terminal_size = (width, height);
 
-        if prev_prompt_row < height
-            && height <= prev_terminal_size.1
-            && width == prev_terminal_size.0
-        {
-            // The terminal got smaller in height but the start of the prompt is still visible
-            // The width didn't change
-            return;
+        // `cursor::position() is blocking and can timeout.
+        // The question is whether we can afford it. If not, perhaps we should use it in some scenarios but not others
+        // The problem is trying to calculate this internally doesn't seem to be reliable because terminals might
+        // have additional text in their buffer that messes with the offset on scroll.
+        // It seems like it _should_ be ok because it only happens on resize
+        if let Ok(position) = cursor::position() {
+            self.prompt_start_row = position.1;
         }
-
-        // Either:
-        // - The terminal got larger in height
-        //   - Note: if the terminal doesn't have sufficient history, this will leave a trail
-        //     of previous prompts currently.
-        //   - Note: if the the prompt contains multiple lines, this will leave a trail of
-        //     previous prompts currently.
-        // - The terminal got smaller in height and the whole prompt is no longer visible
-        //   - Note: if the the prompt contains multiple lines, this will leave a trail of
-        //     previous prompts currently.
-        // - The width changed
-        self.prompt_start_row = height.saturating_sub(1);
     }
 
     /// Writes `line` to the terminal with a following carriage return and newline
