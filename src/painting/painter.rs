@@ -406,7 +406,13 @@ impl Painter {
         // The question is whether we can afford it. If not, perhaps we should use it in some scenarios but not others
         // The problem is trying to calculate this internally doesn't seem to be reliable because terminals might
         // have additional text in their buffer that messes with the offset on scroll.
-        // It seems like it _should_ be ok because it only happens on resize
+        // It seems like it _should_ be ok because it only happens on resize.
+
+        // Known bug: on iterm2 and kitty, clearing the screen via CMD-K doesn't reset
+        // the position. Might need to special-case this.
+        //
+        // I assume this is a bug with the position() call but haven't figured that
+        // out yet.
         if let Ok(position) = cursor::position() {
             self.prompt_start_row = position.1;
         }
