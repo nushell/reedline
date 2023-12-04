@@ -176,11 +176,6 @@ impl History for SqliteBackedHistory {
     fn session(&self) -> Option<HistorySessionId> {
         self.session
     }
-
-    // fn update_session(&mut self, history_session: Option<HistorySessionId>) {
-    //     self.session = history_session;
-    //     self.session_timestamp = history_session.map(|hs| chrono::Utc.timestamp_nanos(hs.0))
-    // }
 }
 fn map_sqlite_err(err: rusqlite::Error) -> ReedlineError {
     // TODO: better error mapping
@@ -197,17 +192,18 @@ impl SqliteBackedHistory {
     ///
     /// **Side effects:** creates all nested directories to the file
     ///
-    pub fn with_file(
-        file: PathBuf,
-        session: Option<HistorySessionId>,
-    ) -> Result<Self> {
+    pub fn with_file(file: PathBuf, session: Option<HistorySessionId>) -> Result<Self> {
         if let Some(base_dir) = file.parent() {
             std::fs::create_dir_all(base_dir).map_err(|e| {
                 ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!("{e}")))
             })?;
         }
         let db = Connection::open(&file).map_err(map_sqlite_err)?;
-        Self::from_connection(db, session, session.map(|s| chrono::Utc.timestamp_nanos(s.0)))
+        Self::from_connection(
+            db,
+            session,
+            session.map(|s| chrono::Utc.timestamp_nanos(s.0)),
+        )
     }
     /// Creates a new history in memory
     pub fn in_memory() -> Result<Self> {
