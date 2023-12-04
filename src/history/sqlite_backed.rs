@@ -199,7 +199,11 @@ impl SqliteBackedHistory {
             })?;
         }
         let db = Connection::open(&file).map_err(map_sqlite_err)?;
-        Self::from_connection(db, session, session.map(|s| chrono::Utc.timestamp_nanos(s.0)))
+        Self::from_connection(
+            db,
+            session,
+            session.map(|s| chrono::Utc.timestamp_nanos(s.0)),
+        )
     }
     /// Creates a new history in memory
     pub fn in_memory() -> Result<Self> {

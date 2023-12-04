@@ -34,11 +34,8 @@ fn main() -> std::io::Result<()> {
 
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     let history = Box::new(
-        reedline::SqliteBackedHistory::with_file(
-            "history.sqlite3".into(),
-            history_session_id,
-        )
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
+        reedline::SqliteBackedHistory::with_file("history.sqlite3".into(), history_session_id)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
     );
     #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);

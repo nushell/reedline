@@ -122,7 +122,7 @@ impl Command {
         matches!(self, Command::Delete | Command::Change)
     }
 
-    pub fn to_reedline(&self, vi_state: &mut Vi) -> Vec<ReedlineOption> {
+    pub fn to_reedline(&self, vi_state: &Vi) -> Vec<ReedlineOption> {
         match self {
             Self::EnterViInsert => vec![ReedlineOption::Event(ReedlineEvent::Repaint)],
             Self::EnterViAppend => vec![ReedlineOption::Edit(EditCommand::MoveRight)],
