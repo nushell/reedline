@@ -226,8 +226,6 @@ pub trait History: Send {
     fn sync(&mut self) -> std::io::Result<()>;
     /// get the history session id
     fn session(&self) -> Option<HistorySessionId>;
-    /// updates the history session id
-    fn update_session(&mut self, history_session: Option<HistorySessionId>);
 }
 
 #[cfg(test)]

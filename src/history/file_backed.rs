@@ -282,10 +282,6 @@ impl History for FileBackedHistory {
     fn session(&self) -> Option<HistorySessionId> {
         self.session
     }
-
-    fn update_session(&mut self, history_session: Option<HistorySessionId>) {
-        self.session = history_session
-    }
 }
 
 impl FileBackedHistory {
