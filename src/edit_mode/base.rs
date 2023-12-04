@@ -8,8 +8,7 @@ use crate::{
 /// - Emacs
 /// - Vi
 pub trait EditMode: Send {
-    /// Translate the given user input event into what the `LineEditor`
-    /// understands
+    /// Translate the given user input event into what the `LineEditor` understands
     fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent;
 
     /// What to display in the prompt indicator

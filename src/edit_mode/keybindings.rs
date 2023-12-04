@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-
-use crossterm::event::{KeyCode, KeyModifiers};
-use serde::{Deserialize, Serialize};
-
-use crate::{enums::ReedlineEvent, EditCommand};
+use {
+    crate::{enums::ReedlineEvent, EditCommand},
+    crossterm::event::{KeyCode, KeyModifiers},
+    serde::{Deserialize, Serialize},
+    std::collections::HashMap,
+};
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct KeyCombination {
@@ -67,8 +67,7 @@ impl Keybindings {
 
     /// Remove a keybinding
     ///
-    /// Returns `Some(ReedlineEvent)` if the keycombination was previously bound
-    /// to a particular [`ReedlineEvent`]
+    /// Returns `Some(ReedlineEvent)` if the keycombination was previously bound to a particular [`ReedlineEvent`]
     pub fn remove_binding(
         &mut self,
         modifier: KeyModifiers,

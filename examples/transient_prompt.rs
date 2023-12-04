@@ -3,8 +3,6 @@
 //
 // Prompts for previous lines will be replaced with a shorter prompt
 
-use std::{borrow::Cow, io};
-
 use nu_ansi_term::{Color, Style};
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 use reedline::SqliteBackedHistory;
@@ -14,6 +12,7 @@ use reedline::{
     PromptHistorySearch, PromptHistorySearchStatus, Reedline, ReedlineEvent, ReedlineMenu, Signal,
     ValidationResult, Validator,
 };
+use std::{borrow::Cow, io};
 
 // For custom prompt, implement the Prompt trait
 //

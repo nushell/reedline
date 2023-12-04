@@ -1,10 +1,7 @@
-use std::iter::Peekable;
-
-use super::{
-    command::{parse_command, Command},
-    motion::{parse_motion, Motion},
-};
+use super::command::{parse_command, Command};
+use super::motion::{parse_motion, Motion};
 use crate::{EditCommand, ReedlineEvent, Vi};
+use std::iter::Peekable;
 
 #[derive(Debug, Clone)]
 pub enum ReedlineOption {
@@ -183,10 +180,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
-
-    use super::*;
 
     fn vi_parse(input: &[char]) -> ParsedViSequence {
         parse(&mut input.iter().peekable())

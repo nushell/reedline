@@ -1,7 +1,6 @@
 use crossterm::{event, execute};
 
-/// Helper managing proper setup and teardown of the kitty keyboard enhancement
-/// protocol
+/// Helper managing proper setup and teardown of the kitty keyboard enhancement protocol
 ///
 /// Note that, currently, only the following support this protocol:
 /// * [kitty terminal](https://sw.kovidgoyal.net/kitty/)
@@ -23,7 +22,6 @@ impl KittyProtocolGuard {
     pub fn set(&mut self, enable: bool) {
         self.enabled = enable && super::kitty_protocol_available();
     }
-
     pub fn enter(&mut self) {
         if self.enabled && !self.active {
             let _ = execute!(
@@ -36,7 +34,6 @@ impl KittyProtocolGuard {
             self.active = true;
         }
     }
-
     pub fn exit(&mut self) {
         if self.active {
             let _ = execute!(std::io::stdout(), event::PopKeyboardEnhancementFlags);

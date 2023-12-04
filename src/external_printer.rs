@@ -37,19 +37,17 @@ where
         let (sender, receiver) = bounded::<T>(max_cap);
         Self { sender, receiver }
     }
-
     /// Gets a Sender to use the printer externally by sending lines to it
     pub fn sender(&self) -> Sender<T> {
         self.sender.clone()
     }
-
     /// Receiver to get messages if any
     pub fn receiver(&self) -> &Receiver<T> {
         &self.receiver
     }
 
-    /// Convenience method if the whole Printer is cloned, blocks if max_cap is
-    /// reached.
+    /// Convenience method if the whole Printer is cloned, blocks if max_cap is reached.
+    ///
     pub fn print(&self, line: T) -> Result<(), SendError<T>> {
         self.sender.send(line)
     }

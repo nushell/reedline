@@ -37,9 +37,8 @@ fn incomplete_brackets(line: &str) -> bool {
 
 #[cfg(test)]
 mod test {
-    use rstest::rstest;
-
     use super::*;
+    use rstest::rstest;
 
     #[rstest]
     #[case("(([[]]))", false)]

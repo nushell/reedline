@@ -1,27 +1,30 @@
-use std::{env::temp_dir, process::Command};
-
-use crossterm::{
-    cursor::SetCursorStyle,
-    event::{KeyCode, KeyModifiers},
+use std::env::temp_dir;
+use std::process::Command;
+use {
+    crossterm::{
+        cursor::SetCursorStyle,
+        event::{KeyCode, KeyModifiers},
+    },
+    nu_ansi_term::{Color, Style},
+    reedline::{
+        default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
+        ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, DefaultValidator,
+        EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline,
+        ReedlineEvent, ReedlineMenu, Signal, Vi,
+    },
 };
-use nu_ansi_term::{Color, Style};
+
+use reedline::CursorConfig;
 #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
 use reedline::FileBackedHistory;
-use reedline::{
-    default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-    ColumnarMenu, CursorConfig, DefaultCompleter, DefaultHinter, DefaultPrompt, DefaultValidator,
-    EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline,
-    ReedlineEvent, ReedlineMenu, Signal, Vi,
-};
 
 fn main() -> std::io::Result<()> {
     println!("Ctrl-D to quit");
     // quick command like parameter handling
     let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
 
-    // Setting history_per_session to true will allow the history to be isolated to
-    // the current session Setting history_per_session to false will allow the
-    // history to be shared across all sessions
+    // Setting history_per_session to true will allow the history to be isolated to the current session
+    // Setting history_per_session to false will allow the history to be shared across all sessions
     let history_per_session = true;
     let mut history_session_id = if history_per_session {
         Reedline::create_history_session_id()
@@ -31,8 +34,11 @@ fn main() -> std::io::Result<()> {
 
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     let history = Box::new(
-        reedline::SqliteBackedHistory::with_file("history.sqlite3".into(), history_session_id)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
+        reedline::SqliteBackedHistory::with_file(
+            "history.sqlite3".into(),
+            history_session_id,
+        )
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
     );
     #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
@@ -173,8 +179,7 @@ fn main() -> std::io::Result<()> {
                     line_editor.print_history_session_id()?;
                     continue;
                 }
-                // Toggle between the full history and the history pertinent to the current
-                // session
+                // Toggle between the full history and the history pertinent to the current session
                 if buffer.trim() == "toggle history_session" {
                     let hist_session_id = if history_session_id.is_none() {
                         // If we never created a history session ID, create one now

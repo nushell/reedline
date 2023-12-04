@@ -3,13 +3,11 @@
 //
 // You can browse the local (non persistent) history using Up/Down or Ctrl n/p.
 
+use reedline::{DefaultPrompt, Reedline, Signal};
 use std::io;
 
-use reedline::{DefaultPrompt, Reedline, Signal};
-
 fn main() -> io::Result<()> {
-    // Create a new Reedline engine with a local History that is not synchronized to
-    // a file.
+    // Create a new Reedline engine with a local History that is not synchronized to a file.
     let mut line_editor = Reedline::create();
     let prompt = DefaultPrompt::default();
 

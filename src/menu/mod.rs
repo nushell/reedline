@@ -2,14 +2,12 @@ mod columnar_menu;
 mod list_menu;
 pub mod menu_functions;
 
+use crate::core_editor::Editor;
+use crate::History;
+use crate::{completion::history::HistoryCompleter, painting::Painter, Completer, Suggestion};
 pub use columnar_menu::ColumnarMenu;
 pub use list_menu::ListMenu;
 use nu_ansi_term::{Color, Style};
-
-use crate::{
-    completion::history::HistoryCompleter, core_editor::Editor, painting::Painter, Completer,
-    History, Suggestion,
-};
 
 /// Struct to store the menu style
 pub struct MenuTextStyle {
@@ -34,15 +32,13 @@ impl Default for MenuTextStyle {
 /// Defines all possible events that could happen with a menu.
 #[derive(Clone)]
 pub enum MenuEvent {
-    /// Activation event for the menu. When the bool is true it means that the
-    /// values have already being updated. This is true when the option
-    /// `quick_completions` is true
+    /// Activation event for the menu. When the bool is true it means that the values
+    /// have already being updated. This is true when the option `quick_completions` is true
     Activate(bool),
     /// Deactivation event
     Deactivate,
     /// Line buffer edit event. When the bool is true it means that the values
-    /// have already being updated. This is true when the option
-    /// `quick_completions` is true
+    /// have already being updated. This is true when the option `quick_completions` is true
     Edit(bool),
     /// Selecting next element in the menu
     NextElement,
@@ -91,9 +87,9 @@ pub trait Menu: Send {
 
     /// Updates the values presented in the menu
     /// This function needs to be defined in the trait because when the menu is
-    /// activated or the `quick_completion` option is true, the len of the
-    /// values is calculated to know if there is only one value so it can be
-    /// selected immediately
+    /// activated or the `quick_completion` option is true, the len of the values
+    /// is calculated to know if there is only one value so it can be selected
+    /// immediately
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer);
 
     /// The working details of a menu are values that could change based on
@@ -108,16 +104,14 @@ pub trait Menu: Send {
         painter: &Painter,
     );
 
-    /// Indicates how to replace in the line buffer the selected value from the
-    /// menu
+    /// Indicates how to replace in the line buffer the selected value from the menu
     fn replace_in_buffer(&self, editor: &mut Editor);
 
-    /// Calculates the real required lines for the menu considering how many
-    /// lines wrap the terminal or if entries have multiple lines
+    /// Calculates the real required lines for the menu considering how many lines
+    /// wrap the terminal or if entries have multiple lines
     fn menu_required_lines(&self, terminal_columns: u16) -> u16;
 
-    /// Creates the menu representation as a string which will be painted by the
-    /// painter
+    /// Creates the menu representation as a string which will be painted by the painter
     fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String;
 
     /// Minimum rows that should be displayed by the menu

@@ -1,11 +1,10 @@
 mod default;
 pub use default::DefaultValidator;
 
-/// The syntax validation trait. Implementers of this trait will check to see if
-/// the current input is incomplete and spans multiple lines
+/// The syntax validation trait. Implementers of this trait will check to see if the current input
+/// is incomplete and spans multiple lines
 pub trait Validator: Send {
-    /// The action that will handle the current buffer as a line and return the
-    /// corresponding validation
+    /// The action that will handle the current buffer as a line and return the corresponding validation
     fn validate(&self, line: &str) -> ValidationResult;
 }
 

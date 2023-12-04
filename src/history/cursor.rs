@@ -1,8 +1,11 @@
-use super::{
-    base::{CommandLineSearch, SearchDirection, SearchFilter},
-    HistoryItem, SearchQuery,
-};
-use crate::{History, HistoryNavigationQuery, HistorySessionId, Result};
+use crate::{History, HistoryNavigationQuery, HistorySessionId};
+
+use super::base::CommandLineSearch;
+use super::base::SearchDirection;
+use super::base::SearchFilter;
+use super::HistoryItem;
+use super::SearchQuery;
+use crate::Result;
 
 /// Interface of a stateful navigation via [`HistoryNavigationQuery`].
 #[derive(Debug)]
@@ -23,15 +26,13 @@ impl HistoryCursor {
         }
     }
 
-    /// This moves the cursor backwards respecting the navigation query that is
-    /// set
+    /// This moves the cursor backwards respecting the navigation query that is set
     /// - Results in a no-op if the cursor is at the initial point
     pub fn back(&mut self, history: &dyn History) -> Result<()> {
         self.navigate_in_direction(history, SearchDirection::Backward)
     }
 
-    /// This moves the cursor forwards respecting the navigation-query that is
-    /// set
+    /// This moves the cursor forwards respecting the navigation-query that is set
     /// - Results in a no-op if the cursor is at the latest point
     pub fn forward(&mut self, history: &dyn History) -> Result<()> {
         self.navigate_in_direction(history, SearchDirection::Forward)
@@ -57,15 +58,13 @@ impl HistoryCursor {
             filter
         }
     }
-
     fn navigate_in_direction(
         &mut self,
         history: &dyn History,
         direction: SearchDirection,
     ) -> Result<()> {
         if direction == SearchDirection::Forward && self.current.is_none() {
-            // if searching forward but we don't have a starting point, assume we are at the
-            // end
+            // if searching forward but we don't have a starting point, assume we are at the end
             return Ok(());
         }
         let start_id = self.current.as_ref().and_then(|e| e.id);
@@ -104,8 +103,10 @@ mod tests {
 
     use pretty_assertions::assert_eq;
 
-    use super::{super::*, *};
     use crate::LineBuffer;
+
+    use super::super::*;
+    use super::*;
 
     fn create_history() -> (Box<dyn History>, HistoryCursor) {
         #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
@@ -378,8 +379,7 @@ mod tests {
         use tempfile::tempdir;
 
         let tmp = tempdir().unwrap();
-        // check that it also works for a path where the directory has not been created
-        // yet
+        // check that it also works for a path where the directory has not been created yet
         let histfile = tmp.path().join("nested_path").join(".history");
 
         let entries = vec!["test", "text", "more test text"];
@@ -388,8 +388,7 @@ mod tests {
             let (mut hist, _) = create_history_at(5, &histfile);
 
             add_text_entries(hist.as_mut(), &entries);
-            // As `hist` goes out of scope and get's dropped, its contents are
-            // flushed to disk
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
         let (reading_hist, _) = create_history_at(5, &histfile);
@@ -417,8 +416,7 @@ mod tests {
         {
             let (mut writing_hist, _) = create_history_at(5, &histfile);
             add_text_entries(writing_hist.as_mut(), &entries);
-            // As `hist` goes out of scope and get's dropped, its contents are
-            // flushed to disk
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
         let (reading_hist, _) = create_history_at(5, &histfile);
@@ -448,15 +446,13 @@ mod tests {
         {
             let (mut writing_hist, _) = create_history_at(capacity, &histfile);
             add_text_entries(writing_hist.as_mut(), &initial_entries);
-            // As `hist` goes out of scope and get's dropped, its contents are
-            // flushed to disk
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
         {
             let (mut appending_hist, _) = create_history_at(capacity, &histfile);
             add_text_entries(appending_hist.as_mut(), &appending_entries);
-            // As `hist` goes out of scope and get's dropped, its contents are flushed to
-            // disk
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
             let actual: Vec<_> = get_all_entry_texts(appending_hist.as_ref());
             assert_eq!(expected_appended_entries, actual);
         }
@@ -466,8 +462,7 @@ mod tests {
             add_text_entries(truncating_hist.as_mut(), &truncating_entries);
             let actual: Vec<_> = get_all_entry_texts(truncating_hist.as_ref());
             assert_eq!(expected_truncated_entries, actual);
-            // As `hist` goes out of scope and get's dropped, its contents are
-            // flushed to disk
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
         let (reading_hist, _) = create_history_at(capacity, &histfile);
@@ -494,8 +489,7 @@ mod tests {
         {
             let (mut writing_hist, _) = create_history_at(10, &histfile);
             add_text_entries(writing_hist.as_mut(), &overly_large_previous_entries);
-            // As `hist` goes out of scope and get's dropped, its contents are
-            // flushed to disk
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
         {
@@ -503,8 +497,7 @@ mod tests {
 
             let actual: Vec<_> = get_all_entry_texts(truncating_hist.as_ref());
             assert_eq!(expected_truncated_entries, actual);
-            // As `hist` goes out of scope and get's dropped, its contents are
-            // flushed to disk
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
         let (reading_hist, _) = create_history_at(5, &histfile);
@@ -532,8 +525,7 @@ mod tests {
         {
             let (mut writing_hist, _) = create_history_at(capacity, &histfile);
             add_text_entries(writing_hist.as_mut(), &initial_entries);
-            // As `hist` goes out of scope and get's dropped, its contents are
-            // flushed to disk
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
         {
@@ -543,12 +535,10 @@ mod tests {
                 let (mut hist_b, _) = create_history_at(capacity, &histfile);
 
                 add_text_entries(hist_b.as_mut(), &entries_b);
-                // As `hist` goes out of scope and get's dropped, its contents
-                // are flushed to disk
+                // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
             }
             add_text_entries(hist_a.as_mut(), &entries_a);
-            // As `hist` goes out of scope and get's dropped, its contents are
-            // flushed to disk
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
         let (reading_hist, _) = create_history_at(capacity, &histfile);
@@ -575,8 +565,7 @@ mod tests {
         {
             let (mut writing_hist, _) = create_history_at(capacity, &histfile);
             add_text_entries(writing_hist.as_mut(), &initial_entries);
-            // As `hist` goes out of scope and get's dropped, its contents are
-            // flushed to disk
+            // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
 
         let threads = (0..num_threads)

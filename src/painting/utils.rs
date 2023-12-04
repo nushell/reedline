@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-
 use unicode_width::UnicodeWidthStr;
 
 /// Ensures input uses CRLF line endings.
@@ -73,10 +72,9 @@ pub(crate) fn line_width(line: &str) -> usize {
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
-
-    use super::*;
 
     #[rstest]
     #[case("sentence\nsentence", "sentence\r\nsentence")]

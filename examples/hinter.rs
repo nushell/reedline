@@ -6,10 +6,9 @@
 // pressing "a" hints to abc.
 // Up/Down or Ctrl p/n, to select next/previous match
 
-use std::io;
-
 use nu_ansi_term::{Color, Style};
 use reedline::{DefaultHinter, DefaultPrompt, Reedline, Signal};
+use std::io;
 
 fn main() -> io::Result<()> {
     let mut line_editor = Reedline::create().with_hinter(Box::new(

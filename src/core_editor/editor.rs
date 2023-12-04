@@ -1,9 +1,6 @@
 use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
-use crate::{
-    core_editor::get_default_clipboard,
-    enums::{EditType, UndoBehavior},
-    EditCommand,
-};
+use crate::enums::{EditType, UndoBehavior};
+use crate::{core_editor::get_default_clipboard, EditCommand};
 
 /// Stateful editor executing changes to the underlying [`LineBuffer`]
 ///
@@ -35,8 +32,7 @@ impl Editor {
     }
 
     /// Set the current [`LineBuffer`].
-    /// [`UndoBehavior`] specifies how this change should be reflected on the
-    /// undo stack.
+    /// [`UndoBehavior`] specifies how this change should be reflected on the undo stack.
     pub(crate) fn set_line_buffer(&mut self, line_buffer: LineBuffer, undo_behavior: UndoBehavior) {
         self.line_buffer = line_buffer;
         self.update_undo_state(undo_behavior);
@@ -143,8 +139,8 @@ impl Editor {
         func(&mut self.line_buffer);
     }
 
-    /// Set the text of the current [`LineBuffer`] given the specified
-    /// [`UndoBehavior`] Insertion point update to the end of the buffer.
+    /// Set the text of the current [`LineBuffer`] given the specified [`UndoBehavior`]
+    /// Insertion point update to the end of the buffer.
     pub(crate) fn set_buffer(&mut self, buffer: String, undo_behavior: UndoBehavior) {
         self.line_buffer.set_buffer(buffer);
         self.update_undo_state(undo_behavior);
@@ -470,10 +466,9 @@ impl Editor {
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
-
-    use super::*;
 
     fn editor_with(buffer: &str) -> Editor {
         let mut editor = Editor::default();
@@ -515,8 +510,7 @@ mod test {
     #[rstest]
     #[case("hello world", 0, 'l', 1, false, "lo world")]
     #[case("hello world", 0, 'l', 1, true, "llo world")]
-    #[ignore = "Deleting two consecutives is not implemented correctly and needs the multiplier \
-                explicitly."]
+    #[ignore = "Deleting two consecutives is not implemented correctly and needs the multiplier explicitly."]
     #[case("hello world", 0, 'l', 2, false, "o world")]
     #[case("hello world", 0, 'h', 1, false, "hello world")]
     #[case("hello world", 0, 'l', 3, true, "ld")]

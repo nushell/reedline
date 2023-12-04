@@ -1,15 +1,14 @@
 // Create a reedline object with tab completions support
 // cargo run --example completions
 //
-// "t" [Tab] will allow you to select the completions "test" and "this is the
-// reedline crate" [Enter] to select the chosen alternative
-
-use std::io;
+// "t" [Tab] will allow you to select the completions "test" and "this is the reedline crate"
+// [Enter] to select the chosen alternative
 
 use reedline::{
     default_emacs_keybindings, ColumnarMenu, DefaultCompleter, DefaultPrompt, Emacs, KeyCode,
     KeyModifiers, Keybindings, Reedline, ReedlineEvent, ReedlineMenu, Signal,
 };
+use std::io;
 
 fn add_menu_keybindings(keybindings: &mut Keybindings) {
     keybindings.add_binding(

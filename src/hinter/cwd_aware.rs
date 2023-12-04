@@ -1,11 +1,10 @@
-use nu_ansi_term::{Color, Style};
-
 use crate::{
     hinter::get_first_token,
     history::SearchQuery,
     result::{ReedlineError, ReedlineErrorVariants::HistoryFeatureUnsupported},
     Hinter, History,
 };
+use nu_ansi_term::{Color, Style};
 
 /// A hinter that uses the completions or the history to show a hint to the user
 ///
@@ -101,8 +100,7 @@ impl CwdAwareHinter {
         self
     }
 
-    /// A builder that sets the number of characters that have to be present to
-    /// enable history hints
+    /// A builder that sets the number of characters that have to be present to enable history hints
     #[must_use]
     pub fn with_min_chars(mut self, min_chars: usize) -> Self {
         self.min_chars = min_chars;

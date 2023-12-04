@@ -1,10 +1,9 @@
-use nu_ansi_term::{ansi::RESET, Style};
-
 use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
 use crate::{
     core_editor::Editor, menu_functions::string_difference, painting::Painter, Completer,
     Suggestion, UndoBehavior,
 };
+use nu_ansi_term::{ansi::RESET, Style};
 
 /// Default values used as reference for the menu. These values are set during
 /// the initial declaration of the menu and are always kept as reference for the
@@ -29,8 +28,7 @@ impl Default for DefaultColumnDetails {
 }
 
 /// Represents the actual column conditions of the menu. These conditions change
-/// since they need to accommodate possible different line sizes for the column
-/// values
+/// since they need to accommodate possible different line sizes for the column values
 #[derive(Default)]
 struct ColumnDetails {
     /// Number of columns that the menu will have
@@ -401,8 +399,7 @@ impl ColumnarMenu {
                 )
             }
         } else {
-            // If no ansi coloring is found, then the selection word is the line in
-            // uppercase
+            // If no ansi coloring is found, then the selection word is the line in uppercase
             let marker = if index == self.index() { ">" } else { "" };
 
             let line = if let Some(description) = &suggestion.description {
@@ -561,8 +558,8 @@ impl Menu for ColumnarMenu {
             // The working value for the menu are updated first before executing any of the
             // menu events
             //
-            // If there is at least one suggestion that contains a description, then the
-            // layout is changed to one column to fit the description
+            // If there is at least one suggestion that contains a description, then the layout
+            // is changed to one column to fit the description
             let exist_description = self
                 .get_values()
                 .iter()
@@ -728,8 +725,9 @@ impl Menu for ColumnarMenu {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::Span;
+
+    use super::*;
 
     macro_rules! partial_completion_tests {
         (name: $test_group_name:ident, completions: $completions:expr, test_cases: $($name:ident: $value:expr,)*) => {

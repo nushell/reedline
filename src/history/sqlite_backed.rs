@@ -1,8 +1,3 @@
-use std::{path::PathBuf, time::Duration};
-
-use chrono::{TimeZone, Utc};
-use rusqlite::{named_params, params, Connection, ToSql};
-
 use super::{
     base::{CommandLineSearch, SearchDirection, SearchQuery},
     History, HistoryItem, HistoryItemId, HistorySessionId,
@@ -11,12 +6,14 @@ use crate::{
     result::{ReedlineError, ReedlineErrorVariants},
     Result,
 };
+use chrono::{TimeZone, Utc};
+use rusqlite::{named_params, params, Connection, ToSql};
+use std::{path::PathBuf, time::Duration};
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
 
 /// A history that stores the values to an SQLite database.
-/// In addition to storing the command, the history can store an additional
-/// arbitrary HistoryEntryContext, to add information such as a timestamp,
-/// running directory, result...
+/// In addition to storing the command, the history can store an additional arbitrary HistoryEntryContext,
+/// to add information such as a timestamp, running directory, result...
 pub struct SqliteBackedHistory {
     db: rusqlite::Connection,
     session: Option<HistorySessionId>,
@@ -202,13 +199,8 @@ impl SqliteBackedHistory {
             })?;
         }
         let db = Connection::open(&file).map_err(map_sqlite_err)?;
-        Self::from_connection(
-            db,
-            session,
-            session.map(|s| chrono::Utc.timestamp_nanos(s.0)),
-        )
+        Self::from_connection(db, session, session.map(|s| chrono::Utc.timestamp_nanos(s.0)))
     }
-
     /// Creates a new history in memory
     pub fn in_memory() -> Result<Self> {
         Self::from_connection(
@@ -217,7 +209,6 @@ impl SqliteBackedHistory {
             None,
         )
     }
-
     /// initialize a new database / migrate an existing one
     fn from_connection(
         db: Connection,
@@ -382,7 +373,11 @@ impl SqliteBackedHistory {
         }
 
         let query = format!(
-            "SELECT {select_expression} FROM history WHERE ({wheres}) ORDER BY id {asc} {limit}"
+            "SELECT {select_expression} \
+             FROM history \
+             WHERE ({wheres}) \
+             ORDER BY id {asc} \
+             {limit}"
         );
         (query, params)
     }

@@ -1,10 +1,9 @@
+use crate::{Completer, Span, Suggestion};
 use std::{
     collections::{BTreeMap, BTreeSet},
     str::Chars,
     sync::Arc,
 };
-
-use crate::{Completer, Span, Suggestion};
 
 /// A default completer that can detect keywords
 ///
@@ -14,10 +13,10 @@ use crate::{Completer, Span, Suggestion};
 /// use reedline::{DefaultCompleter, Reedline};
 ///
 /// let commands = vec![
-///     "test".into(),
-///     "hello world".into(),
-///     "hello world reedline".into(),
-///     "this is the reedline crate".into(),
+///  "test".into(),
+///  "hello world".into(),
+///  "hello world reedline".into(),
+///  "this is the reedline crate".into(),
 /// ];
 /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 ///
@@ -39,8 +38,8 @@ impl Default for DefaultCompleter {
     }
 }
 impl Completer for DefaultCompleter {
-    /// Returns a vector of completions and the position in which they must be
-    /// replaced; based on the provided input.
+    /// Returns a vector of completions and the position in which they must be replaced;
+    /// based on the provided input.
     ///
     /// # Arguments
     ///
@@ -49,68 +48,25 @@ impl Completer for DefaultCompleter {
     ///
     /// # Example
     /// ```
-    /// use reedline::{Completer, DefaultCompleter, Span, Suggestion};
+    /// use reedline::{DefaultCompleter,Completer,Span,Suggestion};
     ///
     /// let mut completions = DefaultCompleter::default();
-    /// completions.insert(
-    ///     vec!["batman", "robin", "batmobile", "batcave", "robber"]
-    ///         .iter()
-    ///         .map(|s| s.to_string())
-    ///         .collect(),
-    /// );
+    /// completions.insert(vec!["batman","robin","batmobile","batcave","robber"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
-    ///     completions.complete("bat", 3),
+    ///     completions.complete("bat",3),
     ///     vec![
-    ///         Suggestion {
-    ///             value: "batcave".into(),
-    ///             description: None,
-    ///             extra: None,
-    ///             span: Span { start: 0, end: 3 },
-    ///             append_whitespace: false
-    ///         },
-    ///         Suggestion {
-    ///             value: "batman".into(),
-    ///             description: None,
-    ///             extra: None,
-    ///             span: Span { start: 0, end: 3 },
-    ///             append_whitespace: false
-    ///         },
-    ///         Suggestion {
-    ///             value: "batmobile".into(),
-    ///             description: None,
-    ///             extra: None,
-    ///             span: Span { start: 0, end: 3 },
-    ///             append_whitespace: false
-    ///         },
-    ///     ]
-    /// );
+    ///         Suggestion {value: "batcave".into(), description: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
+    ///         Suggestion {value: "batman".into(), description: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
+    ///         Suggestion {value: "batmobile".into(), description: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
+    ///     ]);
     ///
     /// assert_eq!(
-    ///     completions.complete("to the bat", 10),
+    ///     completions.complete("to the bat",10),
     ///     vec![
-    ///         Suggestion {
-    ///             value: "batcave".into(),
-    ///             description: None,
-    ///             extra: None,
-    ///             span: Span { start: 7, end: 10 },
-    ///             append_whitespace: false
-    ///         },
-    ///         Suggestion {
-    ///             value: "batman".into(),
-    ///             description: None,
-    ///             extra: None,
-    ///             span: Span { start: 7, end: 10 },
-    ///             append_whitespace: false
-    ///         },
-    ///         Suggestion {
-    ///             value: "batmobile".into(),
-    ///             description: None,
-    ///             extra: None,
-    ///             span: Span { start: 7, end: 10 },
-    ///             append_whitespace: false
-    ///         },
-    ///     ]
-    /// );
+    ///         Suggestion {value: "batcave".into(), description: None, extra: None, span: Span { start: 7, end: 10 }, append_whitespace: false},
+    ///         Suggestion {value: "batman".into(), description: None, extra: None, span: Span { start: 7, end: 10 }, append_whitespace: false},
+    ///         Suggestion {value: "batmobile".into(), description: None, extra: None, span: Span { start: 7, end: 10 }, append_whitespace: false},
+    ///     ]);
     /// ```
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
         let mut span_line_whitespaces = 0;
@@ -160,16 +116,14 @@ impl Completer for DefaultCompleter {
     }
 }
 impl DefaultCompleter {
-    /// Construct the default completer with a list of commands/keywords to
-    /// highlight
+    /// Construct the default completer with a list of commands/keywords to highlight
     pub fn new(external_commands: Vec<String>) -> Self {
         let mut dc = DefaultCompleter::default();
         dc.insert(external_commands);
         dc
     }
 
-    /// Construct the default completer with a list of commands/keywords to
-    /// highlight, given a minimum word length
+    /// Construct the default completer with a list of commands/keywords to highlight, given a minimum word length
     pub fn new_with_wordlen(external_commands: Vec<String>, min_word_len: usize) -> Self {
         let mut dc = DefaultCompleter::default().set_min_word_len(min_word_len);
         dc.insert(external_commands);
@@ -184,31 +138,16 @@ impl DefaultCompleter {
     ///
     /// # Example
     /// ```
-    /// use reedline::{Completer, DefaultCompleter};
+    /// use reedline::{DefaultCompleter,Completer};
     ///
     /// let mut completions = DefaultCompleter::default();
     ///
     /// // Insert multiple words
-    /// completions.insert(
-    ///     vec!["a", "line", "with", "many", "words"]
-    ///         .iter()
-    ///         .map(|s| s.to_string())
-    ///         .collect(),
-    /// );
+    /// completions.insert(vec!["a","line","with","many","words"].iter().map(|s| s.to_string()).collect());
     ///
     /// // The above line is equal to the following:
-    /// completions.insert(
-    ///     vec!["a", "line", "with"]
-    ///         .iter()
-    ///         .map(|s| s.to_string())
-    ///         .collect(),
-    /// );
-    /// completions.insert(
-    ///     vec!["many", "words"]
-    ///         .iter()
-    ///         .map(|s| s.to_string())
-    ///         .collect(),
-    /// );
+    /// completions.insert(vec!["a","line","with"].iter().map(|s| s.to_string()).collect());
+    /// completions.insert(vec!["many","words"].iter().map(|s| s.to_string()).collect());
     /// ```
     pub fn insert(&mut self, words: Vec<String>) {
         for word in words {
@@ -218,10 +157,9 @@ impl DefaultCompleter {
         }
     }
 
-    /// Create a new `DefaultCompleter` with provided non alphabet characters
-    /// whitelisted. The default `DefaultCompleter` will only parse alphabet
-    /// characters (a-z, A-Z). Use this to introduce additional accepted
-    /// special characters.
+    /// Create a new `DefaultCompleter` with provided non alphabet characters whitelisted.
+    /// The default `DefaultCompleter` will only parse alphabet characters (a-z, A-Z). Use this to
+    /// introduce additional accepted special characters.
     ///
     /// # Arguments
     ///
@@ -229,52 +167,22 @@ impl DefaultCompleter {
     ///
     /// # Example
     /// ```
-    /// use reedline::{Completer, DefaultCompleter, Span, Suggestion};
+    /// use reedline::{DefaultCompleter,Completer,Span,Suggestion};
     ///
     /// let mut completions = DefaultCompleter::default();
-    /// completions.insert(
-    ///     vec!["test-hyphen", "test_underscore"]
-    ///         .iter()
-    ///         .map(|s| s.to_string())
-    ///         .collect(),
-    /// );
+    /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
-    ///     completions.complete("te", 2),
-    ///     vec![Suggestion {
-    ///         value: "test".into(),
-    ///         description: None,
-    ///         extra: None,
-    ///         span: Span { start: 0, end: 2 },
-    ///         append_whitespace: false
-    ///     }]
-    /// );
+    ///     completions.complete("te",2),
+    ///     vec![Suggestion {value: "test".into(), description: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false}]);
     ///
     /// let mut completions = DefaultCompleter::with_inclusions(&['-', '_']);
-    /// completions.insert(
-    ///     vec!["test-hyphen", "test_underscore"]
-    ///         .iter()
-    ///         .map(|s| s.to_string())
-    ///         .collect(),
-    /// );
+    /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
-    ///     completions.complete("te", 2),
+    ///     completions.complete("te",2),
     ///     vec![
-    ///         Suggestion {
-    ///             value: "test-hyphen".into(),
-    ///             description: None,
-    ///             extra: None,
-    ///             span: Span { start: 0, end: 2 },
-    ///             append_whitespace: false
-    ///         },
-    ///         Suggestion {
-    ///             value: "test_underscore".into(),
-    ///             description: None,
-    ///             extra: None,
-    ///             span: Span { start: 0, end: 2 },
-    ///             append_whitespace: false
-    ///         },
-    ///     ]
-    /// );
+    ///         Suggestion {value: "test-hyphen".into(), description: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false},
+    ///         Suggestion {value: "test_underscore".into(), description: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false},
+    ///     ]);
     /// ```
     pub fn with_inclusions(incl: &[char]) -> Self {
         let mut set = BTreeSet::new();
@@ -289,15 +197,10 @@ impl DefaultCompleter {
     /// Clears all the data from the tree
     /// # Example
     /// ```
-    /// use reedline::{Completer, DefaultCompleter};
+    /// use reedline::{DefaultCompleter,Completer};
     ///
     /// let mut completions = DefaultCompleter::default();
-    /// completions.insert(
-    ///     vec!["batman", "robin", "batmobile", "batcave", "robber"]
-    ///         .iter()
-    ///         .map(|s| s.to_string())
-    ///         .collect(),
-    /// );
+    /// completions.insert(vec!["batman","robin","batmobile","batcave","robber"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(completions.word_count(), 5);
     /// assert_eq!(completions.size(), 24);
     /// completions.clear();
@@ -311,15 +214,10 @@ impl DefaultCompleter {
     /// Returns a count of how many words that exist in the tree
     /// # Example
     /// ```
-    /// use reedline::{Completer, DefaultCompleter};
+    /// use reedline::{DefaultCompleter,Completer};
     ///
     /// let mut completions = DefaultCompleter::default();
-    /// completions.insert(
-    ///     vec!["batman", "robin", "batmobile", "batcave", "robber"]
-    ///         .iter()
-    ///         .map(|s| s.to_string())
-    ///         .collect(),
-    /// );
+    /// completions.insert(vec!["batman","robin","batmobile","batcave","robber"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(completions.word_count(), 5);
     /// ```
     pub fn word_count(&self) -> u32 {
@@ -329,15 +227,10 @@ impl DefaultCompleter {
     /// Returns the size of the tree, the amount of nodes, not words
     /// # Example
     /// ```
-    /// use reedline::{Completer, DefaultCompleter};
+    /// use reedline::{DefaultCompleter,Completer};
     ///
     /// let mut completions = DefaultCompleter::default();
-    /// completions.insert(
-    ///     vec!["batman", "robin", "batmobile", "batcave", "robber"]
-    ///         .iter()
-    ///         .map(|s| s.to_string())
-    ///         .collect(),
-    /// );
+    /// completions.insert(vec!["batman","robin","batmobile","batcave","robber"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(completions.size(), 24);
     /// ```
     pub fn size(&self) -> u32 {
@@ -350,24 +243,14 @@ impl DefaultCompleter {
     /// ignored.
     /// # Example
     /// ```
-    /// use reedline::{Completer, DefaultCompleter};
+    /// use reedline::{DefaultCompleter,Completer};
     ///
     /// let mut completions = DefaultCompleter::default().set_min_word_len(4);
-    /// completions.insert(
-    ///     vec!["one", "two", "three", "four", "five"]
-    ///         .iter()
-    ///         .map(|s| s.to_string())
-    ///         .collect(),
-    /// );
+    /// completions.insert(vec!["one","two","three","four","five"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(completions.word_count(), 3);
     ///
     /// let mut completions = DefaultCompleter::default().set_min_word_len(1);
-    /// completions.insert(
-    ///     vec!["one", "two", "three", "four", "five"]
-    ///         .iter()
-    ///         .map(|s| s.to_string())
-    ///         .collect(),
-    /// );
+    /// completions.insert(vec!["one","two","three","four","five"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(completions.word_count(), 5);
     /// ```
     pub fn min_word_len(&self) -> usize {

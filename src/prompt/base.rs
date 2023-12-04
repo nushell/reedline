@@ -1,11 +1,12 @@
-use std::{
-    borrow::Cow,
-    fmt::{Display, Formatter},
+use {
+    crossterm::style::Color,
+    serde::{Deserialize, Serialize},
+    std::{
+        borrow::Cow,
+        fmt::{Display, Formatter},
+    },
+    strum_macros::EnumIter,
 };
-
-use crossterm::style::Color;
-use serde::{Deserialize, Serialize};
-use strum_macros::EnumIter;
 
 /// The default color for the prompt, indicator, and right prompt
 pub static DEFAULT_PROMPT_COLOR: Color = Color::Green;
@@ -87,8 +88,7 @@ pub trait Prompt: Send {
     fn render_prompt_left(&self) -> Cow<str>;
     /// Provide content of the right full prompt
     fn render_prompt_right(&self) -> Cow<str>;
-    /// Render the prompt indicator (Last part of the prompt that changes based
-    /// on the editor mode)
+    /// Render the prompt indicator (Last part of the prompt that changes based on the editor mode)
     fn render_prompt_indicator(&self, prompt_mode: PromptEditMode) -> Cow<str>;
     /// Indicator to show before explicit new lines
     fn render_prompt_multiline_indicator(&self) -> Cow<str>;

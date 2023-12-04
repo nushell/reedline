@@ -7,6 +7,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
 use self::motion::ViCharSearch;
+
 use super::EditMode;
 use crate::{
     edit_mode::{keybindings::Keybindings, vi::parser::parse},
@@ -172,9 +173,8 @@ impl EditMode for Vi {
 
 #[cfg(test)]
 mod test {
-    use pretty_assertions::assert_eq;
-
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn esc_leads_to_normal_mode_test() {

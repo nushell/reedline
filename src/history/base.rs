@@ -1,14 +1,11 @@
-use chrono::Utc;
-
 use super::HistoryItemId;
 use crate::{core_editor::LineBuffer, HistoryItem, HistorySessionId, Result};
+use chrono::Utc;
 
 /// Browsing modes for a [`History`]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryNavigationQuery {
-    /// `bash` style browsing through the history. Contained `LineBuffer` is
-    /// used to store the state of manual entry before browsing through the
-    /// history
+    /// `bash` style browsing through the history. Contained `LineBuffer` is used to store the state of manual entry before browsing through the history
     Normal(LineBuffer),
     /// Search for entries starting with a particular string.
     PrefixSearch(String),
@@ -45,8 +42,7 @@ pub struct SearchFilter {
     /// Query for the command line content
     pub command_line: Option<CommandLineSearch>,
     /// Considered implementation detail for now
-    pub(crate) not_command_line: Option<String>, /* to skip the currently shown value in
-                                                  * up-arrow navigation */
+    pub(crate) not_command_line: Option<String>, // to skip the currently shown value in up-arrow navigation
     /// Filter based on the executing systems hostname
     pub hostname: Option<String>,
     /// Exact filter for the working directory
@@ -100,11 +96,9 @@ impl SearchFilter {
 pub struct SearchQuery {
     /// Direction to search in
     pub direction: SearchDirection,
-    /// if given, only get results after/before this time (depending on
-    /// direction)
+    /// if given, only get results after/before this time (depending on direction)
     pub start_time: Option<chrono::DateTime<Utc>>,
-    /// if given, only get results after/before this time (depending on
-    /// direction)
+    /// if given, only get results after/before this time (depending on direction)
     pub end_time: Option<chrono::DateTime<Utc>>,
     /// if given, only get results after/before this id (depending on direction)
     pub start_id: Option<HistoryItemId>,
@@ -152,8 +146,7 @@ impl SearchQuery {
         ))
     }
 
-    /// Get the most recent entry starting with the `prefix` and `cwd` same as
-    /// the current cwd
+    /// Get the most recent entry starting with the `prefix` and `cwd` same as the current cwd
     pub fn last_with_prefix_and_cwd(
         prefix: String,
         session: Option<HistorySessionId>,
@@ -191,8 +184,7 @@ impl SearchQuery {
 }
 
 /// Represents a history file or database
-/// Data could be stored e.g. in a plain text file, in a `JSONL` file, in a
-/// `SQLite` database
+/// Data could be stored e.g. in a plain text file, in a `JSONL` file, in a `SQLite` database
 pub trait History: Send {
     /// save a history item to the database
     /// if given id is None, a new id is created and set in the return value

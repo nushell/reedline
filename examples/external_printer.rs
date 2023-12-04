@@ -2,9 +2,13 @@
 // to run:
 // cargo run --example external_printer --features=external_printer
 
-use std::{thread, thread::sleep, time::Duration};
-
-use reedline::{DefaultPrompt, ExternalPrinter, Reedline, Signal};
+use {
+    reedline::ExternalPrinter,
+    reedline::{DefaultPrompt, Reedline, Signal},
+    std::thread,
+    std::thread::sleep,
+    std::time::Duration,
+};
 
 fn main() {
     let printer = ExternalPrinter::default();

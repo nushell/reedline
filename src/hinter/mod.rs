@@ -2,6 +2,7 @@ mod cwd_aware;
 mod default;
 pub use cwd_aware::CwdAwareHinter;
 pub use default::DefaultHinter;
+
 use unicode_segmentation::UnicodeSegmentation;
 
 pub fn is_whitespace_str(s: &str) -> bool {
@@ -27,9 +28,8 @@ pub fn get_first_token(string: &str) -> String {
 }
 
 use crate::History;
-/// A trait that's responsible for returning the hint for the current line and
-/// position Hints are often shown in-line as part of the buffer, showing the
-/// user text they can accept or ignore
+/// A trait that's responsible for returning the hint for the current line and position
+/// Hints are often shown in-line as part of the buffer, showing the user text they can accept or ignore
 pub trait Hinter: Send {
     /// Handle the hinting duty by using the line, position, and current history
     ///
@@ -42,8 +42,7 @@ pub trait Hinter: Send {
         use_ansi_coloring: bool,
     ) -> String;
 
-    /// Return the current hint unformatted to perform the completion of the
-    /// full hint
+    /// Return the current hint unformatted to perform the completion of the full hint
     fn complete_hint(&self) -> String;
 
     /// Return the first semantic token of the hint

@@ -1,49 +1,48 @@
-use std::{
-    fs::File,
-    io,
-    io::{Result, Write},
-    path::PathBuf,
-    process::Command,
-    time::{Duration, SystemTime},
-};
+use std::path::PathBuf;
 
-use crossterm::{
-    cursor::{SetCursorStyle, Show},
-    event,
-    event::{Event, KeyCode, KeyEvent, KeyModifiers},
-    terminal, QueueableCommand,
-};
 use itertools::Itertools;
+
+use crate::{enums::ReedlineRawEvent, CursorConfig};
+#[cfg(feature = "bashisms")]
+use crate::{
+    history::SearchFilter,
+    menu_functions::{parse_selection_char, ParseAction},
+};
 #[cfg(feature = "external_printer")]
 use {
     crate::external_printer::ExternalPrinter,
     crossbeam::channel::TryRecvError,
     std::io::{Error, ErrorKind},
 };
-
-use crate::{
-    completion::{Completer, DefaultCompleter},
-    core_editor::Editor,
-    edit_mode::{EditMode, Emacs},
-    enums::{EventStatus, ReedlineEvent, ReedlineRawEvent},
-    highlighter::SimpleMatchHighlighter,
-    hinter::Hinter,
-    history::{
-        FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
-        HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
+use {
+    crate::{
+        completion::{Completer, DefaultCompleter},
+        core_editor::Editor,
+        edit_mode::{EditMode, Emacs},
+        enums::{EventStatus, ReedlineEvent},
+        highlighter::SimpleMatchHighlighter,
+        hinter::Hinter,
+        history::{
+            FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
+            HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
+        },
+        painting::{Painter, PromptLines},
+        prompt::{PromptEditMode, PromptHistorySearchStatus},
+        result::{ReedlineError, ReedlineErrorVariants},
+        terminal_extensions::{bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard},
+        utils::text_manipulation,
+        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
+        PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
     },
-    painting::{Painter, PromptLines},
-    prompt::{PromptEditMode, PromptHistorySearchStatus},
-    result::{ReedlineError, ReedlineErrorVariants},
-    terminal_extensions::{bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard},
-    utils::text_manipulation,
-    CursorConfig, EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent,
-    Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
-};
-#[cfg(feature = "bashisms")]
-use crate::{
-    history::SearchFilter,
-    menu_functions::{parse_selection_char, ParseAction},
+    crossterm::{
+        cursor::{SetCursorStyle, Show},
+        event,
+        event::{Event, KeyCode, KeyEvent, KeyModifiers},
+        terminal, QueueableCommand,
+    },
+    std::{
+        fs::File, io, io::Result, io::Write, process::Command, time::Duration, time::SystemTime,
+    },
 };
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for
@@ -52,10 +51,10 @@ use crate::{
 // arrives. This doesn't allow for the possibility of more than 1 event
 // happening at the same time.
 const POLL_WAIT: u64 = 10;
-// Since a paste event is multiple Event::Key events happening at the same time,
-// we specify how many events should be in the crossterm_events vector before it
-// is considered a paste. 10 events in 10 milliseconds is conservative enough
-// (unlikely somebody will type more than 10 characters in 10 milliseconds)
+// Since a paste event is multiple Event::Key events happening at the same time, we specify
+// how many events should be in the crossterm_events vector before it is considered
+// a paste. 10 events in 10 milliseconds is conservative enough (unlikely somebody
+// will type more than 10 characters in 10 milliseconds)
 const EVENTS_THRESHOLD: usize = 10;
 
 /// Determines if inputs should be used to extend the regular line buffer,
@@ -70,9 +69,9 @@ enum InputMode {
     /// editing affects the search string,
     /// suggestions are provided to be inserted in the line buffer
     HistorySearch,
-    /// Hybrid mode indicating that history is walked through in the standard
-    /// prompt Either bash style up/down history or fish style prefix
-    /// search, Edits directly switch to [`InputMode::Regular`]
+    /// Hybrid mode indicating that history is walked through in the standard prompt
+    /// Either bash style up/down history or fish style prefix search,
+    /// Edits directly switch to [`InputMode::Regular`]
     HistoryTraversal,
 }
 
@@ -80,18 +79,19 @@ enum InputMode {
 ///
 /// ## Example usage
 /// ```no_run
-/// use reedline::{DefaultPrompt, Reedline, Signal};
+/// use reedline::{Reedline, Signal, DefaultPrompt};
 /// let mut line_editor = Reedline::create();
 /// let prompt = DefaultPrompt::default();
 ///
 /// let out = line_editor.read_line(&prompt).unwrap();
 /// match out {
-///     Signal::Success(content) => {
-///         // process content
-///     }
-///     _ => {
-///         eprintln!("Entry aborted!");
-///     }
+///    Signal::Success(content) => {
+///        // process content
+///    }
+///    _ => {
+///        eprintln!("Entry aborted!");
+///
+///    }
 /// }
 /// ```
 pub struct Reedline {
@@ -177,8 +177,7 @@ impl Drop for Reedline {
 impl Reedline {
     const FILTERED_ITEM_ID: HistoryItemId = HistoryItemId(i64::MAX);
 
-    /// Create a new [`Reedline`] engine with a local [`History`] that is not
-    /// synchronized to a file.
+    /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     #[must_use]
     pub fn create() -> Self {
         let history = Box::<FileBackedHistory>::default();
@@ -224,8 +223,7 @@ impl Reedline {
         }
     }
 
-    /// Get a new history session id based on the current time and the first
-    /// commit datetime of reedline
+    /// Get a new history session id based on the current time and the first commit datetime of reedline
     pub fn create_history_session_id() -> Option<HistorySessionId> {
         let nanos = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
             Ok(n) => n.as_nanos() as i64,
@@ -237,14 +235,13 @@ impl Reedline {
 
     /// Toggle whether reedline enables bracketed paste to reed copied content
     ///
-    /// This currently alters the behavior for multiline pastes as pasting of
-    /// regular text will execute after every complete new line as
-    /// determined by the [`Validator`]. With enabled bracketed paste all
-    /// lines will appear in the buffer and can then be submitted with a
+    /// This currently alters the behavior for multiline pastes as pasting of regular text will
+    /// execute after every complete new line as determined by the [`Validator`]. With enabled
+    /// bracketed paste all lines will appear in the buffer and can then be submitted with a
     /// separate enter.
     ///
-    /// At this point most terminals should support it or ignore the setting of
-    /// the necessary flags. For full compatibility, keep it disabled.
+    /// At this point most terminals should support it or ignore the setting of the necessary
+    /// flags. For full compatibility, keep it disabled.
     pub fn use_bracketed_paste(mut self, enable: bool) -> Self {
         self.bracketed_paste.set(enable);
         self
@@ -269,25 +266,27 @@ impl Reedline {
     }
 
     /// Set a new history session id
-    /// This should be used in situations where the user initially did not have
-    /// a history_session_id and then later realized they want to have one
-    /// without restarting the application.
+    /// This should be used in situations where the user initially did not have a history_session_id
+    /// and then later realized they want to have one without restarting the application.
     pub fn set_history_session_id(&mut self, session: Option<HistorySessionId>) -> Result<()> {
         self.history_session_id = session;
         Ok(())
     }
 
-    /// A builder to include a [`Hinter`] in your instance of the Reedline
-    /// engine # Example
+    /// A builder to include a [`Hinter`] in your instance of the Reedline engine
+    /// # Example
     /// ```rust
-    /// // Cargo.toml
+    /// //Cargo.toml
     /// //[dependencies]
-    /// // nu-ansi-term = "*"
-    /// use nu_ansi_term::{Color, Style};
-    /// use reedline::{DefaultHinter, Reedline};
+    /// //nu-ansi-term = "*"
+    /// use {
+    ///     nu_ansi_term::{Color, Style},
+    ///     reedline::{DefaultHinter, Reedline},
+    /// };
     ///
     /// let mut line_editor = Reedline::create().with_hinter(Box::new(
-    ///     DefaultHinter::default().with_style(Style::new().italic().fg(Color::LightGray)),
+    ///     DefaultHinter::default()
+    ///     .with_style(Style::new().italic().fg(Color::LightGray)),
     /// ));
     /// ```
     #[must_use]
@@ -311,10 +310,10 @@ impl Reedline {
     /// use reedline::{DefaultCompleter, Reedline};
     ///
     /// let commands = vec![
-    ///     "test".into(),
-    ///     "hello world".into(),
-    ///     "hello world reedline".into(),
-    ///     "this is the reedline crate".into(),
+    ///   "test".into(),
+    ///   "hello world".into(),
+    ///   "hello world reedline".into(),
+    ///   "this is the reedline crate".into(),
     /// ];
     /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
     ///
@@ -326,45 +325,45 @@ impl Reedline {
         self
     }
 
-    /// Turn on quick completions. These completions will auto-select if the
-    /// completer ever narrows down to a single entry.
+    /// Turn on quick completions. These completions will auto-select if the completer
+    /// ever narrows down to a single entry.
     #[must_use]
     pub fn with_quick_completions(mut self, quick_completions: bool) -> Self {
         self.quick_completions = quick_completions;
         self
     }
 
-    /// Turn on partial completions. These completions will fill the buffer with
-    /// the smallest common string from all the options
+    /// Turn on partial completions. These completions will fill the buffer with the
+    /// smallest common string from all the options
     #[must_use]
     pub fn with_partial_completions(mut self, partial_completions: bool) -> Self {
         self.partial_completions = partial_completions;
         self
     }
 
-    /// A builder which enables or disables the use of ansi coloring in the
-    /// prompt and in the command line syntax highlighting.
+    /// A builder which enables or disables the use of ansi coloring in the prompt
+    /// and in the command line syntax highlighting.
     #[must_use]
     pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
         self.use_ansi_coloring = use_ansi_coloring;
         self
     }
 
-    /// A builder that configures the highlighter for your instance of the
-    /// Reedline engine # Example
+    /// A builder that configures the highlighter for your instance of the Reedline engine
+    /// # Example
     /// ```rust
     /// // Create a reedline object with highlighter support
     ///
     /// use reedline::{ExampleHighlighter, Reedline};
     ///
     /// let commands = vec![
-    ///     "test".into(),
-    ///     "hello world".into(),
-    ///     "hello world reedline".into(),
-    ///     "this is the reedline crate".into(),
+    ///   "test".into(),
+    ///   "hello world".into(),
+    ///   "hello world reedline".into(),
+    ///   "this is the reedline crate".into(),
     /// ];
     /// let mut line_editor =
-    ///     Reedline::create().with_highlighter(Box::new(ExampleHighlighter::new(commands)));
+    /// Reedline::create().with_highlighter(Box::new(ExampleHighlighter::new(commands)));
     /// ```
     #[must_use]
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Self {
@@ -372,18 +371,19 @@ impl Reedline {
         self
     }
 
-    /// A builder which configures the history for your instance of the Reedline
-    /// engine # Example
+    /// A builder which configures the history for your instance of the Reedline engine
+    /// # Example
     /// ```rust,no_run
     /// // Create a reedline object with history support, including history size limits
     ///
     /// use reedline::{FileBackedHistory, Reedline};
     ///
     /// let history = Box::new(
-    ///     FileBackedHistory::with_file(5, "history.txt".into())
-    ///         .expect("Error configuring history with file"),
+    /// FileBackedHistory::with_file(5, "history.txt".into())
+    ///     .expect("Error configuring history with file"),
     /// );
-    /// let mut line_editor = Reedline::create().with_history(history);
+    /// let mut line_editor = Reedline::create()
+    ///     .with_history(history);
     /// ```
     #[must_use]
     pub fn with_history(mut self, history: Box<dyn History>) -> Self {
@@ -391,8 +391,8 @@ impl Reedline {
         self
     }
 
-    /// A builder which configures history exclusion for your instance of the
-    /// Reedline engine # Example
+    /// A builder which configures history exclusion for your instance of the Reedline engine
+    /// # Example
     /// ```rust,no_run
     /// // Create a reedline instance with history that will *not* include commands starting with a space
     ///
@@ -412,14 +412,15 @@ impl Reedline {
         self
     }
 
-    /// A builder that configures the validator for your instance of the
-    /// Reedline engine # Example
+    /// A builder that configures the validator for your instance of the Reedline engine
+    /// # Example
     /// ```rust
     /// // Create a reedline object with validator support
     ///
     /// use reedline::{DefaultValidator, Reedline};
     ///
-    /// let mut line_editor = Reedline::create().with_validator(Box::new(DefaultValidator));
+    /// let mut line_editor =
+    /// Reedline::create().with_validator(Box::new(DefaultValidator));
     /// ```
     #[must_use]
     pub fn with_validator(mut self, validator: Box<dyn Validator>) -> Self {
@@ -427,26 +428,25 @@ impl Reedline {
         self
     }
 
-    /// A builder that configures the alternate text editor used to edit the
-    /// line buffer
+    /// A builder that configures the alternate text editor used to edit the line buffer
     ///
-    /// You are responsible for providing a file path that is unique to this
-    /// reedline session
+    /// You are responsible for providing a file path that is unique to this reedline session
     ///
     /// # Example
     /// ```rust,no_run
     /// // Create a reedline object with vim as editor
     ///
-    /// use std::{env::temp_dir, process::Command};
-    ///
     /// use reedline::Reedline;
+    /// use std::env::temp_dir;
+    /// use std::process::Command;
     ///
     /// let temp_file = std::env::temp_dir().join("my-random-unique.file");
     /// let mut command = Command::new("vim");
     /// // you can provide additional flags:
     /// command.arg("-p"); // open in a vim tab (just for demonstration)
-    ///                    // you don't have to pass the filename to the command
-    /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp_file);
+    /// // you don't have to pass the filename to the command
+    /// let mut line_editor =
+    /// Reedline::create().with_buffer_editor(command, temp_file);
     /// ```
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
@@ -475,8 +475,7 @@ impl Reedline {
         self
     }
 
-    /// A builder which configures the edit mode for your instance of the
-    /// Reedline engine
+    /// A builder which configures the edit mode for your instance of the Reedline engine
     #[must_use]
     pub fn with_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
         self.edit_mode = edit_mode;
@@ -504,10 +503,9 @@ impl Reedline {
         self
     }
 
-    /// A builder that enables reedline changing the cursor shape based on the
-    /// current edit mode. The current implementation sets the cursor shape
-    /// when drawing the prompt. Do not use this if the cursor shape is set
-    /// elsewhere, e.g. in the terminal settings or by ansi escape sequences.
+    /// A builder that enables reedline changing the cursor shape based on the current edit mode.
+    /// The current implementation sets the cursor shape when drawing the prompt.
+    /// Do not use this if the cursor shape is set elsewhere, e.g. in the terminal settings or by ansi escape sequences.
     pub fn with_cursor_config(mut self, cursor_shapes: CursorConfig) -> Self {
         self.cursor_shapes = Some(cursor_shapes);
         self
@@ -518,8 +516,7 @@ impl Reedline {
         self.edit_mode.edit_mode()
     }
 
-    /// Output the complete [`History`] chronologically with numbering to the
-    /// terminal
+    /// Output the complete [`History`] chronologically with numbering to the terminal
     pub fn print_history(&mut self) -> Result<()> {
         let history: Vec<_> = self
             .history
@@ -532,8 +529,7 @@ impl Reedline {
         Ok(())
     }
 
-    /// Output the complete [`History`] for this session, chronologically with
-    /// numbering to the terminal
+    /// Output the complete [`History`] for this session, chronologically with numbering to the terminal
     pub fn print_history_session(&mut self) -> Result<()> {
         let history: Vec<_> = self
             .history
@@ -555,8 +551,7 @@ impl Reedline {
         Ok(())
     }
 
-    /// Toggle between having a history that uses the history session id and one
-    /// that does not
+    /// Toggle between having a history that uses the history session id and one that does not
     pub fn toggle_history_session_matching(
         &mut self,
         session: Option<HistorySessionId>,
@@ -586,9 +581,8 @@ impl Reedline {
 
     /// Check if any commands have been run.
     ///
-    /// When no commands have been run, calling
-    /// [`Self::update_last_command_context`] does not make sense and is
-    /// guaranteed to fail with a "No command run" error.
+    /// When no commands have been run, calling [`Self::update_last_command_context`]
+    /// does not make sense and is guaranteed to fail with a "No command run" error.
     pub fn has_last_command_context(&self) -> bool {
         self.history_last_run_id.is_some()
     }
@@ -612,9 +606,8 @@ impl Reedline {
 
     /// Wait for input and provide the user with a specified [`Prompt`].
     ///
-    /// Returns a [`std::io::Result`] in which the `Err` type is
-    /// [`std::io::Result`] and the `Ok` variant wraps a [`Signal`] which
-    /// handles user inputs.
+    /// Returns a [`std::io::Result`] in which the `Err` type is [`std::io::Result`]
+    /// and the `Ok` variant wraps a [`Signal`] which handles user inputs.
     pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
         terminal::enable_raw_mode()?;
         self.bracketed_paste.enter();
@@ -638,8 +631,7 @@ impl Reedline {
         self.editor.get_buffer()
     }
 
-    /// Writes `msg` to the terminal with a following carriage return and
-    /// newline
+    /// Writes `msg` to the terminal with a following carriage return and newline
     fn print_line(&mut self, msg: &str) -> Result<()> {
         self.painter.paint_line(msg)
     }
@@ -659,8 +651,8 @@ impl Reedline {
         Ok(())
     }
 
-    /// Helper implementing the logic for [`Reedline::read_line()`] to be
-    /// wrapped in a `raw_mode` context.
+    /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
+    /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
         self.painter.initialize_prompt_position()?;
         self.hide_hints = false;
@@ -721,8 +713,7 @@ impl Reedline {
 
                 // There could be multiple events queued up!
                 // pasting text, resizes, blocking this thread (e.g. during debugging)
-                // We should be able to handle all of them as quickly as possible without
-                // causing unnecessary output steps.
+                // We should be able to handle all of them as quickly as possible without causing unnecessary output steps.
                 if !event::poll(Duration::from_millis(POLL_WAIT))? {
                     break;
                 }
@@ -761,8 +752,7 @@ impl Reedline {
             for event in reedline_events.drain(..) {
                 match self.handle_event(prompt, event)? {
                     EventStatus::Exits(signal) => {
-                        // Move the cursor below the input area, for external commands or new
-                        // read_line call
+                        // Move the cursor below the input area, for external commands or new read_line call
                         self.painter.move_cursor_to_end()?;
                         return Ok(signal);
                     }
@@ -838,8 +828,7 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
-                // TODO: Decide if we need to do something special to have a nicer painter state
-                // on the next go
+                // TODO: Decide if we need to do something special to have a nicer painter state on the next go
                 Ok(EventStatus::Exits(Signal::Success(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
@@ -1105,8 +1094,7 @@ impl Reedline {
                 }
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
-                // TODO: Decide if we need to do something special to have a nicer painter state
-                // on the next go
+                // TODO: Decide if we need to do something special to have a nicer painter state on the next go
                 Ok(EventStatus::Exits(Signal::Success(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
@@ -1297,11 +1285,9 @@ impl Reedline {
         self.editor.move_to_end(UndoBehavior::HistoryNavigation);
     }
 
-    /// Enable the search and navigation through the history from the line
-    /// buffer prompt
+    /// Enable the search and navigation through the history from the line buffer prompt
     ///
-    /// Enables either prefix search with output in the line buffer or simple
-    /// traversal
+    /// Enables either prefix search with output in the line buffer or simple traversal
     fn get_history_navigation_based_on_line_buffer(&self) -> HistoryNavigationQuery {
         if self.editor.is_empty() || !self.editor.is_cursor_at_buffer_end() {
             // Perform bash-style basic up/down entry walking
@@ -1322,8 +1308,7 @@ impl Reedline {
 
     /// Switch into reverse history search mode
     ///
-    /// This mode uses a separate prompt and handles keybindings slightly
-    /// differently!
+    /// This mode uses a separate prompt and handles keybindings slightly differently!
     fn enter_history_search(&mut self) {
         self.history_cursor = HistoryCursor::new(
             HistoryNavigationQuery::SubstringSearch("".to_string()),
@@ -1332,8 +1317,7 @@ impl Reedline {
         self.input_mode = InputMode::HistorySearch;
     }
 
-    /// Dispatches the applicable [`EditCommand`] actions for editing the
-    /// history search string.
+    /// Dispatches the applicable [`EditCommand`] actions for editing the history search string.
     ///
     /// Only modifies internal state, does not perform regular output!
     fn run_history_commands(&mut self, commands: &[EditCommand]) {
@@ -1379,12 +1363,10 @@ impl Reedline {
         }
     }
 
-    /// Set the buffer contents for history traversal/search in the standard
-    /// prompt
+    /// Set the buffer contents for history traversal/search in the standard prompt
     ///
-    /// When using the up/down traversal or fish/zsh style prefix search update
-    /// the main line buffer accordingly. Not used for the separate modal
-    /// reverse search!
+    /// When using the up/down traversal or fish/zsh style prefix search update the main line buffer accordingly.
+    /// Not used for the separate modal reverse search!
     fn update_buffer_from_history(&mut self) {
         match self.history_cursor.get_navigation() {
             _ if self.history_cursor_on_excluded => self.editor.set_buffer(
@@ -1418,8 +1400,7 @@ impl Reedline {
         }
     }
 
-    /// Executes [`EditCommand`] actions by modifying the internal state
-    /// appropriately. Does not output itself.
+    /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
     pub fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         if self.input_mode == InputMode::HistoryTraversal {
             if matches!(
