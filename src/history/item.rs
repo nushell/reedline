@@ -97,6 +97,8 @@ pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
     /// the exit status of the command
     pub exit_status: Option<i64>,
     /// arbitrary additional information that might be interesting
+    /// NOTE: this attribute is required because of https://github.com/rust-lang/rust/issues/41617
+    ///       (see https://github.com/serde-rs/serde/issues/1296#issuecomment-394056188 for the fix)
     #[serde(deserialize_with = "Option::<ExtraInfo>::deserialize")]
     pub more_info: Option<ExtraInfo>,
 }
