@@ -9,6 +9,7 @@ use std::{fmt::Display, time::Duration};
 pub struct HistoryItemId(pub i64);
 
 impl HistoryItemId {
+    /// Create a new `HistoryItemId` value
     pub const fn new(i: i64) -> HistoryItemId {
         HistoryItemId(i)
     }
