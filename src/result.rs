@@ -3,7 +3,7 @@ use thiserror::Error;
 
 /// non-public (for now)
 #[derive(Error, Debug)]
-pub(crate) enum ReedlineErrorVariants {
+pub enum ReedlineErrorVariants {
     // todo: we should probably be more specific here
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     #[error("error within history database: {0}")]
@@ -21,7 +21,7 @@ pub(crate) enum ReedlineErrorVariants {
 
 /// separate struct to not expose anything to the public (for now)
 #[derive(Debug)]
-pub struct ReedlineError(pub(crate) ReedlineErrorVariants);
+pub struct ReedlineError(pub ReedlineErrorVariants);
 
 impl Display for ReedlineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
