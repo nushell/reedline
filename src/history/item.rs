@@ -5,7 +5,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Display, time::Duration};
 
 /// Unique ID for the [`HistoryItem`]. More recent items have higher ids than older ones.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct HistoryItemId(pub(crate) i64);
 impl HistoryItemId {
     pub(crate) const fn new(i: i64) -> HistoryItemId {
@@ -20,7 +20,7 @@ impl Display for HistoryItemId {
 }
 
 /// Unique ID for the session in which reedline was run to disambiguate different sessions
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistorySessionId(pub(crate) i64);
 impl HistorySessionId {
     pub(crate) const fn new(i: i64) -> HistorySessionId {
@@ -52,7 +52,7 @@ impl From<HistorySessionId> for i64 {
 /// This trait represents additional arbitrary context to be added to a history (optional, see [`HistoryItem`])
 pub trait HistoryItemExtraInfo: Serialize + DeserializeOwned + Default + Send {}
 
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// something that is serialized as null and deserialized by ignoring everything
 pub struct IgnoreAllExtraInfo;
 
@@ -77,7 +77,7 @@ impl<'de> Deserialize<'de> for IgnoreAllExtraInfo {
 impl HistoryItemExtraInfo for IgnoreAllExtraInfo {}
 
 /// Represents one run command with some optional additional context
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
     /// primary key, unique across one history
     pub id: Option<HistoryItemId>,
