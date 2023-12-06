@@ -6,9 +6,11 @@ use std::{fmt::Display, time::Duration};
 
 /// Unique ID for the [`HistoryItem`]. More recent items have higher ids than older ones.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct HistoryItemId(pub(crate) i64);
+pub struct HistoryItemId(pub i64);
+
 impl HistoryItemId {
-    pub(crate) const fn new(i: i64) -> HistoryItemId {
+    /// Create a new `HistoryItemId` value
+    pub const fn new(i: i64) -> HistoryItemId {
         HistoryItemId(i)
     }
 }
