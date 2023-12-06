@@ -151,8 +151,14 @@ impl Painter {
         // Marking the painter state as larger buffer to avoid animations
         self.large_buffer = required_lines >= screen_height;
 
+        // This might not be terribly performant. Testing it out
+        let is_reset = || match cursor::position() {
+            Ok(position) => position.1 < self.prompt_start_row,
+            Err(_) => false,
+        };
+
         // Moving the start position of the cursor based on the size of the required lines
-        if self.large_buffer {
+        if self.large_buffer || is_reset() {
             self.prompt_start_row = 0;
         } else if required_lines >= remaining_lines {
             let extra = required_lines.saturating_sub(remaining_lines);
