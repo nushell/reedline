@@ -239,7 +239,7 @@ mod engine;
 pub use engine::Reedline;
 
 mod result;
-pub use result::{ReedlineError, Result};
+pub use result::{ReedlineError, ReedlineErrorVariants, Result};
 
 mod history;
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
