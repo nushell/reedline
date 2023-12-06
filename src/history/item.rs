@@ -97,6 +97,7 @@ pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
     /// the exit status of the command
     pub exit_status: Option<i64>,
     /// arbitrary additional information that might be interesting
+    #[serde(deserialize_with = "Option::<ExtraInfo>::deserialize")]
     pub more_info: Option<ExtraInfo>,
 }
 
