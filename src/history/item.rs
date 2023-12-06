@@ -52,7 +52,7 @@ impl From<HistorySessionId> for i64 {
 /// This trait represents additional arbitrary context to be added to a history (optional, see [`HistoryItem`])
 pub trait HistoryItemExtraInfo: Serialize + DeserializeOwned + Default + Send {}
 
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 /// something that is serialized as null and deserialized by ignoring everything
 pub struct IgnoreAllExtraInfo;
 
