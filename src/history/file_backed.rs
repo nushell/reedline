@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use rand::{rngs::SmallRng, RngCore, SeedableRng};
 
 use super::{
     base::CommandLineSearch, History, HistoryItem, HistoryItemId, SearchDirection, SearchQuery,
@@ -32,6 +33,7 @@ pub struct FileBackedHistory {
     file: Option<PathBuf>,
     last_on_disk: Option<HistoryItemId>,
     session: Option<HistorySessionId>,
+    rng: SmallRng,
 }
 
 impl Default for FileBackedHistory {
@@ -63,7 +65,7 @@ fn decode_entry(s: &str) -> std::result::Result<(HistoryItemId, String), &'stati
 
 impl History for FileBackedHistory {
     fn generate_id(&mut self) -> HistoryItemId {
-        HistoryItemId((self.entries.len() + 1) as i64)
+        HistoryItemId(self.rng.next_u64() as i64)
     }
 
     /// only saves a value if it's different than the last value
@@ -280,10 +282,9 @@ impl History for FileBackedHistory {
                 .collect::<std::io::Result<IndexMap<_, _>>>()?;
 
             if from_file.len() + own_entries.len() > self.capacity {
-                (
-                    from_file.split_off(from_file.len() - (self.capacity - own_entries.len())),
-                    true,
-                )
+                let start = from_file.len() + own_entries.len() - self.capacity;
+
+                (from_file.split_off(start), true)
             } else {
                 (from_file, false)
             }
@@ -361,6 +362,7 @@ impl FileBackedHistory {
             file: None,
             last_on_disk: None,
             session: None,
+            rng: SmallRng::from_entropy(),
         }
     }
 
