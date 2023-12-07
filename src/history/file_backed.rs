@@ -90,7 +90,7 @@ impl History for FileBackedHistory {
             if self.entries.len() == self.capacity {
                 // History is "full", so we delete the oldest entry first,
                 // before adding a new one.
-                self.entries.remove(&HistoryItemId(0));
+                self.entries.shift_remove(&HistoryItemId(0));
             }
 
             self.entries.insert(h.id, entry.to_string());

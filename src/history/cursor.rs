@@ -322,6 +322,7 @@ mod tests {
     #[test]
     fn prefix_search_ignores_consecutive_equivalent_entries_going_forwards() -> Result<()> {
         let (mut hist, _) = create_history();
+
         save_from_command_line(hist.as_mut(), "find me once")?;
         save_from_command_line(hist.as_mut(), "test")?;
         save_from_command_line(hist.as_mut(), "find me once")?;
@@ -331,21 +332,26 @@ mod tests {
             HistoryNavigationQuery::PrefixSearch("find".to_string()),
             None,
         );
+
         cursor.back(&*hist)?;
         assert_eq!(
             cursor.string_at_cursor(),
             Some("find me as well".to_string())
         );
+
         cursor.back(&*hist)?;
         cursor.back(&*hist)?;
         assert_eq!(cursor.string_at_cursor(), Some("find me once".to_string()));
+
         cursor.forward(&*hist)?;
         assert_eq!(
             cursor.string_at_cursor(),
             Some("find me as well".to_string())
         );
+
         cursor.forward(&*hist)?;
         assert_eq!(cursor.string_at_cursor(), None);
+
         Ok(())
     }
 
