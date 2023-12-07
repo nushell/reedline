@@ -7,6 +7,7 @@ use crate::{
     Result,
 };
 use chrono::{TimeZone, Utc};
+use rand::{rngs::SmallRng, RngCore, SeedableRng};
 use rusqlite::{named_params, params, Connection, ToSql};
 use std::{path::PathBuf, time::Duration};
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
@@ -21,12 +22,13 @@ pub struct SqliteBackedHistory {
     db: rusqlite::Connection,
     session: Option<HistorySessionId>,
     session_timestamp: Option<chrono::DateTime<Utc>>,
+    rng: SmallRng,
 }
 
 fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem> {
     let x: Option<String> = row.get("more_info")?;
     Ok(HistoryItem {
-        id: Some(HistoryItemId::new(row.get("id")?)),
+        id: HistoryItemId::new(row.get("id")?),
         start_timestamp: row.get::<&str, Option<i64>>("start_timestamp")?.map(|e| {
             match Utc.timestamp_millis_opt(e) {
                 chrono::LocalResult::Single(e) => e,
@@ -59,8 +61,12 @@ fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem
 }
 
 impl History for SqliteBackedHistory {
-    fn save(&mut self, mut entry: HistoryItem) -> Result<HistoryItem> {
-        let ret: i64 = self
+    fn generate_id(&mut self) -> HistoryItemId {
+        HistoryItemId(self.rng.next_u64() as i64)
+    }
+
+    fn save(&mut self, entry: &HistoryItem) -> Result<()> {
+        self
             .db
             .prepare(
                 "insert into history
@@ -74,13 +80,12 @@ impl History for SqliteBackedHistory {
                         cwd = excluded.cwd,
                         duration_ms = excluded.duration_ms,
                         exit_status = excluded.exit_status,
-                        more_info = excluded.more_info
-                    returning id",
+                        more_info = excluded.more_info",
             )
             .map_err(map_sqlite_err)?
-            .query_row(
+            .execute(
                 named_params! {
-                    ":id": entry.id.map(|id| id.0),
+                    ":id": entry.id.0,
                     ":start_timestamp": entry.start_timestamp.map(|e| e.timestamp_millis()),
                     ":command_line": entry.command_line,
                     ":session_id": entry.session_id.map(|e| e.0),
@@ -90,11 +95,14 @@ impl History for SqliteBackedHistory {
                     ":exit_status": entry.exit_status,
                     ":more_info": entry.more_info.as_ref().map(|e| serde_json::to_string(e).unwrap())
                 },
-                |row| row.get(0),
             )
-            .map_err(map_sqlite_err)?;
-        entry.id = Some(HistoryItemId::new(ret));
-        Ok(entry)
+            .map(|_| ())
+            .map_err(map_sqlite_err)
+    }
+
+    /// this history doesn't replace entries
+    fn replace(&mut self, h: &HistoryItem) -> Result<()> {
+        self.save(h)
     }
 
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem> {
@@ -140,7 +148,7 @@ impl History for SqliteBackedHistory {
     ) -> Result<()> {
         // in theory this should run in a transaction
         let item = self.load(id)?;
-        self.save(updater(item))?;
+        self.save(&updater(item))?;
         Ok(())
     }
 
@@ -271,6 +279,7 @@ impl SqliteBackedHistory {
             db,
             session,
             session_timestamp,
+            rng: SmallRng::from_entropy(),
         })
     }
 

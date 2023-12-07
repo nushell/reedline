@@ -58,11 +58,16 @@ fn decode_entry(s: &str) -> String {
 }
 
 impl History for FileBackedHistory {
+    fn generate_id(&mut self) -> HistoryItemId {
+        HistoryItemId((self.entries.len() - 1) as i64)
+    }
+
     /// only saves a value if it's different than the last value
-    fn save(&mut self, h: HistoryItem) -> Result<HistoryItem> {
-        let entry = h.command_line;
+    fn save(&mut self, h: &HistoryItem) -> Result<()> {
+        let entry = h.command_line.clone();
+
         // Don't append if the preceding value is identical or the string empty
-        let entry_id = if self
+        if self
             .entries
             .back()
             .map_or(true, |previous| previous != &entry)
@@ -76,16 +81,19 @@ impl History for FileBackedHistory {
                 self.len_on_disk = self.len_on_disk.saturating_sub(1);
             }
             self.entries.push_back(entry.to_string());
-            Some(HistoryItemId::new((self.entries.len() - 1) as i64))
-        } else {
-            None
-        };
-        Ok(FileBackedHistory::construct_entry(entry_id, entry))
+        }
+
+        Ok(())
     }
 
-    fn load(&self, id: HistoryItemId) -> Result<super::HistoryItem> {
+    /// this history doesn't replace entries
+    fn replace(&mut self, h: &HistoryItem) -> Result<()> {
+        self.save(h)
+    }
+
+    fn load(&self, id: HistoryItemId) -> Result<HistoryItem> {
         Ok(FileBackedHistory::construct_entry(
-            Some(id),
+            id,
             self.entries
                 .get(id.0 as usize)
                 .ok_or(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
@@ -161,7 +169,7 @@ impl History for FileBackedHistory {
                 }
             }
             Some(FileBackedHistory::construct_entry(
-                Some(HistoryItemId::new(idx as i64)),
+                HistoryItemId::new(idx as i64),
                 cmd.to_string(), // todo: this copy might be a perf bottleneck
             ))
         };
@@ -328,7 +336,7 @@ impl FileBackedHistory {
     }
 
     // this history doesn't store any info except command line
-    fn construct_entry(id: Option<HistoryItemId>, command_line: String) -> HistoryItem {
+    fn construct_entry(id: HistoryItemId, command_line: String) -> HistoryItem {
         HistoryItem {
             id,
             start_timestamp: None,

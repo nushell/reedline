@@ -1767,6 +1767,7 @@ impl Reedline {
     fn submit_buffer(&mut self, prompt: &dyn Prompt) -> io::Result<EventStatus> {
         let buffer = self.editor.get_buffer().to_string();
         self.hide_hints = true;
+
         // Additional repaint to show the content without hints etc.
         if let Some(transient_prompt) = self.transient_prompt.take() {
             self.repaint(transient_prompt.as_ref())?;
@@ -1774,25 +1775,33 @@ impl Reedline {
         } else {
             self.repaint(prompt)?;
         }
-        if !buffer.is_empty() {
-            let mut entry = HistoryItem::from_command_line(&buffer);
-            entry.session_id = self.get_history_session_id();
 
-            if self
+        if !buffer.is_empty() {
+            let filtered = self
                 .history_exclusion_prefix
                 .as_ref()
-                .map(|prefix| buffer.starts_with(prefix))
-                .unwrap_or(false)
-            {
-                entry.id = Some(Self::FILTERED_ITEM_ID);
-                self.history_last_run_id = entry.id;
-                self.history_excluded_item = Some(entry);
+                .map_or(false, |prefix| buffer.starts_with(prefix));
+
+            let entry_id = if filtered {
+                Self::FILTERED_ITEM_ID
             } else {
-                entry = self.history.save(entry).expect("todo: error handling");
-                self.history_last_run_id = entry.id;
-                self.history_excluded_item = None;
+                self.history.generate_id()
+            };
+
+            let mut entry = HistoryItem::from_command_line(&buffer, entry_id);
+
+            entry.session_id = self.get_history_session_id();
+
+            if filtered {
+                self.history.replace(&entry).expect("todo: error handling");
+            } else {
+                self.history.save(&entry).expect("todo: error handling");
             }
+
+            self.history_last_run_id = Some(entry_id);
+            self.history_excluded_item = if filtered { Some(entry) } else { None };
         }
+
         self.run_edit_commands(&[EditCommand::Clear]);
         self.editor.reset_undo_stack();
 

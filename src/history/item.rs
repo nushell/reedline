@@ -85,7 +85,7 @@ impl HistoryItemExtraInfo for IgnoreAllExtraInfo {}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
     /// primary key, unique across one history
-    pub id: Option<HistoryItemId>,
+    pub id: HistoryItemId,
     /// date-time when this command was started
     pub start_timestamp: Option<chrono::DateTime<Utc>>,
     /// the full command line as text
@@ -111,9 +111,9 @@ pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
 
 impl HistoryItem {
     /// create a history item purely from the command line with everything else set to None
-    pub fn from_command_line(cmd: impl Into<String>) -> HistoryItem {
+    pub fn from_command_line(cmd: impl Into<String>, id: HistoryItemId) -> HistoryItem {
         HistoryItem {
-            id: None,
+            id,
             start_timestamp: None,
             command_line: cmd.into(),
             session_id: None,
