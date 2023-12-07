@@ -186,10 +186,15 @@ impl SearchQuery {
 /// Represents a history file or database
 /// Data could be stored e.g. in a plain text file, in a `JSONL` file, in a `SQLite` database
 pub trait History: Send {
-    /// save a history item to the database
-    /// if given id is None, a new id is created and set in the return value
-    /// if given id is Some, the existing entry is updated
-    fn save(&mut self, h: HistoryItem) -> Result<HistoryItem>;
+    /// generate a unique identifier for a new [`HistoryItem`]
+    fn generate_id(&mut self) -> HistoryItemId;
+
+    /// save a new history item to the database
+    fn save(&mut self, h: &HistoryItem) -> Result<()>;
+
+    /// replace an existing history item in the database
+    fn replace(&mut self, h: &HistoryItem) -> Result<()>;
+
     /// load a history item by its id
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem>;
 
@@ -227,11 +232,18 @@ mod test {
     #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
     const IS_FILE_BASED: bool = true;
 
+    use std::{
+        sync::atomic::{AtomicI64, Ordering},
+        time::Duration,
+    };
+
     use crate::HistorySessionId;
+
+    static COUNTER: AtomicI64 = AtomicI64::new(0);
 
     fn create_item(session: i64, cwd: &str, cmd: &str, exit_status: i64) -> HistoryItem {
         HistoryItem {
-            id: None,
+            id: HistoryItemId(COUNTER.fetch_add(1, Ordering::SeqCst)),
             start_timestamp: None,
             command_line: cmd.to_string(),
             session_id: Some(HistorySessionId::new(session)),
@@ -242,7 +254,6 @@ mod test {
             more_info: None,
         }
     }
-    use std::time::Duration;
 
     use super::*;
     fn create_filled_example_history() -> Result<Box<dyn History>> {
@@ -251,20 +262,20 @@ mod test {
         #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
         let mut history = crate::FileBackedHistory::default();
         #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
-        history.save(create_item(1, "/", "dummy", 0))?; // add dummy item so ids start with 1
-        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
-        history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
-        history.save(create_item(1, "/home/me/Downloads", "unzip foo.zip", 0))?; // 3
-        history.save(create_item(1, "/home/me/Downloads", "cd foo", 0))?; // 4
-        history.save(create_item(1, "/home/me/Downloads/foo", "ls", 0))?; // 5
-        history.save(create_item(1, "/home/me/Downloads/foo", "ls -alh", 0))?; // 6
-        history.save(create_item(1, "/home/me/Downloads/foo", "cat x.txt", 0))?; // 7
+        history.save(&create_item(1, "/", "dummy", 0))?; // add dummy item so ids start with 1
+        history.save(&create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
+        history.save(&create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
+        history.save(&create_item(1, "/home/me/Downloads", "unzip foo.zip", 0))?; // 3
+        history.save(&create_item(1, "/home/me/Downloads", "cd foo", 0))?; // 4
+        history.save(&create_item(1, "/home/me/Downloads/foo", "ls", 0))?; // 5
+        history.save(&create_item(1, "/home/me/Downloads/foo", "ls -alh", 0))?; // 6
+        history.save(&create_item(1, "/home/me/Downloads/foo", "cat x.txt", 0))?; // 7
 
-        history.save(create_item(1, "/home/me", "cd /etc/nginx", 0))?; // 8
-        history.save(create_item(1, "/etc/nginx", "ls -l", 0))?; // 9
-        history.save(create_item(1, "/etc/nginx", "vim nginx.conf", 0))?; // 10
-        history.save(create_item(1, "/etc/nginx", "vim htpasswd", 0))?; // 11
-        history.save(create_item(1, "/etc/nginx", "cat nginx.conf", 0))?; // 12
+        history.save(&create_item(1, "/home/me", "cd /etc/nginx", 0))?; // 8
+        history.save(&create_item(1, "/etc/nginx", "ls -l", 0))?; // 9
+        history.save(&create_item(1, "/etc/nginx", "vim nginx.conf", 0))?; // 10
+        history.save(&create_item(1, "/etc/nginx", "vim htpasswd", 0))?; // 11
+        history.save(&create_item(1, "/etc/nginx", "cat nginx.conf", 0))?; // 12
         Ok(Box::new(history))
     }
 
@@ -409,8 +420,8 @@ mod test {
 
         // create history, add a few entries
         let mut history = open_history();
-        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
-        history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
+        history.save(&create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
+        history.save(&create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
         assert_eq!(history.count_all()?, 2);
         drop(history);
 

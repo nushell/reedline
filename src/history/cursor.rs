@@ -67,7 +67,7 @@ impl HistoryCursor {
             // if searching forward but we don't have a starting point, assume we are at the end
             return Ok(());
         }
-        let start_id = self.current.as_ref().and_then(|e| e.id);
+        let start_id = self.current.as_ref().map(|e| e.id);
         let mut next = history.search(SearchQuery {
             start_id,
             end_id: None,
@@ -108,6 +108,13 @@ mod tests {
     use super::super::*;
     use super::*;
 
+    fn save_from_command_line(hist: &mut dyn History, cmd_line: impl Into<String>) -> Result<()> {
+        let id = hist.generate_id();
+        let entry = HistoryItem::from_command_line(cmd_line, id);
+
+        hist.save(&entry)
+    }
+
     fn create_history() -> (Box<dyn History>, HistoryCursor) {
         #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
         let hist = Box::new(SqliteBackedHistory::in_memory().unwrap());
@@ -118,6 +125,7 @@ mod tests {
             HistoryCursor::new(HistoryNavigationQuery::Normal(LineBuffer::default()), None),
         )
     }
+
     fn create_history_at(cap: usize, path: &Path) -> (Box<dyn History>, HistoryCursor) {
         let hist = Box::new(FileBackedHistory::with_file(cap, path.to_owned()).unwrap());
         (
@@ -133,10 +141,10 @@ mod tests {
         let actual: Vec<_> = res.iter().map(|e| e.command_line.to_string()).collect();
         actual
     }
+
     fn add_text_entries(hist: &mut dyn History, entries: &[impl AsRef<str>]) {
         entries.iter().for_each(|e| {
-            hist.save(HistoryItem::from_command_line(e.as_ref()))
-                .unwrap();
+            save_from_command_line(hist, e.as_ref()).unwrap();
         });
     }
 
@@ -166,8 +174,8 @@ mod tests {
     #[test]
     fn going_backwards_bottoms_out() -> Result<()> {
         let (mut hist, mut cursor) = create_history();
-        hist.save(HistoryItem::from_command_line("command1"))?;
-        hist.save(HistoryItem::from_command_line("command2"))?;
+        save_from_command_line(hist.as_mut(), "command1")?;
+        save_from_command_line(hist.as_mut(), "command2")?;
         cursor.back(&*hist)?;
         cursor.back(&*hist)?;
         cursor.back(&*hist)?;
@@ -180,8 +188,8 @@ mod tests {
     #[test]
     fn going_forwards_bottoms_out() -> Result<()> {
         let (mut hist, mut cursor) = create_history();
-        hist.save(HistoryItem::from_command_line("command1"))?;
-        hist.save(HistoryItem::from_command_line("command2"))?;
+        save_from_command_line(hist.as_mut(), "command1")?;
+        save_from_command_line(hist.as_mut(), "command2")?;
         cursor.forward(&*hist)?;
         cursor.forward(&*hist)?;
         cursor.forward(&*hist)?;
@@ -195,10 +203,10 @@ mod tests {
     #[test]
     fn appends_only_unique() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("unique_old"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("unique"))?;
+        save_from_command_line(hist.as_mut(), "unique_old")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "unique")?;
         assert_eq!(hist.count_all()?, 3);
         Ok(())
     }
@@ -206,9 +214,9 @@ mod tests {
     #[test]
     fn prefix_search_works() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("find me as well"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("find me"))?;
+        save_from_command_line(hist.as_mut(), "find me as well")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "find me")?;
 
         let mut cursor = HistoryCursor::new(
             HistoryNavigationQuery::PrefixSearch("find".to_string()),
@@ -228,9 +236,9 @@ mod tests {
     #[test]
     fn prefix_search_bottoms_out() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("find me as well"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("find me"))?;
+        save_from_command_line(hist.as_mut(), "find me as well")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "find me")?;
 
         let mut cursor = HistoryCursor::new(
             HistoryNavigationQuery::PrefixSearch("find".to_string()),
@@ -256,9 +264,9 @@ mod tests {
     #[test]
     fn prefix_search_returns_to_none() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("find me as well"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("find me"))?;
+        save_from_command_line(hist.as_mut(), "find me as well")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "find me")?;
 
         let mut cursor = HistoryCursor::new(
             HistoryNavigationQuery::PrefixSearch("find".to_string()),
@@ -283,10 +291,10 @@ mod tests {
     #[test]
     fn prefix_search_ignores_consecutive_equivalent_entries_going_backwards() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("find me as well"))?;
-        hist.save(HistoryItem::from_command_line("find me once"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("find me once"))?;
+        save_from_command_line(hist.as_mut(), "find me as well")?;
+        save_from_command_line(hist.as_mut(), "find me once")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "find me once")?;
 
         let mut cursor = HistoryCursor::new(
             HistoryNavigationQuery::PrefixSearch("find".to_string()),
@@ -305,10 +313,10 @@ mod tests {
     #[test]
     fn prefix_search_ignores_consecutive_equivalent_entries_going_forwards() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("find me once"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("find me once"))?;
-        hist.save(HistoryItem::from_command_line("find me as well"))?;
+        save_from_command_line(hist.as_mut(), "find me once")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "find me once")?;
+        save_from_command_line(hist.as_mut(), "find me as well")?;
 
         let mut cursor = HistoryCursor::new(
             HistoryNavigationQuery::PrefixSearch("find".to_string()),
@@ -335,11 +343,11 @@ mod tests {
     #[test]
     fn substring_search_works() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("substring"))?;
-        hist.save(HistoryItem::from_command_line("don't find me either"))?;
-        hist.save(HistoryItem::from_command_line("prefix substring"))?;
-        hist.save(HistoryItem::from_command_line("don't find me"))?;
-        hist.save(HistoryItem::from_command_line("prefix substring suffix"))?;
+        save_from_command_line(hist.as_mut(), "substring")?;
+        save_from_command_line(hist.as_mut(), "don't find me either")?;
+        save_from_command_line(hist.as_mut(), "prefix substring")?;
+        save_from_command_line(hist.as_mut(), "don't find me")?;
+        save_from_command_line(hist.as_mut(), "prefix substring suffix")?;
 
         let mut cursor = HistoryCursor::new(
             HistoryNavigationQuery::SubstringSearch("substring".to_string()),
@@ -363,7 +371,7 @@ mod tests {
     #[test]
     fn substring_search_with_empty_value_returns_none() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("substring"))?;
+        save_from_command_line(hist.as_mut(), "substring")?;
 
         let cursor = HistoryCursor::new(
             HistoryNavigationQuery::SubstringSearch("".to_string()),
@@ -574,11 +582,9 @@ mod tests {
                 let hfile = histfile.clone();
                 std::thread::spawn(move || {
                     let (mut hist, _) = create_history_at(cap, &hfile);
-                    hist.save(HistoryItem::from_command_line(format!("A{i}")))
-                        .unwrap();
+                    save_from_command_line(hist.as_mut(), format!("A{i}")).unwrap();
                     hist.sync().unwrap();
-                    hist.save(HistoryItem::from_command_line(format!("B{i}")))
-                        .unwrap();
+                    save_from_command_line(hist.as_mut(), format!("B{i}")).unwrap();
                 })
             })
             .collect::<Vec<_>>();
