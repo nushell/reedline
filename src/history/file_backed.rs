@@ -1,3 +1,5 @@
+use indexmap::IndexMap;
+
 use super::{
     base::CommandLineSearch, History, HistoryItem, HistoryItemId, SearchDirection, SearchQuery,
 };
@@ -7,7 +9,6 @@ use crate::{
 };
 
 use std::{
-    collections::VecDeque,
     fs::OpenOptions,
     io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write},
     ops::{Deref, DerefMut},
@@ -27,9 +28,9 @@ pub const NEWLINE_ESCAPE: &str = "<\\n>";
 #[derive(Debug)]
 pub struct FileBackedHistory {
     capacity: usize,
-    entries: VecDeque<String>,
+    entries: IndexMap<HistoryItemId, String>,
     file: Option<PathBuf>,
-    len_on_disk: usize, // Keep track what was previously written to disk
+    last_on_disk: Option<HistoryItemId>,
     session: Option<HistorySessionId>,
 }
 
@@ -49,12 +50,19 @@ impl Default for FileBackedHistory {
     }
 }
 
-fn encode_entry(s: &str) -> String {
-    s.replace('\n', NEWLINE_ESCAPE)
+fn encode_entry(id: HistoryItemId, s: &str) -> String {
+    format!("{id}:{}", s.replace('\n', NEWLINE_ESCAPE))
 }
 
-fn decode_entry(s: &str) -> String {
-    s.replace(NEWLINE_ESCAPE, "\n")
+fn decode_entry(s: &str) -> std::result::Result<(HistoryItemId, String), &'static str> {
+    let sep = s
+        .bytes()
+        .position(|b| b == b':')
+        .ok_or("History item ID is missing")?;
+
+    let id = s[..sep].parse().map_err(|_| "Invalid history item ID")?;
+
+    Ok((HistoryItemId(id), s.replace(NEWLINE_ESCAPE, "\n")))
 }
 
 impl History for FileBackedHistory {
@@ -69,18 +77,18 @@ impl History for FileBackedHistory {
         // Don't append if the preceding value is identical or the string empty
         if self
             .entries
-            .back()
-            .map_or(true, |previous| previous != &entry)
+            .last()
+            .map_or(true, |(_, previous)| previous != &entry)
             && !entry.is_empty()
             && self.capacity > 0
         {
             if self.entries.len() == self.capacity {
                 // History is "full", so we delete the oldest entry first,
                 // before adding a new one.
-                self.entries.pop_front();
-                self.len_on_disk = self.len_on_disk.saturating_sub(1);
+                self.entries.remove(&HistoryItemId(0));
             }
-            self.entries.push_back(entry.to_string());
+
+            self.entries.insert(h.id, entry.to_string());
         }
 
         Ok(())
@@ -95,7 +103,7 @@ impl History for FileBackedHistory {
         Ok(FileBackedHistory::construct_entry(
             id,
             self.entries
-                .get(id.0 as usize)
+                .get(&id)
                 .ok_or(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
                     "Item does not exist",
                 )))?
@@ -130,31 +138,19 @@ impl History for FileBackedHistory {
                 },
             ));
         }
-        let (min_id, max_id) = {
-            let start = query.start_id.map(|e| e.0);
-            let end = query.end_id.map(|e| e.0);
+
+        let (from_id, to_id) = {
+            let start = query.start_id;
+            let end = query.end_id;
+
             if let SearchDirection::Backward = query.direction {
                 (end, start)
             } else {
                 (start, end)
             }
         };
-        // add one to make it inclusive
-        let min_id = min_id.map(|e| e + 1).unwrap_or(0);
-        // subtract one to make it inclusive
-        let max_id = max_id
-            .map(|e| e - 1)
-            .unwrap_or(self.entries.len() as i64 - 1);
-        if max_id < 0 || min_id > self.entries.len() as i64 - 1 {
-            return Ok(vec![]);
-        }
-        let intrinsic_limit = max_id - min_id + 1;
-        let limit = if let Some(given_limit) = query.limit {
-            std::cmp::min(intrinsic_limit, given_limit) as usize
-        } else {
-            intrinsic_limit as usize
-        };
-        let filter = |(idx, cmd): (usize, &String)| {
+
+        let filter = |(_, (id, cmd)): (usize, (&HistoryItemId, &String))| {
             if !match &query.filter.command_line {
                 Some(CommandLineSearch::Prefix(p)) => cmd.starts_with(p),
                 Some(CommandLineSearch::Substring(p)) => cmd.contains(p),
@@ -169,17 +165,37 @@ impl History for FileBackedHistory {
                 }
             }
             Some(FileBackedHistory::construct_entry(
-                HistoryItemId::new(idx as i64),
+                *id,
                 cmd.to_string(), // todo: this copy might be a perf bottleneck
             ))
         };
+
+        let from_index = match from_id {
+            Some(from_id) => self.entries.binary_search_keys(&from_id).expect("todo"),
+            None => 0,
+        };
+
+        let to_index = match to_id {
+            Some(to_id) => self.entries.binary_search_keys(&to_id).expect("todo"),
+            None => self.entries.len().saturating_sub(1),
+        };
+
+        if from_index >= to_index {
+            return Ok(vec![]);
+        }
 
         let iter = self
             .entries
             .iter()
             .enumerate()
-            .skip(min_id as usize)
-            .take(intrinsic_limit as usize);
+            .skip(from_index)
+            .take(to_index - from_index);
+
+        let limit = match query.limit {
+            Some(limit) => usize::try_from(limit).unwrap(),
+            None => usize::MAX,
+        };
+
         if let SearchDirection::Backward = query.direction {
             Ok(iter.rev().filter_map(filter).take(limit).collect())
         } else {
@@ -202,7 +218,7 @@ impl History for FileBackedHistory {
 
     fn clear(&mut self) -> Result<()> {
         self.entries.clear();
-        self.len_on_disk = 0;
+        self.last_on_disk = None;
 
         if let Some(file) = &self.file {
             if let Err(err) = std::fs::remove_file(file) {
@@ -228,7 +244,16 @@ impl History for FileBackedHistory {
     fn sync(&mut self) -> std::io::Result<()> {
         if let Some(fname) = &self.file {
             // The unwritten entries
-            let own_entries = self.entries.range(self.len_on_disk..);
+            let last_index_on_disk = match self.last_on_disk {
+                Some(last_id) => self.entries.binary_search_keys(&last_id).unwrap(),
+                None => 0,
+            };
+
+            if last_index_on_disk == self.entries.len() {
+                return Ok(());
+            }
+
+            let own_entries = self.entries.get_range(last_index_on_disk..).unwrap();
 
             if let Some(base_dir) = fname.parent() {
                 std::fs::create_dir_all(base_dir)?;
@@ -242,12 +267,15 @@ impl History for FileBackedHistory {
                     .open(fname)?,
             );
             let mut writer_guard = f_lock.write()?;
+
             let (mut foreign_entries, truncate) = {
                 let reader = BufReader::new(writer_guard.deref());
+
                 let mut from_file = reader
                     .lines()
-                    .map(|o| o.map(|i| decode_entry(&i)))
-                    .collect::<std::io::Result<VecDeque<_>>>()?;
+                    .map(|o| o.map(|i| decode_entry(&i).expect("todo: error handling")))
+                    .collect::<std::io::Result<IndexMap<_, _>>>()?;
+
                 if from_file.len() + own_entries.len() > self.capacity {
                     (
                         from_file.split_off(
@@ -262,33 +290,38 @@ impl History for FileBackedHistory {
 
             {
                 let mut writer = BufWriter::new(writer_guard.deref_mut());
+
                 if truncate {
                     writer.rewind()?;
 
-                    for line in &foreign_entries {
-                        writer.write_all(encode_entry(line).as_bytes())?;
+                    for (id, line) in &foreign_entries {
+                        writer.write_all(encode_entry(*id, line).as_bytes())?;
                         writer.write_all("\n".as_bytes())?;
                     }
                 } else {
                     writer.seek(SeekFrom::End(0))?;
                 }
-                for line in own_entries {
-                    writer.write_all(encode_entry(line).as_bytes())?;
+
+                for (id, line) in own_entries {
+                    writer.write_all(encode_entry(*id, line).as_bytes())?;
                     writer.write_all("\n".as_bytes())?;
                 }
+
                 writer.flush()?;
             }
+
             if truncate {
                 let file = writer_guard.deref_mut();
                 let file_len = file.stream_position()?;
                 file.set_len(file_len)?;
             }
 
-            let own_entries = self.entries.drain(self.len_on_disk..);
+            let own_entries = self.entries.drain(last_index_on_disk + 1..);
             foreign_entries.extend(own_entries);
             self.entries = foreign_entries;
 
-            self.len_on_disk = self.entries.len();
+            let last_entry = self.entries.last().unwrap();
+            self.last_on_disk = Some(*last_entry.0);
         }
         Ok(())
     }
@@ -310,9 +343,9 @@ impl FileBackedHistory {
 
         Ok(FileBackedHistory {
             capacity,
-            entries: VecDeque::new(),
+            entries: IndexMap::new(),
             file: None,
-            len_on_disk: 0,
+            last_on_disk: None,
             session: None,
         })
     }
