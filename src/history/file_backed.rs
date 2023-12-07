@@ -52,7 +52,7 @@ fn decode_entry(s: &str) -> String {
 
 impl History for FileBackedHistory {
     fn generate_id(&mut self) -> HistoryItemId {
-        HistoryItemId((self.entries.len() - 1) as i64)
+        HistoryItemId((self.entries.len() + 1) as i64)
     }
 
     /// only saves a value if it's different than the last value
