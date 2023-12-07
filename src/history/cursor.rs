@@ -58,6 +58,7 @@ impl HistoryCursor {
             filter
         }
     }
+
     fn navigate_in_direction(
         &mut self,
         history: &dyn History,
@@ -67,7 +68,9 @@ impl HistoryCursor {
             // if searching forward but we don't have a starting point, assume we are at the end
             return Ok(());
         }
+
         let start_id = self.current.as_ref().map(|e| e.id);
+
         let mut next = history.search(SearchQuery {
             start_id,
             end_id: None,
@@ -77,12 +80,18 @@ impl HistoryCursor {
             limit: Some(1),
             filter: self.get_search_filter(),
         })?;
+
         if next.len() == 1 {
+            // NOTE: .swap_remove() does not preserve the vector's order
+            // But is *is* faster than .remove() as it completes in O(1)
+            // And given we won't use this vector of results afterwards,
+            // we can use this function without worrying here
             self.current = Some(next.swap_remove(0));
         } else if direction == SearchDirection::Forward {
             // no result and searching forward: we are at the end
             self.current = None;
         }
+
         Ok(())
     }
 
@@ -400,6 +409,7 @@ mod tests {
         }
 
         let (reading_hist, _) = create_history_at(5, &histfile);
+
         let actual = get_all_entry_texts(reading_hist.as_ref());
         assert_eq!(entries, actual);
 

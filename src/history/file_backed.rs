@@ -55,7 +55,10 @@ fn decode_entry(s: &str) -> std::result::Result<(HistoryItemId, String), &'stati
 
     let id = s[..sep].parse().map_err(|_| "Invalid history item ID")?;
 
-    Ok((HistoryItemId(id), s.replace(NEWLINE_ESCAPE, "\n")))
+    Ok((
+        HistoryItemId(id),
+        s[sep + 1..].replace(NEWLINE_ESCAPE, "\n"),
+    ))
 }
 
 impl History for FileBackedHistory {
@@ -142,57 +145,61 @@ impl History for FileBackedHistory {
             }
         };
 
-        let filter = |(_, (id, cmd)): (usize, (&HistoryItemId, &String))| {
-            if !match &query.filter.command_line {
-                Some(CommandLineSearch::Prefix(p)) => cmd.starts_with(p),
-                Some(CommandLineSearch::Substring(p)) => cmd.contains(p),
-                Some(CommandLineSearch::Exact(p)) => cmd == p,
-                None => true,
-            } {
-                return None;
-            }
-            if let Some(str) = &query.filter.not_command_line {
-                if cmd == str {
-                    return None;
-                }
-            }
-            Some(FileBackedHistory::construct_entry(
-                *id,
-                cmd.to_string(), // todo: this copy might be a perf bottleneck
-            ))
-        };
-
         let from_index = match from_id {
-            Some(from_id) => self.entries.binary_search_keys(&from_id).expect("todo"),
+            Some(from_id) => self.entries.get_index_of(&from_id).expect("todo"),
             None => 0,
         };
 
         let to_index = match to_id {
-            Some(to_id) => self.entries.binary_search_keys(&to_id).expect("todo"),
+            Some(to_id) => self.entries.get_index_of(&to_id).expect("todo"),
             None => self.entries.len().saturating_sub(1),
         };
 
-        if from_index >= to_index {
+        if from_index == to_index {
             return Ok(vec![]);
         }
+
+        assert!(from_index < to_index);
 
         let iter = self
             .entries
             .iter()
-            .enumerate()
             .skip(from_index)
-            .take(to_index - from_index);
+            .take(1 + to_index - from_index);
 
         let limit = match query.limit {
             Some(limit) => usize::try_from(limit).unwrap(),
             None => usize::MAX,
         };
 
-        if let SearchDirection::Backward = query.direction {
-            Ok(iter.rev().filter_map(filter).take(limit).collect())
-        } else {
-            Ok(iter.filter_map(filter).take(limit).collect())
-        }
+        let filter = |(id, cmd): (&HistoryItemId, &String)| {
+            let str_matches = match &query.filter.command_line {
+                Some(CommandLineSearch::Prefix(p)) => cmd.starts_with(p),
+                Some(CommandLineSearch::Substring(p)) => cmd.contains(p),
+                Some(CommandLineSearch::Exact(p)) => cmd == p,
+                None => true,
+            };
+
+            if !str_matches {
+                return None;
+            }
+
+            if let Some(str) = &query.filter.not_command_line {
+                if cmd == str {
+                    return None;
+                }
+            }
+
+            Some(FileBackedHistory::construct_entry(
+                *id,
+                cmd.clone(), // todo: this cloning might be a perf bottleneck
+            ))
+        };
+
+        Ok(match query.direction {
+            SearchDirection::Backward => iter.rev().filter_map(filter).take(limit).collect(),
+            SearchDirection::Forward => iter.filter_map(filter).take(limit).collect(),
+        })
     }
 
     fn update(
@@ -234,85 +241,102 @@ impl History for FileBackedHistory {
     ///
     /// If file would exceed `capacity` truncates the oldest entries.
     fn sync(&mut self) -> std::io::Result<()> {
-        if let Some(fname) = &self.file {
-            // The unwritten entries
-            let last_index_on_disk = match self.last_on_disk {
-                Some(last_id) => self.entries.binary_search_keys(&last_id).unwrap(),
-                None => 0,
-            };
+        let Some(fname) = &self.file else {
+            return Ok(());
+        };
 
-            if last_index_on_disk == self.entries.len() {
-                return Ok(());
+        // The unwritten entries
+        let last_index_on_disk = self
+            .last_on_disk
+            .map(|id| self.entries.get_index_of(&id).unwrap());
+
+        let range_start = match last_index_on_disk {
+            Some(index) => index + 1,
+            None => 0,
+        };
+
+        let own_entries = self.entries.get_range(range_start..).unwrap();
+
+        if let Some(base_dir) = fname.parent() {
+            std::fs::create_dir_all(base_dir)?;
+        }
+
+        let mut f_lock = fd_lock::RwLock::new(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .read(true)
+                .open(fname)?,
+        );
+
+        let mut writer_guard = f_lock.write()?;
+
+        let (mut foreign_entries, truncate) = {
+            let reader = BufReader::new(writer_guard.deref());
+
+            let mut from_file = reader
+                .lines()
+                .map(|o| o.map(|i| decode_entry(&i).expect("todo: error handling")))
+                .collect::<std::io::Result<IndexMap<_, _>>>()?;
+
+            if from_file.len() + own_entries.len() > self.capacity {
+                (
+                    from_file.split_off(from_file.len() - (self.capacity - own_entries.len())),
+                    true,
+                )
+            } else {
+                (from_file, false)
             }
+        };
 
-            let own_entries = self.entries.get_range(last_index_on_disk..).unwrap();
+        {
+            let mut writer = BufWriter::new(writer_guard.deref_mut());
 
-            if let Some(base_dir) = fname.parent() {
-                std::fs::create_dir_all(base_dir)?;
-            }
+            // In case of truncation, we first write every foreign entry (replacing existing content)
+            if truncate {
+                writer.rewind()?;
 
-            let mut f_lock = fd_lock::RwLock::new(
-                OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .read(true)
-                    .open(fname)?,
-            );
-            let mut writer_guard = f_lock.write()?;
-
-            let (mut foreign_entries, truncate) = {
-                let reader = BufReader::new(writer_guard.deref());
-
-                let mut from_file = reader
-                    .lines()
-                    .map(|o| o.map(|i| decode_entry(&i).expect("todo: error handling")))
-                    .collect::<std::io::Result<IndexMap<_, _>>>()?;
-
-                if from_file.len() + own_entries.len() > self.capacity {
-                    (
-                        from_file.split_off(from_file.len() - (self.capacity - own_entries.len())),
-                        true,
-                    )
-                } else {
-                    (from_file, false)
-                }
-            };
-
-            {
-                let mut writer = BufWriter::new(writer_guard.deref_mut());
-
-                if truncate {
-                    writer.rewind()?;
-
-                    for (id, line) in &foreign_entries {
-                        writer.write_all(encode_entry(*id, line).as_bytes())?;
-                        writer.write_all("\n".as_bytes())?;
-                    }
-                } else {
-                    writer.seek(SeekFrom::End(0))?;
-                }
-
-                for (id, line) in own_entries {
+                for (id, line) in &foreign_entries {
                     writer.write_all(encode_entry(*id, line).as_bytes())?;
                     writer.write_all("\n".as_bytes())?;
                 }
-
-                writer.flush()?;
+            } else {
+                // Otherwise we directly jump at the end of the file
+                writer.seek(SeekFrom::End(0))?;
             }
 
-            if truncate {
-                let file = writer_guard.deref_mut();
-                let file_len = file.stream_position()?;
-                file.set_len(file_len)?;
+            // Then we write new entries (that haven't been synced to the file yet)
+            for (id, line) in own_entries {
+                writer.write_all(encode_entry(*id, line).as_bytes())?;
+                writer.write_all("\n".as_bytes())?;
             }
 
-            let own_entries = self.entries.drain(last_index_on_disk + 1..);
-            foreign_entries.extend(own_entries);
-            self.entries = foreign_entries;
-
-            let last_entry = self.entries.last().unwrap();
-            self.last_on_disk = Some(*last_entry.0);
+            writer.flush()?;
         }
+
+        // If truncation is needed, we then remove everything after the cursor's current location
+        if truncate {
+            let file = writer_guard.deref_mut();
+            let file_len = file.stream_position()?;
+            file.set_len(file_len)?;
+        }
+
+        match last_index_on_disk {
+            Some(last_index_on_disk) => {
+                if last_index_on_disk + 1 < self.entries.len() {
+                    foreign_entries.extend(self.entries.drain(last_index_on_disk + 1..));
+                }
+            }
+
+            None => {
+                foreign_entries.extend(self.entries.drain(..));
+            }
+        }
+
+        self.entries = foreign_entries;
+
+        self.last_on_disk = self.entries.last().map(|(id, _)| *id);
+
         Ok(())
     }
 
@@ -350,11 +374,14 @@ impl FileBackedHistory {
     ///
     pub fn with_file(capacity: usize, file: PathBuf) -> std::io::Result<Self> {
         let mut hist = Self::new(capacity);
+
         if let Some(base_dir) = file.parent() {
             std::fs::create_dir_all(base_dir)?;
         }
+
         hist.file = Some(file);
         hist.sync()?;
+
         Ok(hist)
     }
 
