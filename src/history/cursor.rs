@@ -549,12 +549,17 @@ mod tests {
         {
             let (mut hist_a, _) = create_history_at(capacity, &histfile);
 
+            assert_eq!(get_all_entry_texts(hist_a.as_ref()), initial_entries);
+
             {
                 let (mut hist_b, _) = create_history_at(capacity, &histfile);
+
+                assert_eq!(get_all_entry_texts(hist_b.as_ref()), initial_entries);
 
                 add_text_entries(hist_b.as_mut(), &entries_b);
                 // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
             }
+
             add_text_entries(hist_a.as_mut(), &entries_a);
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
