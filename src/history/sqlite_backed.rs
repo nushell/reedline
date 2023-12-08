@@ -245,13 +245,18 @@ impl SqliteBackedHistory {
             db.pragma_update(None, "foreign_keys", "on")?;
             db.pragma_update(None, "application_id", SQLITE_APPLICATION_ID)?;
 
+            // Get the user version
+            // By default, it is set to 0
             let db_version: i32 = db.query_row(
                 "SELECT user_version FROM pragma_user_version",
                 params![],
                 |r| r.get(0),
             )?;
 
+            // An up-to-date database should have its version set to the latest number (currently 1)
+            // 0 means the database is either uninitialized or it is using the old history format
             if db_version == 0 {
+                // Check if an history already exists
                 let existing_history = db.query_row(
                     "select count(*) from pragma_table_list() where name = 'history';",
                     (),
@@ -260,6 +265,7 @@ impl SqliteBackedHistory {
 
                 let mut statements = vec![];
 
+                // If so, rename it and delete related indexes
                 if existing_history {
                     statements.push(
                         "
@@ -273,6 +279,7 @@ impl SqliteBackedHistory {
                     );
                 }
 
+                // Create the history table using the v1 schema
                 statements.push(
                     "
                     create table history (
@@ -294,9 +301,10 @@ impl SqliteBackedHistory {
                     create index if not exists idx_history_cmd on history(command_line);
                     create index if not exists idx_history_cmd on history(session_id);
                     ",
-                )
-                ;
+                );
 
+                // If there was an history previously, migrate it to the new table
+                // Then delete it
                 if existing_history {
                     statements.push(
                         "
@@ -309,10 +317,10 @@ impl SqliteBackedHistory {
                     );
                 }
 
+                // Update the version to indicate the DB is up-to-date
                 statements.push("pragma user_version = 1;");
 
-                // TODO: update db version to 1
-
+                // We use a transaction to ensure consistency, given we're doing multiple operations
                 let transaction = db.transaction()?;
                 transaction.execute_batch(&statements.join("\n"))?;
                 transaction.commit()?;
@@ -329,9 +337,14 @@ impl SqliteBackedHistory {
             ))
         };
 
+        // Connect to the database, check it and (if required) initialize it
         let (db_version, history) = inner().map_err(map_sqlite_err)?;
 
-        if db_version > 1 {
+        // Ensure the database version is the currently supported one
+        // If this isn't the case, then something is wrong
+        // (either the previous versions migration is buggy, or the database is using a format deployed on a
+        //  later reedline version than this one)
+        if db_version != 1 {
             return Err(ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(
                 format!("Unknown database version {db_version}"),
             )));
@@ -345,6 +358,8 @@ impl SqliteBackedHistory {
         query: &'a SearchQuery,
         select_expression: &str,
     ) -> (String, BoxedNamedParams<'a>) {
+        // Destructure the query - this ensures that if another element is added to this type later on,
+        // we won't forget to update this function as the destructuring will then be incomplete.
         let SearchQuery {
             direction,
             start_time,
@@ -355,12 +370,14 @@ impl SqliteBackedHistory {
             filter,
         } = query;
 
-        // TODO: this whole function could be done with less allocs
         let (is_asc, asc) = match direction {
             SearchDirection::Forward => (true, "asc"),
             SearchDirection::Backward => (false, "desc"),
         };
 
+        // TODO: find a way to avoid too many allocations
+        // Current version is an acceptable compromise given most of the performance
+        // will be eaten by SQLite anyway
         let mut wheres = Vec::new();
         let mut params: BoxedNamedParams = Vec::new();
 
@@ -369,11 +386,13 @@ impl SqliteBackedHistory {
             wheres.push(format!("timestamp_start {cmp_op} :start_time"));
             params.push((":start_time", Box::new(start.timestamp_millis())));
         }
+
         if let Some(end) = end_time {
             let cmp_op = if is_asc { ">=" } else { "<=" };
             wheres.push(format!(":end_time {cmp_op} timestamp_start"));
             params.push((":end_time", Box::new(end.timestamp_millis())));
         }
+
         if let Some(start) = start_id {
             let cmp_op = if is_asc { '>' } else { '<' };
             wheres.push(format!(
@@ -381,6 +400,7 @@ impl SqliteBackedHistory {
             ));
             params.push((":start_id", Box::new(start.0)));
         }
+
         if let Some(end) = end_id {
             let cmp_op = if is_asc { ">=" } else { "<=" };
             wheres.push(format!(
@@ -388,6 +408,7 @@ impl SqliteBackedHistory {
             ));
             params.push((":end_id", Box::new(end.0)));
         }
+
         let limit = match limit {
             Some(l) => {
                 params.push((":limit", Box::new(l)));
@@ -395,14 +416,21 @@ impl SqliteBackedHistory {
             }
             None => "",
         };
+
         if let Some(command_line) = &filter.command_line {
-            // TODO: escape %
             let command_line_like = match command_line {
-                CommandLineSearch::Exact(e) => e.to_string(),
-                CommandLineSearch::Prefix(prefix) => format!("{prefix}%"),
-                CommandLineSearch::Substring(cont) => format!("%{cont}%"),
+                CommandLineSearch::Exact(e) => escape_like_with_backslashes(e, ESCAPE_CHAR),
+                CommandLineSearch::Prefix(prefix) => {
+                    format!("{}%", escape_like_with_backslashes(prefix, ESCAPE_CHAR))
+                }
+                CommandLineSearch::Substring(cont) => {
+                    format!("%{}%", escape_like_with_backslashes(cont, ESCAPE_CHAR))
+                }
             };
-            wheres.push("command_line like :command_line".to_owned());
+
+            wheres.push(format!(
+                "command_line like :command_line escape '{ESCAPE_CHAR}'"
+            ));
             params.push((":command_line", Box::new(command_line_like)));
         }
 
@@ -461,3 +489,17 @@ impl SqliteBackedHistory {
         (query, params)
     }
 }
+
+/// Escape special symbols for an SQL LIKE clause
+/// (!) Requires LIKE clause to specify an `ESCAPE '<char>'` clause
+fn escape_like_with_backslashes(str: &str, escape_char: char) -> String {
+    let mut str = str.replace(escape_char, &format!("{escape_char}{escape_char}"));
+
+    for forbidden in ['%', '\'', '\n'] {
+        str = str.replace(forbidden, &format!("{escape_char}{forbidden}"));
+    }
+
+    str
+}
+
+static ESCAPE_CHAR: char = '\\';
