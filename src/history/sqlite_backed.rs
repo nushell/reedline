@@ -27,6 +27,7 @@ pub struct SqliteBackedHistory {
 
 fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem> {
     let x: Option<String> = row.get("more_info")?;
+
     Ok(HistoryItem {
         id: HistoryItemId::new(row.get("id")?),
         start_timestamp: row.get::<&str, Option<i64>>("start_timestamp")?.map(|e| {
@@ -70,7 +71,7 @@ impl History for SqliteBackedHistory {
             .db
             .prepare(
                 "insert into history
-                               (id,  start_timestamp,  command_line,  session_id,  hostname,  cwd,  duration_ms,  exit_status,  more_info)
+                               (id, start_timestamp,  command_line,  session_id,  hostname,  cwd,  duration_ms,  exit_status,  more_info)
                         values (:id, :start_timestamp, :command_line, :session_id, :hostname, :cwd, :duration_ms, :exit_status, :more_info)
                     on conflict (history.id) do update set
                         start_timestamp = excluded.start_timestamp,
@@ -256,7 +257,8 @@ impl SqliteBackedHistory {
         db.execute_batch(
             "
         create table if not exists history (
-            id integer primary key autoincrement,
+            idx integer primary key autoincrement,
+            id integer unique not null,
             command_line text not null,
             start_timestamp integer,
             session_id integer,
@@ -266,15 +268,16 @@ impl SqliteBackedHistory {
             exit_status integer,
             more_info text
         ) strict;
+        
         create index if not exists idx_history_time on history(start_timestamp);
         create index if not exists idx_history_cwd on history(cwd); -- suboptimal for many hosts
         create index if not exists idx_history_exit_status on history(exit_status);
         create index if not exists idx_history_cmd on history(command_line);
         create index if not exists idx_history_cmd on history(session_id);
-        -- todo: better indexes
         ",
         )
         .map_err(map_sqlite_err)?;
+
         Ok(SqliteBackedHistory {
             db,
             session,
@@ -288,94 +291,102 @@ impl SqliteBackedHistory {
         query: &'a SearchQuery,
         select_expression: &str,
     ) -> (String, BoxedNamedParams<'a>) {
+        let SearchQuery {
+            direction,
+            start_time,
+            end_time,
+            start_id,
+            end_id,
+            limit,
+            filter,
+        } = query;
+
         // TODO: this whole function could be done with less allocs
-        let (is_asc, asc) = match query.direction {
+        let (is_asc, asc) = match direction {
             SearchDirection::Forward => (true, "asc"),
             SearchDirection::Backward => (false, "desc"),
         };
+
         let mut wheres = Vec::new();
         let mut params: BoxedNamedParams = Vec::new();
-        if let Some(start) = query.start_time {
-            wheres.push(if is_asc {
-                "timestamp_start > :start_time"
-            } else {
-                "timestamp_start < :start_time"
-            });
+
+        if let Some(start) = start_time {
+            let cmp_op = if is_asc { '>' } else { '<' };
+            wheres.push(format!("timestamp_start {cmp_op} :start_time"));
             params.push((":start_time", Box::new(start.timestamp_millis())));
         }
-        if let Some(end) = query.end_time {
-            wheres.push(if is_asc {
-                ":end_time >= timestamp_start"
-            } else {
-                ":end_time <= timestamp_start"
-            });
+        if let Some(end) = end_time {
+            let cmp_op = if is_asc { ">=" } else { "<=" };
+            wheres.push(format!(":end_time {cmp_op} timestamp_start"));
             params.push((":end_time", Box::new(end.timestamp_millis())));
         }
-        if let Some(start) = query.start_id {
-            wheres.push(if is_asc {
-                "id > :start_id"
-            } else {
-                "id < :start_id"
-            });
+        if let Some(start) = start_id {
+            let cmp_op = if is_asc { '>' } else { '<' };
+            wheres.push(format!(
+                "idx {cmp_op} (SELECT idx FROM history WHERE id = :start_id)"
+            ));
             params.push((":start_id", Box::new(start.0)));
         }
-        if let Some(end) = query.end_id {
-            wheres.push(if is_asc {
-                ":end_id >= id"
-            } else {
-                ":end_id <= id"
-            });
+        if let Some(end) = end_id {
+            let cmp_op = if is_asc { ">=" } else { "<=" };
+            wheres.push(format!(
+                "idx {cmp_op} (SELECT idx FROM history WHERE id = :start_id)"
+            ));
             params.push((":end_id", Box::new(end.0)));
         }
-        let limit = match query.limit {
+        let limit = match limit {
             Some(l) => {
                 params.push((":limit", Box::new(l)));
                 "limit :limit"
             }
             None => "",
         };
-        if let Some(command_line) = &query.filter.command_line {
+        if let Some(command_line) = &filter.command_line {
             // TODO: escape %
             let command_line_like = match command_line {
                 CommandLineSearch::Exact(e) => e.to_string(),
                 CommandLineSearch::Prefix(prefix) => format!("{prefix}%"),
                 CommandLineSearch::Substring(cont) => format!("%{cont}%"),
             };
-            wheres.push("command_line like :command_line");
+            wheres.push("command_line like :command_line".to_owned());
             params.push((":command_line", Box::new(command_line_like)));
         }
 
-        if let Some(str) = &query.filter.not_command_line {
-            wheres.push("command_line != :not_cmd");
+        if let Some(str) = &filter.not_command_line {
+            wheres.push("command_line != :not_cmd".to_owned());
             params.push((":not_cmd", Box::new(str)));
         }
-        if let Some(hostname) = &query.filter.hostname {
-            wheres.push("hostname = :hostname");
+
+        if let Some(hostname) = &filter.hostname {
+            wheres.push("hostname = :hostname".to_owned());
             params.push((":hostname", Box::new(hostname)));
         }
-        if let Some(cwd_exact) = &query.filter.cwd_exact {
-            wheres.push("cwd = :cwd");
+
+        if let Some(cwd_exact) = &filter.cwd_exact {
+            wheres.push("cwd = :cwd".to_owned());
             params.push((":cwd", Box::new(cwd_exact)));
         }
-        if let Some(cwd_prefix) = &query.filter.cwd_prefix {
-            wheres.push("cwd like :cwd_like");
+
+        if let Some(cwd_prefix) = &filter.cwd_prefix {
+            wheres.push("cwd like :cwd_like".to_owned());
             let cwd_like = format!("{cwd_prefix}%");
             params.push((":cwd_like", Box::new(cwd_like)));
         }
-        if let Some(exit_successful) = query.filter.exit_successful {
-            if exit_successful {
-                wheres.push("exit_status = 0");
-            } else {
-                wheres.push("exit_status != 0");
-            }
+
+        if let Some(exit_successful) = filter.exit_successful {
+            let cmp_op = if exit_successful { "=" } else { "!=" };
+            wheres.push(format!("exit_status {cmp_op} 0"));
         }
+
         if let (Some(session_id), Some(session_timestamp)) =
-            (query.filter.session, self.session_timestamp)
+            (filter.session, self.session_timestamp)
         {
             // Filter so that we get rows:
             // - that have the same session_id, or
             // - were executed before our session started
-            wheres.push("(session_id = :session_id OR start_timestamp < :session_timestamp)");
+            wheres.push(
+                "(session_id = :session_id OR start_timestamp < :session_timestamp)".to_owned(),
+            );
             params.push((":session_id", Box::new(session_id)));
             params.push((
                 ":session_timestamp",
@@ -390,7 +401,7 @@ impl SqliteBackedHistory {
             "SELECT {select_expression} \
              FROM history \
              WHERE ({wheres}) \
-             ORDER BY id {asc} \
+             ORDER BY idx {asc} \
              {limit}"
         );
         (query, params)
