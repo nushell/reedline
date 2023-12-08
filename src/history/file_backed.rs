@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use rand::{rngs::SmallRng, RngCore, SeedableRng};
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use super::{
     base::CommandLineSearch, History, HistoryItem, HistoryItemId, SearchDirection, SearchQuery,
@@ -79,7 +79,7 @@ fn decode_entry(s: &str, counter: &mut i64) -> (HistoryItemId, String) {
 
 impl History for FileBackedHistory {
     fn generate_id(&mut self) -> HistoryItemId {
-        HistoryItemId(self.rng.next_u64() as i64)
+        HistoryItemId(self.rng.gen())
     }
 
     /// only saves a value if it's different than the last value

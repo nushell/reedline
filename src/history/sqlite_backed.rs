@@ -7,7 +7,7 @@ use crate::{
     Result,
 };
 use chrono::{TimeZone, Utc};
-use rand::{rngs::SmallRng, RngCore, SeedableRng};
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 use rusqlite::{named_params, params, Connection, ToSql};
 use std::{path::PathBuf, time::Duration};
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
@@ -60,7 +60,7 @@ fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem
 
 impl History for SqliteBackedHistory {
     fn generate_id(&mut self) -> HistoryItemId {
-        HistoryItemId(self.rng.next_u64() as i64)
+        HistoryItemId(self.rng.gen())
     }
 
     fn save(&mut self, entry: &HistoryItem) -> Result<()> {
