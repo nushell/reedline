@@ -52,16 +52,30 @@ fn encode_entry(id: HistoryItemId, s: &str) -> String {
     format!("{id}{ID_SEP}{}", s.replace('\n', NEWLINE_ESCAPE))
 }
 
+/// Decode an entry
+///
+/// Legacy format: ls /
+/// New format   : 182535<id>:ls /
+///
+/// If a line can't be parsed using the new format, it will fallback to the legacy one.
+///
+/// This allows this function to support decoding for both legacy and new histories,
+/// as well as mixing both of them.
 fn decode_entry(s: &str, counter: &mut i64) -> (HistoryItemId, String) {
+    let mut parsed = None;
+
     if let Some(sep) = s.find(ID_SEP) {
-        if let Ok(id) = s[..sep].parse() {
-            return (HistoryItemId(id), s[sep + ID_SEP.len()..].to_owned());
+        if let Ok(parsed_id) = s[..sep].parse() {
+            parsed = Some((parsed_id, &s[sep + ID_SEP.len()..]));
         }
     }
 
-    *counter += 1;
+    let (id, content) = parsed.unwrap_or_else(|| {
+        *counter += 1;
+        (*counter - 1, s)
+    });
 
-    (HistoryItemId(*counter - 1), s.to_owned())
+    (HistoryItemId(id), content.replace(NEWLINE_ESCAPE, "\n"))
 }
 
 impl History for FileBackedHistory {
