@@ -271,9 +271,9 @@ impl SqliteBackedHistory {
                         "
                         alter table history rename to history_old;
 
+                        drop index if exists idx_history_time;
                         drop index if exists idx_history_cwd;
                         drop index if exists idx_history_exit_status;
-                        drop index if exists idx_history_cmd;
                         drop index if exists idx_history_cmd;
                         ",
                     );
@@ -299,7 +299,7 @@ impl SqliteBackedHistory {
                     create index if not exists idx_history_cwd on history(cwd); -- suboptimal for many hosts
                     create index if not exists idx_history_exit_status on history(exit_status);
                     create index if not exists idx_history_cmd on history(command_line);
-                    create index if not exists idx_history_cmd on history(session_id);
+                    create index if not exists idx_history_session_id on history(session_id);
                     ",
                 );
 
