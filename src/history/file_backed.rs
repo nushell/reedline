@@ -140,7 +140,19 @@ impl History for FileBackedHistory {
     }
 
     fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>> {
-        if query.start_time.is_some() || query.end_time.is_some() {
+        // Destructure the query - this ensures that if another element is added to this type later on,
+        // we won't forget to update this function as the destructuring will then be incomplete.
+        let SearchQuery {
+            direction,
+            start_time,
+            end_time,
+            start_id,
+            end_id,
+            limit,
+            filter,
+        } = query;
+
+        if start_time.is_some() || end_time.is_some() {
             return Err(ReedlineError(
                 ReedlineErrorVariants::HistoryFeatureUnsupported {
                     history: "FileBackedHistory",
@@ -149,10 +161,10 @@ impl History for FileBackedHistory {
             ));
         }
 
-        if query.filter.hostname.is_some()
-            || query.filter.cwd_exact.is_some()
-            || query.filter.cwd_prefix.is_some()
-            || query.filter.exit_successful.is_some()
+        if filter.hostname.is_some()
+            || filter.cwd_exact.is_some()
+            || filter.cwd_prefix.is_some()
+            || filter.exit_successful.is_some()
         {
             return Err(ReedlineError(
                 ReedlineErrorVariants::HistoryFeatureUnsupported {
@@ -162,42 +174,42 @@ impl History for FileBackedHistory {
             ));
         }
 
-        let (from_id, to_id) = {
-            let start = query.start_id;
-            let end = query.end_id;
-
-            if let SearchDirection::Backward = query.direction {
-                (end, start)
+        let (start_id, end_id) = {
+            if let SearchDirection::Backward = direction {
+                (end_id, start_id)
             } else {
-                (start, end)
+                (start_id, end_id)
             }
         };
 
-        let from_index = match from_id {
-            Some(from_id) => self.entries.get_index_of(&from_id).expect("todo"),
+        let start_idx = match start_id {
+            Some(from_id) => self.entries.get_index_of(&from_id).ok_or(ReedlineError(
+                ReedlineErrorVariants::OtherHistoryError("provided 'start_id' item was not found"),
+            ))?,
             None => 0,
         };
 
-        let to_index = match to_id {
-            Some(to_id) => self.entries.get_index_of(&to_id).expect("todo"),
+        let end_idx = match end_id {
+            Some(to_id) => self.entries.get_index_of(&to_id).ok_or(ReedlineError(
+                ReedlineErrorVariants::OtherHistoryError("provided 'end_id' item was not found"),
+            ))?,
             None => self.entries.len().saturating_sub(1),
         };
 
-        assert!(from_index <= to_index);
+        assert!(start_idx <= end_idx);
 
         let iter = self
             .entries
             .iter()
-            .skip(from_index)
-            .take(1 + to_index - from_index);
+            .skip(start_idx)
+            .take(1 + end_idx - start_idx);
 
-        let limit = match query.limit {
-            Some(limit) => usize::try_from(limit).unwrap(),
-            None => usize::MAX,
-        };
+        let limit = limit
+            .and_then(|limit| usize::try_from(limit).ok())
+            .unwrap_or(usize::MAX);
 
         let filter = |(id, cmd): (&HistoryItemId, &String)| {
-            let str_matches = match &query.filter.command_line {
+            let str_matches = match &filter.command_line {
                 Some(CommandLineSearch::Prefix(p)) => cmd.starts_with(p),
                 Some(CommandLineSearch::Substring(p)) => cmd.contains(p),
                 Some(CommandLineSearch::Exact(p)) => cmd == p,
@@ -208,7 +220,7 @@ impl History for FileBackedHistory {
                 return None;
             }
 
-            if let Some(str) = &query.filter.not_command_line {
+            if let Some(str) = &filter.not_command_line {
                 if cmd == str {
                     return None;
                 }
