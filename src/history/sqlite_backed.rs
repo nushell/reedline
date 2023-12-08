@@ -244,7 +244,7 @@ impl SqliteBackedHistory {
 
             // Get the user version
             // By default, it is set to 0
-            let db_version: i32 = db.query_row(
+            let mut db_version: i32 = db.query_row(
                 "SELECT user_version FROM pragma_user_version",
                 params![],
                 |r| r.get(0),
@@ -316,6 +316,7 @@ impl SqliteBackedHistory {
 
                 // Update the version to indicate the DB is up-to-date
                 statements.push("pragma user_version = 1;");
+                db_version = 1;
 
                 // We use a transaction to ensure consistency, given we're doing multiple operations
                 let transaction = db.transaction()?;
@@ -472,10 +473,13 @@ impl SqliteBackedHistory {
                 Box::new(session_timestamp.timestamp_millis()),
             ));
         }
+
         let mut wheres = wheres.join(" and ");
+
         if wheres.is_empty() {
             wheres = "true".to_string();
         }
+
         let query = format!(
             "SELECT {select_expression} \
              FROM history \
@@ -483,6 +487,7 @@ impl SqliteBackedHistory {
              ORDER BY idx {asc} \
              {limit}"
         );
+
         (query, params)
     }
 }
