@@ -228,11 +228,6 @@ pub trait History: Send {
 
 #[cfg(test)]
 mod test {
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
-    const IS_FILE_BASED: bool = false;
-    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
-    const IS_FILE_BASED: bool = true;
-
     use std::time::Duration;
 
     use crate::HistorySessionId;
@@ -244,10 +239,10 @@ mod test {
         cmd: &str,
         exit_status: i64,
     ) -> Result<()> {
-        let len = hist.count_all()?;
+        let id = hist.count_all()? + 1;
 
         let item = HistoryItem {
-            id: HistoryItemId(len as i64),
+            id: HistoryItemId(id as i64),
             start_timestamp: None,
             command_line: cmd.to_string(),
             session_id: Some(HistorySessionId::new(session)),
@@ -260,7 +255,8 @@ mod test {
 
         hist.save(&item)?;
 
-        assert_eq!(hist.count_all()?, len + 1);
+        // Ensure the item was correctly inserted
+        assert_eq!(hist.count_all()?, id);
 
         Ok(())
     }
@@ -272,9 +268,6 @@ mod test {
 
         #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
         let mut history = crate::FileBackedHistory::default();
-
-        #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
-        create_item(&mut history, 1, "/", "dummy", 0)?; // add dummy item so ids start with 1
 
         create_item(&mut history, 1, "/home/me", "cd ~/Downloads", 0)?; // 1
         create_item(&mut history, 1, "/home/me/Downloads", "unzp foo.zip", 1)?; // 2
@@ -323,7 +316,9 @@ mod test {
             .iter()
             .map(|id| history.load(HistoryItemId::new(*id)))
             .collect::<Result<Vec<HistoryItem>>>()?;
+
         assert_eq!(res, wanted);
+
         Ok(())
     }
 
@@ -335,7 +330,7 @@ mod test {
             history.search(SearchQuery::everything(SearchDirection::Forward, None))
         );
 
-        assert_eq!(history.count_all()?, if IS_FILE_BASED { 13 } else { 12 });
+        assert_eq!(history.count_all()?, 12);
         Ok(())
     }
 
@@ -355,7 +350,7 @@ mod test {
             limit: Some(1),
             ..SearchQuery::everything(SearchDirection::Forward, None)
         })?;
-        search_returned(&*history, res, vec![if IS_FILE_BASED { 0 } else { 1 }])?;
+        search_returned(&*history, res, vec![1])?;
         Ok(())
     }
 
