@@ -230,63 +230,111 @@ impl SqliteBackedHistory {
     }
     /// initialize a new database / migrate an existing one
     fn from_connection(
-        db: Connection,
+        mut db: Connection,
         session: Option<HistorySessionId>,
         session_timestamp: Option<chrono::DateTime<Utc>>,
     ) -> Result<Self> {
-        // https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
-        db.pragma_update(None, "journal_mode", "wal")
-            .map_err(map_sqlite_err)?;
-        db.pragma_update(None, "synchronous", "normal")
-            .map_err(map_sqlite_err)?;
-        db.pragma_update(None, "mmap_size", "1000000000")
-            .map_err(map_sqlite_err)?;
-        db.pragma_update(None, "foreign_keys", "on")
-            .map_err(map_sqlite_err)?;
-        db.pragma_update(None, "application_id", SQLITE_APPLICATION_ID)
-            .map_err(map_sqlite_err)?;
-        let db_version: i32 = db
-            .query_row(
+        let inner = || -> rusqlite::Result<(i32, Self)> {
+            // https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
+            db.pragma_update(None, "journal_mode", "wal")?;
+            db.pragma_update(None, "synchronous", "normal")?;
+            db.pragma_update(None, "mmap_size", "1000000000")?;
+            db.pragma_update(None, "foreign_keys", "on")?;
+            db.pragma_update(None, "application_id", SQLITE_APPLICATION_ID)?;
+
+            let db_version: i32 = db.query_row(
                 "SELECT user_version FROM pragma_user_version",
                 params![],
                 |r| r.get(0),
-            )
-            .map_err(map_sqlite_err)?;
-        if db_version != 0 {
+            )?;
+
+            if db_version == 0 {
+                let existing_history = db.query_row(
+                    "select count(*) from pragma_table_list() where name = 'history';",
+                    (),
+                    |result| Ok(result.get::<_, usize>("count(*)")? > 0),
+                )?;
+
+                let mut statements = vec![];
+
+                if existing_history {
+                    statements.push(
+                        "
+                        alter table history rename to history_old;
+
+                        drop index if exists idx_history_cwd;
+                        drop index if exists idx_history_exit_status;
+                        drop index if exists idx_history_cmd;
+                        drop index if exists idx_history_cmd;
+                        ",
+                    );
+                }
+
+                statements.push(
+                    "
+                    create table history (
+                        idx integer primary key autoincrement,
+                        id integer unique not null,
+                        command_line text not null,
+                        start_timestamp integer,
+                        session_id integer,
+                        hostname text,
+                        cwd text,
+                        duration_ms integer,
+                        exit_status integer,
+                        more_info text
+                    ) strict;
+                    
+                    create index if not exists idx_history_time on history(start_timestamp);
+                    create index if not exists idx_history_cwd on history(cwd); -- suboptimal for many hosts
+                    create index if not exists idx_history_exit_status on history(exit_status);
+                    create index if not exists idx_history_cmd on history(command_line);
+                    create index if not exists idx_history_cmd on history(session_id);
+                    ",
+                )
+                ;
+
+                if existing_history {
+                    statements.push(
+                        "
+                        insert into history (id, command_line, start_timestamp, session_id, hostname, cwd, duration_ms, exit_status, more_info)
+                        select id as idx, command_line, start_timestamp, session_id, hostname, cwd, duration_ms, exit_status, more_info
+                        from history_old;
+
+                        drop table history_old;
+                        ",
+                    );
+                }
+
+                statements.push("pragma user_version = 1;");
+
+                // TODO: update db version to 1
+
+                let transaction = db.transaction()?;
+                transaction.execute_batch(&statements.join("\n"))?;
+                transaction.commit()?;
+            }
+
+            Ok((
+                db_version,
+                SqliteBackedHistory {
+                    db,
+                    session,
+                    session_timestamp,
+                    rng: SmallRng::from_entropy(),
+                },
+            ))
+        };
+
+        let (db_version, history) = inner().map_err(map_sqlite_err)?;
+
+        if db_version > 1 {
             return Err(ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(
                 format!("Unknown database version {db_version}"),
             )));
         }
-        db.execute_batch(
-            "
-        create table if not exists history (
-            idx integer primary key autoincrement,
-            id integer unique not null,
-            command_line text not null,
-            start_timestamp integer,
-            session_id integer,
-            hostname text,
-            cwd text,
-            duration_ms integer,
-            exit_status integer,
-            more_info text
-        ) strict;
-        
-        create index if not exists idx_history_time on history(start_timestamp);
-        create index if not exists idx_history_cwd on history(cwd); -- suboptimal for many hosts
-        create index if not exists idx_history_exit_status on history(exit_status);
-        create index if not exists idx_history_cmd on history(command_line);
-        create index if not exists idx_history_cmd on history(session_id);
-        ",
-        )
-        .map_err(map_sqlite_err)?;
 
-        Ok(SqliteBackedHistory {
-            db,
-            session,
-            session_timestamp,
-            rng: SmallRng::from_entropy(),
-        })
+        Ok(history)
     }
 
     fn construct_query<'a>(
