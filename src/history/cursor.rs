@@ -468,27 +468,35 @@ mod tests {
         let expected_truncated_entries = vec!["test 4", "test 5", "test 6", "test 7", "test 8"];
 
         {
+            println!("> Creating writing history...");
             let (mut writing_hist, _) = create_history_at(capacity, &histfile);
             add_text_entries(writing_hist.as_mut(), &initial_entries);
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+            println!("> Flushing writing history...");
         }
 
         {
+            println!("> Creating appending history...");
             let (mut appending_hist, _) = create_history_at(capacity, &histfile);
             add_text_entries(appending_hist.as_mut(), &appending_entries);
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
             let actual: Vec<_> = get_all_entry_texts(appending_hist.as_ref());
             assert_eq!(expected_appended_entries, actual);
+            println!("> Flushing appending history...");
         }
 
         {
+            println!("> Creating truncating history...");
             let (mut truncating_hist, _) = create_history_at(capacity, &histfile);
             add_text_entries(truncating_hist.as_mut(), &truncating_entries);
             let actual: Vec<_> = get_all_entry_texts(truncating_hist.as_ref());
             assert_eq!(expected_truncated_entries, actual);
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+
+            println!("> Flushing truncating history...");
         }
 
+        println!("> Creating reading history...");
         let (reading_hist, _) = create_history_at(capacity, &histfile);
 
         let actual: Vec<_> = get_all_entry_texts(reading_hist.as_ref());

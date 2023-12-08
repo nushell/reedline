@@ -110,24 +110,30 @@ impl History for SqliteBackedHistory {
             .map_err(map_sqlite_err)?
             .query_row(named_params! { ":id": id.0 }, deserialize_history_item)
             .map_err(map_sqlite_err)?;
+
         Ok(entry)
     }
 
-    fn count(&self, query: SearchQuery) -> Result<i64> {
+    fn count(&self, query: SearchQuery) -> Result<u64> {
         let (query, params) = self.construct_query(&query, "coalesce(count(*), 0)");
+
         let params_borrow: Vec<(&str, &dyn ToSql)> = params.iter().map(|e| (e.0, &*e.1)).collect();
-        let result: i64 = self
+
+        let result: u64 = self
             .db
             .prepare(&query)
             .unwrap()
             .query_row(&params_borrow[..], |r| r.get(0))
             .map_err(map_sqlite_err)?;
+
         Ok(result)
     }
 
     fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>> {
         let (query, params) = self.construct_query(&query, "*");
+
         let params_borrow: Vec<(&str, &dyn ToSql)> = params.iter().map(|e| (e.0, &*e.1)).collect();
+
         let results: Vec<HistoryItem> = self
             .db
             .prepare(&query)

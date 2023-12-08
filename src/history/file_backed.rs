@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use itertools::Itertools;
 use rand::{rngs::SmallRng, RngCore, SeedableRng};
 
 use super::{
@@ -79,10 +80,12 @@ impl History for FileBackedHistory {
             .map_or(true, |(_, previous)| previous != &entry)
             && !entry.is_empty()
         {
-            if self.entries.len() == self.capacity {
+            if self.entries.len() >= self.capacity {
                 // History is "full", so we delete the oldest entry first,
                 // before adding a new one.
-                self.entries.shift_remove(&HistoryItemId(0));
+                let first_id = *(self.entries.first().unwrap().0);
+                let prev = self.entries.shift_remove(&first_id);
+                assert!(prev.is_some());
             }
 
             self.entries.insert(h.id, entry.to_string());
@@ -97,6 +100,8 @@ impl History for FileBackedHistory {
     }
 
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem> {
+        println!("{:?}", self.entries);
+
         Ok(FileBackedHistory::construct_entry(
             id,
             self.entries
@@ -108,9 +113,9 @@ impl History for FileBackedHistory {
         ))
     }
 
-    fn count(&self, query: SearchQuery) -> Result<i64> {
+    fn count(&self, query: SearchQuery) -> Result<u64> {
         // todo: this could be done cheaper
-        Ok(self.search(query)?.len() as i64)
+        Ok(self.search(query)?.len() as u64)
     }
 
     fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>> {
@@ -157,11 +162,7 @@ impl History for FileBackedHistory {
             None => self.entries.len().saturating_sub(1),
         };
 
-        if from_index == to_index {
-            return Ok(vec![]);
-        }
-
-        assert!(from_index < to_index);
+        assert!(from_index <= to_index);
 
         let iter = self
             .entries
@@ -335,6 +336,9 @@ impl History for FileBackedHistory {
         }
 
         self.entries = foreign_entries;
+
+        println!("|- Result         : {}", self.entries.values().join(" ; "));
+        println!();
 
         self.last_on_disk = self.entries.last().map(|(id, _)| *id);
 
