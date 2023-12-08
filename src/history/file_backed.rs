@@ -46,22 +46,22 @@ impl Default for FileBackedHistory {
     }
 }
 
+static ID_SEP: &str = "<id>:";
+
 fn encode_entry(id: HistoryItemId, s: &str) -> String {
-    format!("{id}:{}", s.replace('\n', NEWLINE_ESCAPE))
+    format!("{id}{ID_SEP}{}", s.replace('\n', NEWLINE_ESCAPE))
 }
 
-fn decode_entry(s: &str) -> std::result::Result<(HistoryItemId, String), &'static str> {
-    let sep = s
-        .bytes()
-        .position(|b| b == b':')
-        .ok_or("History item ID is missing")?;
+fn decode_entry(s: &str, counter: &mut i64) -> (HistoryItemId, String) {
+    if let Some(sep) = s.find(ID_SEP) {
+        if let Ok(id) = s[..sep].parse() {
+            return (HistoryItemId(id), s[sep + ID_SEP.len()..].to_owned());
+        }
+    }
 
-    let id = s[..sep].parse().map_err(|_| "Invalid history item ID")?;
+    *counter += 1;
 
-    Ok((
-        HistoryItemId(id),
-        s[sep + 1..].replace(NEWLINE_ESCAPE, "\n"),
-    ))
+    (HistoryItemId(*counter - 1), s.to_owned())
 }
 
 impl History for FileBackedHistory {
@@ -277,9 +277,11 @@ impl History for FileBackedHistory {
         let (mut foreign_entries, truncate) = {
             let reader = BufReader::new(writer_guard.deref());
 
+            let mut counter = 0;
+
             let mut from_file = reader
                 .lines()
-                .map(|o| o.map(|i| decode_entry(&i).expect("todo: error handling")))
+                .map(|o| o.map(|i| decode_entry(&i, &mut counter)))
                 .collect::<std::io::Result<IndexMap<_, _>>>()?;
 
             if from_file.len() + own_entries.len() > self.capacity {
