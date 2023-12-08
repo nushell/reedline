@@ -1,5 +1,4 @@
 use indexmap::IndexMap;
-use itertools::Itertools;
 use rand::{rngs::SmallRng, RngCore, SeedableRng};
 
 use super::{
@@ -360,9 +359,6 @@ impl History for FileBackedHistory {
         }
 
         self.entries = foreign_entries;
-
-        println!("|- Result         : {}", self.entries.values().join(" ; "));
-        println!();
 
         self.last_on_disk = self.entries.last().map(|(id, _)| *id);
 
