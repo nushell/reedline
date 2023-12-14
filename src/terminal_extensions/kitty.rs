@@ -11,7 +11,7 @@ use crossterm::{event, execute};
 /// * [kakoune text editor](https://github.com/mawww/kakoune/issues/4103)
 /// * [dte text editor](https://gitlab.com/craigbarnes/dte/-/issues/138)
 ///
-/// Refer to https://sw.kovidgoyal.net/kitty/keyboard-protocol/ if you're curious.
+/// Refer to <https://sw.kovidgoyal.net/kitty/keyboard-protocol/> if you're curious.
 #[derive(Default)]
 pub(crate) struct KittyProtocolGuard {
     enabled: bool,

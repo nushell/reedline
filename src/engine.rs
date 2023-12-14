@@ -254,7 +254,7 @@ impl Reedline {
     /// You can check for that with [`crate::kitty_protocol_available`]
     /// `Reedline` will perform this check internally
     ///
-    /// Read more: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+    /// Read more: <https://sw.kovidgoyal.net/kitty/keyboard-protocol/>
     pub fn use_kitty_keyboard_enhancement(mut self, enable: bool) -> Self {
         self.kitty_protocol.set(enable);
         self

@@ -2,7 +2,7 @@ use crossterm::{event, execute};
 
 /// Helper managing proper setup and teardown of bracketed paste mode
 ///
-/// https://en.wikipedia.org/wiki/Bracketed-paste
+/// <https://en.wikipedia.org/wiki/Bracketed-paste>
 #[derive(Default)]
 pub(crate) struct BracketedPasteGuard {
     enabled: bool,

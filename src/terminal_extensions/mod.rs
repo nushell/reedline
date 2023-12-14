@@ -3,7 +3,7 @@ pub(crate) mod kitty;
 
 /// Return if the terminal supports the kitty keyboard enhancement protocol
 ///
-/// Read more: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+/// Read more: <https://sw.kovidgoyal.net/kitty/keyboard-protocol/>
 ///
 /// SIDE EFFECT: Touches the terminal file descriptors
 pub fn kitty_protocol_available() -> bool {
