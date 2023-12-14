@@ -17,6 +17,9 @@ pub const EXTERNAL_PRINTER_DEFAULT_CAPACITY: usize = 20;
 /// An ExternalPrinter allows to print messages of text while editing a line.
 /// The message is printed as a new line, the line-edit will continue below the
 /// output.
+///
+/// ## Required feature:
+/// `external_printer`
 #[cfg(feature = "external_printer")]
 #[derive(Debug, Clone)]
 pub struct ExternalPrinter<T>

@@ -1697,6 +1697,9 @@ impl Reedline {
     }
 
     /// Adds an external printer
+    ///
+    /// ## Required feature:
+    /// `external_printer`
     #[cfg(feature = "external_printer")]
     pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
         self.external_printer = Some(printer);

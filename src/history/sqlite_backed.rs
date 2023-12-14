@@ -14,6 +14,9 @@ const SQLITE_APPLICATION_ID: i32 = 1151497937;
 /// A history that stores the values to an SQLite database.
 /// In addition to storing the command, the history can store an additional arbitrary HistoryEntryContext,
 /// to add information such as a timestamp, running directory, result...
+///
+/// ## Required feature:
+/// `sqlite` or `sqlite-dynlib`
 pub struct SqliteBackedHistory {
     db: rusqlite::Connection,
     session: Option<HistorySessionId>,
