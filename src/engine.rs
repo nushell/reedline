@@ -254,7 +254,7 @@ impl Reedline {
     /// You can check for that with [`crate::kitty_protocol_available`]
     /// `Reedline` will perform this check internally
     ///
-    /// Read more: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+    /// Read more: <https://sw.kovidgoyal.net/kitty/keyboard-protocol/>
     pub fn use_kitty_keyboard_enhancement(mut self, enable: bool) -> Self {
         self.kitty_protocol.set(enable);
         self
@@ -1697,6 +1697,9 @@ impl Reedline {
     }
 
     /// Adds an external printer
+    ///
+    /// ## Required feature:
+    /// `external_printer`
     #[cfg(feature = "external_printer")]
     pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
         self.external_printer = Some(printer);

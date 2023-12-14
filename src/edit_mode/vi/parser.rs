@@ -67,7 +67,7 @@ impl ParsedViSequence {
     ///
     /// ### Note:
     ///
-    /// https://github.com/vim/vim/blob/140f6d0eda7921f2f0b057ec38ed501240903fc3/runtime/doc/motion.txt#L64-L70
+    /// <https://github.com/vim/vim/blob/140f6d0eda7921f2f0b057ec38ed501240903fc3/runtime/doc/motion.txt#L64-L70>
     fn total_multiplier(&self) -> usize {
         self.multiplier.unwrap_or(1) * self.count.unwrap_or(1)
     }
