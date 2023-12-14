@@ -56,4 +56,5 @@ required-features = ["external_printer"]
 
 [package.metadata.docs.rs]
 # Whether to pass `--all-features` to Cargo (default: false)
-all-features = true
+all-features = false
+features = ["bashisms", "external_printer", "sqlite"]
