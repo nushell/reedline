@@ -7,6 +7,7 @@ use crate::{
 use std::borrow::Cow;
 
 /// Aggregate of prompt and input string used by `Painter`
+#[derive(Debug)]
 pub(crate) struct PromptLines<'prompt> {
     pub(crate) prompt_str_left: Cow<'prompt, str>,
     pub(crate) prompt_str_right: Cow<'prompt, str>,
