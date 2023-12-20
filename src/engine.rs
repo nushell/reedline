@@ -149,7 +149,14 @@ pub struct Reedline {
     // Manage optional kitty protocol
     kitty_protocol: KittyProtocolGuard,
 
-    // Echo typed input
+    /// Whether to echo typed input
+    ///
+    /// On unix systems, this corresponds to the
+    /// [termios](https://www.man7.org/linux/man-pages/man3/termios.3.html) `ECHO` flag.
+    /// If it is set by the terminal, typed characters will be printed.
+    /// Otherwise, typed characters are not shown.
+    ///
+    /// On non-unix systems this will always remain `true`.
     echo_on: bool,
 
     #[cfg(feature = "external_printer")]
