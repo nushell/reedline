@@ -23,7 +23,7 @@ impl Hinter for DefaultHinter {
                     history.session(),
                 ))
                 .expect("todo: error handling")
-                .get(0)
+                .first()
                 .map_or_else(String::new, |entry| {
                     entry
                         .command_line
