@@ -153,7 +153,7 @@ impl Painter {
 
         // This might not be terribly performant. Testing it out
         let is_reset = || match cursor::position() {
-            Ok(position) => position.1 < self.prompt_start_row,
+            Ok(position) => position.1.abs_diff(self.prompt_start_row) > 1,
             Err(_) => false,
         };
 
