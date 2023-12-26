@@ -53,7 +53,7 @@ impl Hinter for CwdAwareHinter {
                         history.session(),
                     ))
                     .unwrap_or_default()
-                    .get(0)
+                    .first()
                     .map_or_else(String::new, |entry| {
                         entry
                             .command_line
