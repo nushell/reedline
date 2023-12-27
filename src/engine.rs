@@ -845,20 +845,14 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
-                self.history_cursor
-                    .back(self.history.as_ref())
-                    .expect("todo: error handling");
+                let _ = self.history_cursor.back(self.history.as_ref());
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::NextHistory | ReedlineEvent::Down => {
-                self.history_cursor
-                    .forward(self.history.as_ref())
-                    .expect("todo: error handling");
+                let _ = self.history_cursor.forward(self.history.as_ref());
                 // Hacky way to ensure that we don't fall of into failed search going forward
                 if self.history_cursor.string_at_cursor().is_none() {
-                    self.history_cursor
-                        .back(self.history.as_ref())
-                        .expect("todo: error handling");
+                    let _ = self.history_cursor.back(self.history.as_ref());
                 }
                 Ok(EventStatus::Handled)
             }
@@ -1243,9 +1237,7 @@ impl Reedline {
         }
 
         if !self.history_cursor_on_excluded {
-            self.history_cursor
-                .back(self.history.as_ref())
-                .expect("todo: error handling");
+            let _ = self.history_cursor.back(self.history.as_ref());
         }
         self.update_buffer_from_history();
         self.editor.move_to_start(UndoBehavior::HistoryNavigation);
@@ -1266,9 +1258,7 @@ impl Reedline {
             self.history_cursor_on_excluded = false;
         } else {
             let cursor_was_on_item = self.history_cursor.string_at_cursor().is_some();
-            self.history_cursor
-                .forward(self.history.as_ref())
-                .expect("todo: error handling");
+            let _ = self.history_cursor.forward(self.history.as_ref());
 
             if cursor_was_on_item
                 && self.history_cursor.string_at_cursor().is_none()
@@ -1337,9 +1327,7 @@ impl Reedline {
                             self.get_history_session_id(),
                         );
                     }
-                    self.history_cursor
-                        .back(self.history.as_mut())
-                        .expect("todo: error handling");
+                    let _ = self.history_cursor.back(self.history.as_mut());
                 }
                 EditCommand::Backspace => {
                     let navigation = self.history_cursor.get_navigation();
@@ -1351,9 +1339,7 @@ impl Reedline {
                             HistoryNavigationQuery::SubstringSearch(new_substring.to_string()),
                             self.get_history_session_id(),
                         );
-                        self.history_cursor
-                            .back(self.history.as_mut())
-                            .expect("todo: error handling");
+                        let _ = self.history_cursor.back(self.history.as_mut());
                     }
                 }
                 _ => {
