@@ -1753,8 +1753,8 @@ impl Reedline {
                 entry.id = Some(Self::FILTERED_ITEM_ID);
                 self.history_last_run_id = entry.id;
                 self.history_excluded_item = Some(entry);
-            } else {
-                entry = self.history.save(entry).expect("todo: error handling");
+            } else if let Ok(saved_entry) = self.history.save(entry) {
+                entry = saved_entry;
                 self.history_last_run_id = entry.id;
                 self.history_excluded_item = None;
             }
