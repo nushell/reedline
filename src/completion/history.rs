@@ -23,7 +23,7 @@ impl<'menu> Completer for HistoryCompleter<'menu> {
             .search(SearchQuery::all_that_contain_rev(
                 parsed.remainder.to_string(),
             ))
-            .unwrap_or(vec![]);
+            .unwrap_or_default();
 
         values
             .into_iter()

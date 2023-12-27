@@ -22,7 +22,7 @@ impl Hinter for DefaultHinter {
                     line.to_string(),
                     history.session(),
                 ))
-                .unwrap_or(vec![])
+                .unwrap_or_default()
                 .first()
                 .map_or_else(String::new, |entry| {
                     entry
