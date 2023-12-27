@@ -9,9 +9,9 @@ use crate::{core_editor::get_default_clipboard, EditCommand};
 pub struct Editor {
     line_buffer: LineBuffer,
     cut_buffer: Box<dyn Clipboard>,
-
     edit_stack: EditStack<LineBuffer>,
     last_undo_behavior: UndoBehavior,
+    selection_anchor: Option<usize>,
 }
 
 impl Default for Editor {
@@ -21,6 +21,7 @@ impl Default for Editor {
             cut_buffer: Box::new(get_default_clipboard()),
             edit_stack: EditStack::new(),
             last_undo_behavior: UndoBehavior::CreateUndoPoint,
+            selection_anchor: None,
         }
     }
 }
@@ -96,6 +97,11 @@ impl Editor {
             EditCommand::CutLeftBefore(c) => self.cut_left_until_char(*c, true, true),
             EditCommand::MoveLeftUntil(c) => self.move_left_until_char(*c, false, true),
             EditCommand::MoveLeftBefore(c) => self.move_left_until_char(*c, true, true),
+            EditCommand::SelectMoveLeft => self.select_move_left(),
+            EditCommand::SelectMoveRight => self.select_move_right(),
+            EditCommand::SelectAll => self.select_all(),
+            EditCommand::CutSelection => self.cut_selection(),
+            EditCommand::CopySelection => self.copy_selection(),
         }
 
         let new_undo_behavior = match (command, command.edit_type()) {
@@ -112,6 +118,12 @@ impl Editor {
             (_, EditType::UndoRedo) => UndoBehavior::UndoRedo,
             (_, _) => UndoBehavior::CreateUndoPoint,
         };
+        if !matches!(
+            command,
+            EditCommand::SelectMoveLeft | EditCommand::SelectMoveRight | EditCommand::SelectAll
+        ) {
+            self.reset_selection();
+        }
         self.update_undo_state(new_undo_behavior);
     }
 
@@ -461,6 +473,65 @@ impl Editor {
         }
 
         self.line_buffer.insert_str(string);
+    }
+
+    fn select_move_left(&mut self) {
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(self.insertion_point());
+        }
+        self.line_buffer.move_left();
+    }
+
+    fn select_move_right(&mut self) {
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(self.insertion_point());
+        }
+        self.line_buffer.move_right();
+    }
+
+    fn select_all(&mut self) {
+        self.selection_anchor = Some(0);
+        self.line_buffer.move_to_end();
+    }
+
+    fn cut_selection(&mut self) {
+        if let Some(selection_anchor) = self.selection_anchor {
+            let (start, end) = if self.insertion_point() > selection_anchor {
+                (selection_anchor, self.insertion_point())
+            } else {
+                (self.insertion_point(), selection_anchor)
+            };
+            let cut_slice = &self.line_buffer.get_buffer()[start..end];
+            self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
+            if self.insertion_point() <= start {
+                // No action necessary
+            } else if self.insertion_point() < end {
+                // Insertion point is in selected area
+                self.line_buffer.set_insertion_point(start);
+            } else {
+                // Insertion point after end
+                self.line_buffer
+                    .set_insertion_point(self.insertion_point() - (end - start));
+            }
+            self.line_buffer
+                .clear_range_safe(self.insertion_point(), selection_anchor);
+        }
+    }
+
+    fn copy_selection(&mut self) {
+        if let Some(selection_anchor) = self.selection_anchor {
+            let (start, end) = if self.insertion_point() > selection_anchor {
+                (selection_anchor, self.insertion_point())
+            } else {
+                (self.insertion_point(), selection_anchor)
+            };
+            let cut_slice = &self.line_buffer.get_buffer()[start..end];
+            self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
+        }
+    }
+
+    fn reset_selection(&mut self) {
+        self.selection_anchor = None;
     }
 }
 

@@ -194,4 +194,21 @@ pub fn add_common_edit_bindings(kb: &mut Keybindings) {
     // Base commands should not affect cut buffer
     kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
     kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::BackspaceWord));
+    kb.add_binding(KM::CONTROL, KC::Char('x'), edit_bind(EC::CutSelection));
+    kb.add_binding(KM::CONTROL, KC::Char('c'), edit_bind(EC::CopySelection));
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('v'),
+        edit_bind(EC::PasteCutBufferBefore),
+    );
+}
+
+pub fn add_common_selection_bindings(kb: &mut Keybindings) {
+    use EditCommand as EC;
+    use KeyCode as KC;
+    use KeyModifiers as KM;
+
+    kb.add_binding(KM::SHIFT, KC::Left, edit_bind(EC::SelectMoveLeft));
+    kb.add_binding(KM::SHIFT, KC::Right, edit_bind(EC::SelectMoveRight));
+    kb.add_binding(KM::CONTROL, KC::Char('a'), edit_bind(EC::SelectAll));
 }

@@ -189,6 +189,21 @@ pub enum EditCommand {
 
     /// CutUntil left before char
     MoveLeftBefore(char),
+
+    /// Select and move left
+    SelectMoveLeft,
+
+    /// Select and move right
+    SelectMoveRight,
+
+    /// Select whole input buffer
+    SelectAll,
+
+    /// Cut selection
+    CutSelection,
+
+    /// Copy selection
+    CopySelection,
 }
 
 impl Display for EditCommand {
@@ -250,6 +265,11 @@ impl Display for EditCommand {
             EditCommand::CutLeftBefore(_) => write!(f, "CutLeftBefore Value: <char>"),
             EditCommand::MoveLeftUntil(_) => write!(f, "MoveLeftUntil Value: <char>"),
             EditCommand::MoveLeftBefore(_) => write!(f, "MoveLeftBefore Value: <char>"),
+            EditCommand::SelectMoveLeft => write!(f, "SelectMoveLeft"),
+            EditCommand::SelectMoveRight => write!(f, "SelectMoveRight"),
+            EditCommand::SelectAll => write!(f, "SelectAll"),
+            EditCommand::CutSelection => write!(f, "CutSelection"),
+            EditCommand::CopySelection => write!(f, "CopySelection"),
         }
     }
 }
@@ -277,7 +297,10 @@ impl EditCommand {
             | EditCommand::MoveRightUntil(_)
             | EditCommand::MoveRightBefore(_)
             | EditCommand::MoveLeftUntil(_)
-            | EditCommand::MoveLeftBefore(_) => EditType::MoveCursor,
+            | EditCommand::MoveLeftBefore(_)
+            | EditCommand::SelectMoveLeft
+            | EditCommand::SelectMoveRight
+            | EditCommand::SelectAll => EditType::MoveCursor,
 
             // Text edits
             EditCommand::InsertChar(_)
@@ -315,9 +338,12 @@ impl EditCommand {
             | EditCommand::CutRightUntil(_)
             | EditCommand::CutRightBefore(_)
             | EditCommand::CutLeftUntil(_)
-            | EditCommand::CutLeftBefore(_) => EditType::EditText,
+            | EditCommand::CutLeftBefore(_)
+            | EditCommand::CutSelection => EditType::EditText,
 
             EditCommand::Undo | EditCommand::Redo => EditType::UndoRedo,
+
+            EditCommand::CopySelection => EditType::NoOp,
         }
     }
 }
@@ -332,6 +358,8 @@ pub enum EditType {
     UndoRedo,
     /// Text editing commands
     EditText,
+    /// No effect on line buffer
+    NoOp,
 }
 
 /// Every line change should come with an `UndoBehavior` tag, which can be used to
