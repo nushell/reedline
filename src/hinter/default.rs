@@ -22,7 +22,7 @@ impl Hinter for DefaultHinter {
                     line.to_string(),
                     history.session(),
                 ))
-                .expect("todo: error handling")
+                .unwrap_or(vec![])
                 .first()
                 .map_or_else(String::new, |entry| {
                     entry

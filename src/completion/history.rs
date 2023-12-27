@@ -23,7 +23,7 @@ impl<'menu> Completer for HistoryCompleter<'menu> {
             .search(SearchQuery::all_that_contain_rev(
                 parsed.remainder.to_string(),
             ))
-            .expect("todo: error handling");
+            .unwrap_or(vec![]);
 
         values
             .into_iter()
@@ -40,7 +40,7 @@ impl<'menu> Completer for HistoryCompleter<'menu> {
             .count(SearchQuery::all_that_contain_rev(
                 parsed.remainder.to_string(),
             ))
-            .expect("todo: error handling");
+            .unwrap_or(0);
         count as usize
     }
 }

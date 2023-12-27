@@ -521,7 +521,7 @@ impl Reedline {
         let history: Vec<_> = self
             .history
             .search(SearchQuery::everything(SearchDirection::Forward, None))
-            .expect("todo: error handling");
+            .unwrap_or(vec![]);
 
         for (i, entry) in history.iter().enumerate() {
             self.print_line(&format!("{}\t{}", i, entry.command_line))?;
@@ -537,7 +537,7 @@ impl Reedline {
                 SearchDirection::Forward,
                 self.get_history_session_id(),
             ))
-            .expect("todo: error handling");
+            .unwrap_or(vec![]);
 
         for (i, entry) in history.iter().enumerate() {
             self.print_line(&format!("{}\t{}", i, entry.command_line))?;
