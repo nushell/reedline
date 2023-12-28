@@ -196,6 +196,12 @@ pub enum EditCommand {
     /// Select and move right
     SelectMoveRight,
 
+    /// Select and move whole word left
+    SelectMoveWordLeft,
+
+    /// Select and move whole word right
+    SelectMoveWordRight,
+
     /// Select whole input buffer
     SelectAll,
 
@@ -270,6 +276,8 @@ impl Display for EditCommand {
             EditCommand::SelectAll => write!(f, "SelectAll"),
             EditCommand::CutSelection => write!(f, "CutSelection"),
             EditCommand::CopySelection => write!(f, "CopySelection"),
+            EditCommand::SelectMoveWordLeft => write!(f, "SelectMoveWordLeft"),
+            EditCommand::SelectMoveWordRight => write!(f, "SelectMoveWordRight"),
         }
     }
 }
@@ -300,6 +308,8 @@ impl EditCommand {
             | EditCommand::MoveLeftBefore(_)
             | EditCommand::SelectMoveLeft
             | EditCommand::SelectMoveRight
+            | EditCommand::SelectMoveWordLeft
+            | EditCommand::SelectMoveWordRight
             | EditCommand::SelectAll => EditType::MoveCursor,
 
             // Text edits

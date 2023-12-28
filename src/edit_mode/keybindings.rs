@@ -210,5 +210,15 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
 
     kb.add_binding(KM::SHIFT, KC::Left, edit_bind(EC::SelectMoveLeft));
     kb.add_binding(KM::SHIFT, KC::Right, edit_bind(EC::SelectMoveRight));
+    kb.add_binding(
+        KM::SHIFT | KM::CONTROL,
+        KC::Left,
+        edit_bind(EC::SelectMoveWordLeft),
+    );
+    kb.add_binding(
+        KM::SHIFT | KM::CONTROL,
+        KC::Right,
+        edit_bind(EC::SelectMoveWordRight),
+    );
     kb.add_binding(KM::CONTROL, KC::Char('a'), edit_bind(EC::SelectAll));
 }

@@ -102,6 +102,8 @@ impl Editor {
             EditCommand::SelectAll => self.select_all(),
             EditCommand::CutSelection => self.cut_selection(),
             EditCommand::CopySelection => self.copy_selection(),
+            EditCommand::SelectMoveWordLeft => self.select_move_word_left(),
+            EditCommand::SelectMoveWordRight => self.select_move_word_right(),
         }
 
         let new_undo_behavior = match (command, command.edit_type()) {
@@ -120,7 +122,11 @@ impl Editor {
         };
         if !matches!(
             command,
-            EditCommand::SelectMoveLeft | EditCommand::SelectMoveRight | EditCommand::SelectAll
+            EditCommand::SelectMoveLeft
+                | EditCommand::SelectMoveRight
+                | EditCommand::SelectMoveWordLeft
+                | EditCommand::SelectMoveWordRight
+                | EditCommand::SelectAll
         ) {
             self.reset_selection();
         }
@@ -544,6 +550,20 @@ impl Editor {
                 (self.insertion_point(), selection_anchor)
             }
         })
+    }
+
+    fn select_move_word_left(&mut self) {
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(self.insertion_point());
+        }
+        self.line_buffer.move_word_left();
+    }
+
+    fn select_move_word_right(&mut self) {
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(self.insertion_point());
+        }
+        self.line_buffer.move_word_right();
     }
 }
 
