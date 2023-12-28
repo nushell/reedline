@@ -533,6 +533,18 @@ impl Editor {
     fn reset_selection(&mut self) {
         self.selection_anchor = None;
     }
+
+    /// If a selection is active returns the selected range, otherwise None.
+    /// The range is guaranteed to be ascending.
+    pub fn get_selection(&self) -> Option<(usize, usize)> {
+        self.selection_anchor.map(|selection_anchor| {
+            if self.insertion_point() > selection_anchor {
+                (selection_anchor, self.insertion_point())
+            } else {
+                (self.insertion_point(), selection_anchor)
+            }
+        })
+    }
 }
 
 #[cfg(test)]

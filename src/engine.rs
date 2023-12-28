@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use itertools::Itertools;
+use nu_ansi_term::{Color, Style};
 
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
@@ -127,6 +128,9 @@ pub struct Reedline {
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
 
+    // Style used for visual selection
+    visual_selection_style: Style,
+
     // Showcase hints based on various strategies (history, language-completion, spellcheck, etc)
     hinter: Option<Box<dyn Hinter>>,
     hide_hints: bool,
@@ -183,6 +187,7 @@ impl Reedline {
         let history = Box::<FileBackedHistory>::default();
         let painter = Painter::new(std::io::BufWriter::new(std::io::stderr()));
         let buffer_highlighter = Box::<ExampleHighlighter>::default();
+        let visual_selection_style = Style::new().on(Color::LightGray);
         let completer = Box::<DefaultCompleter>::default();
         let hinter = None;
         let validator = None;
@@ -209,6 +214,7 @@ impl Reedline {
             quick_completions: false,
             partial_completions: false,
             highlighter: buffer_highlighter,
+            visual_selection_style,
             hinter,
             hide_hints: false,
             validator,
@@ -368,6 +374,13 @@ impl Reedline {
     #[must_use]
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Self {
         self.highlighter = highlighter;
+        self
+    }
+
+    /// A builder that configures the style used for visual selection
+    #[must_use]
+    pub fn with_visual_selection_style(mut self, style: Style) -> Self {
+        self.visual_selection_style = style;
         self
     }
 
@@ -1638,14 +1651,18 @@ impl Reedline {
         let cursor_position_in_buffer = self.editor.insertion_point();
         let buffer_to_paint = self.editor.get_buffer();
 
-        let (before_cursor, after_cursor) = self
+        let mut styled_text = self
             .highlighter
-            .highlight(buffer_to_paint, cursor_position_in_buffer)
-            .render_around_insertion_point(
-                cursor_position_in_buffer,
-                prompt,
-                self.use_ansi_coloring,
-            );
+            .highlight(buffer_to_paint, cursor_position_in_buffer);
+        if let Some((from, to)) = self.editor.get_selection() {
+            styled_text.style_range(from, to, self.visual_selection_style);
+        }
+
+        let (before_cursor, after_cursor) = styled_text.render_around_insertion_point(
+            cursor_position_in_buffer,
+            prompt,
+            self.use_ansi_coloring,
+        );
 
         let hint: String = if self.hints_active() {
             self.hinter.as_mut().map_or_else(String::new, |hinter| {
