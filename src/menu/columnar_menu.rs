@@ -344,7 +344,7 @@ impl ColumnarMenu {
                     let left_text_size = self.longest_suggestion + self.default_details.col_padding;
                     let right_text_size = self.get_width().saturating_sub(left_text_size);
                     format!(
-                        "{}{}{:max$}{}{}{}{}{}",
+                        "{}{}{:max$}{}{}{}{}{}{}",
                         suggestion
                             .style
                             .unwrap_or(self.color.text_style)
@@ -352,6 +352,7 @@ impl ColumnarMenu {
                             .prefix(),
                         self.color.selected_text_style.prefix(),
                         &suggestion.value,
+                        RESET,
                         self.color.description_style.reverse().prefix(),
                         self.color.selected_text_style.prefix(),
                         description
