@@ -1,4 +1,5 @@
 mod columnar_menu;
+mod ide_menu;
 mod list_menu;
 pub mod menu_functions;
 
@@ -6,6 +7,7 @@ use crate::core_editor::Editor;
 use crate::History;
 use crate::{completion::history::HistoryCompleter, painting::Painter, Completer, Suggestion};
 pub use columnar_menu::ColumnarMenu;
+pub use ide_menu::IdeMenu;
 pub use list_menu::ListMenu;
 use nu_ansi_term::{Color, Style};
 
