@@ -1538,7 +1538,7 @@ impl Reedline {
                         self.get_history_session_id(),
                     )))
                     .unwrap_or_else(|_| Vec::new())
-                    .get(0)
+                    .first()
                     .and_then(|history| history.command_line.split_whitespace().next_back())
                     .map(|token| (parsed.remainder.len(), indicator.len(), token.to_string())),
             });
