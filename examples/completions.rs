@@ -29,7 +29,7 @@ fn main() -> io::Result<()> {
     ];
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands, 2));
     // Use the interactive menu to select options from the completer
-    let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu"));
+    let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu").with_only_buffer_difference(true));
 
     let mut keybindings = default_emacs_keybindings();
     add_menu_keybindings(&mut keybindings);

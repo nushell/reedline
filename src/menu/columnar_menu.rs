@@ -530,7 +530,7 @@ impl Menu for ColumnarMenu {
             if let Some(old_string) = &self.input {
                 let (start, input) = string_difference(editor.get_buffer(), old_string);
                 if !input.is_empty() {
-                    self.values = completer.complete(input, start);
+                    self.values = completer.complete(input, start + input.len());
                     self.reset_position();
                 }
             }
@@ -541,7 +541,10 @@ impl Menu for ColumnarMenu {
             // Also, by replacing the new line character with a space, the insert
             // position is maintain in the line buffer.
             let trimmed_buffer = editor.get_buffer().replace('\n', " ");
-            self.values = completer.complete(trimmed_buffer.as_str(), editor.insertion_point());
+            self.values = completer.complete(
+                &trimmed_buffer[..editor.insertion_point()],
+                editor.insertion_point(),
+            );
             self.reset_position();
         }
     }

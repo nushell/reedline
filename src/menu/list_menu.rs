@@ -402,13 +402,16 @@ impl Menu for ListMenu {
                     if input.is_empty() {
                         (line_buffer.insertion_point(), "")
                     } else {
-                        (start, input)
+                        (start + input.len(), input)
                     }
                 }
                 None => (line_buffer.insertion_point(), ""),
             }
         } else {
-            (line_buffer.insertion_point(), line_buffer.get_buffer())
+            (
+                line_buffer.insertion_point(),
+                &line_buffer.get_buffer()[..line_buffer.insertion_point()],
+            )
         };
 
         let parsed = parse_selection_char(input, SELECTION_CHAR);
