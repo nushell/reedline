@@ -1,22 +1,65 @@
 use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
 use crate::{
-    core_editor::Editor, menu_functions::string_difference, painting::Painter, Completer,
+    core_editor::Editor, menu_functions::string_difference, painting::{Painter, strip_ansi}, Completer,
     Suggestion, UndoBehavior,
 };
 use nu_ansi_term::{ansi::RESET, Style};
+use itertools::{EitherOrBoth::{Both, Left, Right}, Itertools};
+
+pub enum DescriptionMode {
+    /// Description is shown on the right of the completion if there is enough space
+    /// otherwise it is shown on the left
+    PreferRight,
+    /// Description is always shown on the right
+    Right,
+    /// Description is always shown on the left
+    Left,
+}
+
+/// Symbols used for the border of the menu
+struct BorderSymbols {
+    pub top_left: char,
+    pub top_right: char,
+    pub bottom_left: char,
+    pub bottom_right: char,
+    pub horizontal: char,
+    pub vertical: char,
+}
+
+impl Default for BorderSymbols {
+    fn default() -> Self {
+        Self {
+            top_left: '╭',
+            top_right: '╮',
+            bottom_left: '╰',
+            bottom_right: '╯',
+            horizontal: '─',
+            vertical: '│',
+        }
+    }
+}
 
 /// Default values used as reference for the menu. These values are set during
 /// the initial declaration of the menu and are always kept as reference for the
 /// changeable [`IdeMenuDetails`] values.
 struct DefaultIdeMenuDetails {
+    /// Minimum width of the menu
     pub min_width: usize,
-    /// padding to the left and right of the suggestions
+    /// Padding to the left and right of the suggestions
     pub padding: usize,
     /// Whether the menu has a border or not
-    pub border: bool,
-    /// horizontal offset from the cursor.
+    pub border: Option<BorderSymbols>,
+    /// Horizontal offset from the cursor.
     /// 0 means the top left corner of the menu is below the cursor
     pub cursor_offset: i16,
+    /// How the description is shown
+    pub description_mode: DescriptionMode,
+    /// Max width of the description, including the border
+    pub max_description_width: usize,
+    /// Max height of the description, including the border
+    pub max_description_height: usize,
+    /// Offset from the suggestion box to the description box
+    pub description_offset: usize,
 }
 
 impl Default for DefaultIdeMenuDetails {
@@ -24,21 +67,31 @@ impl Default for DefaultIdeMenuDetails {
         Self { 
             min_width: 0,
             padding: 0,
-            border: false,
+            border: None,
             cursor_offset: 0,
+            description_mode: DescriptionMode::PreferRight,
+            max_description_width: 50,
+            max_description_height: 5,
+            description_offset: 1,
         }
     }
 }
 
 #[derive(Default)]
 struct IdeMenuDetails {
-    // Width of the menu, including the padding and border
-    pub width: usize,
-    /// Distance from the left side of the terminal to the completion menu
+    // Width of the menu, including the padding and border and the description
+    pub menu_width: usize,
+    /// width of the completion box, including the padding and border
+    pub completion_width: usize,
+    /// width of the description box, including the padding and border
+    pub description_width: usize,
+    /// Where the discription box should be shown based on the description mode
+    /// and the available space
+    pub description_is_right: bool,
+    /// Distance from the left side of the terminal to the menu
     pub left_distance: usize,
-    /// Distance from the right side of the terminal to the completion menu
+    /// Distance from the right side of the terminal to the menu
     pub right_distance: usize,
-
 }
 
 /// Menu to present suggestions like similar to Ide completion menus
@@ -133,10 +186,32 @@ impl IdeMenu {
         self
     }
 
+    /// Menu builder with the default border value
+    #[must_use]
+    pub fn with_default_border(mut self) -> Self {
+        self.default_details.border = Some(BorderSymbols::default());
+        self
+    }
+
     /// Menu builder with new value for border value
     #[must_use]
-    pub fn with_border(mut self, border: bool) -> Self {
-        self.default_details.border = border;
+    pub fn with_border(
+        mut self, 
+        top_right: char, 
+        top_left: char, 
+        bottom_right: char, 
+        bottom_left: char, 
+        horizontal: char, 
+        vertical: char
+    ) -> Self {
+        self.default_details.border = Some(BorderSymbols {
+            top_right,
+            top_left,
+            bottom_right,
+            bottom_left,
+            horizontal,
+            vertical,
+        });
         self
     }
 
@@ -160,6 +235,29 @@ impl IdeMenu {
         self.only_buffer_difference = only_buffer_difference;
         self
     }
+
+    /// Menu builder with new description mode
+    #[must_use]
+    pub fn with_description_mode(mut self, description_mode: DescriptionMode) -> Self {
+        self.default_details.description_mode = description_mode;
+        self
+    }
+
+    /// Menu builder with new max description width
+    #[must_use]
+    pub fn with_max_description_width(mut self, max_description_width: usize) -> Self {
+        self.default_details.max_description_width = max_description_width;
+        self
+    }
+
+    /// Menu builder with new max description height
+    #[must_use]
+    pub fn with_max_description_height(mut self, max_description_height: usize) -> Self {
+        self.default_details.max_description_height = max_description_height;
+        self
+    }
+
+
 }
 
 // Menu functionality
@@ -190,24 +288,29 @@ impl IdeMenu {
 
     /// Calculates how many rows the Menu will use
     fn get_rows(&self) -> u16 {
-        let values = self.get_values().len() as u16;
+        let mut values = self.get_values().len() as u16;
 
         if values == 0 {
             // When the values are empty the no_records_msg is shown, taking 1 line
             return 1;
         }
 
-        if self.default_details.border {
+        if self.default_details.border.is_some() {
             // top and bottom border take 1 line each
-            return values + 2;
+            values += 2;
         } 
 
-        values
+        let descripion_height = self.get_value()
+            .and_then(|value| value.description)
+            .map(|description| self.description_dims(description).1 as u16)
+            .unwrap_or(0);
+
+        values.max(descripion_height)
     }
 
     /// Returns working details width
     fn get_width(&self) -> usize {
-        self.working_details.width
+        self.working_details.menu_width
     }
 
     fn reset_position(&mut self) {
@@ -228,16 +331,86 @@ impl IdeMenu {
         }
     }
 
-    fn create_string(
+    fn create_description(
+        &self,
+        description: String,
+        use_ansi_coloring: bool
+    ) -> Vec<String> {
+    
+        let max_width = self.default_details.max_description_width;
+        let max_height = self.default_details.max_description_height;
+
+        let content_width = max_width.saturating_sub(if self.default_details.border.is_some() { 2 } else { 0 });
+        let mut description_lines = split_string(&description, content_width);
+
+        let needs_padding = description_lines.len() > 1;
+
+        if let Some(border) = &self.default_details.border {
+            let horizontal_border = border.horizontal.to_string()
+                .repeat(if needs_padding { 
+                    content_width 
+                } else { 
+                    description_lines[0].chars().count()
+                });
+
+
+            for line in &mut description_lines {
+                let padding = if needs_padding {
+                    " ".repeat(content_width.saturating_sub(line.chars().count()))
+                } else {
+                    String::new()
+                };
+
+                if use_ansi_coloring {
+                    *line = format!("{}{}{}{}{}{}", border.vertical, self.color.description_style.prefix(), line, padding, RESET, border.vertical);
+                } else {
+                    *line = format!("{}{}{}{}", border.vertical, line, padding, border.vertical);
+                }
+            }
+
+            description_lines.insert(0, format!("{}{}{}", border.top_left, horizontal_border, border.top_right));
+            description_lines.push(format!("{}{}{}", border.bottom_left, horizontal_border, border.bottom_right));
+        } else {
+            for line in &mut description_lines {
+                let padding = if needs_padding {
+                    " ".repeat(content_width.saturating_sub(line.len()))
+                } else {
+                    String::new()
+                };
+
+                if use_ansi_coloring {
+                    *line = format!("{}{}{}{}", self.color.description_style.prefix(), line, padding, RESET);
+                } else {
+                    *line = format!("{}{}", line, padding);
+                }
+            }
+        }
+
+        // TODO: cut off the description if it is too long
+
+        description_lines
+    }
+
+    /// Returns width and height of the description, including the border
+    fn description_dims(&self, description: String) -> (u16, u16) {
+        let lines = self.create_description(description, false);
+        let height = lines.len() as u16;
+        let string = lines.get(0).cloned().unwrap_or_default();
+        let width = strip_ansi(&string).chars().count() as u16;
+
+        (width, height)
+    }
+
+    fn create_value_string(
         &self,
         suggestion: &Suggestion,
         index: usize,
         use_ansi_coloring: bool
     ) -> String {
-        let vertical_border = if self.default_details.border { "│" } else { "" };
+        let vertical_border = self.default_details.border.as_ref().map(|border| border.vertical).unwrap_or_default();
+        let padding_right = self.working_details.completion_width.saturating_sub(suggestion.value.len()).saturating_sub(if self.default_details.border.is_some() { 2 } else { 0 });
 
         if use_ansi_coloring {
-            let padding_right = self.longest_suggestion.saturating_sub(suggestion.value.len()) + self.default_details.padding;
 
             if index == self.index() {
                 format!(
@@ -265,7 +438,16 @@ impl IdeMenu {
             }
 
         } else {
-            todo!()
+            let marker = if index == self.index() { ">" } else { "" };
+
+            format!(
+                "{}{}{}{}{}",
+                vertical_border,
+                marker,
+                suggestion.value,
+                " ".repeat(padding_right),
+                vertical_border,
+            )
         }
     }
 }
@@ -425,24 +607,54 @@ impl Menu for IdeMenu {
             let terminal_width = painter.screen_width();
             let cursor_pos = crossterm::cursor::position().unwrap().0;
 
-            let menu_width = self.longest_suggestion + self.default_details.padding * 2 + if self.default_details.border { 2 } else { 0 };
-            self.working_details.width = menu_width.max(self.default_details.min_width);
+            self.working_details.description_width = self.get_value()
+                .and_then(|value| value.description)
+                .map(|description| self.description_dims(description).0)
+                .unwrap_or(0) as usize;
 
-            let potential_left_distance = cursor_pos as i16 + self.default_details.cursor_offset;
+            self.working_details.completion_width = self.longest_suggestion + self.default_details.padding * 2 + if self.default_details.border.is_some() { 
+                    2 
+                } else { 
+                    0 
+                }.max(self.default_details.min_width);
 
-            let left_distance = if potential_left_distance + self.get_width() as i16 > terminal_width as i16 {
-                terminal_width.saturating_sub(self.get_width() as u16)
-            } else if potential_left_distance < 0 {
-                0
-            } else {
-                potential_left_distance as u16
+            self.working_details.menu_width = self.working_details.completion_width + self.working_details.description_width + if self.working_details.description_width > 0 { 
+                    self.default_details.description_offset 
+                } else { 
+                    0 
+                };
+    
+            self.working_details.description_is_right = match self.default_details.description_mode {
+                DescriptionMode::Left => false,
+                DescriptionMode::PreferRight => {
+                    // if there is enough space to the right of the cursor, the description is shown on the right
+                    // otherwise it is shown on the left
+                    let potential_right_distance = (terminal_width as i16).saturating_sub(cursor_pos as i16 + self.default_details.cursor_offset + self.default_details.description_offset as i16 + self.working_details.completion_width as i16).max(0) as usize	;
+
+                    if potential_right_distance >= self.working_details.description_width + self.default_details.description_offset {
+                        true
+                    } else {
+                        false
+                    }      
+                },
+                DescriptionMode::Right => true,
             };
 
-            let right_distance = (terminal_width as usize).saturating_sub(left_distance as usize + self.get_width());
+            if self.working_details.description_is_right {
+                let potential_left_distance = cursor_pos as i16 + self.default_details.cursor_offset;
+                let left_distance = potential_left_distance.clamp(0, terminal_width.saturating_sub(self.get_width() as u16) as i16);
 
-            self.working_details.left_distance = left_distance as usize;
-            self.working_details.right_distance = right_distance;
+                let right_distance = (terminal_width as usize).saturating_sub(left_distance as usize + self.get_width());
+                self.working_details.left_distance = left_distance as usize;
+                self.working_details.right_distance = right_distance;
+            } else {
+                let potential_left_distance = cursor_pos as i16 + self.default_details.cursor_offset - self.working_details.description_width as i16 - self.default_details.description_offset as i16;
+                let left_distance = potential_left_distance.clamp(0, terminal_width.saturating_sub(self.get_width() as u16) as i16);
 
+                let right_distance = (terminal_width as usize).saturating_sub(left_distance as usize + self.get_width());
+                self.working_details.left_distance = left_distance as usize;
+                self.working_details.right_distance = right_distance;
+            }
         }
     }
 
@@ -470,6 +682,7 @@ impl Menu for IdeMenu {
             editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
         }
     }
+
     /// Minimum rows that should be displayed by the menu
     fn min_rows(&self) -> u16 {
         self.get_rows()
@@ -506,30 +719,130 @@ impl Menu for IdeMenu {
                 .map(|(index, suggestion)| {
                     // Correcting the enumerate index based on the number of skipped values
                     let index = index + skip_values;
-                    self.create_string(suggestion, index, use_ansi_coloring)
+                    self.create_value_string(suggestion, index, use_ansi_coloring)
                 })
                 .collect::<Vec<String>>();
 
-            if self.default_details.border {
-                let inner_width = self.working_details.width.saturating_sub(2);
+            if let Some(border) = &self.default_details.border {
+                let inner_width = self.working_details.completion_width.saturating_sub(2);
                 strings.insert(0, format!(
-                    "╭{}╮",
-                    "─".repeat(inner_width)
+                    "{}{}{}",
+                    border.top_left,
+                    border.horizontal.to_string().repeat(inner_width),
+                    border.top_right,
                 ));
 
                 strings.push(format!(
-                    "╰{}╯",
-                    "─".repeat(inner_width)
+                    "{}{}{}",
+                    border.bottom_left,
+                    border.horizontal.to_string().repeat(inner_width),
+                    border.bottom_right,
                 ));
             }
 
-            strings.iter_mut().for_each(|string| {
-                string.insert_str(0, &" ".repeat(self.working_details.left_distance));
-            });
+            let description_lines = self.get_value()
+                .and_then(|value| value.clone().description)
+                .map(|description| self.create_description(description, use_ansi_coloring))
+                .unwrap_or_default();
+
+            let padding_left = &" ".repeat(self.working_details.left_distance);
+
+            // vertically join the description lines with the suggestion lines
+            if self.working_details.description_is_right {
+                for (idx, pair) in strings.clone().iter().zip_longest(description_lines.iter()).enumerate() {
+                    match pair {
+                        Both(_suggestion_line, description_line) => {
+                            strings[idx] = format!(
+                                "{}{}{}{}",
+                                padding_left,
+                                strings[idx],
+                                " ".repeat(self.default_details.description_offset),
+                                description_line,
+                            )
+                        },
+                        Left(suggestion_line) => {
+                            strings[idx] = format!(
+                                "{}{}",
+                                padding_left,
+                                suggestion_line,
+                            )
+                        },
+                        Right(description_line) => {
+                            strings.push(format!(
+                                "{}{}",
+                                " ".repeat(self.working_details.completion_width + self.default_details.description_offset) + padding_left,
+                                description_line,
+                            ))
+                        }
+                    }
+                }
+            } else {
+                for (idx, pair) in strings.clone().iter().zip_longest(description_lines.iter()).enumerate() {
+                    match pair {
+                        Both(suggestion_line, description_line) => {
+                            strings[idx] = format!(
+                                "{}{}{}{}",
+                                padding_left,
+                                description_line,
+                                " ".repeat(self.default_details.description_offset),
+                                suggestion_line,
+                            )
+                        },
+                        Left(suggestion_line) => {
+                            strings[idx] = format!(
+                                "{}{}",
+                                " ".repeat(self.working_details.description_width + self.default_details.description_offset) + padding_left,
+                                suggestion_line,
+                            )
+                        },
+                        Right(description_line) => {
+                            strings.push(format!(
+                                "{}{}",
+                                padding_left,
+                                description_line,
+                            ))
+                        }
+                    }
+                }
+            }
 
             strings.join("\r\n")
         }
     }
+}
 
+/// Split the input into strings that are at most `max_width` long
+/// The split is done at spaces if possible
+fn split_string(input: &str, max_width: usize) -> Vec<String> {
+    let words: Vec<&str> = input.split_whitespace().collect();
+    let mut result = Vec::new();
+    let mut current_line = String::new();
 
+    for word in words {
+        if word.len() > max_width {
+            let chars: Vec<char> = word.chars().collect();
+            let mut i = 0;
+            while i < chars.len() {
+                let end = usize::min(i + max_width, chars.len());
+                result.push(chars[i..end].iter().collect());
+                i = end;
+            }
+        } else if current_line.len() + word.len() + 1 > max_width {
+            if !current_line.is_empty() {
+                result.push(current_line.trim_end().to_string());
+            }
+            current_line = String::from(word);
+        } else {
+            if !current_line.is_empty() {
+                current_line.push(' ');
+            }
+            current_line.push_str(word);
+        }
+    }
+
+    if !current_line.is_empty() {
+        result.push(current_line.trim_end().to_string());
+    }
+
+    result
 }
