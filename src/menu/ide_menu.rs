@@ -96,7 +96,7 @@ struct IdeMenuDetails {
     pub completion_width: usize,
     /// width of the description box, including the padding and border
     pub description_width: usize,
-    /// Where the discription box should be shown based on the description mode
+    /// Where the description box should be shown based on the description mode
     /// and the available space
     pub description_is_right: bool,
     /// Distance from the left side of the terminal to the menu
@@ -327,7 +327,7 @@ impl IdeMenu {
 
         let descripion_height = self.get_value()
             .and_then(|value| value.description)
-            .map(|description| self.description_dims(description).1 as u16)
+            .map(|description| self.description_dims(description).1)
             .unwrap_or(0);
 
         values.max(descripion_height)
@@ -430,7 +430,7 @@ impl IdeMenu {
         // will be capped by the available lines
         let lines = self.create_description(description, false, u16::MAX);
         let height = lines.len() as u16;
-        let string = lines.get(0).cloned().unwrap_or_default();
+        let string = lines.first().cloned().unwrap_or_default();
         let width = strip_ansi(&string).chars().count() as u16;
 
         (width, height)
@@ -703,11 +703,7 @@ impl Menu for IdeMenu {
                     // otherwise it is shown on the left
                     let potential_right_distance = (terminal_width as i16).saturating_sub(cursor_pos as i16 + self.default_details.cursor_offset + self.default_details.description_offset as i16 + self.working_details.completion_width as i16).max(0) as usize	;
 
-                    if potential_right_distance >= self.working_details.description_width + self.default_details.description_offset {
-                        true
-                    } else {
-                        false
-                    }      
+                    potential_right_distance >= self.working_details.description_width + self.default_details.description_offset     
                 },
                 DescriptionMode::Right => true,
             };
@@ -777,7 +773,7 @@ impl Menu for IdeMenu {
             } else { 
                 0 
             };
-            let available_lines = available_lines.min(self.default_details.max_completion_height as u16);
+            let available_lines = available_lines.min(self.default_details.max_completion_height);
             // The skip values represent the number of lines that should be skipped
             // while printing the menu
             let skip_values = if self.selected >= available_lines.saturating_sub(border_width) {
@@ -949,7 +945,7 @@ fn split_string(input: &str, max_width: usize, max_height: usize, truncation_sym
 
         for (idx, char_idx) in indexes_to_replace {
             let mut chars: Vec<_> = result[idx].chars().collect();
-            chars[char_idx] = truncation_symbol.chars().nth(0).unwrap();
+            chars[char_idx] = truncation_symbol.chars().next().unwrap();
             result[idx] = chars.iter().collect();
         }
     }
