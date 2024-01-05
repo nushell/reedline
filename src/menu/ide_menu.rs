@@ -43,8 +43,11 @@ impl Default for BorderSymbols {
 /// the initial declaration of the menu and are always kept as reference for the
 /// changeable [`IdeMenuDetails`] values.
 struct DefaultIdeMenuDetails {
-    /// Minimum width of the menu
-    pub min_width: usize,
+    /// Minimum width of the completion box, 
+    pub min_completion_width: usize,
+    /// max height of the completion box, including the border
+    /// this will be capped by the lines available in the terminal
+    pub max_completion_height: u16,
     /// Padding to the left and right of the suggestions
     pub padding: usize,
     /// Whether the menu has a border or not
@@ -54,6 +57,10 @@ struct DefaultIdeMenuDetails {
     pub cursor_offset: i16,
     /// How the description is shown
     pub description_mode: DescriptionMode,
+    /// Min width of the description, including the border
+    /// this will be applied, when the description is "squished"
+    /// by the completion box
+    pub min_description_width: usize,
     /// Max width of the description, including the border
     pub max_description_width: usize,
     /// Max height of the description, including the border
@@ -65,13 +72,15 @@ struct DefaultIdeMenuDetails {
 impl Default for DefaultIdeMenuDetails {
     fn default() -> Self {
         Self { 
-            min_width: 0,
+            min_completion_width: 0,
+            max_completion_height: u16::MAX,
             padding: 0,
             border: None,
-            cursor_offset: 0,
+            cursor_offset: 0,       
             description_mode: DescriptionMode::PreferRight,
-            max_description_width: 50,
-            max_description_height: 5,
+            min_description_width: 5,
+            max_description_width: 40,
+            max_description_height: 10,
             description_offset: 1,
         }
     }
@@ -79,7 +88,9 @@ impl Default for DefaultIdeMenuDetails {
 
 #[derive(Default)]
 struct IdeMenuDetails {
-    // Width of the menu, including the padding and border and the description
+    /// current width of the terminal
+    pub terminal_width: usize,
+    /// Width of the menu, including the padding and border and the description
     pub menu_width: usize,
     /// width of the completion box, including the padding and border
     pub completion_width: usize,
@@ -172,10 +183,17 @@ impl IdeMenu {
         self
     }
 
-    /// Menu builder with new value for width value
+    /// Menu builder with new value for min completion width value
     #[must_use]
-    pub fn with_width(mut self, width: usize) -> Self {
-        self.default_details.min_width = width;
+    pub fn with_min_completion_width(mut self, width: usize) -> Self {
+        self.default_details.min_completion_width = width;
+        self
+    }
+
+    /// Menu builder with new value for max completion height value
+    #[must_use]
+    pub fn with_max_completion_height(mut self, height: u16) -> Self {
+        self.default_details.max_completion_height = height;
         self
     }
 
@@ -243,6 +261,13 @@ impl IdeMenu {
         self
     }
 
+    /// Menu builder with new min description width
+    #[must_use]
+    pub fn with_min_description_width(mut self, min_description_width: usize) -> Self {
+        self.default_details.min_description_width = min_description_width;
+        self
+    }
+
     /// Menu builder with new max description width
     #[must_use]
     pub fn with_max_description_width(mut self, max_description_width: usize) -> Self {
@@ -286,7 +311,7 @@ impl IdeMenu {
         self.values.get(self.index()).cloned()
     }
 
-    /// Calculates how many rows the Menu will use
+    /// Calculates how many rows the Menu will try to use (if available)
     fn get_rows(&self) -> u16 {
         let mut values = self.get_values().len() as u16;
 
@@ -334,14 +359,24 @@ impl IdeMenu {
     fn create_description(
         &self,
         description: String,
-        use_ansi_coloring: bool
+        use_ansi_coloring: bool,
+        available_lines: u16,
     ) -> Vec<String> {
-    
-        let max_width = self.default_details.max_description_width;
-        let max_height = self.default_details.max_description_height;
+        let border_width = if self.default_details.border.is_some() { 
+            2 
+        } else { 
+            0 
+        };
+
+        let available_width = self.working_details.terminal_width
+            .saturating_sub(self.working_details.completion_width + self.default_details.description_offset + border_width);
+
+        let max_width = self.default_details.max_description_width.min(available_width).max(self.default_details.min_description_width);
+        let max_height = self.default_details.max_description_height.min(available_lines as usize);
 
         let content_width = max_width.saturating_sub(if self.default_details.border.is_some() { 2 } else { 0 });
-        let mut description_lines = split_string(&description, content_width);
+        let content_height = max_height.saturating_sub(if self.default_details.border.is_some() { 2 } else { 0 });
+        let mut description_lines = split_string(&description, content_width, content_height, "...");
 
         let needs_padding = description_lines.len() > 1;
 
@@ -373,7 +408,7 @@ impl IdeMenu {
         } else {
             for line in &mut description_lines {
                 let padding = if needs_padding {
-                    " ".repeat(content_width.saturating_sub(line.len()))
+                    " ".repeat(content_width.saturating_sub(line.chars().count()))
                 } else {
                     String::new()
                 };
@@ -386,14 +421,14 @@ impl IdeMenu {
             }
         }
 
-        // TODO: cut off the description if it is too long
-
         description_lines
     }
 
     /// Returns width and height of the description, including the border
     fn description_dims(&self, description: String) -> (u16, u16) {
-        let lines = self.create_description(description, false);
+        // we will calculate the uncapped height, the real height
+        // will be capped by the available lines
+        let lines = self.create_description(description, false, u16::MAX);
         let height = lines.len() as u16;
         let string = lines.get(0).cloned().unwrap_or_default();
         let width = strip_ansi(&string).chars().count() as u16;
@@ -408,17 +443,26 @@ impl IdeMenu {
         use_ansi_coloring: bool
     ) -> String {
         let vertical_border = self.default_details.border.as_ref().map(|border| border.vertical).unwrap_or_default();
-        let padding_right = self.working_details.completion_width.saturating_sub(suggestion.value.len()).saturating_sub(if self.default_details.border.is_some() { 2 } else { 0 });
+        let padding_right = self.working_details.completion_width.saturating_sub(suggestion.value.chars().count()).saturating_sub(if self.default_details.border.is_some() { 2 } else { 0 });
+
+        let max_string_width = self.working_details.completion_width.saturating_sub(if self.default_details.border.is_some() { 2 } else { 0 });
+        
+        let string = if suggestion.value.chars().count() > max_string_width {
+            let mut chars = suggestion.value.chars().take(max_string_width.saturating_sub(3)).collect::<String>();
+            chars.push_str("...");
+            chars
+        } else {
+            suggestion.value.clone()
+        };        
 
         if use_ansi_coloring {
-
             if index == self.index() {
                 format!(
                     "{}{}{}{}{}{}{}",
                     vertical_border,
                     self.color.selected_text_style.prefix(),
                     " ".repeat(self.default_details.padding),
-                    suggestion.value,
+                    string,
                     " ".repeat(padding_right),
                     RESET,
                     vertical_border,
@@ -430,13 +474,12 @@ impl IdeMenu {
                     vertical_border,
                     self.color.text_style.prefix(),
                     " ".repeat(self.default_details.padding),
-                    suggestion.value,
+                    string,
                     " ".repeat(padding_right),
                     RESET,
                     vertical_border,
                 )
             }
-
         } else {
             let marker = if index == self.index() { ">" } else { "" };
 
@@ -444,7 +487,7 @@ impl IdeMenu {
                 "{}{}{}{}{}",
                 vertical_border,
                 marker,
-                suggestion.value,
+                string,
                 " ".repeat(padding_right),
                 vertical_border,
             )
@@ -605,18 +648,42 @@ impl Menu for IdeMenu {
 
 
             let terminal_width = painter.screen_width();
+            
+            self.working_details.terminal_width = terminal_width as usize;
             let cursor_pos = crossterm::cursor::position().unwrap().0;
+            
+            let border_width = if self.default_details.border.is_some() { 
+                2 
+            } else { 
+                0 
+            };
+            // we first estimate the completion, so we can use it to calculate the space for the description
+            self.working_details.completion_width = (self.longest_suggestion 
+                + self.default_details.padding 
+                * 2 
+                + border_width)
+                .max(self.default_details.min_completion_width);
 
             self.working_details.description_width = self.get_value()
                 .and_then(|value| value.description)
                 .map(|description| self.description_dims(description).0)
                 .unwrap_or(0) as usize;
+            // then cap the completion width to the available space
+            let max_completion_width = (terminal_width as usize)
+                .saturating_sub(
+                    self.default_details.padding 
+                    * 2 
+                    + border_width 
+                    + self.working_details.description_width 
+                    + if self.working_details.description_width > 0 { 
+                        self.default_details.description_offset 
+                    } else { 
+                        0 
+                    }
+                );
 
-            self.working_details.completion_width = self.longest_suggestion + self.default_details.padding * 2 + if self.default_details.border.is_some() { 
-                    2 
-                } else { 
-                    0 
-                }.max(self.default_details.min_width);
+            self.working_details.completion_width = self.working_details.completion_width.min(max_completion_width);
+            
 
             self.working_details.menu_width = self.working_details.completion_width + self.working_details.description_width + if self.working_details.description_width > 0 { 
                     self.default_details.description_offset 
@@ -700,16 +767,22 @@ impl Menu for IdeMenu {
         if self.get_values().is_empty() {
             self.no_records_msg(use_ansi_coloring)
         } else {
+            let border_width = if self.default_details.border.is_some() { 
+                2 
+            } else { 
+                0 
+            };
+            let available_lines = available_lines.min(self.default_details.max_completion_height as u16);
             // The skip values represent the number of lines that should be skipped
             // while printing the menu
-            let skip_values = if self.selected >= available_lines {
-                let skip_lines = self.selected.saturating_sub(available_lines) + 1;
+            let skip_values = if self.selected >= available_lines.saturating_sub(border_width) {
+                let skip_lines = self.selected.saturating_sub(available_lines.saturating_sub(border_width)) + 1;
                 skip_lines as usize
             } else {
                 0
             };
 
-            let available_values = self.get_values().len();
+            let available_values = available_lines.saturating_sub(border_width) as usize;
 
             let mut strings = self.get_values()
                 .iter()
@@ -718,6 +791,7 @@ impl Menu for IdeMenu {
                 .enumerate()
                 .map(|(index, suggestion)| {
                     // Correcting the enumerate index based on the number of skipped values
+
                     let index = index + skip_values;
                     self.create_value_string(suggestion, index, use_ansi_coloring)
                 })
@@ -742,12 +816,12 @@ impl Menu for IdeMenu {
 
             let description_lines = self.get_value()
                 .and_then(|value| value.clone().description)
-                .map(|description| self.create_description(description, use_ansi_coloring))
+                .map(|description| self.create_description(description, use_ansi_coloring, available_lines))
                 .unwrap_or_default();
 
             let padding_left = &" ".repeat(self.working_details.left_distance);
 
-            // vertically join the description lines with the suggestion lines
+            // horizontally join the description lines with the suggestion lines
             if self.working_details.description_is_right {
                 for (idx, pair) in strings.clone().iter().zip_longest(description_lines.iter()).enumerate() {
                     match pair {
@@ -813,7 +887,11 @@ impl Menu for IdeMenu {
 
 /// Split the input into strings that are at most `max_width` long
 /// The split is done at spaces if possible
-fn split_string(input: &str, max_width: usize) -> Vec<String> {
+fn split_string(input: &str, max_width: usize, max_height: usize, truncation_symbol: &str) -> Vec<String> {
+    if max_width == 0 || max_height == 0 {
+        return Vec::new();
+    }
+
     let words: Vec<&str> = input.split_whitespace().collect();
     let mut result = Vec::new();
     let mut current_line = String::new();
@@ -842,6 +920,33 @@ fn split_string(input: &str, max_width: usize) -> Vec<String> {
 
     if !current_line.is_empty() {
         result.push(current_line.trim_end().to_string());
+    }
+    
+    // add the truncation symbol to the last truncation_symbol len characters, not just to the last line
+    // this is needed, so we still fit in max_width, even if truncation symbol is larger
+    if result.len() > max_height {
+        result.truncate(max_height);
+        let truncation_len = truncation_symbol.chars().count();
+        
+        let mut indexes_to_replace: Vec<(usize, usize)> = Vec::new();    
+        let mut char_count = 0;
+    
+        'outer: for (idx, line) in result.iter().enumerate().rev() {
+            let chars: Vec<_> = line.chars().collect();
+            for (char_idx, _char) in chars.iter().enumerate().rev() {
+                indexes_to_replace.push((idx, char_idx));
+                char_count += 1;
+                if char_count == truncation_len {
+                    break 'outer;
+                }
+            }
+        }
+
+        for (idx, char_idx) in indexes_to_replace {
+            let mut chars: Vec<_> = result[idx].chars().collect();
+            chars[char_idx] = truncation_symbol.chars().nth(0).unwrap();
+            result[idx] = chars.iter().collect();
+        }
     }
 
     result
