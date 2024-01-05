@@ -533,6 +533,8 @@ impl Menu for ColumnarMenu {
                     self.values = completer.complete(input, start + input.len());
                     self.reset_position();
                 }
+            } else {
+                self.values = completer.complete("", editor.insertion_point());
             }
         } else {
             // If there is a new line character in the line buffer, the completer
