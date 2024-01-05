@@ -374,8 +374,8 @@ impl IdeMenu {
         let max_width = self.default_details.max_description_width.min(available_width).max(self.default_details.min_description_width);
         let max_height = self.default_details.max_description_height.min(available_lines as usize);
 
-        let content_width = max_width.saturating_sub(if self.default_details.border.is_some() { 2 } else { 0 });
-        let content_height = max_height.saturating_sub(if self.default_details.border.is_some() { 2 } else { 0 });
+        let content_width = max_width.saturating_sub(border_width);
+        let content_height = max_height.saturating_sub(border_width);
         let mut description_lines = split_string(&description, content_width, content_height, "...");
 
         let needs_padding = description_lines.len() > 1;
@@ -442,10 +442,15 @@ impl IdeMenu {
         index: usize,
         use_ansi_coloring: bool
     ) -> String {
+        let border_width = if self.default_details.border.is_some() { 
+            2 
+        } else { 
+            0 
+        };
         let vertical_border = self.default_details.border.as_ref().map(|border| border.vertical).unwrap_or_default();
-        let padding_right = self.working_details.completion_width.saturating_sub(suggestion.value.chars().count()).saturating_sub(if self.default_details.border.is_some() { 2 } else { 0 });
+        let padding_right = self.working_details.completion_width.saturating_sub(suggestion.value.chars().count()).saturating_sub(border_width);
 
-        let max_string_width = self.working_details.completion_width.saturating_sub(if self.default_details.border.is_some() { 2 } else { 0 });
+        let max_string_width = self.working_details.completion_width.saturating_sub(border_width);
         
         let string = if suggestion.value.chars().count() > max_string_width {
             let mut chars = suggestion.value.chars().take(max_string_width.saturating_sub(3)).collect::<String>();
