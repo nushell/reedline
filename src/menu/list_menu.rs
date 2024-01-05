@@ -395,7 +395,7 @@ impl Menu for ListMenu {
     /// Collecting the value from the completer to be shown in the menu
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         let line_buffer = editor.line_buffer();
-        let (start, input) = if self.only_buffer_difference {
+        let (pos, input) = if self.only_buffer_difference {
             match &self.input {
                 Some(old_string) => {
                     let (start, input) = string_difference(line_buffer.get_buffer(), old_string);
@@ -424,7 +424,7 @@ impl Menu for ListMenu {
         }
 
         self.values = if parsed.remainder.is_empty() {
-            self.query_size = Some(completer.total_completions(parsed.remainder, start));
+            self.query_size = Some(completer.total_completions(parsed.remainder, pos));
 
             let skip = self.pages.iter().take(self.page).sum::<Page>().size;
             let take = self
@@ -433,10 +433,10 @@ impl Menu for ListMenu {
                 .map(|page| page.size)
                 .unwrap_or(self.page_size);
 
-            completer.partial_complete(input, start, skip, take)
+            completer.partial_complete(input, pos, skip, take)
         } else {
             self.query_size = None;
-            completer.complete(input, start)
+            completer.complete(input, pos)
         }
     }
 

@@ -541,7 +541,7 @@ impl Menu for ColumnarMenu {
             // If there is a new line character in the line buffer, the completer
             // doesn't calculate the suggested values correctly. This happens when
             // editing a multiline buffer.
-            // Also, by replacing the new line character with a space, the insertF
+            // Also, by replacing the new line character with a space, the insert
             // position is maintain in the line buffer.
             let trimmed_buffer = editor.get_buffer().replace('\n', " ");
             completer.complete(
