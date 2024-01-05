@@ -526,29 +526,31 @@ impl Menu for ColumnarMenu {
 
     /// Updates menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        if self.only_buffer_difference {
+        self.values = if self.only_buffer_difference {
             if let Some(old_string) = &self.input {
                 let (start, input) = string_difference(editor.get_buffer(), old_string);
                 if !input.is_empty() {
-                    self.values = completer.complete(input, start + input.len());
-                    self.reset_position();
+                    completer.complete(input, start + input.len())
+                } else {
+                    completer.complete("", editor.insertion_point())
                 }
             } else {
-                self.values = completer.complete("", editor.insertion_point());
+                completer.complete("", editor.insertion_point())
             }
         } else {
             // If there is a new line character in the line buffer, the completer
             // doesn't calculate the suggested values correctly. This happens when
             // editing a multiline buffer.
-            // Also, by replacing the new line character with a space, the insert
+            // Also, by replacing the new line character with a space, the insertF
             // position is maintain in the line buffer.
             let trimmed_buffer = editor.get_buffer().replace('\n', " ");
-            self.values = completer.complete(
+            completer.complete(
                 &trimmed_buffer[..editor.insertion_point()],
                 editor.insertion_point(),
-            );
-            self.reset_position();
-        }
+            )
+        };
+
+        self.reset_position();
     }
 
     /// The working details for the menu changes based on the size of the lines
