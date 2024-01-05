@@ -153,7 +153,10 @@ impl Painter {
 
         // This might not be terribly performant. Testing it out
         let is_reset = || match cursor::position() {
-            Ok(position) => position.1.abs_diff(self.prompt_start_row) > 1,
+            // when output something without newline, the cursor position is at current line.
+            // but the prompt_start_row is next line.
+            // in this case we don't want to reset, need to `add 1` to handle for such case.
+            Ok(position) => position.1 + 1 < self.prompt_start_row,
             Err(_) => false,
         };
 
