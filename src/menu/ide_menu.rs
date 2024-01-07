@@ -286,6 +286,13 @@ impl IdeMenu {
         self.default_details.max_description_height = max_description_height;
         self
     }
+
+    /// Menu builder with new description offset
+    #[must_use]
+    pub fn with_description_offset(mut self, description_offset: usize) -> Self {
+        self.default_details.description_offset = description_offset;
+        self
+    }
 }
 
 // Menu functionality
