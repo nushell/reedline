@@ -373,6 +373,10 @@ impl IdeMenu {
         use_ansi_coloring: bool,
         available_lines: u16,
     ) -> Vec<String> {
+        if description.is_empty() {
+            return Vec::new();
+        }
+
         let border_width = if self.default_details.border.is_some() {
             2
         } else {
@@ -406,7 +410,10 @@ impl IdeMenu {
             let horizontal_border = border.horizontal.to_string().repeat(if needs_padding {
                 content_width
             } else {
-                description_lines[0].chars().count()
+                description_lines
+                    .first()
+                    .map(|line| line.chars().count())
+                    .unwrap_or(0)
             });
 
             for line in &mut description_lines {
