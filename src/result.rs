@@ -33,6 +33,12 @@ pub enum ReedlineErrorVariants {
 #[derive(Debug)]
 pub struct ReedlineError(pub ReedlineErrorVariants);
 
+impl From<std::io::Error> for ReedlineError {
+    fn from(err: std::io::Error) -> Self {
+        Self(ReedlineErrorVariants::IOError(err))
+    }
+}
+
 impl Display for ReedlineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
