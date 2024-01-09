@@ -392,8 +392,8 @@ impl IdeMenu {
         let max_width = self
             .default_details
             .max_description_width
-            .min(available_width)
-            .max(self.default_details.min_description_width);
+            .clamp(self.default_details.min_description_width, available_width);
+
         let max_height = self
             .default_details
             .max_description_height
@@ -403,6 +403,12 @@ impl IdeMenu {
         let content_height = max_height.saturating_sub(border_width);
         let mut description_lines =
             split_string(&description, content_width, content_height, "...");
+
+        let content_width = description_lines
+            .iter()
+            .map(|s| s.len())
+            .max()
+            .unwrap_or_default();
 
         let needs_padding = description_lines.len() > 1;
 
@@ -497,12 +503,14 @@ impl IdeMenu {
         } else {
             0
         };
+        
         let vertical_border = self
             .default_details
             .border
             .as_ref()
             .map(|border| border.vertical)
             .unwrap_or_default();
+
         let padding_right = self
             .working_details
             .completion_width
