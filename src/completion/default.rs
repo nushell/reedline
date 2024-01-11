@@ -71,8 +71,8 @@ impl Completer for DefaultCompleter {
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
         let mut span_line_whitespaces = 0;
         let mut completions = vec![];
-        // TODO trimming here is only necessary if someone passes in text containing
-        // stuff after the cursor with `only_buffer_difference: false`
+        // Trimming in case someone passes in text containing stuff after the cursor, if
+        // `only_buffer_difference` is false
         let line = if line.len() > pos { &line[..pos] } else { line };
         if !line.is_empty() {
             let mut split = line.split(' ').rev();
