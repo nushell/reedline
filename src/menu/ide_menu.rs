@@ -12,13 +12,13 @@ use itertools::{
 use nu_ansi_term::{ansi::RESET, Style};
 
 pub enum DescriptionMode {
+    /// Description is always shown on the left
+    Left,
+    /// Description is always shown on the right
+    Right,
     /// Description is shown on the right of the completion if there is enough space
     /// otherwise it is shown on the left
     PreferRight,
-    /// Description is always shown on the right
-    Right,
-    /// Description is always shown on the left
-    Left,
 }
 
 /// Symbols used for the border of the menu
@@ -48,8 +48,10 @@ impl Default for BorderSymbols {
 /// the initial declaration of the menu and are always kept as reference for the
 /// changeable [`IdeMenuDetails`] values.
 struct DefaultIdeMenuDetails {
-    /// Minimum width of the completion box,
+    /// Minimum width of the completion box, including the border
     pub min_completion_width: usize,
+    /// max width of the completion box, including the border
+    pub max_completion_width: usize,
     /// max height of the completion box, including the border
     /// this will be capped by the lines available in the terminal
     pub max_completion_height: u16,
@@ -78,13 +80,14 @@ impl Default for DefaultIdeMenuDetails {
     fn default() -> Self {
         Self {
             min_completion_width: 0,
-            max_completion_height: u16::MAX,
+            max_completion_width: 50,
+            max_completion_height: u16::MAX, // will be limited by the available lines
             padding: 0,
             border: None,
             cursor_offset: 0,
             description_mode: DescriptionMode::PreferRight,
-            min_description_width: 5,
-            max_description_width: 40,
+            min_description_width: 0,
+            max_description_width: 50,
             max_description_height: 10,
             description_offset: 1,
         }
@@ -105,9 +108,11 @@ struct IdeMenuDetails {
     /// and the available space
     pub description_is_right: bool,
     /// Distance from the left side of the terminal to the menu
-    pub left_distance: usize,
+    pub space_left: usize,
     /// Distance from the right side of the terminal to the menu
-    pub right_distance: usize,
+    pub space_right: usize,
+    /// Corrected description offset, based on the available space
+    pub description_offset: usize,
 }
 
 /// Menu to present suggestions like similar to Ide completion menus
@@ -192,6 +197,13 @@ impl IdeMenu {
     #[must_use]
     pub fn with_min_completion_width(mut self, width: usize) -> Self {
         self.default_details.min_completion_width = width;
+        self
+    }
+
+    /// Menu builder with new value for max completion width value
+    #[must_use]
+    pub fn with_max_completion_width(mut self, width: usize) -> Self {
+        self.default_details.max_completion_width = width;
         self
     }
 
@@ -335,13 +347,21 @@ impl IdeMenu {
             values += 2;
         }
 
-        let descripion_height = self
+        let description_height = self
             .get_value()
             .and_then(|value| value.description)
-            .map(|description| self.description_dims(description).1)
-            .unwrap_or(0);
+            .map(|description| {
+                self.description_dims(
+                    description,
+                    self.working_details.description_width,
+                    self.default_details.max_description_height,
+                )
+                .1
+            })
+            .unwrap_or(0)
+            .min(self.default_details.max_description_height as u16);
 
-        values.max(descripion_height)
+        values.max(description_height)
     }
 
     /// Returns working details width
@@ -371,9 +391,10 @@ impl IdeMenu {
         &self,
         description: String,
         use_ansi_coloring: bool,
-        available_lines: u16,
+        width: usize,
+        height: usize,
     ) -> Vec<String> {
-        if description.is_empty() {
+        if description.is_empty() || width == 0 || height == 0 {
             return Vec::new();
         }
 
@@ -383,24 +404,9 @@ impl IdeMenu {
             0
         };
 
-        let available_width = self.working_details.terminal_width.saturating_sub(
-            self.working_details.completion_width
-                + self.default_details.description_offset
-                + border_width,
-        );
+        let content_width = width.saturating_sub(border_width);
+        let content_height = height.saturating_sub(border_width);
 
-        let max_width = self
-            .default_details
-            .max_description_width
-            .clamp(self.default_details.min_description_width, available_width);
-
-        let max_height = self
-            .default_details
-            .max_description_height
-            .min(available_lines as usize);
-
-        let content_width = max_width.saturating_sub(border_width);
-        let content_height = max_height.saturating_sub(border_width);
         let mut description_lines =
             split_string(&description, content_width, content_height, "...");
 
@@ -481,10 +487,15 @@ impl IdeMenu {
     }
 
     /// Returns width and height of the description, including the border
-    fn description_dims(&self, description: String) -> (u16, u16) {
+    fn description_dims(
+        &self,
+        description: String,
+        max_width: usize,
+        max_height: usize,
+    ) -> (u16, u16) {
         // we will calculate the uncapped height, the real height
         // will be capped by the available lines
-        let lines = self.create_description(description, false, u16::MAX);
+        let lines = self.create_description(description, false, max_width, max_height);
         let height = lines.len() as u16;
         let string = lines.first().cloned().unwrap_or_default();
         let width = strip_ansi(&string).chars().count() as u16;
@@ -497,13 +508,14 @@ impl IdeMenu {
         suggestion: &Suggestion,
         index: usize,
         use_ansi_coloring: bool,
+        padding: usize,
     ) -> String {
         let border_width = if self.default_details.border.is_some() {
             2
         } else {
             0
         };
-        
+
         let vertical_border = self
             .default_details
             .border
@@ -514,13 +526,12 @@ impl IdeMenu {
         let padding_right = self
             .working_details
             .completion_width
-            .saturating_sub(suggestion.value.chars().count())
-            .saturating_sub(border_width);
+            .saturating_sub(suggestion.value.chars().count() + border_width + padding);
 
         let max_string_width = self
             .working_details
             .completion_width
-            .saturating_sub(border_width);
+            .saturating_sub(border_width + padding);
 
         let string = if suggestion.value.chars().count() > max_string_width {
             let mut chars = suggestion
@@ -540,7 +551,7 @@ impl IdeMenu {
                     "{}{}{}{}{}{}{}",
                     vertical_border,
                     self.color.selected_text_style.prefix(),
-                    " ".repeat(self.default_details.padding),
+                    " ".repeat(padding),
                     string,
                     " ".repeat(padding_right),
                     RESET,
@@ -551,7 +562,7 @@ impl IdeMenu {
                     "{}{}{}{}{}{}{}",
                     vertical_border,
                     self.color.text_style.prefix(),
-                    " ".repeat(self.default_details.padding),
+                    " ".repeat(padding),
                     string,
                     " ".repeat(padding_right),
                     RESET,
@@ -562,8 +573,9 @@ impl IdeMenu {
             let marker = if index == self.index() { ">" } else { "" };
 
             format!(
-                "{}{}{}{}{}",
+                "{}{}{}{}{}{}",
                 vertical_border,
+                " ".repeat(padding),
                 marker,
                 string,
                 " ".repeat(padding_right),
@@ -727,9 +739,9 @@ impl Menu for IdeMenu {
                 }
             });
 
-            let terminal_width = painter.screen_width();
+            let terminal_width = painter.screen_width() as usize;
+            self.working_details.terminal_width = terminal_width;
 
-            self.working_details.terminal_width = terminal_width as usize;
             let cursor_pos = crossterm::cursor::position().unwrap().0;
 
             let border_width = if self.default_details.border.is_some() {
@@ -737,90 +749,92 @@ impl Menu for IdeMenu {
             } else {
                 0
             };
-            // we first estimate the completion, so we can use it to calculate the space for the description
-            self.working_details.completion_width =
-                (self.longest_suggestion + self.default_details.padding * 2 + border_width)
-                    .max(self.default_details.min_completion_width);
 
-            self.working_details.description_width = self
+            let description = self
                 .get_value()
-                .and_then(|value| value.description)
-                .map(|description| self.description_dims(description).0)
-                .unwrap_or(0) as usize;
-            // then cap the completion width to the available space
-            let max_completion_width = (terminal_width as usize).saturating_sub(
-                self.default_details.padding * 2
-                    + border_width
-                    + self.working_details.description_width
-                    + if self.working_details.description_width > 0 {
-                        self.default_details.description_offset
-                    } else {
-                        0
-                    },
-            );
+                .map(|v| {
+                    if let Some(v) = v.description {
+                        if v.is_empty() {
+                            return None;
+                        } else {
+                            return Some(v);
+                        }
+                    }
+                    None
+                })
+                .unwrap_or_default();
 
-            self.working_details.completion_width = self
-                .working_details
-                .completion_width
-                .min(max_completion_width);
+            let min_description_width = if description.is_some() {
+                self.default_details.min_description_width
+            } else {
+                0
+            };
 
-            self.working_details.menu_width = self.working_details.completion_width
-                + self.working_details.description_width
-                + if self.working_details.description_width > 0 {
-                    self.default_details.description_offset
-                } else {
-                    0
-                };
+            let completion_width =
+                (self.longest_suggestion + 2 * self.default_details.padding + border_width)
+                    .min(self.default_details.max_completion_width)
+                    .max(self.default_details.min_completion_width)
+                    .min(terminal_width.saturating_sub(min_description_width))
+                    .max(3 + border_width); // big enough to show "..."
+
+            let available_description_width = terminal_width
+                .saturating_sub(completion_width)
+                .min(self.default_details.max_description_width)
+                .max(self.default_details.min_description_width)
+                .min(terminal_width.saturating_sub(completion_width));
+
+            let description_width = if let Some(description) = description {
+                self.description_dims(description, available_description_width, usize::MAX)
+                    .0 as usize
+            } else {
+                0
+            };
+
+            let max_offset = terminal_width.saturating_sub(completion_width + description_width);
+
+            let description_offset = self.default_details.description_offset.min(max_offset);
+
+            self.working_details.completion_width = completion_width;
+            self.working_details.description_width = description_width;
+            self.working_details.description_offset = description_offset;
+            self.working_details.menu_width =
+                completion_width + description_offset + description_width;
+
+            let cursor_offset = self.default_details.cursor_offset;
 
             self.working_details.description_is_right = match self.default_details.description_mode
             {
                 DescriptionMode::Left => false,
+                DescriptionMode::Right => true,
                 DescriptionMode::PreferRight => {
                     // if there is enough space to the right of the cursor, the description is shown on the right
                     // otherwise it is shown on the left
                     let potential_right_distance = (terminal_width as i16)
                         .saturating_sub(
                             cursor_pos as i16
-                                + self.default_details.cursor_offset
-                                + self.default_details.description_offset as i16
-                                + self.working_details.completion_width as i16,
+                                + cursor_offset
+                                + description_offset as i16
+                                + completion_width as i16,
                         )
                         .max(0) as usize;
 
-                    potential_right_distance
-                        >= self.working_details.description_width
-                            + self.default_details.description_offset
+                    potential_right_distance >= description_width
                 }
-                DescriptionMode::Right => true,
             };
 
-            if self.working_details.description_is_right {
-                let potential_left_distance =
-                    cursor_pos as i16 + self.default_details.cursor_offset;
-                let left_distance = potential_left_distance.clamp(
-                    0,
-                    terminal_width.saturating_sub(self.get_width() as u16) as i16,
-                );
-
-                let right_distance = (terminal_width as usize)
-                    .saturating_sub(left_distance as usize + self.get_width());
-                self.working_details.left_distance = left_distance as usize;
-                self.working_details.right_distance = right_distance;
+            let space_left = (if self.working_details.description_is_right {
+                cursor_pos as i16 + cursor_offset
             } else {
-                let potential_left_distance = cursor_pos as i16
-                    + self.default_details.cursor_offset
-                    - self.working_details.description_width as i16
-                    - self.default_details.description_offset as i16;
-                let left_distance = potential_left_distance.clamp(
-                    0,
-                    terminal_width.saturating_sub(self.get_width() as u16) as i16,
-                );
-
-                let right_distance = (terminal_width as usize)
-                    .saturating_sub(left_distance as usize + self.get_width());
-                self.working_details.left_distance = left_distance as usize;
-                self.working_details.right_distance = right_distance;
+                (cursor_pos as i16 + cursor_offset)
+                    .saturating_sub(description_width as i16 + description_offset as i16)
             }
+            .max(0) as usize)
+                .min(terminal_width.saturating_sub(self.get_width()));
+
+            let space_right = terminal_width.saturating_sub(space_left as usize + self.get_width());
+
+            self.working_details.space_left = space_left;
+            self.working_details.space_right = space_right;
         }
     }
 
@@ -871,6 +885,7 @@ impl Menu for IdeMenu {
             } else {
                 0
             };
+
             let available_lines = available_lines.min(self.default_details.max_completion_height);
             // The skip values represent the number of lines that should be skipped
             // while printing the menu
@@ -886,6 +901,14 @@ impl Menu for IdeMenu {
 
             let available_values = available_lines.saturating_sub(border_width) as usize;
 
+            let max_padding = self
+                .working_details
+                .completion_width
+                .saturating_sub(self.longest_suggestion + border_width as usize)
+                / 2;
+
+            let corrected_padding = self.default_details.padding.min(max_padding);
+
             let mut strings = self
                 .get_values()
                 .iter()
@@ -896,12 +919,19 @@ impl Menu for IdeMenu {
                     // Correcting the enumerate index based on the number of skipped values
 
                     let index = index + skip_values;
-                    self.create_value_string(suggestion, index, use_ansi_coloring)
+                    self.create_value_string(
+                        suggestion,
+                        index,
+                        use_ansi_coloring,
+                        corrected_padding,
+                    )
                 })
                 .collect::<Vec<String>>();
 
+            // Add top and bottom border
             if let Some(border) = &self.default_details.border {
                 let inner_width = self.working_details.completion_width.saturating_sub(2);
+
                 strings.insert(
                     0,
                     format!(
@@ -924,13 +954,18 @@ impl Menu for IdeMenu {
                 .get_value()
                 .and_then(|value| value.clone().description)
                 .map(|description| {
-                    self.create_description(description, use_ansi_coloring, available_lines)
+                    self.create_description(
+                        description,
+                        use_ansi_coloring,
+                        self.working_details.description_width,
+                        available_lines as usize,
+                    )
                 })
                 .unwrap_or_default();
 
-            let padding_left = &" ".repeat(self.working_details.left_distance);
+            let distance_left = &" ".repeat(self.working_details.space_left);
 
-            // horizontally join the description lines with the suggestion lines
+            // Horizontally join the description lines with the suggestion lines
             if self.working_details.description_is_right {
                 for (idx, pair) in strings
                     .clone()
@@ -942,21 +977,21 @@ impl Menu for IdeMenu {
                         Both(_suggestion_line, description_line) => {
                             strings[idx] = format!(
                                 "{}{}{}{}",
-                                padding_left,
+                                distance_left,
                                 strings[idx],
-                                " ".repeat(self.default_details.description_offset),
+                                " ".repeat(self.working_details.description_offset),
                                 description_line,
                             )
                         }
                         Left(suggestion_line) => {
-                            strings[idx] = format!("{}{}", padding_left, suggestion_line,)
+                            strings[idx] = format!("{}{}", distance_left, suggestion_line);
                         }
                         Right(description_line) => strings.push(format!(
                             "{}{}",
                             " ".repeat(
                                 self.working_details.completion_width
-                                    + self.default_details.description_offset
-                            ) + padding_left,
+                                    + self.working_details.description_offset
+                            ) + distance_left,
                             description_line,
                         )),
                     }
@@ -972,9 +1007,9 @@ impl Menu for IdeMenu {
                         Both(suggestion_line, description_line) => {
                             strings[idx] = format!(
                                 "{}{}{}{}",
-                                padding_left,
+                                distance_left,
                                 description_line,
-                                " ".repeat(self.default_details.description_offset),
+                                " ".repeat(self.working_details.description_offset),
                                 suggestion_line,
                             )
                         }
@@ -983,13 +1018,13 @@ impl Menu for IdeMenu {
                                 "{}{}",
                                 " ".repeat(
                                     self.working_details.description_width
-                                        + self.default_details.description_offset
-                                ) + padding_left,
+                                        + self.working_details.description_offset
+                                ) + distance_left,
                                 suggestion_line,
-                            )
+                            );
                         }
                         Right(description_line) => {
-                            strings.push(format!("{}{}", padding_left, description_line,))
+                            strings.push(format!("{}{}", distance_left, description_line,))
                         }
                     }
                 }
@@ -1001,7 +1036,7 @@ impl Menu for IdeMenu {
 }
 
 /// Split the input into strings that are at most `max_width` long
-/// The split is done at spaces if possible
+/// The split is done at whitespace if possible
 fn split_string(
     input: &str,
     max_width: usize,
