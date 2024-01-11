@@ -389,6 +389,12 @@ impl Painter {
         if let Some(menu) = menu {
             // TODO: Also solve the difficult problem of displaying (parts of)
             // the content after the cursor with the completion menu
+            // This only shows the rest of the line the cursor is on
+            if let Some(newline) = lines.after_cursor.find('\n') {
+                self.stdout.queue(Print(&lines.after_cursor[0..newline]))?;
+            } else {
+                self.stdout.queue(Print(&lines.after_cursor))?;
+            }
             self.print_menu(menu, lines, use_ansi_coloring)?;
         } else {
             // Selecting lines for the hint
