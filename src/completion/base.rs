@@ -24,7 +24,8 @@ impl Span {
     }
 }
 
-/// A trait that defines how to convert a line and position to a list of potential completions in that position.
+/// A trait that defines how to convert some text and a position to a list of potential completions in that position.
+/// The text could be a part of the whole line, and the position is the index of the end of the text in the original line.
 pub trait Completer: Send {
     /// the action that will take the line and position and convert it to a vector of completions, which include the
     /// span to replace and the contents of that replacement
