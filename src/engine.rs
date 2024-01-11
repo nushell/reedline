@@ -149,6 +149,16 @@ pub struct Reedline {
     // Manage optional kitty protocol
     kitty_protocol: KittyProtocolGuard,
 
+    /// Whether to echo typed input
+    ///
+    /// On unix systems, this corresponds to the
+    /// [termios](https://www.man7.org/linux/man-pages/man3/termios.3.html) `ECHO` flag.
+    /// If it is set by the terminal, typed characters will be printed.
+    /// Otherwise, typed characters are not shown.
+    ///
+    /// On non-unix systems this will always remain `true`.
+    echo_on: bool,
+
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
 }
@@ -218,6 +228,7 @@ impl Reedline {
             cursor_shapes: None,
             bracketed_paste: BracketedPasteGuard::default(),
             kitty_protocol: KittyProtocolGuard::default(),
+            echo_on: true,
             #[cfg(feature = "external_printer")]
             external_printer: None,
         }
@@ -609,6 +620,14 @@ impl Reedline {
     /// Returns a [`std::io::Result`] in which the `Err` type is [`std::io::Result`]
     /// and the `Ok` variant wraps a [`Signal`] which handles user inputs.
     pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+        // Needs to be done before `terminal::enable_raw_mode()` which modifies the terminal flags
+        #[cfg(unix)]
+        if let Ok(attr) = nix::sys::termios::tcgetattr(std::io::stdin()) {
+            self.echo_on = attr
+                .local_flags
+                .contains(nix::sys::termios::LocalFlags::ECHO);
+        }
+
         terminal::enable_raw_mode()?;
         self.bracketed_paste.enter();
         self.kitty_protocol.enter();
@@ -618,6 +637,7 @@ impl Reedline {
         self.bracketed_paste.exit();
         self.kitty_protocol.exit();
         terminal::disable_raw_mode()?;
+
         result
     }
 
@@ -1638,14 +1658,17 @@ impl Reedline {
         let cursor_position_in_buffer = self.editor.insertion_point();
         let buffer_to_paint = self.editor.get_buffer();
 
-        let (before_cursor, after_cursor) = self
-            .highlighter
-            .highlight(buffer_to_paint, cursor_position_in_buffer)
-            .render_around_insertion_point(
-                cursor_position_in_buffer,
-                prompt,
-                self.use_ansi_coloring,
-            );
+        let (before_cursor, after_cursor) = if self.echo_on {
+            self.highlighter
+                .highlight(buffer_to_paint, cursor_position_in_buffer)
+                .render_around_insertion_point(
+                    cursor_position_in_buffer,
+                    prompt,
+                    self.use_ansi_coloring,
+                )
+        } else {
+            (String::new(), String::new())
+        };
 
         let hint: String = if self.hints_active() {
             self.hinter.as_mut().map_or_else(String::new, |hinter| {
