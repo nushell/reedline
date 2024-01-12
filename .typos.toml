@@ -9,3 +9,5 @@ bui = "bui"
 # For testing string truncation
 descriptio = "descriptio"
 ot = "ot"
+# for sqlite backed history
+wheres = "wheres"
