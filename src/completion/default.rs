@@ -71,8 +71,11 @@ impl Completer for DefaultCompleter {
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
         let mut span_line_whitespaces = 0;
         let mut completions = vec![];
+        // Trimming in case someone passes in text containing stuff after the cursor, if
+        // `only_buffer_difference` is false
+        let line = if line.len() > pos { &line[..pos] } else { line };
         if !line.is_empty() {
-            let mut split = line[0..pos].split(' ').rev();
+            let mut split = line.split(' ').rev();
             let mut span_line: String = String::new();
             for _ in 0..split.clone().count() {
                 if let Some(s) = split.next() {

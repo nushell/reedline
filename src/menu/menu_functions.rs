@@ -209,7 +209,7 @@ pub fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &
                     false
                 }
             } else {
-                *c == old_chars[old_char_index].1
+                old_char_index == new_char_index && *c == old_chars[old_char_index].1
             };
 
             if equal {
@@ -477,6 +477,15 @@ mod tests {
 
         let res = string_difference(new_string, old_string);
         assert_eq!(res, (6, "ｓｈｅ"));
+    }
+
+    #[test]
+    fn string_difference_with_repeat() {
+        let new_string = "ee";
+        let old_string = "e";
+
+        let res = string_difference(new_string, old_string);
+        assert_eq!(res, (1, "e"));
     }
 
     #[test]

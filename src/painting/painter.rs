@@ -153,7 +153,10 @@ impl Painter {
 
         // This might not be terribly performant. Testing it out
         let is_reset = || match cursor::position() {
-            Ok(position) => position.1.abs_diff(self.prompt_start_row) > 1,
+            // when output something without newline, the cursor position is at current line.
+            // but the prompt_start_row is next line.
+            // in this case we don't want to reset, need to `add 1` to handle for such case.
+            Ok(position) => position.1 + 1 < self.prompt_start_row,
             Err(_) => false,
         };
 
@@ -386,6 +389,12 @@ impl Painter {
         if let Some(menu) = menu {
             // TODO: Also solve the difficult problem of displaying (parts of)
             // the content after the cursor with the completion menu
+            // This only shows the rest of the line the cursor is on
+            if let Some(newline) = lines.after_cursor.find('\n') {
+                self.stdout.queue(Print(&lines.after_cursor[0..newline]))?;
+            } else {
+                self.stdout.queue(Print(&lines.after_cursor))?;
+            }
             self.print_menu(menu, lines, use_ansi_coloring)?;
         } else {
             // Selecting lines for the hint
