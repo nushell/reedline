@@ -7,4 +7,3 @@ pub use painter::Painter;
 pub(crate) use prompt_lines::PromptLines;
 pub use styled_text::StyledText;
 pub(crate) use utils::estimate_single_line_wraps;
-pub(crate) use utils::strip_ansi;
