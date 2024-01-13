@@ -267,20 +267,44 @@ pub enum EditCommand {
 impl Display for EditCommand {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            EditCommand::MoveToStart { .. } => write!(f, "MoveToStart"),
-            EditCommand::MoveToLineStart { .. } => write!(f, "MoveToLineStart"),
-            EditCommand::MoveToEnd { .. } => write!(f, "MoveToEnd"),
-            EditCommand::MoveToLineEnd { .. } => write!(f, "MoveToLineEnd"),
-            EditCommand::MoveLeft { .. } => write!(f, "MoveLeft"),
-            EditCommand::MoveRight { .. } => write!(f, "MoveRight"),
-            EditCommand::MoveWordLeft { .. } => write!(f, "MoveWordLeft"),
-            EditCommand::MoveBigWordLeft { .. } => write!(f, "MoveBigWordLeft"),
-            EditCommand::MoveWordRight { .. } => write!(f, "MoveWordRight"),
-            EditCommand::MoveWordRightEnd { .. } => write!(f, "MoveWordRightEnd"),
-            EditCommand::MoveBigWordRightEnd { .. } => write!(f, "MoveBigWordRightEnd"),
-            EditCommand::MoveWordRightStart { .. } => write!(f, "MoveWordRightStart"),
-            EditCommand::MoveBigWordRightStart { .. } => write!(f, "MoveBigWordRightStart"),
-            EditCommand::MoveToPosition { .. } => write!(f, "MoveToPosition  Value: <int>"),
+            EditCommand::MoveToStart { .. } => write!(f, "MoveToStart Optional[select: <bool>]"),
+            EditCommand::MoveToLineStart { .. } => {
+                write!(f, "MoveToLineStart Optional[select: <bool>]")
+            }
+            EditCommand::MoveToEnd { .. } => write!(f, "MoveToEnd Optional[select: <bool>]"),
+            EditCommand::MoveToLineEnd { .. } => {
+                write!(f, "MoveToLineEnd Optional[select: <bool>]")
+            }
+            EditCommand::MoveLeft { .. } => write!(f, "MoveLeft Optional[select: <bool>]"),
+            EditCommand::MoveRight { .. } => write!(f, "MoveRight Optional[select: <bool>]"),
+            EditCommand::MoveWordLeft { .. } => write!(f, "MoveWordLeft Optional[select: <bool>]"),
+            EditCommand::MoveBigWordLeft { .. } => {
+                write!(f, "MoveBigWordLeft Optional[select: <bool>]")
+            }
+            EditCommand::MoveWordRight { .. } => {
+                write!(f, "MoveWordRight Optional[select: <bool>]")
+            }
+            EditCommand::MoveWordRightEnd { .. } => {
+                write!(f, "MoveWordRightEnd Optional[select: <bool>]")
+            }
+            EditCommand::MoveBigWordRightEnd { .. } => {
+                write!(f, "MoveBigWordRightEnd Optional[select: <bool>]")
+            }
+            EditCommand::MoveWordRightStart { .. } => {
+                write!(f, "MoveWordRightStart Optional[select: <bool>]")
+            }
+            EditCommand::MoveBigWordRightStart { .. } => {
+                write!(f, "MoveBigWordRightStart Optional[select: <bool>]")
+            }
+            EditCommand::MoveToPosition { .. } => {
+                write!(f, "MoveToPosition  Value: <int>, Optional[select: <bool>]")
+            }
+            EditCommand::MoveLeftUntil { .. } => {
+                write!(f, "MoveLeftUntil Value: <char>, Optional[select: <bool>]")
+            }
+            EditCommand::MoveLeftBefore { .. } => {
+                write!(f, "MoveLeftBefore Value: <char>, Optional[select: <bool>]")
+            }
             EditCommand::InsertChar(_) => write!(f, "InsertChar  Value: <char>"),
             EditCommand::InsertString(_) => write!(f, "InsertString Value: <string>"),
             EditCommand::InsertNewline => write!(f, "InsertNewline"),
@@ -321,8 +345,6 @@ impl Display for EditCommand {
             EditCommand::MoveRightBefore { .. } => write!(f, "MoveRightBefore Value: <char>"),
             EditCommand::CutLeftUntil(_) => write!(f, "CutLeftUntil Value: <char>"),
             EditCommand::CutLeftBefore(_) => write!(f, "CutLeftBefore Value: <char>"),
-            EditCommand::MoveLeftUntil { .. } => write!(f, "MoveLeftUntil Value: <char>"),
-            EditCommand::MoveLeftBefore { .. } => write!(f, "MoveLeftBefore Value: <char>"),
             EditCommand::SelectAll => write!(f, "SelectAll"),
             EditCommand::CutSelection => write!(f, "CutSelection"),
             EditCommand::CopySelection => write!(f, "CopySelection"),
