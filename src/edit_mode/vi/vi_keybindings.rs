@@ -22,7 +22,11 @@ pub fn default_vi_normal_keybindings() -> Keybindings {
     add_common_navigation_bindings(&mut kb);
     add_common_selection_bindings(&mut kb);
     // Replicate vi's default behavior for Backspace and delete
-    kb.add_binding(KM::NONE, KC::Backspace, edit_bind(EC::MoveLeft));
+    kb.add_binding(
+        KM::NONE,
+        KC::Backspace,
+        edit_bind(EC::MoveLeft { select: false }),
+    );
     kb.add_binding(KM::NONE, KC::Delete, edit_bind(EC::Delete));
 
     kb

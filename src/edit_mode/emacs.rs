@@ -60,22 +60,30 @@ pub fn default_emacs_keybindings() -> Keybindings {
 
     // *** ALT ***
     // Moves
-    kb.add_binding(KM::ALT, KC::Left, edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::ALT,
+        KC::Left,
+        edit_bind(EC::MoveWordLeft { select: false }),
+    );
     kb.add_binding(
         KM::ALT,
         KC::Right,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWordRight),
+            edit_bind(EC::MoveWordRight { select: false }),
         ]),
     );
-    kb.add_binding(KM::ALT, KC::Char('b'), edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('b'),
+        edit_bind(EC::MoveWordLeft { select: false }),
+    );
     kb.add_binding(
         KM::ALT,
         KC::Char('f'),
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWordRight),
+            edit_bind(EC::MoveWordRight { select: false }),
         ]),
     );
     // Edits

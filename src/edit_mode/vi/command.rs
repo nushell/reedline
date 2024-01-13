@@ -125,14 +125,20 @@ impl Command {
     pub fn to_reedline(&self, vi_state: &mut Vi) -> Vec<ReedlineOption> {
         match self {
             Self::EnterViInsert => vec![ReedlineOption::Event(ReedlineEvent::Repaint)],
-            Self::EnterViAppend => vec![ReedlineOption::Edit(EditCommand::MoveRight)],
+            Self::EnterViAppend => vec![ReedlineOption::Edit(EditCommand::MoveRight {
+                select: false,
+            })],
             Self::PasteAfter => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferAfter)],
             Self::PasteBefore => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferBefore)],
             Self::Undo => vec![ReedlineOption::Edit(EditCommand::Undo)],
             Self::ChangeToLineEnd => vec![ReedlineOption::Edit(EditCommand::ClearToLineEnd)],
             Self::DeleteToEnd => vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)],
-            Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
-            Self::PrependToStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
+            Self::AppendToEnd => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd {
+                select: false,
+            })],
+            Self::PrependToStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart {
+                select: false,
+            })],
             Self::RewriteCurrentLine => vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)],
             Self::DeleteChar => vec![ReedlineOption::Edit(EditCommand::CutChar)],
             Self::ReplaceChar(c) => {
@@ -207,7 +213,7 @@ impl Command {
                 let op = match motion {
                     Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::ClearToLineEnd)]),
                     Motion::Line => Some(vec![
-                        ReedlineOption::Edit(EditCommand::MoveToStart),
+                        ReedlineOption::Edit(EditCommand::MoveToStart { select: false }),
                         ReedlineOption::Edit(EditCommand::ClearToLineEnd),
                     ]),
                     Motion::NextWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)]),

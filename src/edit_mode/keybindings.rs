@@ -136,24 +136,36 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
     );
 
     // Ctrl Left and Right
-    kb.add_binding(KM::CONTROL, KC::Left, edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Left,
+        edit_bind(EC::MoveWordLeft { select: false }),
+    );
     kb.add_binding(
         KM::CONTROL,
         KC::Right,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWordRight),
+            edit_bind(EC::MoveWordRight { select: false }),
         ]),
     );
     // Home/End & ctrl+a/ctrl+e
-    kb.add_binding(KM::NONE, KC::Home, edit_bind(EC::MoveToLineStart));
-    kb.add_binding(KM::CONTROL, KC::Char('a'), edit_bind(EC::MoveToLineStart));
+    kb.add_binding(
+        KM::NONE,
+        KC::Home,
+        edit_bind(EC::MoveToLineStart { select: false }),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Char('a'),
+        edit_bind(EC::MoveToLineStart { select: false }),
+    );
     kb.add_binding(
         KM::NONE,
         KC::End,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintComplete,
-            edit_bind(EC::MoveToLineEnd),
+            edit_bind(EC::MoveToLineEnd { select: false }),
         ]),
     );
     kb.add_binding(
@@ -161,12 +173,20 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
         KC::Char('e'),
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintComplete,
-            edit_bind(EC::MoveToLineEnd),
+            edit_bind(EC::MoveToLineEnd { select: false }),
         ]),
     );
     // Ctrl Home/End
-    kb.add_binding(KM::CONTROL, KC::Home, edit_bind(EC::MoveToStart));
-    kb.add_binding(KM::CONTROL, KC::End, edit_bind(EC::MoveToEnd));
+    kb.add_binding(
+        KM::CONTROL,
+        KC::Home,
+        edit_bind(EC::MoveToStart { select: false }),
+    );
+    kb.add_binding(
+        KM::CONTROL,
+        KC::End,
+        edit_bind(EC::MoveToEnd { select: false }),
+    );
     // EMACS arrows
     kb.add_binding(
         KM::CONTROL,
@@ -208,17 +228,45 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
     use KeyCode as KC;
     use KeyModifiers as KM;
 
-    kb.add_binding(KM::SHIFT, KC::Left, edit_bind(EC::SelectMoveLeft));
-    kb.add_binding(KM::SHIFT, KC::Right, edit_bind(EC::SelectMoveRight));
+    kb.add_binding(
+        KM::SHIFT,
+        KC::Left,
+        edit_bind(EC::MoveLeft { select: true }),
+    );
+    kb.add_binding(
+        KM::SHIFT,
+        KC::Right,
+        edit_bind(EC::MoveRight { select: true }),
+    );
     kb.add_binding(
         KM::SHIFT | KM::CONTROL,
         KC::Left,
-        edit_bind(EC::SelectMoveWordLeft),
+        edit_bind(EC::MoveWordLeft { select: true }),
     );
     kb.add_binding(
         KM::SHIFT | KM::CONTROL,
         KC::Right,
-        edit_bind(EC::SelectMoveWordRight),
+        edit_bind(EC::MoveWordRight { select: true }),
+    );
+    kb.add_binding(
+        KM::SHIFT,
+        KC::End,
+        edit_bind(EC::MoveToLineEnd { select: true }),
+    );
+    kb.add_binding(
+        KM::SHIFT | KM::CONTROL,
+        KC::End,
+        edit_bind(EC::MoveToEnd { select: true }),
+    );
+    kb.add_binding(
+        KM::SHIFT,
+        KC::Home,
+        edit_bind(EC::MoveToLineStart { select: true }),
+    );
+    kb.add_binding(
+        KM::SHIFT | KM::CONTROL,
+        KC::Home,
+        edit_bind(EC::MoveToStart { select: true }),
     );
     kb.add_binding(KM::CONTROL, KC::Char('a'), edit_bind(EC::SelectAll));
 }

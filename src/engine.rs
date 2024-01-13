@@ -1117,7 +1117,7 @@ impl Reedline {
                         match commands.first() {
                             Some(&EditCommand::Backspace)
                             | Some(&EditCommand::BackspaceWord)
-                            | Some(&EditCommand::MoveToLineStart) => {
+                            | Some(&EditCommand::MoveToLineStart { select: false }) => {
                                 menu.menu_event(MenuEvent::Deactivate)
                             }
                             _ => {
@@ -1179,11 +1179,11 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Left => {
-                self.run_edit_commands(&[EditCommand::MoveLeft]);
+                self.run_edit_commands(&[EditCommand::MoveLeft { select: false }]);
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Right => {
-                self.run_edit_commands(&[EditCommand::MoveRight]);
+                self.run_edit_commands(&[EditCommand::MoveRight { select: false }]);
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::SearchHistory => {
@@ -1261,9 +1261,12 @@ impl Reedline {
                 .expect("todo: error handling");
         }
         self.update_buffer_from_history();
-        self.editor.move_to_start(UndoBehavior::HistoryNavigation);
+        self.editor.move_to_start(false);
         self.editor
-            .move_to_line_end(UndoBehavior::HistoryNavigation);
+            .update_undo_state(UndoBehavior::HistoryNavigation);
+        self.editor.move_to_line_end(false);
+        self.editor
+            .update_undo_state(UndoBehavior::HistoryNavigation);
     }
 
     fn next_history(&mut self) {
@@ -1295,7 +1298,9 @@ impl Reedline {
             self.input_mode = InputMode::Regular;
         }
         self.update_buffer_from_history();
-        self.editor.move_to_end(UndoBehavior::HistoryNavigation);
+        self.editor.move_to_end(false);
+        self.editor
+            .update_undo_state(UndoBehavior::HistoryNavigation)
     }
 
     /// Enable the search and navigation through the history from the line buffer prompt
@@ -1558,7 +1563,10 @@ impl Reedline {
 
         if let Some((start, size, history)) = history_result {
             let edits = vec![
-                EditCommand::MoveToPosition(start),
+                EditCommand::MoveToPosition {
+                    position: start,
+                    select: false,
+                },
                 EditCommand::ReplaceChars(size, history),
             ];
 

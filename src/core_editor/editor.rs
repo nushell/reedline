@@ -41,24 +41,28 @@ impl Editor {
 
     pub(crate) fn run_edit_command(&mut self, command: &EditCommand) {
         match command {
-            EditCommand::MoveToStart => self.line_buffer.move_to_start(),
-            EditCommand::MoveToLineStart => self.line_buffer.move_to_line_start(),
-            EditCommand::MoveToEnd => self.line_buffer.move_to_end(),
-            EditCommand::MoveToLineEnd => self.line_buffer.move_to_line_end(),
-            EditCommand::MoveToPosition(pos) => self.line_buffer.set_insertion_point(*pos),
-            EditCommand::MoveLeft => self.line_buffer.move_left(),
-            EditCommand::MoveRight => self.line_buffer.move_right(),
-            EditCommand::MoveWordLeft => self.line_buffer.move_word_left(),
-            EditCommand::MoveBigWordLeft => self.line_buffer.move_big_word_left(),
-            EditCommand::MoveWordRight => self.line_buffer.move_word_right(),
-            EditCommand::MoveWordRightStart => self.line_buffer.move_word_right_start(),
-            EditCommand::MoveBigWordRightStart => self.line_buffer.move_big_word_right_start(),
-            EditCommand::MoveWordRightEnd => self.line_buffer.move_word_right_end(),
-            EditCommand::MoveBigWordRightEnd => self.line_buffer.move_big_word_right_end(),
-            EditCommand::InsertChar(c) => self.line_buffer.insert_char(*c),
+            EditCommand::MoveToStart { select } => self.move_to_start(*select),
+            EditCommand::MoveToLineStart { select } => self.move_to_line_start(*select),
+            EditCommand::MoveToEnd { select } => self.move_to_end(*select),
+            EditCommand::MoveToLineEnd { select } => self.move_to_line_end(*select),
+            EditCommand::MoveToPosition { position, select } => {
+                self.move_to_position(*position, *select)
+            }
+            EditCommand::MoveLeft { select } => self.move_left(*select),
+            EditCommand::MoveRight { select } => self.move_right(*select),
+            EditCommand::MoveWordLeft { select } => self.move_word_left(*select),
+            EditCommand::MoveBigWordLeft { select } => self.move_big_word_left(*select),
+            EditCommand::MoveWordRight { select } => self.move_word_right(*select),
+            EditCommand::MoveWordRightStart { select } => self.move_word_right_start(*select),
+            EditCommand::MoveBigWordRightStart { select } => {
+                self.move_big_word_right_start(*select)
+            }
+            EditCommand::MoveWordRightEnd { select } => self.move_word_right_end(*select),
+            EditCommand::MoveBigWordRightEnd { select } => self.move_big_word_right_end(*select),
+            EditCommand::InsertChar(c) => self.insert_char(*c),
             EditCommand::Complete => {}
-            EditCommand::InsertString(str) => self.line_buffer.insert_str(str),
-            EditCommand::InsertNewline => self.line_buffer.insert_newline(),
+            EditCommand::InsertString(str) => self.insert_str(str),
+            EditCommand::InsertNewline => self.insert_newline(),
             EditCommand::ReplaceChar(chr) => self.replace_char(*chr),
             EditCommand::ReplaceChars(n_chars, str) => self.replace_chars(*n_chars, str),
             EditCommand::Backspace => self.backspace(),
@@ -91,23 +95,31 @@ impl Editor {
             EditCommand::Redo => self.redo(),
             EditCommand::CutRightUntil(c) => self.cut_right_until_char(*c, false, true),
             EditCommand::CutRightBefore(c) => self.cut_right_until_char(*c, true, true),
-            EditCommand::MoveRightUntil(c) => self.move_right_until_char(*c, false, true),
-            EditCommand::MoveRightBefore(c) => self.move_right_until_char(*c, true, true),
+            EditCommand::MoveRightUntil { c, select } => {
+                self.move_right_until_char(*c, false, true, *select)
+            }
+            EditCommand::MoveRightBefore { c, select } => {
+                self.move_right_until_char(*c, true, true, *select)
+            }
             EditCommand::CutLeftUntil(c) => self.cut_left_until_char(*c, false, true),
             EditCommand::CutLeftBefore(c) => self.cut_left_until_char(*c, true, true),
-            EditCommand::MoveLeftUntil(c) => self.move_left_until_char(*c, false, true),
-            EditCommand::MoveLeftBefore(c) => self.move_left_until_char(*c, true, true),
-            EditCommand::SelectMoveLeft => self.select_move_left(),
-            EditCommand::SelectMoveRight => self.select_move_right(),
+            EditCommand::MoveLeftUntil { c, select } => {
+                self.move_left_until_char(*c, false, true, *select)
+            }
+            EditCommand::MoveLeftBefore { c, select } => {
+                self.move_left_until_char(*c, true, true, *select)
+            }
             EditCommand::SelectAll => self.select_all(),
             EditCommand::CutSelection => self.cut_selection(),
             EditCommand::CopySelection => self.copy_selection(),
-            EditCommand::SelectMoveWordLeft => self.select_move_word_left(),
-            EditCommand::SelectMoveWordRight => self.select_move_word_right(),
         }
+        if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
+            self.selection_anchor = None;
+        }
+        if let EditType::MoveCursor { select: true } = command.edit_type() {}
 
         let new_undo_behavior = match (command, command.edit_type()) {
-            (_, EditType::MoveCursor) => UndoBehavior::MoveCursor,
+            (_, EditType::MoveCursor { .. }) => UndoBehavior::MoveCursor,
             (EditCommand::InsertChar(c), EditType::EditText) => UndoBehavior::InsertCharacter(*c),
             (EditCommand::Delete, EditType::EditText) => {
                 let deleted_char = self.edit_stack.current().grapheme_right().chars().next();
@@ -120,17 +132,20 @@ impl Editor {
             (_, EditType::UndoRedo) => UndoBehavior::UndoRedo,
             (_, _) => UndoBehavior::CreateUndoPoint,
         };
-        if !matches!(
-            command,
-            EditCommand::SelectMoveLeft
-                | EditCommand::SelectMoveRight
-                | EditCommand::SelectMoveWordLeft
-                | EditCommand::SelectMoveWordRight
-                | EditCommand::SelectAll
-        ) {
-            self.reset_selection();
-        }
+
         self.update_undo_state(new_undo_behavior);
+    }
+    fn update_selection_anchor(&mut self, select: bool) {
+        self.selection_anchor = if select {
+            self.selection_anchor
+                .or_else(|| Some(self.insertion_point()))
+        } else {
+            None
+        };
+    }
+    fn move_to_position(&mut self, position: usize, select: bool) {
+        self.update_selection_anchor(select);
+        self.line_buffer.set_insertion_point(position)
     }
 
     pub(crate) fn move_line_up(&mut self) {
@@ -188,25 +203,24 @@ impl Editor {
         self.edit_stack.reset();
     }
 
-    pub(crate) fn move_to_start(&mut self, undo_behavior: UndoBehavior) {
+    pub(crate) fn move_to_start(&mut self, select: bool) {
+        self.update_selection_anchor(select);
         self.line_buffer.move_to_start();
-        self.update_undo_state(undo_behavior);
     }
 
-    pub(crate) fn move_to_end(&mut self, undo_behavior: UndoBehavior) {
+    pub(crate) fn move_to_end(&mut self, select: bool) {
+        self.update_selection_anchor(select);
         self.line_buffer.move_to_end();
-        self.update_undo_state(undo_behavior);
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn move_to_line_start(&mut self, undo_behavior: UndoBehavior) {
+    pub(crate) fn move_to_line_start(&mut self, select: bool) {
+        self.update_selection_anchor(select);
         self.line_buffer.move_to_line_start();
-        self.update_undo_state(undo_behavior);
     }
 
-    pub(crate) fn move_to_line_end(&mut self, undo_behavior: UndoBehavior) {
+    pub(crate) fn move_to_line_end(&mut self, select: bool) {
+        self.update_selection_anchor(select);
         self.line_buffer.move_to_line_end();
-        self.update_undo_state(undo_behavior);
     }
 
     fn undo(&mut self) {
@@ -219,7 +233,7 @@ impl Editor {
         self.line_buffer = val.clone();
     }
 
-    fn update_undo_state(&mut self, undo_behavior: UndoBehavior) {
+    pub(crate) fn update_undo_state(&mut self, undo_behavior: UndoBehavior) {
         if matches!(undo_behavior, UndoBehavior::UndoRedo) {
             self.last_undo_behavior = UndoBehavior::UndoRedo;
             return;
@@ -375,6 +389,7 @@ impl Editor {
     }
 
     fn insert_cut_buffer_before(&mut self) {
+        self.delete_selection();
         match self.cut_buffer.get() {
             (content, ClipboardMode::Normal) => {
                 self.line_buffer.insert_str(&content);
@@ -393,6 +408,7 @@ impl Editor {
     }
 
     fn insert_cut_buffer_after(&mut self) {
+        self.delete_selection();
         match self.cut_buffer.get() {
             (content, ClipboardMode::Normal) => {
                 self.line_buffer.move_right();
@@ -411,7 +427,14 @@ impl Editor {
         }
     }
 
-    fn move_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
+    fn move_right_until_char(
+        &mut self,
+        c: char,
+        before_char: bool,
+        current_line: bool,
+        select: bool,
+    ) {
+        self.update_selection_anchor(select);
         if before_char {
             self.line_buffer.move_right_before(c, current_line);
         } else {
@@ -419,7 +442,14 @@ impl Editor {
         }
     }
 
-    fn move_left_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
+    fn move_left_until_char(
+        &mut self,
+        c: char,
+        before_char: bool,
+        current_line: bool,
+        select: bool,
+    ) {
+        self.update_selection_anchor(select);
         if before_char {
             self.line_buffer.move_left_before(c, current_line);
         } else {
@@ -481,17 +511,13 @@ impl Editor {
         self.line_buffer.insert_str(string);
     }
 
-    fn select_move_left(&mut self) {
-        if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(self.insertion_point());
-        }
+    fn move_left(&mut self, select: bool) {
+        self.update_selection_anchor(select);
         self.line_buffer.move_left();
     }
 
-    fn select_move_right(&mut self) {
-        if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(self.insertion_point());
-        }
+    fn move_right(&mut self, select: bool) {
+        self.update_selection_anchor(select);
         self.line_buffer.move_right();
     }
 
@@ -501,43 +527,19 @@ impl Editor {
     }
 
     fn cut_selection(&mut self) {
-        if let Some(selection_anchor) = self.selection_anchor {
-            let (start, end) = if self.insertion_point() > selection_anchor {
-                (selection_anchor, self.insertion_point())
-            } else {
-                (self.insertion_point(), selection_anchor)
-            };
+        if let Some((start, end)) = self.get_selection() {
             let cut_slice = &self.line_buffer.get_buffer()[start..end];
             self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
-            if self.insertion_point() <= start {
-                // No action necessary
-            } else if self.insertion_point() < end {
-                // Insertion point is in selected area
-                self.line_buffer.set_insertion_point(start);
-            } else {
-                // Insertion point after end
-                self.line_buffer
-                    .set_insertion_point(self.insertion_point() - (end - start));
-            }
-            self.line_buffer
-                .clear_range_safe(self.insertion_point(), selection_anchor);
+            self.line_buffer.clear_range_safe(start, end);
+            self.selection_anchor = None;
         }
     }
 
     fn copy_selection(&mut self) {
-        if let Some(selection_anchor) = self.selection_anchor {
-            let (start, end) = if self.insertion_point() > selection_anchor {
-                (selection_anchor, self.insertion_point())
-            } else {
-                (self.insertion_point(), selection_anchor)
-            };
+        if let Some((start, end)) = self.get_selection() {
             let cut_slice = &self.line_buffer.get_buffer()[start..end];
             self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
         }
-    }
-
-    fn reset_selection(&mut self) {
-        self.selection_anchor = None;
     }
 
     /// If a selection is active returns the selected range, otherwise None.
@@ -552,24 +554,11 @@ impl Editor {
         })
     }
 
-    fn select_move_word_left(&mut self) {
-        if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(self.insertion_point());
-        }
-        self.line_buffer.move_word_left();
-    }
-
-    fn select_move_word_right(&mut self) {
-        if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(self.insertion_point());
-        }
-        self.line_buffer.move_word_right();
-    }
-
     fn delete_selection(&mut self) {
-        self.line_buffer.clear_range_safe(
-            self.selection_anchor.expect("Deleting a selection only makes sense if we indeed have a selection. Calling without one is probably a bug."), 
-            self.line_buffer.insertion_point());
+        if let Some((start, end)) = self.get_selection() {
+            self.line_buffer.clear_range_safe(start, end);
+            self.selection_anchor = None;
+        }
     }
 
     fn backspace(&mut self) {
@@ -586,6 +575,49 @@ impl Editor {
         } else {
             self.line_buffer.delete_right_grapheme();
         }
+    }
+
+    fn move_word_left(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.word_left_index(), select);
+    }
+
+    fn move_big_word_left(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.big_word_left_index(), select);
+    }
+
+    fn move_word_right(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.word_right_index(), select);
+    }
+
+    fn move_word_right_start(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.word_right_start_index(), select);
+    }
+
+    fn move_big_word_right_start(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.big_word_right_start_index(), select);
+    }
+
+    fn move_word_right_end(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.word_right_end_index(), select);
+    }
+
+    fn move_big_word_right_end(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.big_word_right_end_index(), select);
+    }
+
+    fn insert_char(&mut self, c: char) {
+        self.delete_selection();
+        self.line_buffer.insert_char(c);
+    }
+
+    fn insert_str(&mut self, str: &str) {
+        self.delete_selection();
+        self.line_buffer.insert_str(str);
+    }
+
+    fn insert_newline(&mut self) {
+        self.delete_selection();
+        self.line_buffer.insert_newline();
     }
 }
 
