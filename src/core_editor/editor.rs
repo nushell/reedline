@@ -61,8 +61,8 @@ impl Editor {
             EditCommand::InsertNewline => self.line_buffer.insert_newline(),
             EditCommand::ReplaceChar(chr) => self.replace_char(*chr),
             EditCommand::ReplaceChars(n_chars, str) => self.replace_chars(*n_chars, str),
-            EditCommand::Backspace => self.line_buffer.delete_left_grapheme(),
-            EditCommand::Delete => self.line_buffer.delete_right_grapheme(),
+            EditCommand::Backspace => self.backspace(),
+            EditCommand::Delete => self.delete(),
             EditCommand::CutChar => self.cut_char(),
             EditCommand::BackspaceWord => self.line_buffer.delete_word_left(),
             EditCommand::DeleteWord => self.line_buffer.delete_word_right(),
@@ -564,6 +564,28 @@ impl Editor {
             self.selection_anchor = Some(self.insertion_point());
         }
         self.line_buffer.move_word_right();
+    }
+
+    fn delete_selection(&mut self) {
+        self.line_buffer.clear_range_safe(
+            self.selection_anchor.expect("Deleting a selection only makes sense if we indeed have a selection. Calling without one is probably a bug."), 
+            self.line_buffer.insertion_point());
+    }
+
+    fn backspace(&mut self) {
+        if self.selection_anchor.is_some() {
+            self.delete_selection();
+        } else {
+            self.line_buffer.delete_left_grapheme();
+        }
+    }
+
+    fn delete(&mut self) {
+        if self.selection_anchor.is_some() {
+            self.delete_selection();
+        } else {
+            self.line_buffer.delete_right_grapheme();
+        }
     }
 }
 
