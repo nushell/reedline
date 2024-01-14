@@ -91,6 +91,33 @@ impl HistoryCursor {
         self.current.as_ref().map(|e| e.command_line.to_string())
     }
 
+    /// Delete the item (if present) at the cursor from the history, and go back or forward one item
+    pub fn delete_item_at_cursor(&mut self, history: &mut dyn History) -> Option<Result<()>> {
+        let current = self.current.as_ref()?;
+        if let Some(id) = current.id {
+            match history.delete(id) {
+                Ok(()) => {
+                    // Cursor must be moved *after* deletion, as deleting may
+                    // alter which entry a `HistoryItemId` points to.
+                    if (self.back(history).is_err()
+                        || self.current.is_none()
+                        || self.current.as_ref().unwrap().id == Some(id))
+                        && self.forward(history).is_err()
+                    {
+                        self.current = None;
+                    }
+                    Some(Ok(()))
+                }
+                Err(e) => Some(Err(e)),
+            }
+        } else {
+            if self.back(history).is_err() {
+                self.current = None;
+            }
+            Some(Ok(()))
+        }
+    }
+
     /// Poll the current [`HistoryNavigationQuery`] mode
     pub fn get_navigation(&self) -> HistoryNavigationQuery {
         self.query.clone()

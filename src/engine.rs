@@ -844,6 +844,15 @@ impl Reedline {
                 // A handled Event causes a repaint
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::DeleteHistoryItem => {
+                match self
+                    .history_cursor
+                    .delete_item_at_cursor(self.history.as_mut())
+                {
+                    Some(Ok(())) => Ok(EventStatus::Handled),
+                    Some(Err(_)) | None => Ok(EventStatus::Inapplicable),
+                }
+            }
             ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
                 self.history_cursor
                     .back(self.history.as_ref())
@@ -1177,6 +1186,26 @@ impl Reedline {
                 self.enter_history_search();
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::DeleteHistoryItem => {
+                if self.input_mode != InputMode::HistoryTraversal {
+                    self.run_edit_commands(&[EditCommand::Clear]);
+                    return Ok(EventStatus::Handled);
+                }
+                match self
+                    .history_cursor
+                    .delete_item_at_cursor(self.history.as_mut())
+                {
+                    Some(Ok(())) => {
+                        self.update_buffer_from_history();
+                        // Move to end of first line, see `Self::previous_history()`.
+                        self.editor.move_to_start(UndoBehavior::HistoryNavigation);
+                        self.editor
+                            .move_to_line_end(UndoBehavior::HistoryNavigation);
+                        Ok(EventStatus::Handled)
+                    }
+                    Some(Err(_)) | None => Ok(EventStatus::Inapplicable),
+                }
+            }
             ReedlineEvent::Multiple(events) => {
                 let mut latest_signal = EventStatus::Inapplicable;
                 for event in events {
@@ -1248,6 +1277,7 @@ impl Reedline {
                 .expect("todo: error handling");
         }
         self.update_buffer_from_history();
+        // Move to end of *first* line, so that pressing up again goes directly to previous item.
         self.editor.move_to_start(UndoBehavior::HistoryNavigation);
         self.editor
             .move_to_line_end(UndoBehavior::HistoryNavigation);
