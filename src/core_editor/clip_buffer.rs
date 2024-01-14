@@ -76,20 +76,20 @@ pub fn get_default_clipboard() -> LocalClipboard {
 #[cfg(feature = "system_clipboard")]
 mod system_clipboard {
     use super::*;
-    use clipboard::{ClipboardContext, ClipboardProvider};
+    use arboard::Clipboard as Arboard;
 
     /// Wrapper around [`clipboard`](https://docs.rs/clipboard) crate
     ///
     /// Requires that the feature `system_clipboard` is enabled
     pub struct SystemClipboard {
-        cb: ClipboardContext,
+        cb: Arboard,
         local_copy: String,
         mode: ClipboardMode,
     }
 
     impl SystemClipboard {
         pub fn new() -> Self {
-            let cb = ClipboardProvider::new().unwrap();
+            let cb = Arboard::new().unwrap();
             SystemClipboard {
                 cb,
                 local_copy: String::new(),
@@ -101,12 +101,12 @@ mod system_clipboard {
     impl Clipboard for SystemClipboard {
         fn set(&mut self, content: &str, mode: ClipboardMode) {
             self.local_copy = content.to_owned();
-            let _ = self.cb.set_contents(content.to_owned());
+            let _ = self.cb.set_text(content);
             self.mode = mode;
         }
 
         fn get(&mut self) -> (String, ClipboardMode) {
-            let system_content = self.cb.get_contents().unwrap_or_default();
+            let system_content = self.cb.get_text().unwrap_or_default();
             if system_content == self.local_copy {
                 // We assume the content was yanked inside the line editor and the last yank determined the mode.
                 (system_content, self.mode)
