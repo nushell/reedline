@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use itertools::Itertools;
+use nu_ansi_term::{Color, Style};
 
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
@@ -127,6 +128,9 @@ pub struct Reedline {
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
 
+    // Style used for visual selection
+    visual_selection_style: Style,
+
     // Showcase hints based on various strategies (history, language-completion, spellcheck, etc)
     hinter: Option<Box<dyn Hinter>>,
     hide_hints: bool,
@@ -183,6 +187,7 @@ impl Reedline {
         let history = Box::<FileBackedHistory>::default();
         let painter = Painter::new(std::io::BufWriter::new(std::io::stderr()));
         let buffer_highlighter = Box::<ExampleHighlighter>::default();
+        let visual_selection_style = Style::new().on(Color::LightGray);
         let completer = Box::<DefaultCompleter>::default();
         let hinter = None;
         let validator = None;
@@ -209,6 +214,7 @@ impl Reedline {
             quick_completions: false,
             partial_completions: false,
             highlighter: buffer_highlighter,
+            visual_selection_style,
             hinter,
             hide_hints: false,
             validator,
@@ -368,6 +374,13 @@ impl Reedline {
     #[must_use]
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Self {
         self.highlighter = highlighter;
+        self
+    }
+
+    /// A builder that configures the style used for visual selection
+    #[must_use]
+    pub fn with_visual_selection_style(mut self, style: Style) -> Self {
+        self.visual_selection_style = style;
         self
     }
 
@@ -1104,7 +1117,7 @@ impl Reedline {
                         match commands.first() {
                             Some(&EditCommand::Backspace)
                             | Some(&EditCommand::BackspaceWord)
-                            | Some(&EditCommand::MoveToLineStart) => {
+                            | Some(&EditCommand::MoveToLineStart { select: false }) => {
                                 menu.menu_event(MenuEvent::Deactivate)
                             }
                             _ => {
@@ -1166,11 +1179,11 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Left => {
-                self.run_edit_commands(&[EditCommand::MoveLeft]);
+                self.run_edit_commands(&[EditCommand::MoveLeft { select: false }]);
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Right => {
-                self.run_edit_commands(&[EditCommand::MoveRight]);
+                self.run_edit_commands(&[EditCommand::MoveRight { select: false }]);
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::SearchHistory => {
@@ -1248,9 +1261,12 @@ impl Reedline {
                 .expect("todo: error handling");
         }
         self.update_buffer_from_history();
-        self.editor.move_to_start(UndoBehavior::HistoryNavigation);
+        self.editor.move_to_start(false);
         self.editor
-            .move_to_line_end(UndoBehavior::HistoryNavigation);
+            .update_undo_state(UndoBehavior::HistoryNavigation);
+        self.editor.move_to_line_end(false);
+        self.editor
+            .update_undo_state(UndoBehavior::HistoryNavigation);
     }
 
     fn next_history(&mut self) {
@@ -1282,7 +1298,9 @@ impl Reedline {
             self.input_mode = InputMode::Regular;
         }
         self.update_buffer_from_history();
-        self.editor.move_to_end(UndoBehavior::HistoryNavigation);
+        self.editor.move_to_end(false);
+        self.editor
+            .update_undo_state(UndoBehavior::HistoryNavigation)
     }
 
     /// Enable the search and navigation through the history from the line buffer prompt
@@ -1545,7 +1563,10 @@ impl Reedline {
 
         if let Some((start, size, history)) = history_result {
             let edits = vec![
-                EditCommand::MoveToPosition(start),
+                EditCommand::MoveToPosition {
+                    position: start,
+                    select: false,
+                },
                 EditCommand::ReplaceChars(size, history),
             ];
 
@@ -1638,14 +1659,18 @@ impl Reedline {
         let cursor_position_in_buffer = self.editor.insertion_point();
         let buffer_to_paint = self.editor.get_buffer();
 
-        let (before_cursor, after_cursor) = self
+        let mut styled_text = self
             .highlighter
-            .highlight(buffer_to_paint, cursor_position_in_buffer)
-            .render_around_insertion_point(
-                cursor_position_in_buffer,
-                prompt,
-                self.use_ansi_coloring,
-            );
+            .highlight(buffer_to_paint, cursor_position_in_buffer);
+        if let Some((from, to)) = self.editor.get_selection() {
+            styled_text.style_range(from, to, self.visual_selection_style);
+        }
+
+        let (before_cursor, after_cursor) = styled_text.render_around_insertion_point(
+            cursor_position_in_buffer,
+            prompt,
+            self.use_ansi_coloring,
+        );
 
         let hint: String = if self.hints_active() {
             self.hinter.as_mut().map_or_else(String::new, |hinter| {
