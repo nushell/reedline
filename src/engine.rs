@@ -1688,7 +1688,7 @@ impl Reedline {
         // Needs to add return carriage to newlines because when not in raw mode
         // some OS don't fully return the carriage
 
-        let lines = PromptLines::new(
+        let mut lines = PromptLines::new(
             prompt,
             self.prompt_edit_mode(),
             None,
@@ -1700,6 +1700,11 @@ impl Reedline {
         // Updating the working details of the active menu
         for menu in self.menus.iter_mut() {
             if menu.is_active() {
+                lines.prompt_indicator = menu.indicator().to_owned().into();
+                // If the menu requires the cursor position, update it (ide menu)
+                let cursor_pos = lines.cursor_pos(self.painter.screen_width());
+                menu.set_cursor_pos(cursor_pos);
+
                 menu.update_working_details(
                     &mut self.editor,
                     self.completer.as_mut(),

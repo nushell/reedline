@@ -6,5 +6,8 @@ extend-exclude = ["src/core_editor/line_buffer.rs"]
 iterm = "iterm"
 # For testing completion of the word build
 bui = "bui"
+# For testing string truncation
+descriptio = "descriptio"
+ot = "ot"
 # for sqlite backed history
 wheres = "wheres"

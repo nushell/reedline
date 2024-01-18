@@ -1,4 +1,5 @@
 mod columnar_menu;
+mod ide_menu;
 mod list_menu;
 pub mod menu_functions;
 
@@ -6,6 +7,7 @@ use crate::core_editor::Editor;
 use crate::History;
 use crate::{completion::history::HistoryCompleter, painting::Painter, Completer, Suggestion};
 pub use columnar_menu::ColumnarMenu;
+pub use ide_menu::IdeMenu;
 pub use list_menu::ListMenu;
 use nu_ansi_term::{Color, Style};
 
@@ -119,6 +121,8 @@ pub trait Menu: Send {
 
     /// Gets cached values from menu that will be displayed
     fn get_values(&self) -> &[Suggestion];
+    /// Sets the position of the cursor (currently only required by the IDE menu)
+    fn set_cursor_pos(&mut self, pos: (u16, u16));
 }
 
 /// Allowed menus in Reedline
@@ -311,5 +315,9 @@ impl Menu for ReedlineMenu {
 
     fn get_values(&self) -> &[Suggestion] {
         self.as_ref().get_values()
+    }
+
+    fn set_cursor_pos(&mut self, pos: (u16, u16)) {
+        self.as_mut().set_cursor_pos(pos);
     }
 }
