@@ -121,6 +121,8 @@ pub trait Menu: Send {
 
     /// Gets cached values from menu that will be displayed
     fn get_values(&self) -> &[Suggestion];
+    /// Sets the position of the cursor (currently only required by the IDE menu)
+    fn set_cursor_pos(&mut self, pos: (u16, u16));
 }
 
 /// Allowed menus in Reedline
@@ -313,5 +315,9 @@ impl Menu for ReedlineMenu {
 
     fn get_values(&self) -> &[Suggestion] {
         self.as_ref().get_values()
+    }
+
+    fn set_cursor_pos(&mut self, pos: (u16, u16)) {
+        self.as_mut().set_cursor_pos(pos);
     }
 }

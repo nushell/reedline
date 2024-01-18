@@ -96,6 +96,8 @@ impl Default for DefaultIdeMenuDetails {
 
 #[derive(Default)]
 struct IdeMenuDetails {
+    /// Column of the cursor
+    pub cursor_col: u16,
     /// Width of the menu, including the padding and border and the description
     pub menu_width: u16,
     /// width of the completion box, including the padding and border
@@ -736,7 +738,7 @@ impl Menu for IdeMenu {
             });
 
             let terminal_width = painter.screen_width();
-            let cursor_pos = crossterm::cursor::position().unwrap().0;
+            let cursor_pos = self.working_details.cursor_col;
 
             let border_width = if self.default_details.border.is_some() {
                 2
@@ -1037,6 +1039,10 @@ impl Menu for IdeMenu {
 
             strings.join("\r\n")
         }
+    }
+
+    fn set_cursor_pos(&mut self, pos: (u16, u16)) {
+        self.working_details.cursor_col = pos.0;
     }
 }
 
