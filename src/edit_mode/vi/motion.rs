@@ -160,30 +160,60 @@ impl Motion {
                 ReedlineEvent::MenuDown,
                 ReedlineEvent::Down,
             ]))],
-            Motion::NextWord => vec![ReedlineOption::Edit(EditCommand::MoveWordRightStart)],
-            Motion::NextBigWord => vec![ReedlineOption::Edit(EditCommand::MoveBigWordRightStart)],
-            Motion::NextWordEnd => vec![ReedlineOption::Edit(EditCommand::MoveWordRightEnd)],
-            Motion::NextBigWordEnd => vec![ReedlineOption::Edit(EditCommand::MoveBigWordRightEnd)],
-            Motion::PreviousWord => vec![ReedlineOption::Edit(EditCommand::MoveWordLeft)],
-            Motion::PreviousBigWord => vec![ReedlineOption::Edit(EditCommand::MoveBigWordLeft)],
+            Motion::NextWord => vec![ReedlineOption::Edit(EditCommand::MoveWordRightStart {
+                select: false,
+            })],
+            Motion::NextBigWord => vec![ReedlineOption::Edit(EditCommand::MoveBigWordRightStart {
+                select: false,
+            })],
+            Motion::NextWordEnd => vec![ReedlineOption::Edit(EditCommand::MoveWordRightEnd {
+                select: false,
+            })],
+            Motion::NextBigWordEnd => {
+                vec![ReedlineOption::Edit(EditCommand::MoveBigWordRightEnd {
+                    select: false,
+                })]
+            }
+            Motion::PreviousWord => vec![ReedlineOption::Edit(EditCommand::MoveWordLeft {
+                select: false,
+            })],
+            Motion::PreviousBigWord => vec![ReedlineOption::Edit(EditCommand::MoveBigWordLeft {
+                select: false,
+            })],
             Motion::Line => vec![], // Placeholder as unusable standalone motion
-            Motion::Start => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart)],
-            Motion::End => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd)],
+            Motion::Start => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart {
+                select: false,
+            })],
+            Motion::End => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd {
+                select: false,
+            })],
             Motion::RightUntil(ch) => {
                 vi_state.last_char_search = Some(ViCharSearch::ToRight(*ch));
-                vec![ReedlineOption::Edit(EditCommand::MoveRightUntil(*ch))]
+                vec![ReedlineOption::Edit(EditCommand::MoveRightUntil {
+                    c: *ch,
+                    select: false,
+                })]
             }
             Motion::RightBefore(ch) => {
                 vi_state.last_char_search = Some(ViCharSearch::TillRight(*ch));
-                vec![ReedlineOption::Edit(EditCommand::MoveRightBefore(*ch))]
+                vec![ReedlineOption::Edit(EditCommand::MoveRightBefore {
+                    c: *ch,
+                    select: false,
+                })]
             }
             Motion::LeftUntil(ch) => {
                 vi_state.last_char_search = Some(ViCharSearch::ToLeft(*ch));
-                vec![ReedlineOption::Edit(EditCommand::MoveLeftUntil(*ch))]
+                vec![ReedlineOption::Edit(EditCommand::MoveLeftUntil {
+                    c: *ch,
+                    select: false,
+                })]
             }
             Motion::LeftBefore(ch) => {
                 vi_state.last_char_search = Some(ViCharSearch::TillLeft(*ch));
-                vec![ReedlineOption::Edit(EditCommand::MoveLeftBefore(*ch))]
+                vec![ReedlineOption::Edit(EditCommand::MoveLeftBefore {
+                    c: *ch,
+                    select: false,
+                })]
             }
             Motion::ReplayCharSearch => {
                 if let Some(char_search) = vi_state.last_char_search.as_ref() {
@@ -229,10 +259,22 @@ impl ViCharSearch {
 
     pub fn to_move(&self) -> EditCommand {
         match self {
-            ViCharSearch::ToRight(c) => EditCommand::MoveRightUntil(*c),
-            ViCharSearch::ToLeft(c) => EditCommand::MoveLeftUntil(*c),
-            ViCharSearch::TillRight(c) => EditCommand::MoveRightBefore(*c),
-            ViCharSearch::TillLeft(c) => EditCommand::MoveLeftBefore(*c),
+            ViCharSearch::ToRight(c) => EditCommand::MoveRightUntil {
+                c: *c,
+                select: false,
+            },
+            ViCharSearch::ToLeft(c) => EditCommand::MoveLeftUntil {
+                c: *c,
+                select: false,
+            },
+            ViCharSearch::TillRight(c) => EditCommand::MoveRightBefore {
+                c: *c,
+                select: false,
+            },
+            ViCharSearch::TillLeft(c) => EditCommand::MoveLeftBefore {
+                c: *c,
+                select: false,
+            },
         }
     }
 

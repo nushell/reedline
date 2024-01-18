@@ -396,6 +396,27 @@ impl LineBuffer {
         self.insertion_point = 0;
     }
 
+    /// Clear all contents between `start` and `end` and change insertion point if necessary.
+    ///
+    /// If the cursor is located between `start` and `end` it is adjusted to `start`.
+    /// If the cursor is located after `end` it is adjusted to stay at its current char boundary.
+    pub fn clear_range_safe(&mut self, start: usize, end: usize) {
+        let (start, end) = if start > end {
+            (end, start)
+        } else {
+            (start, end)
+        };
+        if self.insertion_point <= start {
+            // No action necessary
+        } else if self.insertion_point < end {
+            self.insertion_point = start;
+        } else {
+            // Insertion point after end
+            self.insertion_point -= end - start;
+        }
+        self.clear_range(start..end);
+    }
+
     /// Clear text covered by `range` in the current line
     ///
     /// Safety: Does not change the insertion point/offset and is thus not unicode safe!

@@ -418,9 +418,9 @@ mod tests {
                 ReedlineEvent::Up,
             ])]))]
     #[case(&['w'],
-        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveWordRightStart])]))]
+        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveWordRightStart{select:false}])]))]
     #[case(&['W'],
-        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveBigWordRightStart])]))]
+        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveBigWordRightStart{select:false}])]))]
     #[case(&['2', 'l'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::UntilFound(vec![
                 ReedlineEvent::HistoryHintComplete,
@@ -436,8 +436,8 @@ mod tests {
                 ReedlineEvent::MenuRight,
                 ReedlineEvent::Right,
             ])]))]
-    #[case(&['0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart])]))]
-    #[case(&['$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd])]))]
+    #[case(&['0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart{select:false}])]))]
+    #[case(&['$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd{select:false}])]))]
     #[case(&['i'], ReedlineEvent::Multiple(vec![ReedlineEvent::Repaint]))]
     #[case(&['p'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter])]))]
     #[case(&['2', 'p'], ReedlineEvent::Multiple(vec![
