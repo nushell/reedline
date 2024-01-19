@@ -92,8 +92,12 @@ impl<'prompt> PromptLines<'prompt> {
     /// The height is relative to the prompt
     pub(crate) fn cursor_pos(&self, terminal_columns: u16) -> (u16, u16) {
         // If we have a multiline prompt (e.g starship), we expect the cursor to be on the last line
-        let prompt_str = self.prompt_str_left.lines().last().unwrap_or_default();
-        let prompt_width = line_width(&format!("{}{}", prompt_str, self.prompt_indicator));
+        let prompt_width = line_width(
+            format!("{}{}", self.prompt_str_left, self.prompt_indicator)
+                .lines()
+                .last()
+                .unwrap_or_default(),
+        );
         let buffer_width = line_width(&self.before_cursor);
 
         let total_width = prompt_width + buffer_width;
