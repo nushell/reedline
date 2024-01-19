@@ -92,20 +92,28 @@ impl<'prompt> PromptLines<'prompt> {
     /// The height is relative to the prompt
     pub(crate) fn cursor_pos(&self, terminal_columns: u16) -> (u16, u16) {
         // If we have a multiline prompt (e.g starship), we expect the cursor to be on the last line
-        let prompt_width = line_width(
-            format!("{}{}", self.prompt_str_left, self.prompt_indicator)
-                .lines()
-                .last()
-                .unwrap_or_default(),
-        );
-        let buffer_width = line_width(&self.before_cursor);
+        let prompt_str = format!("{}{}", self.prompt_str_left, self.prompt_indicator);
+        // The Cursor position will be relative to this
+        let last_prompt_str = prompt_str.lines().last().unwrap_or_default();
 
-        let total_width = prompt_width + buffer_width;
+        let is_multiline = self.before_cursor.contains('\n');
+        let buffer_width = line_width(self.before_cursor.lines().last().unwrap_or_default());
+
+        let total_width = if is_multiline {
+            // The buffer already contains the multiline prompt
+            buffer_width
+        } else {
+            buffer_width + line_width(last_prompt_str)
+        };
+
+        let buffer_width_prompt = format!("{}{}", last_prompt_str, self.before_cursor);
+
+        let cursor_y = (estimate_required_lines(&buffer_width_prompt, terminal_columns) as u16)
+            .saturating_sub(1); // 0 based
 
         let cursor_x = (total_width % terminal_columns as usize) as u16;
-        let cursor_y = (total_width / terminal_columns as usize) as u16;
 
-        (cursor_x, cursor_y)
+        (cursor_x, cursor_y as u16)
     }
 
     /// Total lines that the prompt uses considering that it may wrap the screen
@@ -207,6 +215,20 @@ mod tests {
         "very long input that does not fit in a single line",
         10,
         (1, 5)
+    )]
+    #[case(
+        "~/path/",
+        "❯ ",
+        "this is a text that contains newlines\n::: and a multiline prompt",
+        40,
+        (26, 2)
+    )]
+    #[case(
+        "~/path/",
+        "❯ ",
+        "this is a text that contains newlines\n::: and very loooooooooooooooong text that wraps",
+        40,
+        (8, 3)
     )]
 
     fn test_cursor_pos(
