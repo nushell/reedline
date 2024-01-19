@@ -158,3 +158,76 @@ impl<'prompt> PromptLines<'prompt> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(
+        "~/path/",
+        "❯ ",
+        "",
+        100,
+        (9, 0)
+    )]
+    #[case(
+        "~/longer/path/\n",
+        "❯ ",
+        "test",
+        100,
+        (6, 0)
+    )]
+    #[case(
+        "~/longer/path/",
+        "\n❯ ",
+        "test",
+        100,
+        (6, 0)
+    )]
+    #[case(
+        "~/longer/path/\n",
+        "\n❯ ",
+        "test",
+        100,
+        (6, 0)
+    )]
+    #[case(
+        "~/path/",
+        "❯ ",
+        "very long input that does not fit in a single line",
+        40,
+        (19, 1)
+    )]
+    #[case(
+        "~/path/\n",
+        "\n❯\n ",
+        "very long input that does not fit in a single line",
+        10,
+        (1, 5)
+    )]
+
+    fn test_cursor_pos(
+        #[case] prompt_str_left: &str,
+        #[case] prompt_indicator: &str,
+        #[case] before_cursor: &str,
+        #[case] terminal_columns: u16,
+        #[case] expected: (u16, u16),
+    ) {
+        let prompt_lines = PromptLines {
+            prompt_str_left: Cow::Borrowed(prompt_str_left),
+            prompt_str_right: Cow::Borrowed(""),
+            prompt_indicator: Cow::Borrowed(prompt_indicator),
+            before_cursor: Cow::Borrowed(before_cursor),
+            after_cursor: Cow::Borrowed(""),
+            hint: Cow::Borrowed(""),
+            right_prompt_on_last_line: false,
+        };
+
+        let pos = prompt_lines.cursor_pos(terminal_columns);
+
+        assert_eq!(pos, expected);
+    }
+}
