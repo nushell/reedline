@@ -679,7 +679,7 @@ impl Menu for IdeMenu {
             // editing a multiline buffer.
             // Also, by replacing the new line character with a space, the insert
             // position is maintain in the line buffer.
-            let trimmed_buffer = editor.get_buffer().replace("\r\n", "  ").replace('\n', " ");
+            let trimmed_buffer = editor.get_buffer().replace('\n', " ");
             completer.complete(
                 &trimmed_buffer[..editor.insertion_point()],
                 editor.insertion_point(),
