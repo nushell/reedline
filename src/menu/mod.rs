@@ -8,6 +8,7 @@ use crate::History;
 use crate::{completion::history::HistoryCompleter, painting::Painter, Completer, Suggestion};
 pub use columnar_menu::ColumnarMenu;
 pub use ide_menu::IdeMenu;
+pub use ide_menu::DescriptionMode;
 pub use list_menu::ListMenu;
 use nu_ansi_term::{Color, Style};
 
