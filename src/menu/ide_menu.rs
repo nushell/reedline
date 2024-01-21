@@ -11,6 +11,7 @@ use nu_ansi_term::{ansi::RESET, Style};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+/// The direction of the description box
 pub enum DescriptionMode {
     /// Description is always shown on the left
     Left,
