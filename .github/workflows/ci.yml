@@ -46,15 +46,8 @@ jobs:
       - name: Clippy
         run: cargo clippy ${{ matrix.flags }} --all-targets --all -- -D warnings
 
-
       - name: Tests
         run: cargo llvm-cov nextest --all ${{ matrix.flags }} --lcov --output-path lcov.info
 
       - name: Doctests
         run: cargo test --doc ${{ matrix.flags }}
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
-        with:
-          files: lcov.info
-          
