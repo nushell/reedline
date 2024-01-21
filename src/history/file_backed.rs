@@ -60,6 +60,7 @@ impl History for FileBackedHistory {
             .back()
             .map_or(true, |previous| previous != &entry)
             && !entry.is_empty()
+            && self.capacity > 0
         {
             if self.entries.len() == self.capacity {
                 // History is "full", so we delete the oldest entry first,
@@ -234,7 +235,9 @@ impl History for FileBackedHistory {
                     .collect::<std::io::Result<VecDeque<_>>>()?;
                 if from_file.len() + own_entries.len() > self.capacity {
                     (
-                        from_file.split_off(from_file.len() - (self.capacity - own_entries.len())),
+                        from_file.split_off(
+                            from_file.len() - (self.capacity.saturating_sub(own_entries.len())),
+                        ),
                         true,
                     )
                 } else {
