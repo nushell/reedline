@@ -318,6 +318,13 @@ impl IdeMenu {
         self.default_details.description_offset = description_offset;
         self
     }
+
+    /// Menu builder with new correct cursor pos
+    #[must_use]
+    pub fn with_correct_cursor_pos(mut self, correct_cursor_pos: bool) -> Self {
+        self.default_details.correct_cursor_pos = correct_cursor_pos;
+        self
+    }
 }
 
 // Menu functionality
