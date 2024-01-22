@@ -49,11 +49,11 @@ impl Default for BorderSymbols {
 /// the initial declaration of the menu and are always kept as reference for the
 /// changeable [`IdeMenuDetails`] values.
 struct DefaultIdeMenuDetails {
-    /// Minimum width of the completion box, including the border
+    /// Min width of the completion box, including the border
     pub min_completion_width: u16,
-    /// max width of the completion box, including the border
+    /// Max width of the completion box, including the border
     pub max_completion_width: u16,
-    /// max height of the completion box, including the border
+    /// Max height of the completion box, including the border
     /// this will be capped by the lines available in the terminal
     pub max_completion_height: u16,
     /// Padding to the left and right of the suggestions

@@ -5,8 +5,8 @@
 // [Enter] to select the chosen alternative
 
 use reedline::{
-    default_emacs_keybindings, ColumnarMenu, DefaultCompleter, DefaultPrompt, Emacs, KeyCode,
-    KeyModifiers, Keybindings, Reedline, ReedlineEvent, ReedlineMenu, Signal,
+    default_emacs_keybindings, ColumnarMenu, DefaultCompleter, DefaultPrompt, EditCommand, Emacs,
+    KeyCode, KeyModifiers, Keybindings, Reedline, ReedlineEvent, ReedlineMenu, Signal,
 };
 use std::io;
 
@@ -19,8 +19,21 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
             ReedlineEvent::MenuNext,
         ]),
     );
+    keybindings.add_binding(
+        KeyModifiers::ALT,
+        KeyCode::Enter,
+        ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
+    );
 }
+
 fn main() -> io::Result<()> {
+    // Number of columns
+    let columns: u16 = 4;
+    // Column width
+    let col_width: Option<usize> = None;
+    // Column padding
+    let col_padding: usize = 2;
+
     let commands = vec![
         "test".into(),
         "hello world".into(),
@@ -28,8 +41,15 @@ fn main() -> io::Result<()> {
         "this is the reedline crate".into(),
     ];
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands, 2));
+
     // Use the interactive menu to select options from the completer
-    let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu"));
+    let columnar_menu = ColumnarMenu::default()
+        .with_name("completion_menu")
+        .with_columns(columns)
+        .with_column_width(col_width)
+        .with_column_padding(col_padding);
+
+    let completion_menu = Box::new(columnar_menu);
 
     let mut keybindings = default_emacs_keybindings();
     add_menu_keybindings(&mut keybindings);
