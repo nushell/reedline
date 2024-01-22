@@ -156,11 +156,6 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
         edit_bind(EC::MoveToLineStart { select: false }),
     );
     kb.add_binding(
-        KM::CONTROL,
-        KC::Char('a'),
-        edit_bind(EC::MoveToLineStart { select: false }),
-    );
-    kb.add_binding(
         KM::NONE,
         KC::End,
         ReedlineEvent::UntilFound(vec![
@@ -214,10 +209,18 @@ pub fn add_common_edit_bindings(kb: &mut Keybindings) {
     // Base commands should not affect cut buffer
     kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
     kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::BackspaceWord));
-    kb.add_binding(KM::CONTROL, KC::Char('x'), edit_bind(EC::CutSelection));
-    kb.add_binding(KM::CONTROL, KC::Char('c'), edit_bind(EC::CopySelection));
     kb.add_binding(
-        KM::CONTROL,
+        KM::CONTROL | KM::SHIFT,
+        KC::Char('x'),
+        edit_bind(EC::CutSelection),
+    );
+    kb.add_binding(
+        KM::CONTROL | KM::SHIFT,
+        KC::Char('c'),
+        edit_bind(EC::CopySelection),
+    );
+    kb.add_binding(
+        KM::CONTROL | KM::SHIFT,
         KC::Char('v'),
         edit_bind(EC::PasteCutBufferBefore),
     );
@@ -268,5 +271,9 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
         KC::Home,
         edit_bind(EC::MoveToStart { select: true }),
     );
-    kb.add_binding(KM::CONTROL, KC::Char('a'), edit_bind(EC::SelectAll));
+    kb.add_binding(
+        KM::CONTROL | KM::SHIFT,
+        KC::Char('a'),
+        edit_bind(EC::SelectAll),
+    );
 }
