@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 /// A span of source code, with positions in bytes
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub struct Span {
@@ -30,6 +32,22 @@ pub trait Completer: Send {
     /// the action that will take the line and position and convert it to a vector of completions, which include the
     /// span to replace and the contents of that replacement
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion>;
+
+    /// same as [`Completer::complete`] but it will return a vector of ranges of the strings
+    /// the suggestions are based on
+    fn complete_with_base_ranges(
+        &mut self,
+        line: &str,
+        pos: usize,
+    ) -> (Vec<Suggestion>, Vec<Range<usize>>) {
+        let mut ranges = vec![];
+        let suggestions = self.complete(line, pos);
+        for suggestion in &suggestions {
+            ranges.push(suggestion.span.start..suggestion.span.end);
+        }
+        ranges.dedup();
+        (suggestions, ranges)
+    }
 
     /// action that will return a partial section of available completions
     /// this command comes handy when trying to avoid to pull all the data at once

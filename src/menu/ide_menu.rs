@@ -49,11 +49,11 @@ impl Default for BorderSymbols {
 /// the initial declaration of the menu and are always kept as reference for the
 /// changeable [`IdeMenuDetails`] values.
 struct DefaultIdeMenuDetails {
-    /// Minimum width of the completion box, including the border
+    /// Min width of the completion box, including the border
     pub min_completion_width: u16,
-    /// max width of the completion box, including the border
+    /// Max width of the completion box, including the border
     pub max_completion_width: u16,
-    /// max height of the completion box, including the border
+    /// Max height of the completion box, including the border
     /// this will be capped by the lines available in the terminal
     pub max_completion_height: u16,
     /// Padding to the left and right of the suggestions
@@ -75,6 +75,14 @@ struct DefaultIdeMenuDetails {
     pub max_description_height: u16,
     /// Offset from the suggestion box to the description box
     pub description_offset: u16,
+    /// If true, the cursor pos will be corrected, so the suggestions match up with the typed text
+    /// ```text
+    /// C:\> str
+    ///      str join
+    ///      str trim
+    ///      str split
+    /// ```
+    pub correct_cursor_pos: bool,
 }
 
 impl Default for DefaultIdeMenuDetails {
@@ -91,6 +99,7 @@ impl Default for DefaultIdeMenuDetails {
             max_description_width: 50,
             max_description_height: 10,
             description_offset: 1,
+            correct_cursor_pos: false,
         }
     }
 }
@@ -114,6 +123,9 @@ struct IdeMenuDetails {
     pub space_right: u16,
     /// Corrected description offset, based on the available space
     pub description_offset: u16,
+    /// The ranges of the strings, the suggestions are based on (ranges in [`Editor::get_buffer`])
+    /// This is required to adjust the suggestion boxes position, when `correct_cursor_pos` in [`DefaultIdeMenuDetails`] is true
+    pub base_strings: Vec<String>,
 }
 
 /// Menu to present suggestions like similar to Ide completion menus
@@ -304,6 +316,13 @@ impl IdeMenu {
     #[must_use]
     pub fn with_description_offset(mut self, description_offset: u16) -> Self {
         self.default_details.description_offset = description_offset;
+        self
+    }
+
+    /// Menu builder with new correct cursor pos
+    #[must_use]
+    pub fn with_correct_cursor_pos(mut self, correct_cursor_pos: bool) -> Self {
+        self.default_details.correct_cursor_pos = correct_cursor_pos;
         self
     }
 }
@@ -662,16 +681,16 @@ impl Menu for IdeMenu {
 
     /// Update menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        self.values = if self.only_buffer_difference {
+        let (values, base_ranges) = if self.only_buffer_difference {
             if let Some(old_string) = &self.input {
                 let (start, input) = string_difference(editor.get_buffer(), old_string);
                 if !input.is_empty() {
-                    completer.complete(input, start + input.len())
+                    completer.complete_with_base_ranges(input, start + input.len())
                 } else {
-                    completer.complete("", editor.insertion_point())
+                    completer.complete_with_base_ranges("", editor.insertion_point())
                 }
             } else {
-                completer.complete("", editor.insertion_point())
+                completer.complete_with_base_ranges("", editor.insertion_point())
             }
         } else {
             // If there is a new line character in the line buffer, the completer
@@ -680,11 +699,17 @@ impl Menu for IdeMenu {
             // Also, by replacing the new line character with a space, the insert
             // position is maintain in the line buffer.
             let trimmed_buffer = editor.get_buffer().replace("\r\n", "  ").replace('\n', " ");
-            completer.complete(
+            completer.complete_with_base_ranges(
                 &trimmed_buffer[..editor.insertion_point()],
                 editor.insertion_point(),
             )
         };
+
+        self.values = values;
+        self.working_details.base_strings = base_ranges
+            .iter()
+            .map(|range| editor.get_buffer()[range.clone()].to_string())
+            .collect::<Vec<String>>();
 
         self.reset_position();
     }
@@ -739,7 +764,18 @@ impl Menu for IdeMenu {
             });
 
             let terminal_width = painter.screen_width();
-            let cursor_pos = self.working_details.cursor_col;
+            let mut cursor_pos = self.working_details.cursor_col;
+
+            if self.default_details.correct_cursor_pos {
+                let base_string = self
+                    .working_details
+                    .base_strings
+                    .iter()
+                    .min_by_key(|s| s.len())
+                    .cloned()
+                    .unwrap_or_default();
+                cursor_pos = cursor_pos.saturating_sub(base_string.width() as u16);
+            }
 
             let border_width = if self.default_details.border.is_some() {
                 2

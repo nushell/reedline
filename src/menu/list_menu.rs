@@ -670,10 +670,6 @@ impl Menu for ListMenu {
     fn min_rows(&self) -> u16 {
         self.max_lines + 1
     }
-
-    fn set_cursor_pos(&mut self, _pos: (u16, u16)) {
-        // The list menu does not need the cursor position
-    }
 }
 
 fn number_of_lines(entry: &str, max_lines: usize, terminal_columns: u16) -> u16 {
