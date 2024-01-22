@@ -728,10 +728,6 @@ impl Menu for ColumnarMenu {
                 .collect()
         }
     }
-
-    fn set_cursor_pos(&mut self, _pos: (u16, u16)) {
-        // The columnar menu does not need the cursor position
-    }
 }
 
 #[cfg(test)]

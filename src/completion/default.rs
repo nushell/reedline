@@ -356,10 +356,10 @@ impl CompletionNode {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
     #[test]
     fn default_completer_with_non_ansi() {
-        use super::*;
-
         let mut completions = DefaultCompleter::default();
         completions.insert(
             ["ｎｕｓｈｅｌｌ", "ｎｕｌｌ", "ｎｕｍｂｅｒ"]
@@ -393,6 +393,53 @@ mod tests {
                     append_whitespace: false,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn default_completer_with_start_strings() {
+        let mut completions = DefaultCompleter::default();
+        completions.insert(
+            ["this is the reedline crate", "test"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        );
+
+        let buffer = "this is t";
+
+        let (suggestions, ranges) = completions.complete_with_base_ranges(buffer, 9);
+        assert_eq!(
+            suggestions,
+            [
+                Suggestion {
+                    value: "test".into(),
+                    description: None,
+                    extra: None,
+                    span: Span { start: 8, end: 9 },
+                    append_whitespace: false,
+                },
+                Suggestion {
+                    value: "this is the reedline crate".into(),
+                    description: None,
+                    extra: None,
+                    span: Span { start: 8, end: 9 },
+                    append_whitespace: false,
+                },
+                Suggestion {
+                    value: "this is the reedline crate".into(),
+                    description: None,
+                    extra: None,
+                    span: Span { start: 0, end: 9 },
+                    append_whitespace: false,
+                },
+            ]
+        );
+
+        assert_eq!(ranges, [8..9, 0..9]);
+        assert_eq!(
+            ["t", "this is t"],
+            [&buffer[ranges[0].clone()], &buffer[ranges[1].clone()]]
         );
     }
 }
