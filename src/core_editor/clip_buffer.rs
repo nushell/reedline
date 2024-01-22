@@ -56,21 +56,29 @@ pub use system_clipboard::SystemClipboard;
 #[cfg(feature = "system_clipboard")]
 /// Helper to get a clipboard based on the `system_clipboard` feature flag:
 ///
-/// Enabled -> [`SystemClipboard`], which talks to the system
+/// Enabled -> [`SystemClipboard`], which talks to the system. If the system clipboard can't be
+/// accessed, it will default to [`LocalClipboard`].
 ///
 /// Disabled -> [`LocalClipboard`], which supports cutting and pasting limited to the [`crate::Reedline`] instance
-pub fn get_default_clipboard() -> SystemClipboard {
-    SystemClipboard::new()
+pub fn get_default_clipboard() -> Box<dyn Clipboard> {
+    SystemClipboard::new().map_or_else(
+        |_e| {
+            eprintln!("Defaulting to local clipboard!");
+            Box::new(LocalClipboard::new()) as Box<dyn Clipboard>
+        },
+        |cb| Box::new(cb),
+    )
 }
 
 #[cfg(not(feature = "system_clipboard"))]
 /// Helper to get a clipboard based on the `system_clipboard` feature flag:
 ///
-/// Enabled -> `SystemClipboard`, which talks to the system
+/// Enabled -> `SystemClipboard`, which talks to the system. If the system clipboard can't be
+/// accessed, it will default to [`LocalClipboard`].
 ///
 /// Disabled -> [`LocalClipboard`], which supports cutting and pasting limited to the [`crate::Reedline`] instance
-pub fn get_default_clipboard() -> LocalClipboard {
-    LocalClipboard::new()
+pub fn get_default_clipboard() -> Box<dyn Clipboard> {
+    Box::new(LocalClipboard::new())
 }
 
 #[cfg(feature = "system_clipboard")]
@@ -78,7 +86,7 @@ mod system_clipboard {
     use super::*;
     use arboard::Clipboard as Arboard;
 
-    /// Wrapper around [`clipboard`](https://docs.rs/clipboard) crate
+    /// Wrapper around [`arboard`](https://docs.rs/arboard) crate
     ///
     /// Requires that the feature `system_clipboard` is enabled
     pub struct SystemClipboard {
@@ -88,13 +96,12 @@ mod system_clipboard {
     }
 
     impl SystemClipboard {
-        pub fn new() -> Self {
-            let cb = Arboard::new().unwrap();
-            SystemClipboard {
-                cb,
+        pub fn new() -> Result<Self, arboard::Error> {
+            Ok(SystemClipboard {
+                cb: Arboard::new()?,
                 local_copy: String::new(),
                 mode: ClipboardMode::Normal,
-            }
+            })
         }
     }
 
@@ -120,7 +127,7 @@ mod system_clipboard {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_default_clipboard, Clipboard, ClipboardMode};
+    use super::{get_default_clipboard, ClipboardMode};
     #[test]
     fn reads_back() {
         let mut cb = get_default_clipboard();
