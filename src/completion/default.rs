@@ -419,6 +419,7 @@ mod tests {
                 Suggestion {
                     value: "test".into(),
                     description: None,
+                    style: None,
                     extra: None,
                     span: Span { start: 8, end: 9 },
                     append_whitespace: false,
@@ -426,6 +427,7 @@ mod tests {
                 Suggestion {
                     value: "this is the reedline crate".into(),
                     description: None,
+                    style: None,
                     extra: None,
                     span: Span { start: 8, end: 9 },
                     append_whitespace: false,
@@ -433,6 +435,7 @@ mod tests {
                 Suggestion {
                     value: "this is the reedline crate".into(),
                     description: None,
+                    style: None,
                     extra: None,
                     span: Span { start: 0, end: 9 },
                     append_whitespace: false,
