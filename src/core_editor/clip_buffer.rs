@@ -62,10 +62,7 @@ pub use system_clipboard::SystemClipboard;
 /// Disabled -> [`LocalClipboard`], which supports cutting and pasting limited to the [`crate::Reedline`] instance
 pub fn get_default_clipboard() -> Box<dyn Clipboard> {
     SystemClipboard::new().map_or_else(
-        |_e| {
-            eprintln!("Defaulting to local clipboard!");
-            Box::new(LocalClipboard::new()) as Box<dyn Clipboard>
-        },
+        |_e| Box::new(LocalClipboard::new()) as Box<dyn Clipboard>,
         |cb| Box::new(cb),
     )
 }
