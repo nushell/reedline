@@ -18,7 +18,7 @@ impl Default for Editor {
     fn default() -> Self {
         Editor {
             line_buffer: LineBuffer::new(),
-            cut_buffer: Box::new(get_default_clipboard()),
+            cut_buffer: get_default_clipboard(),
             edit_stack: EditStack::new(),
             last_undo_behavior: UndoBehavior::CreateUndoPoint,
             selection_anchor: None,
