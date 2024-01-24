@@ -78,6 +78,8 @@ pub trait Completer: Send {
 pub struct Suggestion {
     /// String replacement that will be introduced to the the buffer
     pub value: String,
+    /// Optional display value for the replacement
+    pub display: Option<String>,
     /// Optional description for the replacement
     pub description: Option<String>,
     /// Optional style for the replacement
@@ -90,4 +92,11 @@ pub struct Suggestion {
     /// Whether to append a space after selecting this suggestion.
     /// This helps to avoid that a completer repeats the complete suggestion.
     pub append_whitespace: bool,
+}
+
+impl Suggestion {
+    /// Returns display if set, otherwise value.
+    pub fn display_or_value(&self) -> &String {
+        self.display.as_ref().unwrap_or(&self.value)
+    }
 }
