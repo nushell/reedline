@@ -344,9 +344,17 @@ impl ColumnarMenu {
                     let left_text_size = self.longest_suggestion + self.default_details.col_padding;
                     let right_text_size = self.get_width().saturating_sub(left_text_size);
                     format!(
-                        "{}{:max$}{}{}{}",
+                        "{}{}{:max$}{}{}{}{}{}{}",
+                        suggestion
+                            .style
+                            .unwrap_or(self.color.text_style)
+                            .reverse()
+                            .prefix(),
                         self.color.selected_text_style.prefix(),
                         &suggestion.value,
+                        RESET,
+                        self.color.description_style.reverse().prefix(),
+                        self.color.selected_text_style.prefix(),
                         description
                             .chars()
                             .take(right_text_size)
@@ -358,7 +366,12 @@ impl ColumnarMenu {
                     )
                 } else {
                     format!(
-                        "{}{}{}{:>empty$}{}",
+                        "{}{}{}{}{:>empty$}{}",
+                        suggestion
+                            .style
+                            .unwrap_or(self.color.text_style)
+                            .reverse()
+                            .prefix(),
                         self.color.selected_text_style.prefix(),
                         &suggestion.value,
                         RESET,
@@ -372,7 +385,7 @@ impl ColumnarMenu {
                 let right_text_size = self.get_width().saturating_sub(left_text_size);
                 format!(
                     "{}{:max$}{}{}{}{}{}",
-                    self.color.text_style.prefix(),
+                    suggestion.style.unwrap_or(self.color.text_style).prefix(),
                     &suggestion.value,
                     RESET,
                     self.color.description_style.prefix(),
@@ -388,7 +401,7 @@ impl ColumnarMenu {
             } else {
                 format!(
                     "{}{}{}{}{:>empty$}{}{}",
-                    self.color.text_style.prefix(),
+                    suggestion.style.unwrap_or(self.color.text_style).prefix(),
                     &suggestion.value,
                     RESET,
                     self.color.description_style.prefix(),
@@ -813,6 +826,7 @@ mod tests {
         Suggestion {
             value: name.to_string(),
             description: None,
+            style: None,
             extra: None,
             span: Span { start: 0, end: pos },
             append_whitespace: false,

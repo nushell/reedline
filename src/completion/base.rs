@@ -1,3 +1,4 @@
+use nu_ansi_term::Style;
 use std::ops::Range;
 
 /// A span of source code, with positions in bytes
@@ -79,6 +80,8 @@ pub struct Suggestion {
     pub value: String,
     /// Optional description for the replacement
     pub description: Option<String>,
+    /// Optional style for the replacement
+    pub style: Option<Style>,
     /// Optional vector of strings in the suggestion. These can be used to
     /// represent examples coming from a suggestion
     pub extra: Option<Vec<String>>,

@@ -497,6 +497,7 @@ mod tests {
             .map(|s| Suggestion {
                 value: s.into(),
                 description: None,
+                style: None,
                 extra: None,
                 span: Span::new(0, s.len()),
                 append_whitespace: false,
@@ -516,6 +517,7 @@ mod tests {
             .map(|s| Suggestion {
                 value: s.into(),
                 description: None,
+                style: None,
                 extra: None,
                 span: Span::new(0, s.len()),
                 append_whitespace: false,
