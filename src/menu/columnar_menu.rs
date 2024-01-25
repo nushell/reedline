@@ -1,7 +1,9 @@
-use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
+use super::{Menu, MenuEvent, MenuTextStyle};
 use crate::{
-    core_editor::Editor, menu_functions::{completer_input, replace_in_buffer}, painting::Painter, Completer, Suggestion,
-    UndoBehavior,
+    core_editor::Editor,
+    menu_functions::{can_partially_complete, completer_input, replace_in_buffer},
+    painting::Painter,
+    Completer, Suggestion,
 };
 use nu_ansi_term::{ansi::RESET, Style};
 
@@ -479,37 +481,12 @@ impl Menu for ColumnarMenu {
             self.update_values(editor, completer);
         }
 
-        let values = self.get_values();
-        if let (Some(Suggestion { value, span, .. }), Some(index)) = find_common_string(values) {
-            let index = index.min(value.len());
-            let matching = &value[0..index];
+        if can_partially_complete(self.get_values(), editor) {
+            // The values need to be updated because the spans need to be
+            // recalculated for accurate replacement in the string
+            self.update_values(editor, completer);
 
-            // make sure that the partial completion does not overwrite user entered input
-            let extends_input = matching.starts_with(&editor.get_buffer()[span.start..span.end]);
-
-            if !matching.is_empty() && extends_input {
-                let mut line_buffer = editor.line_buffer().clone();
-                line_buffer.replace_range(span.start..span.end, matching);
-
-                let offset = if matching.len() < (span.end - span.start) {
-                    line_buffer
-                        .insertion_point()
-                        .saturating_sub((span.end - span.start) - matching.len())
-                } else {
-                    line_buffer.insertion_point() + matching.len() - (span.end - span.start)
-                };
-
-                line_buffer.set_insertion_point(offset);
-                editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
-
-                // The values need to be updated because the spans need to be
-                // recalculated for accurate replacement in the string
-                self.update_values(editor, completer);
-
-                true
-            } else {
-                false
-            }
+            true
         } else {
             false
         }

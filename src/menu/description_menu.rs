@@ -1,7 +1,7 @@
 use {
     crate::{
         menu_functions::{completer_input, replace_in_buffer},
-        Completer, Editor, Menu, MenuEvent, MenuTextStyle, Painter, Suggestion, UndoBehavior,
+        Completer, Editor, Menu, MenuEvent, MenuTextStyle, Painter, Suggestion,
     },
     nu_ansi_term::{ansi::RESET, Style},
 };

@@ -4,7 +4,7 @@ use {
         core_editor::Editor,
         menu_functions::{completer_input, replace_in_buffer},
         painting::{estimate_single_line_wraps, Painter},
-        Completer, Suggestion, UndoBehavior,
+        Completer, Suggestion,
     },
     nu_ansi_term::{ansi::RESET, Style},
     std::{fmt::Write, iter::Sum},
