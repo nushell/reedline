@@ -37,8 +37,15 @@ impl Default for FileBackedHistory {
     /// Creates an in-memory [`History`] with a maximal capacity of [`HISTORY_SIZE`].
     ///
     /// To create a [`History`] that is synchronized with a file use [`FileBackedHistory::with_file()`]
+    ///
+    /// # Panics
+    ///
+    /// If `HISTORY_SIZE == usize::MAX`
     fn default() -> Self {
-        Self::new(HISTORY_SIZE)
+        match Self::new(HISTORY_SIZE) {
+            Ok(history) => history,
+            Err(e) => panic!("{}", e),
+        }
     }
 }
 
@@ -286,20 +293,20 @@ impl History for FileBackedHistory {
 impl FileBackedHistory {
     /// Creates a new in-memory history that remembers `n <= capacity` elements
     ///
-    /// # Panics
-    ///
-    /// If `capacity == usize::MAX`
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize) -> Result<Self> {
         if capacity == usize::MAX {
-            panic!("History capacity too large to be addressed safely");
+            return Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
+                "History capacity too large to be addressed safely",
+            )));
         }
-        FileBackedHistory {
+
+        Ok(FileBackedHistory {
             capacity,
             entries: VecDeque::new(),
             file: None,
             len_on_disk: 0,
             session: None,
-        }
+        })
     }
 
     /// Creates a new history with an associated history file.
@@ -310,8 +317,8 @@ impl FileBackedHistory {
     ///
     /// **Side effects:** creates all nested directories to the file
     ///
-    pub fn with_file(capacity: usize, file: PathBuf) -> std::io::Result<Self> {
-        let mut hist = Self::new(capacity);
+    pub fn with_file(capacity: usize, file: PathBuf) -> Result<Self> {
+        let mut hist = Self::new(capacity)?;
         if let Some(base_dir) = file.parent() {
             std::fs::create_dir_all(base_dir)?;
         }

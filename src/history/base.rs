@@ -431,7 +431,7 @@ mod test {
     #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
     #[test]
     fn history_size_zero() -> Result<()> {
-        let mut history = crate::FileBackedHistory::new(0);
+        let mut history = crate::FileBackedHistory::new(0)?;
         history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?;
         assert_eq!(history.count_all()?, 0);
         let _ = history.sync();
@@ -439,5 +439,13 @@ mod test {
         drop(history);
 
         Ok(())
+    }
+
+    #[test]
+    fn create_file_backed_history() {
+        use crate::HISTORY_SIZE;
+
+        assert!(crate::FileBackedHistory::new(usize::MAX).is_err());
+        assert!(crate::FileBackedHistory::new(HISTORY_SIZE).is_ok());
     }
 }
