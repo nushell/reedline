@@ -9,8 +9,8 @@ use {
     reedline::{
         default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
         ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, DefaultValidator,
-        EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, MenuBuilder,
-        Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi,
+        EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline,
+        ReedlineEvent, ReedlineMenu, Signal, Vi,
     },
 };
 
