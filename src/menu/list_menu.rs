@@ -2,7 +2,7 @@ use {
     super::{menu_functions::parse_selection_char, Menu, MenuEvent, MenuTextStyle},
     crate::{
         core_editor::Editor,
-        menu_functions::completer_input,
+        menu_functions::{completer_input, replace_in_buffer},
         painting::{estimate_single_line_wraps, Painter},
         Completer, Suggestion, UndoBehavior,
     },
@@ -450,27 +450,7 @@ impl Menu for ListMenu {
 
     /// The buffer gets cleared with the actual value
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        if let Some(Suggestion {
-            mut value,
-            span,
-            append_whitespace,
-            ..
-        }) = self.get_value()
-        {
-            let buffer_len = editor.line_buffer().len();
-            let start = span.start.min(buffer_len);
-            let end = span.end.min(buffer_len);
-            if append_whitespace {
-                value.push(' ');
-            }
-            let mut line_buffer = editor.line_buffer().clone();
-            line_buffer.replace_range(start..end, &value);
-
-            let mut offset = line_buffer.insertion_point();
-            offset += value.len().saturating_sub(end.saturating_sub(start));
-            line_buffer.set_insertion_point(offset);
-            editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
-        }
+        replace_in_buffer(self.get_value(), editor);
     }
 
     fn update_working_details(

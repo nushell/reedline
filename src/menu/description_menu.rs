@@ -1,7 +1,7 @@
 use {
     crate::{
-        menu_functions::completer_input, Completer, Editor, Menu, MenuEvent, MenuTextStyle,
-        Painter, Suggestion, UndoBehavior,
+        menu_functions::{completer_input, replace_in_buffer},
+        Completer, Editor, Menu, MenuEvent, MenuTextStyle, Painter, Suggestion, UndoBehavior,
     },
     nu_ansi_term::{ansi::RESET, Style},
 };
@@ -619,30 +619,15 @@ impl Menu for DescriptionMenu {
 
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        if let Some(Suggestion { value, span, .. }) = self.get_value() {
-            let start = span.start.min(editor.line_buffer().len());
-            let end = span.end.min(editor.line_buffer().len());
-
-            let replacement = if let Some(example_index) = self.example_index {
-                self.examples
+        if let Some(mut suggestion) = self.get_value() {
+            if let Some(example_index) = self.example_index {
+                let example = self
+                    .examples
                     .get(example_index)
-                    .expect("the example index is always checked")
-            } else {
-                &value
-            };
-
-            editor.edit_buffer(
-                |lb| {
-                    lb.replace_range(start..end, replacement);
-                    let mut offset = lb.insertion_point();
-                    offset += lb
-                        .len()
-                        .saturating_sub(end.saturating_sub(start))
-                        .saturating_sub(start);
-                    lb.set_insertion_point(offset);
-                },
-                UndoBehavior::CreateUndoPoint,
-            );
+                    .expect("the example index is always checked");
+                suggestion.value = example.clone();
+            }
+            replace_in_buffer(Some(suggestion), editor);
         }
     }
 

@@ -1,6 +1,6 @@
 use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
 use crate::{
-    core_editor::Editor, menu_functions::completer_input, painting::Painter, Completer, Suggestion,
+    core_editor::Editor, menu_functions::{completer_input, replace_in_buffer}, painting::Painter, Completer, Suggestion,
     UndoBehavior,
 };
 use nu_ansi_term::{ansi::RESET, Style};
@@ -643,27 +643,7 @@ impl Menu for ColumnarMenu {
 
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        if let Some(Suggestion {
-            mut value,
-            span,
-            append_whitespace,
-            ..
-        }) = self.get_value()
-        {
-            let start = span.start.min(editor.line_buffer().len());
-            let end = span.end.min(editor.line_buffer().len());
-            if append_whitespace {
-                value.push(' ');
-            }
-            let mut line_buffer = editor.line_buffer().clone();
-            line_buffer.replace_range(start..end, &value);
-
-            let mut offset = line_buffer.insertion_point();
-            offset = offset.saturating_add(value.len());
-            offset = offset.saturating_sub(end.saturating_sub(start));
-            line_buffer.set_insertion_point(offset);
-            editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
-        }
+        replace_in_buffer(self.get_value(), editor);
     }
 
     /// Minimum rows that should be displayed by the menu

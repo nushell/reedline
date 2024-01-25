@@ -1,5 +1,5 @@
 //! Collection of common functions that can be used to create menus
-use crate::{Editor, Suggestion};
+use crate::{Editor, Suggestion, UndoBehavior};
 
 /// Index result obtained from parsing a string with an index marker
 /// For example, the next string:
@@ -276,6 +276,35 @@ pub fn completer_input(
             trimmed_buffer[..editor.insertion_point()].to_owned(),
             editor.insertion_point(),
         )
+    }
+}
+
+/// Helper to accept a completion suggestion and edit the buffer
+pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
+    if let Some(Suggestion {
+        mut value,
+        span,
+        append_whitespace,
+        ..
+    }) = value
+    {
+        let start = span.start.min(editor.line_buffer().len());
+        let end = span.end.min(editor.line_buffer().len());
+        if append_whitespace {
+            value.push(' ');
+        }
+
+        editor.edit_buffer(
+            |line_buffer| {
+                line_buffer.replace_range(start..end, &value);
+
+                let mut offset = line_buffer.insertion_point();
+                offset = offset.saturating_add(value.len());
+                offset = offset.saturating_sub(end.saturating_sub(start));
+                line_buffer.set_insertion_point(offset);
+            },
+            UndoBehavior::CreateUndoPoint,
+        );
     }
 }
 
