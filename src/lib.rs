@@ -277,7 +277,7 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
 pub use menu::{
-    menu_functions, ColumnarMenu, DescriptionMode, IdeMenu, ListMenu, Menu, MenuEvent,
+    menu_functions, ColumnarMenu, DescriptionMode, IdeMenu, ListMenu, Menu, MenuBuilder, MenuEvent,
     MenuTextStyle, ReedlineMenu,
 };
 

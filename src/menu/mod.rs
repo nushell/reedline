@@ -12,6 +12,54 @@ pub use ide_menu::IdeMenu;
 pub use list_menu::ListMenu;
 use nu_ansi_term::{Color, Style};
 
+/// Common menu values
+pub struct MenuCommon {
+    /// Menu name
+    name: String,
+    /// Ide menu active status
+    active: bool,
+    /// Menu coloring
+    color: MenuTextStyle,
+    /// Menu cached values
+    values: Vec<Suggestion>,
+    /// Selected value. Starts at 0
+    selected: u16,
+    /// Menu marker when active
+    marker: String,
+    /// Event sent to the menu
+    event: Option<MenuEvent>,
+    /// Longest suggestion found in the values
+    longest_suggestion: usize,
+    /// String collected after the menu is activated
+    input: Option<String>,
+    /// Calls the completer using only the line buffer difference difference
+    /// after the menu was activated
+    only_buffer_difference: bool,
+}
+
+impl MenuCommon {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            active: false,
+            color: MenuTextStyle::default(),
+            values: Vec::new(),
+            selected: 0,
+            marker: "| ".to_string(),
+            event: None,
+            longest_suggestion: 0,
+            input: None,
+            only_buffer_difference: false,
+        }
+    }
+
+    #[must_use]
+    pub fn with_marker(mut self, marker: &str) -> Self {
+        self.marker = marker.to_string();
+        self
+    }
+}
+
 /// Struct to store the menu style
 pub struct MenuTextStyle {
     /// Text style for selected text in a menu
@@ -63,17 +111,40 @@ pub enum MenuEvent {
 
 /// Trait that defines how a menu will be printed by the painter
 pub trait Menu: Send {
+    /// Returns the common menu values
+    fn common(&self) -> &MenuCommon;
+
+    /// Returns the common menu values as mutable
+    fn common_mut(&mut self) -> &mut MenuCommon;
+
     /// Menu name
-    fn name(&self) -> &str;
+    fn name(&self) -> &str {
+        &self.common().name
+    }
 
     /// Menu indicator
-    fn indicator(&self) -> &str;
+    fn indicator(&self) -> &str {
+        &self.common().marker
+    }
 
     /// Checks if the menu is active
-    fn is_active(&self) -> bool;
+    fn is_active(&self) -> bool {
+        self.common().active
+    }
 
     /// Selects what type of event happened with the menu
-    fn menu_event(&mut self, event: MenuEvent);
+    fn menu_event(&mut self, event: MenuEvent) {
+        match &event {
+            MenuEvent::Activate(_) => self.common_mut().active = true,
+            MenuEvent::Deactivate => {
+                self.common_mut().active = false;
+                self.common_mut().input = None;
+            }
+            _ => {}
+        }
+
+        self.common_mut().event = Some(event);
+    }
 
     /// A menu may not be allowed to quick complete because it needs to stay
     /// active even with one element
@@ -120,11 +191,68 @@ pub trait Menu: Send {
     /// Minimum rows that should be displayed by the menu
     fn min_rows(&self) -> u16;
 
+    /// Gets the index of the selected value
+    fn index(&self) -> usize {
+        self.common().selected as usize
+    }
+
+    /// Gets the selected value
+    fn get_value(&self) -> Option<Suggestion> {
+        self.common().values.get(self.index()).cloned()
+    }
+
     /// Gets cached values from menu that will be displayed
-    fn get_values(&self) -> &[Suggestion];
+    fn get_values(&self) -> &[Suggestion] {
+        &self.common().values
+    }
     /// Sets the position of the cursor (currently only required by the IDE menu)
     fn set_cursor_pos(&mut self, _pos: (u16, u16)) {
         // empty implementation to make it optional
+    }
+}
+
+/// Common builder for menus
+pub trait MenuBuilder: Sized + Menu {
+    /// Menu builder with new name
+    #[must_use]
+    fn with_name(mut self, name: &str) -> Self {
+        self.common_mut().name = name.into();
+        self
+    }
+
+    /// Menu builder with new value for text style
+    #[must_use]
+    fn with_text_style(mut self, text_style: Style) -> Self {
+        self.common_mut().color.text_style = text_style;
+        self
+    }
+
+    /// Menu builder with new value for selected text style
+    #[must_use]
+    fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
+        self.common_mut().color.selected_text_style = selected_text_style;
+        self
+    }
+
+    /// Menu builder with new value for description style
+    #[must_use]
+    fn with_description_style(mut self, description_style: Style) -> Self {
+        self.common_mut().color.description_style = description_style;
+        self
+    }
+
+    /// Menu builder with new value for marker
+    #[must_use]
+    fn with_marker(mut self, marker: &str) -> Self {
+        self.common_mut().marker = marker.to_string();
+        self
+    }
+
+    /// Menu builder with new only buffer difference
+    #[must_use]
+    fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
+        self.common_mut().only_buffer_difference = only_buffer_difference;
+        self
     }
 }
 
@@ -229,6 +357,14 @@ impl ReedlineMenu {
 }
 
 impl Menu for ReedlineMenu {
+    fn common(&self) -> &MenuCommon {
+        self.as_ref().common()
+    }
+
+    fn common_mut(&mut self) -> &mut MenuCommon {
+        self.as_mut().common_mut()
+    }
+
     fn name(&self) -> &str {
         self.as_ref().name()
     }
