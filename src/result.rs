@@ -11,7 +11,7 @@ pub enum ReedlineErrorVariants {
     HistoryDatabaseError(String),
 
     /// Error within history
-    #[error("error within history: {0}")]
+    #[error("error in Reedline history: {0}")]
     OtherHistoryError(&'static str),
 
     /// History does not support a feature
