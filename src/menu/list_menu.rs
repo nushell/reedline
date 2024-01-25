@@ -1,10 +1,8 @@
 use {
-    super::{
-        menu_functions::{parse_selection_char, string_difference},
-        Menu, MenuEvent, MenuTextStyle,
-    },
+    super::{menu_functions::parse_selection_char, Menu, MenuEvent, MenuTextStyle},
     crate::{
         core_editor::Editor,
+        menu_functions::completer_input,
         painting::{estimate_single_line_wraps, Painter},
         Completer, Suggestion, UndoBehavior,
     },
@@ -394,27 +392,10 @@ impl Menu for ListMenu {
 
     /// Collecting the value from the completer to be shown in the menu
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        let line_buffer = editor.line_buffer();
-        let (pos, input) = if self.only_buffer_difference {
-            match &self.input {
-                Some(old_string) => {
-                    let (start, input) = string_difference(line_buffer.get_buffer(), old_string);
-                    if input.is_empty() {
-                        (line_buffer.insertion_point(), "")
-                    } else {
-                        (start + input.len(), input)
-                    }
-                }
-                None => (line_buffer.insertion_point(), ""),
-            }
-        } else {
-            (
-                line_buffer.insertion_point(),
-                &line_buffer.get_buffer()[..line_buffer.insertion_point()],
-            )
-        };
+        let (input, pos) =
+            completer_input(self.input.as_deref(), self.only_buffer_difference, editor);
 
-        let parsed = parse_selection_char(input, SELECTION_CHAR);
+        let parsed = parse_selection_char(&input, SELECTION_CHAR);
         self.update_row_pos(parsed.index);
 
         // If there are no row selector and the menu has an Edit event, this clears
@@ -433,10 +414,10 @@ impl Menu for ListMenu {
                 .map(|page| page.size)
                 .unwrap_or(self.page_size);
 
-            completer.partial_complete(input, pos, skip, take)
+            completer.partial_complete(&input, pos, skip, take)
         } else {
             self.query_size = None;
-            completer.complete(input, pos)
+            completer.complete(&input, pos)
         }
     }
 

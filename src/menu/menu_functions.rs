@@ -1,5 +1,5 @@
 //! Collection of common functions that can be used to create menus
-use crate::Suggestion;
+use crate::{Editor, Suggestion};
 
 /// Index result obtained from parsing a string with an index marker
 /// For example, the next string:
@@ -242,6 +242,40 @@ pub fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &
         (Some(start), None) => (start, &new_string[start..]),
         (None, None) => (new_string.len(), ""),
         (None, Some(_)) => unreachable!(),
+    }
+}
+
+/// Get the part of the line that should be given as input to the completer, as well
+/// as the index of the end of that piece of text
+pub fn completer_input(
+    input: Option<&str>,
+    only_buffer_difference: bool,
+    editor: &Editor,
+) -> (String, usize) {
+    if only_buffer_difference {
+        if let Some(old_string) = input {
+            let (start, input) = string_difference(editor.get_buffer(), old_string);
+            if !input.is_empty() {
+                (input.to_owned(), start + input.len())
+            } else {
+                (String::new(), editor.insertion_point())
+            }
+        } else {
+            (String::new(), editor.insertion_point())
+        }
+    } else {
+        // If there is a new line character in the line buffer, the completer
+        // doesn't calculate the suggested values correctly. This happens when
+        // editing a multiline buffer.
+        // Also, by replacing the new line character with a space, the insert
+        // position is maintain in the line buffer.
+        // TODO removing newlines may mess with history completers (list menu didn't do it)
+        // Maybe newlines shouldn't be replaced here at all but rather the completer should handle them
+        let trimmed_buffer = editor.get_buffer().replace("\r\n", "  ").replace('\n', " ");
+        (
+            trimmed_buffer[..editor.insertion_point()].to_owned(),
+            editor.insertion_point(),
+        )
     }
 }
 

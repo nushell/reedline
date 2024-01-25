@@ -1,7 +1,7 @@
 use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
 use crate::{
-    core_editor::Editor, menu_functions::string_difference, painting::Painter, Completer,
-    Suggestion, UndoBehavior,
+    core_editor::Editor, menu_functions::completer_input, painting::Painter, Completer, Suggestion,
+    UndoBehavior,
 };
 use itertools::{
     EitherOrBoth::{Both, Left, Right},
@@ -681,29 +681,12 @@ impl Menu for IdeMenu {
 
     /// Update menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        let (values, base_ranges) = if self.only_buffer_difference {
-            if let Some(old_string) = &self.input {
-                let (start, input) = string_difference(editor.get_buffer(), old_string);
-                if !input.is_empty() {
-                    completer.complete_with_base_ranges(input, start + input.len())
-                } else {
-                    completer.complete_with_base_ranges("", editor.insertion_point())
-                }
-            } else {
-                completer.complete_with_base_ranges("", editor.insertion_point())
-            }
-        } else {
-            // If there is a new line character in the line buffer, the completer
-            // doesn't calculate the suggested values correctly. This happens when
-            // editing a multiline buffer.
-            // Also, by replacing the new line character with a space, the insert
-            // position is maintain in the line buffer.
-            let trimmed_buffer = editor.get_buffer().replace("\r\n", "  ").replace('\n', " ");
-            completer.complete_with_base_ranges(
-                &trimmed_buffer[..editor.insertion_point()],
-                editor.insertion_point(),
-            )
-        };
+        let (input, pos) = completer_input(
+            self.input.as_deref(),
+            self.only_buffer_difference,
+            editor,
+        );
+        let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 
         self.values = values;
         self.working_details.base_strings = base_ranges

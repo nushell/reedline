@@ -1,7 +1,7 @@
 use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
 use crate::{
-    core_editor::Editor, menu_functions::string_difference, painting::Painter, Completer,
-    Suggestion, UndoBehavior,
+    core_editor::Editor, menu_functions::completer_input, painting::Painter, Completer, Suggestion,
+    UndoBehavior,
 };
 use nu_ansi_term::{ansi::RESET, Style};
 
@@ -531,29 +531,9 @@ impl Menu for ColumnarMenu {
 
     /// Updates menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        self.values = if self.only_buffer_difference {
-            if let Some(old_string) = &self.input {
-                let (start, input) = string_difference(editor.get_buffer(), old_string);
-                if !input.is_empty() {
-                    completer.complete(input, start + input.len())
-                } else {
-                    completer.complete("", editor.insertion_point())
-                }
-            } else {
-                completer.complete("", editor.insertion_point())
-            }
-        } else {
-            // If there is a new line character in the line buffer, the completer
-            // doesn't calculate the suggested values correctly. This happens when
-            // editing a multiline buffer.
-            // Also, by replacing the new line character with a space, the insert
-            // position is maintain in the line buffer.
-            let trimmed_buffer = editor.get_buffer().replace("\r\n", "  ").replace('\n', " ");
-            completer.complete(
-                &trimmed_buffer[..editor.insertion_point()],
-                editor.insertion_point(),
-            )
-        };
+        let (input, pos) =
+            completer_input(self.input.as_deref(), self.only_buffer_difference, editor);
+        self.values = completer.complete(&input, pos);
 
         self.reset_position();
     }

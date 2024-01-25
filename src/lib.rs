@@ -277,8 +277,8 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
 pub use menu::{
-    menu_functions, ColumnarMenu, DescriptionMode, IdeMenu, ListMenu, Menu, MenuEvent,
-    MenuTextStyle, ReedlineMenu,
+    menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, IdeMenu, ListMenu, Menu,
+    MenuEvent, MenuTextStyle, ReedlineMenu,
 };
 
 mod terminal_extensions;
