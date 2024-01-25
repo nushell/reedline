@@ -559,8 +559,9 @@ impl IdeMenu {
         if use_ansi_coloring {
             if index == self.index() {
                 format!(
-                    "{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}{}",
                     vertical_border,
+                    suggestion.style.unwrap_or(self.color.text_style).reverse().prefix(),
                     self.color.selected_text_style.prefix(),
                     " ".repeat(padding),
                     string,
@@ -572,7 +573,7 @@ impl IdeMenu {
                 format!(
                     "{}{}{}{}{}{}{}",
                     vertical_border,
-                    self.color.text_style.prefix(),
+                    suggestion.style.unwrap_or(self.color.text_style).prefix(),
                     " ".repeat(padding),
                     string,
                     " ".repeat(padding_right),
