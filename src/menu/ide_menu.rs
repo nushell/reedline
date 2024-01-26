@@ -498,8 +498,11 @@ impl IdeMenu {
                 format!(
                     "{}{}{}{}{}{}{}{}",
                     vertical_border,
-                    suggestion.style.unwrap_or(self.color.text_style).prefix(),
-                    self.color.selected_text_style.prefix(),
+                    suggestion
+                        .style
+                        .unwrap_or(self.common.color.text_style)
+                        .prefix(),
+                    self.common.color.selected_text_style.prefix(),
                     " ".repeat(padding),
                     string,
                     " ".repeat(padding_right),
