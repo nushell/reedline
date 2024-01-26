@@ -338,6 +338,7 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Span;
     use rstest::rstest;
 
     #[test]
@@ -626,7 +627,7 @@ mod tests {
     #[case("foobar", 3, Some("foobar"), true, "", 3)]
     #[case("foobar", 6, Some("foo"), true, "bar", 6)]
     #[case("foobar", 6, Some("for"), true, "oba", 5)]
-    fn completer_input_normal(
+    fn test_completer_input(
         #[case] buffer: String,
         #[case] insertion_point: usize,
         #[case] prev_input: Option<&str>,
@@ -638,5 +639,39 @@ mod tests {
             (output, pos),
             completer_input(&buffer, insertion_point, prev_input, only_buffer_difference)
         )
+    }
+
+    #[rstest]
+    #[case("foobar baz", 6, "foobleh baz", 7, "bleh", 3, 6)]
+    fn test_replace_in_buffer(
+        #[case] orig_buffer: &str,
+        #[case] orig_insertion_point: usize,
+        #[case] new_buffer: &str,
+        #[case] new_insertion_point: usize,
+        #[case] value: String,
+        #[case] start: usize,
+        #[case] end: usize,
+    ) {
+        let mut editor = Editor::default();
+        editor.edit_buffer(
+            |lb| {
+                lb.set_buffer(orig_buffer.to_owned());
+                lb.set_insertion_point(orig_insertion_point);
+            },
+            UndoBehavior::CreateUndoPoint,
+        );
+        replace_in_buffer(
+            Some(Suggestion {
+                value,
+                description: None,
+                style: None,
+                extra: None,
+                span: Span::new(start, end),
+                append_whitespace: false,
+            }),
+            &mut editor,
+        );
+        assert_eq!(new_buffer, editor.get_buffer());
+        assert_eq!(new_insertion_point, editor.insertion_point());
     }
 }
