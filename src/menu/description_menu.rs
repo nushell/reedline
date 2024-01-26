@@ -482,8 +482,12 @@ impl Menu for DescriptionMenu {
 
     /// Updates menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        let (input, pos) =
-            completer_input(self.input.as_deref(), self.only_buffer_difference, editor);
+        let (input, pos) = completer_input(
+            editor.get_buffer(),
+            editor.insertion_point(),
+            self.input.as_deref(),
+            self.only_buffer_difference,
+        );
         self.values = completer.complete(&input, pos);
 
         self.reset_position();

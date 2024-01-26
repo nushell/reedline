@@ -247,35 +247,29 @@ pub fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &
 
 /// Get the part of the line that should be given as input to the completer, as well
 /// as the index of the end of that piece of text
+///
+/// `prev_input` is the text in the buffer when the menu was activated. Needed if only_buffer_difference is true
 pub fn completer_input(
-    input: Option<&str>,
+    buffer: &str,
+    insertion_point: usize,
+    prev_input: Option<&str>,
     only_buffer_difference: bool,
-    editor: &Editor,
 ) -> (String, usize) {
     if only_buffer_difference {
-        if let Some(old_string) = input {
-            let (start, input) = string_difference(editor.get_buffer(), old_string);
+        if let Some(old_string) = prev_input {
+            let (start, input) = string_difference(buffer, old_string);
             if !input.is_empty() {
                 (input.to_owned(), start + input.len())
             } else {
-                (String::new(), editor.insertion_point())
+                (String::new(), insertion_point)
             }
         } else {
-            (String::new(), editor.insertion_point())
+            (String::new(), insertion_point)
         }
     } else {
-        // If there is a new line character in the line buffer, the completer
-        // doesn't calculate the suggested values correctly. This happens when
-        // editing a multiline buffer.
-        // Also, by replacing the new line character with a space, the insert
-        // position is maintain in the line buffer.
-        // TODO removing newlines may mess with history completers (list menu didn't do it)
-        // Maybe newlines shouldn't be replaced here at all but rather the completer should handle them
-        let trimmed_buffer = editor.get_buffer().replace("\r\n", "  ").replace('\n', " ");
-        (
-            trimmed_buffer[..editor.insertion_point()].to_owned(),
-            editor.insertion_point(),
-        )
+        // TODO previously, all but the list menu replaced newlines with spaces here
+        // The completers should be adapted to account for this, and tests need to be added
+        (buffer[..insertion_point].to_owned(), insertion_point)
     }
 }
 
@@ -344,6 +338,7 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     #[test]
     fn parse_row_test() {
@@ -622,5 +617,26 @@ mod tests {
         let res = find_common_string(&input);
 
         assert!(matches!(res, (Some(elem), Some(6)) if elem == &input[0]));
+    }
+
+    #[rstest]
+    #[case("foobar", 6, None, false, "foobar", 6)]
+    #[case("foo\r\nbar", 5, None, false, "foo\r\n", 5)]
+    #[case("foobar", 6, None, true, "", 6)]
+    #[case("foobar", 3, Some("foobar"), true, "", 3)]
+    #[case("foobar", 6, Some("foo"), true, "bar", 6)]
+    #[case("foobar", 6, Some("for"), true, "oba", 5)]
+    fn completer_input_normal(
+        #[case] buffer: String,
+        #[case] insertion_point: usize,
+        #[case] prev_input: Option<&str>,
+        #[case] only_buffer_difference: bool,
+        #[case] output: String,
+        #[case] pos: usize,
+    ) {
+        assert_eq!(
+            (output, pos),
+            completer_input(&buffer, insertion_point, prev_input, only_buffer_difference)
+        )
     }
 }

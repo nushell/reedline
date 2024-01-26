@@ -658,8 +658,12 @@ impl Menu for IdeMenu {
 
     /// Update menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        let (input, pos) =
-            completer_input(self.input.as_deref(), self.only_buffer_difference, editor);
+        let (input, pos) = completer_input(
+            editor.get_buffer(),
+            editor.insertion_point(),
+            self.input.as_deref(),
+            self.only_buffer_difference,
+        );
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 
         self.values = values;
@@ -1105,7 +1109,7 @@ fn truncate_string_list(list: &mut [String], truncation_chars: &str) {
 
 #[cfg(test)]
 mod tests {
-    use crate::Span;
+    use crate::{Span, UndoBehavior};
 
     use super::*;
     use pretty_assertions::assert_eq;
