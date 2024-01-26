@@ -345,15 +345,11 @@ impl ColumnarMenu {
                     let right_text_size = self.get_width().saturating_sub(left_text_size);
                     format!(
                         "{}{}{:max$}{}{}{}{}{}{}",
-                        suggestion
-                            .style
-                            .unwrap_or(self.color.text_style)
-                            .reverse()
-                            .prefix(),
+                        suggestion.style.unwrap_or(self.color.text_style).prefix(),
                         self.color.selected_text_style.prefix(),
                         &suggestion.value,
                         RESET,
-                        self.color.description_style.reverse().prefix(),
+                        self.color.description_style.prefix(),
                         self.color.selected_text_style.prefix(),
                         description
                             .chars()
@@ -367,11 +363,7 @@ impl ColumnarMenu {
                 } else {
                     format!(
                         "{}{}{}{}{:>empty$}{}",
-                        suggestion
-                            .style
-                            .unwrap_or(self.color.text_style)
-                            .reverse()
-                            .prefix(),
+                        suggestion.style.unwrap_or(self.color.text_style).prefix(),
                         self.color.selected_text_style.prefix(),
                         &suggestion.value,
                         RESET,

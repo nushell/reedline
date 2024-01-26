@@ -11,7 +11,7 @@ pub enum ReedlineErrorVariants {
     HistoryDatabaseError(String),
 
     /// Error within history
-    #[error("error within history: {0}")]
+    #[error("error in Reedline history: {0}")]
     OtherHistoryError(&'static str),
 
     /// History does not support a feature
@@ -32,6 +32,12 @@ pub enum ReedlineErrorVariants {
 /// separate struct to not expose anything to the public (for now)
 #[derive(Debug)]
 pub struct ReedlineError(pub ReedlineErrorVariants);
+
+impl From<std::io::Error> for ReedlineError {
+    fn from(err: std::io::Error) -> Self {
+        Self(ReedlineErrorVariants::IOError(err))
+    }
+}
 
 impl Display for ReedlineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
