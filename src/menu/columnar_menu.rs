@@ -1,9 +1,9 @@
-use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
+use super::{menu_functions::find_common_string, Menu, MenuBuilder, MenuCommon, MenuEvent};
 use crate::{
     core_editor::Editor, menu_functions::string_difference, painting::Painter, Completer,
     Suggestion, UndoBehavior,
 };
-use nu_ansi_term::{ansi::RESET, Style};
+use nu_ansi_term::ansi::RESET;
 
 /// Default values used as reference for the menu. These values are set during
 /// the initial declaration of the menu and are always kept as reference for the
@@ -40,12 +40,8 @@ struct ColumnDetails {
 /// Menu to present suggestions in a columnar fashion
 /// It presents a description of the suggestion if available
 pub struct ColumnarMenu {
-    /// Menu name
-    name: String,
-    /// Columnar menu active status
-    active: bool,
-    /// Menu coloring
-    color: MenuTextStyle,
+    /// Common menu values
+    common: MenuCommon,
     /// Default column details that are set when creating the menu
     /// These values are the reference for the working details
     default_details: DefaultColumnDetails,
@@ -54,76 +50,30 @@ pub struct ColumnarMenu {
     min_rows: u16,
     /// Working column details keep changing based on the collected values
     working_details: ColumnDetails,
-    /// Menu cached values
-    values: Vec<Suggestion>,
     /// column position of the cursor. Starts from 0
     col_pos: u16,
     /// row position in the menu. Starts from 0
     row_pos: u16,
-    /// Menu marker when active
-    marker: String,
-    /// Event sent to the menu
-    event: Option<MenuEvent>,
-    /// Longest suggestion found in the values
-    longest_suggestion: usize,
-    /// String collected after the menu is activated
-    input: Option<String>,
-    /// Calls the completer using only the line buffer difference difference
-    /// after the menu was activated
-    only_buffer_difference: bool,
 }
 
 impl Default for ColumnarMenu {
     fn default() -> Self {
         Self {
-            name: "columnar_menu".to_string(),
-            active: false,
-            color: MenuTextStyle::default(),
+            common: MenuCommon::default().with_name("columnar_menu"),
             default_details: DefaultColumnDetails::default(),
             min_rows: 3,
             working_details: ColumnDetails::default(),
-            values: Vec::new(),
             col_pos: 0,
             row_pos: 0,
-            marker: "| ".to_string(),
-            event: None,
-            longest_suggestion: 0,
-            input: None,
-            only_buffer_difference: false,
         }
     }
 }
 
-// Menu configuration functions
+// Menu common configuration functions
+impl MenuBuilder for ColumnarMenu {}
+
+// Menu specific configuration functions
 impl ColumnarMenu {
-    /// Menu builder with new name
-    #[must_use]
-    pub fn with_name(mut self, name: &str) -> Self {
-        self.name = name.into();
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_text_style(mut self, text_style: Style) -> Self {
-        self.color.text_style = text_style;
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
-        self.color.selected_text_style = selected_text_style;
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_description_text_style(mut self, description_text_style: Style) -> Self {
-        self.color.description_style = description_text_style;
-        self
-    }
-
     /// Menu builder with new columns value
     #[must_use]
     pub fn with_columns(mut self, columns: u16) -> Self {
@@ -142,20 +92,6 @@ impl ColumnarMenu {
     #[must_use]
     pub fn with_column_padding(mut self, col_padding: usize) -> Self {
         self.default_details.col_padding = col_padding;
-        self
-    }
-
-    /// Menu builder with marker
-    #[must_use]
-    pub fn with_marker(mut self, marker: String) -> Self {
-        self.marker = marker;
-        self
-    }
-
-    /// Menu builder with new only buffer difference
-    #[must_use]
-    pub fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
-        self.only_buffer_difference = only_buffer_difference;
         self
     }
 }
@@ -218,7 +154,7 @@ impl ColumnarMenu {
         } else {
             let new_row = self.get_rows().saturating_sub(1);
             let index = new_row * self.get_cols() + self.col_pos;
-            if index >= self.values.len() as u16 {
+            if index >= self.common.values.len() as u16 {
                 new_row.saturating_sub(1)
             } else {
                 new_row
@@ -233,7 +169,7 @@ impl ColumnarMenu {
             0
         } else {
             let index = new_row * self.get_cols() + self.col_pos;
-            if index >= self.values.len() as u16 {
+            if index >= self.common.values.len() as u16 {
                 0
             } else {
                 new_row
@@ -245,7 +181,7 @@ impl ColumnarMenu {
     fn move_left(&mut self) {
         self.col_pos = if let Some(row) = self.col_pos.checked_sub(1) {
             row
-        } else if self.index() + 1 == self.values.len() {
+        } else if self.index() + 1 == self.common.values.len() {
             0
         } else {
             self.get_cols().saturating_sub(1)
@@ -255,7 +191,8 @@ impl ColumnarMenu {
     /// Move menu cursor element
     fn move_right(&mut self) {
         let new_col = self.col_pos + 1;
-        self.col_pos = if new_col >= self.get_cols() || self.index() + 2 > self.values.len() {
+        self.col_pos = if new_col >= self.get_cols() || self.index() + 2 > self.common.values.len()
+        {
             0
         } else {
             new_col
@@ -306,7 +243,7 @@ impl ColumnarMenu {
         if use_ansi_coloring {
             format!(
                 "{}{}{}",
-                self.color.selected_text_style.prefix(),
+                self.common.color.selected_text_style.prefix(),
                 msg,
                 RESET
             )
@@ -341,16 +278,20 @@ impl ColumnarMenu {
         if use_ansi_coloring {
             if index == self.index() {
                 if let Some(description) = &suggestion.description {
-                    let left_text_size = self.longest_suggestion + self.default_details.col_padding;
+                    let left_text_size =
+                        self.common.longest_suggestion + self.default_details.col_padding;
                     let right_text_size = self.get_width().saturating_sub(left_text_size);
                     format!(
                         "{}{}{:max$}{}{}{}{}{}{}",
-                        suggestion.style.unwrap_or(self.color.text_style).prefix(),
-                        self.color.selected_text_style.prefix(),
+                        suggestion
+                            .style
+                            .unwrap_or(self.common.color.text_style)
+                            .prefix(),
+                        self.common.color.selected_text_style.prefix(),
                         &suggestion.value,
                         RESET,
-                        self.color.description_style.prefix(),
-                        self.color.selected_text_style.prefix(),
+                        self.common.color.description_style.prefix(),
+                        self.common.color.selected_text_style.prefix(),
                         description
                             .chars()
                             .take(right_text_size)
@@ -363,8 +304,11 @@ impl ColumnarMenu {
                 } else {
                     format!(
                         "{}{}{}{}{:>empty$}{}",
-                        suggestion.style.unwrap_or(self.color.text_style).prefix(),
-                        self.color.selected_text_style.prefix(),
+                        suggestion
+                            .style
+                            .unwrap_or(self.common.color.text_style)
+                            .prefix(),
+                        self.common.color.selected_text_style.prefix(),
                         &suggestion.value,
                         RESET,
                         "",
@@ -373,14 +317,18 @@ impl ColumnarMenu {
                     )
                 }
             } else if let Some(description) = &suggestion.description {
-                let left_text_size = self.longest_suggestion + self.default_details.col_padding;
+                let left_text_size =
+                    self.common.longest_suggestion + self.default_details.col_padding;
                 let right_text_size = self.get_width().saturating_sub(left_text_size);
                 format!(
                     "{}{:max$}{}{}{}{}{}",
-                    suggestion.style.unwrap_or(self.color.text_style).prefix(),
+                    suggestion
+                        .style
+                        .unwrap_or(self.common.color.text_style)
+                        .prefix(),
                     &suggestion.value,
                     RESET,
-                    self.color.description_style.prefix(),
+                    self.common.color.description_style.prefix(),
                     description
                         .chars()
                         .take(right_text_size)
@@ -393,10 +341,13 @@ impl ColumnarMenu {
             } else {
                 format!(
                     "{}{}{}{}{:>empty$}{}{}",
-                    suggestion.style.unwrap_or(self.color.text_style).prefix(),
+                    suggestion
+                        .style
+                        .unwrap_or(self.common.color.text_style)
+                        .prefix(),
                     &suggestion.value,
                     RESET,
-                    self.color.description_style.prefix(),
+                    self.common.color.description_style.prefix(),
                     "",
                     RESET,
                     self.end_of_line(column),
@@ -418,7 +369,7 @@ impl ColumnarMenu {
                         .collect::<String>()
                         .replace('\n', " "),
                     self.end_of_line(column),
-                    max = self.longest_suggestion
+                    max = self.common.longest_suggestion
                         + self
                             .default_details
                             .col_padding
@@ -445,19 +396,14 @@ impl ColumnarMenu {
 }
 
 impl Menu for ColumnarMenu {
-    /// Menu name
-    fn name(&self) -> &str {
-        self.name.as_str()
+    /// Get MenuCommon
+    fn common(&self) -> &MenuCommon {
+        &self.common
     }
 
-    /// Menu indicator
-    fn indicator(&self) -> &str {
-        self.marker.as_str()
-    }
-
-    /// Deactivates context menu
-    fn is_active(&self) -> bool {
-        self.active
+    /// Get mutable MenuCommon
+    fn common_mut(&mut self) -> &mut MenuCommon {
+        &mut self.common
     }
 
     /// The columnar menu can to quick complete if there is only one element
@@ -515,24 +461,10 @@ impl Menu for ColumnarMenu {
         }
     }
 
-    /// Selects what type of event happened with the menu
-    fn menu_event(&mut self, event: MenuEvent) {
-        match &event {
-            MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => {
-                self.active = false;
-                self.input = None;
-            }
-            _ => {}
-        }
-
-        self.event = Some(event);
-    }
-
     /// Updates menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        self.values = if self.only_buffer_difference {
-            if let Some(old_string) = &self.input {
+        self.common.values = if self.common.only_buffer_difference {
+            if let Some(old_string) = &self.common.input {
                 let (start, input) = string_difference(editor.get_buffer(), old_string);
                 if !input.is_empty() {
                     completer.complete(input, start + input.len())
@@ -566,7 +498,7 @@ impl Menu for ColumnarMenu {
         completer: &mut dyn Completer,
         painter: &Painter,
     ) {
-        if let Some(event) = self.event.take() {
+        if let Some(event) = self.common.event.take() {
             // The working value for the menu are updated first before executing any of the
             // menu events
             //
@@ -581,13 +513,14 @@ impl Menu for ColumnarMenu {
                 self.working_details.columns = 1;
                 self.working_details.col_width = painter.screen_width() as usize;
 
-                self.longest_suggestion = self.get_values().iter().fold(0, |prev, suggestion| {
-                    if prev >= suggestion.value.len() {
-                        prev
-                    } else {
-                        suggestion.value.len()
-                    }
-                });
+                self.common.longest_suggestion =
+                    self.get_values().iter().fold(0, |prev, suggestion| {
+                        if prev >= suggestion.value.len() {
+                            prev
+                        } else {
+                            suggestion.value.len()
+                        }
+                    });
             } else {
                 let max_width = self.get_values().iter().fold(0, |acc, suggestion| {
                     let str_len = suggestion.value.len() + self.default_details.col_padding;
@@ -627,10 +560,10 @@ impl Menu for ColumnarMenu {
 
             match event {
                 MenuEvent::Activate(updated) => {
-                    self.active = true;
+                    self.common.active = true;
                     self.reset_position();
 
-                    self.input = if self.only_buffer_difference {
+                    self.common.input = if self.common.only_buffer_difference {
                         Some(editor.get_buffer().to_string())
                     } else {
                         None
@@ -640,7 +573,7 @@ impl Menu for ColumnarMenu {
                         self.update_values(editor, completer);
                     }
                 }
-                MenuEvent::Deactivate => self.active = false,
+                MenuEvent::Deactivate => self.common.active = false,
                 MenuEvent::Edit(updated) => {
                     self.reset_position();
 
@@ -693,7 +626,7 @@ impl Menu for ColumnarMenu {
 
     /// Gets values from filler that will be displayed in the menu
     fn get_values(&self) -> &[Suggestion] {
-        &self.values
+        &self.common.values
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {

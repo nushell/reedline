@@ -1,14 +1,14 @@
 use {
     super::{
         menu_functions::{parse_selection_char, string_difference},
-        Menu, MenuEvent, MenuTextStyle,
+        Menu, MenuBuilder, MenuCommon, MenuEvent,
     },
     crate::{
         core_editor::Editor,
         painting::{estimate_single_line_wraps, Painter},
         Completer, Suggestion, UndoBehavior,
     },
-    nu_ansi_term::{ansi::RESET, Style},
+    nu_ansi_term::ansi::RESET,
     std::{fmt::Write, iter::Sum},
     unicode_width::UnicodeWidthStr,
 };
@@ -41,22 +41,10 @@ impl<'a> Sum<&'a Page> for Page {
 /// Struct to store the menu style
 /// Context menu definition
 pub struct ListMenu {
-    /// Menu name
-    name: String,
-    /// Menu coloring
-    color: MenuTextStyle,
+    /// Common menu values
+    common: MenuCommon,
     /// Number of records pulled until page is full
     page_size: usize,
-    /// Menu marker displayed when the menu is active
-    marker: String,
-    /// Menu active status
-    active: bool,
-    /// Cached values collected when querying the completer.
-    /// When collecting chronological values, the menu only caches at least
-    /// page_size records.
-    /// When performing a query to the completer, the cached values will
-    /// be the result from such query
-    values: Vec<Suggestion>,
     /// row position in the menu. Starts from 0
     row_position: u16,
     /// Max size of the suggestions when querying without a search buffer
@@ -69,88 +57,34 @@ pub struct ListMenu {
     pages: Vec<Page>,
     /// Page index
     page: usize,
-    /// Event sent to the menu
-    event: Option<MenuEvent>,
-    /// String collected after the menu is activated
-    input: Option<String>,
-    /// Calls the completer using only the line buffer difference difference
-    /// after the menu was activated
-    only_buffer_difference: bool,
 }
 
 impl Default for ListMenu {
     fn default() -> Self {
         Self {
-            name: "search_menu".to_string(),
-            color: MenuTextStyle::default(),
+            common: MenuCommon::default()
+                .with_name("search_menu")
+                .with_marker("? "),
             page_size: 10,
-            active: false,
-            values: Vec::new(),
             row_position: 0,
             page: 0,
             query_size: None,
-            marker: "? ".to_string(),
             max_lines: 5,
             multiline_marker: ":::".to_string(),
             pages: Vec::new(),
-            event: None,
-            input: None,
-            only_buffer_difference: true,
         }
     }
 }
 
-// Menu configuration functions
+// Menu common configuration functions
+impl MenuBuilder for ListMenu {}
+
+// Menu specific configuration functions
 impl ListMenu {
-    /// Menu builder with new name
-    #[must_use]
-    pub fn with_name(mut self, name: &str) -> Self {
-        self.name = name.into();
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_text_style(mut self, text_style: Style) -> Self {
-        self.color.text_style = text_style;
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
-        self.color.selected_text_style = selected_text_style;
-        self
-    }
-
-    /// Menu builder with new value for description style
-    #[must_use]
-    pub fn with_description_text_style(mut self, description_text_style: Style) -> Self {
-        self.color.description_style = description_text_style;
-        self
-    }
-
     /// Menu builder with new page size
     #[must_use]
     pub fn with_page_size(mut self, page_size: usize) -> Self {
         self.page_size = page_size;
-        self
-    }
-
-    /// Menu builder with new only buffer difference
-    #[must_use]
-    pub fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
-        self.only_buffer_difference = only_buffer_difference;
-        self
-    }
-}
-
-// Menu functionality
-impl ListMenu {
-    /// Menu builder with menu marker
-    #[must_use]
-    pub fn with_marker(mut self, marker: String) -> Self {
-        self.marker = marker;
         self
     }
 
@@ -160,7 +94,10 @@ impl ListMenu {
         self.max_lines = max_lines;
         self
     }
+}
 
+// Menu functionality
+impl ListMenu {
     fn update_row_pos(&mut self, new_pos: Option<usize>) {
         if let (Some(row), Some(page)) = (new_pos, self.pages.get(self.page)) {
             let values_before_page = self.pages.iter().take(self.page).sum::<Page>().size;
@@ -177,7 +114,7 @@ impl ListMenu {
     }
 
     fn total_values(&self) -> usize {
-        self.query_size.unwrap_or(self.values.len())
+        self.query_size.unwrap_or(self.common.values.len())
     }
 
     fn values_until_current_page(&self) -> usize {
@@ -246,7 +183,7 @@ impl ListMenu {
         if use_ansi_coloring {
             format!(
                 "{}{}{}",
-                self.color.selected_text_style.prefix(),
+                self.common.color.selected_text_style.prefix(),
                 msg,
                 RESET
             )
@@ -257,7 +194,7 @@ impl ListMenu {
 
     fn banner_message(&self, page: &Page, use_ansi_coloring: bool) -> String {
         let values_until = self.values_until_current_page().saturating_sub(1);
-        let value_before = if self.values.is_empty() || self.page == 0 {
+        let value_before = if self.common.values.is_empty() || self.page == 0 {
             0
         } else {
             let page_size = self.pages.get(self.page).map(|page| page.size).unwrap_or(0);
@@ -277,7 +214,7 @@ impl ListMenu {
         if use_ansi_coloring {
             format!(
                 "{}{}{}",
-                self.color.selected_text_style.prefix(),
+                self.common.color.selected_text_style.prefix(),
                 status_bar,
                 RESET,
             )
@@ -294,9 +231,9 @@ impl ListMenu {
     /// Text style for menu
     fn text_style(&self, index: usize) -> String {
         if index == self.index() {
-            self.color.selected_text_style.prefix().to_string()
+            self.common.color.selected_text_style.prefix().to_string()
         } else {
-            self.color.text_style.prefix().to_string()
+            self.common.color.text_style.prefix().to_string()
         }
     }
 
@@ -313,7 +250,7 @@ impl ListMenu {
             if use_ansi_coloring {
                 format!(
                     "{}({}) {}",
-                    self.color.description_style.prefix(),
+                    self.common.color.description_style.prefix(),
                     desc,
                     RESET
                 )
@@ -348,18 +285,14 @@ impl ListMenu {
 }
 
 impl Menu for ListMenu {
-    fn name(&self) -> &str {
-        self.name.as_str()
+    /// Get MenuCommon
+    fn common(&self) -> &MenuCommon {
+        &self.common
     }
 
-    /// Menu indicator
-    fn indicator(&self) -> &str {
-        self.marker.as_str()
-    }
-
-    /// Deactivates context menu
-    fn is_active(&self) -> bool {
-        self.active
+    /// Get mutable MenuCommon
+    fn common_mut(&mut self) -> &mut MenuCommon {
+        &mut self.common
     }
 
     /// There is no use for quick complete for the menu
@@ -378,25 +311,11 @@ impl Menu for ListMenu {
         false
     }
 
-    /// Selects what type of event happened with the menu
-    fn menu_event(&mut self, event: MenuEvent) {
-        match &event {
-            MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => {
-                self.active = false;
-                self.input = None;
-            }
-            _ => {}
-        }
-
-        self.event = Some(event);
-    }
-
     /// Collecting the value from the completer to be shown in the menu
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         let line_buffer = editor.line_buffer();
-        let (pos, input) = if self.only_buffer_difference {
-            match &self.input {
+        let (pos, input) = if self.common.only_buffer_difference {
+            match &self.common.input {
                 Some(old_string) => {
                     let (start, input) = string_difference(line_buffer.get_buffer(), old_string);
                     if input.is_empty() {
@@ -419,11 +338,11 @@ impl Menu for ListMenu {
 
         // If there are no row selector and the menu has an Edit event, this clears
         // the position together with the pages vector
-        if matches!(self.event, Some(MenuEvent::Edit(_))) && parsed.index.is_none() {
+        if matches!(self.common.event, Some(MenuEvent::Edit(_))) && parsed.index.is_none() {
             self.reset_position();
         }
 
-        self.values = if parsed.remainder.is_empty() {
+        self.common.values = if parsed.remainder.is_empty() {
             self.query_size = Some(completer.total_completions(parsed.remainder, pos));
 
             let skip = self.pages.iter().take(self.page).sum::<Page>().size;
@@ -445,13 +364,13 @@ impl Menu for ListMenu {
         if self.query_size.is_some() {
             // When there is a size value it means that only a chunk of the
             // chronological data from the database was collected
-            &self.values
+            &self.common.values
         } else {
             // If no record then it means that the values hold the result
             // from the query to the database. This slice can be used to get the
             // data that will be shown in the menu
-            if self.values.is_empty() {
-                return &self.values;
+            if self.common.values.is_empty() {
+                return &self.common.values;
             }
 
             let start = self.pages.iter().take(self.page).sum::<Page>().size;
@@ -463,7 +382,7 @@ impl Menu for ListMenu {
             };
 
             let end = end.min(self.total_values());
-            &self.values[start..end]
+            &self.common.values[start..end]
         }
     }
 
@@ -498,12 +417,12 @@ impl Menu for ListMenu {
         completer: &mut dyn Completer,
         painter: &Painter,
     ) {
-        if let Some(event) = self.event.clone() {
+        if let Some(event) = self.common.event.clone() {
             match event {
                 MenuEvent::Activate(_) => {
                     self.reset_position();
 
-                    self.input = if self.only_buffer_difference {
+                    self.common.input = if self.common.only_buffer_difference {
                         Some(editor.get_buffer().to_string())
                     } else {
                         None
@@ -517,8 +436,8 @@ impl Menu for ListMenu {
                     });
                 }
                 MenuEvent::Deactivate => {
-                    self.active = false;
-                    self.input = None;
+                    self.common.active = false;
+                    self.common.input = None;
                 }
                 MenuEvent::Edit(_) => {
                     self.update_values(editor, completer);
@@ -532,7 +451,7 @@ impl Menu for ListMenu {
 
                     if let Some(page) = self.pages.get(self.page) {
                         if new_pos >= page.size as u16 {
-                            self.event = Some(MenuEvent::NextPage);
+                            self.common.event = Some(MenuEvent::NextPage);
                             self.update_working_details(editor, completer, painter);
                         } else {
                             self.row_position = new_pos;
@@ -553,7 +472,7 @@ impl Menu for ListMenu {
                             self.row_position = page.size.saturating_sub(1) as u16;
                         }
 
-                        self.event = Some(MenuEvent::PreviousPage);
+                        self.common.event = Some(MenuEvent::PreviousPage);
                         self.update_working_details(editor, completer, painter);
                     }
                 }
@@ -591,7 +510,7 @@ impl Menu for ListMenu {
                 }
             }
 
-            self.event = None;
+            self.common.event = None;
         }
     }
 

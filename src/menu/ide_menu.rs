@@ -1,4 +1,4 @@
-use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
+use super::{menu_functions::find_common_string, Menu, MenuBuilder, MenuCommon, MenuEvent};
 use crate::{
     core_editor::Editor, menu_functions::string_difference, painting::Painter, Completer,
     Suggestion, UndoBehavior,
@@ -7,7 +7,7 @@ use itertools::{
     EitherOrBoth::{Both, Left, Right},
     Itertools,
 };
-use nu_ansi_term::{ansi::RESET, Style};
+use nu_ansi_term::ansi::RESET;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -130,118 +130,69 @@ struct IdeMenuDetails {
 
 /// Menu to present suggestions like similar to Ide completion menus
 pub struct IdeMenu {
-    /// Menu name
-    name: String,
-    /// Ide menu active status
-    active: bool,
-    /// Menu coloring
-    color: MenuTextStyle,
+    /// Common menu values
+    common: MenuCommon,
     /// Default ide menu details that are set when creating the menu
     /// These values are the reference for the working details
     default_details: DefaultIdeMenuDetails,
     /// Working ide menu details keep changing based on the collected values
     working_details: IdeMenuDetails,
-    /// Menu cached values
-    values: Vec<Suggestion>,
-    /// Selected value. Starts at 0
+    /// Selected value
     selected: u16,
-    /// Menu marker when active
-    marker: String,
-    /// Event sent to the menu
-    event: Option<MenuEvent>,
-    /// Longest suggestion found in the values
-    longest_suggestion: usize,
-    /// String collected after the menu is activated
-    input: Option<String>,
-    /// Calls the completer using only the line buffer difference difference
-    /// after the menu was activated
-    only_buffer_difference: bool,
 }
 
 impl Default for IdeMenu {
     fn default() -> Self {
         Self {
-            name: "ide_completion_menu".to_string(),
-            active: false,
-            color: MenuTextStyle::default(),
+            common: MenuCommon::default().with_name("ide_completion_menu"),
             default_details: DefaultIdeMenuDetails::default(),
             working_details: IdeMenuDetails::default(),
-            values: Vec::new(),
             selected: 0,
-            marker: "| ".to_string(),
-            event: None,
-            longest_suggestion: 0,
-            input: None,
-            only_buffer_difference: false,
         }
     }
 }
 
+// Menu common configuration functions
+impl MenuBuilder for IdeMenu {}
+
+// Menu specific configuration functions
 impl IdeMenu {
-    /// Menu builder with new name
-    #[must_use]
-    pub fn with_name(mut self, name: &str) -> Self {
-        self.name = name.into();
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_text_style(mut self, text_style: Style) -> Self {
-        self.color.text_style = text_style;
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
-        self.color.selected_text_style = selected_text_style;
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_description_text_style(mut self, description_text_style: Style) -> Self {
-        self.color.description_style = description_text_style;
-        self
-    }
-
-    /// Menu builder with new value for min completion width value
+    /// Menu builder with new value for min completion width
     #[must_use]
     pub fn with_min_completion_width(mut self, width: u16) -> Self {
         self.default_details.min_completion_width = width;
         self
     }
 
-    /// Menu builder with new value for max completion width value
+    /// Menu builder with new value for max completion width
     #[must_use]
     pub fn with_max_completion_width(mut self, width: u16) -> Self {
         self.default_details.max_completion_width = width;
         self
     }
 
-    /// Menu builder with new value for max completion height value
+    /// Menu builder with new value for max completion height
     #[must_use]
     pub fn with_max_completion_height(mut self, height: u16) -> Self {
         self.default_details.max_completion_height = height;
         self
     }
 
-    /// Menu builder with new value for padding value
+    /// Menu builder with new value for padding
     #[must_use]
     pub fn with_padding(mut self, padding: u16) -> Self {
         self.default_details.padding = padding;
         self
     }
 
-    /// Menu builder with the default border value
+    /// Menu builder with the default border
     #[must_use]
     pub fn with_default_border(mut self) -> Self {
         self.default_details.border = Some(BorderSymbols::default());
         self
     }
 
-    /// Menu builder with new value for border value
+    /// Menu builder with new value for border
     #[must_use]
     pub fn with_border(
         mut self,
@@ -263,24 +214,10 @@ impl IdeMenu {
         self
     }
 
-    /// Menu builder with new value for cursor offset value
+    /// Menu builder with new value for cursor offset
     #[must_use]
     pub fn with_cursor_offset(mut self, cursor_offset: i16) -> Self {
         self.default_details.cursor_offset = cursor_offset;
-        self
-    }
-
-    /// Menu builder with marker
-    #[must_use]
-    pub fn with_marker(mut self, marker: String) -> Self {
-        self.marker = marker;
-        self
-    }
-
-    /// Menu builder with new only buffer difference
-    #[must_use]
-    pub fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
-        self.only_buffer_difference = only_buffer_difference;
         self
     }
 
@@ -330,7 +267,7 @@ impl IdeMenu {
 // Menu functionality
 impl IdeMenu {
     fn move_next(&mut self) {
-        if self.selected < (self.values.len() as u16).saturating_sub(1) {
+        if self.selected < (self.common.values.len() as u16).saturating_sub(1) {
             self.selected += 1;
         } else {
             self.selected = 0;
@@ -341,7 +278,7 @@ impl IdeMenu {
         if self.selected > 0 {
             self.selected -= 1;
         } else {
-            self.selected = self.values.len().saturating_sub(1) as u16;
+            self.selected = self.common.values.len().saturating_sub(1) as u16;
         }
     }
 
@@ -350,7 +287,7 @@ impl IdeMenu {
     }
 
     fn get_value(&self) -> Option<Suggestion> {
-        self.values.get(self.index()).cloned()
+        self.common.values.get(self.index()).cloned()
     }
 
     /// Calculates how many rows the Menu will try to use (if available)
@@ -399,7 +336,7 @@ impl IdeMenu {
         if use_ansi_coloring {
             format!(
                 "{}{}{}",
-                self.color.selected_text_style.prefix(),
+                self.common.color.selected_text_style.prefix(),
                 msg,
                 RESET
             )
@@ -457,7 +394,7 @@ impl IdeMenu {
                     *line = format!(
                         "{}{}{}{}{}{}",
                         border.vertical,
-                        self.color.description_style.prefix(),
+                        self.common.color.description_style.prefix(),
                         line,
                         padding,
                         RESET,
@@ -486,7 +423,7 @@ impl IdeMenu {
                 if use_ansi_coloring {
                     *line = format!(
                         "{}{}{}{}",
-                        self.color.description_style.prefix(),
+                        self.common.color.description_style.prefix(),
                         line,
                         padding,
                         RESET
@@ -563,10 +500,10 @@ impl IdeMenu {
                     vertical_border,
                     suggestion
                         .style
-                        .unwrap_or(self.color.text_style)
+                        .unwrap_or(self.common.color.text_style)
                         .reverse()
                         .prefix(),
-                    self.color.selected_text_style.prefix(),
+                    self.common.color.selected_text_style.prefix(),
                     " ".repeat(padding),
                     string,
                     " ".repeat(padding_right),
@@ -577,7 +514,10 @@ impl IdeMenu {
                 format!(
                     "{}{}{}{}{}{}{}",
                     vertical_border,
-                    suggestion.style.unwrap_or(self.color.text_style).prefix(),
+                    suggestion
+                        .style
+                        .unwrap_or(self.common.color.text_style)
+                        .prefix(),
                     " ".repeat(padding),
                     string,
                     " ".repeat(padding_right),
@@ -602,19 +542,14 @@ impl IdeMenu {
 }
 
 impl Menu for IdeMenu {
-    /// Menu name
-    fn name(&self) -> &str {
-        self.name.as_str()
+    /// Get MenuCommon
+    fn common(&self) -> &MenuCommon {
+        &self.common
     }
 
-    /// Menu indicator
-    fn indicator(&self) -> &str {
-        self.marker.as_str()
-    }
-
-    /// Deactivates context menu
-    fn is_active(&self) -> bool {
-        self.active
+    /// Get mutable MenuCommon
+    fn common_mut(&mut self) -> &mut MenuCommon {
+        &mut self.common
     }
 
     /// The ide menu can to quick complete if there is only one element
@@ -670,24 +605,10 @@ impl Menu for IdeMenu {
         }
     }
 
-    /// Selects what type of event happened with the menu
-    fn menu_event(&mut self, event: MenuEvent) {
-        match &event {
-            MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => {
-                self.active = false;
-                self.input = None;
-            }
-            _ => {}
-        }
-
-        self.event = Some(event);
-    }
-
     /// Update menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        let (values, base_ranges) = if self.only_buffer_difference {
-            if let Some(old_string) = &self.input {
+        let (values, base_ranges) = if self.common.only_buffer_difference {
+            if let Some(old_string) = &self.common.input {
                 let (start, input) = string_difference(editor.get_buffer(), old_string);
                 if !input.is_empty() {
                     completer.complete_with_base_ranges(input, start + input.len())
@@ -710,7 +631,7 @@ impl Menu for IdeMenu {
             )
         };
 
-        self.values = values;
+        self.common.values = values;
         self.working_details.base_strings = base_ranges
             .iter()
             .map(|range| editor.get_buffer()[range.clone()].to_string())
@@ -727,14 +648,14 @@ impl Menu for IdeMenu {
         completer: &mut dyn Completer,
         painter: &Painter,
     ) {
-        if let Some(event) = self.event.take() {
+        if let Some(event) = self.common.event.take() {
             // The working value for the menu are updated first before executing any of the
             match event {
                 MenuEvent::Activate(updated) => {
-                    self.active = true;
+                    self.common.active = true;
                     self.reset_position();
 
-                    self.input = if self.only_buffer_difference {
+                    self.common.input = if self.common.only_buffer_difference {
                         Some(editor.get_buffer().to_string())
                     } else {
                         None
@@ -744,7 +665,7 @@ impl Menu for IdeMenu {
                         self.update_values(editor, completer);
                     }
                 }
-                MenuEvent::Deactivate => self.active = false,
+                MenuEvent::Deactivate => self.common.active = false,
                 MenuEvent::Edit(updated) => {
                     self.reset_position();
 
@@ -760,13 +681,14 @@ impl Menu for IdeMenu {
                 | MenuEvent::NextPage => {}
             }
 
-            self.longest_suggestion = self.get_values().iter().fold(0, |prev, suggestion| {
-                if prev >= suggestion.value.len() {
-                    prev
-                } else {
-                    suggestion.value.len()
-                }
-            });
+            self.common.longest_suggestion =
+                self.get_values().iter().fold(0, |prev, suggestion| {
+                    if prev >= suggestion.value.len() {
+                        prev
+                    } else {
+                        suggestion.value.len()
+                    }
+                });
 
             let terminal_width = painter.screen_width();
             let mut cursor_pos = self.working_details.cursor_col;
@@ -808,7 +730,7 @@ impl Menu for IdeMenu {
                 0
             };
 
-            let completion_width = ((self.longest_suggestion.min(u16::MAX as usize) as u16)
+            let completion_width = ((self.common.longest_suggestion.min(u16::MAX as usize) as u16)
                 + 2 * self.default_details.padding
                 + border_width)
                 .min(self.default_details.max_completion_width)
@@ -915,7 +837,7 @@ impl Menu for IdeMenu {
     }
 
     fn get_values(&self) -> &[Suggestion] {
-        &self.values
+        &self.common.values
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
@@ -948,7 +870,7 @@ impl Menu for IdeMenu {
             let available_values = available_lines.saturating_sub(border_width) as usize;
 
             let max_padding = self.working_details.completion_width.saturating_sub(
-                self.longest_suggestion.min(u16::MAX as usize) as u16 + border_width,
+                self.common.longest_suggestion.min(u16::MAX as usize) as u16 + border_width,
             ) / 2;
 
             let corrected_padding = self.default_details.padding.min(max_padding) as usize;
