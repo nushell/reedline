@@ -69,7 +69,7 @@ pub trait Menu: Send {
     fn settings(&self) -> &MenuSettings {
         // We panic here, so this function has base implementation
         // so existing menus will not break.
-        // if a breaking change is ok, this can be removed 
+        // if a breaking change is ok, this can be removed
         panic!("`settings` requires a manual implementation per menu. It has a base implementation to not break existing menus")
     }
 
