@@ -6,8 +6,8 @@
 
 use reedline::{
     default_emacs_keybindings, DefaultCompleter, DefaultPrompt, DescriptionMode, EditCommand,
-    Emacs, IdeMenu, KeyCode, KeyModifiers, Keybindings, Reedline, ReedlineEvent, ReedlineMenu,
-    Signal,
+    Emacs, IdeMenu, KeyCode, KeyModifiers, Keybindings, MenuBuilder, Reedline, ReedlineEvent,
+    ReedlineMenu, Signal,
 };
 use std::io;
 

@@ -14,9 +14,9 @@ use {
     },
 };
 
-use reedline::CursorConfig;
 #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
 use reedline::FileBackedHistory;
+use reedline::{CursorConfig, MenuBuilder};
 
 fn main() -> reedline::Result<()> {
     println!("Ctrl-D to quit");
