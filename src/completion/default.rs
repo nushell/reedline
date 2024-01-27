@@ -78,7 +78,7 @@ impl Completer for DefaultCompleter {
             // When editing a multiline buffer, there can be new line characters in it.
             // Also, by replacing the new line character with a space, the insert
             // position is maintain in the line buffer.
-            let line = line.replace("\r\n", " ").replace('\n', " ");
+            let line = line.replace("\r\n", "  ").replace('\n', " ");
             let mut split = line.split(' ').rev();
             let mut span_line: String = String::new();
             for _ in 0..split.clone().count() {
