@@ -623,6 +623,7 @@ mod tests {
     #[rstest]
     #[case("foobar", 6, None, false, "foobar", 6)]
     #[case("foo\r\nbar", 5, None, false, "foo\r\n", 5)]
+    #[case("foo\nbar", 4, None, false, "foo\n", 4)]
     #[case("foobar", 6, None, true, "", 6)]
     #[case("foobar", 3, Some("foobar"), true, "", 3)]
     #[case("foobar", 6, Some("foo"), true, "bar", 6)]
