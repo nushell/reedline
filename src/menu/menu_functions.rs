@@ -288,17 +288,13 @@ pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
             value.push(' ');
         }
 
-        editor.edit_buffer(
-            |line_buffer| {
-                line_buffer.replace_range(start..end, &value);
-
-                let mut offset = line_buffer.insertion_point();
-                offset = offset.saturating_add(value.len());
-                offset = offset.saturating_sub(end.saturating_sub(start));
-                line_buffer.set_insertion_point(offset);
-            },
-            UndoBehavior::CreateUndoPoint,
-        );
+        let mut line_buffer = editor.line_buffer().clone();
+        line_buffer.replace_range(start..end, &value);
+        let mut offset = line_buffer.insertion_point();
+        offset = offset.saturating_add(value.len());
+        offset = offset.saturating_sub(end.saturating_sub(start));
+        line_buffer.set_insertion_point(offset);
+        editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
     }
 }
 
@@ -338,7 +334,7 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Span;
+    use crate::{EditCommand, LineBuffer, Span};
     use rstest::rstest;
 
     #[test]
@@ -644,6 +640,8 @@ mod tests {
 
     #[rstest]
     #[case("foobar baz", 6, "foobleh baz", 7, "bleh", 3, 6)]
+    #[case("foobar baz", 6, "foo baz", 3, "", 3, 6)]
+    #[case("foobar baz", 10, "foobleh", 7, "bleh", 3, 1000)]
     fn test_replace_in_buffer(
         #[case] orig_buffer: &str,
         #[case] orig_insertion_point: usize,
@@ -654,13 +652,10 @@ mod tests {
         #[case] end: usize,
     ) {
         let mut editor = Editor::default();
-        editor.edit_buffer(
-            |lb| {
-                lb.set_buffer(orig_buffer.to_owned());
-                lb.set_insertion_point(orig_insertion_point);
-            },
-            UndoBehavior::CreateUndoPoint,
-        );
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.set_buffer(orig_buffer.to_owned());
+        line_buffer.set_insertion_point(orig_insertion_point);
+        editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
         replace_in_buffer(
             Some(Suggestion {
                 value,
@@ -674,5 +669,9 @@ mod tests {
         );
         assert_eq!(new_buffer, editor.get_buffer());
         assert_eq!(new_insertion_point, editor.insertion_point());
+
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(orig_buffer, editor.get_buffer());
+        assert_eq!(orig_insertion_point, editor.insertion_point());
     }
 }
