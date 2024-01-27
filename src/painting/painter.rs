@@ -342,12 +342,21 @@ impl Painter {
         self.stdout.queue(Print(&coerce_crlf(prompt_skipped)))?;
 
         if extra_rows == 0 {
+            if use_ansi_coloring {
+                self.stdout
+                    .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
+            }
+
             self.print_right_prompt(lines)?;
         }
 
         // Adjusting extra_rows base on the calculated prompt line size
         let extra_rows = extra_rows.saturating_sub(prompt_lines);
 
+        if use_ansi_coloring {
+            self.stdout
+                .queue(SetForegroundColor(prompt.get_indicator_color()))?;
+        }
         let indicator_skipped = skip_buffer_lines(&lines.prompt_indicator, extra_rows, None);
         self.stdout.queue(Print(&coerce_crlf(indicator_skipped)))?;
 
