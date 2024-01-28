@@ -513,10 +513,9 @@ impl IdeMenu {
 
         if use_ansi_coloring {
             let match_len = self.working_details.shortest_base_string.len();
-            
+
             // Split string so the match text can be styled
-            let (match_str, remaining_str) = string
-                .split_at(match_len);
+            let (match_str, remaining_str) = string.split_at(match_len);
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -532,7 +531,6 @@ impl IdeMenu {
                     self.settings.color.selected_match_style.prefix(),
                     match_str,
                     RESET,
-
                     suggestion_style_prefix,
                     self.settings.color.selected_text_style.prefix(),
                     remaining_str,
@@ -549,7 +547,6 @@ impl IdeMenu {
                     self.settings.color.match_style.prefix(),
                     match_str,
                     RESET,
-
                     suggestion_style_prefix,
                     self.settings.color.text_style.prefix(),
                     remaining_str,
@@ -700,9 +697,7 @@ impl Menu for IdeMenu {
             let mut cursor_pos = self.working_details.cursor_col;
 
             if self.default_details.correct_cursor_pos {
-                let base_string = &self
-                    .working_details
-                    .shortest_base_string;
+                let base_string = &self.working_details.shortest_base_string;
 
                 cursor_pos = cursor_pos.saturating_sub(base_string.width() as u16);
             }

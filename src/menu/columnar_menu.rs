@@ -301,8 +301,7 @@ impl ColumnarMenu {
             let match_len = self.working_details.shortest_base_string.len();
 
             // Split string so the match text can be styled
-            let (match_str, remaining_str) = suggestion.value
-                .split_at(match_len);
+            let (match_str, remaining_str) = suggestion.value.split_at(match_len);
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -319,7 +318,6 @@ impl ColumnarMenu {
                         self.settings.color.selected_match_style.prefix(),
                         match_str,
                         RESET,
-             
                         suggestion_style_prefix,
                         self.settings.color.selected_text_style.prefix(),
                         &remaining_str,
@@ -342,7 +340,6 @@ impl ColumnarMenu {
                         self.settings.color.selected_match_style.prefix(),
                         match_str,
                         RESET,
-
                         suggestion_style_prefix,
                         self.settings.color.selected_text_style.prefix(),
                         remaining_str,
@@ -361,7 +358,6 @@ impl ColumnarMenu {
                     self.settings.color.match_style.prefix(),
                     match_str,
                     RESET,
-
                     suggestion_style_prefix,
                     remaining_str,
                     RESET,
@@ -382,7 +378,6 @@ impl ColumnarMenu {
                     self.settings.color.match_style.prefix(),
                     match_str,
                     RESET,
-
                     suggestion_style_prefix,
                     remaining_str,
                     RESET,
@@ -499,7 +494,7 @@ impl Menu for ColumnarMenu {
         );
 
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
-        
+
         self.values = values;
         self.working_details.shortest_base_string = base_ranges
             .iter()

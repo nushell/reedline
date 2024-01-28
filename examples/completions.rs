@@ -56,7 +56,7 @@ fn main() -> io::Result<()> {
         "abacaxyc".into(),
         "abadarabc".into(),
     ];
-    
+
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands, 2));
 
     // Use the interactive menu to select options from the completer
