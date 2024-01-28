@@ -689,7 +689,11 @@ impl Reedline {
             }
 
             let mut latest_resize = None;
-            loop {
+
+            // There could be multiple events queued up!
+            // pasting text, resizes, blocking this thread (e.g. during debugging)
+            // We should be able to handle all of them as quickly as possible without causing unnecessary output steps.
+            while event::poll(Duration::from_millis(POLL_WAIT))? {
                 match event::read()? {
                     Event::Resize(x, y) => {
                         latest_resize = Some((x, y));
@@ -717,13 +721,6 @@ impl Reedline {
                             crossterm_events.push(evt);
                         }
                     }
-                }
-
-                // There could be multiple events queued up!
-                // pasting text, resizes, blocking this thread (e.g. during debugging)
-                // We should be able to handle all of them as quickly as possible without causing unnecessary output steps.
-                if !event::poll(Duration::from_millis(POLL_WAIT))? {
-                    break;
                 }
             }
 
