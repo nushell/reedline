@@ -487,6 +487,12 @@ impl Reedline {
         self.transient_prompt = Some(transient_prompt);
         self
     }
+    /// Remove the current prompt
+    #[must_use]
+    pub fn disable_transient_prompt(mut self) -> Self {
+        self.transient_prompt = None;
+        self
+    }
 
     /// A builder which configures the edit mode for your instance of the Reedline engine
     #[must_use]
