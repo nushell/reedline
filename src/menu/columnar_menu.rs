@@ -1,9 +1,11 @@
-use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
+use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
-    core_editor::Editor, menu_functions::string_difference, painting::Painter, Completer,
-    Suggestion, UndoBehavior,
+    core_editor::Editor,
+    menu_functions::{can_partially_complete, completer_input, replace_in_buffer},
+    painting::Painter,
+    Completer, Suggestion,
 };
-use nu_ansi_term::{ansi::RESET, Style};
+use nu_ansi_term::ansi::RESET;
 
 /// Default values used as reference for the menu. These values are set during
 /// the initial declaration of the menu and are always kept as reference for the
@@ -40,12 +42,10 @@ struct ColumnDetails {
 /// Menu to present suggestions in a columnar fashion
 /// It presents a description of the suggestion if available
 pub struct ColumnarMenu {
-    /// Menu name
-    name: String,
+    /// Menu settings
+    settings: MenuSettings,
     /// Columnar menu active status
     active: bool,
-    /// Menu coloring
-    color: MenuTextStyle,
     /// Default column details that are set when creating the menu
     /// These values are the reference for the working details
     default_details: DefaultColumnDetails,
@@ -60,70 +60,41 @@ pub struct ColumnarMenu {
     col_pos: u16,
     /// row position in the menu. Starts from 0
     row_pos: u16,
-    /// Menu marker when active
-    marker: String,
     /// Event sent to the menu
     event: Option<MenuEvent>,
     /// Longest suggestion found in the values
     longest_suggestion: usize,
     /// String collected after the menu is activated
     input: Option<String>,
-    /// Calls the completer using only the line buffer difference difference
-    /// after the menu was activated
-    only_buffer_difference: bool,
 }
 
 impl Default for ColumnarMenu {
     fn default() -> Self {
         Self {
-            name: "columnar_menu".to_string(),
+            settings: MenuSettings::default().with_name("columnar_menu"),
             active: false,
-            color: MenuTextStyle::default(),
             default_details: DefaultColumnDetails::default(),
             min_rows: 3,
             working_details: ColumnDetails::default(),
             values: Vec::new(),
             col_pos: 0,
             row_pos: 0,
-            marker: "| ".to_string(),
             event: None,
             longest_suggestion: 0,
             input: None,
-            only_buffer_difference: false,
         }
     }
 }
 
 // Menu configuration functions
+impl MenuBuilder for ColumnarMenu {
+    fn settings_mut(&mut self) -> &mut MenuSettings {
+        &mut self.settings
+    }
+}
+
+// Menu specific configuration functions
 impl ColumnarMenu {
-    /// Menu builder with new name
-    #[must_use]
-    pub fn with_name(mut self, name: &str) -> Self {
-        self.name = name.into();
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_text_style(mut self, text_style: Style) -> Self {
-        self.color.text_style = text_style;
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
-        self.color.selected_text_style = selected_text_style;
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_description_text_style(mut self, description_text_style: Style) -> Self {
-        self.color.description_style = description_text_style;
-        self
-    }
-
     /// Menu builder with new columns value
     #[must_use]
     pub fn with_columns(mut self, columns: u16) -> Self {
@@ -142,20 +113,6 @@ impl ColumnarMenu {
     #[must_use]
     pub fn with_column_padding(mut self, col_padding: usize) -> Self {
         self.default_details.col_padding = col_padding;
-        self
-    }
-
-    /// Menu builder with marker
-    #[must_use]
-    pub fn with_marker(mut self, marker: String) -> Self {
-        self.marker = marker;
-        self
-    }
-
-    /// Menu builder with new only buffer difference
-    #[must_use]
-    pub fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
-        self.only_buffer_difference = only_buffer_difference;
         self
     }
 }
@@ -306,7 +263,7 @@ impl ColumnarMenu {
         if use_ansi_coloring {
             format!(
                 "{}{}{}",
-                self.color.selected_text_style.prefix(),
+                self.settings.color.selected_text_style.prefix(),
                 msg,
                 RESET
             )
@@ -345,12 +302,15 @@ impl ColumnarMenu {
                     let right_text_size = self.get_width().saturating_sub(left_text_size);
                     format!(
                         "{}{}{:max$}{}{}{}{}{}{}",
-                        suggestion.style.unwrap_or(self.color.text_style).prefix(),
-                        self.color.selected_text_style.prefix(),
+                        suggestion
+                            .style
+                            .unwrap_or(self.settings.color.text_style)
+                            .prefix(),
+                        self.settings.color.selected_text_style.prefix(),
                         &suggestion.value,
                         RESET,
-                        self.color.description_style.prefix(),
-                        self.color.selected_text_style.prefix(),
+                        self.settings.color.description_style.prefix(),
+                        self.settings.color.selected_text_style.prefix(),
                         description
                             .chars()
                             .take(right_text_size)
@@ -363,8 +323,11 @@ impl ColumnarMenu {
                 } else {
                     format!(
                         "{}{}{}{}{:>empty$}{}",
-                        suggestion.style.unwrap_or(self.color.text_style).prefix(),
-                        self.color.selected_text_style.prefix(),
+                        suggestion
+                            .style
+                            .unwrap_or(self.settings.color.text_style)
+                            .prefix(),
+                        self.settings.color.selected_text_style.prefix(),
                         &suggestion.value,
                         RESET,
                         "",
@@ -377,10 +340,13 @@ impl ColumnarMenu {
                 let right_text_size = self.get_width().saturating_sub(left_text_size);
                 format!(
                     "{}{:max$}{}{}{}{}{}",
-                    suggestion.style.unwrap_or(self.color.text_style).prefix(),
+                    suggestion
+                        .style
+                        .unwrap_or(self.settings.color.text_style)
+                        .prefix(),
                     &suggestion.value,
                     RESET,
-                    self.color.description_style.prefix(),
+                    self.settings.color.description_style.prefix(),
                     description
                         .chars()
                         .take(right_text_size)
@@ -393,10 +359,13 @@ impl ColumnarMenu {
             } else {
                 format!(
                     "{}{}{}{}{:>empty$}{}{}",
-                    suggestion.style.unwrap_or(self.color.text_style).prefix(),
+                    suggestion
+                        .style
+                        .unwrap_or(self.settings.color.text_style)
+                        .prefix(),
                     &suggestion.value,
                     RESET,
-                    self.color.description_style.prefix(),
+                    self.settings.color.description_style.prefix(),
                     "",
                     RESET,
                     self.end_of_line(column),
@@ -445,14 +414,9 @@ impl ColumnarMenu {
 }
 
 impl Menu for ColumnarMenu {
-    /// Menu name
-    fn name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    /// Menu indicator
-    fn indicator(&self) -> &str {
-        self.marker.as_str()
+    /// Menu settings
+    fn settings(&self) -> &MenuSettings {
+        &self.settings
     }
 
     /// Deactivates context menu
@@ -479,37 +443,12 @@ impl Menu for ColumnarMenu {
             self.update_values(editor, completer);
         }
 
-        let values = self.get_values();
-        if let (Some(Suggestion { value, span, .. }), Some(index)) = find_common_string(values) {
-            let index = index.min(value.len());
-            let matching = &value[0..index];
+        if can_partially_complete(self.get_values(), editor) {
+            // The values need to be updated because the spans need to be
+            // recalculated for accurate replacement in the string
+            self.update_values(editor, completer);
 
-            // make sure that the partial completion does not overwrite user entered input
-            let extends_input = matching.starts_with(&editor.get_buffer()[span.start..span.end]);
-
-            if !matching.is_empty() && extends_input {
-                let mut line_buffer = editor.line_buffer().clone();
-                line_buffer.replace_range(span.start..span.end, matching);
-
-                let offset = if matching.len() < (span.end - span.start) {
-                    line_buffer
-                        .insertion_point()
-                        .saturating_sub((span.end - span.start) - matching.len())
-                } else {
-                    line_buffer.insertion_point() + matching.len() - (span.end - span.start)
-                };
-
-                line_buffer.set_insertion_point(offset);
-                editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
-
-                // The values need to be updated because the spans need to be
-                // recalculated for accurate replacement in the string
-                self.update_values(editor, completer);
-
-                true
-            } else {
-                false
-            }
+            true
         } else {
             false
         }
@@ -531,29 +470,13 @@ impl Menu for ColumnarMenu {
 
     /// Updates menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        self.values = if self.only_buffer_difference {
-            if let Some(old_string) = &self.input {
-                let (start, input) = string_difference(editor.get_buffer(), old_string);
-                if !input.is_empty() {
-                    completer.complete(input, start + input.len())
-                } else {
-                    completer.complete("", editor.insertion_point())
-                }
-            } else {
-                completer.complete("", editor.insertion_point())
-            }
-        } else {
-            // If there is a new line character in the line buffer, the completer
-            // doesn't calculate the suggested values correctly. This happens when
-            // editing a multiline buffer.
-            // Also, by replacing the new line character with a space, the insert
-            // position is maintain in the line buffer.
-            let trimmed_buffer = editor.get_buffer().replace("\r\n", "  ").replace('\n', " ");
-            completer.complete(
-                &trimmed_buffer[..editor.insertion_point()],
-                editor.insertion_point(),
-            )
-        };
+        let (input, pos) = completer_input(
+            editor.get_buffer(),
+            editor.insertion_point(),
+            self.input.as_deref(),
+            self.settings.only_buffer_difference,
+        );
+        self.values = completer.complete(&input, pos);
 
         self.reset_position();
     }
@@ -630,7 +553,7 @@ impl Menu for ColumnarMenu {
                     self.active = true;
                     self.reset_position();
 
-                    self.input = if self.only_buffer_difference {
+                    self.input = if self.settings.only_buffer_difference {
                         Some(editor.get_buffer().to_string())
                     } else {
                         None
@@ -663,27 +586,7 @@ impl Menu for ColumnarMenu {
 
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        if let Some(Suggestion {
-            mut value,
-            span,
-            append_whitespace,
-            ..
-        }) = self.get_value()
-        {
-            let start = span.start.min(editor.line_buffer().len());
-            let end = span.end.min(editor.line_buffer().len());
-            if append_whitespace {
-                value.push(' ');
-            }
-            let mut line_buffer = editor.line_buffer().clone();
-            line_buffer.replace_range(start..end, &value);
-
-            let mut offset = line_buffer.insertion_point();
-            offset = offset.saturating_add(value.len());
-            offset = offset.saturating_sub(end.saturating_sub(start));
-            line_buffer.set_insertion_point(offset);
-            editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
-        }
+        replace_in_buffer(self.get_value(), editor);
     }
 
     /// Minimum rows that should be displayed by the menu
@@ -737,7 +640,7 @@ impl Menu for ColumnarMenu {
 
 #[cfg(test)]
 mod tests {
-    use crate::Span;
+    use crate::{Span, UndoBehavior};
 
     use super::*;
 

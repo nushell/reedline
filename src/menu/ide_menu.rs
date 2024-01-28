@@ -1,13 +1,15 @@
-use super::{menu_functions::find_common_string, Menu, MenuEvent, MenuTextStyle};
+use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
-    core_editor::Editor, menu_functions::string_difference, painting::Painter, Completer,
-    Suggestion, UndoBehavior,
+    core_editor::Editor,
+    menu_functions::{can_partially_complete, completer_input, replace_in_buffer},
+    painting::Painter,
+    Completer, Suggestion,
 };
 use itertools::{
     EitherOrBoth::{Both, Left, Right},
     Itertools,
 };
-use nu_ansi_term::{ansi::RESET, Style};
+use nu_ansi_term::ansi::RESET;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -130,12 +132,10 @@ struct IdeMenuDetails {
 
 /// Menu to present suggestions like similar to Ide completion menus
 pub struct IdeMenu {
-    /// Menu name
-    name: String,
+    /// Menu settings
+    settings: MenuSettings,
     /// Ide menu active status
     active: bool,
-    /// Menu coloring
-    color: MenuTextStyle,
     /// Default ide menu details that are set when creating the menu
     /// These values are the reference for the working details
     default_details: DefaultIdeMenuDetails,
@@ -145,103 +145,75 @@ pub struct IdeMenu {
     values: Vec<Suggestion>,
     /// Selected value. Starts at 0
     selected: u16,
-    /// Menu marker when active
-    marker: String,
     /// Event sent to the menu
     event: Option<MenuEvent>,
     /// Longest suggestion found in the values
     longest_suggestion: usize,
     /// String collected after the menu is activated
     input: Option<String>,
-    /// Calls the completer using only the line buffer difference difference
-    /// after the menu was activated
-    only_buffer_difference: bool,
 }
 
 impl Default for IdeMenu {
     fn default() -> Self {
         Self {
-            name: "ide_completion_menu".to_string(),
+            settings: MenuSettings::default().with_name("ide_completion_menu"),
             active: false,
-            color: MenuTextStyle::default(),
             default_details: DefaultIdeMenuDetails::default(),
             working_details: IdeMenuDetails::default(),
             values: Vec::new(),
             selected: 0,
-            marker: "| ".to_string(),
             event: None,
             longest_suggestion: 0,
             input: None,
-            only_buffer_difference: false,
         }
     }
 }
 
+// Menu configuration functions
+impl MenuBuilder for IdeMenu {
+    fn settings_mut(&mut self) -> &mut MenuSettings {
+        &mut self.settings
+    }
+}
+
+// Menu specific configuration functions
 impl IdeMenu {
-    /// Menu builder with new name
-    #[must_use]
-    pub fn with_name(mut self, name: &str) -> Self {
-        self.name = name.into();
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_text_style(mut self, text_style: Style) -> Self {
-        self.color.text_style = text_style;
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_selected_text_style(mut self, selected_text_style: Style) -> Self {
-        self.color.selected_text_style = selected_text_style;
-        self
-    }
-
-    /// Menu builder with new value for text style
-    #[must_use]
-    pub fn with_description_text_style(mut self, description_text_style: Style) -> Self {
-        self.color.description_style = description_text_style;
-        self
-    }
-
-    /// Menu builder with new value for min completion width value
+    /// Menu builder with new value for min completion width
     #[must_use]
     pub fn with_min_completion_width(mut self, width: u16) -> Self {
         self.default_details.min_completion_width = width;
         self
     }
 
-    /// Menu builder with new value for max completion width value
+    /// Menu builder with new value for max completion width
     #[must_use]
     pub fn with_max_completion_width(mut self, width: u16) -> Self {
         self.default_details.max_completion_width = width;
         self
     }
 
-    /// Menu builder with new value for max completion height value
+    /// Menu builder with new value for max completion height
     #[must_use]
     pub fn with_max_completion_height(mut self, height: u16) -> Self {
         self.default_details.max_completion_height = height;
         self
     }
 
-    /// Menu builder with new value for padding value
+    /// Menu builder with new value for padding
     #[must_use]
     pub fn with_padding(mut self, padding: u16) -> Self {
         self.default_details.padding = padding;
         self
     }
 
-    /// Menu builder with the default border value
+    /// Menu builder with the default border
     #[must_use]
     pub fn with_default_border(mut self) -> Self {
         self.default_details.border = Some(BorderSymbols::default());
         self
     }
 
-    /// Menu builder with new value for border value
+    /// Menu builder with new value for border
     #[must_use]
     pub fn with_border(
         mut self,
@@ -263,24 +235,10 @@ impl IdeMenu {
         self
     }
 
-    /// Menu builder with new value for cursor offset value
+    /// Menu builder with new value for cursor offset
     #[must_use]
     pub fn with_cursor_offset(mut self, cursor_offset: i16) -> Self {
         self.default_details.cursor_offset = cursor_offset;
-        self
-    }
-
-    /// Menu builder with marker
-    #[must_use]
-    pub fn with_marker(mut self, marker: String) -> Self {
-        self.marker = marker;
-        self
-    }
-
-    /// Menu builder with new only buffer difference
-    #[must_use]
-    pub fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
-        self.only_buffer_difference = only_buffer_difference;
         self
     }
 
@@ -399,7 +357,7 @@ impl IdeMenu {
         if use_ansi_coloring {
             format!(
                 "{}{}{}",
-                self.color.selected_text_style.prefix(),
+                self.settings.color.selected_text_style.prefix(),
                 msg,
                 RESET
             )
@@ -431,8 +389,6 @@ impl IdeMenu {
 
         let mut description_lines = split_string(&description, content_width as usize);
 
-        // panic!("{:?}", description_lines);
-
         if description_lines.len() > content_height as usize {
             description_lines.truncate(content_height as usize);
             truncate_string_list(&mut description_lines, "...");
@@ -457,7 +413,7 @@ impl IdeMenu {
                     *line = format!(
                         "{}{}{}{}{}{}",
                         border.vertical,
-                        self.color.description_style.prefix(),
+                        self.settings.color.description_style.prefix(),
                         line,
                         padding,
                         RESET,
@@ -486,7 +442,7 @@ impl IdeMenu {
                 if use_ansi_coloring {
                     *line = format!(
                         "{}{}{}{}",
-                        self.color.description_style.prefix(),
+                        self.settings.color.description_style.prefix(),
                         line,
                         padding,
                         RESET
@@ -561,8 +517,11 @@ impl IdeMenu {
                 format!(
                     "{}{}{}{}{}{}{}{}",
                     vertical_border,
-                    suggestion.style.unwrap_or(self.color.text_style).prefix(),
-                    self.color.selected_text_style.prefix(),
+                    suggestion
+                        .style
+                        .unwrap_or(self.settings.color.text_style)
+                        .prefix(),
+                    self.settings.color.selected_text_style.prefix(),
                     " ".repeat(padding),
                     string,
                     " ".repeat(padding_right),
@@ -573,7 +532,10 @@ impl IdeMenu {
                 format!(
                     "{}{}{}{}{}{}{}",
                     vertical_border,
-                    suggestion.style.unwrap_or(self.color.text_style).prefix(),
+                    suggestion
+                        .style
+                        .unwrap_or(self.settings.color.text_style)
+                        .prefix(),
                     " ".repeat(padding),
                     string,
                     " ".repeat(padding_right),
@@ -598,14 +560,9 @@ impl IdeMenu {
 }
 
 impl Menu for IdeMenu {
-    /// Menu name
-    fn name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    /// Menu indicator
-    fn indicator(&self) -> &str {
-        self.marker.as_str()
+    /// Menu settings
+    fn settings(&self) -> &MenuSettings {
+        &self.settings
     }
 
     /// Deactivates context menu
@@ -630,37 +587,12 @@ impl Menu for IdeMenu {
             self.update_values(editor, completer);
         }
 
-        let values = self.get_values();
-        if let (Some(Suggestion { value, span, .. }), Some(index)) = find_common_string(values) {
-            let index = index.min(value.len());
-            let matching = &value[0..index];
+        if can_partially_complete(self.get_values(), editor) {
+            // The values need to be updated because the spans need to be
+            // recalculated for accurate replacement in the string
+            self.update_values(editor, completer);
 
-            // make sure that the partial completion does not overwrite user entered input
-            let extends_input = matching.starts_with(&editor.get_buffer()[span.start..span.end]);
-
-            if !matching.is_empty() && extends_input {
-                let mut line_buffer = editor.line_buffer().clone();
-                line_buffer.replace_range(span.start..span.end, matching);
-
-                let offset = if matching.len() < (span.end - span.start) {
-                    line_buffer
-                        .insertion_point()
-                        .saturating_sub((span.end - span.start) - matching.len())
-                } else {
-                    line_buffer.insertion_point() + matching.len() - (span.end - span.start)
-                };
-
-                line_buffer.set_insertion_point(offset);
-                editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
-
-                // The values need to be updated because the spans need to be
-                // recalculated for accurate replacement in the string
-                self.update_values(editor, completer);
-
-                true
-            } else {
-                false
-            }
+            true
         } else {
             false
         }
@@ -682,29 +614,13 @@ impl Menu for IdeMenu {
 
     /// Update menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        let (values, base_ranges) = if self.only_buffer_difference {
-            if let Some(old_string) = &self.input {
-                let (start, input) = string_difference(editor.get_buffer(), old_string);
-                if !input.is_empty() {
-                    completer.complete_with_base_ranges(input, start + input.len())
-                } else {
-                    completer.complete_with_base_ranges("", editor.insertion_point())
-                }
-            } else {
-                completer.complete_with_base_ranges("", editor.insertion_point())
-            }
-        } else {
-            // If there is a new line character in the line buffer, the completer
-            // doesn't calculate the suggested values correctly. This happens when
-            // editing a multiline buffer.
-            // Also, by replacing the new line character with a space, the insert
-            // position is maintain in the line buffer.
-            let trimmed_buffer = editor.get_buffer().replace("\r\n", "  ").replace('\n', " ");
-            completer.complete_with_base_ranges(
-                &trimmed_buffer[..editor.insertion_point()],
-                editor.insertion_point(),
-            )
-        };
+        let (input, pos) = completer_input(
+            editor.get_buffer(),
+            editor.insertion_point(),
+            self.input.as_deref(),
+            self.settings.only_buffer_difference,
+        );
+        let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 
         self.values = values;
         self.working_details.base_strings = base_ranges
@@ -730,7 +646,7 @@ impl Menu for IdeMenu {
                     self.active = true;
                     self.reset_position();
 
-                    self.input = if self.only_buffer_difference {
+                    self.input = if self.settings.only_buffer_difference {
                         Some(editor.get_buffer().to_string())
                     } else {
                         None
@@ -882,27 +798,7 @@ impl Menu for IdeMenu {
 
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        if let Some(Suggestion {
-            mut value,
-            span,
-            append_whitespace,
-            ..
-        }) = self.get_value()
-        {
-            let start = span.start.min(editor.line_buffer().len());
-            let end = span.end.min(editor.line_buffer().len());
-            if append_whitespace {
-                value.push(' ');
-            }
-            let mut line_buffer = editor.line_buffer().clone();
-            line_buffer.replace_range(start..end, &value);
-
-            let mut offset = line_buffer.insertion_point();
-            offset = offset.saturating_add(value.len());
-            offset = offset.saturating_sub(end.saturating_sub(start));
-            line_buffer.set_insertion_point(offset);
-            editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
-        }
+        replace_in_buffer(self.get_value(), editor);
     }
 
     /// Minimum rows that should be displayed by the menu
@@ -1169,7 +1065,7 @@ fn truncate_string_list(list: &mut [String], truncation_chars: &str) {
 
 #[cfg(test)]
 mod tests {
-    use crate::Span;
+    use crate::{Span, UndoBehavior};
 
     use super::*;
     use pretty_assertions::assert_eq;

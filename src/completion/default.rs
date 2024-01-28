@@ -61,11 +61,11 @@ impl Completer for DefaultCompleter {
     ///     ]);
     ///
     /// assert_eq!(
-    ///     completions.complete("to the bat",10),
+    ///     completions.complete("to the\r\nbat",11),
     ///     vec![
-    ///         Suggestion {value: "batcave".into(), description: None, style: None, extra: None, span: Span { start: 7, end: 10 }, append_whitespace: false},
-    ///         Suggestion {value: "batman".into(), description: None, style: None, extra: None, span: Span { start: 7, end: 10 }, append_whitespace: false},
-    ///         Suggestion {value: "batmobile".into(), description: None, style: None, extra: None, span: Span { start: 7, end: 10 }, append_whitespace: false},
+    ///         Suggestion {value: "batcave".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false},
+    ///         Suggestion {value: "batman".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false},
+    ///         Suggestion {value: "batmobile".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false},
     ///     ]);
     /// ```
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
@@ -75,6 +75,10 @@ impl Completer for DefaultCompleter {
         // `only_buffer_difference` is false
         let line = if line.len() > pos { &line[..pos] } else { line };
         if !line.is_empty() {
+            // When editing a multiline buffer, there can be new line characters in it.
+            // Also, by replacing the new line character with a space, the insert
+            // position is maintain in the line buffer.
+            let line = line.replace("\r\n", "  ").replace('\n', " ");
             let mut split = line.split(' ').rev();
             let mut span_line: String = String::new();
             for _ in 0..split.clone().count() {
@@ -119,6 +123,7 @@ impl Completer for DefaultCompleter {
         completions
     }
 }
+
 impl DefaultCompleter {
     /// Construct the default completer with a list of commands/keywords to highlight
     pub fn new(external_commands: Vec<String>) -> Self {
