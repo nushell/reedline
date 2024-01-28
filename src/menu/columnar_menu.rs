@@ -71,7 +71,7 @@ pub struct ColumnarMenu {
 impl Default for ColumnarMenu {
     fn default() -> Self {
         Self {
-            settings: MenuSettings::default(),
+            settings: MenuSettings::default().with_name("columnar_menu"),
             active: false,
             default_details: DefaultColumnDetails::default(),
             min_rows: 3,
