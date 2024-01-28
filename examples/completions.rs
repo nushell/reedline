@@ -36,10 +36,27 @@ fn main() -> io::Result<()> {
 
     let commands = vec![
         "test".into(),
+        "clear".into(),
+        "exit".into(),
+        "history 1".into(),
+        "history 2".into(),
+        "logout".into(),
+        "login".into(),
         "hello world".into(),
         "hello world reedline".into(),
+        "hello world something".into(),
+        "hello world another".into(),
+        "hello world 1".into(),
+        "hello world 2".into(),
+        "hello another very large option for hello word that will force one column".into(),
         "this is the reedline crate".into(),
+        "abaaabas".into(),
+        "abaaacas".into(),
+        "ababac".into(),
+        "abacaxyc".into(),
+        "abadarabc".into(),
     ];
+    
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands, 2));
 
     // Use the interactive menu to select options from the completer

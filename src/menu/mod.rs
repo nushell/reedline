@@ -22,6 +22,12 @@ pub struct MenuTextStyle {
     pub text_style: Style,
     /// Text style for the item description
     pub description_style: Style,
+    /// Text style of the parts of the suggestions that match the
+    /// typed text when the suggestion is selected
+    pub selected_match_style: Style,
+    /// Text style of the parts of the suggestions that match the
+    /// typed text
+    pub match_style: Style,
 }
 
 impl Default for MenuTextStyle {
@@ -30,6 +36,13 @@ impl Default for MenuTextStyle {
             selected_text_style: Color::Green.bold().reverse(),
             text_style: Color::DarkGray.normal(),
             description_style: Color::Yellow.normal(),
+            selected_match_style: {
+                let mut style = Color::Green.bold().reverse().underline();
+                // LightBlue text color
+                style.background = Some(Color::LightBlue);
+                style
+            },
+            match_style: Color::DarkGray.normal().underline(),
         }
     }
 }

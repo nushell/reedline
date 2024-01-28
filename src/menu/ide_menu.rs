@@ -125,9 +125,8 @@ struct IdeMenuDetails {
     pub space_right: u16,
     /// Corrected description offset, based on the available space
     pub description_offset: u16,
-    /// The ranges of the strings, the suggestions are based on (ranges in [`Editor::get_buffer`])
-    /// This is required to adjust the suggestion boxes position, when `correct_cursor_pos` in [`DefaultIdeMenuDetails`] is true
-    pub base_strings: Vec<String>,
+    /// The shortest of the strings, which the suggestions are based on
+    pub shortest_base_string: String,
 }
 
 /// Menu to present suggestions like similar to Ide completion menus
@@ -513,31 +512,47 @@ impl IdeMenu {
         };
 
         if use_ansi_coloring {
+            let match_len = self.working_details.shortest_base_string.len();
+            
+            // Split string so the match text can be styled
+            let (match_str, remaining_str) = string
+                .split_at(match_len);
+
+            let suggestion_style_prefix = suggestion
+                .style
+                .unwrap_or(self.settings.color.text_style)
+                .prefix();
+
             if index == self.index() {
                 format!(
-                    "{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}{}{}{}{}{}",
                     vertical_border,
-                    suggestion
-                        .style
-                        .unwrap_or(self.settings.color.text_style)
-                        .prefix(),
-                    self.settings.color.selected_text_style.prefix(),
+                    suggestion_style_prefix,
                     " ".repeat(padding),
-                    string,
+                    self.settings.color.selected_match_style.prefix(),
+                    match_str,
+                    RESET,
+
+                    suggestion_style_prefix,
+                    self.settings.color.selected_text_style.prefix(),
+                    remaining_str,
                     " ".repeat(padding_right),
                     RESET,
                     vertical_border,
                 )
             } else {
                 format!(
-                    "{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}{}{}{}{}{}",
                     vertical_border,
-                    suggestion
-                        .style
-                        .unwrap_or(self.settings.color.text_style)
-                        .prefix(),
+                    suggestion_style_prefix,
                     " ".repeat(padding),
-                    string,
+                    self.settings.color.match_style.prefix(),
+                    match_str,
+                    RESET,
+
+                    suggestion_style_prefix,
+                    self.settings.color.text_style.prefix(),
+                    remaining_str,
                     " ".repeat(padding_right),
                     RESET,
                     vertical_border,
@@ -623,10 +638,11 @@ impl Menu for IdeMenu {
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 
         self.values = values;
-        self.working_details.base_strings = base_ranges
+        self.working_details.shortest_base_string = base_ranges
             .iter()
             .map(|range| editor.get_buffer()[range.clone()].to_string())
-            .collect::<Vec<String>>();
+            .min_by_key(|s| s.len())
+            .unwrap_or_default();
 
         self.reset_position();
     }
@@ -684,13 +700,10 @@ impl Menu for IdeMenu {
             let mut cursor_pos = self.working_details.cursor_col;
 
             if self.default_details.correct_cursor_pos {
-                let base_string = self
+                let base_string = &self
                     .working_details
-                    .base_strings
-                    .iter()
-                    .min_by_key(|s| s.len())
-                    .cloned()
-                    .unwrap_or_default();
+                    .shortest_base_string;
+
                 cursor_pos = cursor_pos.saturating_sub(base_string.width() as u16);
             }
 
