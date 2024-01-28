@@ -284,9 +284,12 @@ pub use menu::{
 mod terminal_extensions;
 pub use terminal_extensions::kitty_protocol_available;
 
-mod utils;
-
+#[cfg(feature = "external_printer")]
 mod external_printer;
+#[cfg(feature = "external_printer")]
+pub use external_printer::{ExternalPrinter, ExternalPrinterChannel};
+
+mod utils;
 pub use utils::{
     get_reedline_default_keybindings, get_reedline_edit_commands,
     get_reedline_keybinding_modifiers, get_reedline_keycodes, get_reedline_prompt_edit_modes,
@@ -298,5 +301,3 @@ pub use crossterm::{
     event::{KeyCode, KeyModifiers},
     style::Color,
 };
-#[cfg(feature = "external_printer")]
-pub use external_printer::ExternalPrinter;

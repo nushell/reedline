@@ -3,17 +3,13 @@ use std::path::PathBuf;
 use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
 
+#[cfg(feature = "external_printer")]
+use crate::ExternalPrinterChannel;
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
 use crate::{
     history::SearchFilter,
     menu_functions::{parse_selection_char, ParseAction},
-};
-#[cfg(feature = "external_printer")]
-use {
-    crate::external_printer::ExternalPrinter,
-    crossbeam::channel::TryRecvError,
-    std::io::{Error, ErrorKind},
 };
 use {
     crate::{
@@ -154,7 +150,7 @@ pub struct Reedline {
     kitty_protocol: KittyProtocolGuard,
 
     #[cfg(feature = "external_printer")]
-    external_printer: Option<ExternalPrinter<String>>,
+    external_printer_channel: Option<ExternalPrinterChannel>,
 }
 
 struct BufferEditor {
@@ -225,7 +221,7 @@ impl Reedline {
             bracketed_paste: BracketedPasteGuard::default(),
             kitty_protocol: KittyProtocolGuard::default(),
             #[cfg(feature = "external_printer")]
-            external_printer: None,
+            external_printer_channel: None,
         }
     }
 
@@ -679,11 +675,10 @@ impl Reedline {
             let mut paste_enter_state = false;
 
             #[cfg(feature = "external_printer")]
-            if let Some(ref external_printer) = self.external_printer {
+            if let Some(channel) = &self.external_printer_channel {
                 // get messages from printer as crlf separated "lines"
-                let messages = Self::external_messages(external_printer)?;
+                let messages = channel.messages();
                 if !messages.is_empty() {
-                    // print the message(s)
                     self.painter.print_external_message(
                         messages,
                         self.editor.line_buffer(),
@@ -1730,38 +1725,23 @@ impl Reedline {
         )
     }
 
+    /// Returns a reference to the external printer's channel, or none if one was not set
+    ///
+    /// ## Required feature:
+    /// `external_printer`
+    #[cfg(feature = "external_printer")]
+    pub fn external_printer(&self) -> Option<&ExternalPrinterChannel> {
+        self.external_printer_channel.as_ref()
+    }
+
     /// Adds an external printer
     ///
     /// ## Required feature:
     /// `external_printer`
     #[cfg(feature = "external_printer")]
-    pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
-        self.external_printer = Some(printer);
+    pub fn with_external_printer(mut self, channel: ExternalPrinterChannel) -> Self {
+        self.external_printer_channel = Some(channel);
         self
-    }
-
-    #[cfg(feature = "external_printer")]
-    fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<Vec<String>> {
-        let mut messages = Vec::new();
-        loop {
-            let result = external_printer.receiver().try_recv();
-            match result {
-                Ok(line) => {
-                    let lines = line.lines().map(String::from).collect::<Vec<_>>();
-                    messages.extend(lines);
-                }
-                Err(TryRecvError::Empty) => {
-                    break;
-                }
-                Err(TryRecvError::Disconnected) => {
-                    return Err(Error::new(
-                        ErrorKind::NotConnected,
-                        TryRecvError::Disconnected,
-                    ));
-                }
-            }
-        }
-        Ok(messages)
     }
 
     fn submit_buffer(&mut self, prompt: &dyn Prompt) -> io::Result<EventStatus> {
