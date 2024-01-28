@@ -540,7 +540,7 @@ impl IdeMenu {
                 )
             } else {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}{}{}{}{}",
                     vertical_border,
                     suggestion_style_prefix,
                     " ".repeat(padding),
@@ -548,7 +548,6 @@ impl IdeMenu {
                     match_str,
                     RESET,
                     suggestion_style_prefix,
-                    self.settings.color.text_style.prefix(),
                     remaining_str,
                     " ".repeat(padding_right),
                     RESET,

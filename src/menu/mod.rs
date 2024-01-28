@@ -36,13 +36,8 @@ impl Default for MenuTextStyle {
             selected_text_style: Color::Green.bold().reverse(),
             text_style: Color::DarkGray.normal(),
             description_style: Color::Yellow.normal(),
-            selected_match_style: {
-                let mut style = Color::Green.bold().reverse().underline();
-                // LightBlue text color
-                style.background = Some(Color::LightBlue);
-                style
-            },
-            match_style: Color::DarkGray.normal().underline(),
+            selected_match_style: Color::Green.bold().reverse().underline(),
+            match_style: Style::default().underline(),
         }
     }
 }
