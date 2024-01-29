@@ -937,13 +937,17 @@ impl Reedline {
                 }
                 Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::MenuNext => {
-                self.active_menu()
-                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
+            ReedlineEvent::MenuNext => match self.active_menu() {
+                None => Ok(EventStatus::Inapplicable),
+                Some(menu) => {
+                    if menu.get_values().len() == 1 && menu.can_quick_complete() {
+                        self.handle_editor_event(prompt, ReedlineEvent::Enter)
+                    } else {
                         menu.menu_event(MenuEvent::NextElement);
                         Ok(EventStatus::Handled)
-                    })
-            }
+                    }
+                }
+            },
             ReedlineEvent::MenuPrevious => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
