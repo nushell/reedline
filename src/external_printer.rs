@@ -13,8 +13,8 @@ use crossbeam::channel::{bounded, Receiver, SendError, Sender};
 /// `external_printer`
 #[derive(Debug)]
 pub struct ExternalPrinterChannel {
-    sender: Sender<String>,
-    receiver: Receiver<String>,
+    sender: Sender<Vec<u8>>,
+    receiver: Receiver<Vec<u8>>,
 }
 
 impl ExternalPrinterChannel {
@@ -43,7 +43,7 @@ impl ExternalPrinterChannel {
         ExternalPrinter(self.sender.clone())
     }
 
-    pub(crate) fn receiver(&self) -> &Receiver<String> {
+    pub(crate) fn receiver(&self) -> &Receiver<Vec<u8>> {
         &self.receiver
     }
 }
@@ -65,9 +65,21 @@ impl Default for ExternalPrinterChannel {
 /// ## Required feature:
 /// `external_printer`
 #[derive(Debug, Clone)]
-pub struct ExternalPrinter(Sender<String>);
+pub struct ExternalPrinter(Sender<Vec<u8>>);
 
 impl ExternalPrinter {
+    /// Queues a `Vec` of bytes to be written
+    ///
+    /// This will block if the corresponding [`ExternalPrinterChannel`] is full.
+    /// Also, if the channel has been dropped,
+    /// then the `Vec` of bytes that would have been sent are returned as an `Err`.
+    ///
+    /// Sending raw bytes allows non-UTF-8 byte sequences to be printed.
+    /// To send a UTF-8 `String`, prefer [`print`](Self::print) instead.
+    pub fn write(&self, bytes: Vec<u8>) -> Result<(), Vec<u8>> {
+        self.0.send(bytes).map_err(SendError::into_inner)
+    }
+
     /// Queues a string message to be printed
     ///
     /// This will block if the corresponding [`ExternalPrinterChannel`] is full.
@@ -76,7 +88,9 @@ impl ExternalPrinter {
     ///
     /// To print any type that implements [`Display`] use [`display`](Self::display).
     pub fn print(&self, string: impl Into<String>) -> Result<(), String> {
-        self.0.send(string.into()).map_err(|SendError(s)| s)
+        self.0
+            .send(string.into().into_bytes())
+            .map_err(|SendError(bytes)| String::from_utf8(bytes).expect("valid utf-8"))
     }
 
     /// Queues a value to be printed, using the result of its [`Display`] implementation as the message
@@ -85,7 +99,7 @@ impl ExternalPrinter {
     /// Also, if the channel has been dropped,
     /// then the `String` message that would have been sent is returned as an `Err`.
     ///
-    /// If `T` is a string-like type, use [`print`](Self::display) instead,
+    /// If `T` is a string-like type, use [`print`](Self::print) instead,
     /// since it can be more efficient.
     pub fn display<T: Display>(&self, value: &T) -> Result<(), String> {
         self.print(value.to_string())
@@ -103,5 +117,22 @@ mod tests {
         let channel = ExternalPrinterChannel::new();
         send_sync(&channel);
         send_sync(&channel.sender())
+    }
+
+    #[test]
+    fn receives_message() {
+        let channel = ExternalPrinterChannel::new();
+        let sender = channel.sender();
+        assert!(sender.print("some text").is_ok());
+        assert_eq!(channel.receiver().recv(), Ok("some text".into()))
+    }
+
+    #[test]
+    fn print_error_does_not_panic() {
+        let channel = ExternalPrinterChannel::new();
+        let sender = channel.sender();
+        drop(channel);
+        let res = sender.print("some text");
+        assert_eq!(res, Err("some text".into()))
     }
 }

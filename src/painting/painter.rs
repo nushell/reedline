@@ -525,15 +525,29 @@ impl Painter {
         if buffer_num_lines > 1 {
             self.stdout.queue(MoveUp(buffer_num_lines - 1))?;
         }
+
         let erase_line = format!("\r{}\r", " ".repeat(self.screen_width().into()));
-        for messsage in channel.receiver().try_iter() {
-            for line in messsage.lines() {
+        for message in channel.receiver().try_iter() {
+            for line in message.split_inclusive(|&b| b == b'\n') {
+                let line = line
+                    .strip_suffix(&[b'\n'])
+                    .map(|line| line.strip_suffix(&[b'\r']).unwrap_or(line))
+                    .unwrap_or(line);
+
                 self.stdout.queue(Print(&erase_line))?;
-                // Note: we don't use `print_line` here because we don't want to
-                // flush right now. The subsequent repaint of the prompt will cause
-                // immediate flush anyways. And if we flush here, every external
-                // print causes visible flicker.
-                self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
+
+                // Note: we don't flush here.
+                // The subsequent repaint of the prompt will cause immediate flush anyways.
+                // And if we flush here, every external print causes visible flicker.
+                //
+                // crossterm's `Print` command return true for `is_ansi_code_supported`.
+                // This means crossterm will use `Print`'s implementation of `Command::write_ansi`
+                // without doing any special handling for ANSI sequences.
+                // So, it's ok for us to do something similar by calling `write_all` directly
+                // without any special handling.
+                self.stdout.write_all(line)?; // self.stdout.queue(Print(line))?;
+                self.stdout.queue(Print("\r\n"))?;
+
                 let new_start = self.prompt_start_row.saturating_add(1);
                 let height = self.screen_height();
                 if new_start >= height {
