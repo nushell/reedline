@@ -237,6 +237,24 @@ pub trait MenuBuilder: Menu + Sized {
         self
     }
 
+    /// Menu builder with new value for match style
+    /// This is the style of the part of the input text, the suggestions
+    /// are based on
+    #[must_use]
+    fn with_match_text_style(mut self, color: Style) -> Self {
+        self.settings_mut().color.match_style = color;
+        self
+    }
+
+    /// Menu builder with new value for selected match style
+    /// This is the style of the part of the input text, the suggestions
+    /// are based on
+    #[must_use]
+    fn with_selected_match_text_style(mut self, color: Style) -> Self {
+        self.settings_mut().color.selected_match_style = color;
+        self
+    }
+
     /// Menu builder with new value for marker
     #[must_use]
     fn with_marker(mut self, marker: &str) -> Self {
