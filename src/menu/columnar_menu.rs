@@ -37,6 +37,8 @@ struct ColumnDetails {
     pub columns: u16,
     /// Column width
     pub col_width: usize,
+    /// The shortest of the strings, which the suggestions are based on
+    pub shortest_base_string: String,
 }
 
 /// Menu to present suggestions in a columnar fashion
@@ -296,18 +298,29 @@ impl ColumnarMenu {
         use_ansi_coloring: bool,
     ) -> String {
         if use_ansi_coloring {
+            let match_len = self.working_details.shortest_base_string.len();
+
+            // Split string so the match text can be styled
+            let (match_str, remaining_str) = suggestion.value.split_at(match_len);
+
+            let suggestion_style_prefix = suggestion
+                .style
+                .unwrap_or(self.settings.color.text_style)
+                .prefix();
+
             if index == self.index() {
                 if let Some(description) = &suggestion.description {
                     let left_text_size = self.longest_suggestion + self.default_details.col_padding;
                     let right_text_size = self.get_width().saturating_sub(left_text_size);
                     format!(
-                        "{}{}{:max$}{}{}{}{}{}{}",
-                        suggestion
-                            .style
-                            .unwrap_or(self.settings.color.text_style)
-                            .prefix(),
+                        "{}{}{}{}{}{}{:max$}{}{}{}{}{}{}",
+                        suggestion_style_prefix,
+                        self.settings.color.selected_match_style.prefix(),
+                        match_str,
+                        RESET,
+                        suggestion_style_prefix,
                         self.settings.color.selected_text_style.prefix(),
-                        &suggestion.value,
+                        &remaining_str,
                         RESET,
                         self.settings.color.description_style.prefix(),
                         self.settings.color.selected_text_style.prefix(),
@@ -322,13 +335,14 @@ impl ColumnarMenu {
                     )
                 } else {
                     format!(
-                        "{}{}{}{}{:>empty$}{}",
-                        suggestion
-                            .style
-                            .unwrap_or(self.settings.color.text_style)
-                            .prefix(),
+                        "{}{}{}{}{}{}{}{}{:>empty$}{}",
+                        suggestion_style_prefix,
+                        self.settings.color.selected_match_style.prefix(),
+                        match_str,
+                        RESET,
+                        suggestion_style_prefix,
                         self.settings.color.selected_text_style.prefix(),
-                        &suggestion.value,
+                        remaining_str,
                         RESET,
                         "",
                         self.end_of_line(column),
@@ -339,12 +353,13 @@ impl ColumnarMenu {
                 let left_text_size = self.longest_suggestion + self.default_details.col_padding;
                 let right_text_size = self.get_width().saturating_sub(left_text_size);
                 format!(
-                    "{}{:max$}{}{}{}{}{}",
-                    suggestion
-                        .style
-                        .unwrap_or(self.settings.color.text_style)
-                        .prefix(),
-                    &suggestion.value,
+                    "{}{}{}{}{}{:max$}{}{}{}{}{}",
+                    suggestion_style_prefix,
+                    self.settings.color.match_style.prefix(),
+                    match_str,
+                    RESET,
+                    suggestion_style_prefix,
+                    remaining_str,
                     RESET,
                     self.settings.color.description_style.prefix(),
                     description
@@ -358,12 +373,13 @@ impl ColumnarMenu {
                 )
             } else {
                 format!(
-                    "{}{}{}{}{:>empty$}{}{}",
-                    suggestion
-                        .style
-                        .unwrap_or(self.settings.color.text_style)
-                        .prefix(),
-                    &suggestion.value,
+                    "{}{}{}{}{}{}{}{}{:>empty$}{}{}",
+                    suggestion_style_prefix,
+                    self.settings.color.match_style.prefix(),
+                    match_str,
+                    RESET,
+                    suggestion_style_prefix,
+                    remaining_str,
                     RESET,
                     self.settings.color.description_style.prefix(),
                     "",
@@ -476,7 +492,15 @@ impl Menu for ColumnarMenu {
             self.input.as_deref(),
             self.settings.only_buffer_difference,
         );
-        self.values = completer.complete(&input, pos);
+
+        let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
+
+        self.values = values;
+        self.working_details.shortest_base_string = base_ranges
+            .iter()
+            .map(|range| editor.get_buffer()[range.clone()].to_string())
+            .min_by_key(|s| s.len())
+            .unwrap_or_default();
 
         self.reset_position();
     }
