@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crossbeam::channel::{bounded, Receiver, SendError, Sender, TryRecvError};
+use crossbeam::channel::{bounded, Receiver, SendError, Sender};
 
 /// The channel to which external messages can be sent
 ///
@@ -43,24 +43,8 @@ impl ExternalPrinterChannel {
         ExternalPrinter(self.sender.clone())
     }
 
-    pub(crate) fn messages(&self) -> Vec<String> {
-        // TODO: refactor to use `self.receiver.try_iter()`
-        let mut messages = Vec::new();
-        loop {
-            match self.receiver.try_recv() {
-                Ok(string) => {
-                    messages.extend(string.lines().map(String::from));
-                }
-                Err(TryRecvError::Empty) => {
-                    break;
-                }
-                Err(TryRecvError::Disconnected) => {
-                    debug_assert!(false); // there is always one sender in `self`.
-                    break;
-                }
-            }
-        }
-        messages
+    pub(crate) fn receiver(&self) -> &Receiver<String> {
+        &self.receiver
     }
 }
 

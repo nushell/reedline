@@ -677,10 +677,9 @@ impl Reedline {
             #[cfg(feature = "external_printer")]
             if let Some(channel) = &self.external_printer_channel {
                 // get messages from printer as crlf separated "lines"
-                let messages = channel.messages();
-                if !messages.is_empty() {
+                if !channel.receiver().is_empty() {
                     self.painter.print_external_message(
-                        messages,
+                        channel,
                         self.editor.line_buffer(),
                         prompt,
                     )?;

@@ -16,7 +16,10 @@ use {
     std::io::{Result, Write},
 };
 #[cfg(feature = "external_printer")]
-use {crate::LineBuffer, crossterm::cursor::MoveUp};
+use {
+    crate::{ExternalPrinterChannel, LineBuffer},
+    crossterm::cursor::MoveUp,
+};
 
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
@@ -495,7 +498,7 @@ impl Painter {
     #[cfg(feature = "external_printer")]
     pub(crate) fn print_external_message(
         &mut self,
-        messages: Vec<String>,
+        channel: &ExternalPrinterChannel,
         line_buffer: &LineBuffer,
         prompt: &dyn Prompt,
     ) -> Result<()> {
@@ -523,19 +526,21 @@ impl Painter {
             self.stdout.queue(MoveUp(buffer_num_lines - 1))?;
         }
         let erase_line = format!("\r{}\r", " ".repeat(self.screen_width().into()));
-        for line in messages {
-            self.stdout.queue(Print(&erase_line))?;
-            // Note: we don't use `print_line` here because we don't want to
-            // flush right now. The subsequent repaint of the prompt will cause
-            // immediate flush anyways. And if we flush here, every external
-            // print causes visible flicker.
-            self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
-            let new_start = self.prompt_start_row.saturating_add(1);
-            let height = self.screen_height();
-            if new_start >= height {
-                self.prompt_start_row = height - 1;
-            } else {
-                self.prompt_start_row = new_start;
+        for messsage in channel.receiver().try_iter() {
+            for line in messsage.lines() {
+                self.stdout.queue(Print(&erase_line))?;
+                // Note: we don't use `print_line` here because we don't want to
+                // flush right now. The subsequent repaint of the prompt will cause
+                // immediate flush anyways. And if we flush here, every external
+                // print causes visible flicker.
+                self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
+                let new_start = self.prompt_start_row.saturating_add(1);
+                let height = self.screen_height();
+                if new_start >= height {
+                    self.prompt_start_row = height - 1;
+                } else {
+                    self.prompt_start_row = new_start;
+                }
             }
         }
         Ok(())
