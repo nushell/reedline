@@ -11,6 +11,7 @@ use crate::{
 
 use std::{
     fs::OpenOptions,
+    hash::{DefaultHasher, Hash, Hasher},
     io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write},
     ops::{Deref, DerefMut},
     path::PathBuf,
@@ -52,10 +53,8 @@ impl Default for FileBackedHistory {
     }
 }
 
-static ID_SEP: &str = "<id>:";
-
-fn encode_entry(id: HistoryItemId, s: &str) -> String {
-    format!("{id}{ID_SEP}{}", s.replace('\n', NEWLINE_ESCAPE))
+fn encode_entry(s: &str) -> String {
+    s.replace('\n', NEWLINE_ESCAPE)
 }
 
 /// Decode an entry
@@ -68,20 +67,13 @@ fn encode_entry(id: HistoryItemId, s: &str) -> String {
 /// This allows this function to support decoding for both legacy and new histories,
 /// as well as mixing both of them.
 fn decode_entry(s: &str, counter: &mut i64) -> (HistoryItemId, String) {
-    let mut parsed = None;
+    let mut hasher = DefaultHasher::new();
+    counter.hash(&mut hasher);
+    s.hash(&mut hasher);
 
-    if let Some(sep) = s.find(ID_SEP) {
-        if let Ok(parsed_id) = s[..sep].parse() {
-            parsed = Some((parsed_id, &s[sep + ID_SEP.len()..]));
-        }
-    }
+    let id = hasher.finish() as i64;
 
-    let (id, content) = parsed.unwrap_or_else(|| {
-        *counter += 1;
-        (*counter - 1, s)
-    });
-
-    (HistoryItemId(id), content.replace(NEWLINE_ESCAPE, "\n"))
+    (HistoryItemId(id), s.replace(NEWLINE_ESCAPE, "\n"))
 }
 
 impl History for FileBackedHistory {
@@ -333,8 +325,8 @@ impl History for FileBackedHistory {
             if truncate {
                 writer.rewind()?;
 
-                for (id, line) in &foreign_entries {
-                    writer.write_all(encode_entry(*id, line).as_bytes())?;
+                for line in foreign_entries.values() {
+                    writer.write_all(encode_entry(line).as_bytes())?;
                     writer.write_all("\n".as_bytes())?;
                 }
             } else {
@@ -343,8 +335,8 @@ impl History for FileBackedHistory {
             }
 
             // Then we write new entries (that haven't been synced to the file yet)
-            for (id, line) in own_entries {
-                writer.write_all(encode_entry(*id, line).as_bytes())?;
+            for line in own_entries.values() {
+                writer.write_all(encode_entry(line).as_bytes())?;
                 writer.write_all("\n".as_bytes())?;
             }
 
@@ -399,7 +391,7 @@ impl FileBackedHistory {
             last_on_disk: None,
             session: None,
             rng: SmallRng::from_entropy(),
-        }
+        })
     }
 
     /// Creates a new history with an associated history file.
@@ -410,11 +402,13 @@ impl FileBackedHistory {
     ///
     /// **Side effects:** creates all nested directories to the file
     ///
-    pub fn with_file(capacity: usize, file: PathBuf) -> std::io::Result<Self> {
-        let mut hist = Self::new(capacity);
+    pub fn with_file(capacity: usize, file: PathBuf) -> Result<Self> {
+        let mut hist = Self::new(capacity)?;
 
         if let Some(base_dir) = file.parent() {
-            std::fs::create_dir_all(base_dir)?;
+            std::fs::create_dir_all(base_dir)
+                .map_err(ReedlineErrorVariants::IOError)
+                .map_err(ReedlineError)?;
         }
 
         hist.file = Some(file);
