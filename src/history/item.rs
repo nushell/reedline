@@ -4,7 +4,10 @@ use rusqlite::ToSql;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Display, time::Duration};
 
-/// Unique ID for the [`HistoryItem`]. More recent items have higher ids than older ones.
+/// Unique ID for the [`HistoryItem`].
+/// These are generated pseudo-randomly.
+/// Note that the ID of a given item may change between program executions.
+/// These IDs only aim to uniquely identify a single item *for the program's execution*.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct HistoryItemId(pub i64);
 impl HistoryItemId {
