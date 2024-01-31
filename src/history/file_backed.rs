@@ -205,13 +205,20 @@ impl History for FileBackedHistory {
         Ok(())
     }
 
-    fn delete(&mut self, _h: super::HistoryItemId) -> Result<()> {
-        Err(ReedlineError(
-            ReedlineErrorVariants::HistoryFeatureUnsupported {
-                history: "FileBackedHistory",
-                feature: "removing entries",
-            },
-        ))
+    fn delete(&mut self, h: super::HistoryItemId) -> Result<()> {
+        let id = h.0 as usize;
+        let num_entries = self.entries.len();
+        // Check if the id is valid
+        if id >= num_entries {
+            return Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
+                "Given id is out of range.",
+            )));
+        }
+
+        // Remove the item with the specified id
+        self.entries.remove(id);
+
+        Ok(())
     }
 
     /// Writes unwritten history contents to disk.

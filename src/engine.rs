@@ -536,8 +536,9 @@ impl Reedline {
             .search(SearchQuery::everything(SearchDirection::Forward, None))
             .expect("todo: error handling");
 
-        for (i, entry) in history.iter().enumerate() {
-            self.print_line(&format!("{}\t{}", i, entry.command_line))?;
+        for entry in history.iter() {
+            let Some(id) = entry.id else { continue };
+            self.print_line(&format!("{}\t{}", id, entry.command_line))?;
         }
         Ok(())
     }
