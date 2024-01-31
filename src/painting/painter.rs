@@ -527,7 +527,11 @@ impl Painter {
         }
 
         let erase_line = format!("\r{}\r", " ".repeat(self.screen_width().into()));
-        for message in channel.receiver().try_iter() {
+        for mut message in channel.receiver().try_iter() {
+            // add a new line for next message
+            // messages that already end in '\n' will have a blank line between it and the next message.
+            message.push(b'\n');
+
             for line in message.split_inclusive(|&b| b == b'\n') {
                 let line = line
                     .strip_suffix(&[b'\n'])
@@ -540,7 +544,7 @@ impl Painter {
                 // The subsequent repaint of the prompt will cause immediate flush anyways.
                 // And if we flush here, every external print causes visible flicker.
                 //
-                // crossterm's `Print` command return true for `is_ansi_code_supported`.
+                // crossterm's `Print` command returns true for `is_ansi_code_supported`.
                 // This means crossterm will use `Print`'s implementation of `Command::write_ansi`
                 // without doing any special handling for ANSI sequences.
                 // So, it's ok for us to do something similar by calling `write_all` directly
