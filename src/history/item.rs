@@ -25,9 +25,10 @@ impl Display for HistoryItemId {
 
 /// Unique ID for the session in which reedline was run to disambiguate different sessions
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HistorySessionId(pub(crate) i64);
+pub struct HistorySessionId(pub i64);
 impl HistorySessionId {
-    pub(crate) const fn new(i: i64) -> HistorySessionId {
+    /// Create a new `HistorySessionId`
+    pub const fn new(i: i64) -> HistorySessionId {
         HistorySessionId(i)
     }
 }
