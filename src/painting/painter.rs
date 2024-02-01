@@ -16,10 +16,7 @@ use {
     std::io::{Result, Write},
 };
 #[cfg(feature = "external_printer")]
-use {
-    crate::{ExternalPrinterChannel, LineBuffer},
-    crossterm::cursor::MoveUp,
-};
+use {crate::LineBuffer, crossterm::cursor::MoveUp, std::sync::mpsc::Receiver};
 
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
@@ -491,17 +488,22 @@ impl Painter {
         self.stdout.flush()
     }
 
-    /// Prints an external message
+    /// Prints external messages from a channel receiver, returning true if there were any messages
     ///
     /// This function doesn't flush the buffer. So buffer should be flushed
     /// afterwards perhaps by repainting the prompt via `repaint_buffer()`.
     #[cfg(feature = "external_printer")]
-    pub(crate) fn print_external_message(
+    pub(crate) fn print_external_messages(
         &mut self,
-        channel: &ExternalPrinterChannel,
+        receiver: &Receiver<Vec<u8>>,
         line_buffer: &LineBuffer,
         prompt: &dyn Prompt,
-    ) -> Result<()> {
+    ) -> Result<bool> {
+        let mut messages = receiver.try_iter().peekable();
+        if messages.peek().is_none() {
+            return Ok(false);
+        }
+
         // adding 3 seems to be right for first line-wrap
         let prompt_len = prompt.render_prompt_right().len() + 3;
         let mut buffer_num_lines = 0_u16;
@@ -527,7 +529,7 @@ impl Painter {
         }
 
         let erase_line = format!("\r{}\r", " ".repeat(self.screen_width().into()));
-        for mut message in channel.receiver().try_iter() {
+        for mut message in messages {
             // add a new line for next message
             // messages that already end in '\n' will have a blank line between it and the next message.
             message.push(b'\n');
@@ -561,7 +563,7 @@ impl Painter {
                 }
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Queue scroll of `num` lines to `self.stdout`.

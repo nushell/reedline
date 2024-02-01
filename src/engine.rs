@@ -4,7 +4,7 @@ use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
 
 #[cfg(feature = "external_printer")]
-use crate::ExternalPrinterChannel;
+use crate::ExternalPrinter;
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
 use crate::{
@@ -150,7 +150,7 @@ pub struct Reedline {
     kitty_protocol: KittyProtocolGuard,
 
     #[cfg(feature = "external_printer")]
-    external_printer_channel: Option<ExternalPrinterChannel>,
+    external_printer: Option<ExternalPrinter>,
 }
 
 struct BufferEditor {
@@ -221,7 +221,7 @@ impl Reedline {
             bracketed_paste: BracketedPasteGuard::default(),
             kitty_protocol: KittyProtocolGuard::default(),
             #[cfg(feature = "external_printer")]
-            external_printer_channel: None,
+            external_printer: None,
         }
     }
 
@@ -675,13 +675,14 @@ impl Reedline {
             let mut paste_enter_state = false;
 
             #[cfg(feature = "external_printer")]
-            if let Some(channel) = &self.external_printer_channel {
-                if !channel.receiver().is_empty() {
-                    self.painter.print_external_message(
-                        channel,
-                        self.editor.line_buffer(),
-                        prompt,
-                    )?;
+            if let Some(printer) = &self.external_printer {
+                let any_messages = self.painter.print_external_messages(
+                    printer.receiver(),
+                    self.editor.line_buffer(),
+                    prompt,
+                )?;
+
+                if any_messages {
                     self.repaint(prompt)?;
                 }
             }
@@ -1720,22 +1721,22 @@ impl Reedline {
         )
     }
 
-    /// Returns a reference to the external printer's channel, or none if one was not set
+    /// Returns a reference to the external printer, or none if one was not set
     ///
     /// ## Required feature:
     /// `external_printer`
     #[cfg(feature = "external_printer")]
-    pub fn external_printer(&self) -> Option<&ExternalPrinterChannel> {
-        self.external_printer_channel.as_ref()
+    pub fn external_printer(&self) -> Option<&ExternalPrinter> {
+        self.external_printer.as_ref()
     }
 
-    /// Adds an external printer
+    /// Add a new external printer, or overwrite the existing one
     ///
     /// ## Required feature:
     /// `external_printer`
     #[cfg(feature = "external_printer")]
-    pub fn with_external_printer(mut self, channel: ExternalPrinterChannel) -> Self {
-        self.external_printer_channel = Some(channel);
+    pub fn with_external_printer(mut self, printer: ExternalPrinter) -> Self {
+        self.external_printer = Some(printer);
         self
     }
 

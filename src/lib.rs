@@ -287,7 +287,7 @@ pub use terminal_extensions::kitty_protocol_available;
 #[cfg(feature = "external_printer")]
 mod external_printer;
 #[cfg(feature = "external_printer")]
-pub use external_printer::{ExternalPrinter, ExternalPrinterChannel};
+pub use external_printer::ExternalPrinter;
 
 mod utils;
 pub use utils::{
