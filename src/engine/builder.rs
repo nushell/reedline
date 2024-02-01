@@ -19,7 +19,8 @@ pub struct ReedlineBuilder {
     use_ansi_coloring: bool,
     bracketed_paste: bool,
     kitty_protocol: bool,
-    _external_printer: bool,
+    #[cfg(feature = "external_printer")]
+    external_printer: Option<ExternalPrinter<String>>,
     cursor_shapes: Option<CursorConfig>,
     history_session_id: Option<HistorySessionId>,
 }
@@ -43,7 +44,8 @@ impl ReedlineBuilder {
             use_ansi_coloring: true,
             bracketed_paste: false,
             kitty_protocol: false,
-            _external_printer: false,
+            #[cfg(feature = "external_printer")]
+            external_printer: None,
             cursor_shapes: None,
             history_session_id: None,
         }
@@ -56,18 +58,6 @@ impl ReedlineBuilder {
 
         let mut kitty_protocol = KittyProtocolGuard::default();
         kitty_protocol.set(self.kitty_protocol);
-
-        #[cfg(feature = "external_printer")]
-        let external_printer = {
-            if self._external_printer {
-                // I doubt you print more than 10 times in a singe cycle, but still
-                // this is a fallible assumption. The printer cap should probably
-                // be passable
-                crate::external_printer::ExternalPrinter::<String>::new(10);
-            } else {
-                None
-            }
-        };
 
         Reedline {
             editor: Editor::default(),
@@ -105,7 +95,7 @@ impl ReedlineBuilder {
             bracketed_paste,
             kitty_protocol,
             #[cfg(feature = "external_printer")]
-            external_printer,
+            external_printer: self.external_printer,
 
             history_cursor: HistoryCursor::new(
                 HistoryNavigationQuery::Normal(LineBuffer::default()),
@@ -214,6 +204,12 @@ impl ReedlineBuilder {
 
     pub fn with_history_session_id(mut self, session: HistorySessionId) -> Self {
         self.history_session_id = Some(session);
+        self
+    }
+
+    #[cfg(feature = "external_printer")]
+    pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
+        self.external_printer = Some(printer);
         self
     }
 }
