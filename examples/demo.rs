@@ -9,8 +9,8 @@ use {
     reedline::{
         default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
         ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, DefaultValidator,
-        EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline,
-        ReedlineEvent, ReedlineMenu, Signal, Vi,
+        EditCommand, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline, ReedlineEvent,
+        ReedlineMenu, Signal, Vi,
     },
 };
 
@@ -42,7 +42,7 @@ fn main() -> reedline::Result<()> {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
     );
     #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
-    let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
+    let history = FileBackedHistory::with_file(50, "history.txt".into())?;
     let commands = vec![
         "test".into(),
         "clear".into(),
@@ -71,7 +71,7 @@ fn main() -> reedline::Result<()> {
         "こんにちは世界".into(),
         "こんばんは世界".into(),
     ];
-    let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
+    let completer = DefaultCompleter::new_with_wordlen(commands.clone(), 2);
 
     let cursor_config = CursorConfig {
         vi_insert: Some(SetCursorStyle::BlinkingBar),
@@ -79,33 +79,30 @@ fn main() -> reedline::Result<()> {
         emacs: None,
     };
 
-    let mut line_editor = Reedline::create()
-        .with_history_session_id(history_session_id)
+    let mut builder = Reedline::builder()
+        .with_history_session_id(history_session_id.unwrap())
         .with_history(history)
-        .with_history_exclusion_prefix(Some(" ".to_string()))
-        .with_completer(completer)
+        .with_history_exclusion_prefix(" ".to_string())
+        .with_completion(completer)
         .with_quick_completions(true)
         .with_partial_completions(true)
         .with_cursor_config(cursor_config)
-        .use_bracketed_paste(true)
-        .use_kitty_keyboard_enhancement(true)
-        .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
-        .with_hinter(Box::new(
-            DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)),
-        ))
-        .with_validator(Box::new(DefaultValidator))
+        .with_bracketed_paste(true)
+        .with_kitty_keyboard_enhancement(true)
+        .with_highlighter(ExampleHighlighter::new(commands))
+        .with_hints(DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)))
+        .with_validator(DefaultValidator)
         .with_ansi_colors(true);
 
     // Adding default menus for the compiled reedline
-    line_editor = line_editor
-        .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+    builder = builder.add_menus(vec![
+        ReedlineMenu::EngineCompleter(Box::new(
             ColumnarMenu::default().with_name("completion_menu"),
-        )))
-        .with_menu(ReedlineMenu::HistoryMenu(Box::new(
-            ListMenu::default().with_name("history_menu"),
-        )));
+        )),
+        ReedlineMenu::HistoryMenu(Box::new(ListMenu::default().with_name("history_menu"))),
+    ]);
 
-    let edit_mode: Box<dyn EditMode> = if vi_mode {
+    if vi_mode {
         let mut normal_keybindings = default_vi_normal_keybindings();
         let mut insert_keybindings = default_vi_insert_keybindings();
 
@@ -114,22 +111,19 @@ fn main() -> reedline::Result<()> {
 
         add_newline_keybinding(&mut insert_keybindings);
 
-        Box::new(Vi::new(insert_keybindings, normal_keybindings))
+        builder = builder.with_edit_mode(Vi::new(insert_keybindings, normal_keybindings));
     } else {
         let mut keybindings = default_emacs_keybindings();
         add_menu_keybindings(&mut keybindings);
         add_newline_keybinding(&mut keybindings);
-
-        Box::new(Emacs::new(keybindings))
+        builder = builder.with_edit_mode(Emacs::new(keybindings));
     };
-
-    line_editor = line_editor.with_edit_mode(edit_mode);
 
     // Adding vi as text editor
     let temp_file = temp_dir().join("temp_file.nu");
     let mut command = Command::new("vi");
     command.arg(&temp_file);
-    line_editor = line_editor.with_buffer_editor(command, temp_file);
+    let mut line_editor = builder.with_buffer_editor(command, temp_file).build();
 
     let prompt = DefaultPrompt::default();
 

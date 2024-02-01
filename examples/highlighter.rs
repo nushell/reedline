@@ -12,8 +12,9 @@ fn main() -> io::Result<()> {
         "hello world reedline".into(),
         "this is the reedline crate".into(),
     ];
-    let mut line_editor =
-        Reedline::create().with_highlighter(Box::new(ExampleHighlighter::new(commands)));
+    let mut line_editor = Reedline::builder()
+        .with_highlighter(ExampleHighlighter::new(commands))
+        .build();
     let prompt = DefaultPrompt::default();
 
     loop {

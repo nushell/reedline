@@ -57,7 +57,7 @@ fn main() -> io::Result<()> {
         "abadarabc".into(),
     ];
 
-    let completer = Box::new(DefaultCompleter::new_with_wordlen(commands, 2));
+    let completer = DefaultCompleter::new_with_wordlen(commands, 2);
 
     // Use the interactive menu to select options from the completer
     let columnar_menu = ColumnarMenu::default()
@@ -71,12 +71,13 @@ fn main() -> io::Result<()> {
     let mut keybindings = default_emacs_keybindings();
     add_menu_keybindings(&mut keybindings);
 
-    let edit_mode = Box::new(Emacs::new(keybindings));
+    let edit_mode = Emacs::new(keybindings);
 
-    let mut line_editor = Reedline::create()
-        .with_completer(completer)
-        .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
-        .with_edit_mode(edit_mode);
+    let mut line_editor = Reedline::builder()
+        .with_completion(completer)
+        .add_menu(ReedlineMenu::EngineCompleter(completion_menu))
+        .with_edit_mode(edit_mode)
+        .build();
 
     let prompt = DefaultPrompt::default();
 
