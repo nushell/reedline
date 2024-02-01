@@ -33,14 +33,12 @@ fn main() -> reedline::Result<()> {
     };
 
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
-    let history = Box::new(
-        reedline::SqliteBackedHistory::with_file(
-            "history.sqlite3".into(),
-            history_session_id,
-            Some(chrono::Utc::now()),
-        )
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
-    );
+    let history = reedline::SqliteBackedHistory::with_file(
+        "history.sqlite3".into(),
+        history_session_id,
+        Some(chrono::Utc::now()),
+    )
+    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
     let history = FileBackedHistory::with_file(50, "history.txt".into())?;
     let commands = vec![

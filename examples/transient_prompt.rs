@@ -98,7 +98,8 @@ fn main() -> io::Result<()> {
 
     let edit_mode = Emacs::new(keybindings);
 
-    let mut line_editor = Reedline::builder()
+    #[allow(unused_mut)]
+    let mut builder = Reedline::builder()
         .with_hints(DefaultHinter::default().with_style(Style::new().fg(Color::LightGray)))
         .with_completion(completer)
         .add_menu(ReedlineMenu::EngineCompleter(completion_menu))
@@ -107,12 +108,12 @@ fn main() -> io::Result<()> {
         .with_validator(CustomValidator {})
         .with_ansi_colors(true)
         .with_history_exclusion_prefix(String::from(" "))
-        .with_transient_prompt(TransientPrompt {})
-        .build();
+        .with_transient_prompt(TransientPrompt {});
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     {
-        line_editor = line_editor.with_history(Box::new(SqliteBackedHistory::in_memory().unwrap()));
-    }
+        builder = builder.with_history(SqliteBackedHistory::in_memory().unwrap());
+    };
+    let mut line_editor = builder.build();
 
     let prompt = DefaultPrompt::default();
 

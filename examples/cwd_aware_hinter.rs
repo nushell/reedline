@@ -25,12 +25,12 @@ fn create_item(cwd: &str, cmd: &str, exit_status: i64) -> reedline::HistoryItem 
     }
 }
 
-fn create_filled_example_history(home_dir: &str, orig_dir: &str) -> Box<dyn reedline::History> {
+fn create_filled_example_history(home_dir: &str, orig_dir: &str) -> impl reedline::History {
     use reedline::History;
     #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
     let mut history = Box::new(reedline::FileBackedHistory::new(100));
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
-    let mut history = Box::new(reedline::SqliteBackedHistory::in_memory().unwrap());
+    let mut history = reedline::SqliteBackedHistory::in_memory().unwrap();
 
     history.save(create_item(orig_dir, "dummy", 0)).unwrap(); // add dummy item so ids start with 1
     history.save(create_item(orig_dir, "ls /usr", 0)).unwrap();
@@ -56,11 +56,12 @@ fn main() -> io::Result<()> {
         orig_dir.to_string_lossy().as_ref(),
     );
 
-    let mut line_editor = Reedline::create()
-        .with_hinter(Box::new(
+    let mut line_editor = Reedline::builder()
+        .with_hints(
             CwdAwareHinter::default().with_style(Style::new().bold().italic().fg(Color::Yellow)),
-        ))
-        .with_history(history);
+        )
+        .with_history(history)
+        .build();
 
     let prompt = DefaultPrompt::default();
 
