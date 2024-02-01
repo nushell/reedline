@@ -6,6 +6,7 @@ use crate::{
     Completer, Suggestion,
 };
 use nu_ansi_term::ansi::RESET;
+use unicode_width::UnicodeWidthStr;
 
 /// Default values used as reference for the menu. These values are set during
 /// the initial declaration of the menu and are always kept as reference for the
@@ -314,7 +315,7 @@ impl ColumnarMenu {
                     let right_text_size = self.get_width().saturating_sub(left_text_size);
                     format!(
                         "{}{}{}{}{}{}{:max$}{}{}{}{}{}{}",
-                        suggestion_style_prefix,
+                        suggestion_style_prefix, 
                         self.settings.color.selected_match_style.prefix(),
                         match_str,
                         RESET,
@@ -331,7 +332,7 @@ impl ColumnarMenu {
                             .replace('\n', " "),
                         RESET,
                         self.end_of_line(column),
-                        max = left_text_size,
+                        max = left_text_size.saturating_sub(match_str.width()),
                     )
                 } else {
                     format!(
@@ -369,7 +370,7 @@ impl ColumnarMenu {
                         .replace('\n', " "),
                     RESET,
                     self.end_of_line(column),
-                    max = left_text_size,
+                    max = left_text_size.saturating_sub(match_str.width()),
                 )
             } else {
                 format!(
