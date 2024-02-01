@@ -315,7 +315,7 @@ impl ColumnarMenu {
                     let right_text_size = self.get_width().saturating_sub(left_text_size);
                     format!(
                         "{}{}{}{}{}{}{:max$}{}{}{}{}{}{}",
-                        suggestion_style_prefix, 
+                        suggestion_style_prefix,
                         self.settings.color.selected_match_style.prefix(),
                         match_str,
                         RESET,
