@@ -156,6 +156,11 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
         edit_bind(EC::MoveToLineStart { select: false }),
     );
     kb.add_binding(
+        KM::CONTROL,
+        KC::Char('a'),
+        edit_bind(EC::MoveToLineStart { select: false }),
+    );
+    kb.add_binding(
         KM::NONE,
         KC::End,
         ReedlineEvent::UntilFound(vec![
