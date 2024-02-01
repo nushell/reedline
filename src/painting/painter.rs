@@ -153,7 +153,10 @@ impl Painter {
 
         // This might not be terribly performant. Testing it out
         let is_reset = || match cursor::position() {
-            Ok(position) => position.1.abs_diff(self.prompt_start_row) > 1,
+            // when output something without newline, the cursor position is at current line.
+            // but the prompt_start_row is next line.
+            // in this case we don't want to reset, need to `add 1` to handle for such case.
+            Ok(position) => position.1 + 1 < self.prompt_start_row,
             Err(_) => false,
         };
 
@@ -268,17 +271,13 @@ impl Painter {
         self.stdout
             .queue(Print(&coerce_crlf(&lines.prompt_str_left)))?;
 
-        let prompt_indicator = match menu {
-            Some(menu) => menu.indicator(),
-            None => &lines.prompt_indicator,
-        };
-
         if use_ansi_coloring {
             self.stdout
                 .queue(SetForegroundColor(prompt.get_indicator_color()))?;
         }
 
-        self.stdout.queue(Print(&coerce_crlf(prompt_indicator)))?;
+        self.stdout
+            .queue(Print(&coerce_crlf(&lines.prompt_indicator)))?;
 
         if use_ansi_coloring {
             self.stdout
@@ -324,12 +323,7 @@ impl Painter {
         // indicator is printed in the same line as the first line of the buffer
         let prompt_lines = lines.prompt_lines_with_wrap(screen_width) as usize;
 
-        let prompt_indicator = match menu {
-            Some(menu) => menu.indicator(),
-            None => &lines.prompt_indicator,
-        };
-
-        let prompt_indicator_lines = prompt_indicator.lines().count();
+        let prompt_indicator_lines = &lines.prompt_indicator.lines().count();
         let before_cursor_lines = lines.before_cursor.lines().count();
         let total_lines_before = prompt_lines + prompt_indicator_lines + before_cursor_lines - 1;
 
@@ -348,13 +342,22 @@ impl Painter {
         self.stdout.queue(Print(&coerce_crlf(prompt_skipped)))?;
 
         if extra_rows == 0 {
+            if use_ansi_coloring {
+                self.stdout
+                    .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
+            }
+
             self.print_right_prompt(lines)?;
         }
 
         // Adjusting extra_rows base on the calculated prompt line size
         let extra_rows = extra_rows.saturating_sub(prompt_lines);
 
-        let indicator_skipped = skip_buffer_lines(prompt_indicator, extra_rows, None);
+        if use_ansi_coloring {
+            self.stdout
+                .queue(SetForegroundColor(prompt.get_indicator_color()))?;
+        }
+        let indicator_skipped = skip_buffer_lines(&lines.prompt_indicator, extra_rows, None);
         self.stdout.queue(Print(&coerce_crlf(indicator_skipped)))?;
 
         if use_ansi_coloring {
@@ -386,6 +389,12 @@ impl Painter {
         if let Some(menu) = menu {
             // TODO: Also solve the difficult problem of displaying (parts of)
             // the content after the cursor with the completion menu
+            // This only shows the rest of the line the cursor is on
+            if let Some(newline) = lines.after_cursor.find('\n') {
+                self.stdout.queue(Print(&lines.after_cursor[0..newline]))?;
+            } else {
+                self.stdout.queue(Print(&lines.after_cursor))?;
+            }
             self.print_menu(menu, lines, use_ansi_coloring)?;
         } else {
             // Selecting lines for the hint

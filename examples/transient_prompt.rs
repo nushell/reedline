@@ -8,7 +8,7 @@ use nu_ansi_term::{Color, Style};
 use reedline::SqliteBackedHistory;
 use reedline::{
     default_emacs_keybindings, ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, Emacs,
-    ExampleHighlighter, KeyCode, KeyModifiers, Keybindings, Prompt, PromptEditMode,
+    ExampleHighlighter, KeyCode, KeyModifiers, Keybindings, MenuBuilder, Prompt, PromptEditMode,
     PromptHistorySearch, PromptHistorySearchStatus, Reedline, ReedlineEvent, ReedlineMenu, Signal,
     ValidationResult, Validator,
 };

@@ -2,7 +2,7 @@ use crate::{
     edit_mode::{
         keybindings::{
             add_common_control_bindings, add_common_edit_bindings, add_common_navigation_bindings,
-            edit_bind, Keybindings,
+            add_common_selection_bindings, edit_bind, Keybindings,
         },
         EditMode,
     },
@@ -21,6 +21,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
     add_common_control_bindings(&mut kb);
     add_common_navigation_bindings(&mut kb);
     add_common_edit_bindings(&mut kb);
+    add_common_selection_bindings(&mut kb);
 
     // This could be in common, but in Vi it also changes the mode
     kb.add_binding(KM::NONE, KC::Enter, ReedlineEvent::Enter);
@@ -53,27 +54,36 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
     kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::CutToEnd));
     kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
+    kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
     // Edits
     kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
 
     // *** ALT ***
     // Moves
-    kb.add_binding(KM::ALT, KC::Left, edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::ALT,
+        KC::Left,
+        edit_bind(EC::MoveWordLeft { select: false }),
+    );
     kb.add_binding(
         KM::ALT,
         KC::Right,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWordRight),
+            edit_bind(EC::MoveWordRight { select: false }),
         ]),
     );
-    kb.add_binding(KM::ALT, KC::Char('b'), edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('b'),
+        edit_bind(EC::MoveWordLeft { select: false }),
+    );
     kb.add_binding(
         KM::ALT,
         KC::Char('f'),
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWordRight),
+            edit_bind(EC::MoveWordRight { select: false }),
         ]),
     );
     // Edits
@@ -84,8 +94,6 @@ pub fn default_emacs_keybindings() -> Keybindings {
         KC::Char('m'),
         ReedlineEvent::Edit(vec![EditCommand::BackspaceWord]),
     );
-    // Cutting
-    kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
     // Case changes
     kb.add_binding(KM::ALT, KC::Char('u'), edit_bind(EC::UppercaseWord));
     kb.add_binding(KM::ALT, KC::Char('l'), edit_bind(EC::LowercaseWord));

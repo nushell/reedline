@@ -14,11 +14,11 @@ use {
     },
 };
 
-use reedline::CursorConfig;
 #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
 use reedline::FileBackedHistory;
+use reedline::{CursorConfig, MenuBuilder};
 
-fn main() -> std::io::Result<()> {
+fn main() -> reedline::Result<()> {
     println!("Ctrl-D to quit");
     // quick command like parameter handling
     let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");

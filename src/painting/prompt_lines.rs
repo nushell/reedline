@@ -88,6 +88,34 @@ impl<'prompt> PromptLines<'prompt> {
         lines.saturating_sub(1) as u16
     }
 
+    /// Calculate the cursor pos, based on the buffer and prompt.
+    /// The height is relative to the prompt
+    pub(crate) fn cursor_pos(&self, terminal_columns: u16) -> (u16, u16) {
+        // If we have a multiline prompt (e.g starship), we expect the cursor to be on the last line
+        let prompt_str = format!("{}{}", self.prompt_str_left, self.prompt_indicator);
+        // The Cursor position will be relative to this
+        let last_prompt_str = prompt_str.lines().last().unwrap_or_default();
+
+        let is_multiline = self.before_cursor.contains('\n');
+        let buffer_width = line_width(self.before_cursor.lines().last().unwrap_or_default());
+
+        let total_width = if is_multiline {
+            // The buffer already contains the multiline prompt
+            buffer_width
+        } else {
+            buffer_width + line_width(last_prompt_str)
+        };
+
+        let buffer_width_prompt = format!("{}{}", last_prompt_str, self.before_cursor);
+
+        let cursor_y = (estimate_required_lines(&buffer_width_prompt, terminal_columns) as u16)
+            .saturating_sub(1); // 0 based
+
+        let cursor_x = (total_width % terminal_columns as usize) as u16;
+
+        (cursor_x, cursor_y as u16)
+    }
+
     /// Total lines that the prompt uses considering that it may wrap the screen
     pub(crate) fn prompt_lines_with_wrap(&self, screen_width: u16) -> u16 {
         let complete_prompt = self.prompt_str_left.to_string() + &self.prompt_indicator;
@@ -136,5 +164,92 @@ impl<'prompt> PromptLines<'prompt> {
         } else {
             estimate as u16
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(
+        "~/path/",
+        "❯ ",
+        "",
+        100,
+        (9, 0)
+    )]
+    #[case(
+        "~/longer/path/\n",
+        "❯ ",
+        "test",
+        100,
+        (6, 0)
+    )]
+    #[case(
+        "~/longer/path/",
+        "\n❯ ",
+        "test",
+        100,
+        (6, 0)
+    )]
+    #[case(
+        "~/longer/path/\n",
+        "\n❯ ",
+        "test",
+        100,
+        (6, 0)
+    )]
+    #[case(
+        "~/path/",
+        "❯ ",
+        "very long input that does not fit in a single line",
+        40,
+        (19, 1)
+    )]
+    #[case(
+        "~/path/\n",
+        "\n❯\n ",
+        "very long input that does not fit in a single line",
+        10,
+        (1, 5)
+    )]
+    #[case(
+        "~/path/",
+        "❯ ",
+        "this is a text that contains newlines\n::: and a multiline prompt",
+        40,
+        (26, 2)
+    )]
+    #[case(
+        "~/path/",
+        "❯ ",
+        "this is a text that contains newlines\n::: and very loooooooooooooooong text that wraps",
+        40,
+        (8, 3)
+    )]
+
+    fn test_cursor_pos(
+        #[case] prompt_str_left: &str,
+        #[case] prompt_indicator: &str,
+        #[case] before_cursor: &str,
+        #[case] terminal_columns: u16,
+        #[case] expected: (u16, u16),
+    ) {
+        let prompt_lines = PromptLines {
+            prompt_str_left: Cow::Borrowed(prompt_str_left),
+            prompt_str_right: Cow::Borrowed(""),
+            prompt_indicator: Cow::Borrowed(prompt_indicator),
+            before_cursor: Cow::Borrowed(before_cursor),
+            after_cursor: Cow::Borrowed(""),
+            hint: Cow::Borrowed(""),
+            right_prompt_on_last_line: false,
+        };
+
+        let pos = prompt_lines.cursor_pos(terminal_columns);
+
+        assert_eq!(pos, expected);
     }
 }

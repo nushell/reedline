@@ -52,13 +52,14 @@ impl<'menu> HistoryCompleter<'menu> {
 
     fn create_suggestion(&self, line: &str, pos: usize, value: &str) -> Suggestion {
         let span = Span {
-            start: pos,
-            end: pos + line.len(),
+            start: pos - line.len(),
+            end: pos,
         };
 
         Suggestion {
             value: value.to_string(),
             description: None,
+            style: None,
             extra: None,
             span,
             append_whitespace: false,

@@ -6,15 +6,25 @@ use thiserror::Error;
 pub enum ReedlineErrorVariants {
     // todo: we should probably be more specific here
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    /// Error within history database
     #[error("error within history database: {0}")]
     HistoryDatabaseError(String),
-    #[error("error within history: {0}")]
+
+    /// Error within history
+    #[error("error in Reedline history: {0}")]
     OtherHistoryError(&'static str),
+
+    /// History does not support a feature
     #[error("the history {history} does not support feature {feature}")]
     HistoryFeatureUnsupported {
+        /// Custom display name for the history
         history: &'static str,
+
+        /// Unsupported feature
         feature: &'static str,
     },
+
+    /// I/O error
     #[error("I/O error: {0}")]
     IOError(std::io::Error),
 }
@@ -22,6 +32,12 @@ pub enum ReedlineErrorVariants {
 /// separate struct to not expose anything to the public (for now)
 #[derive(Debug)]
 pub struct ReedlineError(pub ReedlineErrorVariants);
+
+impl From<std::io::Error> for ReedlineError {
+    fn from(err: std::io::Error) -> Self {
+        Self(ReedlineErrorVariants::IOError(err))
+    }
+}
 
 impl Display for ReedlineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
