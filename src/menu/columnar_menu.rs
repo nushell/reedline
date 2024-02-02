@@ -309,12 +309,16 @@ impl ColumnarMenu {
                 .unwrap_or(self.settings.color.text_style)
                 .prefix();
 
+            let left_text_size = self.longest_suggestion + self.default_details.col_padding;
+            let right_text_size = self.get_width().saturating_sub(left_text_size);
+
+            let max_remaining = left_text_size.saturating_sub(match_str.width());
+            let max_match = max_remaining.saturating_sub(remaining_str.width());
+
             if index == self.index() {
                 if let Some(description) = &suggestion.description {
-                    let left_text_size = self.longest_suggestion + self.default_details.col_padding;
-                    let right_text_size = self.get_width().saturating_sub(left_text_size);
                     format!(
-                        "{}{}{}{}{}{}{:max$}{}{}{}{}{}{}",
+                        "{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}{}{}",
                         suggestion_style_prefix,
                         self.settings.color.selected_match_style.prefix(),
                         match_str,
@@ -332,7 +336,6 @@ impl ColumnarMenu {
                             .replace('\n', " "),
                         RESET,
                         self.end_of_line(column),
-                        max = left_text_size.saturating_sub(match_str.width()),
                     )
                 } else {
                     format!(
@@ -351,10 +354,8 @@ impl ColumnarMenu {
                     )
                 }
             } else if let Some(description) = &suggestion.description {
-                let left_text_size = self.longest_suggestion + self.default_details.col_padding;
-                let right_text_size = self.get_width().saturating_sub(left_text_size);
                 format!(
-                    "{}{}{}{}{}{:max$}{}{}{}{}{}",
+                    "{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}{}",
                     suggestion_style_prefix,
                     self.settings.color.match_style.prefix(),
                     match_str,
@@ -370,7 +371,6 @@ impl ColumnarMenu {
                         .replace('\n', " "),
                     RESET,
                     self.end_of_line(column),
-                    max = left_text_size.saturating_sub(match_str.width()),
                 )
             } else {
                 format!(
