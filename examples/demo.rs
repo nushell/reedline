@@ -81,7 +81,7 @@ fn main() -> reedline::Result<()> {
         .with_history_session_id(history_session_id.unwrap())
         .with_history(history)
         .with_history_exclusion_prefix(" ".to_string())
-        .with_completion(completer)
+        .with_completions(completer)
         .use_quick_completions(true)
         .use_partial_completions(true)
         .with_cursor_config(cursor_config)

@@ -101,7 +101,7 @@ fn main() -> io::Result<()> {
     #[allow(unused_mut)]
     let mut builder = Reedline::builder()
         .with_hints(DefaultHinter::default().with_style(Style::new().fg(Color::LightGray)))
-        .with_completion(completer)
+        .with_completions(completer)
         .add_menu(ReedlineMenu::EngineCompleter(completion_menu))
         .with_edit_mode(edit_mode)
         .with_highlighter(ExampleHighlighter::new(commands))

@@ -74,7 +74,7 @@ fn main() -> io::Result<()> {
     let edit_mode = Emacs::new(keybindings);
 
     let mut line_editor = Reedline::builder()
-        .with_completion(completer)
+        .with_completions(completer)
         .add_menu(ReedlineMenu::EngineCompleter(completion_menu))
         .with_edit_mode(edit_mode)
         .build();
