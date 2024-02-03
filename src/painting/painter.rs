@@ -16,7 +16,7 @@ use {
     std::io::{Result, Write},
 };
 #[cfg(feature = "external_printer")]
-use {crate::LineBuffer, crossterm::cursor::MoveUp};
+use {crate::LineBuffer, crossterm::cursor::MoveUp, std::sync::mpsc::Receiver};
 
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
@@ -488,17 +488,22 @@ impl Painter {
         self.stdout.flush()
     }
 
-    /// Prints an external message
+    /// Prints external messages from a channel receiver, returning true if there were any messages
     ///
     /// This function doesn't flush the buffer. So buffer should be flushed
     /// afterwards perhaps by repainting the prompt via `repaint_buffer()`.
     #[cfg(feature = "external_printer")]
-    pub(crate) fn print_external_message(
+    pub(crate) fn print_external_messages(
         &mut self,
-        messages: Vec<String>,
+        receiver: &Receiver<Vec<u8>>,
         line_buffer: &LineBuffer,
         prompt: &dyn Prompt,
-    ) -> Result<()> {
+    ) -> Result<bool> {
+        let mut messages = receiver.try_iter().peekable();
+        if messages.peek().is_none() {
+            return Ok(false);
+        }
+
         // adding 3 seems to be right for first line-wrap
         let prompt_len = prompt.render_prompt_right().len() + 3;
         let mut buffer_num_lines = 0_u16;
@@ -522,23 +527,43 @@ impl Painter {
         if buffer_num_lines > 1 {
             self.stdout.queue(MoveUp(buffer_num_lines - 1))?;
         }
+
         let erase_line = format!("\r{}\r", " ".repeat(self.screen_width().into()));
-        for line in messages {
-            self.stdout.queue(Print(&erase_line))?;
-            // Note: we don't use `print_line` here because we don't want to
-            // flush right now. The subsequent repaint of the prompt will cause
-            // immediate flush anyways. And if we flush here, every external
-            // print causes visible flicker.
-            self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
-            let new_start = self.prompt_start_row.saturating_add(1);
-            let height = self.screen_height();
-            if new_start >= height {
-                self.prompt_start_row = height - 1;
-            } else {
-                self.prompt_start_row = new_start;
+        for mut message in messages {
+            // add a new line for next message
+            // messages that already end in '\n' will have a blank line between it and the next message.
+            message.push(b'\n');
+
+            for line in message.split_inclusive(|&b| b == b'\n') {
+                let line = line
+                    .strip_suffix(&[b'\n'])
+                    .map(|line| line.strip_suffix(&[b'\r']).unwrap_or(line))
+                    .unwrap_or(line);
+
+                self.stdout.queue(Print(&erase_line))?;
+
+                // Note: we don't flush here.
+                // The subsequent repaint of the prompt will cause immediate flush anyways.
+                // And if we flush here, every external print causes visible flicker.
+                //
+                // crossterm's `Print` command returns true for `is_ansi_code_supported`.
+                // This means crossterm will use `Print`'s implementation of `Command::write_ansi`
+                // without doing any special handling for ANSI sequences.
+                // So, it's ok for us to do something similar by calling `write_all` directly
+                // without any special handling.
+                self.stdout.write_all(line)?; // self.stdout.queue(Print(line))?;
+                self.stdout.queue(Print("\r\n"))?;
+
+                let new_start = self.prompt_start_row.saturating_add(1);
+                let height = self.screen_height();
+                if new_start >= height {
+                    self.prompt_start_row = height - 1;
+                } else {
+                    self.prompt_start_row = new_start;
+                }
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Queue scroll of `num` lines to `self.stdout`.

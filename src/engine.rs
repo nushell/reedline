@@ -3,17 +3,13 @@ use std::path::PathBuf;
 use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
 
+#[cfg(feature = "external_printer")]
+use crate::ExternalPrinter;
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
 use crate::{
     history::SearchFilter,
     menu_functions::{parse_selection_char, ParseAction},
-};
-#[cfg(feature = "external_printer")]
-use {
-    crate::external_printer::ExternalPrinter,
-    crossbeam::channel::TryRecvError,
-    std::io::{Error, ErrorKind},
 };
 use {
     crate::{
@@ -154,7 +150,7 @@ pub struct Reedline {
     kitty_protocol: KittyProtocolGuard,
 
     #[cfg(feature = "external_printer")]
-    external_printer: Option<ExternalPrinter<String>>,
+    external_printer: Option<ExternalPrinter>,
 }
 
 struct BufferEditor {
@@ -679,22 +675,24 @@ impl Reedline {
             let mut paste_enter_state = false;
 
             #[cfg(feature = "external_printer")]
-            if let Some(ref external_printer) = self.external_printer {
-                // get messages from printer as crlf separated "lines"
-                let messages = Self::external_messages(external_printer)?;
-                if !messages.is_empty() {
-                    // print the message(s)
-                    self.painter.print_external_message(
-                        messages,
-                        self.editor.line_buffer(),
-                        prompt,
-                    )?;
+            if let Some(printer) = &self.external_printer {
+                let any_messages = self.painter.print_external_messages(
+                    printer.receiver(),
+                    self.editor.line_buffer(),
+                    prompt,
+                )?;
+
+                if any_messages {
                     self.repaint(prompt)?;
                 }
             }
 
             let mut latest_resize = None;
-            loop {
+
+            // There could be multiple events queued up!
+            // pasting text, resizes, blocking this thread (e.g. during debugging)
+            // We should be able to handle all of them as quickly as possible without causing unnecessary output steps.
+            while event::poll(Duration::from_millis(POLL_WAIT))? {
                 match event::read()? {
                     Event::Resize(x, y) => {
                         latest_resize = Some((x, y));
@@ -722,13 +720,6 @@ impl Reedline {
                             crossterm_events.push(evt);
                         }
                     }
-                }
-
-                // There could be multiple events queued up!
-                // pasting text, resizes, blocking this thread (e.g. during debugging)
-                // We should be able to handle all of them as quickly as possible without causing unnecessary output steps.
-                if !event::poll(Duration::from_millis(POLL_WAIT))? {
-                    break;
                 }
             }
 
@@ -1730,38 +1721,23 @@ impl Reedline {
         )
     }
 
-    /// Adds an external printer
+    /// Returns a reference to the external printer, or none if one was not set
     ///
     /// ## Required feature:
     /// `external_printer`
     #[cfg(feature = "external_printer")]
-    pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
-        self.external_printer = Some(printer);
-        self
+    pub fn external_printer(&self) -> Option<&ExternalPrinter> {
+        self.external_printer.as_ref()
     }
 
+    /// Add a new external printer, or overwrite the existing one
+    ///
+    /// ## Required feature:
+    /// `external_printer`
     #[cfg(feature = "external_printer")]
-    fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<Vec<String>> {
-        let mut messages = Vec::new();
-        loop {
-            let result = external_printer.receiver().try_recv();
-            match result {
-                Ok(line) => {
-                    let lines = line.lines().map(String::from).collect::<Vec<_>>();
-                    messages.extend(lines);
-                }
-                Err(TryRecvError::Empty) => {
-                    break;
-                }
-                Err(TryRecvError::Disconnected) => {
-                    return Err(Error::new(
-                        ErrorKind::NotConnected,
-                        TryRecvError::Disconnected,
-                    ));
-                }
-            }
-        }
-        Ok(messages)
+    pub fn with_external_printer(mut self, printer: ExternalPrinter) -> Self {
+        self.external_printer = Some(printer);
+        self
     }
 
     fn submit_buffer(&mut self, prompt: &dyn Prompt) -> io::Result<EventStatus> {

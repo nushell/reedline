@@ -1,72 +1,70 @@
-//! To print messages while editing a line
-//!
-//! See example:
-//!
-//! ``` shell
-//! cargo run --example external_printer --features=external_printer
-//! ```
-#[cfg(feature = "external_printer")]
-use {
-    crossbeam::channel::{bounded, Receiver, SendError, Sender},
-    std::fmt::Display,
-};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 
-#[cfg(feature = "external_printer")]
-pub const EXTERNAL_PRINTER_DEFAULT_CAPACITY: usize = 20;
-
-/// An ExternalPrinter allows to print messages of text while editing a line.
-/// The message is printed as a new line, the line-edit will continue below the
-/// output.
+/// An external printer allows one to print messages of text while editing a line.
+/// The message is printed as a new line, and the line-edit will continue below the output.
+///
+/// Use [`sender`](Self::sender) to receive a [`SyncSender`] for use in other threads.
 ///
 /// ## Required feature:
 /// `external_printer`
-#[cfg(feature = "external_printer")]
-#[derive(Debug, Clone)]
-pub struct ExternalPrinter<T>
-where
-    T: Display,
-{
-    sender: Sender<T>,
-    receiver: Receiver<T>,
+#[derive(Debug)]
+pub struct ExternalPrinter {
+    sender: SyncSender<Vec<u8>>,
+    receiver: Receiver<Vec<u8>>,
 }
 
-#[cfg(feature = "external_printer")]
-impl<T> ExternalPrinter<T>
-where
-    T: Display,
-{
-    /// Creates an ExternalPrinter to store lines with a max_cap
-    pub fn new(max_cap: usize) -> Self {
-        let (sender, receiver) = bounded::<T>(max_cap);
+impl ExternalPrinter {
+    /// The default maximum number of lines that can be queued up for printing
+    pub const DEFAULT_CAPACITY: usize = 20;
+
+    /// Create a new `ExternalPrinter` with the [default capacity](Self::DEFAULT_CAPACITY)
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a new `ExternalPrinter` with the given capacity
+    ///
+    /// The capacity determines the maximum number of lines that can be queued up for printing
+    /// before subsequent [`send`](SyncSender::send) calls on the [`sender`](Self::sender) will block.
+    pub fn with_capacity(capacity: usize) -> Self {
+        let (sender, receiver) = mpsc::sync_channel(capacity);
         Self { sender, receiver }
     }
-    /// Gets a Sender to use the printer externally by sending lines to it
-    pub fn sender(&self) -> Sender<T> {
+
+    /// Returns a new [`SyncSender`] which can be used in other threads to queue messages to print
+    pub fn sender(&self) -> SyncSender<Vec<u8>> {
         self.sender.clone()
     }
-    /// Receiver to get messages if any
-    pub fn receiver(&self) -> &Receiver<T> {
+
+    pub(crate) fn receiver(&self) -> &Receiver<Vec<u8>> {
         &self.receiver
-    }
-
-    /// Convenience method if the whole Printer is cloned, blocks if max_cap is reached.
-    ///
-    pub fn print(&self, line: T) -> Result<(), SendError<T>> {
-        self.sender.send(line)
-    }
-
-    /// Convenience method to get a line if any, doesn´t block.
-    pub fn get_line(&self) -> Option<T> {
-        self.receiver.try_recv().ok()
     }
 }
 
-#[cfg(feature = "external_printer")]
-impl<T> Default for ExternalPrinter<T>
-where
-    T: Display,
-{
+impl Default for ExternalPrinter {
     fn default() -> Self {
-        Self::new(EXTERNAL_PRINTER_DEFAULT_CAPACITY)
+        Self::with_capacity(Self::DEFAULT_CAPACITY)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn impls_send() {
+        fn impls_send<T: Send>(_: &T) {}
+
+        let printer = ExternalPrinter::new();
+        impls_send(&printer);
+        impls_send(&printer.sender())
+    }
+
+    #[test]
+    fn receives_message() {
+        let printer = ExternalPrinter::new();
+        let sender = printer.sender();
+        assert!(sender.send(b"some text".into()).is_ok());
+        assert_eq!(printer.receiver().recv(), Ok(b"some text".into()))
     }
 }
