@@ -33,6 +33,23 @@ macro_rules! with_builder_methods {
             }
         }
     };
+    ($name:ident, $attribute:ident, generic, $interface:ty) => {
+        paste! {
+            pub fn [<with_ $name>]<T: interface + 'static>(mut self, value: T) -> Self {
+                self.$attribute = Some(Box::new(value));
+                self
+            }
+
+            pub fn [<without_ $name>](mut self) -> Self {
+                self.$attribute = None;
+                self
+            }
+
+            pub fn $name(&self) -> Option<&dyn $interface> {
+                (&self.$attribute).as_ref()
+            }
+        }
+    };
 }
 
 pub struct ReedlineBuilder {
