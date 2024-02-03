@@ -1,6 +1,27 @@
 use nu_ansi_term::Style;
 
 use super::*;
+use paste::paste;
+
+macro_rules! with_builder_methods {
+    ($name:ident, $attribute:ident, $ty:ty) => {
+        paste! {
+            pub fn [<with_ $name>](mut self, $attribute: $ty) -> Self {
+                self.$attribute = Some($attribute);
+                self
+            }
+
+            pub fn [<without_ $name>](mut self) -> Self {
+                self.$attribute = None;
+                self
+            }
+
+            pub fn $name(&self) -> Option<&$ty> {
+                (&self.$attribute).as_ref()
+            }
+        }
+    };
+}
 
 pub struct ReedlineBuilder {
     history: Option<Box<dyn History>>,
