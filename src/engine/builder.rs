@@ -1,9 +1,10 @@
 use nu_ansi_term::Style;
 
 use super::*;
+
 use paste::paste;
 
-macro_rules! with_builder_methods {
+macro_rules! with_flag {
     ($name:ident, $attribute:ident, bool) => {
         paste! {
             pub fn [<use_ $name>](mut self, value: bool) -> Self {
@@ -16,6 +17,9 @@ macro_rules! with_builder_methods {
             }
         }
     };
+}
+
+macro_rules! with {
     ($name:ident, $attribute:ident, $ty:ty) => {
         paste! {
             pub fn [<with_ $name>](mut self, value: $ty) -> Self {
@@ -33,7 +37,10 @@ macro_rules! with_builder_methods {
             }
         }
     };
-    ($name:ident, $attribute:ident, generic, $interface:ty) => {
+}
+
+macro_rules! with_type_erased {
+    ($name:ident, $attribute:ident, $interface:ty) => {
         paste! {
             pub fn [<with_ $name>]<T: $interface + 'static>(mut self, value: T) -> Self {
                 self.$attribute = Some(Box::new(value));
@@ -155,42 +162,40 @@ impl ReedlineBuilder {
         }
     }
 
-    with_builder_methods!(history, history, generic, History);
+    with_type_erased!(history, history, History);
 
-    with_builder_methods!(hints, hinter, generic, Hinter);
+    with_type_erased!(hints, hinter, Hinter);
 
-    with_builder_methods!(completions, completer, generic, Completer);
+    with_type_erased!(completions, completer, Completer);
 
-    with_builder_methods!(highlighter, highlighter, generic, Highlighter);
+    with_type_erased!(highlighter, highlighter, Highlighter);
 
-    with_builder_methods!(validator, validator, generic, Validator);
+    with_type_erased!(validator, validator, Validator);
 
-    with_builder_methods!(transient_prompt, transient_prompt, generic, Prompt);
+    with_type_erased!(transient_prompt, transient_prompt, Prompt);
 
-    with_builder_methods!(edit_mode, edit_mode, generic, EditMode);
+    with_type_erased!(edit_mode, edit_mode, EditMode);
 
-    // 
+    with!(history_exclusion_prefix, history_exclusion_prefix, String);
 
-    with_builder_methods!(history_exclusion_prefix, history_exclusion_prefix, String);
+    with!(selection_style, visual_selection_style, Style);
 
-    with_builder_methods!(selection_style, visual_selection_style, Style);
+    with!(cursor_config, cursor_shapes, CursorConfig);
 
-    with_builder_methods!(cursor_config, cursor_shapes, CursorConfig);
-
-    with_builder_methods!(history_session_id, history_session_id, HistorySessionId);
+    with!(history_session_id, history_session_id, HistorySessionId);
 
     #[cfg(feature = "external_printer")]
-    with_builder_methods!(external_printer, external_printer, ExternalPrinter<String>);
+    with!(external_printer, external_printer, ExternalPrinter<String>);
 
-    with_builder_methods!(quick_completions, quick_completions, bool);
+    with_flag!(quick_completions, quick_completions, bool);
 
-    with_builder_methods!(partial_completions, partial_completions, bool);
+    with_flag!(partial_completions, partial_completions, bool);
 
-    with_builder_methods!(bracketed_paste, bracketed_paste, bool);
+    with_flag!(bracketed_paste, bracketed_paste, bool);
 
-    with_builder_methods!(kitty_keyboard_enhancement, kitty_protocol, bool);
+    with_flag!(kitty_keyboard_enhancement, kitty_protocol, bool);
 
-    with_builder_methods!(ansi_colors, use_ansi_coloring, bool);
+    with_flag!(ansi_colors, use_ansi_coloring, bool);
 
     pub fn add_menu(mut self, menu: ReedlineMenu) -> Self {
         self.menus.push(menu);
