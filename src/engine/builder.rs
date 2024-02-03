@@ -195,30 +195,15 @@ impl ReedlineBuilder {
     #[cfg(feature = "external_printer")]
     with_builder_methods!(external_printer, external_printer, ExternalPrinter<String>);
 
-    pub fn with_quick_completions(mut self, quick_completions: bool) -> Self {
-        self.quick_completions = quick_completions;
-        self
-    }
+    with_builder_methods!(quick_completions, quick_completions, bool);
 
-    pub fn with_partial_completions(mut self, partial_completions: bool) -> Self {
-        self.partial_completions = partial_completions;
-        self
-    }
+    with_builder_methods!(partial_completions, partial_completions, bool);
 
-    pub fn with_bracketed_paste(mut self, bracketed_paste: bool) -> Self {
-        self.partial_completions = bracketed_paste;
-        self
-    }
+    with_builder_methods!(bracketed_paste, bracketed_paste, bool);
 
-    pub fn with_kitty_keyboard_enhancement(mut self, enhance: bool) -> Self {
-        self.kitty_protocol = enhance;
-        self
-    }
+    with_builder_methods!(kitty_keyboard_enhancement, kitty_protocol, bool);
 
-    pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
-        self.use_ansi_coloring = use_ansi_coloring;
-        self
-    }
+    with_builder_methods!(ansi_colors, use_ansi_coloring, bool);
 
     pub fn add_menu(mut self, menu: ReedlineMenu) -> Self {
         self.menus.push(menu);
