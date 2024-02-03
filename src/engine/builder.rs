@@ -6,8 +6,8 @@ use paste::paste;
 macro_rules! with_builder_methods {
     ($name:ident, $attribute:ident, $ty:ty) => {
         paste! {
-            pub fn [<with_ $name>](mut self, $attribute: $ty) -> Self {
-                self.$attribute = Some($attribute);
+            pub fn [<with_ $name>](mut self, with: $ty) -> Self {
+                self.$attribute = Some(with);
                 self
             }
 
@@ -156,6 +156,11 @@ impl ReedlineBuilder {
         self
     }
 
+    pub fn with_edit_mode<E: EditMode + 'static>(mut self, mode: E) -> Self {
+        self.edit_mode = Some(Box::new(mode));
+        self
+    }
+
     pub fn with_buffer_editor(mut self, mut editor: Command, temp_file: PathBuf) -> Self {
         if !editor.get_args().contains(&temp_file.as_os_str()) {
             editor.arg(&temp_file);
@@ -167,15 +172,16 @@ impl ReedlineBuilder {
         self
     }
 
-    pub fn with_history_exclusion_prefix(mut self, prefix: String) -> Self {
-        self.history_exclusion_prefix = Some(prefix);
-        self
-    }
+    with_builder_methods!(history_exclusion_prefix, history_exclusion_prefix, String);
 
-    pub fn with_selection_style(mut self, style: Style) -> Self {
-        self.visual_selection_style = Some(style);
-        self
-    }
+    with_builder_methods!(selection_style, visual_selection_style, Style);
+
+    with_builder_methods!(cursor_config, cursor_shapes, CursorConfig);
+
+    with_builder_methods!(history_session_id, history_session_id, HistorySessionId);
+
+    #[cfg(feature = "external_printer")]
+    with_builder_methods!(external_printer, external_printer, ExternalPrinter<String>);
 
     pub fn with_quick_completions(mut self, quick_completions: bool) -> Self {
         self.quick_completions = quick_completions;
@@ -202,11 +208,6 @@ impl ReedlineBuilder {
         self
     }
 
-    pub fn with_edit_mode<E: EditMode + 'static>(mut self, mode: E) -> Self {
-        self.edit_mode = Some(Box::new(mode));
-        self
-    }
-
     pub fn add_menu(mut self, menu: ReedlineMenu) -> Self {
         self.menus.push(menu);
         self
@@ -215,22 +216,6 @@ impl ReedlineBuilder {
     // `menus` cannot accept a slice because ReedlineMenu is not Clone
     pub fn add_menus(mut self, menus: Vec<ReedlineMenu>) -> Self {
         self.menus.extend(menus);
-        self
-    }
-
-    pub fn with_cursor_config(mut self, cursor_shapes: CursorConfig) -> Self {
-        self.cursor_shapes = Some(cursor_shapes);
-        self
-    }
-
-    pub fn with_history_session_id(mut self, session: HistorySessionId) -> Self {
-        self.history_session_id = Some(session);
-        self
-    }
-
-    #[cfg(feature = "external_printer")]
-    pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
-        self.external_printer = Some(printer);
         self
     }
 }
