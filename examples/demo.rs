@@ -82,15 +82,15 @@ fn main() -> reedline::Result<()> {
         .with_history(history)
         .with_history_exclusion_prefix(" ".to_string())
         .with_completion(completer)
-        .with_quick_completions(true)
-        .with_partial_completions(true)
+        .use_quick_completions(true)
+        .use_partial_completions(true)
         .with_cursor_config(cursor_config)
-        .with_bracketed_paste(true)
-        .with_kitty_keyboard_enhancement(true)
+        .use_bracketed_paste(true)
+        .use_kitty_keyboard_enhancement(true)
         .with_highlighter(ExampleHighlighter::new(commands))
         .with_hints(DefaultHinter::default().with_style(Style::new().fg(Color::DarkGray)))
         .with_validator(DefaultValidator)
-        .with_ansi_colors(true);
+        .use_ansi_colors(true);
 
     // Adding default menus for the compiled reedline
     builder = builder.add_menus(vec![

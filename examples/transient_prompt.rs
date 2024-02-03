@@ -106,7 +106,7 @@ fn main() -> io::Result<()> {
         .with_edit_mode(edit_mode)
         .with_highlighter(ExampleHighlighter::new(commands))
         .with_validator(CustomValidator {})
-        .with_ansi_colors(true)
+        .use_ansi_colors(true)
         .with_history_exclusion_prefix(String::from(" "))
         .with_transient_prompt(TransientPrompt {});
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
