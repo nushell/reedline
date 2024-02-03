@@ -4,10 +4,22 @@ use super::*;
 use paste::paste;
 
 macro_rules! with_builder_methods {
+    ($name:ident, $attribute:ident, bool) => {
+        paste! {
+            pub fn [<use_ $name>](mut self, value: bool) -> Self {
+                self.$attribute = value;
+                self
+            }
+
+            pub fn $name(&self) -> bool {
+                self.$attribute
+            }
+        }
+    };
     ($name:ident, $attribute:ident, $ty:ty) => {
         paste! {
-            pub fn [<with_ $name>](mut self, with: $ty) -> Self {
-                self.$attribute = Some(with);
+            pub fn [<with_ $name>](mut self, value: $ty) -> Self {
+                self.$attribute = Some(value);
                 self
             }
 
