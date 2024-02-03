@@ -46,7 +46,7 @@ macro_rules! with_builder_methods {
             }
 
             pub fn $name(&self) -> Option<&dyn $interface> {
-                (&self.$attribute).as_ref()
+                (&self.$attribute).as_deref()
             }
         }
     };
@@ -155,51 +155,21 @@ impl ReedlineBuilder {
         }
     }
 
-    pub fn with_history<H: History + 'static>(mut self, history: H) -> Self {
-        self.history = Some(Box::new(history));
-        self
-    }
+    with_builder_methods!(history, history, generic, History);
 
-    pub fn with_hints<H: Hinter + 'static>(mut self, hinter: H) -> Self {
-        self.hinter = Some(Box::new(hinter));
-        self
-    }
+    with_builder_methods!(hints, hinter, generic, Hinter);
 
-    pub fn with_completion<C: Completer + 'static>(mut self, completer: C) -> Self {
-        self.completer = Some(Box::new(completer));
-        self
-    }
+    with_builder_methods!(completions, completer, generic, Completer);
 
-    pub fn with_highlighter<H: Highlighter + 'static>(mut self, highlighter: H) -> Self {
-        self.highlighter = Some(Box::new(highlighter));
-        self
-    }
+    with_builder_methods!(highlighter, highlighter, generic, Highlighter);
 
-    pub fn with_validator<V: Validator + 'static>(mut self, validator: V) -> Self {
-        self.validator = Some(Box::new(validator));
-        self
-    }
+    with_builder_methods!(validator, validator, generic, Validator);
 
-    pub fn with_transient_prompt<P: Prompt + 'static>(mut self, prompt: P) -> Self {
-        self.transient_prompt = Some(Box::new(prompt));
-        self
-    }
+    with_builder_methods!(transient_prompt, transient_prompt, generic, Prompt);
 
-    pub fn with_edit_mode<E: EditMode + 'static>(mut self, mode: E) -> Self {
-        self.edit_mode = Some(Box::new(mode));
-        self
-    }
+    with_builder_methods!(edit_mode, edit_mode, generic, EditMode);
 
-    pub fn with_buffer_editor(mut self, mut editor: Command, temp_file: PathBuf) -> Self {
-        if !editor.get_args().contains(&temp_file.as_os_str()) {
-            editor.arg(&temp_file);
-        }
-        self.buffer_editor = Some(BufferEditor {
-            command: editor,
-            temp_file,
-        });
-        self
-    }
+    // 
 
     with_builder_methods!(history_exclusion_prefix, history_exclusion_prefix, String);
 
@@ -230,6 +200,17 @@ impl ReedlineBuilder {
     // `menus` cannot accept a slice because ReedlineMenu is not Clone
     pub fn add_menus(mut self, menus: Vec<ReedlineMenu>) -> Self {
         self.menus.extend(menus);
+        self
+    }
+
+    pub fn with_buffer_editor(mut self, mut editor: Command, temp_file: PathBuf) -> Self {
+        if !editor.get_args().contains(&temp_file.as_os_str()) {
+            editor.arg(&temp_file);
+        }
+        self.buffer_editor = Some(BufferEditor {
+            command: editor,
+            temp_file,
+        });
         self
     }
 }
