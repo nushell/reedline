@@ -35,7 +35,7 @@ macro_rules! with_builder_methods {
     };
     ($name:ident, $attribute:ident, generic, $interface:ty) => {
         paste! {
-            pub fn [<with_ $name>]<T: interface + 'static>(mut self, value: T) -> Self {
+            pub fn [<with_ $name>]<T: $interface + 'static>(mut self, value: T) -> Self {
                 self.$attribute = Some(Box::new(value));
                 self
             }
