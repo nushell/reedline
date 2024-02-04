@@ -908,7 +908,7 @@ mod test {
     #[case("word and another one", 3, 7)] // repeat calling will move
     #[case("word and another one", 4, 7)] // Starting from whitespace works
     #[case("word\nline two", 0, 3)] // Multiline...
-    #[case("word\nline two", 3, 8)] // ... contineus to next word end
+    #[case("word\nline two", 3, 8)] // ... continues to next word end
     #[case("weirdö characters", 0, 5)] // Multibyte unicode at the word end (latin UTF-8 should be two bytes long)
     #[case("weirdö characters", 5, 17)] // continue with unicode (latin UTF-8 should be two bytes long)
     #[case("weirdö", 0, 5)] // Multibyte unicode at the buffer end is fine as well
