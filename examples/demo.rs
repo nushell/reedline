@@ -176,7 +176,7 @@ fn main() -> reedline::Result<()> {
                     continue;
                 }
                 // Delete history entry of a certain id
-                if buffer.trim().starts_with("history delete-item") {
+                if buffer.trim().starts_with("history remove-item") {
                     let parts: Vec<&str> = buffer.split_whitespace().collect();
                     if parts.len() == 3 {
                         if let Ok(id) = parts[2].parse::<i64>() {
@@ -184,7 +184,7 @@ fn main() -> reedline::Result<()> {
                             continue;
                         }
                     }
-                    println!("Invalid command. Use: history delete <id>");
+                    println!("Invalid command. Use: history remove-item <id>");
                     continue;
                 }
                 // Get this history session identifier
