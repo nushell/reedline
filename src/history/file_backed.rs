@@ -31,6 +31,7 @@ pub struct FileBackedHistory {
     file: Option<PathBuf>,
     len_on_disk: usize, // Keep track what was previously written to disk
     session: Option<HistorySessionId>,
+    overwrite: bool, // Will overwrite file on next sync, not just new entries
 }
 
 impl Default for FileBackedHistory {
@@ -217,6 +218,7 @@ impl History for FileBackedHistory {
 
         // Remove the item with the specified id
         self.entries.remove(id);
+        self.overwrite = true;
 
         Ok(())
     }
@@ -226,9 +228,6 @@ impl History for FileBackedHistory {
     /// If file would exceed `capacity` truncates the oldest entries.
     fn sync(&mut self) -> std::io::Result<()> {
         if let Some(fname) = &self.file {
-            // The unwritten entries
-            let own_entries = self.entries.range(self.len_on_disk..);
-
             if let Some(base_dir) = fname.parent() {
                 std::fs::create_dir_all(base_dir)?;
             }
@@ -238,14 +237,39 @@ impl History for FileBackedHistory {
                     .create(true)
                     .write(true)
                     .read(true)
+                    .truncate(self.overwrite)
                     .open(fname)?,
             );
             let mut writer_guard = f_lock.write()?;
+
+            if self.overwrite {
+                self.overwrite = false;
+                let mut writer = BufWriter::new(writer_guard.deref_mut());
+                for line in &self.entries {
+                    writer.write_all(encode_entry(line).as_bytes())?;
+                    writer.write_all("\n".as_bytes())?;
+                }
+                writer.flush()?;
+                return Ok(());
+            }
+
+            // The unwritten entries
+            let own_entries = self.entries.range(self.len_on_disk..);
+
             let (mut foreign_entries, truncate) = {
                 let reader = BufReader::new(writer_guard.deref());
                 let mut from_file = reader
                     .lines()
                     .map(|o| o.map(|i| decode_entry(&i)))
+                    .filter(|e| {
+                        if let Ok(entry) = e {
+                            if entry.starts_with(' ') {
+                                self.overwrite = true;
+                                return false;
+                            }
+                        }
+                        true
+                    })
                     .collect::<std::io::Result<VecDeque<_>>>()?;
                 if from_file.len() + own_entries.len() > self.capacity {
                     (
@@ -313,6 +337,7 @@ impl FileBackedHistory {
             file: None,
             len_on_disk: 0,
             session: None,
+            overwrite: false,
         })
     }
 
