@@ -223,9 +223,11 @@ impl History for FileBackedHistory {
         Ok(())
     }
 
-    /// Writes unwritten history contents to disk.
+    /// Syncs current state with disk.
     ///
+    /// Normally, that means reading entries from the file and appending new entries to it.
     /// If file would exceed `capacity` truncates the oldest entries.
+    /// If necessary, the whole file is overwritten.
     fn sync(&mut self) -> std::io::Result<()> {
         if let Some(fname) = &self.file {
             if let Some(base_dir) = fname.parent() {
