@@ -198,8 +198,6 @@ pub trait History: Send {
     /// load a history item by its id
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem>;
 
-    /// retrieves the next unused session id
-
     /// count the results of a query
     fn count(&self, query: SearchQuery) -> Result<u64>;
 
@@ -207,6 +205,7 @@ pub trait History: Send {
     fn count_all(&self) -> Result<u64> {
         self.count(SearchQuery::everything(SearchDirection::Forward, None))
     }
+
     /// return the results of a query
     fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>>;
 
@@ -216,12 +215,16 @@ pub trait History: Send {
         id: HistoryItemId,
         updater: &dyn Fn(HistoryItem) -> HistoryItem,
     ) -> Result<()>;
+
     /// delete all history items
     fn clear(&mut self) -> Result<()>;
+
     /// remove an item from this history
     fn delete(&mut self, h: HistoryItemId) -> Result<()>;
+
     /// ensure that this history is written to disk
     fn sync(&mut self) -> std::io::Result<()>;
+
     /// get the history session id
     fn session(&self) -> Option<HistorySessionId>;
 }
