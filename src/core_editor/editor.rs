@@ -667,7 +667,7 @@ mod test {
     #[rstest]
     #[case("hello world", 0, 'l', 1, false, "lo world")]
     #[case("hello world", 0, 'l', 1, true, "llo world")]
-    #[ignore = "Deleting two consecutives is not implemented correctly and needs the multiplier explicitly."]
+    #[ignore = "Deleting two consecutive chars is not implemented correctly and needs the multiplier explicitly."]
     #[case("hello world", 0, 'l', 2, false, "o world")]
     #[case("hello world", 0, 'h', 1, false, "hello world")]
     #[case("hello world", 0, 'l', 3, true, "ld")]

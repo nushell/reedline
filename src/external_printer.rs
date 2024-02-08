@@ -55,7 +55,7 @@ where
         self.sender.send(line)
     }
 
-    /// Convenience method to get a line if any, doesn´t block.
+    /// Convenience method to get a line if any, doesn't block.
     pub fn get_line(&self) -> Option<T> {
         self.receiver.try_recv().ok()
     }
