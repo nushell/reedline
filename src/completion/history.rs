@@ -105,7 +105,7 @@ mod tests {
         let expected_history_size = command_line_history.len();
         let mut history = FileBackedHistory::new(command_line_history.len())?;
         for command_line in command_line_history {
-            history.save(new_history_item(command_line))?;
+            history.save(&new_history_item(command_line))?;
         }
         let input = "git s";
         let mut sut = HistoryCompleter::new(&history);
@@ -144,7 +144,7 @@ mod tests {
     ) -> Result<()> {
         let mut history = FileBackedHistory::new(history_items.len())?;
         for history_item in history_items {
-            history.save(new_history_item(history_item))?;
+            history.save(&new_history_item(history_item))?;
         }
         let mut sut = HistoryCompleter::new(&history);
         let actual: Vec<String> = sut
