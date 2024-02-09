@@ -42,7 +42,7 @@ pub struct SearchFilter {
     /// Query for the command line content
     pub command_line: Option<CommandLineSearch>,
     /// Considered implementation detail for now
-    pub(crate) not_command_line: Option<String>, // to skip the currently shown value in up-arrow navigation
+    pub not_command_line: Option<String>, // to skip the currently shown value in up-arrow navigation
     /// Filter based on the executing systems hostname
     pub hostname: Option<String>,
     /// Exact filter for the working directory
