@@ -292,6 +292,7 @@ impl History for FileBackedHistory {
         let mut f_lock = fd_lock::RwLock::new(
             OpenOptions::new()
                 .create(true)
+                .truncate(false)
                 .write(true)
                 .read(true)
                 .open(fname)?,
