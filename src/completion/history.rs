@@ -71,14 +71,18 @@ impl<'menu> HistoryCompleter<'menu> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicI64, Ordering};
+
     use rstest::rstest;
 
     use super::*;
     use crate::*;
 
+    static COUNTER: AtomicI64 = AtomicI64::new(0);
+
     fn new_history_item(command_line: &str) -> HistoryItem {
         HistoryItem {
-            id: None,
+            id: HistoryItemId(COUNTER.fetch_add(1, Ordering::SeqCst)),
             start_timestamp: None,
             command_line: command_line.to_string(),
             session_id: None,
