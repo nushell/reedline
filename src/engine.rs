@@ -657,7 +657,7 @@ impl Reedline {
         Ok(())
     }
 
-    /// Clear the screen and the scollback buffer of the terminal
+    /// Clear the screen and the scrollback buffer of the terminal
     pub fn clear_scrollback(&mut self) -> Result<()> {
         self.painter.clear_scrollback()?;
 

@@ -67,7 +67,7 @@ impl Keybindings {
 
     /// Remove a keybinding
     ///
-    /// Returns `Some(ReedlineEvent)` if the keycombination was previously bound to a particular [`ReedlineEvent`]
+    /// Returns `Some(ReedlineEvent)` if the key combination was previously bound to a particular [`ReedlineEvent`]
     pub fn remove_binding(
         &mut self,
         modifier: KeyModifiers,

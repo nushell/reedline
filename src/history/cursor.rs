@@ -542,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_histories_dont_erase_eachother() -> Result<()> {
+    fn concurrent_histories_do_not_erase_each_other() -> Result<()> {
         use tempfile::tempdir;
 
         let tmp = tempdir().unwrap();

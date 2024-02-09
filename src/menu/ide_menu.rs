@@ -893,7 +893,7 @@ impl Menu for IdeMenu {
                 ));
             }
 
-            let decsription_height =
+            let description_height =
                 available_lines.min(self.default_details.max_description_height);
             let description_lines = self
                 .get_value()
@@ -903,7 +903,7 @@ impl Menu for IdeMenu {
                         description,
                         use_ansi_coloring,
                         self.working_details.description_width,
-                        decsription_height,
+                        description_height,
                         self.working_details.description_width, // the width has already been calculated
                     )
                 })

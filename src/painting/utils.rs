@@ -51,7 +51,7 @@ pub(crate) fn estimate_required_lines(input: &str, screen_width: u16) -> usize {
 
 /// Reports the additional lines needed due to wrapping for the given line.
 ///
-/// Does not account for any potential linebreaks in `line`
+/// Does not account for any potential line breaks in `line`
 ///
 /// If `line` fits in `terminal_columns` returns 0
 pub(crate) fn estimate_single_line_wraps(line: &str, terminal_columns: u16) -> usize {
