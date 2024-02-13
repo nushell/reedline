@@ -58,7 +58,7 @@ impl StyledText {
             match (start_position, end_position) {
                 (Position::Before, Position::After) => {
                     let mut in_range = pair.1.split_off(from - current_idx);
-                    let after_range = in_range.split_off(to - current_idx - from);
+                    let after_range = in_range.split_off(to - from);
                     let in_range = (new_style, in_range);
                     let after_range = (pair.0, after_range);
                     self.buffer.insert(pair_idx + 1, in_range);
@@ -254,5 +254,22 @@ mod test {
         assert_eq!(styled_text.buffer[0], (before_style, "as".into()));
         assert_eq!(styled_text.buffer[1], (after_style, "d".into()));
         assert_eq!(styled_text.buffer[2], (before_style, "f".into()));
+    }
+    #[test]
+    fn regression_style_range_cargo_run() {
+        let (_, before_style, after_style) = get_styled_text_template();
+        let mut styled_text = StyledText {
+            buffer: vec![
+                (before_style, "cargo".into()),
+                (before_style, " ".into()),
+                (before_style, "run".into()),
+            ],
+        };
+        styled_text.style_range(8, 7, after_style);
+        assert_eq!(styled_text.buffer[0], (before_style, "cargo".into()));
+        assert_eq!(styled_text.buffer[1], (before_style, " ".into()));
+        assert_eq!(styled_text.buffer[2], (before_style, "r".into()));
+        assert_eq!(styled_text.buffer[3], (after_style, "u".into()));
+        assert_eq!(styled_text.buffer[4], (before_style, "n".into()));
     }
 }
