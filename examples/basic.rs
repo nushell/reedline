@@ -8,7 +8,7 @@ use std::io;
 
 fn main() -> io::Result<()> {
     // Create a new Reedline engine with a local History that is not synchronized to a file.
-    let mut line_editor = Reedline::create();
+    let mut line_editor = Reedline::new();
     let prompt = DefaultPrompt::default();
 
     loop {

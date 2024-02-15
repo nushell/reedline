@@ -56,7 +56,7 @@ impl Prompt for CustomPrompt {
 
 fn main() -> io::Result<()> {
     println!("Custom prompt demo:\nAbort with Ctrl-C or Ctrl-D");
-    let mut line_editor = Reedline::create();
+    let mut line_editor = Reedline::new();
 
     let prompt = CustomPrompt(Cell::new(0), "Custom Prompt");
 

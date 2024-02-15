@@ -648,6 +648,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de3145af08024dea9fa9914f381a17b8fc6034dfb00f3a84013f7ff43f29ed4c"
+
+[[package]]
 name = "petgraph"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -727,6 +733,7 @@ dependencies = [
  "gethostname 0.4.3",
  "itertools",
  "nu-ansi-term",
+ "paste",
  "pretty_assertions",
  "rstest",
  "rusqlite",
