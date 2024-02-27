@@ -113,7 +113,9 @@ mod system_clipboard {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_local_clipboard, get_system_clipboard, ClipboardMode};
+    #[cfg(feature = "system_clipboard")]
+    use super::get_system_clipboard;
+    use super::{get_local_clipboard, ClipboardMode};
     #[test]
     fn reads_back_local() {
         let mut cb = get_local_clipboard();
@@ -132,6 +134,7 @@ mod tests {
         cb.set(&previous_state, ClipboardMode::Normal);
     }
 
+    #[cfg(feature = "system_clipboard")]
     #[test]
     fn reads_back_system() {
         let mut cb = get_system_clipboard();
