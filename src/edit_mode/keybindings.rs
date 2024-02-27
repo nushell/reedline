@@ -217,17 +217,23 @@ pub fn add_common_edit_bindings(kb: &mut Keybindings) {
     kb.add_binding(
         KM::CONTROL | KM::SHIFT,
         KC::Char('x'),
-        edit_bind(EC::CutSelection),
+        edit_bind(EC::CutSelection {
+            system_clipboard: true,
+        }),
     );
     kb.add_binding(
         KM::CONTROL | KM::SHIFT,
         KC::Char('c'),
-        edit_bind(EC::CopySelection),
+        edit_bind(EC::CopySelection {
+            system_clipboard: true,
+        }),
     );
     kb.add_binding(
         KM::CONTROL | KM::SHIFT,
         KC::Char('v'),
-        edit_bind(EC::PasteCutBufferBefore),
+        edit_bind(EC::Paste {
+            system_clipboard: true,
+        }),
     );
 }
 

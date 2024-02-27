@@ -257,11 +257,23 @@ pub enum EditCommand {
     /// Select whole input buffer
     SelectAll,
 
-    /// Cut selection
-    CutSelection,
+    /// Cut selection to local buffer or system clipboard
+    CutSelection {
+        /// Should the system clipboard be used as the destination of the content?
+        system_clipboard: bool,
+    },
 
-    /// Copy selection
-    CopySelection,
+    /// Copy selection to local buffer or system clipboard
+    CopySelection {
+        /// Should the system clipboard be used as the destination of the content?
+        system_clipboard: bool,
+    },
+
+    /// Paste content from local buffer or system clipboard at the current cursor position
+    Paste {
+        /// Is the system clipboard the source of the paste operation?
+        system_clipboard: bool,
+    },
 }
 
 impl Display for EditCommand {
@@ -346,8 +358,13 @@ impl Display for EditCommand {
             EditCommand::CutLeftUntil(_) => write!(f, "CutLeftUntil Value: <char>"),
             EditCommand::CutLeftBefore(_) => write!(f, "CutLeftBefore Value: <char>"),
             EditCommand::SelectAll => write!(f, "SelectAll"),
-            EditCommand::CutSelection => write!(f, "CutSelection"),
-            EditCommand::CopySelection => write!(f, "CopySelection"),
+            EditCommand::CutSelection { .. } => {
+                write!(f, "CutSelectionToSystem system_clipboard: <bool>")
+            }
+            EditCommand::CopySelection { .. } => {
+                write!(f, "CopySelectionToSystem system_clipboard: <bool>")
+            }
+            EditCommand::Paste { .. } => write!(f, "PasteSystemClipboard system_clipboard: <bool>"),
         }
     }
 }
@@ -418,11 +435,12 @@ impl EditCommand {
             | EditCommand::CutRightBefore(_)
             | EditCommand::CutLeftUntil(_)
             | EditCommand::CutLeftBefore(_)
-            | EditCommand::CutSelection => EditType::EditText,
+            | EditCommand::CutSelection { .. }
+            | EditCommand::Paste { .. } => EditType::EditText,
 
             EditCommand::Undo | EditCommand::Redo => EditType::UndoRedo,
 
-            EditCommand::CopySelection => EditType::NoOp,
+            EditCommand::CopySelection { .. } => EditType::NoOp,
         }
     }
 }

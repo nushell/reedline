@@ -50,32 +50,21 @@ impl Clipboard for LocalClipboard {
     }
 }
 
+/// Creates a local clipboard
+pub fn get_local_clipboard() -> Box<dyn Clipboard> {
+    Box::new(LocalClipboard::new())
+}
+
 #[cfg(feature = "system_clipboard")]
 pub use system_clipboard::SystemClipboard;
 
+/// Creates a handle for the OS clipboard
 #[cfg(feature = "system_clipboard")]
-/// Helper to get a clipboard based on the `system_clipboard` feature flag:
-///
-/// Enabled -> [`SystemClipboard`], which talks to the system. If the system clipboard can't be
-/// accessed, it will default to [`LocalClipboard`].
-///
-/// Disabled -> [`LocalClipboard`], which supports cutting and pasting limited to the [`crate::Reedline`] instance
-pub fn get_default_clipboard() -> Box<dyn Clipboard> {
+pub fn get_system_clipboard() -> Box<dyn Clipboard> {
     SystemClipboard::new().map_or_else(
         |_e| Box::new(LocalClipboard::new()) as Box<dyn Clipboard>,
         |cb| Box::new(cb),
     )
-}
-
-#[cfg(not(feature = "system_clipboard"))]
-/// Helper to get a clipboard based on the `system_clipboard` feature flag:
-///
-/// Enabled -> `SystemClipboard`, which talks to the system. If the system clipboard can't be
-/// accessed, it will default to [`LocalClipboard`].
-///
-/// Disabled -> [`LocalClipboard`], which supports cutting and pasting limited to the [`crate::Reedline`] instance
-pub fn get_default_clipboard() -> Box<dyn Clipboard> {
-    Box::new(LocalClipboard::new())
 }
 
 #[cfg(feature = "system_clipboard")]
@@ -124,10 +113,28 @@ mod system_clipboard {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_default_clipboard, ClipboardMode};
+    use super::{get_local_clipboard, get_system_clipboard, ClipboardMode};
     #[test]
-    fn reads_back() {
-        let mut cb = get_default_clipboard();
+    fn reads_back_local() {
+        let mut cb = get_local_clipboard();
+        // If the system clipboard is used we want to persist it for the user
+        let previous_state = cb.get().0;
+
+        // Actual test
+        cb.set("test", ClipboardMode::Normal);
+        assert_eq!(cb.len(), 4);
+        assert_eq!(cb.get().0, "test".to_owned());
+        cb.clear();
+        assert_eq!(cb.get().0, String::new());
+
+        // Restore!
+
+        cb.set(&previous_state, ClipboardMode::Normal);
+    }
+
+    #[test]
+    fn reads_back_system() {
+        let mut cb = get_system_clipboard();
         // If the system clipboard is used we want to persist it for the user
         let previous_state = cb.get().0;
 
