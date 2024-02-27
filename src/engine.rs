@@ -109,6 +109,9 @@ pub struct Reedline {
     history_cursor_on_excluded: bool,
     input_mode: InputMode,
 
+    // Yielded to the host program after a `ReedlineEvent::ExecuteHostCommand`, thus redraw in-place
+    executing_host_command: bool,
+
     // Validator
     validator: Option<Box<dyn Validator>>,
 
@@ -207,6 +210,7 @@ impl Reedline {
             history_excluded_item: None,
             history_cursor_on_excluded: false,
             input_mode: InputMode::Regular,
+            executing_host_command: false,
             painter,
             transient_prompt: None,
             edit_mode,
@@ -667,8 +671,12 @@ impl Reedline {
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        self.painter.initialize_prompt_position()?;
-        self.hide_hints = false;
+        if self.executing_host_command {
+            self.executing_host_command = false;
+        } else {
+            self.painter.initialize_prompt_position()?;
+            self.hide_hints = false;
+        }
 
         self.repaint(prompt)?;
 
@@ -765,8 +773,10 @@ impl Reedline {
             for event in reedline_events.drain(..) {
                 match self.handle_event(prompt, event)? {
                     EventStatus::Exits(signal) => {
-                        // Move the cursor below the input area, for external commands or new read_line call
-                        self.painter.move_cursor_to_end()?;
+                        if !self.executing_host_command {
+                            // Move the cursor below the input area, for external commands or new read_line call
+                            self.painter.move_cursor_to_end()?;
+                        }
                         return Ok(signal);
                     }
                     EventStatus::Handled => {
@@ -842,6 +852,7 @@ impl Reedline {
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
                 // TODO: Decide if we need to do something special to have a nicer painter state on the next go
+                self.executing_host_command = true;
                 Ok(EventStatus::Exits(Signal::Success(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
@@ -1112,6 +1123,7 @@ impl Reedline {
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
                 // TODO: Decide if we need to do something special to have a nicer painter state on the next go
+                self.executing_host_command = true;
                 Ok(EventStatus::Exits(Signal::Success(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
