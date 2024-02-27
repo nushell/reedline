@@ -109,8 +109,8 @@ pub struct Reedline {
     history_cursor_on_excluded: bool,
     input_mode: InputMode,
 
-    // ExecuteHostCommand
-    execute_host_command: bool,
+    // Yielded to the host program after a `ReedlineEvent::ExecuteHostCommand`, thus redraw in-place
+    executing_host_command: bool,
 
     // Validator
     validator: Option<Box<dyn Validator>>,
