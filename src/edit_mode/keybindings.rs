@@ -214,26 +214,23 @@ pub fn add_common_edit_bindings(kb: &mut Keybindings) {
     // Base commands should not affect cut buffer
     kb.add_binding(KM::CONTROL, KC::Char('h'), edit_bind(EC::Backspace));
     kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::BackspaceWord));
+    #[cfg(feature = "system_clipboard")]
     kb.add_binding(
         KM::CONTROL | KM::SHIFT,
         KC::Char('x'),
-        edit_bind(EC::CutSelection {
-            system_clipboard: true,
-        }),
+        edit_bind(EC::CutSelectionSystem),
     );
+    #[cfg(feature = "system_clipboard")]
     kb.add_binding(
         KM::CONTROL | KM::SHIFT,
         KC::Char('c'),
-        edit_bind(EC::CopySelection {
-            system_clipboard: true,
-        }),
+        edit_bind(EC::CopySelectionSystem),
     );
+    #[cfg(feature = "system_clipboard")]
     kb.add_binding(
         KM::CONTROL | KM::SHIFT,
         KC::Char('v'),
-        edit_bind(EC::Paste {
-            system_clipboard: true,
-        }),
+        edit_bind(EC::PasteSystem),
     );
 }
 

@@ -117,24 +117,15 @@ impl Editor {
                 self.move_left_until_char(*c, true, true, *select)
             }
             EditCommand::SelectAll => self.select_all(),
-            EditCommand::CutSelection {
-                system_clipboard: true,
-            } => self.cut_selection_to_system(),
-            EditCommand::CutSelection {
-                system_clipboard: false,
-            } => self.cut_selection_to_cut_buffer(),
-            EditCommand::CopySelection {
-                system_clipboard: true,
-            } => self.copy_selection_to_system(),
-            EditCommand::CopySelection {
-                system_clipboard: false,
-            } => self.copy_selection_to_cut_buffer(),
-            EditCommand::Paste {
-                system_clipboard: true,
-            } => self.paste_system_clipboard(),
-            EditCommand::Paste {
-                system_clipboard: false,
-            } => self.paste_cut_buffer(),
+            EditCommand::CutSelection => self.cut_selection_to_cut_buffer(),
+            EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
+            EditCommand::Paste => self.paste_cut_buffer(),
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::CutSelectionSystem => self.cut_selection_to_system(),
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::CopySelectionSystem => self.copy_selection_to_system(),
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::PasteSystem => self.paste_from_system(),
         }
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
             self.selection_anchor = None;
@@ -535,10 +526,8 @@ impl Editor {
         self.line_buffer.move_to_end();
     }
 
+    #[cfg(feature = "system_clipboard")]
     fn cut_selection_to_system(&mut self) {
-        #[cfg(not(feature = "system_clipboard"))]
-        panic!("The OS clipboard is not enabled. Enable its use with the reedline/system_clipboard feature!");
-        #[cfg(feature = "system_clipboard")]
         if let Some((start, end)) = self.get_selection() {
             let cut_slice = &self.line_buffer.get_buffer()[start..end];
             self.system_clipboard.set(cut_slice, ClipboardMode::Normal);
@@ -556,10 +545,8 @@ impl Editor {
         }
     }
 
+    #[cfg(feature = "system_clipboard")]
     fn copy_selection_to_system(&mut self) {
-        #[cfg(not(feature = "system_clipboard"))]
-        panic!("The OS clipboard is not enabled. Enable its use with the reedline/system_clipboard feature!");
-        #[cfg(feature = "system_clipboard")]
         if let Some((start, end)) = self.get_selection() {
             let cut_slice = &self.line_buffer.get_buffer()[start..end];
             self.system_clipboard.set(cut_slice, ClipboardMode::Normal);
@@ -651,17 +638,10 @@ impl Editor {
         self.line_buffer.insert_newline();
     }
 
-    fn paste_system_clipboard(&mut self) {
-        #[cfg(not(feature = "system_clipboard"))]
-        panic!("The OS clipboard is not enabled. Enable its use with the reedline/system_clipboard feature!");
-        #[cfg(feature = "system_clipboard")]
-        {
-            self.delete_selection();
-            insert_clipboard_content_before(
-                &mut self.line_buffer,
-                self.system_clipboard.deref_mut(),
-            );
-        }
+    #[cfg(feature = "system_clipboard")]
+    fn paste_from_system(&mut self) {
+        self.delete_selection();
+        insert_clipboard_content_before(&mut self.line_buffer, self.system_clipboard.deref_mut());
     }
 
     fn paste_cut_buffer(&mut self) {
@@ -896,38 +876,26 @@ mod test {
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(editor.get_buffer(), "This \r\n is a test");
     }
-    #[cfg(not(feature = "system_clipboard"))]
+    #[cfg(feature = "system_clipboard")]
     mod without_system_clipboard {
         use super::*;
         #[test]
-        #[should_panic]
-        fn test_cut_selection_panic() {
+        fn test_cut_selection_system() {
             let mut editor = editor_with("This is a test!");
             editor.selection_anchor = Some(editor.line_buffer.len());
             editor.line_buffer.set_insertion_point(0);
-            editor.run_edit_command(&EditCommand::CutSelection {
-                system_clipboard: true,
-            });
+            editor.run_edit_command(&EditCommand::CutSelectionSystem);
+            assert!(editor.line_buffer.get_buffer().is_empty());
         }
         #[test]
-        #[should_panic]
-        fn test_copy_selection_panic() {
-            let mut editor = editor_with("This is a test!");
+        fn test_copypaste_selection_system() {
+            let s = "This is a test!";
+            let mut editor = editor_with(s);
             editor.selection_anchor = Some(editor.line_buffer.len());
             editor.line_buffer.set_insertion_point(0);
-            editor.run_edit_command(&EditCommand::CopySelection {
-                system_clipboard: true,
-            });
-        }
-        #[test]
-        #[should_panic]
-        fn test_paste_selection_panic() {
-            let mut editor = editor_with("This is a test!");
-            editor.selection_anchor = Some(editor.line_buffer.len());
-            editor.line_buffer.set_insertion_point(0);
-            editor.run_edit_command(&EditCommand::Paste {
-                system_clipboard: true,
-            });
+            editor.run_edit_command(&EditCommand::CopySelectionSystem);
+            editor.run_edit_command(&EditCommand::PasteSystem);
+            pretty_assertions::assert_eq!(editor.line_buffer.len(), s.len() * 2);
         }
     }
 }
