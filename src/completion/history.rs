@@ -60,6 +60,7 @@ impl<'menu> HistoryCompleter<'menu> {
 
         Suggestion {
             value: value.to_string(),
+            display: None,
             description: None,
             style: None,
             extra: None,

@@ -302,7 +302,11 @@ impl ColumnarMenu {
             let match_len = self.working_details.shortest_base_string.len();
 
             // Split string so the match text can be styled
-            let (match_str, remaining_str) = suggestion.value.split_at(match_len);
+            let (match_str, remaining_str) = if let Some(display) = suggestion.display.as_ref() {
+                ("", display.as_str())
+            } else {
+                suggestion.value.split_at(match_len)
+            };
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -397,7 +401,7 @@ impl ColumnarMenu {
                 format!(
                     "{}{:max$}{}{}",
                     marker,
-                    &suggestion.value,
+                    suggestion.display_or_value(),
                     description
                         .chars()
                         .take(empty_space)
@@ -414,7 +418,7 @@ impl ColumnarMenu {
                 format!(
                     "{}{}{:>empty$}{}",
                     marker,
-                    &suggestion.value,
+                    suggestion.display_or_value(),
                     "",
                     self.end_of_line(column),
                     empty = empty_space.saturating_sub(marker.len()),
@@ -530,15 +534,17 @@ impl Menu for ColumnarMenu {
                 self.working_details.col_width = painter.screen_width() as usize;
 
                 self.longest_suggestion = self.get_values().iter().fold(0, |prev, suggestion| {
-                    if prev >= suggestion.value.len() {
+                    let suggestion_length = suggestion.display_or_value().len();
+                    if prev >= suggestion_length {
                         prev
                     } else {
-                        suggestion.value.len()
+                        suggestion_length
                     }
                 });
             } else {
                 let max_width = self.get_values().iter().fold(0, |acc, suggestion| {
-                    let str_len = suggestion.value.len() + self.default_details.col_padding;
+                    let str_len =
+                        suggestion.display_or_value().len() + self.default_details.col_padding;
                     if str_len > acc {
                         str_len
                     } else {
@@ -654,7 +660,9 @@ impl Menu for ColumnarMenu {
                     // Correcting the enumerate index based on the number of skipped values
                     let index = index + skip_values;
                     let column = index as u16 % self.get_cols();
-                    let empty_space = self.get_width().saturating_sub(suggestion.value.len());
+                    let empty_space = self
+                        .get_width()
+                        .saturating_sub(suggestion.display_or_value().len());
 
                     self.create_string(suggestion, index, column, empty_space, use_ansi_coloring)
                 })
@@ -745,6 +753,7 @@ mod tests {
     fn fake_suggestion(name: &str, pos: usize) -> Suggestion {
         Suggestion {
             value: name.to_string(),
+            display: None,
             description: None,
             style: None,
             extra: None,

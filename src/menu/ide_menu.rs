@@ -1376,6 +1376,7 @@ mod tests {
     fn fake_suggestion(name: &str, pos: usize) -> Suggestion {
         Suggestion {
             value: name.to_string(),
+            display: None,
             description: None,
             style: None,
             extra: None,
