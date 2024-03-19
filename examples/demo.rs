@@ -16,7 +16,7 @@ use {
 
 #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
 use reedline::FileBackedHistory;
-use reedline::{CursorConfig, MenuBuilder};
+use reedline::{CursorConfig, HistoryItemId, MenuBuilder};
 
 fn main() -> reedline::Result<()> {
     println!("Ctrl-D to quit");
@@ -173,6 +173,18 @@ fn main() -> reedline::Result<()> {
                 // Get the history only pertinent to the current session
                 if buffer.trim() == "history session" {
                     line_editor.print_history_session()?;
+                    continue;
+                }
+                // Delete history entry of a certain id
+                if buffer.trim().starts_with("history remove-item") {
+                    let parts: Vec<&str> = buffer.split_whitespace().collect();
+                    if parts.len() == 3 {
+                        if let Ok(id) = parts[2].parse::<i64>() {
+                            line_editor.history_mut().delete(HistoryItemId::new(id))?;
+                            continue;
+                        }
+                    }
+                    println!("Invalid command. Use: history remove-item <id>");
                     continue;
                 }
                 // Get this history session identifier
