@@ -136,17 +136,8 @@ impl EditMode for Vi {
                 }
                 (_, KeyModifiers::NONE, KeyCode::Esc) => {
                     self.cache.clear();
-
-                    ReedlineEvent::Multiple(vec![
-                        if self.mode == ViMode::Insert {
-                            self.mode = ViMode::Normal;
-                            ReedlineEvent::Left
-                        } else {
-                            ReedlineEvent::None
-                        },
-                        ReedlineEvent::Esc,
-                        ReedlineEvent::Repaint,
-                    ])
+                    self.mode = ViMode::Normal;
+                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
                 }
                 (_, KeyModifiers::NONE, KeyCode::Enter) => {
                     self.mode = ViMode::Insert;
@@ -197,11 +188,7 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Left,
-                ReedlineEvent::Esc,
-                ReedlineEvent::Repaint
-            ])
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
         );
         assert!(matches!(vi.mode, ViMode::Normal));
     }
