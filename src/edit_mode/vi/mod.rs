@@ -30,6 +30,8 @@ pub struct Vi {
     previous: Option<ReedlineEvent>,
     // last f, F, t, T motion for ; and ,
     last_char_search: Option<ViCharSearch>,
+    alternate_esc_seq: (KeyCode, KeyCode),
+    most_recent_keycode: KeyCode,
 }
 
 impl Default for Vi {
@@ -37,23 +39,37 @@ impl Default for Vi {
         Vi {
             insert_keybindings: default_vi_insert_keybindings(),
             normal_keybindings: default_vi_normal_keybindings(),
+            alternate_esc_seq: (KeyCode::Null, KeyCode::Null),
             cache: Vec::new(),
             mode: ViMode::Insert,
             previous: None,
             last_char_search: None,
+            most_recent_keycode: KeyCode::Null,
         }
     }
 }
 
 impl Vi {
     /// Creates Vi editor using defined keybindings
-    pub fn new(insert_keybindings: Keybindings, normal_keybindings: Keybindings) -> Self {
+    pub fn new(
+        insert_keybindings: Keybindings,
+        normal_keybindings: Keybindings,
+        alternate_esc_seq: (KeyCode, KeyCode),
+    ) -> Self {
         Self {
             insert_keybindings,
             normal_keybindings,
+            alternate_esc_seq,
             ..Default::default()
         }
     }
+}
+
+fn exit_insert_mode(editor: &mut Vi) -> ReedlineEvent {
+    editor.most_recent_keycode = KeyCode::Null;
+    editor.cache.clear();
+    editor.mode = ViMode::Normal;
+    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
 }
 
 impl EditMode for Vi {
@@ -61,8 +77,37 @@ impl EditMode for Vi {
         match event.into() {
             Event::Key(KeyEvent {
                 code, modifiers, ..
-            }) => match (self.mode, modifiers, code) {
-                (ViMode::Normal, modifier, KeyCode::Char(c)) => {
+            }) => match (
+                self.mode,
+                modifiers,
+                code,
+                self.alternate_esc_seq,
+                self.most_recent_keycode,
+            ) {
+                (ViMode::Insert, KeyModifiers::NONE, code, (e1, e2), mr)
+                    if code == e2 && mr == e1 =>
+                {
+                    exit_insert_mode(self)
+                }
+                (ViMode::Insert, KeyModifiers::NONE, code, (e1, _), _) if code == e1 => {
+                    self.most_recent_keycode = code;
+                    ReedlineEvent::None
+                }
+                (
+                    ViMode::Insert,
+                    KeyModifiers::NONE,
+                    KeyCode::Char(code),
+                    (KeyCode::Char(e1), KeyCode::Char(e2)),
+                    KeyCode::Char(mr),
+                ) if code != e2 && mr == e1 => {
+                    self.most_recent_keycode = KeyCode::Char(code);
+                    ReedlineEvent::Multiple(vec![
+                        ReedlineEvent::Edit(vec![EditCommand::InsertChar(e1)]),
+                        ReedlineEvent::Edit(vec![EditCommand::InsertChar(code)]),
+                    ])
+                }
+
+                (ViMode::Normal, modifier, KeyCode::Char(c), _, _) => {
                     let c = c.to_ascii_lowercase();
 
                     if let Some(event) = self
@@ -97,7 +142,7 @@ impl EditMode for Vi {
                         ReedlineEvent::None
                     }
                 }
-                (ViMode::Insert, modifier, KeyCode::Char(c)) => {
+                (ViMode::Insert, modifier, KeyCode::Char(c), _, _) => {
                     // Note. The modifier can also be a combination of modifiers, for
                     // example:
                     //     KeyModifiers::CONTROL | KeyModifiers::ALT
@@ -122,6 +167,7 @@ impl EditMode for Vi {
                                         | KeyModifiers::ALT
                                         | KeyModifiers::SHIFT
                             {
+                                self.most_recent_keycode = KeyCode::Char(c);
                                 ReedlineEvent::Edit(vec![EditCommand::InsertChar(
                                     if modifier == KeyModifiers::SHIFT {
                                         c.to_ascii_uppercase()
@@ -134,20 +180,16 @@ impl EditMode for Vi {
                             }
                         })
                 }
-                (_, KeyModifiers::NONE, KeyCode::Esc) => {
-                    self.cache.clear();
-                    self.mode = ViMode::Normal;
-                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
-                }
-                (_, KeyModifiers::NONE, KeyCode::Enter) => {
+                (_, KeyModifiers::NONE, KeyCode::Esc, _, _) => exit_insert_mode(self),
+                (_, KeyModifiers::NONE, KeyCode::Enter, _, _) => {
                     self.mode = ViMode::Insert;
                     ReedlineEvent::Enter
                 }
-                (ViMode::Normal, _, _) => self
+                (ViMode::Normal, _, _, _, _) => self
                     .normal_keybindings
                     .find_binding(modifiers, code)
                     .unwrap_or(ReedlineEvent::None),
-                (ViMode::Insert, _, _) => self
+                (ViMode::Insert, _, _, _, _) => self
                     .insert_keybindings
                     .find_binding(modifiers, code)
                     .unwrap_or(ReedlineEvent::None),
