@@ -733,6 +733,8 @@ dependencies = [
  "crossbeam",
  "crossterm",
  "fd-lock",
+ "gethostname",
+ "indexmap",
  "itertools",
  "nu-ansi-term",
  "pretty_assertions",
