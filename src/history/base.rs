@@ -42,7 +42,7 @@ pub struct SearchFilter {
     /// Query for the command line content
     pub command_line: Option<CommandLineSearch>,
     /// Considered implementation detail for now
-    pub(crate) not_command_line: Option<String>, // to skip the currently shown value in up-arrow navigation
+    pub not_command_line: Option<String>, // to skip the currently shown value in up-arrow navigation
     /// Filter based on the executing systems hostname
     pub hostname: Option<String>,
     /// Exact filter for the working directory
@@ -186,21 +186,26 @@ impl SearchQuery {
 /// Represents a history file or database
 /// Data could be stored e.g. in a plain text file, in a `JSONL` file, in a `SQLite` database
 pub trait History: Send {
-    /// save a history item to the database
-    /// if given id is None, a new id is created and set in the return value
-    /// if given id is Some, the existing entry is updated
-    fn save(&mut self, h: HistoryItem) -> Result<HistoryItem>;
+    /// generate a unique identifier for a new [`HistoryItem`]
+    fn generate_id(&mut self) -> HistoryItemId;
+
+    /// save a new history item to the database
+    fn save(&mut self, h: &HistoryItem) -> Result<()>;
+
+    /// replace an existing history item in the database
+    fn replace(&mut self, h: &HistoryItem) -> Result<()>;
+
     /// load a history item by its id
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem>;
 
-    /// retrieves the next unused session id
-
     /// count the results of a query
-    fn count(&self, query: SearchQuery) -> Result<i64>;
+    fn count(&self, query: SearchQuery) -> Result<u64>;
+
     /// return the total number of history items
-    fn count_all(&self) -> Result<i64> {
+    fn count_all(&self) -> Result<u64> {
         self.count(SearchQuery::everything(SearchDirection::Forward, None))
     }
+
     /// return the results of a query
     fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>>;
 
@@ -210,28 +215,37 @@ pub trait History: Send {
         id: HistoryItemId,
         updater: &dyn Fn(HistoryItem) -> HistoryItem,
     ) -> Result<()>;
+
     /// delete all history items
     fn clear(&mut self) -> Result<()>;
+
     /// remove an item from this history
     fn delete(&mut self, h: HistoryItemId) -> Result<()>;
+
     /// ensure that this history is written to disk
     fn sync(&mut self) -> std::io::Result<()>;
+
     /// get the history session id
     fn session(&self) -> Option<HistorySessionId>;
 }
 
 #[cfg(test)]
 mod test {
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
-    const IS_FILE_BASED: bool = false;
-    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
-    const IS_FILE_BASED: bool = true;
+    use std::time::Duration;
 
     use crate::HistorySessionId;
 
-    fn create_item(session: i64, cwd: &str, cmd: &str, exit_status: i64) -> HistoryItem {
-        HistoryItem {
-            id: None,
+    fn create_item(
+        hist: &mut dyn History,
+        session: i64,
+        cwd: &str,
+        cmd: &str,
+        exit_status: i64,
+    ) -> Result<()> {
+        let id = hist.count_all()? + 1;
+
+        let item = HistoryItem {
+            id: HistoryItemId(id as i64),
             start_timestamp: None,
             command_line: cmd.to_string(),
             session_id: Some(HistorySessionId::new(session)),
@@ -240,31 +254,38 @@ mod test {
             duration: Some(Duration::from_millis(1000)),
             exit_status: Some(exit_status),
             more_info: None,
-        }
+        };
+
+        hist.save(&item)?;
+
+        // // Ensure the item was correctly inserted
+        // assert_eq!(hist.count_all()?, id);
+
+        Ok(())
     }
-    use std::time::Duration;
 
     use super::*;
     fn create_filled_example_history() -> Result<Box<dyn History>> {
         #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
         let mut history = crate::SqliteBackedHistory::in_memory()?;
+
         #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
         let mut history = crate::FileBackedHistory::default();
-        #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
-        history.save(create_item(1, "/", "dummy", 0))?; // add dummy item so ids start with 1
-        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
-        history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
-        history.save(create_item(1, "/home/me/Downloads", "unzip foo.zip", 0))?; // 3
-        history.save(create_item(1, "/home/me/Downloads", "cd foo", 0))?; // 4
-        history.save(create_item(1, "/home/me/Downloads/foo", "ls", 0))?; // 5
-        history.save(create_item(1, "/home/me/Downloads/foo", "ls -alh", 0))?; // 6
-        history.save(create_item(1, "/home/me/Downloads/foo", "cat x.txt", 0))?; // 7
 
-        history.save(create_item(1, "/home/me", "cd /etc/nginx", 0))?; // 8
-        history.save(create_item(1, "/etc/nginx", "ls -l", 0))?; // 9
-        history.save(create_item(1, "/etc/nginx", "vim nginx.conf", 0))?; // 10
-        history.save(create_item(1, "/etc/nginx", "vim htpasswd", 0))?; // 11
-        history.save(create_item(1, "/etc/nginx", "cat nginx.conf", 0))?; // 12
+        create_item(&mut history, 1, "/home/me", "cd ~/Downloads", 0)?; // 1
+        create_item(&mut history, 1, "/home/me/Downloads", "unzp foo.zip", 1)?; // 2
+        create_item(&mut history, 1, "/home/me/Downloads", "unzip foo.zip", 0)?; // 3
+        create_item(&mut history, 1, "/home/me/Downloads", "cd foo", 0)?; // 4
+        create_item(&mut history, 1, "/home/me/Downloads/foo", "ls", 0)?; // 5
+        create_item(&mut history, 1, "/home/me/Downloads/foo", "ls -alh", 0)?; // 6
+        create_item(&mut history, 1, "/home/me/Downloads/foo", "cat x.txt", 0)?; // 7
+
+        create_item(&mut history, 1, "/home/me", "cd /etc/nginx", 0)?; // 8
+        create_item(&mut history, 1, "/etc/nginx", "ls -l", 0)?; // 9
+        create_item(&mut history, 1, "/etc/nginx", "vim nginx.conf", 0)?; // 10
+        create_item(&mut history, 1, "/etc/nginx", "vim htpasswd", 0)?; // 11
+        create_item(&mut history, 1, "/etc/nginx", "cat nginx.conf", 0)?; // 12
+
         Ok(Box::new(history))
     }
 
@@ -298,7 +319,9 @@ mod test {
             .iter()
             .map(|id| history.load(HistoryItemId::new(*id)))
             .collect::<Result<Vec<HistoryItem>>>()?;
+
         assert_eq!(res, wanted);
+
         Ok(())
     }
 
@@ -310,7 +333,7 @@ mod test {
             history.search(SearchQuery::everything(SearchDirection::Forward, None))
         );
 
-        assert_eq!(history.count_all()?, if IS_FILE_BASED { 13 } else { 12 });
+        assert_eq!(history.count_all()?, 12);
         Ok(())
     }
 
@@ -330,7 +353,7 @@ mod test {
             limit: Some(1),
             ..SearchQuery::everything(SearchDirection::Forward, None)
         })?;
-        search_returned(&*history, res, vec![if IS_FILE_BASED { 0 } else { 1 }])?;
+        search_returned(&*history, res, vec![1])?;
         Ok(())
     }
 
@@ -409,8 +432,8 @@ mod test {
 
         // create history, add a few entries
         let mut history = open_history();
-        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
-        history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
+        create_item(history.as_mut(), 1, "/home/me", "cd ~/Downloads", 0)?; // 1
+        create_item(history.as_mut(), 1, "/home/me/Downloads", "unzp foo.zip", 1)?; // 2
         assert_eq!(history.count_all()?, 2);
         drop(history);
 
@@ -432,7 +455,7 @@ mod test {
     #[test]
     fn history_size_zero() -> Result<()> {
         let mut history = crate::FileBackedHistory::new(0)?;
-        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?;
+        create_item(&mut history, 1, "/home/me", "cd ~/Downloads", 0)?;
         assert_eq!(history.count_all()?, 0);
         let _ = history.sync();
         history.clear()?;

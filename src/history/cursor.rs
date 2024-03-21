@@ -58,6 +58,7 @@ impl HistoryCursor {
             filter
         }
     }
+
     fn navigate_in_direction(
         &mut self,
         history: &dyn History,
@@ -67,7 +68,9 @@ impl HistoryCursor {
             // if searching forward but we don't have a starting point, assume we are at the end
             return Ok(());
         }
-        let start_id = self.current.as_ref().and_then(|e| e.id);
+
+        let start_id = self.current.as_ref().map(|e| e.id);
+
         let mut next = history.search(SearchQuery {
             start_id,
             end_id: None,
@@ -77,12 +80,18 @@ impl HistoryCursor {
             limit: Some(1),
             filter: self.get_search_filter(),
         })?;
+
         if next.len() == 1 {
+            // NOTE: .swap_remove() does not preserve the vector's order
+            // But is *is* faster than .remove() as it completes in O(1)
+            // And given we won't use this vector of results afterwards,
+            // we can use this function without worrying here
             self.current = Some(next.swap_remove(0));
         } else if direction == SearchDirection::Forward {
             // no result and searching forward: we are at the end
             self.current = None;
         }
+
         Ok(())
     }
 
@@ -108,6 +117,13 @@ mod tests {
     use super::super::*;
     use super::*;
 
+    fn save_from_command_line(hist: &mut dyn History, cmd_line: impl Into<String>) -> Result<()> {
+        let id = hist.generate_id();
+        let entry = HistoryItem::from_command_line(cmd_line, id);
+
+        hist.save(&entry)
+    }
+
     fn create_history() -> (Box<dyn History>, HistoryCursor) {
         #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
         let hist = Box::new(SqliteBackedHistory::in_memory().unwrap());
@@ -118,6 +134,7 @@ mod tests {
             HistoryCursor::new(HistoryNavigationQuery::Normal(LineBuffer::default()), None),
         )
     }
+
     fn create_history_at(cap: usize, path: &Path) -> (Box<dyn History>, HistoryCursor) {
         let hist = Box::new(FileBackedHistory::with_file(cap, path.to_owned()).unwrap());
         (
@@ -133,10 +150,10 @@ mod tests {
         let actual: Vec<_> = res.iter().map(|e| e.command_line.to_string()).collect();
         actual
     }
+
     fn add_text_entries(hist: &mut dyn History, entries: &[impl AsRef<str>]) {
         entries.iter().for_each(|e| {
-            hist.save(HistoryItem::from_command_line(e.as_ref()))
-                .unwrap();
+            save_from_command_line(hist, e.as_ref()).unwrap();
         });
     }
 
@@ -166,8 +183,8 @@ mod tests {
     #[test]
     fn going_backwards_bottoms_out() -> Result<()> {
         let (mut hist, mut cursor) = create_history();
-        hist.save(HistoryItem::from_command_line("command1"))?;
-        hist.save(HistoryItem::from_command_line("command2"))?;
+        save_from_command_line(hist.as_mut(), "command1")?;
+        save_from_command_line(hist.as_mut(), "command2")?;
         cursor.back(&*hist)?;
         cursor.back(&*hist)?;
         cursor.back(&*hist)?;
@@ -180,8 +197,8 @@ mod tests {
     #[test]
     fn going_forwards_bottoms_out() -> Result<()> {
         let (mut hist, mut cursor) = create_history();
-        hist.save(HistoryItem::from_command_line("command1"))?;
-        hist.save(HistoryItem::from_command_line("command2"))?;
+        save_from_command_line(hist.as_mut(), "command1")?;
+        save_from_command_line(hist.as_mut(), "command2")?;
         cursor.forward(&*hist)?;
         cursor.forward(&*hist)?;
         cursor.forward(&*hist)?;
@@ -195,10 +212,10 @@ mod tests {
     #[test]
     fn appends_only_unique() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("unique_old"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("unique"))?;
+        save_from_command_line(hist.as_mut(), "unique_old")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "unique")?;
         assert_eq!(hist.count_all()?, 3);
         Ok(())
     }
@@ -206,9 +223,9 @@ mod tests {
     #[test]
     fn prefix_search_works() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("find me as well"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("find me"))?;
+        save_from_command_line(hist.as_mut(), "find me as well")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "find me")?;
 
         let mut cursor = HistoryCursor::new(
             HistoryNavigationQuery::PrefixSearch("find".to_string()),
@@ -228,9 +245,9 @@ mod tests {
     #[test]
     fn prefix_search_bottoms_out() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("find me as well"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("find me"))?;
+        save_from_command_line(hist.as_mut(), "find me as well")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "find me")?;
 
         let mut cursor = HistoryCursor::new(
             HistoryNavigationQuery::PrefixSearch("find".to_string()),
@@ -256,9 +273,9 @@ mod tests {
     #[test]
     fn prefix_search_returns_to_none() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("find me as well"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("find me"))?;
+        save_from_command_line(hist.as_mut(), "find me as well")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "find me")?;
 
         let mut cursor = HistoryCursor::new(
             HistoryNavigationQuery::PrefixSearch("find".to_string()),
@@ -283,10 +300,10 @@ mod tests {
     #[test]
     fn prefix_search_ignores_consecutive_equivalent_entries_going_backwards() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("find me as well"))?;
-        hist.save(HistoryItem::from_command_line("find me once"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("find me once"))?;
+        save_from_command_line(hist.as_mut(), "find me as well")?;
+        save_from_command_line(hist.as_mut(), "find me once")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "find me once")?;
 
         let mut cursor = HistoryCursor::new(
             HistoryNavigationQuery::PrefixSearch("find".to_string()),
@@ -305,41 +322,47 @@ mod tests {
     #[test]
     fn prefix_search_ignores_consecutive_equivalent_entries_going_forwards() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("find me once"))?;
-        hist.save(HistoryItem::from_command_line("test"))?;
-        hist.save(HistoryItem::from_command_line("find me once"))?;
-        hist.save(HistoryItem::from_command_line("find me as well"))?;
+
+        save_from_command_line(hist.as_mut(), "find me once")?;
+        save_from_command_line(hist.as_mut(), "test")?;
+        save_from_command_line(hist.as_mut(), "find me once")?;
+        save_from_command_line(hist.as_mut(), "find me as well")?;
 
         let mut cursor = HistoryCursor::new(
             HistoryNavigationQuery::PrefixSearch("find".to_string()),
             None,
         );
+
         cursor.back(&*hist)?;
         assert_eq!(
             cursor.string_at_cursor(),
             Some("find me as well".to_string())
         );
+
         cursor.back(&*hist)?;
         cursor.back(&*hist)?;
         assert_eq!(cursor.string_at_cursor(), Some("find me once".to_string()));
+
         cursor.forward(&*hist)?;
         assert_eq!(
             cursor.string_at_cursor(),
             Some("find me as well".to_string())
         );
+
         cursor.forward(&*hist)?;
         assert_eq!(cursor.string_at_cursor(), None);
+
         Ok(())
     }
 
     #[test]
     fn substring_search_works() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("substring"))?;
-        hist.save(HistoryItem::from_command_line("don't find me either"))?;
-        hist.save(HistoryItem::from_command_line("prefix substring"))?;
-        hist.save(HistoryItem::from_command_line("don't find me"))?;
-        hist.save(HistoryItem::from_command_line("prefix substring suffix"))?;
+        save_from_command_line(hist.as_mut(), "substring")?;
+        save_from_command_line(hist.as_mut(), "don't find me either")?;
+        save_from_command_line(hist.as_mut(), "prefix substring")?;
+        save_from_command_line(hist.as_mut(), "don't find me")?;
+        save_from_command_line(hist.as_mut(), "prefix substring suffix")?;
 
         let mut cursor = HistoryCursor::new(
             HistoryNavigationQuery::SubstringSearch("substring".to_string()),
@@ -363,7 +386,7 @@ mod tests {
     #[test]
     fn substring_search_with_empty_value_returns_none() -> Result<()> {
         let (mut hist, _) = create_history();
-        hist.save(HistoryItem::from_command_line("substring"))?;
+        save_from_command_line(hist.as_mut(), "substring")?;
 
         let cursor = HistoryCursor::new(
             HistoryNavigationQuery::SubstringSearch("".to_string()),
@@ -392,6 +415,7 @@ mod tests {
         }
 
         let (reading_hist, _) = create_history_at(5, &histfile);
+
         let actual = get_all_entry_texts(reading_hist.as_ref());
         assert_eq!(entries, actual);
 
@@ -444,27 +468,35 @@ mod tests {
         let expected_truncated_entries = vec!["test 4", "test 5", "test 6", "test 7", "test 8"];
 
         {
+            println!("> Creating writing history...");
             let (mut writing_hist, _) = create_history_at(capacity, &histfile);
             add_text_entries(writing_hist.as_mut(), &initial_entries);
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+            println!("> Flushing writing history...");
         }
 
         {
+            println!("> Creating appending history...");
             let (mut appending_hist, _) = create_history_at(capacity, &histfile);
             add_text_entries(appending_hist.as_mut(), &appending_entries);
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
             let actual: Vec<_> = get_all_entry_texts(appending_hist.as_ref());
             assert_eq!(expected_appended_entries, actual);
+            println!("> Flushing appending history...");
         }
 
         {
+            println!("> Creating truncating history...");
             let (mut truncating_hist, _) = create_history_at(capacity, &histfile);
             add_text_entries(truncating_hist.as_mut(), &truncating_entries);
             let actual: Vec<_> = get_all_entry_texts(truncating_hist.as_ref());
             assert_eq!(expected_truncated_entries, actual);
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
+
+            println!("> Flushing truncating history...");
         }
 
+        println!("> Creating reading history...");
         let (reading_hist, _) = create_history_at(capacity, &histfile);
 
         let actual: Vec<_> = get_all_entry_texts(reading_hist.as_ref());
@@ -531,12 +563,17 @@ mod tests {
         {
             let (mut hist_a, _) = create_history_at(capacity, &histfile);
 
+            assert_eq!(get_all_entry_texts(hist_a.as_ref()), initial_entries);
+
             {
                 let (mut hist_b, _) = create_history_at(capacity, &histfile);
+
+                assert_eq!(get_all_entry_texts(hist_b.as_ref()), initial_entries);
 
                 add_text_entries(hist_b.as_mut(), &entries_b);
                 // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
             }
+
             add_text_entries(hist_a.as_mut(), &entries_a);
             // As `hist` goes out of scope and get's dropped, its contents are flushed to disk
         }
@@ -574,11 +611,9 @@ mod tests {
                 let hfile = histfile.clone();
                 std::thread::spawn(move || {
                     let (mut hist, _) = create_history_at(cap, &hfile);
-                    hist.save(HistoryItem::from_command_line(format!("A{i}")))
-                        .unwrap();
+                    save_from_command_line(hist.as_mut(), format!("A{i}")).unwrap();
                     hist.sync().unwrap();
-                    hist.save(HistoryItem::from_command_line(format!("B{i}")))
-                        .unwrap();
+                    save_from_command_line(hist.as_mut(), format!("B{i}")).unwrap();
                 })
             })
             .collect::<Vec<_>>();

@@ -7,6 +7,7 @@ use crate::{
     Result,
 };
 use chrono::{TimeZone, Utc};
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 use rusqlite::{named_params, params, Connection, ToSql};
 use std::{path::PathBuf, time::Duration};
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
@@ -21,12 +22,14 @@ pub struct SqliteBackedHistory {
     db: rusqlite::Connection,
     session: Option<HistorySessionId>,
     session_timestamp: Option<chrono::DateTime<Utc>>,
+    rng: SmallRng,
 }
 
 fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem> {
     let x: Option<String> = row.get("more_info")?;
+
     Ok(HistoryItem {
-        id: Some(HistoryItemId::new(row.get("id")?)),
+        id: HistoryItemId::new(row.get("id")?),
         start_timestamp: row.get::<&str, Option<i64>>("start_timestamp")?.map(|e| {
             match Utc.timestamp_millis_opt(e) {
                 chrono::LocalResult::Single(e) => e,
@@ -59,12 +62,16 @@ fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem
 }
 
 impl History for SqliteBackedHistory {
-    fn save(&mut self, mut entry: HistoryItem) -> Result<HistoryItem> {
-        let ret: i64 = self
+    fn generate_id(&mut self) -> HistoryItemId {
+        HistoryItemId(self.rng.gen())
+    }
+
+    fn save(&mut self, entry: &HistoryItem) -> Result<()> {
+        self
             .db
             .prepare(
                 "insert into history
-                               (id,  start_timestamp,  command_line,  session_id,  hostname,  cwd,  duration_ms,  exit_status,  more_info)
+                               (id, start_timestamp,  command_line,  session_id,  hostname,  cwd,  duration_ms,  exit_status,  more_info)
                         values (:id, :start_timestamp, :command_line, :session_id, :hostname, :cwd, :duration_ms, :exit_status, :more_info)
                     on conflict (history.id) do update set
                         start_timestamp = excluded.start_timestamp,
@@ -74,13 +81,12 @@ impl History for SqliteBackedHistory {
                         cwd = excluded.cwd,
                         duration_ms = excluded.duration_ms,
                         exit_status = excluded.exit_status,
-                        more_info = excluded.more_info
-                    returning id",
+                        more_info = excluded.more_info",
             )
             .map_err(map_sqlite_err)?
-            .query_row(
+            .execute(
                 named_params! {
-                    ":id": entry.id.map(|id| id.0),
+                    ":id": entry.id.0,
                     ":start_timestamp": entry.start_timestamp.map(|e| e.timestamp_millis()),
                     ":command_line": entry.command_line,
                     ":session_id": entry.session_id.map(|e| e.0),
@@ -90,11 +96,14 @@ impl History for SqliteBackedHistory {
                     ":exit_status": entry.exit_status,
                     ":more_info": entry.more_info.as_ref().map(|e| serde_json::to_string(e).unwrap())
                 },
-                |row| row.get(0),
             )
-            .map_err(map_sqlite_err)?;
-        entry.id = Some(HistoryItemId::new(ret));
-        Ok(entry)
+            .map(|_| ())
+            .map_err(map_sqlite_err)
+    }
+
+    /// this history doesn't replace entries
+    fn replace(&mut self, h: &HistoryItem) -> Result<()> {
+        self.save(h)
     }
 
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem> {
@@ -104,24 +113,30 @@ impl History for SqliteBackedHistory {
             .map_err(map_sqlite_err)?
             .query_row(named_params! { ":id": id.0 }, deserialize_history_item)
             .map_err(map_sqlite_err)?;
+
         Ok(entry)
     }
 
-    fn count(&self, query: SearchQuery) -> Result<i64> {
+    fn count(&self, query: SearchQuery) -> Result<u64> {
         let (query, params) = self.construct_query(&query, "coalesce(count(*), 0)");
+
         let params_borrow: Vec<(&str, &dyn ToSql)> = params.iter().map(|e| (e.0, &*e.1)).collect();
-        let result: i64 = self
+
+        let result: u64 = self
             .db
             .prepare(&query)
             .unwrap()
             .query_row(&params_borrow[..], |r| r.get(0))
             .map_err(map_sqlite_err)?;
+
         Ok(result)
     }
 
     fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>> {
         let (query, params) = self.construct_query(&query, "*");
+
         let params_borrow: Vec<(&str, &dyn ToSql)> = params.iter().map(|e| (e.0, &*e.1)).collect();
+
         let results: Vec<HistoryItem> = self
             .db
             .prepare(&query)
@@ -140,7 +155,7 @@ impl History for SqliteBackedHistory {
     ) -> Result<()> {
         // in theory this should run in a transaction
         let item = self.load(id)?;
-        self.save(updater(item))?;
+        self.save(&updater(item))?;
         Ok(())
     }
 
@@ -218,60 +233,125 @@ impl SqliteBackedHistory {
     }
     /// initialize a new database / migrate an existing one
     fn from_connection(
-        db: Connection,
+        mut db: Connection,
         session: Option<HistorySessionId>,
         session_timestamp: Option<chrono::DateTime<Utc>>,
     ) -> Result<Self> {
-        // https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
-        db.pragma_update(None, "journal_mode", "wal")
-            .map_err(map_sqlite_err)?;
-        db.pragma_update(None, "synchronous", "normal")
-            .map_err(map_sqlite_err)?;
-        db.pragma_update(None, "mmap_size", "1000000000")
-            .map_err(map_sqlite_err)?;
-        db.pragma_update(None, "foreign_keys", "on")
-            .map_err(map_sqlite_err)?;
-        db.pragma_update(None, "application_id", SQLITE_APPLICATION_ID)
-            .map_err(map_sqlite_err)?;
-        let db_version: i32 = db
-            .query_row(
+        let inner = || -> rusqlite::Result<(i32, Self)> {
+            // https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
+            db.pragma_update(None, "journal_mode", "wal")?;
+            db.pragma_update(None, "synchronous", "normal")?;
+            db.pragma_update(None, "mmap_size", "1000000000")?;
+            db.pragma_update(None, "foreign_keys", "on")?;
+            db.pragma_update(None, "application_id", SQLITE_APPLICATION_ID)?;
+
+            // Get the user version
+            // By default, it is set to 0
+            let mut db_version: i32 = db.query_row(
                 "SELECT user_version FROM pragma_user_version",
                 params![],
                 |r| r.get(0),
-            )
-            .map_err(map_sqlite_err)?;
-        if db_version != 0 {
+            )?;
+
+            // An up-to-date database should have its version set to the latest number (currently 1)
+            // 0 means the database is either uninitialized or it is using the old history format
+            if db_version == 0 {
+                // Check if an history already exists
+                let existing_history = db.query_row(
+                    "select count(*) from pragma_table_list() where name = 'history';",
+                    (),
+                    |result| Ok(result.get::<_, usize>("count(*)")? > 0),
+                )?;
+
+                let mut statements = vec![];
+
+                // If so, rename it and delete related indexes
+                if existing_history {
+                    statements.push(
+                        "
+                        alter table history rename to history_old;
+
+                        drop index if exists idx_history_time;
+                        drop index if exists idx_history_cwd;
+                        drop index if exists idx_history_exit_status;
+                        drop index if exists idx_history_cmd;
+                        ",
+                    );
+                }
+
+                // Create the history table using the v1 schema
+                statements.push(
+                    "
+                    create table history (
+                        idx integer primary key autoincrement,
+                        id integer unique not null,
+                        command_line text not null,
+                        start_timestamp integer,
+                        session_id integer,
+                        hostname text,
+                        cwd text,
+                        duration_ms integer,
+                        exit_status integer,
+                        more_info text
+                    ) strict;
+                    
+                    create index if not exists idx_history_time on history(start_timestamp);
+                    create index if not exists idx_history_cwd on history(cwd); -- suboptimal for many hosts
+                    create index if not exists idx_history_exit_status on history(exit_status);
+                    create index if not exists idx_history_cmd on history(command_line);
+                    create index if not exists idx_history_session_id on history(session_id);
+                    ",
+                );
+
+                // If there was an history previously, migrate it to the new table
+                // Then delete it
+                if existing_history {
+                    statements.push(
+                        "
+                        insert into history (id, command_line, start_timestamp, session_id, hostname, cwd, duration_ms, exit_status, more_info)
+                        select id as idx, command_line, start_timestamp, session_id, hostname, cwd, duration_ms, exit_status, more_info
+                        from history_old;
+
+                        drop table history_old;
+                        ",
+                    );
+                }
+
+                // Update the version to indicate the DB is up-to-date
+                statements.push("pragma user_version = 1;");
+                db_version = 1;
+
+                // We use a transaction to ensure consistency, given we're doing multiple operations
+                let transaction = db.transaction()?;
+                transaction.execute_batch(&statements.join("\n"))?;
+                transaction.commit()?;
+            }
+
+            Ok((
+                db_version,
+                SqliteBackedHistory {
+                    db,
+                    session,
+                    session_timestamp,
+                    rng: SmallRng::from_entropy(),
+                },
+            ))
+        };
+
+        // Connect to the database, check it and (if required) initialize it
+        let (db_version, history) = inner().map_err(map_sqlite_err)?;
+
+        // Ensure the database version is the currently supported one
+        // If this isn't the case, then something is wrong
+        // (either the previous versions migration is buggy, or the database is using a format deployed on a
+        //  later reedline version than this one)
+        if db_version != 1 {
             return Err(ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(
                 format!("Unknown database version {db_version}"),
             )));
         }
-        db.execute_batch(
-            "
-        create table if not exists history (
-            id integer primary key autoincrement,
-            command_line text not null,
-            start_timestamp integer,
-            session_id integer,
-            hostname text,
-            cwd text,
-            duration_ms integer,
-            exit_status integer,
-            more_info text
-        ) strict;
-        create index if not exists idx_history_time on history(start_timestamp);
-        create index if not exists idx_history_cwd on history(cwd); -- suboptimal for many hosts
-        create index if not exists idx_history_exit_status on history(exit_status);
-        create index if not exists idx_history_cmd on history(command_line);
-        create index if not exists idx_history_cmd on history(session_id);
-        -- todo: better indexes
-        ",
-        )
-        .map_err(map_sqlite_err)?;
-        Ok(SqliteBackedHistory {
-            db,
-            session,
-            session_timestamp,
-        })
+
+        Ok(history)
     }
 
     fn construct_query<'a>(
@@ -279,111 +359,152 @@ impl SqliteBackedHistory {
         query: &'a SearchQuery,
         select_expression: &str,
     ) -> (String, BoxedNamedParams<'a>) {
-        // TODO: this whole function could be done with less allocs
-        let (is_asc, asc) = match query.direction {
+        // Destructure the query - this ensures that if another element is added to this type later on,
+        // we won't forget to update this function as the destructuring will then be incomplete.
+        let SearchQuery {
+            direction,
+            start_time,
+            end_time,
+            start_id,
+            end_id,
+            limit,
+            filter,
+        } = query;
+
+        let (is_asc, asc) = match direction {
             SearchDirection::Forward => (true, "asc"),
             SearchDirection::Backward => (false, "desc"),
         };
+
+        // TODO: find a way to avoid too many allocations
+        // Current version is an acceptable compromise given most of the performance
+        // will be eaten by SQLite anyway
         let mut wheres = Vec::new();
         let mut params: BoxedNamedParams = Vec::new();
-        if let Some(start) = query.start_time {
-            wheres.push(if is_asc {
-                "timestamp_start > :start_time"
-            } else {
-                "timestamp_start < :start_time"
-            });
+
+        if let Some(start) = start_time {
+            let cmp_op = if is_asc { '>' } else { '<' };
+            wheres.push(format!("timestamp_start {cmp_op} :start_time"));
             params.push((":start_time", Box::new(start.timestamp_millis())));
         }
-        if let Some(end) = query.end_time {
-            wheres.push(if is_asc {
-                ":end_time >= timestamp_start"
-            } else {
-                ":end_time <= timestamp_start"
-            });
+
+        if let Some(end) = end_time {
+            let cmp_op = if is_asc { ">=" } else { "<=" };
+            wheres.push(format!(":end_time {cmp_op} timestamp_start"));
             params.push((":end_time", Box::new(end.timestamp_millis())));
         }
-        if let Some(start) = query.start_id {
-            wheres.push(if is_asc {
-                "id > :start_id"
-            } else {
-                "id < :start_id"
-            });
+
+        if let Some(start) = start_id {
+            let cmp_op = if is_asc { '>' } else { '<' };
+            wheres.push(format!(
+                "idx {cmp_op} (SELECT idx FROM history WHERE id = :start_id)"
+            ));
             params.push((":start_id", Box::new(start.0)));
         }
-        if let Some(end) = query.end_id {
-            wheres.push(if is_asc {
-                ":end_id >= id"
-            } else {
-                ":end_id <= id"
-            });
+
+        if let Some(end) = end_id {
+            let cmp_op = if is_asc { ">=" } else { "<=" };
+            wheres.push(format!(
+                "idx {cmp_op} (SELECT idx FROM history WHERE id = :start_id)"
+            ));
             params.push((":end_id", Box::new(end.0)));
         }
-        let limit = match query.limit {
+
+        let limit = match limit {
             Some(l) => {
                 params.push((":limit", Box::new(l)));
                 "limit :limit"
             }
             None => "",
         };
-        if let Some(command_line) = &query.filter.command_line {
-            // TODO: escape %
+
+        if let Some(command_line) = &filter.command_line {
             let command_line_like = match command_line {
-                CommandLineSearch::Exact(e) => e.to_string(),
-                CommandLineSearch::Prefix(prefix) => format!("{prefix}%"),
-                CommandLineSearch::Substring(cont) => format!("%{cont}%"),
+                CommandLineSearch::Exact(e) => escape_like_with_backslashes(e, ESCAPE_CHAR),
+                CommandLineSearch::Prefix(prefix) => {
+                    format!("{}%", escape_like_with_backslashes(prefix, ESCAPE_CHAR))
+                }
+                CommandLineSearch::Substring(cont) => {
+                    format!("%{}%", escape_like_with_backslashes(cont, ESCAPE_CHAR))
+                }
             };
-            wheres.push("command_line like :command_line");
+
+            wheres.push(format!(
+                "command_line like :command_line escape '{ESCAPE_CHAR}'"
+            ));
             params.push((":command_line", Box::new(command_line_like)));
         }
 
-        if let Some(str) = &query.filter.not_command_line {
-            wheres.push("command_line != :not_cmd");
+        if let Some(str) = &filter.not_command_line {
+            wheres.push("command_line != :not_cmd".to_owned());
             params.push((":not_cmd", Box::new(str)));
         }
-        if let Some(hostname) = &query.filter.hostname {
-            wheres.push("hostname = :hostname");
+
+        if let Some(hostname) = &filter.hostname {
+            wheres.push("hostname = :hostname".to_owned());
             params.push((":hostname", Box::new(hostname)));
         }
-        if let Some(cwd_exact) = &query.filter.cwd_exact {
-            wheres.push("cwd = :cwd");
+
+        if let Some(cwd_exact) = &filter.cwd_exact {
+            wheres.push("cwd = :cwd".to_owned());
             params.push((":cwd", Box::new(cwd_exact)));
         }
-        if let Some(cwd_prefix) = &query.filter.cwd_prefix {
-            wheres.push("cwd like :cwd_like");
+
+        if let Some(cwd_prefix) = &filter.cwd_prefix {
+            wheres.push("cwd like :cwd_like".to_owned());
             let cwd_like = format!("{cwd_prefix}%");
             params.push((":cwd_like", Box::new(cwd_like)));
         }
-        if let Some(exit_successful) = query.filter.exit_successful {
-            if exit_successful {
-                wheres.push("exit_status = 0");
-            } else {
-                wheres.push("exit_status != 0");
-            }
+
+        if let Some(exit_successful) = filter.exit_successful {
+            let cmp_op = if exit_successful { "=" } else { "!=" };
+            wheres.push(format!("exit_status {cmp_op} 0"));
         }
+
         if let (Some(session_id), Some(session_timestamp)) =
-            (query.filter.session, self.session_timestamp)
+            (filter.session, self.session_timestamp)
         {
             // Filter so that we get rows:
             // - that have the same session_id, or
             // - were executed before our session started
-            wheres.push("(session_id = :session_id OR start_timestamp < :session_timestamp)");
+            wheres.push(
+                "(session_id = :session_id OR start_timestamp < :session_timestamp)".to_owned(),
+            );
             params.push((":session_id", Box::new(session_id)));
             params.push((
                 ":session_timestamp",
                 Box::new(session_timestamp.timestamp_millis()),
             ));
         }
+
         let mut wheres = wheres.join(" and ");
+
         if wheres.is_empty() {
             wheres = "true".to_string();
         }
+
         let query = format!(
             "SELECT {select_expression} \
              FROM history \
              WHERE ({wheres}) \
-             ORDER BY id {asc} \
+             ORDER BY idx {asc} \
              {limit}"
         );
+
         (query, params)
     }
 }
+
+/// Escape special symbols for an SQL LIKE clause
+/// (!) Requires LIKE clause to specify an `ESCAPE '<char>'` clause
+fn escape_like_with_backslashes(str: &str, escape_char: char) -> String {
+    let mut str = str.replace(escape_char, &format!("{escape_char}{escape_char}"));
+
+    for forbidden in ['%', '\'', '\n'] {
+        str = str.replace(forbidden, &format!("{escape_char}{forbidden}"));
+    }
+
+    str
+}
+
+static ESCAPE_CHAR: char = '\\';

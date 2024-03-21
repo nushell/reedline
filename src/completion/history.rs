@@ -71,14 +71,18 @@ impl<'menu> HistoryCompleter<'menu> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicI64, Ordering};
+
     use rstest::rstest;
 
     use super::*;
     use crate::*;
 
+    static COUNTER: AtomicI64 = AtomicI64::new(0);
+
     fn new_history_item(command_line: &str) -> HistoryItem {
         HistoryItem {
-            id: None,
+            id: HistoryItemId(COUNTER.fetch_add(1, Ordering::SeqCst)),
             start_timestamp: None,
             command_line: command_line.to_string(),
             session_id: None,
@@ -105,7 +109,7 @@ mod tests {
         let expected_history_size = command_line_history.len();
         let mut history = FileBackedHistory::new(command_line_history.len())?;
         for command_line in command_line_history {
-            history.save(new_history_item(command_line))?;
+            history.save(&new_history_item(command_line))?;
         }
         let input = "git s";
         let mut sut = HistoryCompleter::new(&history);
@@ -144,7 +148,7 @@ mod tests {
     ) -> Result<()> {
         let mut history = FileBackedHistory::new(history_items.len())?;
         for history_item in history_items {
-            history.save(new_history_item(history_item))?;
+            history.save(&new_history_item(history_item))?;
         }
         let mut sut = HistoryCompleter::new(&history);
         let actual: Vec<String> = sut

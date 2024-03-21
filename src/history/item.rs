@@ -4,7 +4,10 @@ use rusqlite::ToSql;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Display, time::Duration};
 
-/// Unique ID for the [`HistoryItem`]. More recent items have higher ids than older ones.
+/// Unique ID for the [`HistoryItem`].
+/// These are generated pseudo-randomly.
+/// Note that the ID of a given item may change between program executions.
+/// These IDs only aim to uniquely identify a single item *for the program's execution*.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct HistoryItemId(pub i64);
 impl HistoryItemId {
@@ -22,9 +25,10 @@ impl Display for HistoryItemId {
 
 /// Unique ID for the session in which reedline was run to disambiguate different sessions
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HistorySessionId(pub(crate) i64);
+pub struct HistorySessionId(pub i64);
 impl HistorySessionId {
-    pub(crate) const fn new(i: i64) -> HistorySessionId {
+    /// Create a new `HistorySessionId`
+    pub const fn new(i: i64) -> HistorySessionId {
         HistorySessionId(i)
     }
 }
@@ -81,7 +85,7 @@ impl HistoryItemExtraInfo for IgnoreAllExtraInfo {}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
     /// primary key, unique across one history
-    pub id: Option<HistoryItemId>,
+    pub id: HistoryItemId,
     /// date-time when this command was started
     pub start_timestamp: Option<chrono::DateTime<Utc>>,
     /// the full command line as text
@@ -107,9 +111,9 @@ pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
 
 impl HistoryItem {
     /// create a history item purely from the command line with everything else set to None
-    pub fn from_command_line(cmd: impl Into<String>) -> HistoryItem {
+    pub fn from_command_line(cmd: impl Into<String>, id: HistoryItemId) -> HistoryItem {
         HistoryItem {
-            id: None,
+            id,
             start_timestamp: None,
             command_line: cmd.into(),
             session_id: None,
