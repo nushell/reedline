@@ -1,6 +1,9 @@
 use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
+#[cfg(feature = "system_clipboard")]
+use crate::core_editor::get_system_clipboard;
 use crate::enums::{EditType, UndoBehavior};
-use crate::{core_editor::get_default_clipboard, EditCommand};
+use crate::{core_editor::get_local_clipboard, EditCommand};
+use std::ops::DerefMut;
 
 /// Stateful editor executing changes to the underlying [`LineBuffer`]
 ///
@@ -9,6 +12,8 @@ use crate::{core_editor::get_default_clipboard, EditCommand};
 pub struct Editor {
     line_buffer: LineBuffer,
     cut_buffer: Box<dyn Clipboard>,
+    #[cfg(feature = "system_clipboard")]
+    system_clipboard: Box<dyn Clipboard>,
     edit_stack: EditStack<LineBuffer>,
     last_undo_behavior: UndoBehavior,
     selection_anchor: Option<usize>,
@@ -18,7 +23,9 @@ impl Default for Editor {
     fn default() -> Self {
         Editor {
             line_buffer: LineBuffer::new(),
-            cut_buffer: get_default_clipboard(),
+            cut_buffer: get_local_clipboard(),
+            #[cfg(feature = "system_clipboard")]
+            system_clipboard: get_system_clipboard(),
             edit_stack: EditStack::new(),
             last_undo_behavior: UndoBehavior::CreateUndoPoint,
             selection_anchor: None,
@@ -110,8 +117,15 @@ impl Editor {
                 self.move_left_until_char(*c, true, true, *select)
             }
             EditCommand::SelectAll => self.select_all(),
-            EditCommand::CutSelection => self.cut_selection(),
-            EditCommand::CopySelection => self.copy_selection(),
+            EditCommand::CutSelection => self.cut_selection_to_cut_buffer(),
+            EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
+            EditCommand::Paste => self.paste_cut_buffer(),
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::CutSelectionSystem => self.cut_selection_to_system(),
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::CopySelectionSystem => self.copy_selection_to_system(),
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::PasteSystem => self.paste_from_system(),
         }
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
             self.selection_anchor = None;
@@ -390,21 +404,7 @@ impl Editor {
 
     fn insert_cut_buffer_before(&mut self) {
         self.delete_selection();
-        match self.cut_buffer.get() {
-            (content, ClipboardMode::Normal) => {
-                self.line_buffer.insert_str(&content);
-            }
-            (mut content, ClipboardMode::Lines) => {
-                // TODO: Simplify that?
-                self.line_buffer.move_to_line_start();
-                self.line_buffer.move_line_up();
-                if !content.ends_with('\n') {
-                    // TODO: Make sure platform requirements are met
-                    content.push('\n');
-                }
-                self.line_buffer.insert_str(&content);
-            }
-        }
+        insert_clipboard_content_before(&mut self.line_buffer, self.cut_buffer.deref_mut())
     }
 
     fn insert_cut_buffer_after(&mut self) {
@@ -526,7 +526,17 @@ impl Editor {
         self.line_buffer.move_to_end();
     }
 
-    fn cut_selection(&mut self) {
+    #[cfg(feature = "system_clipboard")]
+    fn cut_selection_to_system(&mut self) {
+        if let Some((start, end)) = self.get_selection() {
+            let cut_slice = &self.line_buffer.get_buffer()[start..end];
+            self.system_clipboard.set(cut_slice, ClipboardMode::Normal);
+            self.line_buffer.clear_range_safe(start, end);
+            self.selection_anchor = None;
+        }
+    }
+
+    fn cut_selection_to_cut_buffer(&mut self) {
         if let Some((start, end)) = self.get_selection() {
             let cut_slice = &self.line_buffer.get_buffer()[start..end];
             self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
@@ -535,7 +545,15 @@ impl Editor {
         }
     }
 
-    fn copy_selection(&mut self) {
+    #[cfg(feature = "system_clipboard")]
+    fn copy_selection_to_system(&mut self) {
+        if let Some((start, end)) = self.get_selection() {
+            let cut_slice = &self.line_buffer.get_buffer()[start..end];
+            self.system_clipboard.set(cut_slice, ClipboardMode::Normal);
+        }
+    }
+
+    fn copy_selection_to_cut_buffer(&mut self) {
         if let Some((start, end)) = self.get_selection() {
             let cut_slice = &self.line_buffer.get_buffer()[start..end];
             self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
@@ -618,6 +636,35 @@ impl Editor {
     fn insert_newline(&mut self) {
         self.delete_selection();
         self.line_buffer.insert_newline();
+    }
+
+    #[cfg(feature = "system_clipboard")]
+    fn paste_from_system(&mut self) {
+        self.delete_selection();
+        insert_clipboard_content_before(&mut self.line_buffer, self.system_clipboard.deref_mut());
+    }
+
+    fn paste_cut_buffer(&mut self) {
+        self.delete_selection();
+        insert_clipboard_content_before(&mut self.line_buffer, self.cut_buffer.deref_mut());
+    }
+}
+
+fn insert_clipboard_content_before(line_buffer: &mut LineBuffer, clipboard: &mut dyn Clipboard) {
+    match clipboard.get() {
+        (content, ClipboardMode::Normal) => {
+            line_buffer.insert_str(&content);
+        }
+        (mut content, ClipboardMode::Lines) => {
+            // TODO: Simplify that?
+            line_buffer.move_to_line_start();
+            line_buffer.move_line_up();
+            if !content.ends_with('\n') {
+                // TODO: Make sure platform requirements are met
+                content.push('\n');
+            }
+            line_buffer.insert_str(&content);
+        }
     }
 }
 
@@ -828,5 +875,27 @@ mod test {
         assert_eq!(editor.get_buffer(), "\r\n is a test");
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(editor.get_buffer(), "This \r\n is a test");
+    }
+    #[cfg(feature = "system_clipboard")]
+    mod without_system_clipboard {
+        use super::*;
+        #[test]
+        fn test_cut_selection_system() {
+            let mut editor = editor_with("This is a test!");
+            editor.selection_anchor = Some(editor.line_buffer.len());
+            editor.line_buffer.set_insertion_point(0);
+            editor.run_edit_command(&EditCommand::CutSelectionSystem);
+            assert!(editor.line_buffer.get_buffer().is_empty());
+        }
+        #[test]
+        fn test_copypaste_selection_system() {
+            let s = "This is a test!";
+            let mut editor = editor_with(s);
+            editor.selection_anchor = Some(editor.line_buffer.len());
+            editor.line_buffer.set_insertion_point(0);
+            editor.run_edit_command(&EditCommand::CopySelectionSystem);
+            editor.run_edit_command(&EditCommand::PasteSystem);
+            pretty_assertions::assert_eq!(editor.line_buffer.len(), s.len() * 2);
+        }
     }
 }

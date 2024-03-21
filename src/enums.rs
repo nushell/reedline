@@ -17,6 +17,7 @@ pub enum Signal {
 /// Editing actions which can be mapped to key bindings.
 ///
 /// Executed by `Reedline::run_edit_commands()`
+#[non_exhaustive]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq, EnumIter)]
 pub enum EditCommand {
     /// Move to the start of the buffer
@@ -257,11 +258,26 @@ pub enum EditCommand {
     /// Select whole input buffer
     SelectAll,
 
-    /// Cut selection
+    /// Cut selection to local buffer
     CutSelection,
 
-    /// Copy selection
+    /// Copy selection to local buffer
     CopySelection,
+
+    /// Paste content from local buffer at the current cursor position
+    Paste,
+
+    /// Cut selection to system clipboard
+    #[cfg(feature = "system_clipboard")]
+    CutSelectionSystem,
+
+    /// Copy selection to system clipboard
+    #[cfg(feature = "system_clipboard")]
+    CopySelectionSystem,
+
+    /// Paste content from system clipboard at the current cursor position
+    #[cfg(feature = "system_clipboard")]
+    PasteSystem,
 }
 
 impl Display for EditCommand {
@@ -348,6 +364,13 @@ impl Display for EditCommand {
             EditCommand::SelectAll => write!(f, "SelectAll"),
             EditCommand::CutSelection => write!(f, "CutSelection"),
             EditCommand::CopySelection => write!(f, "CopySelection"),
+            EditCommand::Paste => write!(f, "Paste"),
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::CutSelectionSystem => write!(f, "CutSelectionSystem"),
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::CopySelectionSystem => write!(f, "CopySelectionSystem"),
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::PasteSystem => write!(f, "PasteSystem"),
         }
     }
 }
@@ -380,7 +403,6 @@ impl EditCommand {
             }
 
             EditCommand::SelectAll => EditType::MoveCursor { select: true },
-
             // Text edits
             EditCommand::InsertChar(_)
             | EditCommand::Backspace
@@ -418,11 +440,17 @@ impl EditCommand {
             | EditCommand::CutRightBefore(_)
             | EditCommand::CutLeftUntil(_)
             | EditCommand::CutLeftBefore(_)
-            | EditCommand::CutSelection => EditType::EditText,
+            | EditCommand::CutSelection
+            | EditCommand::Paste => EditType::EditText,
+
+            #[cfg(feature = "system_clipboard")] // Sadly cfg attributes in patterns don't work
+            EditCommand::CutSelectionSystem | EditCommand::PasteSystem => EditType::EditText,
 
             EditCommand::Undo | EditCommand::Redo => EditType::UndoRedo,
 
             EditCommand::CopySelection => EditType::NoOp,
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::CopySelectionSystem => EditType::NoOp,
         }
     }
 }
