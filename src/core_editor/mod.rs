@@ -3,6 +3,8 @@ mod edit_stack;
 mod editor;
 mod line_buffer;
 
-pub(crate) use clip_buffer::{get_default_clipboard, Clipboard, ClipboardMode};
+#[cfg(feature = "system_clipboard")]
+pub(crate) use clip_buffer::get_system_clipboard;
+pub(crate) use clip_buffer::{get_local_clipboard, Clipboard, ClipboardMode};
 pub use editor::Editor;
 pub use line_buffer::LineBuffer;
