@@ -231,6 +231,7 @@ impl History for FileBackedHistory {
                     .create(true)
                     .write(true)
                     .read(true)
+                    .truncate(false)
                     .open(fname)?,
             );
             let mut writer_guard = f_lock.write()?;
