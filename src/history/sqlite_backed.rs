@@ -326,7 +326,6 @@ impl SqliteBackedHistory {
             None => "",
         };
         if let Some(command_line) = &query.filter.command_line {
-            // TODO: escape %
             match command_line {
                 CommandLineSearch::Exact(e) => {
                     wheres.push("command_line == :command_line");
