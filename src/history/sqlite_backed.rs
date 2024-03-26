@@ -329,10 +329,10 @@ impl SqliteBackedHistory {
             // TODO: escape %
             let command_line_like = match command_line {
                 CommandLineSearch::Exact(e) => e.to_string(),
-                CommandLineSearch::Prefix(prefix) => format!("{prefix}%"),
-                CommandLineSearch::Substring(cont) => format!("%{cont}%"),
+                CommandLineSearch::Prefix(prefix) => format!("{prefix}*"),
+                CommandLineSearch::Substring(cont) => format!("*{cont}*"),
             };
-            wheres.push("command_line like :command_line");
+            wheres.push("command_line glob :command_line");
             params.push((":command_line", Box::new(command_line_like)));
         }
 
