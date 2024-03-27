@@ -326,14 +326,20 @@ impl SqliteBackedHistory {
             None => "",
         };
         if let Some(command_line) = &query.filter.command_line {
-            // TODO: escape %
-            let command_line_like = match command_line {
-                CommandLineSearch::Exact(e) => e.to_string(),
-                CommandLineSearch::Prefix(prefix) => format!("{prefix}%"),
-                CommandLineSearch::Substring(cont) => format!("%{cont}%"),
+            match command_line {
+                CommandLineSearch::Exact(e) => {
+                    wheres.push("command_line == :command_line");
+                    params.push((":command_line", Box::new(e)));
+                }
+                CommandLineSearch::Prefix(prefix) => {
+                    wheres.push("instr(command_line, :command_line) == 1");
+                    params.push((":command_line", Box::new(prefix)));
+                }
+                CommandLineSearch::Substring(cont) => {
+                    wheres.push("instr(command_line, :command_line) >= 1");
+                    params.push((":command_line", Box::new(cont)));
+                }
             };
-            wheres.push("command_line like :command_line");
-            params.push((":command_line", Box::new(command_line_like)));
         }
 
         if let Some(str) = &query.filter.not_command_line {
