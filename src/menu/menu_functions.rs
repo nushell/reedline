@@ -50,7 +50,7 @@ pub enum ParseAction {
 ///         remainder: "this is an example",
 ///         index: Some(10),
 ///         marker: Some("!10"),
-///         action: ParseAction::ForwardSearch
+///         action: ParseAction::ForwardSearch,
 ///         prefix: None,
 ///     }
 /// )
