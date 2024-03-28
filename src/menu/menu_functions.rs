@@ -51,6 +51,7 @@ pub enum ParseAction {
 ///         index: Some(10),
 ///         marker: Some("!10"),
 ///         action: ParseAction::ForwardSearch
+///         prefix: None,
 ///     }
 /// )
 ///
