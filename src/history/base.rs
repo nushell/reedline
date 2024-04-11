@@ -373,6 +373,24 @@ mod test {
     }
 
     #[test]
+    fn search_prefix_is_case_sensitive() -> Result<()> {
+        // Basic prefix search should preserve case
+        //
+        // https://github.com/nushell/nushell/issues/10131
+        let history = create_filled_example_history()?;
+        let res = history.search(SearchQuery {
+            filter: SearchFilter::from_text_search(
+                CommandLineSearch::Prefix("LS ".to_string()),
+                None,
+            ),
+            ..SearchQuery::everything(SearchDirection::Backward, None)
+        })?;
+        search_returned(&*history, res, vec![])?;
+
+        Ok(())
+    }
+
+    #[test]
     fn search_includes() -> Result<()> {
         let history = create_filled_example_history()?;
         let res = history.search(SearchQuery {
