@@ -1549,18 +1549,12 @@ impl Reedline {
                         )
                     }),
                 ParseAction::BackwardPrefixSearch => {
-                    self.history
-                        .search(
-                            // TODO: Allow this to work when using history isolation
-                            // Not quite sure how to check that anymore
-                            /*SearchQuery::last_with_prefix_and_cwd(
+                    let history_search_by_session = self
+                        .history
+                        .search(SearchQuery::last_with_prefix_and_cwd(
                             parsed.prefix.unwrap().to_string(),
-                            self.get_history_session_id(),*/
-                            SearchQuery::last_with_prefix(
-                                parsed_prefix.clone(),
-                                self.get_history_session_id(),
-                            ),
-                        )
+                            self.get_history_session_id(),
+                        ))
                         .unwrap_or_else(|_| Vec::new())
                         .get(index.saturating_sub(1))
                         .map(|history| {
@@ -1569,7 +1563,28 @@ impl Reedline {
                                 parsed_prefix.len() + parsed_marker.len(),
                                 history.command_line.clone(),
                             )
-                        })
+                        });
+                    // If we don't find any history searching by session id, then let's
+                    // search everything, otherwise use the result from the session search
+                    if history_search_by_session.is_none() {
+                        eprintln!("Using global search");
+                        self.history
+                            .search(SearchQuery::last_with_prefix(
+                                parsed_prefix.clone(),
+                                self.get_history_session_id(),
+                            ))
+                            .unwrap_or_else(|_| Vec::new())
+                            .get(index.saturating_sub(1))
+                            .map(|history| {
+                                (
+                                    parsed.remainder.len(),
+                                    parsed_prefix.len() + parsed_marker.len(),
+                                    history.command_line.clone(),
+                                )
+                            })
+                    } else {
+                        history_search_by_session
+                    }
                 }
                 ParseAction::ForwardSearch => self
                     .history
