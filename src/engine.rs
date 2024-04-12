@@ -1495,6 +1495,8 @@ impl Reedline {
     fn parse_bang_command(&mut self) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
         let parsed = parse_selection_char(buffer, '!');
+        let parsed_prefix = parsed.prefix.unwrap_or_default().to_string();
+        let parsed_marker = parsed.marker.unwrap_or_default().to_string();
 
         if let Some(last) = parsed.remainder.chars().last() {
             if last != ' ' {
@@ -1546,6 +1548,44 @@ impl Reedline {
                             history.command_line.clone(),
                         )
                     }),
+                ParseAction::BackwardPrefixSearch => {
+                    let history_search_by_session = self
+                        .history
+                        .search(SearchQuery::last_with_prefix_and_cwd(
+                            parsed.prefix.unwrap().to_string(),
+                            self.get_history_session_id(),
+                        ))
+                        .unwrap_or_else(|_| Vec::new())
+                        .get(index.saturating_sub(1))
+                        .map(|history| {
+                            (
+                                parsed.remainder.len(),
+                                parsed_prefix.len() + parsed_marker.len(),
+                                history.command_line.clone(),
+                            )
+                        });
+                    // If we don't find any history searching by session id, then let's
+                    // search everything, otherwise use the result from the session search
+                    if history_search_by_session.is_none() {
+                        eprintln!("Using global search");
+                        self.history
+                            .search(SearchQuery::last_with_prefix(
+                                parsed_prefix.clone(),
+                                self.get_history_session_id(),
+                            ))
+                            .unwrap_or_else(|_| Vec::new())
+                            .get(index.saturating_sub(1))
+                            .map(|history| {
+                                (
+                                    parsed.remainder.len(),
+                                    parsed_prefix.len() + parsed_marker.len(),
+                                    history.command_line.clone(),
+                                )
+                            })
+                    } else {
+                        history_search_by_session
+                    }
+                }
                 ParseAction::ForwardSearch => self
                     .history
                     .search(SearchQuery {
@@ -1573,6 +1613,7 @@ impl Reedline {
                     )))
                     .unwrap_or_else(|_| Vec::new())
                     .first()
+                    //BUGBUG: This returns the wrong results with paths with spaces in them
                     .and_then(|history| history.command_line.split_whitespace().next_back())
                     .map(|token| (parsed.remainder.len(), indicator.len(), token.to_string())),
             });
