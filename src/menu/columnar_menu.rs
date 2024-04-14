@@ -299,13 +299,21 @@ impl ColumnarMenu {
         use_ansi_coloring: bool,
     ) -> String {
         if use_ansi_coloring {
-            let match_len = self.working_details.shortest_base_string.len();
+            let match_len = self
+                .working_details
+                .shortest_base_string
+                .trim_end()
+                .chars()
+                .count();
 
             // Split string so the match text can be styled
-            let (match_str, remaining_str) = if match_len <= suggestion.value.len() {
-                suggestion.value.split_at(match_len)
+            let (match_str, remaining_str) = if match_len <= suggestion.value.chars().count() {
+                (
+                    suggestion.value.chars().take(match_len).collect::<String>(),
+                    suggestion.value.chars().skip(match_len).collect::<String>(),
+                )
             } else {
-                ("", suggestion.value.as_str())
+                ("".to_string(), suggestion.value.to_string())
             };
 
             let suggestion_style_prefix = suggestion

@@ -512,13 +512,21 @@ impl IdeMenu {
         };
 
         if use_ansi_coloring {
-            let match_len = self.working_details.shortest_base_string.len();
+            let match_len = self
+                .working_details
+                .shortest_base_string
+                .trim_end()
+                .chars()
+                .count();
 
             // Split string so the match text can be styled
-            let (match_str, remaining_str) = if match_len <= string.len() {
-                string.split_at(match_len)
+            let (match_str, remaining_str) = if match_len <= string.chars().count() {
+                (
+                    string.chars().take(match_len).collect::<String>(),
+                    string.chars().skip(match_len).collect::<String>(),
+                )
             } else {
-                ("", string.as_str())
+                ("".to_string(), string.to_string())
             };
 
             let suggestion_style_prefix = suggestion
