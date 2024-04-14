@@ -515,7 +515,11 @@ impl IdeMenu {
             let match_len = self.working_details.shortest_base_string.len();
 
             // Split string so the match text can be styled
-            let (match_str, remaining_str) = string.split_at(match_len);
+            let (match_str, remaining_str) = if match_len <= string.len() {
+                string.split_at(match_len)
+            } else {
+                ("", string.as_str())
+            };
 
             let suggestion_style_prefix = suggestion
                 .style
