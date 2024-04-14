@@ -33,7 +33,7 @@ fn main() -> io::Result<()> {
     // Max width of the completion box, including the border
     let max_completion_width: u16 = 50;
     // Max height of the completion box, including the border
-    let max_completion_height: u16 = u16::MAX;
+    let max_completion_height = u16::MAX;
     // Padding inside of the completion box (on the left and right side)
     let padding: u16 = 0;
     // Whether to draw the default border around the completion box

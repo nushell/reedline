@@ -822,7 +822,7 @@ impl Menu for IdeMenu {
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
-        self.get_rows().min(self.default_details.max_completion_height)
+        self.get_rows()
     }
 
     fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String {
