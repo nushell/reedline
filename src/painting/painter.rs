@@ -73,7 +73,7 @@ fn select_prompt_row(
         if painter_state.previous_prompt_rows_range.contains(&row) {
             // Cursor is still in the range of the previous prompt, re-use it.
             let start_row = *painter_state.previous_prompt_rows_range.start();
-            return PromptRowSelector::UseExistingPrompt { start_row }
+            return PromptRowSelector::UseExistingPrompt { start_row };
         } else {
             // There was some output or cursor is outside of the range of previous prompt make a
             // fresh new prompt.
@@ -138,7 +138,10 @@ impl Painter {
     ///
     /// Not to be used for resizes during a running line editor, use
     /// [`Painter::handle_resize()`] instead
-    pub(crate) fn initialize_prompt_position(&mut self, suspended_state: Option<&PainterSuspendedState>) -> Result<()> {
+    pub(crate) fn initialize_prompt_position(
+        &mut self,
+        suspended_state: Option<&PainterSuspendedState>,
+    ) -> Result<()> {
         // Update the terminal size
         self.terminal_size = {
             let size = terminal::size()?;
@@ -150,10 +153,9 @@ impl Painter {
                 size
             }
         };
-        match select_prompt_row(suspended_state, cursor::position()?) {
-            PromptRowSelector::UseExistingPrompt { start_row } => {
-                self.prompt_start_row = start_row
-            }
+        let prompt_selector = select_prompt_row(suspended_state, cursor::position()?);
+        self.prompt_start_row = match prompt_selector {
+            PromptRowSelector::UseExistingPrompt { start_row } => start_row,
             PromptRowSelector::MakeNewPrompt { new_row } => {
                 // If we are on the last line and would move beyond the last line, we need to make
                 // room for the prompt.
@@ -161,12 +163,12 @@ impl Painter {
                 // origin, causing issues after repaints.
                 if new_row == self.screen_height() {
                     self.print_crlf()?;
-                    self.prompt_start_row = new_row.saturating_sub(1)
+                    new_row.saturating_sub(1)
                 } else {
-                    self.prompt_start_row = new_row
+                    new_row
                 }
             }
-        }
+        };
         Ok(())
     }
 
@@ -671,24 +673,32 @@ mod tests {
 
     #[test]
     fn test_select_new_prompt_with_no_state_no_output() {
-        let selector = select_prompt_row(None, (0, 12));
-        assert_eq!(selector, PromptRowSelector::MakeNewPrompt { new_row: 12 })
+        assert_eq!(
+            select_prompt_row(None, (0, 12)),
+            PromptRowSelector::MakeNewPrompt { new_row: 12 }
+        );
     }
 
     #[test]
     fn test_select_new_prompt_with_no_state_but_output() {
-        let selector = select_prompt_row(None, (3, 12));
-        assert_eq!(selector, PromptRowSelector::MakeNewPrompt { new_row: 13 })
+        assert_eq!(
+            select_prompt_row(None, (3, 12)),
+            PromptRowSelector::MakeNewPrompt { new_row: 13 }
+        );
     }
 
     #[test]
     fn test_select_existing_prompt() {
         let state = PainterSuspendedState {
-            previous_prompt_rows_range: 11..=13
+            previous_prompt_rows_range: 11..=13,
         };
-        let selector = select_prompt_row(Some(&state), (0, 12));
-        assert_eq!(selector, PromptRowSelector::UseExistingPrompt { start_row: 11 });
-        let selector = select_prompt_row(Some(&state), (3, 12));
-        assert_eq!(selector, PromptRowSelector::UseExistingPrompt { start_row: 11 });
+        assert_eq!(
+            select_prompt_row(Some(&state), (0, 12)),
+            PromptRowSelector::UseExistingPrompt { start_row: 11 }
+        );
+        assert_eq!(
+            select_prompt_row(Some(&state), (3, 12)),
+            PromptRowSelector::UseExistingPrompt { start_row: 11 }
+        );
     }
 }

@@ -672,7 +672,8 @@ impl Reedline {
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        self.painter.initialize_prompt_position(self.suspended_state.as_ref())?;
+        self.painter
+            .initialize_prompt_position(self.suspended_state.as_ref())?;
         if self.suspended_state.is_some() {
             // Last editor was suspended to run a ExecuteHostCommand event,
             // we are resuming operation now.
