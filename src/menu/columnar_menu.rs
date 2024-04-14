@@ -302,7 +302,11 @@ impl ColumnarMenu {
             let match_len = self.working_details.shortest_base_string.len();
 
             // Split string so the match text can be styled
-            let (match_str, remaining_str) = suggestion.value.split_at(match_len);
+            let (match_str, remaining_str) = if match_len <= suggestion.value.len() {
+                suggestion.value.split_at(match_len)
+            } else {
+                ("", suggestion.value.as_str())
+            };
 
             let suggestion_style_prefix = suggestion
                 .style
