@@ -94,7 +94,7 @@ impl super::Reedline {
 
     /// The history session id, or [`None`](Option::None) if no session is attached.
     pub fn history_session_id(&self) -> Option<HistorySessionId> {
-        self.history_session_id.clone()
+        self.history_session_id
     }
 
     /// Set whether to use quick completions.

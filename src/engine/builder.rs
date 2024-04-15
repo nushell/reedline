@@ -121,7 +121,7 @@ impl ReedlineBuilder {
     }
 
     pub fn history(&self) -> Option<&dyn History> {
-        (&self.history).as_deref()
+        self.history.as_deref()
     }
 
     /// Use a [`Hinter`](crate::Hinter).
@@ -137,7 +137,7 @@ impl ReedlineBuilder {
     }
 
     pub fn hints(&self) -> Option<&dyn Hinter> {
-        (&self.hinter).as_deref()
+        self.hinter.as_deref()
     }
 
     /// Use a [`Completer`](crate::Completer).
@@ -153,7 +153,7 @@ impl ReedlineBuilder {
     }
 
     pub fn completions(&self) -> Option<&dyn Completer> {
-        (&self.completer).as_deref()
+        self.completer.as_deref()
     }
 
     /// Use a [`Highlighter`](crate::Highlighter).
@@ -169,7 +169,7 @@ impl ReedlineBuilder {
     }
 
     pub fn highlighter(&self) -> Option<&dyn Highlighter> {
-        (&self.highlighter).as_deref()
+        self.highlighter.as_deref()
     }
 
     /// Use a [`Validator`](crate::Validator).
@@ -185,7 +185,7 @@ impl ReedlineBuilder {
     }
 
     pub fn validator(&self) -> Option<&dyn Validator> {
-        (&self.validator).as_deref()
+        self.validator.as_deref()
     }
 
     /// Use of a different prompt on submitted inputs.
@@ -202,7 +202,7 @@ impl ReedlineBuilder {
     }
 
     pub fn transient_prompt(&self) -> Option<&dyn Prompt> {
-        (&self.transient_prompt).as_deref()
+        self.transient_prompt.as_deref()
     }
 
     /// Set the initial edit mode
@@ -218,7 +218,7 @@ impl ReedlineBuilder {
     }
 
     pub fn edit_mode(&self) -> Option<&dyn EditMode> {
-        (&self.edit_mode).as_deref()
+        self.edit_mode.as_deref()
     }
 
     /// Configure a history exclusion
@@ -247,7 +247,7 @@ impl ReedlineBuilder {
     }
 
     pub fn history_exclusion_prefix(&self) -> Option<&String> {
-        (&self.history_exclusion_prefix).as_ref()
+        self.history_exclusion_prefix.as_ref()
     }
 
     pub fn with_selection_style(mut self, selection_style: Style) -> Self {
@@ -262,7 +262,7 @@ impl ReedlineBuilder {
 
     /// Configure the styling of visual selection
     pub fn selection_style(&self) -> Option<&Style> {
-        (&self.visual_selection_style).as_ref()
+        self.visual_selection_style.as_ref()
     }
 
     /// Let reedline dynamically determine and change the cursor shape depending
@@ -279,7 +279,7 @@ impl ReedlineBuilder {
     }
 
     pub fn cursor_config(&self) -> Option<&CursorConfig> {
-        (&self.cursor_shapes).as_ref()
+        self.cursor_shapes.as_ref()
     }
 
     /// Set a new history session id
@@ -296,7 +296,7 @@ impl ReedlineBuilder {
     }
 
     pub fn history_session_id(&self) -> Option<HistorySessionId> {
-        self.history_session_id.clone()
+        self.history_session_id
     }
 
     #[cfg(feature = "external_printer")]
@@ -313,7 +313,7 @@ impl ReedlineBuilder {
 
     #[cfg(feature = "external_printer")]
     pub fn external_printer(&self) -> Option<&ExternalPrinter<String>> {
-        (&self.external_printer).as_ref()
+        self.external_printer.as_ref()
     }
 
     /// Set whether to use quick completions. They will select and fill a completion
