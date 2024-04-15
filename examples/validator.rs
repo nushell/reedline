@@ -21,8 +21,10 @@ impl Validator for CustomValidator {
 }
 
 fn main() -> io::Result<()> {
-    println!("Input \"complete\" followed by [Enter], will accept the input line (Signal::Succeed will be called)\nPressing [Enter] will in other cases give you a multi-line prompt.\nAbort with Ctrl-C or Ctrl-D");
-    let mut line_editor = Reedline::create().with_validator(Box::new(CustomValidator));
+    println!("Input \"complete\" followed by [Enter], will accept the input line (Signal::Succeed will be called)");
+    println!("Pressing [Enter] will in other cases give you a multi-line prompt.");
+    println!("Abort with Ctrl-C or Ctrl-D");
+    let mut line_editor = Reedline::builder().with_validator(CustomValidator).build();
 
     let prompt = DefaultPrompt::default();
 

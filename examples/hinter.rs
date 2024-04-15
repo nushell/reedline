@@ -11,9 +11,9 @@ use reedline::{DefaultHinter, DefaultPrompt, Reedline, Signal};
 use std::io;
 
 fn main() -> io::Result<()> {
-    let mut line_editor = Reedline::create().with_hinter(Box::new(
-        DefaultHinter::default().with_style(Style::new().italic().fg(Color::LightGray)),
-    ));
+    let mut line_editor = Reedline::builder()
+        .with_hints(DefaultHinter::default().with_style(Style::new().italic().fg(Color::LightGray)))
+        .build();
     let prompt = DefaultPrompt::default();
 
     loop {

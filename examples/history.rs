@@ -10,12 +10,10 @@ use reedline::{DefaultPrompt, FileBackedHistory, Reedline, Signal};
 use std::io;
 
 fn main() -> io::Result<()> {
-    let history = Box::new(
-        FileBackedHistory::with_file(5, "history.txt".into())
-            .expect("Error configuring history with file"),
-    );
+    let history = FileBackedHistory::with_file(5, "history.txt".into())
+        .expect("Error configuring history with file");
 
-    let mut line_editor = Reedline::create().with_history(history);
+    let mut line_editor = Reedline::builder().with_history(history).build();
     let prompt = DefaultPrompt::default();
 
     loop {
