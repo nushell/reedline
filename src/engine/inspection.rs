@@ -1,261 +1,166 @@
+use std::{path::PathBuf, process};
+
 use nu_ansi_term::Style;
 
 use crate::*;
 
 impl super::Reedline {
-    /// Toggle whether reedline enables bracketed paste to reed copied content
-    ///
-    /// This currently alters the behavior for multiline pastes as pasting of regular text will
-    /// execute after every complete new line as determined by the [`Validator`]. With enabled
-    /// bracketed paste all lines will appear in the buffer and can then be submitted with a
-    /// separate enter.
-    ///
-    /// At this point most terminals should support it or ignore the setting of the necessary
-    /// flags. For full compatibility, keep it disabled.
-    pub fn use_bracketed_paste(mut self, enable: bool) -> Self {
-        self.bracketed_paste.set(enable);
-        self
-    }
-
-    /// Toggle whether reedline uses the kitty keyboard enhancement protocol
-    ///
-    /// This allows us to disambiguate more events than the traditional standard
-    /// Only available with a few terminal emulators.
-    /// You can check for that with [`crate::kitty_protocol_available`]
-    /// `Reedline` will perform this check internally
-    ///
-    /// Read more: <https://sw.kovidgoyal.net/kitty/keyboard-protocol/>
-    pub fn use_kitty_keyboard_enhancement(mut self, enable: bool) -> Self {
-        self.kitty_protocol.set(enable);
-        self
-    }
-
-    /// Return the previously generated history session id
-    pub fn get_history_session_id(&self) -> Option<HistorySessionId> {
-        self.history_session_id
-    }
-
-    /// Set a new history session id
-    /// This should be used in situations where the user initially did not have a history_session_id
-    /// and then later realized they want to have one without restarting the application.
-    pub fn set_history_session_id(&mut self, session: Option<HistorySessionId>) {
-        self.history_session_id = session;
-    }
-
-    /// A builder to include a [`Hinter`] in your instance of the Reedline engine
-    /// # Example
-    /// ```rust
-    /// //Cargo.toml
-    /// //[dependencies]
-    /// //nu-ansi-term = "*"
-    /// use {
-    ///     nu_ansi_term::{Color, Style},
-    ///     reedline::{DefaultHinter, Reedline},
-    /// };
-    ///
-    /// let mut line_editor = Reedline::create().with_hinter(Box::new(
-    ///     DefaultHinter::default()
-    ///     .with_style(Style::new().italic().fg(Color::LightGray)),
-    /// ));
-    /// ```
-    #[must_use]
-    pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Self {
-        self.hinter = Some(hinter);
-        self
-    }
-
-    /// Remove current [`Hinter`]
-    #[must_use]
-    pub fn disable_hints(mut self) -> Self {
-        self.hinter = None;
-        self
-    }
-
-    /// A builder to configure the tab completion
-    /// # Example
-    /// ```rust
-    /// // Create a reedline object with tab completions support
-    ///
-    /// use reedline::{DefaultCompleter, Reedline};
-    ///
-    /// let commands = vec![
-    ///   "test".into(),
-    ///   "hello world".into(),
-    ///   "hello world reedline".into(),
-    ///   "this is the reedline crate".into(),
-    /// ];
-    /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
-    ///
-    /// let mut line_editor = Reedline::create().with_completer(completer);
-    /// ```
-    #[must_use]
-    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
-        self.completer = completer;
-        self
-    }
-
-    /// Turn on quick completions. These completions will auto-select if the completer
-    /// ever narrows down to a single entry.
-    #[must_use]
-    pub fn with_quick_completions(mut self, quick_completions: bool) -> Self {
-        self.quick_completions = quick_completions;
-        self
-    }
-
-    /// Turn on partial completions. These completions will fill the buffer with the
-    /// smallest common string from all the options
-    #[must_use]
-    pub fn with_partial_completions(mut self, partial_completions: bool) -> Self {
-        self.partial_completions = partial_completions;
-        self
-    }
-
-    /// A builder which enables or disables the use of ansi coloring in the prompt
-    /// and in the command line syntax highlighting.
-    #[must_use]
-    pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
-        self.use_ansi_coloring = use_ansi_coloring;
-        self
-    }
-
-    /// A builder that configures the highlighter for your instance of the Reedline engine
-    /// # Example
-    /// ```rust
-    /// // Create a reedline object with highlighter support
-    ///
-    /// use reedline::{ExampleHighlighter, Reedline};
-    ///
-    /// let commands = vec![
-    ///   "test".into(),
-    ///   "hello world".into(),
-    ///   "hello world reedline".into(),
-    ///   "this is the reedline crate".into(),
-    /// ];
-    /// let mut line_editor =
-    /// Reedline::create().with_highlighter(Box::new(ExampleHighlighter::new(commands)));
-    /// ```
-    #[must_use]
-    pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Self {
-        self.highlighter = highlighter;
-        self
-    }
-
-    /// A builder that configures the style used for visual selection
-    #[must_use]
-    pub fn with_visual_selection_style(mut self, style: Style) -> Self {
-        self.visual_selection_style = style;
-        self
-    }
-
-    /// A builder which configures the history for your instance of the Reedline engine
-    /// # Example
-    /// ```rust,no_run
-    /// // Create a reedline object with history support, including history size limits
-    ///
-    /// use reedline::{FileBackedHistory, Reedline};
-    ///
-    /// let history = Box::new(
-    /// FileBackedHistory::with_file(5, "history.txt".into())
-    ///     .expect("Error configuring history with file"),
-    /// );
-    /// let mut line_editor = Reedline::create()
-    ///     .with_history(history);
-    /// ```
-    #[must_use]
-    pub fn with_history(mut self, history: Box<dyn History>) -> Self {
+    /// Set the [`History`](crate::History) of a constructed engine.
+    /// Prefer [`ReedlineBuilder::with_history`](crate::engine::builder::ReedlineBuilder::with_history)
+    /// if you don't need to change this while using reedline.
+    pub fn with_history(&mut self, history: Box<dyn History>) -> &mut Self {
         self.history = history;
         self
     }
 
-    /// A builder which configures history exclusion for your instance of the Reedline engine
-    /// # Example
-    /// ```rust,no_run
-    /// // Create a reedline instance with history that will *not* include commands starting with a space
-    ///
-    /// use reedline::{FileBackedHistory, Reedline};
-    ///
-    /// let history = Box::new(
-    /// FileBackedHistory::with_file(5, "history.txt".into())
-    ///     .expect("Error configuring history with file"),
-    /// );
-    /// let mut line_editor = Reedline::create()
-    ///     .with_history(history)
-    ///     .with_history_exclusion_prefix(Some(" ".into()));
-    /// ```
-    #[must_use]
-    pub fn with_history_exclusion_prefix(mut self, ignore_prefix: Option<String>) -> Self {
-        self.history_exclusion_prefix = ignore_prefix;
+    /// Set the [`Hinter`](crate::Hinter) of a constructed engine.
+    /// Prefer [`ReedlineBuilder::with_hints`](crate::engine::builder::ReedlineBuilder::with_hints)
+    /// if you don't need to change this while using reedline.
+    pub fn with_hints(&mut self, hints: Option<Box<dyn Hinter>>) -> &mut Self {
+        self.hinter = hints;
         self
     }
 
-    /// A builder that configures the validator for your instance of the Reedline engine
-    /// # Example
-    /// ```rust
-    /// // Create a reedline object with validator support
-    ///
-    /// use reedline::{DefaultValidator, Reedline};
-    ///
-    /// let mut line_editor =
-    /// Reedline::create().with_validator(Box::new(DefaultValidator));
-    /// ```
-    #[must_use]
-    pub fn with_validator(mut self, validator: Box<dyn Validator>) -> Self {
-        self.validator = Some(validator);
+    /// Set the [`Completer`](crate::Completer) of a constructed engine.
+    /// Prefer [`ReedlineBuilder::with_completions`](crate::engine::builder::ReedlineBuilder::with_completions)
+    /// if you don't need to change this while using reedline.
+    pub fn with_completions(&mut self, completions: Box<dyn Completer>) -> &mut Self {
+        self.completer = completions;
         self
     }
 
-    /// Remove the current [`Validator`]
-    #[must_use]
-    pub fn disable_validator(mut self) -> Self {
-        self.validator = None;
+    /// Set the [`Highlighter`](crate::Highlighter) of a constructed engine.
+    /// Prefer [`ReedlineBuilder::with_highlighter`](crate::engine::builder::ReedlineBuilder::with_highlighter)
+    /// if you don't need to change this while using reedline.
+    pub fn with_highlighter(&mut self, highlighter: Box<dyn Highlighter>) -> &mut Self {
+        self.highlighter = highlighter;
         self
     }
 
-    /// Set a different prompt to be used after submitting each line
-    #[must_use]
-    pub fn with_transient_prompt(mut self, transient_prompt: Box<dyn Prompt>) -> Self {
-        self.transient_prompt = Some(transient_prompt);
+    /// Set the [`Validator`](crate::Validator) of a constructed engine.
+    /// Prefer [`ReedlineBuilder::with_validator`](crate::engine::builder::ReedlineBuilder::with_validator)
+    /// if you don't need to change this while using reedline.
+    pub fn with_validator(&mut self, validator: Option<Box<dyn Validator>>) -> &mut Self {
+        self.validator = validator;
         self
     }
 
-    /// A builder which configures the edit mode for your instance of the Reedline engine
-    #[must_use]
-    pub fn with_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
+    /// Use a [`Prompt`](crate::Prompt) as the the transient prompt of a constructed engine.
+    /// Prefer [`ReedlineBuilder::with_transient_prompt`](crate::engine::builder::ReedlineBuilder::with_transient_prompt)
+    /// if you don't need to change this while using reedline.
+    pub fn with_transient_prompt(&mut self, prompt: Option<Box<dyn Prompt>>) -> &mut Self {
+        self.transient_prompt = prompt;
+        self
+    }
+
+    /// Set the edit mode of a constructed engine.
+    /// Prefer [`ReedlineBuilder::with_edit_mode`](crate::engine::builder::ReedlineBuilder::with_edit_mode)
+    /// if you don't need to change this while using reedline.
+    pub fn with_edit_mode(&mut self, edit_mode: Box<dyn EditMode>) -> &mut Self {
         self.edit_mode = edit_mode;
         self
     }
 
-    /// A builder that appends a menu to the engine
-    #[must_use]
-    pub fn with_menu(mut self, menu: ReedlineMenu) -> Self {
+    /// Set the history exclusion prefix of a construncted engine.
+    /// Prefer [`ReedlineBuilder::with_history_exclusion_prefix`](crate::engine::builder::ReedlineBuilder::with_history_exclusion_prefix)
+    /// if you don't need to change this while using reedline.
+    pub fn with_history_exclusion_prefix(&mut self, ignore_prefix: Option<String>) -> &mut Self {
+        self.history_exclusion_prefix = ignore_prefix;
+        self
+    }
+
+    /// Set the visual selection style of a construncted engine.
+    /// Prefer [`ReedlineBuilder::with_selection_style`](crate::engine::builder::ReedlineBuilder::with_selection_style)
+    /// if you don't need to change this while using reedline.
+    pub fn with_selection_style(&mut self, selection_style: Style) -> &mut Self {
+        self.visual_selection_style = selection_style;
+        self
+    }
+
+    /// Configure the cursor shapes depending on the edit mode.
+    /// Prefer [`ReedlineBuilder::with_cursor_config`](crate::engine::builder::ReedlineBuilder::with_cursor_config)
+    /// if you don't need to change this while using reedline.
+    pub fn with_cursor_config(&mut self, cursor_config: Option<CursorConfig>) -> &mut Self {
+        self.cursor_shapes = cursor_config;
+        self
+    }
+
+    /// Set the history session id.
+    /// Prefer [`ReedlineBuilder::with_history_session_id`](crate::engine::builder::ReedlineBuilder::with_history_session_id)
+    /// if you don't need to change this while using reedline.
+    pub fn with_history_session_id(&mut self, session: Option<HistorySessionId>) {
+        self.history_session_id = session;
+    }
+
+    /// The history session id, or [`None`](Option::None) if no session is attached.
+    pub fn history_session_id(&self) -> Option<HistorySessionId> {
+        self.history_session_id.clone()
+    }
+
+    /// Set whether to use quick completions.
+    /// Prefer [`ReedlineBuilder::use_quick_completions`](crate::engine::builder::ReedlineBuilder::use_quick_completions)
+    /// if you don't need to change this while using reedline.
+    pub fn use_quick_completions(&mut self, enabled: bool) -> &mut Self {
+        self.quick_completions = enabled;
+        self
+    }
+
+    /// Set whether to use partial completions.
+    /// Prefer [`ReedlineBuilder::use_partial_completions`](crate::engine::builder::ReedlineBuilder::use_partial_completions)
+    /// if you don't need to change this while using reedline.
+    pub fn use_partial_completions(&mut self, enabled: bool) -> &mut Self {
+        self.partial_completions = enabled;
+        self
+    }
+
+    /// Set whether to use bracketed paste.
+    /// Prefer [`ReedlineBuilder::use_bracketed_paste`](crate::engine::builder::ReedlineBuilder::use_bracketed_paste)
+    /// if you don't need to change this while using reedline.
+    pub fn use_bracketed_paste(&mut self, enabled: bool) -> &mut Self {
+        self.bracketed_paste.set(enabled);
+        self
+    }
+
+    /// Set whether to use the enhanced keyboard protocol.
+    /// Prefer [`ReedlineBuilder::use_kitty_keyboard_enhancement`](crate::engine::builder::ReedlineBuilder::use_kitty_keyboard_enhancement)
+    /// if you don't need to change this while using reedline.
+    pub fn use_kitty_keyboard_enhancement(&mut self, enabled: bool) -> &mut Self {
+        self.kitty_protocol.set(enabled);
+        self
+    }
+
+    /// Set whether ANSI escape sequences should be used to provide colored terminal output.
+    /// Prefer [`ReedlineBuilder::use_ansi_colors`](crate::engine::builder::ReedlineBuilder::use_ansi_colors)
+    /// if you don't need to change this while using reedline.
+    pub fn use_ansi_colors(&mut self, enabled: bool) -> &mut Self {
+        self.use_ansi_coloring = enabled;
+        self
+    }
+
+    /// Add a menu.
+    /// Prefer [`ReedlineBuilder::add_menu`](crate::engine::builder::ReedlineBuilder::add_menu)
+    /// if you don't need to add a menu while using reedline.
+    pub fn add_menu(&mut self, menu: ReedlineMenu) -> &mut Self {
         self.menus.push(menu);
         self
     }
 
-    /// A builder that clears the list of menus added to the engine
-    #[must_use]
-    pub fn clear_menus(mut self) -> Self {
-        self.menus = Vec::new();
+    /// Allow the line buffer to be edited through a ephemeral file at the given path with the specified editor.
+    /// Prefer [`ReedlineBuilder::with_buffer_editor`](crate::engine::builder::ReedlineBuilder::with_buffer_editor)
+    /// if you don't need to change this while using reedline.
+    pub fn with_buffer_editor(
+        &mut self,
+        editor: process::Command,
+        temp_file: PathBuf,
+    ) -> &mut Self {
+        let mut editor = editor;
+        if !editor.get_args().any(|arg| arg == temp_file.as_os_str()) {
+            editor.arg(&temp_file);
+        }
+        self.buffer_editor = Some(super::BufferEditor {
+            command: editor,
+            temp_file,
+        });
         self
-    }
-
-    /// A builder that adds the history item id
-    #[must_use]
-    pub fn with_history_session_id(mut self, session: Option<HistorySessionId>) -> Self {
-        self.history_session_id = session;
-        self
-    }
-
-    /// A builder that enables reedline changing the cursor shape based on the current edit mode.
-    /// The current implementation sets the cursor shape when drawing the prompt.
-    /// Do not use this if the cursor shape is set elsewhere, e.g. in the terminal settings or by ansi escape sequences.
-    pub fn with_cursor_config(mut self, cursor_shapes: CursorConfig) -> Self {
-        self.cursor_shapes = Some(cursor_shapes);
-        self
-    }
-
-    /// Returns the corresponding expected prompt style for the given edit mode
-    pub fn prompt_edit_mode(&self) -> PromptEditMode {
-        self.edit_mode.edit_mode()
     }
 }

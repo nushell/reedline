@@ -1,7 +1,18 @@
-use std::path::PathBuf;
-
-use itertools::Itertools;
+use crossterm::{
+    cursor::{SetCursorStyle, Show},
+    event,
+    event::{Event, KeyCode, KeyEvent, KeyModifiers},
+    terminal, QueueableCommand,
+};
 use nu_ansi_term::{Color, Style};
+
+use std::{
+    fs::File,
+    io::{self, Write},
+    path::PathBuf,
+    process::Command,
+    time::{Duration, SystemTime},
+};
 
 /// the builder-style mutation API of 'Reedline'
 /// shouldn't clutter the actual engine logic
@@ -10,7 +21,25 @@ mod inspection;
 mod builder;
 pub use builder::ReedlineBuilder;
 
-use crate::{enums::ReedlineRawEvent, CursorConfig};
+use crate::{
+    completion::{Completer, DefaultCompleter},
+    core_editor::Editor,
+    edit_mode::{EditMode, Emacs},
+    enums::{EventStatus, ReedlineEvent, ReedlineRawEvent},
+    highlighter::SimpleMatchHighlighter,
+    hinter::Hinter,
+    history::{
+        FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
+        HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
+    },
+    painting::{Painter, PromptLines},
+    prompt::PromptHistorySearchStatus,
+    result::{ReedlineError, ReedlineErrorVariants},
+    terminal_extensions::{bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard},
+    utils::text_manipulation,
+    CursorConfig, EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent,
+    Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
+};
 #[cfg(feature = "bashisms")]
 use crate::{
     history::SearchFilter,
@@ -21,36 +50,6 @@ use {
     crate::external_printer::ExternalPrinter,
     crossbeam::channel::TryRecvError,
     std::io::{Error, ErrorKind},
-};
-use {
-    crate::{
-        completion::{Completer, DefaultCompleter},
-        core_editor::Editor,
-        edit_mode::{EditMode, Emacs},
-        enums::{EventStatus, ReedlineEvent},
-        highlighter::SimpleMatchHighlighter,
-        hinter::Hinter,
-        history::{
-            FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
-            HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
-        },
-        painting::{Painter, PromptLines},
-        prompt::PromptHistorySearchStatus,
-        result::{ReedlineError, ReedlineErrorVariants},
-        terminal_extensions::{bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard},
-        utils::text_manipulation,
-        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
-        PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
-    },
-    crossterm::{
-        cursor::{SetCursorStyle, Show},
-        event,
-        event::{Event, KeyCode, KeyEvent, KeyModifiers},
-        terminal, QueueableCommand,
-    },
-    std::{
-        fs::File, io, io::Result, io::Write, process::Command, time::Duration, time::SystemTime,
-    },
 };
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for
@@ -225,41 +224,14 @@ impl Reedline {
         Some(HistorySessionId::new(nanos))
     }
 
-    /// A builder that configures the alternate text editor used to edit the line buffer
-    ///
-    /// You are responsible for providing a file path that is unique to this reedline session
-    ///
-    /// # Example
-    /// ```rust,no_run
-    /// // Create a reedline object with vim as editor
-    ///
-    /// use reedline::Reedline;
-    /// use std::env::temp_dir;
-    /// use std::process::Command;
-    ///
-    /// let temp_file = std::env::temp_dir().join("my-random-unique.file");
-    /// let mut command = Command::new("vim");
-    /// // you can provide additional flags:
-    /// command.arg("-p"); // open in a vim tab (just for demonstration)
-    /// // you don't have to pass the filename to the command
-    /// let mut line_editor =
-    /// Reedline::create().with_buffer_editor(command, temp_file);
-    /// ```
-    #[must_use]
-    pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
-        let mut editor = editor;
-        if !editor.get_args().contains(&temp_file.as_os_str()) {
-            editor.arg(&temp_file);
-        }
-        self.buffer_editor = Some(BufferEditor {
-            command: editor,
-            temp_file,
-        });
+    /// Clear the internal list of menus
+    pub fn clear_menus(&mut self) -> &mut Self {
+        self.menus.clear();
         self
     }
 
     /// Output the complete [`History`] chronologically with numbering to the terminal
-    pub fn print_history(&mut self) -> Result<()> {
+    pub fn print_history(&mut self) -> io::Result<()> {
         let history: Vec<_> = self
             .history
             .search(SearchQuery::everything(SearchDirection::Forward, None))
@@ -272,12 +244,12 @@ impl Reedline {
     }
 
     /// Output the complete [`History`] for this session, chronologically with numbering to the terminal
-    pub fn print_history_session(&mut self) -> Result<()> {
+    pub fn print_history_session(&mut self) -> io::Result<()> {
         let history: Vec<_> = self
             .history
             .search(SearchQuery::everything(
                 SearchDirection::Forward,
-                self.get_history_session_id(),
+                self.history_session_id,
             ))
             .expect("todo: error handling");
 
@@ -288,8 +260,8 @@ impl Reedline {
     }
 
     /// Print the history session id
-    pub fn print_history_session_id(&mut self) -> Result<()> {
-        println!("History Session Id: {:?}", self.get_history_session_id());
+    pub fn print_history_session_id(&mut self) -> io::Result<()> {
+        println!("History Session Id: {:?}", self.history_session_id);
         Ok(())
     }
 
@@ -297,8 +269,8 @@ impl Reedline {
     pub fn toggle_history_session_matching(
         &mut self,
         session: Option<HistorySessionId>,
-    ) -> Result<()> {
-        self.history_session_id = match self.get_history_session_id() {
+    ) -> io::Result<()> {
+        self.history_session_id = match self.history_session_id {
             Some(_) => None,
             None => session,
         };
@@ -350,7 +322,7 @@ impl Reedline {
     ///
     /// Returns a [`std::io::Result`] in which the `Err` type is [`std::io::Result`]
     /// and the `Ok` variant wraps a [`Signal`] which handles user inputs.
-    pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    pub fn read_line(&mut self, prompt: &dyn Prompt) -> io::Result<Signal> {
         terminal::enable_raw_mode()?;
         self.bracketed_paste.enter();
         self.kitty_protocol.enter();
@@ -374,20 +346,20 @@ impl Reedline {
     }
 
     /// Writes `msg` to the terminal with a following carriage return and newline
-    fn print_line(&mut self, msg: &str) -> Result<()> {
+    fn print_line(&mut self, msg: &str) -> io::Result<()> {
         self.painter.paint_line(msg)
     }
 
     /// Clear the screen by printing enough whitespace to start the prompt or
     /// other output back at the first line of the terminal.
-    pub fn clear_screen(&mut self) -> Result<()> {
+    pub fn clear_screen(&mut self) -> io::Result<()> {
         self.painter.clear_screen()?;
 
         Ok(())
     }
 
     /// Clear the screen and the scrollback buffer of the terminal
-    pub fn clear_scrollback(&mut self) -> Result<()> {
+    pub fn clear_scrollback(&mut self) -> io::Result<()> {
         self.painter.clear_scrollback()?;
 
         Ok(())
@@ -395,7 +367,7 @@ impl Reedline {
 
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
-    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> io::Result<Signal> {
         if self.executing_host_command {
             self.executing_host_command = false;
         } else {
@@ -517,7 +489,11 @@ impl Reedline {
         }
     }
 
-    fn handle_event(&mut self, prompt: &dyn Prompt, event: ReedlineEvent) -> Result<EventStatus> {
+    fn handle_event(
+        &mut self,
+        prompt: &dyn Prompt,
+        event: ReedlineEvent,
+    ) -> io::Result<EventStatus> {
         if self.input_mode == InputMode::HistorySearch {
             self.handle_history_search_event(event)
         } else {
@@ -988,7 +964,7 @@ impl Reedline {
             self.input_mode = InputMode::HistoryTraversal;
             self.history_cursor = HistoryCursor::new(
                 self.get_history_navigation_based_on_line_buffer(),
-                self.get_history_session_id(),
+                self.history_session_id,
             );
 
             if self.history_excluded_item.is_some() {
@@ -1015,7 +991,7 @@ impl Reedline {
             self.input_mode = InputMode::HistoryTraversal;
             self.history_cursor = HistoryCursor::new(
                 self.get_history_navigation_based_on_line_buffer(),
-                self.get_history_session_id(),
+                self.history_session_id,
             );
         }
 
@@ -1071,7 +1047,7 @@ impl Reedline {
     fn enter_history_search(&mut self) {
         self.history_cursor = HistoryCursor::new(
             HistoryNavigationQuery::SubstringSearch("".to_string()),
-            self.get_history_session_id(),
+            self.history_session_id,
         );
         self.input_mode = InputMode::HistorySearch;
     }
@@ -1088,12 +1064,12 @@ impl Reedline {
                         substring.push(*c);
                         self.history_cursor = HistoryCursor::new(
                             HistoryNavigationQuery::SubstringSearch(substring),
-                            self.get_history_session_id(),
+                            self.history_session_id,
                         );
                     } else {
                         self.history_cursor = HistoryCursor::new(
                             HistoryNavigationQuery::SubstringSearch(String::from(*c)),
-                            self.get_history_session_id(),
+                            self.history_session_id,
                         );
                     }
                     self.history_cursor
@@ -1108,7 +1084,7 @@ impl Reedline {
 
                         self.history_cursor = HistoryCursor::new(
                             HistoryNavigationQuery::SubstringSearch(new_substring.to_string()),
-                            self.get_history_session_id(),
+                            self.history_session_id,
                         );
                         self.history_cursor
                             .back(self.history.as_mut())
@@ -1242,7 +1218,7 @@ impl Reedline {
                         start_id: None,
                         end_id: None,
                         limit: Some(1), // fetch the latest one entries
-                        filter: SearchFilter::anything(self.get_history_session_id()),
+                        filter: SearchFilter::anything(self.history_session_id),
                     })
                     .unwrap_or_else(|_| Vec::new())
                     .get(index.saturating_sub(1))
@@ -1262,7 +1238,7 @@ impl Reedline {
                         start_id: None,
                         end_id: None,
                         limit: Some(index as i64), // fetch the latest n entries
-                        filter: SearchFilter::anything(self.get_history_session_id()),
+                        filter: SearchFilter::anything(self.history_session_id),
                     })
                     .unwrap_or_else(|_| Vec::new())
                     .get(index.saturating_sub(1))
@@ -1278,7 +1254,7 @@ impl Reedline {
                         .history
                         .search(SearchQuery::last_with_prefix_and_cwd(
                             parsed.prefix.unwrap().to_string(),
-                            self.get_history_session_id(),
+                            self.history_session_id,
                         ))
                         .unwrap_or_else(|_| Vec::new())
                         .get(index.saturating_sub(1))
@@ -1296,7 +1272,7 @@ impl Reedline {
                         self.history
                             .search(SearchQuery::last_with_prefix(
                                 parsed_prefix.clone(),
-                                self.get_history_session_id(),
+                                self.history_session_id,
                             ))
                             .unwrap_or_else(|_| Vec::new())
                             .get(index.saturating_sub(1))
@@ -1320,7 +1296,7 @@ impl Reedline {
                         start_id: None,
                         end_id: None,
                         limit: Some((index + 1) as i64), // fetch the oldest n entries
-                        filter: SearchFilter::anything(self.get_history_session_id()),
+                        filter: SearchFilter::anything(self.history_session_id),
                     })
                     .unwrap_or_else(|_| Vec::new())
                     .get(index)
@@ -1334,7 +1310,7 @@ impl Reedline {
                 ParseAction::LastToken => self
                     .history
                     .search(SearchQuery::last_with_search(SearchFilter::anything(
-                        self.get_history_session_id(),
+                        self.history_session_id,
                     )))
                     .unwrap_or_else(|_| Vec::new())
                     .first()
@@ -1358,7 +1334,7 @@ impl Reedline {
         }
     }
 
-    fn open_editor(&mut self) -> Result<()> {
+    fn open_editor(&mut self) -> io::Result<()> {
         match &mut self.buffer_editor {
             Some(BufferEditor {
                 ref mut command,
@@ -1388,7 +1364,7 @@ impl Reedline {
     ///
     /// Overwrites the prompt indicator and highlights the search string
     /// separately from the result buffer.
-    fn history_search_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+    fn history_search_paint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
         let navigation = self.history_cursor.get_navigation();
 
         if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
@@ -1414,7 +1390,7 @@ impl Reedline {
 
             let lines = PromptLines::new(
                 prompt,
-                self.prompt_edit_mode(),
+                self.edit_mode.edit_mode(),
                 Some(prompt_history_search),
                 &res_string,
                 "",
@@ -1424,7 +1400,7 @@ impl Reedline {
             self.painter.repaint_buffer(
                 prompt,
                 &lines,
-                self.prompt_edit_mode(),
+                self.edit_mode.edit_mode(),
                 None,
                 self.use_ansi_coloring,
                 &self.cursor_shapes,
@@ -1437,7 +1413,7 @@ impl Reedline {
     /// Triggers a full repaint including the prompt parts
     ///
     /// Includes the highlighting and hinting calls.
-    fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+    fn buffer_paint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
         let cursor_position_in_buffer = self.editor.insertion_point();
         let buffer_to_paint = self.editor.get_buffer();
 
@@ -1472,7 +1448,7 @@ impl Reedline {
 
         let mut lines = PromptLines::new(
             prompt,
-            self.prompt_edit_mode(),
+            self.edit_mode.edit_mode(),
             None,
             &before_cursor,
             &after_cursor,
@@ -1501,7 +1477,7 @@ impl Reedline {
         self.painter.repaint_buffer(
             prompt,
             &lines,
-            self.prompt_edit_mode(),
+            self.edit_mode.edit_mode(),
             menu,
             self.use_ansi_coloring,
             &self.cursor_shapes,
@@ -1554,7 +1530,7 @@ impl Reedline {
         }
         if !buffer.is_empty() {
             let mut entry = HistoryItem::from_command_line(&buffer);
-            entry.session_id = self.get_history_session_id();
+            entry.session_id = self.history_session_id;
 
             if self
                 .history_exclusion_prefix
