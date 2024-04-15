@@ -1495,7 +1495,7 @@ impl Reedline {
     }
 
     #[cfg(feature = "external_printer")]
-    fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<Vec<String>> {
+    fn external_messages(external_printer: &ExternalPrinter<String>) -> io::Result<Vec<String>> {
         let mut messages = Vec::new();
         loop {
             let result = external_printer.receiver().try_recv();

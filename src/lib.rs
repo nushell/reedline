@@ -104,7 +104,7 @@
 //!   "hello world reedline".into(),
 //!   "this is the reedline crate".into(),
 //! ];
-//! let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
+//! let completer = DefaultCompleter::new_with_wordlen(commands.clone(), 2);
 //! // Use the interactive menu to select options from the completer
 //! let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu"));
 //! // Set up the required keybindings
@@ -118,12 +118,13 @@
 //!     ]),
 //! );
 //!
-//! let edit_mode = Box::new(Emacs::new(keybindings));
+//! let edit_mode = Emacs::new(keybindings);
 //!
-//! let mut line_editor = Reedline::create()
-//!     .with_completer(completer)
-//!     .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
-//!     .with_edit_mode(edit_mode);
+//! let mut line_editor = Reedline::builder()
+//!     .with_completions(completer)
+//!     .add_menu(ReedlineMenu::EngineCompleter(completion_menu))
+//!     .with_edit_mode(edit_mode)
+//!     .build();
 //! ```
 //!
 //! ## Integrate with [`Hinter`] for fish-style history autosuggestions
@@ -141,10 +142,10 @@
 //! };
 //!
 //!
-//! let mut line_editor = Reedline::create().with_hinter(Box::new(
+//! let mut line_editor = Reedline::builder().with_hints(
 //!   DefaultHinter::default()
 //!   .with_style(Style::new().italic().fg(Color::LightGray)),
-//! ));
+//! );
 //! ```
 //!
 //!
@@ -155,9 +156,7 @@
 //!
 //! use reedline::{DefaultValidator, Reedline};
 //!
-//! let validator = Box::new(DefaultValidator);
-//!
-//! let mut line_editor = Reedline::create().with_validator(validator);
+//! let mut line_editor = Reedline::builder().with_validator(DefaultValidator).build();
 //! ```
 //!
 //! ## Use custom [`EditMode`]

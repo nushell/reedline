@@ -18,9 +18,9 @@ use std::{
 ///  "hello world reedline".into(),
 ///  "this is the reedline crate".into(),
 /// ];
-/// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
+/// let completer = DefaultCompleter::new_with_wordlen(commands.clone(), 2);
 ///
-/// let mut line_editor = Reedline::create().with_completer(completer);
+/// let mut line_editor = Reedline::builder().with_completions(completer).build();
 /// ```
 #[derive(Debug, Clone)]
 pub struct DefaultCompleter {
