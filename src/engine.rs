@@ -246,7 +246,6 @@ impl Reedline {
     /// Reedline::create().with_buffer_editor(command, temp_file);
     /// ```
     #[must_use]
-    #[deprecated]
     pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
         let mut editor = editor;
         if !editor.get_args().contains(&temp_file.as_os_str()) {

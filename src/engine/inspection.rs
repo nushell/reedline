@@ -59,7 +59,6 @@ impl super::Reedline {
     /// ));
     /// ```
     #[must_use]
-    #[deprecated]
     pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Self {
         self.hinter = Some(hinter);
         self
@@ -67,7 +66,6 @@ impl super::Reedline {
 
     /// Remove current [`Hinter`]
     #[must_use]
-    #[deprecated]
     pub fn disable_hints(mut self) -> Self {
         self.hinter = None;
         self
@@ -91,7 +89,6 @@ impl super::Reedline {
     /// let mut line_editor = Reedline::create().with_completer(completer);
     /// ```
     #[must_use]
-    #[deprecated]
     pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
         self.completer = completer;
         self
@@ -100,7 +97,6 @@ impl super::Reedline {
     /// Turn on quick completions. These completions will auto-select if the completer
     /// ever narrows down to a single entry.
     #[must_use]
-    #[deprecated]
     pub fn with_quick_completions(mut self, quick_completions: bool) -> Self {
         self.quick_completions = quick_completions;
         self
@@ -109,7 +105,6 @@ impl super::Reedline {
     /// Turn on partial completions. These completions will fill the buffer with the
     /// smallest common string from all the options
     #[must_use]
-    #[deprecated]
     pub fn with_partial_completions(mut self, partial_completions: bool) -> Self {
         self.partial_completions = partial_completions;
         self
@@ -118,7 +113,6 @@ impl super::Reedline {
     /// A builder which enables or disables the use of ansi coloring in the prompt
     /// and in the command line syntax highlighting.
     #[must_use]
-    #[deprecated]
     pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
         self.use_ansi_coloring = use_ansi_coloring;
         self
@@ -141,7 +135,6 @@ impl super::Reedline {
     /// Reedline::create().with_highlighter(Box::new(ExampleHighlighter::new(commands)));
     /// ```
     #[must_use]
-    #[deprecated]
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Self {
         self.highlighter = highlighter;
         self
@@ -149,7 +142,6 @@ impl super::Reedline {
 
     /// A builder that configures the style used for visual selection
     #[must_use]
-    #[deprecated]
     pub fn with_visual_selection_style(mut self, style: Style) -> Self {
         self.visual_selection_style = style;
         self
@@ -170,7 +162,6 @@ impl super::Reedline {
     ///     .with_history(history);
     /// ```
     #[must_use]
-    #[deprecated]
     pub fn with_history(mut self, history: Box<dyn History>) -> Self {
         self.history = history;
         self
@@ -192,7 +183,6 @@ impl super::Reedline {
     ///     .with_history_exclusion_prefix(Some(" ".into()));
     /// ```
     #[must_use]
-    #[deprecated]
     pub fn with_history_exclusion_prefix(mut self, ignore_prefix: Option<String>) -> Self {
         self.history_exclusion_prefix = ignore_prefix;
         self
@@ -209,7 +199,6 @@ impl super::Reedline {
     /// Reedline::create().with_validator(Box::new(DefaultValidator));
     /// ```
     #[must_use]
-    #[deprecated]
     pub fn with_validator(mut self, validator: Box<dyn Validator>) -> Self {
         self.validator = Some(validator);
         self
@@ -217,7 +206,6 @@ impl super::Reedline {
 
     /// Remove the current [`Validator`]
     #[must_use]
-    #[deprecated]
     pub fn disable_validator(mut self) -> Self {
         self.validator = None;
         self
@@ -225,7 +213,6 @@ impl super::Reedline {
 
     /// Set a different prompt to be used after submitting each line
     #[must_use]
-    #[deprecated]
     pub fn with_transient_prompt(mut self, transient_prompt: Box<dyn Prompt>) -> Self {
         self.transient_prompt = Some(transient_prompt);
         self
@@ -233,7 +220,6 @@ impl super::Reedline {
 
     /// A builder which configures the edit mode for your instance of the Reedline engine
     #[must_use]
-    #[deprecated]
     pub fn with_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
         self.edit_mode = edit_mode;
         self
@@ -241,7 +227,6 @@ impl super::Reedline {
 
     /// A builder that appends a menu to the engine
     #[must_use]
-    #[deprecated]
     pub fn with_menu(mut self, menu: ReedlineMenu) -> Self {
         self.menus.push(menu);
         self
@@ -249,7 +234,6 @@ impl super::Reedline {
 
     /// A builder that clears the list of menus added to the engine
     #[must_use]
-    #[deprecated]
     pub fn clear_menus(mut self) -> Self {
         self.menus = Vec::new();
         self
@@ -257,7 +241,6 @@ impl super::Reedline {
 
     /// A builder that adds the history item id
     #[must_use]
-    #[deprecated]
     pub fn with_history_session_id(mut self, session: Option<HistorySessionId>) -> Self {
         self.history_session_id = session;
         self
@@ -266,7 +249,6 @@ impl super::Reedline {
     /// A builder that enables reedline changing the cursor shape based on the current edit mode.
     /// The current implementation sets the cursor shape when drawing the prompt.
     /// Do not use this if the cursor shape is set elsewhere, e.g. in the terminal settings or by ansi escape sequences.
-    #[deprecated]
     pub fn with_cursor_config(mut self, cursor_shapes: CursorConfig) -> Self {
         self.cursor_shapes = Some(cursor_shapes);
         self
