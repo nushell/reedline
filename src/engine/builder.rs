@@ -2,63 +2,6 @@ use nu_ansi_term::Style;
 
 use super::*;
 
-use paste::paste;
-
-macro_rules! with_flag {
-    ($name:ident, $attribute:ident, bool) => {
-        paste! {
-            pub fn [<use_ $name>](mut self, value: bool) -> Self {
-                self.$attribute = value;
-                self
-            }
-
-            pub fn $name(&self) -> bool {
-                self.$attribute
-            }
-        }
-    };
-}
-
-macro_rules! with {
-    ($name:ident, $attribute:ident, $ty:ty) => {
-        paste! {
-            pub fn [<with_ $name>](mut self, value: $ty) -> Self {
-                self.$attribute = Some(value);
-                self
-            }
-
-            pub fn [<without_ $name>](mut self) -> Self {
-                self.$attribute = None;
-                self
-            }
-
-            pub fn $name(&self) -> Option<&$ty> {
-                (&self.$attribute).as_ref()
-            }
-        }
-    };
-}
-
-macro_rules! with_type_erased {
-    ($name:ident, $attribute:ident, $interface:ty) => {
-        paste! {
-            pub fn [<with_ $name>]<T: $interface + 'static>(mut self, value: T) -> Self {
-                self.$attribute = Some(Box::new(value));
-                self
-            }
-
-            pub fn [<without_ $name>](mut self) -> Self {
-                self.$attribute = None;
-                self
-            }
-
-            pub fn $name(&self) -> Option<&dyn $interface> {
-                (&self.$attribute).as_deref()
-            }
-        }
-    };
-}
-
 pub struct ReedlineBuilder {
     history: Option<Box<dyn History>>,
     edit_mode: Option<Box<dyn EditMode>>,
@@ -163,40 +106,221 @@ impl ReedlineBuilder {
         }
     }
 
-    with_type_erased!(history, history, History);
+    pub fn with_history<T: History + 'static>(mut self, value: T) -> Self {
+        self.history = Some(Box::new(value));
+        self
+    }
 
-    with_type_erased!(hints, hinter, Hinter);
+    pub fn without_history(mut self) -> Self {
+        self.history = None;
+        self
+    }
 
-    with_type_erased!(completions, completer, Completer);
+    pub fn history(&self) -> Option<&dyn History> {
+        (&self.history).as_deref()
+    }
 
-    with_type_erased!(highlighter, highlighter, Highlighter);
+    pub fn with_hints<T: Hinter + 'static>(mut self, value: T) -> Self {
+        self.hinter = Some(Box::new(value));
+        self
+    }
 
-    with_type_erased!(validator, validator, Validator);
+    pub fn without_hints(mut self) -> Self {
+        self.hinter = None;
+        self
+    }
 
-    with_type_erased!(transient_prompt, transient_prompt, Prompt);
+    pub fn hints(&self) -> Option<&dyn Hinter> {
+        (&self.hinter).as_deref()
+    }
 
-    with_type_erased!(edit_mode, edit_mode, EditMode);
+    pub fn with_completions<T: Completer + 'static>(mut self, value: T) -> Self {
+        self.completer = Some(Box::new(value));
+        self
+    }
 
-    with!(history_exclusion_prefix, history_exclusion_prefix, String);
+    pub fn without_completions(mut self) -> Self {
+        self.completer = None;
+        self
+    }
 
-    with!(selection_style, visual_selection_style, Style);
+    pub fn completions(&self) -> Option<&dyn Completer> {
+        (&self.completer).as_deref()
+    }
 
-    with!(cursor_config, cursor_shapes, CursorConfig);
+    pub fn with_highlighter<T: Highlighter + 'static>(mut self, value: T) -> Self {
+        self.highlighter = Some(Box::new(value));
+        self
+    }
 
-    with!(history_session_id, history_session_id, HistorySessionId);
+    pub fn without_highlighter(mut self) -> Self {
+        self.highlighter = None;
+        self
+    }
+
+    pub fn highlighter(&self) -> Option<&dyn Highlighter> {
+        (&self.highlighter).as_deref()
+    }
+
+    pub fn with_validator<T: Validator + 'static>(mut self, value: T) -> Self {
+        self.validator = Some(Box::new(value));
+        self
+    }
+
+    pub fn without_validator(mut self) -> Self {
+        self.validator = None;
+        self
+    }
+
+    pub fn validator(&self) -> Option<&dyn Validator> {
+        (&self.validator).as_deref()
+    }
+
+    pub fn with_transient_prompt<T: Prompt + 'static>(mut self, value: T) -> Self {
+        self.transient_prompt = Some(Box::new(value));
+        self
+    }
+
+    pub fn without_transient_prompt(mut self) -> Self {
+        self.transient_prompt = None;
+        self
+    }
+
+    pub fn transient_prompt(&self) -> Option<&dyn Prompt> {
+        (&self.transient_prompt).as_deref()
+    }
+
+    pub fn with_edit_mode<T: EditMode + 'static>(mut self, value: T) -> Self {
+        self.edit_mode = Some(Box::new(value));
+        self
+    }
+
+    pub fn without_edit_mode(mut self) -> Self {
+        self.edit_mode = None;
+        self
+    }
+
+    pub fn edit_mode(&self) -> Option<&dyn EditMode> {
+        (&self.edit_mode).as_deref()
+    }
+
+    pub fn with_history_exclusion_prefix(mut self, value: String) -> Self {
+        self.history_exclusion_prefix = Some(value);
+        self
+    }
+
+    pub fn without_history_exclusion_prefix(mut self) -> Self {
+        self.history_exclusion_prefix = None;
+        self
+    }
+
+    pub fn history_exclusion_prefix(&self) -> Option<&String> {
+        (&self.history_exclusion_prefix).as_ref()
+    }
+
+    pub fn with_selection_style(mut self, value: Style) -> Self {
+        self.visual_selection_style = Some(value);
+        self
+    }
+
+    pub fn without_selection_style(mut self) -> Self {
+        self.visual_selection_style = None;
+        self
+    }
+
+    pub fn selection_style(&self) -> Option<&Style> {
+        (&self.visual_selection_style).as_ref()
+    }
+
+    pub fn with_cursor_config(mut self, value: CursorConfig) -> Self {
+        self.cursor_shapes = Some(value);
+        self
+    }
+
+    pub fn without_cursor_config(mut self) -> Self {
+        self.cursor_shapes = None;
+        self
+    }
+
+    pub fn cursor_config(&self) -> Option<&CursorConfig> {
+        (&self.cursor_shapes).as_ref()
+    }
+
+    pub fn with_history_session_id(mut self, value: HistorySessionId) -> Self {
+        self.history_session_id = Some(value);
+        self
+    }
+
+    pub fn without_history_session_id(mut self) -> Self {
+        self.history_session_id = None;
+        self
+    }
+
+    pub fn history_session_id(&self) -> Option<&HistorySessionId> {
+        (&self.history_session_id).as_ref()
+    }
 
     #[cfg(feature = "external_printer")]
-    with!(external_printer, external_printer, ExternalPrinter<String>);
+    pub fn with_external_printer(mut self, value: ExternalPrinter<String>) -> Self {
+        self.external_printer = Some(value);
+        self
+    }
 
-    with_flag!(quick_completions, quick_completions, bool);
+    #[cfg(feature = "external_printer")]
+    pub fn without_external_printer(mut self) -> Self {
+        self.external_printer = None;
+        self
+    }
 
-    with_flag!(partial_completions, partial_completions, bool);
+    #[cfg(feature = "external_printer")]
+    pub fn external_printer(&self) -> Option<&ExternalPrinter<String>> {
+        (&self.external_printer).as_ref()
+    }
 
-    with_flag!(bracketed_paste, bracketed_paste, bool);
+    pub fn use_quick_completions(mut self, value: bool) -> Self {
+        self.quick_completions = value;
+        self
+    }
 
-    with_flag!(kitty_keyboard_enhancement, kitty_protocol, bool);
+    pub fn quick_completions(&self) -> bool {
+        self.quick_completions
+    }
 
-    with_flag!(ansi_colors, use_ansi_coloring, bool);
+    pub fn use_partial_completions(mut self, value: bool) -> Self {
+        self.partial_completions = value;
+        self
+    }
+
+    pub fn partial_completions(&self) -> bool {
+        self.partial_completions
+    }
+
+    pub fn use_bracketed_paste(mut self, value: bool) -> Self {
+        self.bracketed_paste = value;
+        self
+    }
+
+    pub fn bracketed_paste(&self) -> bool {
+        self.bracketed_paste
+    }
+
+    pub fn use_kitty_keyboard_enhancement(mut self, value: bool) -> Self {
+        self.kitty_protocol = value;
+        self
+    }
+
+    pub fn kitty_keyboard_enhancement(&self) -> bool {
+        self.kitty_protocol
+    }
+
+    pub fn use_ansi_colors(mut self, value: bool) -> Self {
+        self.use_ansi_coloring = value;
+        self
+    }
+
+    pub fn ansi_colors(&self) -> bool {
+        self.use_ansi_coloring
+    }
 
     pub fn add_menu(mut self, menu: ReedlineMenu) -> Self {
         self.menus.push(menu);
