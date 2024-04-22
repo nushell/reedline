@@ -1567,7 +1567,6 @@ impl Reedline {
                     // If we don't find any history searching by session id, then let's
                     // search everything, otherwise use the result from the session search
                     if history_search_by_session.is_none() {
-                        eprintln!("Using global search");
                         self.history
                             .search(SearchQuery::last_with_prefix(
                                 parsed_prefix.clone(),
