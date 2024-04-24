@@ -94,6 +94,7 @@ pub struct Painter {
     terminal_size: (u16, u16),
     last_required_lines: u16,
     large_buffer: bool,
+    after_cursor_lines: Option<String>,
 }
 
 impl Painter {
@@ -104,6 +105,7 @@ impl Painter {
             terminal_size: (0, 0),
             last_required_lines: 0,
             large_buffer: false,
+            after_cursor_lines: None,
         }
     }
 
@@ -232,9 +234,14 @@ impl Painter {
             self.print_small_buffer(prompt, lines, menu, use_ansi_coloring)?;
         }
 
-        // The last_required_lines is used to move the cursor at the end where stdout
-        // can print without overwriting the things written during the painting
+        // The last_required_lines is used to calculate safe range of the current prompt.
         self.last_required_lines = required_lines;
+
+        self.after_cursor_lines = if !lines.after_cursor.is_empty() {
+            Some(lines.after_cursor.to_string())
+        } else {
+            None
+        };
 
         self.stdout.queue(RestorePosition)?;
 
@@ -525,18 +532,13 @@ impl Painter {
     }
 
     // The prompt is moved to the end of the buffer after the event was handled
-    // If the prompt is in the middle of a multiline buffer, then the next output to stdout
-    // could overwrite the buffer writing
     pub(crate) fn move_cursor_to_end(&mut self) -> Result<()> {
-        let final_row = self.prompt_start_row + self.last_required_lines;
-        let scroll = final_row.saturating_sub(self.screen_height() - 1);
-        if scroll != 0 {
-            self.queue_universal_scroll(scroll)?;
+        if let Some(after_cursor) = &self.after_cursor_lines {
+            self.stdout
+                .queue(Clear(ClearType::FromCursorDown))?
+                .queue(Print(after_cursor))?;
         }
-        self.stdout
-            .queue(MoveTo(0, final_row.min(self.screen_height() - 1)))?;
-
-        self.stdout.flush()
+        self.print_crlf()
     }
 
     /// Prints an external message
