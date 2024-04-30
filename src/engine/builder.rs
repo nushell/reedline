@@ -104,7 +104,7 @@ impl ReedlineBuilder {
                 self.history_session_id,
             ),
             input_mode: InputMode::Regular,
-            executing_host_command: false,
+            suspended_state: None,
         }
     }
 

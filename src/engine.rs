@@ -32,7 +32,7 @@ use crate::{
         FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
         HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
     },
-    painting::{Painter, PromptLines},
+    painting::{Painter, PainterSuspendedState, PromptLines},
     prompt::PromptHistorySearchStatus,
     result::{ReedlineError, ReedlineErrorVariants},
     terminal_extensions::{bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard},
@@ -115,8 +115,9 @@ pub struct Reedline {
     history_cursor_on_excluded: bool,
     input_mode: InputMode,
 
-    // Yielded to the host program after a `ReedlineEvent::ExecuteHostCommand`, thus redraw in-place
-    executing_host_command: bool,
+    // State of the painter after a `ReedlineEvent::ExecuteHostCommand` was requested, used after
+    // execution to decide if we can re-use the previous prompt or paint a new one.
+    suspended_state: Option<PainterSuspendedState>,
 
     // Validator
     validator: Option<Box<dyn Validator>>,
@@ -368,12 +369,14 @@ impl Reedline {
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> io::Result<Signal> {
-        if self.executing_host_command {
-            self.executing_host_command = false;
-        } else {
-            self.painter.initialize_prompt_position()?;
-            self.hide_hints = false;
+        self.painter
+            .initialize_prompt_position(self.suspended_state.as_ref())?;
+        if self.suspended_state.is_some() {
+            // Last editor was suspended to run a ExecuteHostCommand event,
+            // we are resuming operation now.
+            self.suspended_state = None;
         }
+        self.hide_hints = false;
 
         self.repaint(prompt)?;
 
@@ -470,8 +473,11 @@ impl Reedline {
             for event in reedline_events.drain(..) {
                 match self.handle_event(prompt, event)? {
                     EventStatus::Exits(signal) => {
-                        if !self.executing_host_command {
-                            // Move the cursor below the input area, for external commands or new read_line call
+                        // Check if we are merely suspended (to process an ExecuteHostCommand event)
+                        // or if we're about to quit the editor.
+                        if self.suspended_state.is_none() {
+                            // We are about to quit the editor, move the cursor below the input
+                            // area, for external commands or new read_line call
                             self.painter.move_cursor_to_end()?;
                         }
                         return Ok(signal);
@@ -552,8 +558,7 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
-                // TODO: Decide if we need to do something special to have a nicer painter state on the next go
-                self.executing_host_command = true;
+                self.suspended_state = Some(self.painter.state_before_suspension());
                 Ok(EventStatus::Exits(Signal::Success(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
@@ -823,8 +828,7 @@ impl Reedline {
                 }
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
-                // TODO: Decide if we need to do something special to have a nicer painter state on the next go
-                self.executing_host_command = true;
+                self.suspended_state = Some(self.painter.state_before_suspension());
                 Ok(EventStatus::Exits(Signal::Success(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
@@ -1268,7 +1272,6 @@ impl Reedline {
                     // If we don't find any history searching by session id, then let's
                     // search everything, otherwise use the result from the session search
                     if history_search_by_session.is_none() {
-                        eprintln!("Using global search");
                         self.history
                             .search(SearchQuery::last_with_prefix(
                                 parsed_prefix.clone(),
