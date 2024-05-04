@@ -1,5 +1,5 @@
 [package]
-authors = ["JT <jonathan.d.turner@gmail.com>", "The Nushell Project Developers"]
+authors = ["The Nushell Project Developers"]
 description = "A readline-like crate for CLI text input"
 edition = "2021"
 license = "MIT"
