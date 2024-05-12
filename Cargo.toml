@@ -26,6 +26,8 @@ fd-lock = "4.0.2"
 itertools = "0.12.0"
 nu-ansi-term = "0.50.0"
 rusqlite = { version = "0.31.0", optional = true }
+rqlite_client = { version = "0.0.1-alpha.15", optional = true }
+url = { version = "2.5.0", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0.79", optional = true }
 strip-ansi-escapes = "0.2.0"
@@ -46,6 +48,7 @@ bashisms = []
 external_printer = ["crossbeam"]
 sqlite = ["rusqlite/bundled", "serde_json"]
 sqlite-dynlib = ["rusqlite", "serde_json"]
+rqlite = ["rqlite_client", "serde_json", "url"]
 system_clipboard = ["arboard"]
 
 [[example]]
@@ -59,4 +62,4 @@ required-features = ["external_printer"]
 [package.metadata.docs.rs]
 # Whether to pass `--all-features` to Cargo (default: false)
 all-features = false
-features = ["bashisms", "external_printer", "sqlite"]
+features = ["bashisms", "external_printer", "sqlite", "rqlite"]

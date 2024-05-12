@@ -32,6 +32,15 @@ fn main() -> reedline::Result<()> {
         None
     };
 
+    #[cfg(feature = "rqlite")]
+    let history = Box::new(
+        reedline::RqliteBackedHistory::with_url(
+            "http://localhost:4001".into(),
+            history_session_id,
+            Some(chrono::Utc::now()),
+        ).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
+    );
+
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     let history = Box::new(
         reedline::SqliteBackedHistory::with_file(
@@ -41,7 +50,7 @@ fn main() -> reedline::Result<()> {
         )
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
     );
-    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib", feature = "rqlite")))]
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
     let commands = vec![
         "test".into(),
