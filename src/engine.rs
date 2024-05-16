@@ -1,9 +1,45 @@
-use std::path::PathBuf;
-
-use itertools::Itertools;
+use crossterm::{
+    cursor::{SetCursorStyle, Show},
+    event,
+    event::{Event, KeyCode, KeyEvent, KeyModifiers},
+    terminal, QueueableCommand,
+};
 use nu_ansi_term::{Color, Style};
 
-use crate::{enums::ReedlineRawEvent, CursorConfig};
+use std::{
+    fs::File,
+    io::{self, Write},
+    path::PathBuf,
+    process::Command,
+    time::{Duration, SystemTime},
+};
+
+/// the builder-style mutation API of 'Reedline'
+/// shouldn't clutter the actual engine logic
+mod inspection;
+
+mod builder;
+pub use builder::ReedlineBuilder;
+
+use crate::{
+    completion::{Completer, DefaultCompleter},
+    core_editor::Editor,
+    edit_mode::{EditMode, Emacs},
+    enums::{EventStatus, ReedlineEvent, ReedlineRawEvent},
+    highlighter::SimpleMatchHighlighter,
+    hinter::Hinter,
+    history::{
+        FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
+        HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
+    },
+    painting::{Painter, PainterSuspendedState, PromptLines},
+    prompt::PromptHistorySearchStatus,
+    result::{ReedlineError, ReedlineErrorVariants},
+    terminal_extensions::{bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard},
+    utils::text_manipulation,
+    CursorConfig, EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent,
+    Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
+};
 #[cfg(feature = "bashisms")]
 use crate::{
     history::SearchFilter,
@@ -14,36 +50,6 @@ use {
     crate::external_printer::ExternalPrinter,
     crossbeam::channel::TryRecvError,
     std::io::{Error, ErrorKind},
-};
-use {
-    crate::{
-        completion::{Completer, DefaultCompleter},
-        core_editor::Editor,
-        edit_mode::{EditMode, Emacs},
-        enums::{EventStatus, ReedlineEvent},
-        highlighter::SimpleMatchHighlighter,
-        hinter::Hinter,
-        history::{
-            FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
-            HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
-        },
-        painting::{Painter, PainterSuspendedState, PromptLines},
-        prompt::{PromptEditMode, PromptHistorySearchStatus},
-        result::{ReedlineError, ReedlineErrorVariants},
-        terminal_extensions::{bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard},
-        utils::text_manipulation,
-        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
-        PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
-    },
-    crossterm::{
-        cursor::{SetCursorStyle, Show},
-        event,
-        event::{Event, KeyCode, KeyEvent, KeyModifiers},
-        terminal, QueueableCommand,
-    },
-    std::{
-        fs::File, io, io::Result, io::Write, process::Command, time::Duration, time::SystemTime,
-    },
 };
 
 // The POLL_WAIT is used to specify for how long the POLL should wait for
@@ -182,56 +188,31 @@ impl Drop for Reedline {
     }
 }
 
+impl Default for Reedline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Reedline {
     const FILTERED_ITEM_ID: HistoryItemId = HistoryItemId(i64::MAX);
 
     /// Create a new [`Reedline`] engine with a local [`History`] that is not synchronized to a file.
     #[must_use]
     pub fn create() -> Self {
-        let history = Box::<FileBackedHistory>::default();
-        let painter = Painter::new(std::io::BufWriter::new(std::io::stderr()));
-        let buffer_highlighter = Box::<ExampleHighlighter>::default();
-        let visual_selection_style = Style::new().on(Color::LightGray);
-        let completer = Box::<DefaultCompleter>::default();
-        let hinter = None;
-        let validator = None;
-        let edit_mode = Box::<Emacs>::default();
-        let hist_session_id = None;
+        Self::new()
+    }
 
-        Reedline {
-            editor: Editor::default(),
-            history,
-            history_cursor: HistoryCursor::new(
-                HistoryNavigationQuery::Normal(LineBuffer::default()),
-                hist_session_id,
-            ),
-            history_session_id: hist_session_id,
-            history_last_run_id: None,
-            history_exclusion_prefix: None,
-            history_excluded_item: None,
-            history_cursor_on_excluded: false,
-            input_mode: InputMode::Regular,
-            suspended_state: None,
-            painter,
-            transient_prompt: None,
-            edit_mode,
-            completer,
-            quick_completions: false,
-            partial_completions: false,
-            highlighter: buffer_highlighter,
-            visual_selection_style,
-            hinter,
-            hide_hints: false,
-            validator,
-            use_ansi_coloring: true,
-            menus: Vec::new(),
-            buffer_editor: None,
-            cursor_shapes: None,
-            bracketed_paste: BracketedPasteGuard::default(),
-            kitty_protocol: KittyProtocolGuard::default(),
-            #[cfg(feature = "external_printer")]
-            external_printer: None,
-        }
+    #[must_use]
+    /// Constructs an instance of `Reedline` with sensible defaults for most use cases
+    pub fn new() -> Self {
+        Self::builder().build()
+    }
+
+    #[must_use]
+    /// Construct a builder for creating a `Reedline`
+    pub const fn builder() -> ReedlineBuilder {
+        ReedlineBuilder::new()
     }
 
     /// Get a new history session id based on the current time and the first commit datetime of reedline
@@ -244,298 +225,14 @@ impl Reedline {
         Some(HistorySessionId::new(nanos))
     }
 
-    /// Toggle whether reedline enables bracketed paste to reed copied content
-    ///
-    /// This currently alters the behavior for multiline pastes as pasting of regular text will
-    /// execute after every complete new line as determined by the [`Validator`]. With enabled
-    /// bracketed paste all lines will appear in the buffer and can then be submitted with a
-    /// separate enter.
-    ///
-    /// At this point most terminals should support it or ignore the setting of the necessary
-    /// flags. For full compatibility, keep it disabled.
-    pub fn use_bracketed_paste(mut self, enable: bool) -> Self {
-        self.bracketed_paste.set(enable);
+    /// Clear the internal list of menus
+    pub fn clear_menus(&mut self) -> &mut Self {
+        self.menus.clear();
         self
-    }
-
-    /// Toggle whether reedline uses the kitty keyboard enhancement protocol
-    ///
-    /// This allows us to disambiguate more events than the traditional standard
-    /// Only available with a few terminal emulators.
-    /// You can check for that with [`crate::kitty_protocol_available`]
-    /// `Reedline` will perform this check internally
-    ///
-    /// Read more: <https://sw.kovidgoyal.net/kitty/keyboard-protocol/>
-    pub fn use_kitty_keyboard_enhancement(mut self, enable: bool) -> Self {
-        self.kitty_protocol.set(enable);
-        self
-    }
-
-    /// Return the previously generated history session id
-    pub fn get_history_session_id(&self) -> Option<HistorySessionId> {
-        self.history_session_id
-    }
-
-    /// Set a new history session id
-    /// This should be used in situations where the user initially did not have a history_session_id
-    /// and then later realized they want to have one without restarting the application.
-    pub fn set_history_session_id(&mut self, session: Option<HistorySessionId>) -> Result<()> {
-        self.history_session_id = session;
-        Ok(())
-    }
-
-    /// A builder to include a [`Hinter`] in your instance of the Reedline engine
-    /// # Example
-    /// ```rust
-    /// //Cargo.toml
-    /// //[dependencies]
-    /// //nu-ansi-term = "*"
-    /// use {
-    ///     nu_ansi_term::{Color, Style},
-    ///     reedline::{DefaultHinter, Reedline},
-    /// };
-    ///
-    /// let mut line_editor = Reedline::create().with_hinter(Box::new(
-    ///     DefaultHinter::default()
-    ///     .with_style(Style::new().italic().fg(Color::LightGray)),
-    /// ));
-    /// ```
-    #[must_use]
-    pub fn with_hinter(mut self, hinter: Box<dyn Hinter>) -> Self {
-        self.hinter = Some(hinter);
-        self
-    }
-
-    /// Remove current [`Hinter`]
-    #[must_use]
-    pub fn disable_hints(mut self) -> Self {
-        self.hinter = None;
-        self
-    }
-
-    /// A builder to configure the tab completion
-    /// # Example
-    /// ```rust
-    /// // Create a reedline object with tab completions support
-    ///
-    /// use reedline::{DefaultCompleter, Reedline};
-    ///
-    /// let commands = vec![
-    ///   "test".into(),
-    ///   "hello world".into(),
-    ///   "hello world reedline".into(),
-    ///   "this is the reedline crate".into(),
-    /// ];
-    /// let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
-    ///
-    /// let mut line_editor = Reedline::create().with_completer(completer);
-    /// ```
-    #[must_use]
-    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
-        self.completer = completer;
-        self
-    }
-
-    /// Turn on quick completions. These completions will auto-select if the completer
-    /// ever narrows down to a single entry.
-    #[must_use]
-    pub fn with_quick_completions(mut self, quick_completions: bool) -> Self {
-        self.quick_completions = quick_completions;
-        self
-    }
-
-    /// Turn on partial completions. These completions will fill the buffer with the
-    /// smallest common string from all the options
-    #[must_use]
-    pub fn with_partial_completions(mut self, partial_completions: bool) -> Self {
-        self.partial_completions = partial_completions;
-        self
-    }
-
-    /// A builder which enables or disables the use of ansi coloring in the prompt
-    /// and in the command line syntax highlighting.
-    #[must_use]
-    pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
-        self.use_ansi_coloring = use_ansi_coloring;
-        self
-    }
-
-    /// A builder that configures the highlighter for your instance of the Reedline engine
-    /// # Example
-    /// ```rust
-    /// // Create a reedline object with highlighter support
-    ///
-    /// use reedline::{ExampleHighlighter, Reedline};
-    ///
-    /// let commands = vec![
-    ///   "test".into(),
-    ///   "hello world".into(),
-    ///   "hello world reedline".into(),
-    ///   "this is the reedline crate".into(),
-    /// ];
-    /// let mut line_editor =
-    /// Reedline::create().with_highlighter(Box::new(ExampleHighlighter::new(commands)));
-    /// ```
-    #[must_use]
-    pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Self {
-        self.highlighter = highlighter;
-        self
-    }
-
-    /// A builder that configures the style used for visual selection
-    #[must_use]
-    pub fn with_visual_selection_style(mut self, style: Style) -> Self {
-        self.visual_selection_style = style;
-        self
-    }
-
-    /// A builder which configures the history for your instance of the Reedline engine
-    /// # Example
-    /// ```rust,no_run
-    /// // Create a reedline object with history support, including history size limits
-    ///
-    /// use reedline::{FileBackedHistory, Reedline};
-    ///
-    /// let history = Box::new(
-    /// FileBackedHistory::with_file(5, "history.txt".into())
-    ///     .expect("Error configuring history with file"),
-    /// );
-    /// let mut line_editor = Reedline::create()
-    ///     .with_history(history);
-    /// ```
-    #[must_use]
-    pub fn with_history(mut self, history: Box<dyn History>) -> Self {
-        self.history = history;
-        self
-    }
-
-    /// A builder which configures history exclusion for your instance of the Reedline engine
-    /// # Example
-    /// ```rust,no_run
-    /// // Create a reedline instance with history that will *not* include commands starting with a space
-    ///
-    /// use reedline::{FileBackedHistory, Reedline};
-    ///
-    /// let history = Box::new(
-    /// FileBackedHistory::with_file(5, "history.txt".into())
-    ///     .expect("Error configuring history with file"),
-    /// );
-    /// let mut line_editor = Reedline::create()
-    ///     .with_history(history)
-    ///     .with_history_exclusion_prefix(Some(" ".into()));
-    /// ```
-    #[must_use]
-    pub fn with_history_exclusion_prefix(mut self, ignore_prefix: Option<String>) -> Self {
-        self.history_exclusion_prefix = ignore_prefix;
-        self
-    }
-
-    /// A builder that configures the validator for your instance of the Reedline engine
-    /// # Example
-    /// ```rust
-    /// // Create a reedline object with validator support
-    ///
-    /// use reedline::{DefaultValidator, Reedline};
-    ///
-    /// let mut line_editor =
-    /// Reedline::create().with_validator(Box::new(DefaultValidator));
-    /// ```
-    #[must_use]
-    pub fn with_validator(mut self, validator: Box<dyn Validator>) -> Self {
-        self.validator = Some(validator);
-        self
-    }
-
-    /// A builder that configures the alternate text editor used to edit the line buffer
-    ///
-    /// You are responsible for providing a file path that is unique to this reedline session
-    ///
-    /// # Example
-    /// ```rust,no_run
-    /// // Create a reedline object with vim as editor
-    ///
-    /// use reedline::Reedline;
-    /// use std::env::temp_dir;
-    /// use std::process::Command;
-    ///
-    /// let temp_file = std::env::temp_dir().join("my-random-unique.file");
-    /// let mut command = Command::new("vim");
-    /// // you can provide additional flags:
-    /// command.arg("-p"); // open in a vim tab (just for demonstration)
-    /// // you don't have to pass the filename to the command
-    /// let mut line_editor =
-    /// Reedline::create().with_buffer_editor(command, temp_file);
-    /// ```
-    #[must_use]
-    pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
-        let mut editor = editor;
-        if !editor.get_args().contains(&temp_file.as_os_str()) {
-            editor.arg(&temp_file);
-        }
-        self.buffer_editor = Some(BufferEditor {
-            command: editor,
-            temp_file,
-        });
-        self
-    }
-
-    /// Remove the current [`Validator`]
-    #[must_use]
-    pub fn disable_validator(mut self) -> Self {
-        self.validator = None;
-        self
-    }
-
-    /// Set a different prompt to be used after submitting each line
-    #[must_use]
-    pub fn with_transient_prompt(mut self, transient_prompt: Box<dyn Prompt>) -> Self {
-        self.transient_prompt = Some(transient_prompt);
-        self
-    }
-
-    /// A builder which configures the edit mode for your instance of the Reedline engine
-    #[must_use]
-    pub fn with_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
-        self.edit_mode = edit_mode;
-        self
-    }
-
-    /// A builder that appends a menu to the engine
-    #[must_use]
-    pub fn with_menu(mut self, menu: ReedlineMenu) -> Self {
-        self.menus.push(menu);
-        self
-    }
-
-    /// A builder that clears the list of menus added to the engine
-    #[must_use]
-    pub fn clear_menus(mut self) -> Self {
-        self.menus = Vec::new();
-        self
-    }
-
-    /// A builder that adds the history item id
-    #[must_use]
-    pub fn with_history_session_id(mut self, session: Option<HistorySessionId>) -> Self {
-        self.history_session_id = session;
-        self
-    }
-
-    /// A builder that enables reedline changing the cursor shape based on the current edit mode.
-    /// The current implementation sets the cursor shape when drawing the prompt.
-    /// Do not use this if the cursor shape is set elsewhere, e.g. in the terminal settings or by ansi escape sequences.
-    pub fn with_cursor_config(mut self, cursor_shapes: CursorConfig) -> Self {
-        self.cursor_shapes = Some(cursor_shapes);
-        self
-    }
-
-    /// Returns the corresponding expected prompt style for the given edit mode
-    pub fn prompt_edit_mode(&self) -> PromptEditMode {
-        self.edit_mode.edit_mode()
     }
 
     /// Output the complete [`History`] chronologically with numbering to the terminal
-    pub fn print_history(&mut self) -> Result<()> {
+    pub fn print_history(&mut self) -> io::Result<()> {
         let history: Vec<_> = self
             .history
             .search(SearchQuery::everything(SearchDirection::Forward, None))
@@ -548,12 +245,12 @@ impl Reedline {
     }
 
     /// Output the complete [`History`] for this session, chronologically with numbering to the terminal
-    pub fn print_history_session(&mut self) -> Result<()> {
+    pub fn print_history_session(&mut self) -> io::Result<()> {
         let history: Vec<_> = self
             .history
             .search(SearchQuery::everything(
                 SearchDirection::Forward,
-                self.get_history_session_id(),
+                self.history_session_id,
             ))
             .expect("todo: error handling");
 
@@ -564,8 +261,8 @@ impl Reedline {
     }
 
     /// Print the history session id
-    pub fn print_history_session_id(&mut self) -> Result<()> {
-        println!("History Session Id: {:?}", self.get_history_session_id());
+    pub fn print_history_session_id(&mut self) -> io::Result<()> {
+        println!("History Session Id: {:?}", self.history_session_id);
         Ok(())
     }
 
@@ -573,8 +270,8 @@ impl Reedline {
     pub fn toggle_history_session_matching(
         &mut self,
         session: Option<HistorySessionId>,
-    ) -> Result<()> {
-        self.history_session_id = match self.get_history_session_id() {
+    ) -> io::Result<()> {
+        self.history_session_id = match self.history_session_id {
             Some(_) => None,
             None => session,
         };
@@ -626,7 +323,7 @@ impl Reedline {
     ///
     /// Returns a [`std::io::Result`] in which the `Err` type is [`std::io::Result`]
     /// and the `Ok` variant wraps a [`Signal`] which handles user inputs.
-    pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    pub fn read_line(&mut self, prompt: &dyn Prompt) -> io::Result<Signal> {
         terminal::enable_raw_mode()?;
         self.bracketed_paste.enter();
         self.kitty_protocol.enter();
@@ -650,20 +347,20 @@ impl Reedline {
     }
 
     /// Writes `msg` to the terminal with a following carriage return and newline
-    fn print_line(&mut self, msg: &str) -> Result<()> {
+    fn print_line(&mut self, msg: &str) -> io::Result<()> {
         self.painter.paint_line(msg)
     }
 
     /// Clear the screen by printing enough whitespace to start the prompt or
     /// other output back at the first line of the terminal.
-    pub fn clear_screen(&mut self) -> Result<()> {
+    pub fn clear_screen(&mut self) -> io::Result<()> {
         self.painter.clear_screen()?;
 
         Ok(())
     }
 
     /// Clear the screen and the scrollback buffer of the terminal
-    pub fn clear_scrollback(&mut self) -> Result<()> {
+    pub fn clear_scrollback(&mut self) -> io::Result<()> {
         self.painter.clear_scrollback()?;
 
         Ok(())
@@ -671,7 +368,7 @@ impl Reedline {
 
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
-    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> io::Result<Signal> {
         self.painter
             .initialize_prompt_position(self.suspended_state.as_ref())?;
         if self.suspended_state.is_some() {
@@ -798,7 +495,11 @@ impl Reedline {
         }
     }
 
-    fn handle_event(&mut self, prompt: &dyn Prompt, event: ReedlineEvent) -> Result<EventStatus> {
+    fn handle_event(
+        &mut self,
+        prompt: &dyn Prompt,
+        event: ReedlineEvent,
+    ) -> io::Result<EventStatus> {
         if self.input_mode == InputMode::HistorySearch {
             self.handle_history_search_event(event)
         } else {
@@ -1267,7 +968,7 @@ impl Reedline {
             self.input_mode = InputMode::HistoryTraversal;
             self.history_cursor = HistoryCursor::new(
                 self.get_history_navigation_based_on_line_buffer(),
-                self.get_history_session_id(),
+                self.history_session_id,
             );
 
             if self.history_excluded_item.is_some() {
@@ -1294,7 +995,7 @@ impl Reedline {
             self.input_mode = InputMode::HistoryTraversal;
             self.history_cursor = HistoryCursor::new(
                 self.get_history_navigation_based_on_line_buffer(),
-                self.get_history_session_id(),
+                self.history_session_id,
             );
         }
 
@@ -1350,7 +1051,7 @@ impl Reedline {
     fn enter_history_search(&mut self) {
         self.history_cursor = HistoryCursor::new(
             HistoryNavigationQuery::SubstringSearch("".to_string()),
-            self.get_history_session_id(),
+            self.history_session_id,
         );
         self.input_mode = InputMode::HistorySearch;
     }
@@ -1367,12 +1068,12 @@ impl Reedline {
                         substring.push(*c);
                         self.history_cursor = HistoryCursor::new(
                             HistoryNavigationQuery::SubstringSearch(substring),
-                            self.get_history_session_id(),
+                            self.history_session_id,
                         );
                     } else {
                         self.history_cursor = HistoryCursor::new(
                             HistoryNavigationQuery::SubstringSearch(String::from(*c)),
-                            self.get_history_session_id(),
+                            self.history_session_id,
                         );
                     }
                     self.history_cursor
@@ -1387,7 +1088,7 @@ impl Reedline {
 
                         self.history_cursor = HistoryCursor::new(
                             HistoryNavigationQuery::SubstringSearch(new_substring.to_string()),
-                            self.get_history_session_id(),
+                            self.history_session_id,
                         );
                         self.history_cursor
                             .back(self.history.as_mut())
@@ -1521,7 +1222,7 @@ impl Reedline {
                         start_id: None,
                         end_id: None,
                         limit: Some(1), // fetch the latest one entries
-                        filter: SearchFilter::anything(self.get_history_session_id()),
+                        filter: SearchFilter::anything(self.history_session_id),
                     })
                     .unwrap_or_else(|_| Vec::new())
                     .get(index.saturating_sub(1))
@@ -1541,7 +1242,7 @@ impl Reedline {
                         start_id: None,
                         end_id: None,
                         limit: Some(index as i64), // fetch the latest n entries
-                        filter: SearchFilter::anything(self.get_history_session_id()),
+                        filter: SearchFilter::anything(self.history_session_id),
                     })
                     .unwrap_or_else(|_| Vec::new())
                     .get(index.saturating_sub(1))
@@ -1557,7 +1258,7 @@ impl Reedline {
                         .history
                         .search(SearchQuery::last_with_prefix_and_cwd(
                             parsed.prefix.unwrap().to_string(),
-                            self.get_history_session_id(),
+                            self.history_session_id,
                         ))
                         .unwrap_or_else(|_| Vec::new())
                         .get(index.saturating_sub(1))
@@ -1574,7 +1275,7 @@ impl Reedline {
                         self.history
                             .search(SearchQuery::last_with_prefix(
                                 parsed_prefix.clone(),
-                                self.get_history_session_id(),
+                                self.history_session_id,
                             ))
                             .unwrap_or_else(|_| Vec::new())
                             .get(index.saturating_sub(1))
@@ -1598,7 +1299,7 @@ impl Reedline {
                         start_id: None,
                         end_id: None,
                         limit: Some((index + 1) as i64), // fetch the oldest n entries
-                        filter: SearchFilter::anything(self.get_history_session_id()),
+                        filter: SearchFilter::anything(self.history_session_id),
                     })
                     .unwrap_or_else(|_| Vec::new())
                     .get(index)
@@ -1612,7 +1313,7 @@ impl Reedline {
                 ParseAction::LastToken => self
                     .history
                     .search(SearchQuery::last_with_search(SearchFilter::anything(
-                        self.get_history_session_id(),
+                        self.history_session_id,
                     )))
                     .unwrap_or_else(|_| Vec::new())
                     .first()
@@ -1636,7 +1337,7 @@ impl Reedline {
         }
     }
 
-    fn open_editor(&mut self) -> Result<()> {
+    fn open_editor(&mut self) -> io::Result<()> {
         match &mut self.buffer_editor {
             Some(BufferEditor {
                 ref mut command,
@@ -1666,7 +1367,7 @@ impl Reedline {
     ///
     /// Overwrites the prompt indicator and highlights the search string
     /// separately from the result buffer.
-    fn history_search_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+    fn history_search_paint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
         let navigation = self.history_cursor.get_navigation();
 
         if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
@@ -1692,7 +1393,7 @@ impl Reedline {
 
             let lines = PromptLines::new(
                 prompt,
-                self.prompt_edit_mode(),
+                self.edit_mode.edit_mode(),
                 Some(prompt_history_search),
                 &res_string,
                 "",
@@ -1702,7 +1403,7 @@ impl Reedline {
             self.painter.repaint_buffer(
                 prompt,
                 &lines,
-                self.prompt_edit_mode(),
+                self.edit_mode.edit_mode(),
                 None,
                 self.use_ansi_coloring,
                 &self.cursor_shapes,
@@ -1715,7 +1416,7 @@ impl Reedline {
     /// Triggers a full repaint including the prompt parts
     ///
     /// Includes the highlighting and hinting calls.
-    fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+    fn buffer_paint(&mut self, prompt: &dyn Prompt) -> io::Result<()> {
         let cursor_position_in_buffer = self.editor.insertion_point();
         let buffer_to_paint = self.editor.get_buffer();
 
@@ -1750,7 +1451,7 @@ impl Reedline {
 
         let mut lines = PromptLines::new(
             prompt,
-            self.prompt_edit_mode(),
+            self.edit_mode.edit_mode(),
             None,
             &before_cursor,
             &after_cursor,
@@ -1779,7 +1480,7 @@ impl Reedline {
         self.painter.repaint_buffer(
             prompt,
             &lines,
-            self.prompt_edit_mode(),
+            self.edit_mode.edit_mode(),
             menu,
             self.use_ansi_coloring,
             &self.cursor_shapes,
@@ -1797,7 +1498,7 @@ impl Reedline {
     }
 
     #[cfg(feature = "external_printer")]
-    fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<Vec<String>> {
+    fn external_messages(external_printer: &ExternalPrinter<String>) -> io::Result<Vec<String>> {
         let mut messages = Vec::new();
         loop {
             let result = external_printer.receiver().try_recv();
@@ -1832,7 +1533,7 @@ impl Reedline {
         }
         if !buffer.is_empty() {
             let mut entry = HistoryItem::from_command_line(&buffer);
-            entry.session_id = self.get_history_session_id();
+            entry.session_id = self.history_session_id;
 
             if self
                 .history_exclusion_prefix
@@ -1859,5 +1560,5 @@ impl Reedline {
 #[test]
 fn thread_safe() {
     fn f<S: Send>(_: S) {}
-    f(Reedline::create());
+    f(Reedline::new());
 }

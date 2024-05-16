@@ -89,31 +89,31 @@ fn main() -> io::Result<()> {
         "hello world reedline".into(),
         "this is the reedline crate".into(),
     ];
-    let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
+    let completer = DefaultCompleter::new_with_wordlen(commands.clone(), 2);
     // Use the interactive menu to select options from the completer
     let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu"));
 
     let mut keybindings = default_emacs_keybindings();
     add_menu_keybindings(&mut keybindings);
 
-    let edit_mode = Box::new(Emacs::new(keybindings));
+    let edit_mode = Emacs::new(keybindings);
 
-    let mut line_editor = Reedline::create()
-        .with_hinter(Box::new(
-            DefaultHinter::default().with_style(Style::new().fg(Color::LightGray)),
-        ))
-        .with_completer(completer)
-        .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
+    #[allow(unused_mut)]
+    let mut builder = Reedline::builder()
+        .with_hints(DefaultHinter::default().with_style(Style::new().fg(Color::LightGray)))
+        .with_completions(completer)
+        .add_menu(ReedlineMenu::EngineCompleter(completion_menu))
         .with_edit_mode(edit_mode)
-        .with_highlighter(Box::new(ExampleHighlighter::new(commands)))
-        .with_validator(Box::new(CustomValidator {}))
-        .with_ansi_colors(true)
-        .with_history_exclusion_prefix(Some(String::from(" ")))
-        .with_transient_prompt(Box::new(TransientPrompt {}));
+        .with_highlighter(ExampleHighlighter::new(commands))
+        .with_validator(CustomValidator {})
+        .use_ansi_colors(true)
+        .with_history_exclusion_prefix(String::from(" "))
+        .with_transient_prompt(TransientPrompt {});
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     {
-        line_editor = line_editor.with_history(Box::new(SqliteBackedHistory::in_memory().unwrap()));
-    }
+        builder = builder.with_history(SqliteBackedHistory::in_memory().unwrap());
+    };
+    let mut line_editor = builder.build();
 
     let prompt = DefaultPrompt::default();
 

@@ -38,7 +38,7 @@ fn main() {
         }
     });
 
-    let mut line_editor = Reedline::create().with_external_printer(printer);
+    let mut line_editor = Reedline::builder().with_external_printer(printer).build();
     let prompt = DefaultPrompt::default();
 
     loop {
