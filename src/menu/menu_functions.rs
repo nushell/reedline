@@ -606,6 +606,7 @@ mod tests {
             .into_iter()
             .map(|s| Suggestion {
                 value: s.into(),
+                display: None,
                 description: None,
                 style: None,
                 extra: None,
@@ -626,6 +627,7 @@ mod tests {
             .into_iter()
             .map(|s| Suggestion {
                 value: s.into(),
+                display: None,
                 description: None,
                 style: None,
                 extra: None,
@@ -681,6 +683,7 @@ mod tests {
         replace_in_buffer(
             Some(Suggestion {
                 value,
+                display: None,
                 description: None,
                 style: None,
                 extra: None,
