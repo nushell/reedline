@@ -589,7 +589,7 @@ impl Menu for DescriptionMenu {
                     .examples
                     .get(example_index)
                     .expect("the example index is always checked");
-                suggestion.value = example.clone();
+                suggestion.value.clone_from(example);
             }
             replace_in_buffer(Some(suggestion), editor);
         }

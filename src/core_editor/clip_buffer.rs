@@ -6,10 +6,12 @@ pub trait Clipboard: Send {
 
     fn get(&mut self) -> (String, ClipboardMode);
 
+    #[allow(dead_code)]
     fn clear(&mut self) {
         self.set("", ClipboardMode::Normal);
     }
 
+    #[allow(dead_code)]
     fn len(&mut self) -> usize {
         self.get().0.len()
     }
@@ -41,7 +43,7 @@ impl LocalClipboard {
 
 impl Clipboard for LocalClipboard {
     fn set(&mut self, content: &str, mode: ClipboardMode) {
-        self.content = content.to_owned();
+        content.clone_into(&mut self.content);
         self.mode = mode;
     }
 

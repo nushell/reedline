@@ -17,6 +17,8 @@ pub struct ParseResult<'buffer> {
     pub marker: Option<&'buffer str>,
     /// Direction of the search based on the marker
     pub action: ParseAction,
+    /// Prefix to search for
+    pub prefix: Option<&'buffer str>,
 }
 
 /// Direction of the index found in the string
@@ -30,6 +32,8 @@ pub enum ParseAction {
     LastToken,
     /// Last executed command.
     LastCommand,
+    /// Backward search for a prefix
+    BackwardPrefixSearch,
 }
 
 /// Splits a string that contains a marker character
@@ -46,7 +50,8 @@ pub enum ParseAction {
 ///         remainder: "this is an example",
 ///         index: Some(10),
 ///         marker: Some("!10"),
-///         action: ParseAction::ForwardSearch
+///         action: ParseAction::ForwardSearch,
+///         prefix: None,
 ///     }
 /// )
 ///
@@ -58,6 +63,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
             index: None,
             marker: None,
             action: ParseAction::ForwardSearch,
+            prefix: None,
         };
     }
 
@@ -75,6 +81,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                         index: Some(0),
                         marker: Some(&buffer[index..index + 2 * marker.len_utf8()]),
                         action: ParseAction::LastCommand,
+                        prefix: None,
                     }
                 }
                 #[cfg(feature = "bashisms")]
@@ -84,6 +91,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                         index: Some(0),
                         marker: Some(&buffer[index..index + 2]),
                         action: ParseAction::LastToken,
+                        prefix: None,
                     }
                 }
                 Some(&x) if x.is_ascii_digit() || x == '-' => {
@@ -106,6 +114,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                                 index: Some(count),
                                 marker: Some(&buffer[index..index + size]),
                                 action,
+                                prefix: None,
                             };
                         }
                     }
@@ -114,7 +123,18 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                         index: Some(count),
                         marker: Some(&buffer[index..index + size]),
                         action,
+                        prefix: None,
                     };
+                }
+                #[cfg(feature = "bashisms")]
+                Some(&x) if x.is_ascii_alphabetic() => {
+                    return ParseResult {
+                        remainder: &buffer[0..index],
+                        index: Some(0),
+                        marker: Some(&buffer[index..index + marker.len_utf8()]),
+                        action: ParseAction::BackwardPrefixSearch,
+                        prefix: Some(&buffer[index + marker.len_utf8()..buffer.len()]),
+                    }
                 }
                 None => {
                     return ParseResult {
@@ -122,6 +142,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                         index: Some(0),
                         marker: Some(&buffer[index..buffer.len()]),
                         action,
+                        prefix: Some(&buffer[index..buffer.len()]),
                     }
                 }
                 _ => {}
@@ -135,6 +156,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
         index: None,
         marker: None,
         action,
+        prefix: None,
     }
 }
 

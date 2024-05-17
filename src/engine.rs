@@ -27,7 +27,7 @@ use {
             FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
             HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
-        painting::{Painter, PromptLines},
+        painting::{Painter, PainterSuspendedState, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
         terminal_extensions::{bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard},
@@ -109,8 +109,9 @@ pub struct Reedline {
     history_cursor_on_excluded: bool,
     input_mode: InputMode,
 
-    // Yielded to the host program after a `ReedlineEvent::ExecuteHostCommand`, thus redraw in-place
-    executing_host_command: bool,
+    // State of the painter after a `ReedlineEvent::ExecuteHostCommand` was requested, used after
+    // execution to decide if we can re-use the previous prompt or paint a new one.
+    suspended_state: Option<PainterSuspendedState>,
 
     // Validator
     validator: Option<Box<dyn Validator>>,
@@ -210,7 +211,7 @@ impl Reedline {
             history_excluded_item: None,
             history_cursor_on_excluded: false,
             input_mode: InputMode::Regular,
-            executing_host_command: false,
+            suspended_state: None,
             painter,
             transient_prompt: None,
             edit_mode,
@@ -671,12 +672,14 @@ impl Reedline {
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        if self.executing_host_command {
-            self.executing_host_command = false;
-        } else {
-            self.painter.initialize_prompt_position()?;
-            self.hide_hints = false;
+        self.painter
+            .initialize_prompt_position(self.suspended_state.as_ref())?;
+        if self.suspended_state.is_some() {
+            // Last editor was suspended to run a ExecuteHostCommand event,
+            // we are resuming operation now.
+            self.suspended_state = None;
         }
+        self.hide_hints = false;
 
         self.repaint(prompt)?;
 
@@ -773,8 +776,11 @@ impl Reedline {
             for event in reedline_events.drain(..) {
                 match self.handle_event(prompt, event)? {
                     EventStatus::Exits(signal) => {
-                        if !self.executing_host_command {
-                            // Move the cursor below the input area, for external commands or new read_line call
+                        // Check if we are merely suspended (to process an ExecuteHostCommand event)
+                        // or if we're about to quit the editor.
+                        if self.suspended_state.is_none() {
+                            // We are about to quit the editor, move the cursor below the input
+                            // area, for external commands or new read_line call
                             self.painter.move_cursor_to_end()?;
                         }
                         return Ok(signal);
@@ -851,8 +857,7 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
-                // TODO: Decide if we need to do something special to have a nicer painter state on the next go
-                self.executing_host_command = true;
+                self.suspended_state = Some(self.painter.state_before_suspension());
                 Ok(EventStatus::Exits(Signal::Success(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
@@ -1122,8 +1127,7 @@ impl Reedline {
                 }
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
-                // TODO: Decide if we need to do something special to have a nicer painter state on the next go
-                self.executing_host_command = true;
+                self.suspended_state = Some(self.painter.state_before_suspension());
                 Ok(EventStatus::Exits(Signal::Success(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
@@ -1495,6 +1499,8 @@ impl Reedline {
     fn parse_bang_command(&mut self) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
         let parsed = parse_selection_char(buffer, '!');
+        let parsed_prefix = parsed.prefix.unwrap_or_default().to_string();
+        let parsed_marker = parsed.marker.unwrap_or_default().to_string();
 
         if let Some(last) = parsed.remainder.chars().last() {
             if last != ' ' {
@@ -1546,6 +1552,43 @@ impl Reedline {
                             history.command_line.clone(),
                         )
                     }),
+                ParseAction::BackwardPrefixSearch => {
+                    let history_search_by_session = self
+                        .history
+                        .search(SearchQuery::last_with_prefix_and_cwd(
+                            parsed.prefix.unwrap().to_string(),
+                            self.get_history_session_id(),
+                        ))
+                        .unwrap_or_else(|_| Vec::new())
+                        .get(index.saturating_sub(1))
+                        .map(|history| {
+                            (
+                                parsed.remainder.len(),
+                                parsed_prefix.len() + parsed_marker.len(),
+                                history.command_line.clone(),
+                            )
+                        });
+                    // If we don't find any history searching by session id, then let's
+                    // search everything, otherwise use the result from the session search
+                    if history_search_by_session.is_none() {
+                        self.history
+                            .search(SearchQuery::last_with_prefix(
+                                parsed_prefix.clone(),
+                                self.get_history_session_id(),
+                            ))
+                            .unwrap_or_else(|_| Vec::new())
+                            .get(index.saturating_sub(1))
+                            .map(|history| {
+                                (
+                                    parsed.remainder.len(),
+                                    parsed_prefix.len() + parsed_marker.len(),
+                                    history.command_line.clone(),
+                                )
+                            })
+                    } else {
+                        history_search_by_session
+                    }
+                }
                 ParseAction::ForwardSearch => self
                     .history
                     .search(SearchQuery {
@@ -1573,6 +1616,7 @@ impl Reedline {
                     )))
                     .unwrap_or_else(|_| Vec::new())
                     .first()
+                    //BUGBUG: This returns the wrong results with paths with spaces in them
                     .and_then(|history| history.command_line.split_whitespace().next_back())
                     .map(|token| (parsed.remainder.len(), indicator.len(), token.to_string())),
             });

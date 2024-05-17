@@ -14,6 +14,7 @@ use {
         QueueableCommand,
     },
     std::io::{Result, Write},
+    std::ops::RangeInclusive,
 };
 #[cfg(feature = "external_printer")]
 use {crate::LineBuffer, crossterm::cursor::MoveUp};
@@ -49,6 +50,42 @@ fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
 /// the type used by crossterm operations
 pub type W = std::io::BufWriter<std::io::Stderr>;
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct PainterSuspendedState {
+    previous_prompt_rows_range: RangeInclusive<u16>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PromptRowSelector {
+    UseExistingPrompt { start_row: u16 },
+    MakeNewPrompt { new_row: u16 },
+}
+
+// Selects the row where the next prompt should start on, taking into account and whether it should re-use a previous
+// prompt.
+fn select_prompt_row(
+    suspended_state: Option<&PainterSuspendedState>,
+    (column, row): (u16, u16), // NOTE: Positions are 0 based here
+) -> PromptRowSelector {
+    if let Some(painter_state) = suspended_state {
+        // The painter was suspended, try to re-use the last prompt position to avoid
+        // unnecessarily making new prompts.
+        if painter_state.previous_prompt_rows_range.contains(&row) {
+            // Cursor is still in the range of the previous prompt, re-use it.
+            let start_row = *painter_state.previous_prompt_rows_range.start();
+            return PromptRowSelector::UseExistingPrompt { start_row };
+        } else {
+            // There was some output or cursor is outside of the range of previous prompt make a
+            // fresh new prompt.
+        }
+    }
+
+    // Assumption: if the cursor is not on the zeroth column,
+    //   there is content we want to leave intact, thus advance to the next row.
+    let new_row = if column > 0 { row + 1 } else { row };
+    PromptRowSelector::MakeNewPrompt { new_row }
+}
+
 /// Implementation of the output to the terminal
 pub struct Painter {
     // Stdout
@@ -57,6 +94,7 @@ pub struct Painter {
     terminal_size: (u16, u16),
     last_required_lines: u16,
     large_buffer: bool,
+    after_cursor_lines: Option<String>,
 }
 
 impl Painter {
@@ -67,6 +105,7 @@ impl Painter {
             terminal_size: (0, 0),
             last_required_lines: 0,
             large_buffer: false,
+            after_cursor_lines: None,
         }
     }
 
@@ -85,12 +124,26 @@ impl Painter {
         self.screen_height().saturating_sub(self.prompt_start_row)
     }
 
+    /// Returns the state necessary before suspending the painter (to run a host command event).
+    ///
+    /// This state will be used to re-initialize the painter to re-use last prompt if possible.
+    pub fn state_before_suspension(&self) -> PainterSuspendedState {
+        let start_row = self.prompt_start_row;
+        let final_row = start_row + self.last_required_lines;
+        PainterSuspendedState {
+            previous_prompt_rows_range: start_row..=final_row,
+        }
+    }
+
     /// Sets the prompt origin position and screen size for a new line editor
     /// invocation
     ///
     /// Not to be used for resizes during a running line editor, use
     /// [`Painter::handle_resize()`] instead
-    pub(crate) fn initialize_prompt_position(&mut self) -> Result<()> {
+    pub(crate) fn initialize_prompt_position(
+        &mut self,
+        suspended_state: Option<&PainterSuspendedState>,
+    ) -> Result<()> {
         // Update the terminal size
         self.terminal_size = {
             let size = terminal::size()?;
@@ -102,26 +155,26 @@ impl Painter {
                 size
             }
         };
-        // Cursor positions are 0 based here.
-        let (column, row) = cursor::position()?;
-        // Assumption: if the cursor is not on the zeroth column,
-        // there is content we want to leave intact, thus advance to the next row
-        let new_row = if column > 0 { row + 1 } else { row };
-        //  If we are on the last line and would move beyond the last line due to
-        //  the condition above, we need to make room for the prompt.
-        //  Otherwise printing the prompt would scroll of the stored prompt
-        //  origin, causing issues after repaints.
-        let new_row = if new_row == self.screen_height() {
-            self.print_crlf()?;
-            new_row.saturating_sub(1)
-        } else {
-            new_row
+        let prompt_selector = select_prompt_row(suspended_state, cursor::position()?);
+        self.prompt_start_row = match prompt_selector {
+            PromptRowSelector::UseExistingPrompt { start_row } => start_row,
+            PromptRowSelector::MakeNewPrompt { new_row } => {
+                // If we are on the last line and would move beyond the last line, we need to make
+                // room for the prompt.
+                // Otherwise printing the prompt would scroll off the stored prompt
+                // origin, causing issues after repaints.
+                if new_row == self.screen_height() {
+                    self.print_crlf()?;
+                    new_row.saturating_sub(1)
+                } else {
+                    new_row
+                }
+            }
         };
-        self.prompt_start_row = new_row;
         Ok(())
     }
 
-    /// Main pain painter for the prompt and buffer
+    /// Main painter for the prompt and buffer
     /// It queues all the actions required to print the prompt together with
     /// lines that make the buffer.
     /// Using the prompt lines object in this function it is estimated how the
@@ -181,9 +234,14 @@ impl Painter {
             self.print_small_buffer(prompt, lines, menu, use_ansi_coloring)?;
         }
 
-        // The last_required_lines is used to move the cursor at the end where stdout
-        // can print without overwriting the things written during the painting
+        // The last_required_lines is used to calculate safe range of the current prompt.
         self.last_required_lines = required_lines;
+
+        self.after_cursor_lines = if !lines.after_cursor.is_empty() {
+            Some(lines.after_cursor.to_string())
+        } else {
+            None
+        };
 
         self.stdout.queue(RestorePosition)?;
 
@@ -461,7 +519,7 @@ impl Painter {
         self.stdout.queue(cursor::Show)?;
 
         self.stdout.flush()?;
-        self.initialize_prompt_position()
+        self.initialize_prompt_position(None)
     }
 
     pub(crate) fn clear_scrollback(&mut self) -> Result<()> {
@@ -470,22 +528,17 @@ impl Painter {
             .queue(crossterm::terminal::Clear(ClearType::Purge))?
             .queue(cursor::MoveTo(0, 0))?
             .flush()?;
-        self.initialize_prompt_position()
+        self.initialize_prompt_position(None)
     }
 
     // The prompt is moved to the end of the buffer after the event was handled
-    // If the prompt is in the middle of a multiline buffer, then the output to stdout
-    // could overwrite the buffer writing
     pub(crate) fn move_cursor_to_end(&mut self) -> Result<()> {
-        let final_row = self.prompt_start_row + self.last_required_lines;
-        let scroll = final_row.saturating_sub(self.screen_height() - 1);
-        if scroll != 0 {
-            self.queue_universal_scroll(scroll)?;
+        if let Some(after_cursor) = &self.after_cursor_lines {
+            self.stdout
+                .queue(Clear(ClearType::FromCursorDown))?
+                .queue(Print(after_cursor))?;
         }
-        self.stdout
-            .queue(MoveTo(0, final_row.min(self.screen_height() - 1)))?;
-
-        self.stdout.flush()
+        self.print_crlf()
     }
 
     /// Prints an external message
@@ -618,5 +671,36 @@ mod tests {
 
         assert_eq!(skip_buffer_lines(string, 0, Some(0)), "sentence1",);
         assert_eq!(skip_buffer_lines(string, 1, Some(0)), "sentence2",);
+    }
+
+    #[test]
+    fn test_select_new_prompt_with_no_state_no_output() {
+        assert_eq!(
+            select_prompt_row(None, (0, 12)),
+            PromptRowSelector::MakeNewPrompt { new_row: 12 }
+        );
+    }
+
+    #[test]
+    fn test_select_new_prompt_with_no_state_but_output() {
+        assert_eq!(
+            select_prompt_row(None, (3, 12)),
+            PromptRowSelector::MakeNewPrompt { new_row: 13 }
+        );
+    }
+
+    #[test]
+    fn test_select_existing_prompt() {
+        let state = PainterSuspendedState {
+            previous_prompt_rows_range: 11..=13,
+        };
+        assert_eq!(
+            select_prompt_row(Some(&state), (0, 12)),
+            PromptRowSelector::UseExistingPrompt { start_row: 11 }
+        );
+        assert_eq!(
+            select_prompt_row(Some(&state), (3, 12)),
+            PromptRowSelector::UseExistingPrompt { start_row: 11 }
+        );
     }
 }
