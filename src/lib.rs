@@ -249,7 +249,7 @@ pub use history::RqliteBackedHistory;
 pub use history::{
     CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemId,
     HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchFilter, SearchQuery,
-    HISTORY_SIZE,
+    HISTORY_SIZE, HistoryStorageDest,
 };
 
 mod prompt;

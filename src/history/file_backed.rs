@@ -13,6 +13,7 @@ use std::{
     ops::{Deref, DerefMut},
     path::PathBuf,
 };
+use crate::history::base::HistoryStorageDest;
 
 /// Default size of the [`FileBackedHistory`] used when calling [`FileBackedHistory::default()`]
 pub const HISTORY_SIZE: usize = 1000;
@@ -318,14 +319,22 @@ impl FileBackedHistory {
     ///
     /// **Side effects:** creates all nested directories to the file
     ///
-    pub fn with_file(capacity: usize, file: PathBuf) -> Result<Self> {
+    pub fn with_file(capacity: usize, dest: HistoryStorageDest) -> Result<Self> {
         let mut hist = Self::new(capacity)?;
-        if let Some(base_dir) = file.parent() {
-            std::fs::create_dir_all(base_dir)?;
+        match dest {
+            HistoryStorageDest::Path(file) => {
+                if let Some(base_dir) = file.parent() {
+                    std::fs::create_dir_all(base_dir)?;
+                }
+                hist.file = Some(file);
+                hist.sync()?;
+                Ok(hist)
+            }
+            #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib", feature = "rqlite"))]
+            HistoryStorageDest::Url(url) => Err(ReedlineError(
+                ReedlineErrorVariants::HistoryDatabaseError(format!("Expect file path, got Url: {}", url.to_string()))
+            )),
         }
-        hist.file = Some(file);
-        hist.sync()?;
-        Ok(hist)
     }
 
     // this history doesn't store any info except command line

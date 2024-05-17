@@ -13,7 +13,7 @@ mod rqlite_backed;
 pub use rqlite_backed::RqliteBackedHistory;
 
 pub use base::{
-    CommandLineSearch, History, HistoryNavigationQuery, SearchDirection, SearchFilter, SearchQuery,
+    CommandLineSearch, History, HistoryNavigationQuery, SearchDirection, SearchFilter, SearchQuery, HistoryStorageDest
 };
 pub use cursor::HistoryCursor;
 pub use item::{HistoryItem, HistoryItemId, HistorySessionId};

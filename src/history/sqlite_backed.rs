@@ -8,7 +8,9 @@ use crate::{
 };
 use chrono::{TimeZone, Utc};
 use rusqlite::{named_params, params, Connection, ToSql};
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
+use crate::history::base::HistoryStorageDest;
+
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
 
 /// A history that stores the values to an SQLite database.
@@ -180,6 +182,7 @@ impl History for SqliteBackedHistory {
         self.session
     }
 }
+
 fn map_sqlite_err(err: rusqlite::Error) -> ReedlineError {
     // TODO: better error mapping
     ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!(
@@ -196,17 +199,25 @@ impl SqliteBackedHistory {
     /// **Side effects:** creates all nested directories to the file
     ///
     pub fn with_file(
-        file: PathBuf,
+        dest: HistoryStorageDest,
         session: Option<HistorySessionId>,
         session_timestamp: Option<chrono::DateTime<Utc>>,
     ) -> Result<Self> {
-        if let Some(base_dir) = file.parent() {
-            std::fs::create_dir_all(base_dir).map_err(|e| {
-                ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!("{e}")))
-            })?;
+        match dest {
+            HistoryStorageDest::Path(file) => {
+                if let Some(base_dir) = file.parent() {
+                    std::fs::create_dir_all(base_dir).map_err(|e| {
+                        ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!("{e}")))
+                    })?;
+                }
+                let db = Connection::open(&file).map_err(map_sqlite_err)?;
+                Self::from_connection(db, session, session_timestamp)
+            }
+            #[cfg(feature = "rqlite")]
+            HistoryStorageDest::Url(url) => Err(ReedlineError(
+                ReedlineErrorVariants::HistoryDatabaseError(format!("Expect file path, got Url: {}", url.to_string()))
+            )),
         }
-        let db = Connection::open(&file).map_err(map_sqlite_err)?;
-        Self::from_connection(db, session, session_timestamp)
     }
     /// Creates a new history in memory
     pub fn in_memory() -> Result<Self> {
@@ -266,7 +277,7 @@ impl SqliteBackedHistory {
         -- todo: better indexes
         ",
         )
-        .map_err(map_sqlite_err)?;
+            .map_err(map_sqlite_err)?;
         Ok(SqliteBackedHistory {
             db,
             session,

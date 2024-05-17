@@ -9,6 +9,7 @@ use rqlite_client::Mapping;
 use serde_json::{json, Value};
 
 use crate::{CommandLineSearch, result::{ReedlineError, ReedlineErrorVariants}, Result, SearchDirection};
+use crate::history::base::HistoryStorageDest;
 
 use super::{
     base::SearchQuery,
@@ -186,21 +187,28 @@ impl RqliteBackedHistory {
     /// # Examples 
     ///
     /// ```
-    /// use reedline::{Reedline, RqliteBackedHistory};
+    /// use reedline::{Reedline, RqliteBackedHistory, HistoryStorageDest};
     /// let history = RqliteBackedHistory::with_url(
-    ///   "http://localhost:4001",
+    ///   HistoryStorageDest::Url(url::Url::parse("http://localhost:4001").unwrap()),
     ///   Reedline::create_history_session_id(),
     ///   Some(chrono::Utc::now())
     /// );
     /// ```
     pub fn with_url(
-        url: &str,
+        dest: HistoryStorageDest,
         session: Option<HistorySessionId>,
         session_timestamp: Option<chrono::DateTime<Utc>>,
     ) -> Result<Self> {
-        let db = rqlite_client::Connection::new(url)
-            .map_err(map_rqlite_err)?;
-        Self::from_connection(db, session, session_timestamp)
+        match dest {
+            HistoryStorageDest::Path(file) => Err(ReedlineError(
+                ReedlineErrorVariants::HistoryDatabaseError(format!("Expect url, got file: {:?}", file))
+            )),
+            HistoryStorageDest::Url(url) => {
+                let db = rqlite_client::Connection::new(url.as_str())
+                    .map_err(map_rqlite_err)?;
+                Self::from_connection(db, session, session_timestamp)
+            }
+        }
     }
 
     /// initialize a new database / migrate an existing one
@@ -362,7 +370,7 @@ enum CarriedMapping {
     Associative(rqlite_client::response::mapping::Associative),
     Standard(rqlite_client::response::mapping::Standard),
     Execute(rqlite_client::response::mapping::Execute),
-    Empty(rqlite_client::response::mapping::Empty),
+    Empty,
 }
 
 enum RqliteIterRow<'a> {
@@ -428,8 +436,8 @@ impl<T, F: Fn(RqliteIterItem) -> Option<T>> RqliteIter<T, F> {
                 cur_row: 0,
                 _marker: PhantomData,
             }),
-            Mapping::Empty(res) => Ok(RqliteIter {
-                carried: CarriedMapping::Empty(res),
+            Mapping::Empty(_) => Ok(RqliteIter {
+                carried: CarriedMapping::Empty,
                 map_fn: f,
                 cur_row: 0,
                 row_count: 0,
@@ -469,7 +477,7 @@ impl<T, F: Fn(RqliteIterItem) -> Option<T>> Iterator for RqliteIter<T, F> {
                 column: res.columns.as_slice(),
                 values: res.values.as_ref().map(|i| &i[self.cur_row]).unwrap(),
             }),
-            CarriedMapping::Empty(_) => return None,
+            CarriedMapping::Empty => return None,
         };
         self.cur_row += 1;
 
