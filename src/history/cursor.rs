@@ -119,7 +119,7 @@ mod tests {
         )
     }
     fn create_history_at(cap: usize, path: &Path) -> (Box<dyn History>, HistoryCursor) {
-        let hist = Box::new(FileBackedHistory::with_file(cap, path.to_owned()).unwrap());
+        let hist = Box::new(FileBackedHistory::with_file(cap, path.to_owned().into()).unwrap());
         (
             hist,
             HistoryCursor::new(HistoryNavigationQuery::Normal(LineBuffer::default()), None),

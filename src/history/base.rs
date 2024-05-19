@@ -62,6 +62,25 @@ impl Display for HistoryStorageDest {
     }
 }
 
+impl From<&str> for HistoryStorageDest {
+    fn from(value: &str) -> Self {
+        HistoryStorageDest::Path(value.into())
+    }
+}
+
+impl From<PathBuf> for HistoryStorageDest {
+    fn from(value: PathBuf) -> Self {
+        HistoryStorageDest::Path(value)
+    }
+}
+
+#[cfg(feature = "rqlite")]
+impl From<Url> for HistoryStorageDest {
+    fn from(value: Url) -> Self {
+        HistoryStorageDest::Url(value)
+    }
+}
+
 /// Defines additional filters for querying the [`History`]
 pub struct SearchFilter {
     /// Query for the command line content
