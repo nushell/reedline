@@ -2,6 +2,7 @@ use super::{
     base::{CommandLineSearch, SearchDirection, SearchQuery},
     History, HistoryItem, HistoryItemId, HistorySessionId,
 };
+use crate::history::base::HistoryStorageDest;
 use crate::{
     result::{ReedlineError, ReedlineErrorVariants},
     Result,
@@ -9,7 +10,6 @@ use crate::{
 use chrono::{TimeZone, Utc};
 use rusqlite::{named_params, params, Connection, ToSql};
 use std::time::Duration;
-use crate::history::base::HistoryStorageDest;
 
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
 
@@ -214,9 +214,11 @@ impl SqliteBackedHistory {
                 Self::from_connection(db, session, session_timestamp)
             }
             #[cfg(feature = "rqlite")]
-            HistoryStorageDest::Url(url) => Err(ReedlineError(
-                ReedlineErrorVariants::HistoryDatabaseError(format!("Expect file path, got Url: {}", url.to_string()))
-            )),
+            HistoryStorageDest::Url(url) => {
+                Err(ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(
+                    format!("Expect file path, got Url: {}", url.to_string()),
+                )))
+            }
         }
     }
     /// Creates a new history in memory
@@ -277,7 +279,7 @@ impl SqliteBackedHistory {
         -- todo: better indexes
         ",
         )
-            .map_err(map_sqlite_err)?;
+        .map_err(map_sqlite_err)?;
         Ok(SqliteBackedHistory {
             db,
             session,

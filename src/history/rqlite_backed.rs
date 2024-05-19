@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fmt::{Debug};
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::time::Duration;
 
@@ -8,13 +8,13 @@ use itertools::Itertools;
 use rqlite_client::Mapping;
 use serde_json::{json, Value};
 
-use crate::{CommandLineSearch, result::{ReedlineError, ReedlineErrorVariants}, Result, SearchDirection};
 use crate::history::base::HistoryStorageDest;
-
-use super::{
-    base::SearchQuery,
-    History, HistoryItem, HistoryItemId, HistorySessionId,
+use crate::{
+    result::{ReedlineError, ReedlineErrorVariants},
+    CommandLineSearch, Result, SearchDirection,
 };
+
+use super::{base::SearchQuery, History, HistoryItem, HistoryItemId, HistorySessionId};
 
 /// A history that stores the values to a Rqlite database.
 /// In addition to storing the command, the history can store an additional arbitrary HistoryEntryContext,
@@ -33,15 +33,19 @@ fn json_value_into_string(val: &Value) -> Option<String> {
 }
 
 fn deserialize_history_item(row: RqliteIterItem) -> Option<HistoryItem> {
-    let more_info = row.get_col("more_info", |val| Some(serde_json::from_value(val.to_owned())))
+    let more_info = row
+        .get_col("more_info", |val| {
+            Some(serde_json::from_value(val.to_owned()))
+        })
         .transpose();
     Some(HistoryItem {
         id: row.get_col("id", |i| i.as_i64().map(|i| HistoryItemId::new(i))),
-        start_timestamp: row.get_col("start_timestamp", |e| e.as_i64()
-            .map(|i| match Utc.timestamp_millis_opt(i) {
+        start_timestamp: row.get_col("start_timestamp", |e| {
+            e.as_i64().map(|i| match Utc.timestamp_millis_opt(i) {
                 LocalResult::Single(e) => e,
                 _ => chrono::Utc::now(),
-            })),
+            })
+        }),
         command_line: row.get_col("command_line", json_value_into_string).unwrap(),
         session_id: row.get_col("session_id", |val| val.as_i64().map(HistorySessionId::new)),
         hostname: row.get_col("hostname", json_value_into_string),
@@ -78,56 +82,72 @@ impl History for RqliteBackedHistory {
             entry.exit_status,
             entry.more_info.as_ref().map(|e| serde_json::to_string(e).unwrap_or("".into())),
         ]);
-        let ret = self.db.execute()
+        let ret = self
+            .db
+            .execute()
             .push_sql(payload)
             .execute_run()
             .map_err(map_rqlite_err)?
             .next();
         entry.id = if let Some(Mapping::Execute(ret)) = ret {
             Some(HistoryItemId::new(ret.last_insert_id as i64))
-        } else { None };
+        } else {
+            None
+        };
 
         Ok(entry)
     }
 
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem> {
-        let entry = self.db.query()
-            .push_sql_str_slice(&["select * from history where id = :id", id.0.to_string().as_str()])
+        let entry = self
+            .db
+            .query()
+            .push_sql_str_slice(&[
+                "select * from history where id = :id",
+                id.0.to_string().as_str(),
+            ])
             .query_run()
             .map_err(map_rqlite_err)?
-            .next().unwrap()
+            .next()
+            .unwrap()
             .into_rqlite_iter(deserialize_history_item)
             .map_err(map_rqlite_err)?
-            .next().unwrap();
+            .next()
+            .unwrap();
         Ok(entry)
     }
 
     fn count(&self, query: SearchQuery) -> Result<i64> {
         let sql = self.construct_query(&query, "coalesce(count(*), 0)");
-        let result = self.db.query()
+        let result = self
+            .db
+            .query()
             .set_sql(sql)
             .query_run()
             .map_err(map_rqlite_err)?
-            .next().unwrap()
+            .next()
+            .unwrap()
             .into_rqlite_iter(|row| row.get_idx(0, |val| val.as_i64()))
             .map_err(map_rqlite_err)?
-            .next().unwrap();
+            .next()
+            .unwrap();
 
         Ok(result)
     }
 
     fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>> {
         let sql = self.construct_query(&query, "*");
-        let mapping = self.db.query()
+        let mapping = self
+            .db
+            .query()
             .set_sql(sql)
             .query_run()
             .map_err(map_rqlite_err)?
-            .next().unwrap()
-            ;
+            .next()
+            .unwrap();
         Ok(RqliteIter::new(mapping, deserialize_history_item)
             .map_err(map_rqlite_err)?
-            .collect()
-        )
+            .collect())
     }
 
     fn update(
@@ -142,12 +162,14 @@ impl History for RqliteBackedHistory {
     }
 
     fn clear(&mut self) -> Result<()> {
-        self.db.execute()
+        self.db
+            .execute()
             .push_sql_str("delete from history")
             .execute_run()
             .map_err(map_rqlite_err)?;
 
-        self.db.execute()
+        self.db
+            .execute()
             .push_sql_str("VACUUM ")
             .execute_run()
             .map_err(map_rqlite_err)?;
@@ -156,7 +178,8 @@ impl History for RqliteBackedHistory {
     }
 
     fn delete(&mut self, entry: HistoryItemId) -> Result<()> {
-        self.db.execute()
+        self.db
+            .execute()
             .push_sql_str_slice(&["delete from history where id = ?", &entry.0.to_string()])
             .execute_run()
             .map_err(map_rqlite_err)?;
@@ -176,15 +199,15 @@ impl History for RqliteBackedHistory {
 impl RqliteBackedHistory {
     /// Create rqlite backed history with url
     ///
-    /// # Arguments 
+    /// # Arguments
     ///
     /// * `url`: The url of reachable rqlite instance
     /// * `session`: Identify of history session
     /// * `session_timestamp`: Shell session started time
     ///
-    /// returns: Result<RqliteBackedHistory, ReedlineError> 
+    /// returns: Result<RqliteBackedHistory, ReedlineError>
     ///
-    /// # Examples 
+    /// # Examples
     ///
     /// ```
     /// use reedline::{Reedline, RqliteBackedHistory, HistoryStorageDest};
@@ -200,12 +223,13 @@ impl RqliteBackedHistory {
         session_timestamp: Option<chrono::DateTime<Utc>>,
     ) -> Result<Self> {
         match dest {
-            HistoryStorageDest::Path(file) => Err(ReedlineError(
-                ReedlineErrorVariants::HistoryDatabaseError(format!("Expect url, got file: {:?}", file))
-            )),
+            HistoryStorageDest::Path(file) => {
+                Err(ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(
+                    format!("Expect url, got file: {:?}", file),
+                )))
+            }
             HistoryStorageDest::Url(url) => {
-                let db = rqlite_client::Connection::new(url.as_str())
-                    .map_err(map_rqlite_err)?;
+                let db = rqlite_client::Connection::new(url.as_str()).map_err(map_rqlite_err)?;
                 Self::from_connection(db, session, session_timestamp)
             }
         }
@@ -217,14 +241,17 @@ impl RqliteBackedHistory {
         session: Option<HistorySessionId>,
         session_timestamp: Option<chrono::DateTime<Utc>>,
     ) -> Result<Self> {
-        let db_version = db.query()
+        let db_version = db
+            .query()
             .set_sql_str("SELECT user_version FROM pragma_user_version")
             .query_run()
             .map_err(map_rqlite_err)?
-            .next().unwrap()
+            .next()
+            .unwrap()
             .into_rqlite_iter(|row| row.get_idx(0, |val| val.as_i64()))
             .map_err(map_rqlite_err)?
-            .next().unwrap();
+            .next()
+            .unwrap();
 
         if db_version != 0 {
             return Err(ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(
@@ -232,7 +259,10 @@ impl RqliteBackedHistory {
             )));
         }
 
-        let query = db.execute().push_sql_str("
+        let query = db
+            .execute()
+            .push_sql_str(
+                "
             create table if not exists history (
                 id integer primary key autoincrement,
                 command_line text not null,
@@ -251,9 +281,10 @@ impl RqliteBackedHistory {
             create index if not exists idx_history_cmd on history(session_id);
             -- todo: better indexes
             ",
-        ).execute_run().map_err(map_rqlite_err)?;
-        if let Some(err) = query.first_error()
-        {
+            )
+            .execute_run()
+            .map_err(map_rqlite_err)?;
+        if let Some(err) = query.first_error() {
             return Err(map_rqlite_err(err));
         }
 
@@ -278,19 +309,35 @@ impl RqliteBackedHistory {
         };
 
         if let Some(start_time) = query.start_time {
-            wheres.push(if is_asc { "timestamp_start > :start_time" } else { "timestamp_start < :start_time" });
+            wheres.push(if is_asc {
+                "timestamp_start > :start_time"
+            } else {
+                "timestamp_start < :start_time"
+            });
             params.push(json!(start_time.timestamp_millis()));
         }
         if let Some(end_time) = query.end_time {
-            wheres.push(if is_asc { ":end_time >= timestamp_start" } else { ":end_time <= timestamp_start" });
+            wheres.push(if is_asc {
+                ":end_time >= timestamp_start"
+            } else {
+                ":end_time <= timestamp_start"
+            });
             params.push(json!(end_time.timestamp_millis()));
         }
         if let Some(start_id) = query.start_id {
-            wheres.push(if is_asc { "id > :start_id" } else { "id < :start_id" });
+            wheres.push(if is_asc {
+                "id > :start_id"
+            } else {
+                "id < :start_id"
+            });
             params.push(json!(start_id));
         }
         if let Some(end_id) = query.end_id {
-            wheres.push(if is_asc { ":end_id >= id" } else { ":end_id <= id" });
+            wheres.push(if is_asc {
+                ":end_id >= id"
+            } else {
+                ":end_id <= id"
+            });
             params.push(json!(end_id));
         }
         if let Some(command_line) = &query.filter.command_line {
@@ -320,9 +367,14 @@ impl RqliteBackedHistory {
             params.push(json!(format!("{cwd_prefix}%")));
         }
         if let Some(exit_successful) = query.filter.exit_successful {
-            wheres.push(if exit_successful { " exit_status != 0" } else { " exit_status != 0" });
+            wheres.push(if exit_successful {
+                " exit_status != 0"
+            } else {
+                " exit_status != 0"
+            });
         }
-        if let (Some(session_id), Some(session_timestamp)) = (query.filter.session, self.session_timestamp)
+        if let (Some(session_id), Some(session_timestamp)) =
+            (query.filter.session, self.session_timestamp)
         {
             wheres.push("(session_id = :session_id OR start_timestamp < :session_timestamp)");
             params.push(json!(session_id));
@@ -336,7 +388,11 @@ impl RqliteBackedHistory {
             None => "",
         };
 
-        let wheres = if wheres.is_empty() { "true".into() } else { wheres.join(" and ") };
+        let wheres = if wheres.is_empty() {
+            "true".into()
+        } else {
+            wheres.join(" and ")
+        };
         let query = format!(
             "SELECT {select_expression}\
              FROM history \
@@ -359,7 +415,10 @@ impl AsStrVec for Vec<String> {
     }
 }
 
-fn map_rqlite_err<E>(err: E) -> ReedlineError where E: Debug {
+fn map_rqlite_err<E>(err: E) -> ReedlineError
+where
+    E: Debug,
+{
     // TODO: better error mapping
     ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(format!(
         "{err:?}"
@@ -375,11 +434,13 @@ enum CarriedMapping {
 
 enum RqliteIterRow<'a> {
     HashMap(&'a HashMap<String, Value>),
-    Table { column: &'a [String], values: &'a Vec<Value> },
+    Table {
+        column: &'a [String],
+        values: &'a Vec<Value>,
+    },
 }
 
 struct RqliteIterItem<'a>(RqliteIterRow<'a>);
-
 
 trait GetItem<T, F: Fn(&Value) -> Option<T>> {
     fn get_idx(&self, idx: usize, f: F) -> Option<T>;
@@ -390,17 +451,20 @@ impl<'a, T, F: Fn(&Value) -> Option<T>> GetItem<T, F> for RqliteIterItem<'a> {
     fn get_idx(&self, idx: usize, f: F) -> Option<T> {
         match &self.0 {
             RqliteIterRow::HashMap(map) => map.values().skip(idx).next(),
-            RqliteIterRow::Table { values, .. } => values.get(idx)
-        }.and_then(f)
+            RqliteIterRow::Table { values, .. } => values.get(idx),
+        }
+        .and_then(f)
     }
 
     fn get_col(&self, col: &str, f: F) -> Option<T> {
         match &self.0 {
             RqliteIterRow::HashMap(map) => map.get(col),
-            RqliteIterRow::Table { column, values } => column.iter()
+            RqliteIterRow::Table { column, values } => column
+                .iter()
                 .find_position(|e| ***e == *col)
-                .and_then(|i| values.get(i.0))
-        }.and_then(f)
+                .and_then(|i| values.get(i.0)),
+        }
+        .and_then(f)
     }
 }
 
@@ -413,7 +477,10 @@ struct RqliteIter<T, F: Fn(RqliteIterItem) -> Option<T>> {
 }
 
 impl<T, F: Fn(RqliteIterItem) -> Option<T>> RqliteIter<T, F> {
-    fn new(mapping: rqlite_client::Mapping, f: F) -> std::result::Result<RqliteIter<T, F>, rqlite_client::Error> {
+    fn new(
+        mapping: rqlite_client::Mapping,
+        f: F,
+    ) -> std::result::Result<RqliteIter<T, F>, rqlite_client::Error> {
         match mapping {
             Mapping::Associative(res) => Ok(RqliteIter {
                 row_count: res.rows.len(),
@@ -462,12 +529,15 @@ impl<T, F: Fn(RqliteIterItem) -> Option<T>> Iterator for RqliteIter<T, F> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.cur_row >= self.row_count { return None; }
+        if self.cur_row >= self.row_count {
+            return None;
+        }
         let item = match &self.carried {
-            CarriedMapping::Associative(res) => RqliteIterItem(RqliteIterRow::HashMap(&res.rows[self.cur_row])),
+            CarriedMapping::Associative(res) => {
+                RqliteIterItem(RqliteIterRow::HashMap(&res.rows[self.cur_row]))
+            }
             CarriedMapping::Execute(res) => {
-                let map = &res.rows.as_ref()
-                    .map(|i| &i[self.cur_row]);
+                let map = &res.rows.as_ref().map(|i| &i[self.cur_row]);
                 match map {
                     Some(map) => RqliteIterItem(RqliteIterRow::HashMap(map)),
                     None => return None,
@@ -501,17 +571,24 @@ impl FirstError for rqlite_client::response::Query {
 }
 
 trait ExecuteRun {
-    fn execute_run(self) -> std::result::Result<rqlite_client::response::query::Query, rqlite_client::Error>;
+    fn execute_run(
+        self,
+    ) -> std::result::Result<rqlite_client::response::query::Query, rqlite_client::Error>;
 }
 
 trait QueryRun {
-    fn query_run(self) -> std::result::Result<rqlite_client::response::query::Query, rqlite_client::Error>;
+    fn query_run(
+        self,
+    ) -> std::result::Result<rqlite_client::response::query::Query, rqlite_client::Error>;
 }
 
 impl<'a, T> ExecuteRun for rqlite_client::Query<'a, T>
-    where T: rqlite_client::state::State,
+where
+    T: rqlite_client::state::State,
 {
-    fn execute_run(self) -> std::result::Result<rqlite_client::response::query::Query, rqlite_client::Error> {
+    fn execute_run(
+        self,
+    ) -> std::result::Result<rqlite_client::response::query::Query, rqlite_client::Error> {
         let res = self.request_run()?;
         let query = rqlite_client::response::query::Query::try_from(res).unwrap();
         for map in query.results() {
@@ -524,9 +601,12 @@ impl<'a, T> ExecuteRun for rqlite_client::Query<'a, T>
 }
 
 impl<'a, T> QueryRun for rqlite_client::Query<'a, T>
-    where T: rqlite_client::state::State,
+where
+    T: rqlite_client::state::State,
 {
-    fn query_run(self) -> std::result::Result<rqlite_client::response::query::Query, rqlite_client::Error> {
+    fn query_run(
+        self,
+    ) -> std::result::Result<rqlite_client::response::query::Query, rqlite_client::Error> {
         let res = self.request_run()?;
         Ok(rqlite_client::response::query::Query::try_from(res).unwrap())
     }

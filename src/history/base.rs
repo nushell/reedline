@@ -1,8 +1,8 @@
-use std::fmt::{Debug, Display, Formatter};
-use std::path::PathBuf;
 use super::HistoryItemId;
 use crate::{core_editor::LineBuffer, HistoryItem, HistorySessionId, Result};
 use chrono::Utc;
+use std::fmt::{Debug, Display, Formatter};
+use std::path::PathBuf;
 
 #[cfg(feature = "url")]
 use url::Url;
@@ -273,9 +273,9 @@ mod test {
 
     fn create_filled_example_history() -> Result<Box<dyn History>> {
         #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
-            let mut history = crate::SqliteBackedHistory::in_memory()?;
+        let mut history = crate::SqliteBackedHistory::in_memory()?;
         #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
-            let mut history = crate::FileBackedHistory::default();
+        let mut history = crate::FileBackedHistory::default();
         #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
         history.save(create_item(1, "/", "dummy", 0))?; // add dummy item so ids start with 1
         history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1

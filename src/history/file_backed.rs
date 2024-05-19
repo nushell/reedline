@@ -6,6 +6,7 @@ use crate::{
     HistorySessionId, Result,
 };
 
+use crate::history::base::HistoryStorageDest;
 use std::{
     collections::VecDeque,
     fs::OpenOptions,
@@ -13,7 +14,6 @@ use std::{
     ops::{Deref, DerefMut},
     path::PathBuf,
 };
-use crate::history::base::HistoryStorageDest;
 
 /// Default size of the [`FileBackedHistory`] used when calling [`FileBackedHistory::default()`]
 pub const HISTORY_SIZE: usize = 1000;
@@ -331,9 +331,11 @@ impl FileBackedHistory {
                 Ok(hist)
             }
             #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib", feature = "rqlite"))]
-            HistoryStorageDest::Url(url) => Err(ReedlineError(
-                ReedlineErrorVariants::HistoryDatabaseError(format!("Expect file path, got Url: {}", url.to_string()))
-            )),
+            HistoryStorageDest::Url(url) => {
+                Err(ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(
+                    format!("Expect file path, got Url: {}", url.to_string()),
+                )))
+            }
         }
     }
 

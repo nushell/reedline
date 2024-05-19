@@ -242,14 +242,14 @@ mod result;
 pub use result::{ReedlineError, ReedlineErrorVariants, Result};
 
 mod history;
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
-pub use history::SqliteBackedHistory;
 #[cfg(feature = "rqlite")]
 pub use history::RqliteBackedHistory;
+#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+pub use history::SqliteBackedHistory;
 pub use history::{
     CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemId,
-    HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchFilter, SearchQuery,
-    HISTORY_SIZE, HistoryStorageDest,
+    HistoryNavigationQuery, HistorySessionId, HistoryStorageDest, SearchDirection, SearchFilter,
+    SearchQuery, HISTORY_SIZE,
 };
 
 mod prompt;

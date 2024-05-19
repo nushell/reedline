@@ -38,7 +38,8 @@ fn main() -> reedline::Result<()> {
             "http://localhost:4001".into(),
             history_session_id,
             Some(chrono::Utc::now()),
-        ).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
+        )
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
     );
 
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
