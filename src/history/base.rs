@@ -56,6 +56,7 @@ impl Display for HistoryStorageDest {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             HistoryStorageDest::Path(path) => Display::fmt(&path.display(), f),
+            #[cfg(feature = "rqlite")]
             HistoryStorageDest::Url(uri) => Display::fmt(uri, f),
         }
     }

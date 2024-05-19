@@ -7,9 +7,9 @@ mod sqlite_backed;
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 pub use sqlite_backed::SqliteBackedHistory;
 
-#[cfg(any(feature = "rqlite"))]
+#[cfg(feature = "rqlite")]
 mod rqlite_backed;
-#[cfg(any(feature = "rqlite"))]
+#[cfg(feature = "rqlite")]
 pub use rqlite_backed::RqliteBackedHistory;
 
 pub use base::{
