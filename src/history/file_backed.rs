@@ -330,7 +330,7 @@ impl FileBackedHistory {
                 hist.sync()?;
                 Ok(hist)
             }
-            #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib", feature = "rqlite"))]
+            #[cfg(feature = "rqlite")]
             HistoryStorageDest::Url(url) => {
                 Err(ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(
                     format!("Expect file path, got Url: {}", url.to_string()),
