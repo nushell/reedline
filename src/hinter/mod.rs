@@ -40,6 +40,7 @@ pub trait Hinter: Send {
         pos: usize,
         history: &dyn History,
         use_ansi_coloring: bool,
+        cwd: &str,
     ) -> String;
 
     /// Return the current hint unformatted to perform the completion of the full hint
