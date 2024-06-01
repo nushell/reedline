@@ -2,7 +2,7 @@ use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
-        can_partially_complete, completer_input, floor_char_boundary, replace_in_buffer,
+        can_partially_complete, completer_input, replace_in_buffer, style_suggestion,
     },
     painting::Painter,
     Completer, Suggestion,
@@ -389,57 +389,31 @@ impl ColumnarMenu {
                 .unwrap_or(shortest_base);
             let match_len = shortest_base.chars().count();
 
-            // Find match position - look for the base string in the suggestion (case-insensitive)
-            let match_position = suggestion
-                .value
-                .to_lowercase()
-                .find(&shortest_base.to_lowercase())
-                .unwrap_or(0);
-
-            // The match is just the part that matches the shortest_base
-            let match_str = {
-                let match_str = &suggestion.value[match_position..];
-                let match_len_bytes = match_str
-                    .char_indices()
-                    .nth(match_len)
-                    .map(|(i, _)| i)
-                    .unwrap_or_else(|| match_str.len());
-                &suggestion.value[match_position..match_position + match_len_bytes]
-            };
-
-            // Prefix is everything before the match
-            let prefix = &suggestion.value[..match_position];
-
-            // Remaining is everything after the match
-            let remaining_str = &suggestion.value[match_position + match_str.len()..];
-
-            let suggestion_style_prefix = suggestion
-                .style
-                .unwrap_or(self.settings.color.text_style)
-                .prefix();
+            let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
 
             let left_text_size = self.longest_suggestion + self.default_details.col_padding;
             let right_text_size = self.get_width().saturating_sub(left_text_size);
 
-            let max_remaining = left_text_size.saturating_sub(match_str.width() + prefix.width());
-            let max_match = max_remaining.saturating_sub(remaining_str.width());
+            let default_indices = (0..match_len).collect();
+            let match_indices = suggestion
+                .match_indices
+                .as_ref()
+                .unwrap_or(&default_indices);
 
             if index == self.index() {
                 if let Some(description) = &suggestion.description {
                     format!(
-                        "{}{}{}{}{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}{}",
-                        suggestion_style_prefix,
-                        self.settings.color.selected_text_style.prefix(),
-                        prefix,
-                        RESET,
-                        suggestion_style_prefix,
-                        self.settings.color.selected_match_style.prefix(),
-                        match_str,
-                        RESET,
-                        suggestion_style_prefix,
-                        self.settings.color.selected_text_style.prefix(),
-                        remaining_str,
-                        RESET,
+                        "{:left_text_size$}{}{}{}{}{}",
+                        style_suggestion(
+                            &self
+                                .settings
+                                .color
+                                .selected_text_style
+                                .paint(&suggestion.value)
+                                .to_string(),
+                            match_indices,
+                            &self.settings.color.selected_match_style,
+                        ),
                         self.settings.color.description_style.prefix(),
                         self.settings.color.selected_text_style.prefix(),
                         description
@@ -451,36 +425,29 @@ impl ColumnarMenu {
                     )
                 } else {
                     format!(
-                        "{}{}{}{}{}{}{}{}{}{}{}{}{:>empty$}",
-                        suggestion_style_prefix,
-                        self.settings.color.selected_text_style.prefix(),
-                        prefix,
-                        RESET,
-                        suggestion_style_prefix,
-                        self.settings.color.selected_match_style.prefix(),
-                        match_str,
-                        RESET,
-                        suggestion_style_prefix,
-                        self.settings.color.selected_text_style.prefix(),
-                        remaining_str,
-                        RESET,
+                        "{}{:>empty$}{}",
+                        style_suggestion(
+                            &self
+                                .settings
+                                .color
+                                .selected_text_style
+                                .paint(&suggestion.value)
+                                .to_string(),
+                            match_indices,
+                            &self.settings.color.selected_match_style,
+                        ),
                         "",
                         empty = empty_space,
                     )
                 }
             } else if let Some(description) = &suggestion.description {
                 format!(
-                    "{}{}{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}",
-                    suggestion_style_prefix,
-                    prefix,
-                    RESET,
-                    suggestion_style_prefix,
-                    self.settings.color.match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    remaining_str,
-                    RESET,
+                    "{:left_text_size$}{}{}{}{}",
+                    style_suggestion(
+                        &suggestion_style.paint(&suggestion.value).to_string(),
+                        match_indices,
+                        &self.settings.color.match_style,
+                    ),
                     self.settings.color.description_style.prefix(),
                     description
                         .chars()
@@ -491,17 +458,12 @@ impl ColumnarMenu {
                 )
             } else {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{:>empty$}{}",
-                    suggestion_style_prefix,
-                    prefix,
-                    RESET,
-                    suggestion_style_prefix,
-                    self.settings.color.match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    remaining_str,
-                    RESET,
+                    "{}{}{:>empty$}{}{}",
+                    style_suggestion(
+                        &suggestion_style.paint(&suggestion.value).to_string(),
+                        match_indices,
+                        &self.settings.color.match_style,
+                    ),
                     self.settings.color.description_style.prefix(),
                     "",
                     RESET,
@@ -931,6 +893,7 @@ mod tests {
             extra: None,
             span: Span { start: 0, end: pos },
             append_whitespace: false,
+            ..Default::default()
         }
     }
 
