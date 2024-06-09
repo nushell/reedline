@@ -1,4 +1,6 @@
 //! Collection of common functions that can be used to create menus
+use nu_ansi_term::{AnsiStrings, Style};
+
 use crate::{Editor, Suggestion, UndoBehavior};
 
 /// Index result obtained from parsing a string with an index marker
@@ -353,6 +355,36 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
     }
 }
 
+/// Style a suggestion to be shown in a completer menu
+pub fn style_suggestion(
+    suggestion: &str,
+    match_indices: &[usize],
+    match_style: &Style,
+    text_style: &Style,
+) -> String {
+    let mut parts = Vec::new();
+    let mut prev_styled = false;
+    let mut start = 0;
+    for i in 0..suggestion.len() {
+        if match_indices.contains(&i) {
+            if !prev_styled {
+                parts.push(text_style.paint(&suggestion[start..i]));
+                start = i;
+                prev_styled = true;
+            }
+        } else if prev_styled {
+            parts.push(match_style.paint(&suggestion[start..i]));
+            start = i;
+            prev_styled = false;
+        }
+    }
+
+    let last_style = if prev_styled { match_style } else { text_style };
+    parts.push(last_style.paint(&suggestion[start..]));
+
+    AnsiStrings(&parts).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -611,6 +643,7 @@ mod tests {
                 extra: None,
                 span: Span::new(0, s.len()),
                 append_whitespace: false,
+                match_indices: None,
             })
             .collect();
         let res = find_common_string(&input);
@@ -631,6 +664,7 @@ mod tests {
                 extra: None,
                 span: Span::new(0, s.len()),
                 append_whitespace: false,
+                match_indices: None,
             })
             .collect();
         let res = find_common_string(&input);
@@ -686,6 +720,7 @@ mod tests {
                 extra: None,
                 span: Span::new(start, end),
                 append_whitespace: false,
+                match_indices: None,
             }),
             &mut editor,
         );
@@ -695,5 +730,16 @@ mod tests {
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(orig_buffer, editor.get_buffer());
         assert_eq!(orig_insertion_point, editor.insertion_point());
+    }
+
+    #[test]
+    fn style_fuzzy_suggestion() {
+        let match_style = Style::new().italic();
+        let text_style = Style::new().dimmed();
+
+        assert_eq!(
+            "\u{1b}[2m\u{1b}[0m\u{1b}[3mab\u{1b}[0m\u{1b}[2mcd\u{1b}[0m\u{1b}[3me\u{1b}[0m\u{1b}[2mfg\u{1b}[0m",
+            style_suggestion("abcdefg", &[0, 1, 4], &match_style, &text_style)
+        );
     }
 }
