@@ -652,7 +652,6 @@ impl Menu for IdeMenu {
         painter: &Painter,
     ) {
         if let Some(event) = self.event.take() {
-            // The working value for the menu are updated first before executing any of the
             match event {
                 MenuEvent::Activate(updated) => {
                     self.active = true;
