@@ -190,6 +190,25 @@ mod tests {
     }
 
     #[test]
+    fn test_delete_without_motion() {
+        let input = ['d'];
+        let output = vi_parse(&input);
+
+        assert_eq!(
+            output,
+            ParsedViSequence {
+                multiplier: None,
+                command: Some(Command::Delete),
+                count: None,
+                motion: ParseResult::Incomplete,
+            }
+        );
+        assert_eq!(output.is_valid(), true);
+        assert_eq!(output.is_complete(ViMode::Normal), false);
+        assert_eq!(output.is_complete(ViMode::Visual), true);
+    }
+
+    #[test]
     fn test_delete_word() {
         let input = ['d', 'w'];
         let output = vi_parse(&input);
@@ -205,6 +224,27 @@ mod tests {
         );
         assert_eq!(output.is_valid(), true);
         assert_eq!(output.is_complete(ViMode::Normal), true);
+        assert_eq!(output.is_complete(ViMode::Visual), true);
+    }
+
+    #[test]
+    fn test_two_delete_without_motion() {
+        let input = ['2', 'd'];
+        let output = vi_parse(&input);
+
+        assert_eq!(
+            output,
+            ParsedViSequence {
+                multiplier: Some(2),
+                command: Some(Command::Delete),
+                count: None,
+                motion: ParseResult::Incomplete,
+            }
+        );
+        assert_eq!(output.is_valid(), true);
+        // in visual mode vim ignores the multiplier,
+        // so we can accept this as valid even there
+        assert_eq!(output.is_complete(ViMode::Normal), false);
         assert_eq!(output.is_complete(ViMode::Visual), true);
     }
 
@@ -520,13 +560,8 @@ mod tests {
         ReedlineEvent::Edit(vec![EditCommand::Undo]),
         ReedlineEvent::Edit(vec![EditCommand::Undo])
         ]))]
-    #[case(&['d', 'd'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
-    #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext])]))]
-    #[case(&['d', 'W'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRightToNext])]))]
-    #[case(&['d', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight])]))]
-    #[case(&['d', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordLeft])]))]
-    #[case(&['d', 'B'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordLeft])]))]
+    #[case(&['d'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::CutSelection])]))]
     fn test_reedline_move_in_visual_mode(#[case] input: &[char], #[case] expected: ReedlineEvent) {
         let mut vi = Vi::default();
         vi.mode = ViMode::Visual;
