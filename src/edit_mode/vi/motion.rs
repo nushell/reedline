@@ -146,20 +146,22 @@ impl Motion {
         match self {
             Motion::Left => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
                 ReedlineEvent::MenuLeft,
-                ReedlineEvent::Left,
+                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: select_mode, }])
             ]))],
             Motion::Right => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
                 ReedlineEvent::HistoryHintComplete,
                 ReedlineEvent::MenuRight,
-                ReedlineEvent::Right,
+                ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: select_mode, }]),
             ]))],
             Motion::Up => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
                 ReedlineEvent::MenuUp,
                 ReedlineEvent::Up,
+                // todo: add EditCommand::MoveLineUp
             ]))],
             Motion::Down => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
                 ReedlineEvent::MenuDown,
                 ReedlineEvent::Down,
+                // todo: add EditCommand::MoveLineDown
             ]))],
             Motion::NextWord => vec![ReedlineOption::Edit(EditCommand::MoveWordRightStart {
                 select: select_mode,
