@@ -88,7 +88,7 @@ impl EditMode for Vi {
                         if !res.is_valid() {
                             self.cache.clear();
                             ReedlineEvent::None
-                        } else if res.is_complete() {
+                        } else if res.is_complete(self.mode) {
                             if res.enters_insert_mode() {
                                 self.mode = ViMode::Insert;
                             }

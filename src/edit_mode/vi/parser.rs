@@ -1,6 +1,6 @@
 use super::command::{parse_command, Command};
 use super::motion::{parse_motion, Motion};
-use crate::{EditCommand, ReedlineEvent, Vi};
+use crate::{EditCommand, ReedlineEvent, Vi, edit_mode::vi::ViMode};
 use std::iter::Peekable;
 
 #[derive(Debug, Clone)]
@@ -50,11 +50,12 @@ impl ParsedViSequence {
         !self.motion.is_invalid()
     }
 
-    pub fn is_complete(&self) -> bool {
+    pub fn is_complete(&self, mode: ViMode) -> bool {
+        assert!(mode == ViMode::Normal || mode == ViMode::Visual);
         match (&self.command, &self.motion) {
             (None, ParseResult::Valid(_)) => true,
             (Some(Command::Incomplete), _) => false,
-            (Some(cmd), ParseResult::Incomplete) if !cmd.requires_motion() => true,
+            (Some(cmd), ParseResult::Incomplete) if !cmd.requires_motion() || mode == ViMode::Visual => true,
             (Some(_), ParseResult::Valid(_)) => true,
             (Some(cmd), ParseResult::Incomplete) if cmd.requires_motion() => false,
             _ => false,
@@ -203,7 +204,8 @@ mod tests {
             }
         );
         assert_eq!(output.is_valid(), true);
-        assert_eq!(output.is_complete(), true);
+        assert_eq!(output.is_complete(ViMode::Normal), true);
+        assert_eq!(output.is_complete(ViMode::Visual), true);
     }
 
     #[test]
@@ -221,7 +223,8 @@ mod tests {
             }
         );
         assert_eq!(output.is_valid(), true);
-        assert_eq!(output.is_complete(), true);
+        assert_eq!(output.is_complete(ViMode::Normal), true);
+        assert_eq!(output.is_complete(ViMode::Visual), true);
     }
 
     #[test]
@@ -239,7 +242,8 @@ mod tests {
             }
         );
         assert_eq!(output.is_valid(), true);
-        assert_eq!(output.is_complete(), true);
+        assert_eq!(output.is_complete(ViMode::Normal), true);
+        assert_eq!(output.is_complete(ViMode::Visual), true);
     }
 
     #[test]
@@ -257,7 +261,8 @@ mod tests {
             }
         );
         assert_eq!(output.is_valid(), true);
-        assert_eq!(output.is_complete(), true);
+        assert_eq!(output.is_complete(ViMode::Normal), true);
+        assert_eq!(output.is_complete(ViMode::Visual), true);
     }
 
     #[test]
@@ -275,7 +280,8 @@ mod tests {
             }
         );
         assert_eq!(output.is_valid(), true);
-        assert_eq!(output.is_complete(), true);
+        assert_eq!(output.is_complete(ViMode::Normal), true);
+        assert_eq!(output.is_complete(ViMode::Visual), true);
     }
 
     #[test]
@@ -293,7 +299,8 @@ mod tests {
             }
         );
         assert_eq!(output.is_valid(), true);
-        assert_eq!(output.is_complete(), true);
+        assert_eq!(output.is_complete(ViMode::Normal), true);
+        assert_eq!(output.is_complete(ViMode::Visual), true);
     }
 
     #[test]
@@ -329,7 +336,8 @@ mod tests {
         );
 
         assert_eq!(output.is_valid(), true);
-        assert_eq!(output.is_complete(), false);
+        assert_eq!(output.is_complete(ViMode::Normal), false);
+        assert_eq!(output.is_complete(ViMode::Visual), false);
     }
 
     #[test]
@@ -347,7 +355,8 @@ mod tests {
             }
         );
         assert_eq!(output.is_valid(), true);
-        assert_eq!(output.is_complete(), false);
+        assert_eq!(output.is_complete(ViMode::Normal), false);
+        assert_eq!(output.is_complete(ViMode::Visual), false);
     }
 
     #[test]
@@ -366,7 +375,8 @@ mod tests {
         );
 
         assert_eq!(output.is_valid(), true);
-        assert_eq!(output.is_complete(), true);
+        assert_eq!(output.is_complete(ViMode::Normal), true);
+        assert_eq!(output.is_complete(ViMode::Visual), true);
     }
 
     #[test]
@@ -384,7 +394,8 @@ mod tests {
             }
         );
         assert_eq!(output.is_valid(), true);
-        assert_eq!(output.is_complete(), true);
+        assert_eq!(output.is_complete(ViMode::Normal), true);
+        assert_eq!(output.is_complete(ViMode::Visual), true);
     }
 
     #[test]
@@ -402,7 +413,8 @@ mod tests {
             }
         );
         assert_eq!(output.is_valid(), true);
-        assert_eq!(output.is_complete(), true);
+        assert_eq!(output.is_complete(ViMode::Normal), true);
+        assert_eq!(output.is_complete(ViMode::Visual), true);
     }
 
     #[rstest]
