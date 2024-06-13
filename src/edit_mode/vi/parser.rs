@@ -106,6 +106,7 @@ impl ParsedViSequence {
                 )
                 | (Some(Command::HistorySearch), ParseResult::Incomplete)
                 | (Some(Command::Change), ParseResult::Valid(_)) => Some(ViMode::Insert),
+            (Some(Command::Delete), ParseResult::Incomplete) => Some(ViMode::Normal),
             _ => None
         }
     }
