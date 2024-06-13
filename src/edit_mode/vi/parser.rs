@@ -92,9 +92,8 @@ impl ParsedViSequence {
         }
     }
 
-    pub fn enters_insert_mode(&self) -> bool {
-        matches!(
-            (&self.command, &self.motion),
+    pub fn changes_mode(&self) -> Option<ViMode>{
+        match (&self.command, &self.motion) {
             (Some(Command::EnterViInsert), ParseResult::Incomplete)
                 | (Some(Command::EnterViAppend), ParseResult::Incomplete)
                 | (Some(Command::ChangeToLineEnd), ParseResult::Incomplete)
@@ -106,8 +105,9 @@ impl ParsedViSequence {
                     ParseResult::Incomplete
                 )
                 | (Some(Command::HistorySearch), ParseResult::Incomplete)
-                | (Some(Command::Change), ParseResult::Valid(_))
-        )
+                | (Some(Command::Change), ParseResult::Valid(_)) => Some(ViMode::Insert),
+            _ => None
+        }
     }
 
     pub fn to_reedline_event(&self, vi_state: &mut Vi) -> ReedlineEvent {
