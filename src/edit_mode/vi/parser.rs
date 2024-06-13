@@ -510,10 +510,28 @@ mod tests {
     #[case(&['d', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight])]))]
     #[case(&['d', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordLeft])]))]
     #[case(&['d', 'B'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordLeft])]))]
+    #[case(&['c', 'c'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine]), ReedlineEvent::Repaint]))]
+    #[case(&['c', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight]), ReedlineEvent::Repaint]))]
+    #[case(&['c', 'W'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRight]), ReedlineEvent::Repaint]))]
+    #[case(&['c', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight]), ReedlineEvent::Repaint]))]
+    #[case(&['c', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordLeft]), ReedlineEvent::Repaint]))]
+    #[case(&['c', 'B'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordLeft]), ReedlineEvent::Repaint]))]
     fn test_reedline_move(#[case] input: &[char], #[case] expected: ReedlineEvent) {
         let mut vi = Vi::default();
         let res = vi_parse(input);
         let output = res.to_reedline_event(&mut vi);
+
+        assert_eq!(output, expected);
+    }
+
+    #[rstest]
+    #[case(&['c', 'w'], &['c', 'e'])]
+    #[case(&['c', 'W'], &['c', 'E'])]
+    fn test_reedline_move_synonm(#[case] synonym: &[char], #[case] original: &[char]) {
+        let mut vi = Vi::default();
+        let output = vi_parse(synonym).to_reedline_event(&mut vi);
+        let expected = vi_parse(original).to_reedline_event(&mut vi);
 
         assert_eq!(output, expected);
     }
