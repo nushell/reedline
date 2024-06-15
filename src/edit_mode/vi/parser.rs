@@ -1,6 +1,6 @@
 use super::command::{parse_command, Command};
 use super::motion::{parse_motion, Motion};
-use crate::{EditCommand, ReedlineEvent, Vi, edit_mode::vi::ViMode};
+use crate::{edit_mode::vi::ViMode, EditCommand, ReedlineEvent, Vi};
 use std::iter::Peekable;
 
 #[derive(Debug, Clone)]
@@ -55,7 +55,11 @@ impl ParsedViSequence {
         match (&self.command, &self.motion) {
             (None, ParseResult::Valid(_)) => true,
             (Some(Command::Incomplete), _) => false,
-            (Some(cmd), ParseResult::Incomplete) if !cmd.requires_motion() || mode == ViMode::Visual => true,
+            (Some(cmd), ParseResult::Incomplete)
+                if !cmd.requires_motion() || mode == ViMode::Visual =>
+            {
+                true
+            }
             (Some(_), ParseResult::Valid(_)) => true,
             (Some(cmd), ParseResult::Incomplete) if cmd.requires_motion() => false,
             _ => false,
@@ -92,22 +96,19 @@ impl ParsedViSequence {
         }
     }
 
-    pub fn changes_mode(&self) -> Option<ViMode>{
+    pub fn changes_mode(&self) -> Option<ViMode> {
         match (&self.command, &self.motion) {
             (Some(Command::EnterViInsert), ParseResult::Incomplete)
-                | (Some(Command::EnterViAppend), ParseResult::Incomplete)
-                | (Some(Command::ChangeToLineEnd), ParseResult::Incomplete)
-                | (Some(Command::AppendToEnd), ParseResult::Incomplete)
-                | (Some(Command::PrependToStart), ParseResult::Incomplete)
-                | (Some(Command::RewriteCurrentLine), ParseResult::Incomplete)
-                | (
-                    Some(Command::SubstituteCharWithInsert),
-                    ParseResult::Incomplete
-                )
-                | (Some(Command::HistorySearch), ParseResult::Incomplete)
-                | (Some(Command::Change), ParseResult::Valid(_)) => Some(ViMode::Insert),
+            | (Some(Command::EnterViAppend), ParseResult::Incomplete)
+            | (Some(Command::ChangeToLineEnd), ParseResult::Incomplete)
+            | (Some(Command::AppendToEnd), ParseResult::Incomplete)
+            | (Some(Command::PrependToStart), ParseResult::Incomplete)
+            | (Some(Command::RewriteCurrentLine), ParseResult::Incomplete)
+            | (Some(Command::SubstituteCharWithInsert), ParseResult::Incomplete)
+            | (Some(Command::HistorySearch), ParseResult::Incomplete)
+            | (Some(Command::Change), ParseResult::Valid(_)) => Some(ViMode::Insert),
             (Some(Command::Delete), ParseResult::Incomplete) => Some(ViMode::Normal),
-            _ => None
+            _ => None,
         }
     }
 

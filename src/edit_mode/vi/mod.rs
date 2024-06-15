@@ -68,7 +68,7 @@ impl EditMode for Vi {
                     self.mode = ViMode::Visual;
                     ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
                 }
-                (ViMode::Normal|ViMode::Visual, modifier, KeyCode::Char(c)) => {
+                (ViMode::Normal | ViMode::Visual, modifier, KeyCode::Char(c)) => {
                     let c = c.to_ascii_lowercase();
 
                     if let Some(event) = self
@@ -149,7 +149,7 @@ impl EditMode for Vi {
                     self.mode = ViMode::Insert;
                     ReedlineEvent::Enter
                 }
-                (ViMode::Normal|ViMode::Visual, _, _) => self
+                (ViMode::Normal | ViMode::Visual, _, _) => self
                     .normal_keybindings
                     .find_binding(modifiers, code)
                     .unwrap_or(ReedlineEvent::None),
@@ -171,7 +171,7 @@ impl EditMode for Vi {
 
     fn edit_mode(&self) -> PromptEditMode {
         match self.mode {
-            ViMode::Normal|ViMode::Visual => PromptEditMode::Vi(PromptViMode::Normal),
+            ViMode::Normal | ViMode::Visual => PromptEditMode::Vi(PromptViMode::Normal),
             ViMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
         }
     }

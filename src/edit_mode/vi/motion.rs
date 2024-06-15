@@ -1,6 +1,6 @@
 use std::iter::Peekable;
 
-use crate::{EditCommand, ReedlineEvent, Vi, edit_mode::vi::ViMode};
+use crate::{edit_mode::vi::ViMode, EditCommand, ReedlineEvent, Vi};
 
 use super::parser::{ParseResult, ReedlineOption};
 
@@ -146,12 +146,16 @@ impl Motion {
         match self {
             Motion::Left => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
                 ReedlineEvent::MenuLeft,
-                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: select_mode, }])
+                ReedlineEvent::Edit(vec![EditCommand::MoveLeft {
+                    select: select_mode,
+                }]),
             ]))],
             Motion::Right => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
                 ReedlineEvent::HistoryHintComplete,
                 ReedlineEvent::MenuRight,
-                ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: select_mode, }]),
+                ReedlineEvent::Edit(vec![EditCommand::MoveRight {
+                    select: select_mode,
+                }]),
             ]))],
             Motion::Up => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
                 ReedlineEvent::MenuUp,
@@ -227,7 +231,9 @@ impl Motion {
             }
             Motion::ReverseCharSearch => {
                 if let Some(char_search) = vi_state.last_char_search.as_ref() {
-                    vec![ReedlineOption::Edit(char_search.reverse().to_move(select_mode))]
+                    vec![ReedlineOption::Edit(
+                        char_search.reverse().to_move(select_mode),
+                    )]
                 } else {
                     vec![]
                 }
