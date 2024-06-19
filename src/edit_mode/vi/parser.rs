@@ -565,8 +565,7 @@ mod tests {
     #[case(&['d'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::Edit(vec![EditCommand::CutSelection])]))]
     fn test_reedline_move_in_visual_mode(#[case] input: &[char], #[case] expected: ReedlineEvent) {
-        let mut vi = Vi::default();
-        vi.mode = ViMode::Visual;
+        let mut vi = Vi { mode: ViMode::Visual, ..Default::default()};
         let res = vi_parse(input);
         let output = res.to_reedline_event(&mut vi);
 
