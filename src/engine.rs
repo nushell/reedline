@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use itertools::Itertools;
-use nu_ansi_term::{Color, Style};
+use nu_ansi_term::Style;
 
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
@@ -39,6 +39,7 @@ use {
         cursor::{SetCursorStyle, Show},
         event,
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
+        style::Color,
         terminal, QueueableCommand,
     },
     std::{
@@ -179,16 +180,27 @@ impl Drop for Reedline {
     }
 }
 
-struct Theme {
-    visual_selection: Style,
-    use_ansi_coloring: bool,
+
+pub struct Theme {
+    pub visual_selection: Style,
+    pub use_ansi_coloring: bool,
+    /// The color for the prompt, indicator, and right prompt
+    pub prompt: Color,
+    pub prompt_multiline: nu_ansi_term::Color,
+    pub indicator: Color,
+    pub prompt_right: Color,
+
 }
 
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            visual_selection: Style::new().on(Color::LightGray),
+            visual_selection: Style::new().on(nu_ansi_term::Color::LightGray),
             use_ansi_coloring: true,
+            prompt: Color::Green,
+            prompt_multiline: nu_ansi_term::Color::LightBlue,
+            indicator: Color::Cyan,
+            prompt_right: Color::AnsiValue(5),
         }
     }
 }
@@ -1713,7 +1725,7 @@ impl Reedline {
                 &lines,
                 self.prompt_edit_mode(),
                 None,
-                self.theme.use_ansi_coloring,
+                &self.theme,
                 &self.cursor_shapes,
             )?;
         }
@@ -1738,7 +1750,7 @@ impl Reedline {
         let (before_cursor, after_cursor) = styled_text.render_around_insertion_point(
             cursor_position_in_buffer,
             prompt,
-            self.theme.use_ansi_coloring,
+            &self.theme,
         );
 
         let hint: String = if self.hints_active() {
@@ -1790,7 +1802,7 @@ impl Reedline {
             &lines,
             self.prompt_edit_mode(),
             menu,
-            self.theme.use_ansi_coloring,
+            &self.theme,
             &self.cursor_shapes,
         )
     }

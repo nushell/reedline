@@ -1,4 +1,4 @@
-use crate::{CursorConfig, PromptEditMode, PromptViMode};
+use crate::{CursorConfig, PromptEditMode, PromptViMode, engine::Theme};
 
 use {
     super::utils::{coerce_crlf, line_width},
@@ -189,7 +189,7 @@ impl Painter {
         lines: &PromptLines,
         prompt_mode: PromptEditMode,
         menu: Option<&ReedlineMenu>,
-        use_ansi_coloring: bool,
+        theme: &Theme,
         cursor_config: &Option<CursorConfig>,
     ) -> Result<()> {
         self.stdout.queue(cursor::Hide)?;
@@ -229,9 +229,9 @@ impl Painter {
             .queue(Clear(ClearType::FromCursorDown))?;
 
         if self.large_buffer {
-            self.print_large_buffer(prompt, lines, menu, use_ansi_coloring)?;
+            self.print_large_buffer(prompt, lines, menu, theme)?;
         } else {
-            self.print_small_buffer(prompt, lines, menu, use_ansi_coloring)?;
+            self.print_small_buffer(prompt, lines, menu, theme)?;
         }
 
         // The last_required_lines is used to calculate safe range of the current prompt.
@@ -318,33 +318,33 @@ impl Painter {
         prompt: &dyn Prompt,
         lines: &PromptLines,
         menu: Option<&ReedlineMenu>,
-        use_ansi_coloring: bool,
+        theme: &Theme,
     ) -> Result<()> {
         // print our prompt with color
-        if use_ansi_coloring {
+        if theme.use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_color()))?;
+                .queue(SetForegroundColor(theme.prompt))?;
         }
 
         self.stdout
             .queue(Print(&coerce_crlf(&lines.prompt_str_left)))?;
 
-        if use_ansi_coloring {
+        if theme.use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_indicator_color()))?;
+                .queue(SetForegroundColor(theme.indicator))?;
         }
 
         self.stdout
             .queue(Print(&coerce_crlf(&lines.prompt_indicator)))?;
 
-        if use_ansi_coloring {
+        if theme.use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
+                .queue(SetForegroundColor(theme.prompt_right))?;
         }
 
         self.print_right_prompt(lines)?;
 
-        if use_ansi_coloring {
+        if theme.use_ansi_coloring {
             self.stdout
                 .queue(SetAttribute(Attribute::Reset))?
                 .queue(ResetColor)?;
@@ -356,7 +356,7 @@ impl Painter {
             .queue(Print(&lines.after_cursor))?;
 
         if let Some(menu) = menu {
-            self.print_menu(menu, lines, use_ansi_coloring)?;
+            self.print_menu(menu, lines, theme.use_ansi_coloring)?;
         } else {
             self.stdout.queue(Print(&lines.hint))?;
         }
@@ -369,7 +369,7 @@ impl Painter {
         prompt: &dyn Prompt,
         lines: &PromptLines,
         menu: Option<&ReedlineMenu>,
-        use_ansi_coloring: bool,
+        theme: &Theme,
     ) -> Result<()> {
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();
@@ -389,9 +389,9 @@ impl Painter {
         let extra_rows = (total_lines_before).saturating_sub(screen_height as usize);
 
         // print our prompt with color
-        if use_ansi_coloring {
+        if theme.use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_color()))?;
+                .queue(SetForegroundColor(theme.prompt))?;
         }
 
         // In case the prompt is made out of multiple lines, the prompt is split by
@@ -400,9 +400,9 @@ impl Painter {
         self.stdout.queue(Print(&coerce_crlf(prompt_skipped)))?;
 
         if extra_rows == 0 {
-            if use_ansi_coloring {
+            if theme.use_ansi_coloring {
                 self.stdout
-                    .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
+                    .queue(SetForegroundColor(theme.prompt_right))?;
             }
 
             self.print_right_prompt(lines)?;
@@ -411,14 +411,14 @@ impl Painter {
         // Adjusting extra_rows base on the calculated prompt line size
         let extra_rows = extra_rows.saturating_sub(prompt_lines);
 
-        if use_ansi_coloring {
+        if theme.use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_indicator_color()))?;
+                .queue(SetForegroundColor(theme.indicator))?;
         }
         let indicator_skipped = skip_buffer_lines(&lines.prompt_indicator, extra_rows, None);
         self.stdout.queue(Print(&coerce_crlf(indicator_skipped)))?;
 
-        if use_ansi_coloring {
+        if theme.use_ansi_coloring {
             self.stdout.queue(ResetColor)?;
         }
 
@@ -453,7 +453,7 @@ impl Painter {
             } else {
                 self.stdout.queue(Print(&lines.after_cursor))?;
             }
-            self.print_menu(menu, lines, use_ansi_coloring)?;
+            self.print_menu(menu, lines, theme.use_ansi_coloring)?;
         } else {
             // Selecting lines for the hint
             // The -1 subtraction is done because the remaining lines consider the line where the
