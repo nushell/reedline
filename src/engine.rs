@@ -1721,7 +1721,6 @@ impl Reedline {
             );
 
             self.painter.repaint_buffer(
-                prompt,
                 &lines,
                 self.prompt_edit_mode(),
                 None,
@@ -1798,7 +1797,6 @@ impl Reedline {
         let menu = self.menus.iter().find(|menu| menu.is_active());
 
         self.painter.repaint_buffer(
-            prompt,
             &lines,
             self.prompt_edit_mode(),
             menu,

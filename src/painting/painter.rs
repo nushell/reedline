@@ -5,7 +5,6 @@ use {
     crate::{
         menu::{Menu, ReedlineMenu},
         painting::PromptLines,
-        Prompt,
     },
     crossterm::{
         cursor::{self, MoveTo, RestorePosition, SavePosition},
@@ -185,7 +184,6 @@ impl Painter {
     /// the screen.
     pub(crate) fn repaint_buffer(
         &mut self,
-        prompt: &dyn Prompt,
         lines: &PromptLines,
         prompt_mode: PromptEditMode,
         menu: Option<&ReedlineMenu>,
@@ -229,9 +227,9 @@ impl Painter {
             .queue(Clear(ClearType::FromCursorDown))?;
 
         if self.large_buffer {
-            self.print_large_buffer(prompt, lines, menu, theme)?;
+            self.print_large_buffer(lines, menu, theme)?;
         } else {
-            self.print_small_buffer(prompt, lines, menu, theme)?;
+            self.print_small_buffer(lines, menu, theme)?;
         }
 
         // The last_required_lines is used to calculate safe range of the current prompt.
@@ -315,7 +313,6 @@ impl Painter {
 
     fn print_small_buffer(
         &mut self,
-        prompt: &dyn Prompt,
         lines: &PromptLines,
         menu: Option<&ReedlineMenu>,
         theme: &Theme,
@@ -366,7 +363,6 @@ impl Painter {
 
     fn print_large_buffer(
         &mut self,
-        prompt: &dyn Prompt,
         lines: &PromptLines,
         menu: Option<&ReedlineMenu>,
         theme: &Theme,

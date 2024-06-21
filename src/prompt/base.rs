@@ -1,5 +1,4 @@
 use {
-    crossterm::style::Color,
     serde::{Deserialize, Serialize},
     std::{
         borrow::Cow,
