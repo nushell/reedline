@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use itertools::Itertools;
-use nu_ansi_term::{Color, Style};
+use nu_ansi_term::Style;
 
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
@@ -39,6 +39,7 @@ use {
         cursor::{SetCursorStyle, Show},
         event,
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
+        style::Color,
         terminal, QueueableCommand,
     },
     std::{
@@ -132,15 +133,12 @@ pub struct Reedline {
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
 
-    // Style used for visual selection
-    visual_selection_style: Style,
-
     // Showcase hints based on various strategies (history, language-completion, spellcheck, etc)
     hinter: Option<Box<dyn Hinter>>,
     hide_hints: bool,
 
     // Use ansi coloring or not
-    use_ansi_coloring: bool,
+    theme: ReedlineTheme,
 
     // Engine Menus
     menus: Vec<ReedlineMenu>,
@@ -182,6 +180,31 @@ impl Drop for Reedline {
     }
 }
 
+pub struct ReedlineTheme {
+    pub visual_selection: Style,
+    pub use_ansi_coloring: bool,
+    /// The color for the prompt, indicator, and right prompt
+    pub prompt: Color,
+    pub prompt_multiline: nu_ansi_term::Color,
+    pub indicator: Color,
+    pub prompt_right: Color,
+}
+
+impl Default for ReedlineTheme {
+    fn default() -> Self {
+        Self {
+            visual_selection: Style::new()
+                .fg(nu_ansi_term::Color::Black)
+                .on(nu_ansi_term::Color::LightGray),
+            use_ansi_coloring: true,
+            prompt: Color::Green,
+            prompt_multiline: nu_ansi_term::Color::LightBlue,
+            indicator: Color::Cyan,
+            prompt_right: Color::AnsiValue(5),
+        }
+    }
+}
+
 impl Reedline {
     const FILTERED_ITEM_ID: HistoryItemId = HistoryItemId(i64::MAX);
 
@@ -191,7 +214,6 @@ impl Reedline {
         let history = Box::<FileBackedHistory>::default();
         let painter = Painter::new(std::io::BufWriter::new(std::io::stderr()));
         let buffer_highlighter = Box::<ExampleHighlighter>::default();
-        let visual_selection_style = Style::new().on(Color::LightGray);
         let completer = Box::<DefaultCompleter>::default();
         let hinter = None;
         let validator = None;
@@ -219,11 +241,10 @@ impl Reedline {
             quick_completions: false,
             partial_completions: false,
             highlighter: buffer_highlighter,
-            visual_selection_style,
             hinter,
             hide_hints: false,
             validator,
-            use_ansi_coloring: true,
+            theme: ReedlineTheme::default(),
             menus: Vec::new(),
             buffer_editor: None,
             cursor_shapes: None,
@@ -356,7 +377,7 @@ impl Reedline {
     /// and in the command line syntax highlighting.
     #[must_use]
     pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
-        self.use_ansi_coloring = use_ansi_coloring;
+        self.theme.use_ansi_coloring = use_ansi_coloring;
         self
     }
 
@@ -385,7 +406,7 @@ impl Reedline {
     /// A builder that configures the style used for visual selection
     #[must_use]
     pub fn with_visual_selection_style(mut self, style: Style) -> Self {
-        self.visual_selection_style = style;
+        self.theme.visual_selection = style;
         self
     }
 
@@ -1682,7 +1703,7 @@ impl Reedline {
             let res_string = self.history_cursor.string_at_cursor().unwrap_or_default();
 
             // Highlight matches
-            let res_string = if self.use_ansi_coloring {
+            let res_string = if self.theme.use_ansi_coloring {
                 let match_highlighter = SimpleMatchHighlighter::new(substring);
                 let styled = match_highlighter.highlight(&res_string, 0);
                 styled.render_simple()
@@ -1700,11 +1721,10 @@ impl Reedline {
             );
 
             self.painter.repaint_buffer(
-                prompt,
                 &lines,
                 self.prompt_edit_mode(),
                 None,
-                self.use_ansi_coloring,
+                &self.theme,
                 &self.cursor_shapes,
             )?;
         }
@@ -1723,13 +1743,13 @@ impl Reedline {
             .highlighter
             .highlight(buffer_to_paint, cursor_position_in_buffer);
         if let Some((from, to)) = self.editor.get_selection() {
-            styled_text.style_range(from, to, self.visual_selection_style);
+            styled_text.style_range(from, to, self.theme.visual_selection);
         }
 
         let (before_cursor, after_cursor) = styled_text.render_around_insertion_point(
             cursor_position_in_buffer,
             prompt,
-            self.use_ansi_coloring,
+            &self.theme,
         );
 
         let hint: String = if self.hints_active() {
@@ -1738,7 +1758,7 @@ impl Reedline {
                     buffer_to_paint,
                     cursor_position_in_buffer,
                     self.history.as_ref(),
-                    self.use_ansi_coloring,
+                    self.theme.use_ansi_coloring,
                 )
             })
         } else {
@@ -1777,11 +1797,10 @@ impl Reedline {
         let menu = self.menus.iter().find(|menu| menu.is_active());
 
         self.painter.repaint_buffer(
-            prompt,
             &lines,
             self.prompt_edit_mode(),
             menu,
-            self.use_ansi_coloring,
+            &self.theme,
             &self.cursor_shapes,
         )
     }
