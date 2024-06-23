@@ -16,7 +16,7 @@ use {
     std::ops::RangeInclusive,
 };
 #[cfg(feature = "external_printer")]
-use {crate::LineBuffer, crossterm::cursor::MoveUp};
+use {crate::LineBuffer, crate::Prompt, crossterm::cursor::MoveUp};
 
 // Returns a string that skips N number of lines with the next offset of lines
 // An offset of 0 would return only one line after skipping the required lines
