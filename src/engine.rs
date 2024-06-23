@@ -180,7 +180,6 @@ impl Drop for Reedline {
     }
 }
 
-
 pub struct Theme {
     pub visual_selection: Style,
     pub use_ansi_coloring: bool,
@@ -189,13 +188,14 @@ pub struct Theme {
     pub prompt_multiline: nu_ansi_term::Color,
     pub indicator: Color,
     pub prompt_right: Color,
-
 }
 
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            visual_selection: Style::new().fg(nu_ansi_term::Color::Black).on(nu_ansi_term::Color::LightGray),
+            visual_selection: Style::new()
+                .fg(nu_ansi_term::Color::Black)
+                .on(nu_ansi_term::Color::LightGray),
             use_ansi_coloring: true,
             prompt: Color::Green,
             prompt_multiline: nu_ansi_term::Color::LightBlue,

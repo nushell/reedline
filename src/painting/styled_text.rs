@@ -1,6 +1,6 @@
 use nu_ansi_term::Style;
 
-use crate::{Prompt, engine::Theme};
+use crate::{engine::Theme, Prompt};
 
 use super::utils::strip_ansi;
 

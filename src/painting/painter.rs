@@ -1,4 +1,4 @@
-use crate::{CursorConfig, PromptEditMode, PromptViMode, engine::Theme};
+use crate::{engine::Theme, CursorConfig, PromptEditMode, PromptViMode};
 
 use {
     super::utils::{coerce_crlf, line_width},
@@ -319,24 +319,21 @@ impl Painter {
     ) -> Result<()> {
         // print our prompt with color
         if theme.use_ansi_coloring {
-            self.stdout
-                .queue(SetForegroundColor(theme.prompt))?;
+            self.stdout.queue(SetForegroundColor(theme.prompt))?;
         }
 
         self.stdout
             .queue(Print(&coerce_crlf(&lines.prompt_str_left)))?;
 
         if theme.use_ansi_coloring {
-            self.stdout
-                .queue(SetForegroundColor(theme.indicator))?;
+            self.stdout.queue(SetForegroundColor(theme.indicator))?;
         }
 
         self.stdout
             .queue(Print(&coerce_crlf(&lines.prompt_indicator)))?;
 
         if theme.use_ansi_coloring {
-            self.stdout
-                .queue(SetForegroundColor(theme.prompt_right))?;
+            self.stdout.queue(SetForegroundColor(theme.prompt_right))?;
         }
 
         self.print_right_prompt(lines)?;
@@ -386,8 +383,7 @@ impl Painter {
 
         // print our prompt with color
         if theme.use_ansi_coloring {
-            self.stdout
-                .queue(SetForegroundColor(theme.prompt))?;
+            self.stdout.queue(SetForegroundColor(theme.prompt))?;
         }
 
         // In case the prompt is made out of multiple lines, the prompt is split by
@@ -397,8 +393,7 @@ impl Painter {
 
         if extra_rows == 0 {
             if theme.use_ansi_coloring {
-                self.stdout
-                    .queue(SetForegroundColor(theme.prompt_right))?;
+                self.stdout.queue(SetForegroundColor(theme.prompt_right))?;
             }
 
             self.print_right_prompt(lines)?;
@@ -408,8 +403,7 @@ impl Painter {
         let extra_rows = extra_rows.saturating_sub(prompt_lines);
 
         if theme.use_ansi_coloring {
-            self.stdout
-                .queue(SetForegroundColor(theme.indicator))?;
+            self.stdout.queue(SetForegroundColor(theme.indicator))?;
         }
         let indicator_skipped = skip_buffer_lines(&lines.prompt_indicator, extra_rows, None);
         self.stdout.queue(Print(&coerce_crlf(indicator_skipped)))?;
