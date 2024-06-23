@@ -1,4 +1,4 @@
-use crate::{engine::Theme, CursorConfig, PromptEditMode, PromptViMode};
+use crate::{engine::ReedlineTheme, CursorConfig, PromptEditMode, PromptViMode};
 
 use {
     super::utils::{coerce_crlf, line_width},
@@ -187,7 +187,7 @@ impl Painter {
         lines: &PromptLines,
         prompt_mode: PromptEditMode,
         menu: Option<&ReedlineMenu>,
-        theme: &Theme,
+        theme: &ReedlineTheme,
         cursor_config: &Option<CursorConfig>,
     ) -> Result<()> {
         self.stdout.queue(cursor::Hide)?;
@@ -315,7 +315,7 @@ impl Painter {
         &mut self,
         lines: &PromptLines,
         menu: Option<&ReedlineMenu>,
-        theme: &Theme,
+        theme: &ReedlineTheme,
     ) -> Result<()> {
         // print our prompt with color
         if theme.use_ansi_coloring {
@@ -362,7 +362,7 @@ impl Painter {
         &mut self,
         lines: &PromptLines,
         menu: Option<&ReedlineMenu>,
-        theme: &Theme,
+        theme: &ReedlineTheme,
     ) -> Result<()> {
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();

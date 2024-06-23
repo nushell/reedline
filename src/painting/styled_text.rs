@@ -1,6 +1,6 @@
 use nu_ansi_term::Style;
 
-use crate::{engine::Theme, Prompt};
+use crate::{engine::ReedlineTheme, Prompt};
 
 use super::utils::strip_ansi;
 
@@ -101,7 +101,7 @@ impl StyledText {
         insertion_point: usize,
         prompt: &dyn Prompt,
         // multiline_prompt: &str,
-        theme: &Theme,
+        theme: &ReedlineTheme,
     ) -> (String, String) {
         let mut current_idx = 0;
         let mut left_string = String::new();

@@ -138,7 +138,7 @@ pub struct Reedline {
     hide_hints: bool,
 
     // Use ansi coloring or not
-    theme: Theme,
+    theme: ReedlineTheme,
 
     // Engine Menus
     menus: Vec<ReedlineMenu>,
@@ -180,7 +180,7 @@ impl Drop for Reedline {
     }
 }
 
-pub struct Theme {
+pub struct ReedlineTheme {
     pub visual_selection: Style,
     pub use_ansi_coloring: bool,
     /// The color for the prompt, indicator, and right prompt
@@ -190,7 +190,7 @@ pub struct Theme {
     pub prompt_right: Color,
 }
 
-impl Default for Theme {
+impl Default for ReedlineTheme {
     fn default() -> Self {
         Self {
             visual_selection: Style::new()
@@ -244,7 +244,7 @@ impl Reedline {
             hinter,
             hide_hints: false,
             validator,
-            theme: Theme::default(),
+            theme: ReedlineTheme::default(),
             menus: Vec::new(),
             buffer_editor: None,
             cursor_shapes: None,
