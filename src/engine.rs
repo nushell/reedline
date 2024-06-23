@@ -195,7 +195,7 @@ pub struct Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            visual_selection: Style::new().on(nu_ansi_term::Color::LightGray),
+            visual_selection: Style::new().fg(nu_ansi_term::Color::Black).on(nu_ansi_term::Color::LightGray),
             use_ansi_coloring: true,
             prompt: Color::Green,
             prompt_multiline: nu_ansi_term::Color::LightBlue,
