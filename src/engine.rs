@@ -142,9 +142,9 @@ pub struct Reedline {
     // Use ansi coloring or not
     use_ansi_coloring: bool,
 
-    // Current working directory as defined by the application, which might not
-    // be the actual working directory of the process
-    cwd: String,
+    // Current working directory as defined by the application. If set, it will
+    // override the actual working directory of the process.
+    cwd: Option<String>,
 
     // Engine Menus
     menus: Vec<ReedlineMenu>,
@@ -228,7 +228,7 @@ impl Reedline {
             hide_hints: false,
             validator,
             use_ansi_coloring: true,
-            cwd: "".to_string(),
+            cwd: None,
             menus: Vec::new(),
             buffer_editor: None,
             cursor_shapes: None,
@@ -367,7 +367,7 @@ impl Reedline {
 
     /// Update current working directory.
     #[must_use]
-    pub fn with_cwd(mut self, cwd: String) -> Self {
+    pub fn with_cwd(mut self, cwd: Option<String>) -> Self {
         self.cwd = cwd;
         self
     }
@@ -1569,7 +1569,12 @@ impl Reedline {
                         .history
                         .search(SearchQuery::last_with_prefix_and_cwd(
                             parsed.prefix.unwrap().to_string(),
-                            self.cwd.clone(),
+                            self.cwd.clone().unwrap_or_else(|| {
+                                std::env::current_dir()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string()
+                            }),
                             self.get_history_session_id(),
                         ))
                         .unwrap_or_else(|_| Vec::new())
@@ -1752,7 +1757,12 @@ impl Reedline {
                     cursor_position_in_buffer,
                     self.history.as_ref(),
                     self.use_ansi_coloring,
-                    &self.cwd,
+                    &self.cwd.clone().unwrap_or_else(|| {
+                        std::env::current_dir()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string()
+                    }),
                 )
             })
         } else {
