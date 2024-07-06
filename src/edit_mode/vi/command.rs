@@ -147,8 +147,9 @@ impl Command {
             Self::SubstituteCharWithInsert => vec![ReedlineOption::Edit(EditCommand::CutChar)],
             Self::HistorySearch => vec![ReedlineOption::Event(ReedlineEvent::SearchHistory)],
             Self::Switchcase => vec![ReedlineOption::Edit(EditCommand::SwitchcaseChar)],
-            // Mark a command as incomplete whenever a motion is required to finish the command
-            Self::Delete | Self::Change | Self::Incomplete => vec![ReedlineOption::Incomplete],
+            // Whenever a motion is required to finish the command we must be in visual mode
+            Self::Delete | Self::Change => vec![ReedlineOption::Edit(EditCommand::CutSelection)],
+            Self::Incomplete => vec![ReedlineOption::Incomplete],
             Command::RepeatLastAction => match &vi_state.previous {
                 Some(event) => vec![ReedlineOption::Event(event.clone())],
                 None => vec![],

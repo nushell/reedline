@@ -19,6 +19,7 @@ use crate::{
 enum ViMode {
     Normal,
     Insert,
+    Visual,
 }
 
 /// This parses incoming input `Event`s like a Vi-Style editor
@@ -62,7 +63,12 @@ impl EditMode for Vi {
             Event::Key(KeyEvent {
                 code, modifiers, ..
             }) => match (self.mode, modifiers, code) {
-                (ViMode::Normal, modifier, KeyCode::Char(c)) => {
+                (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v')) => {
+                    self.cache.clear();
+                    self.mode = ViMode::Visual;
+                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+                }
+                (ViMode::Normal | ViMode::Visual, modifier, KeyCode::Char(c)) => {
                     let c = c.to_ascii_lowercase();
 
                     if let Some(event) = self
@@ -82,9 +88,9 @@ impl EditMode for Vi {
                         if !res.is_valid() {
                             self.cache.clear();
                             ReedlineEvent::None
-                        } else if res.is_complete() {
-                            if res.enters_insert_mode() {
-                                self.mode = ViMode::Insert;
+                        } else if res.is_complete(self.mode) {
+                            if let Some(mode) = res.changes_mode() {
+                                self.mode = mode;
                             }
 
                             let event = res.to_reedline_event(self);
@@ -143,7 +149,7 @@ impl EditMode for Vi {
                     self.mode = ViMode::Insert;
                     ReedlineEvent::Enter
                 }
-                (ViMode::Normal, _, _) => self
+                (ViMode::Normal | ViMode::Visual, _, _) => self
                     .normal_keybindings
                     .find_binding(modifiers, code)
                     .unwrap_or(ReedlineEvent::None),
@@ -165,7 +171,7 @@ impl EditMode for Vi {
 
     fn edit_mode(&self) -> PromptEditMode {
         match self.mode {
-            ViMode::Normal => PromptEditMode::Vi(PromptViMode::Normal),
+            ViMode::Normal | ViMode::Visual => PromptEditMode::Vi(PromptViMode::Normal),
             ViMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
         }
     }
