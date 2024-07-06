@@ -462,56 +462,6 @@ impl Menu for DescriptionMenu {
         painter: &Painter,
     ) {
         if let Some(event) = self.event.take() {
-            // Updating all working parameters from the menu before executing any of the
-            // possible event
-            let max_width = self.get_values().iter().fold(0, |acc, suggestion| {
-                let str_len = suggestion.value.len() + self.default_details.col_padding;
-                if str_len > acc {
-                    str_len
-                } else {
-                    acc
-                }
-            });
-
-            // If no default width is found, then the total screen width is used to estimate
-            // the column width based on the default number of columns
-            let default_width = if let Some(col_width) = self.default_details.col_width {
-                col_width
-            } else {
-                let col_width = painter.screen_width() / self.default_details.columns;
-                col_width as usize
-            };
-
-            // Adjusting the working width of the column based the max line width found
-            // in the menu values
-            if max_width > default_width {
-                self.working_details.col_width = max_width;
-            } else {
-                self.working_details.col_width = default_width;
-            };
-
-            // The working columns is adjusted based on possible number of columns
-            // that could be fitted in the screen with the calculated column width
-            let possible_cols = painter.screen_width() / self.working_details.col_width as u16;
-            if possible_cols > self.default_details.columns {
-                self.working_details.columns = self.default_details.columns.max(1);
-            } else {
-                self.working_details.columns = possible_cols;
-            }
-
-            // Updating the working rows to display the description
-            if self.menu_required_lines(painter.screen_width()) <= painter.remaining_lines() {
-                self.working_details.description_rows = self.default_details.description_rows;
-                self.show_examples = true;
-            } else {
-                self.working_details.description_rows = painter
-                    .remaining_lines()
-                    .saturating_sub(self.default_details.selection_rows + 1)
-                    as usize;
-
-                self.show_examples = false;
-            }
-
             match event {
                 MenuEvent::Activate(_) => {
                     self.reset_position();
@@ -577,6 +527,54 @@ impl Menu for DescriptionMenu {
                     }
                 }
                 MenuEvent::PreviousPage | MenuEvent::NextPage => {}
+            }
+
+            let max_width = self.get_values().iter().fold(0, |acc, suggestion| {
+                let str_len = suggestion.value.len() + self.default_details.col_padding;
+                if str_len > acc {
+                    str_len
+                } else {
+                    acc
+                }
+            });
+
+            // If no default width is found, then the total screen width is used to estimate
+            // the column width based on the default number of columns
+            let default_width = if let Some(col_width) = self.default_details.col_width {
+                col_width
+            } else {
+                let col_width = painter.screen_width() / self.default_details.columns;
+                col_width as usize
+            };
+
+            // Adjusting the working width of the column based the max line width found
+            // in the menu values
+            if max_width > default_width {
+                self.working_details.col_width = max_width;
+            } else {
+                self.working_details.col_width = default_width;
+            };
+
+            // The working columns is adjusted based on possible number of columns
+            // that could be fitted in the screen with the calculated column width
+            let possible_cols = painter.screen_width() / self.working_details.col_width as u16;
+            if possible_cols > self.default_details.columns {
+                self.working_details.columns = self.default_details.columns.max(1);
+            } else {
+                self.working_details.columns = possible_cols;
+            }
+
+            // Updating the working rows to display the description
+            if self.menu_required_lines(painter.screen_width()) <= painter.remaining_lines() {
+                self.working_details.description_rows = self.default_details.description_rows;
+                self.show_examples = true;
+            } else {
+                self.working_details.description_rows = painter
+                    .remaining_lines()
+                    .saturating_sub(self.default_details.selection_rows + 1)
+                    as usize;
+
+                self.show_examples = false;
             }
         }
     }

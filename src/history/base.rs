@@ -146,24 +146,14 @@ impl SearchQuery {
         ))
     }
 
-    /// Get the most recent entry starting with the `prefix` and `cwd` same as the current cwd
+    /// Get the most recent entry starting with the `prefix` and `cwd`
     pub fn last_with_prefix_and_cwd(
         prefix: String,
+        cwd: String,
         session: Option<HistorySessionId>,
     ) -> SearchQuery {
-        let cwd = std::env::current_dir();
-        if let Ok(cwd) = cwd {
-            SearchQuery::last_with_search(SearchFilter::from_text_search_cwd(
-                cwd.to_string_lossy().to_string(),
-                CommandLineSearch::Prefix(prefix),
-                session,
-            ))
-        } else {
-            SearchQuery::last_with_search(SearchFilter::from_text_search(
-                CommandLineSearch::Prefix(prefix),
-                session,
-            ))
-        }
+        let prefix = CommandLineSearch::Prefix(prefix);
+        SearchQuery::last_with_search(SearchFilter::from_text_search_cwd(cwd, prefix, session))
     }
 
     /// Query to get all entries in the given [`SearchDirection`]

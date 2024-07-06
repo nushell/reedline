@@ -140,6 +140,10 @@ pub struct Reedline {
     // Use ansi coloring or not
     theme: ReedlineTheme,
 
+    // Current working directory as defined by the application. If set, it will
+    // override the actual working directory of the process.
+    cwd: Option<String>,
+
     // Engine Menus
     menus: Vec<ReedlineMenu>,
 
@@ -245,6 +249,7 @@ impl Reedline {
             hide_hints: false,
             validator,
             theme: ReedlineTheme::default(),
+            cwd: None,
             menus: Vec::new(),
             buffer_editor: None,
             cursor_shapes: None,
@@ -378,6 +383,13 @@ impl Reedline {
     #[must_use]
     pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
         self.theme.use_ansi_coloring = use_ansi_coloring;
+        self
+    }
+
+    /// Update current working directory.
+    #[must_use]
+    pub fn with_cwd(mut self, cwd: Option<String>) -> Self {
+        self.cwd = cwd;
         self
     }
 
@@ -1578,6 +1590,12 @@ impl Reedline {
                         .history
                         .search(SearchQuery::last_with_prefix_and_cwd(
                             parsed.prefix.unwrap().to_string(),
+                            self.cwd.clone().unwrap_or_else(|| {
+                                std::env::current_dir()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string()
+                            }),
                             self.get_history_session_id(),
                         ))
                         .unwrap_or_else(|_| Vec::new())
@@ -1759,6 +1777,12 @@ impl Reedline {
                     cursor_position_in_buffer,
                     self.history.as_ref(),
                     self.theme.use_ansi_coloring,
+                    &self.cwd.clone().unwrap_or_else(|| {
+                        std::env::current_dir()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string()
+                    }),
                 )
             })
         } else {

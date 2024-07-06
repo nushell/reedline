@@ -222,13 +222,13 @@ Reedline has now all the basic features to become the primary line editor for [n
 - Undo support.
 - Clipboard integration
 - Line completeness validation for seamless entry of multiline command sequences.
+- Visual selection
 
 ### Areas for future improvements
 
 - [ ] Support for Unicode beyond simple left-to-right scripts
 - [ ] Easier keybinding configuration
 - [ ] Support for more advanced vi commands
-- [ ] Visual selection
 - [ ] Smooth experience if completion or prompt content takes long to compute
 - [ ] Support for a concurrent output stream from background tasks to be displayed, while the input prompt is active. ("Full duplex" mode)
 
