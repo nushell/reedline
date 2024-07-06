@@ -299,7 +299,7 @@ impl ColumnarMenu {
         use_ansi_coloring: bool,
     ) -> String {
         if use_ansi_coloring {
-            let match_len = self.working_details.shortest_base_string.len();
+            let match_len = self.working_details.shortest_base_string.width();
 
             // Split string so the match text can be styled
             let (match_str, remaining_str) = suggestion.value.split_at(match_len);
@@ -408,7 +408,7 @@ impl ColumnarMenu {
                         + self
                             .default_details
                             .col_padding
-                            .saturating_sub(marker.len()),
+                            .saturating_sub(marker.width()),
                 )
             } else {
                 format!(
@@ -417,7 +417,7 @@ impl ColumnarMenu {
                     &suggestion.value,
                     "",
                     self.end_of_line(column),
-                    empty = empty_space.saturating_sub(marker.len()),
+                    empty = empty_space.saturating_sub(marker.width()),
                 )
             };
 
@@ -500,7 +500,7 @@ impl Menu for ColumnarMenu {
         self.working_details.shortest_base_string = base_ranges
             .iter()
             .map(|range| editor.get_buffer()[range.clone()].to_string())
-            .min_by_key(|s| s.len())
+            .min_by_key(|s| s.width())
             .unwrap_or_default();
 
         self.reset_position();
@@ -530,15 +530,15 @@ impl Menu for ColumnarMenu {
                 self.working_details.col_width = painter.screen_width() as usize;
 
                 self.longest_suggestion = self.get_values().iter().fold(0, |prev, suggestion| {
-                    if prev >= suggestion.value.len() {
+                    if prev >= suggestion.value.width() {
                         prev
                     } else {
-                        suggestion.value.len()
+                        suggestion.value.width()
                     }
                 });
             } else {
                 let max_width = self.get_values().iter().fold(0, |acc, suggestion| {
-                    let str_len = suggestion.value.len() + self.default_details.col_padding;
+                    let str_len = suggestion.value.width() + self.default_details.col_padding;
                     if str_len > acc {
                         str_len
                     } else {
@@ -654,7 +654,7 @@ impl Menu for ColumnarMenu {
                     // Correcting the enumerate index based on the number of skipped values
                     let index = index + skip_values;
                     let column = index as u16 % self.get_cols();
-                    let empty_space = self.get_width().saturating_sub(suggestion.value.len());
+                    let empty_space = self.get_width().saturating_sub(suggestion.value.width());
 
                     self.create_string(suggestion, index, column, empty_space, use_ansi_coloring)
                 })
