@@ -515,8 +515,42 @@ impl Menu for ColumnarMenu {
         painter: &Painter,
     ) {
         if let Some(event) = self.event.take() {
-            // The working value for the menu are updated first before executing any of the
-            // menu events
+            match event {
+                MenuEvent::Activate(updated) => {
+                    self.active = true;
+                    self.reset_position();
+
+                    self.input = if self.settings.only_buffer_difference {
+                        Some(editor.get_buffer().to_string())
+                    } else {
+                        None
+                    };
+
+                    if !updated {
+                        self.update_values(editor, completer);
+                    }
+                }
+                MenuEvent::Deactivate => self.active = false,
+                MenuEvent::Edit(updated) => {
+                    self.reset_position();
+
+                    if !updated {
+                        self.update_values(editor, completer);
+                    }
+                }
+                MenuEvent::NextElement => self.move_next(),
+                MenuEvent::PreviousElement => self.move_previous(),
+                MenuEvent::MoveUp => self.move_up(),
+                MenuEvent::MoveDown => self.move_down(),
+                MenuEvent::MoveLeft => self.move_left(),
+                MenuEvent::MoveRight => self.move_right(),
+                MenuEvent::PreviousPage | MenuEvent::NextPage => {
+                    // The columnar menu doest have the concept of pages, yet
+                }
+            }
+
+            // The working value for the menu are updated only after executing the menu events,
+            // so they have the latest suggestions
             //
             // If there is at least one suggestion that contains a description, then the layout
             // is changed to one column to fit the description
@@ -570,40 +604,6 @@ impl Menu for ColumnarMenu {
                     self.working_details.columns = self.default_details.columns.max(1);
                 } else {
                     self.working_details.columns = possible_cols;
-                }
-            }
-
-            match event {
-                MenuEvent::Activate(updated) => {
-                    self.active = true;
-                    self.reset_position();
-
-                    self.input = if self.settings.only_buffer_difference {
-                        Some(editor.get_buffer().to_string())
-                    } else {
-                        None
-                    };
-
-                    if !updated {
-                        self.update_values(editor, completer);
-                    }
-                }
-                MenuEvent::Deactivate => self.active = false,
-                MenuEvent::Edit(updated) => {
-                    self.reset_position();
-
-                    if !updated {
-                        self.update_values(editor, completer);
-                    }
-                }
-                MenuEvent::NextElement => self.move_next(),
-                MenuEvent::PreviousElement => self.move_previous(),
-                MenuEvent::MoveUp => self.move_up(),
-                MenuEvent::MoveDown => self.move_down(),
-                MenuEvent::MoveLeft => self.move_left(),
-                MenuEvent::MoveRight => self.move_right(),
-                MenuEvent::PreviousPage | MenuEvent::NextPage => {
-                    // The columnar menu doest have the concept of pages, yet
                 }
             }
         }
