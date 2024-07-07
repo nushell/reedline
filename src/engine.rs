@@ -407,7 +407,6 @@ impl Reedline {
         self
     }
 
-
     /// A builder which sets the color to use for the right side of the prompt.
     #[must_use]
     pub fn with_prompt_right_color(mut self, color: Color) -> Self {
