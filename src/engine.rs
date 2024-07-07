@@ -386,6 +386,34 @@ impl Reedline {
         self
     }
 
+    /// A builder which sets the color to use for the prompt.
+    #[must_use]
+    pub fn with_prompt_color(mut self, color: Color) -> Self {
+        self.theme.prompt = color;
+        self
+    }
+
+    /// A builder which sets the color to use for the multiline prompt.
+    #[must_use]
+    pub fn with_prompt_multiline_color(mut self, color: nu_ansi_term::Color) -> Self {
+        self.theme.prompt_multiline = color;
+        self
+    }
+
+    /// A builder which sets the indicator color to use for the prompt.
+    #[must_use]
+    pub fn with_indicator_color(mut self, color: Color) -> Self {
+        self.theme.indicator = color;
+        self
+    }
+
+
+    /// A builder which sets the color to use for the right side of the prompt.
+    #[must_use]
+    pub fn with_prompt_right_color(mut self, color: Color) -> Self {
+        self.theme.prompt_right = color;
+        self
+    }
     /// Update current working directory.
     #[must_use]
     pub fn with_cwd(mut self, cwd: Option<String>) -> Self {
