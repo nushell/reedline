@@ -511,8 +511,7 @@ mod tests {
     #[case(&['d', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordLeft])]))]
     #[case(&['d', 'B'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordLeft])]))]
     #[case(&['c', 'c'], ReedlineEvent::Multiple(vec![
-        //ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine]), ReedlineEvent::Repaint]))]
-        ReedlineEvent::Edit(vec![EditCommand::MoveToStart{select: false}]), ReedlineEvent::Edit(vec![EditCommand::ClearToLineEnd]), ReedlineEvent::Repaint]))]
+        ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: false }]), ReedlineEvent::Edit(vec![EditCommand::CutToLineEnd]), ReedlineEvent::Repaint]))]
     #[case(&['c', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight]), ReedlineEvent::Repaint]))]
     #[case(&['c', 'W'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRight]), ReedlineEvent::Repaint]))]
     #[case(&['c', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight]), ReedlineEvent::Repaint]))]
