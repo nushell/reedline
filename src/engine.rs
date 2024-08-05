@@ -1658,10 +1658,10 @@ impl Reedline {
         match &mut self.buffer_editor {
             Some(BufferEditor {
                 ref mut command,
-                temp_file,
+                ref temp_file,
             }) => {
                 {
-                    let mut file = File::create(&temp_file)?;
+                    let mut file = File::create(temp_file)?;
                     write!(file, "{}", self.editor.get_buffer())?;
                 }
                 {

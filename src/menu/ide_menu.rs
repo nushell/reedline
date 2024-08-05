@@ -1054,10 +1054,7 @@ fn truncate_string_list(list: &mut [String], truncation_chars: &str) {
         let mut new_line = String::new();
         for grapheme in chars.into_iter().rev() {
             if to_replace > 0 {
-                new_line.insert_str(
-                    0,
-                    &truncation_chars[truncation_len - to_replace].to_string(),
-                );
+                new_line.insert(0, truncation_chars[truncation_len - to_replace]);
                 to_replace -= 1;
             } else {
                 new_line.insert_str(0, grapheme);
