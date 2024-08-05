@@ -552,6 +552,9 @@ pub enum ReedlineEvent {
     /// Bubble up [`Signal::CtrlC`]
     CtrlC,
 
+    /// Clears the display and set prompt to first line
+    ClearDisplay,
+
     /// Clears the screen and sets prompt to first line
     ClearScreen,
 
@@ -654,6 +657,7 @@ impl Display for ReedlineEvent {
             ReedlineEvent::HistoryHintWordComplete => write!(f, "HistoryHintWordComplete"),
             ReedlineEvent::CtrlD => write!(f, "CtrlD"),
             ReedlineEvent::CtrlC => write!(f, "CtrlC"),
+            ReedlineEvent::ClearDisplay => write!(f, "ClearDisplay"),
             ReedlineEvent::ClearScreen => write!(f, "ClearScreen"),
             ReedlineEvent::ClearScrollback => write!(f, "ClearScrollback"),
             ReedlineEvent::Enter => write!(f, "Enter"),

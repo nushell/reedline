@@ -507,6 +507,16 @@ impl Painter {
         self.stdout.flush()
     }
 
+    /// <placeholder docs>
+    pub(crate) fn clear_display(&mut self) -> Result<()> {
+        self.stdout.queue(cursor::Hide)?;
+        self.stdout.queue(Clear(ClearType::All))?;
+        self.stdout.queue(MoveTo(0, 0))?;
+        self.stdout.queue(cursor::Show)?;
+        self.stdout.flush()?;
+        self.initialize_prompt_position(None)
+    }
+
     /// Clear the screen by printing enough whitespace to start the prompt or
     /// other output back at the first line of the terminal.
     pub(crate) fn clear_screen(&mut self) -> Result<()> {

@@ -666,6 +666,13 @@ impl Reedline {
         self.painter.paint_line(msg)
     }
 
+    /// <placeholder docs>
+    pub fn clear_display(&mut self) -> Result<()> {
+        self.painter.clear_display()?;
+
+        Ok(())
+    }
+
     /// Clear the screen by printing enough whitespace to start the prompt or
     /// other output back at the first line of the terminal.
     pub fn clear_screen(&mut self) -> Result<()> {
@@ -847,6 +854,10 @@ impl Reedline {
             ReedlineEvent::CtrlC => {
                 self.input_mode = InputMode::Regular;
                 Ok(EventStatus::Exits(Signal::CtrlC))
+            }
+            ReedlineEvent::ClearDisplay => {
+                self.painter.clear_display()?;
+                Ok(EventStatus::Handled)
             }
             ReedlineEvent::ClearScreen => {
                 self.painter.clear_screen()?;
@@ -1071,6 +1082,11 @@ impl Reedline {
                 self.run_edit_commands(&[EditCommand::Clear]);
                 self.editor.reset_undo_stack();
                 Ok(EventStatus::Exits(Signal::CtrlC))
+            }
+            ReedlineEvent::ClearDisplay => {
+                self.deactivate_menus();
+                self.painter.clear_display()?;
+                Ok(EventStatus::Handled)
             }
             ReedlineEvent::ClearScreen => {
                 self.deactivate_menus();
