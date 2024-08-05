@@ -50,7 +50,7 @@ jobs:
         run: cargo llvm-cov nextest --all ${{ matrix.flags }} --lcov --output-path lcov.info
 
       - name: Check lockfile
-        run: cargo check --locked {{ matrix.flags }} --all-targets --all
+        run: cargo check --locked ${{ matrix.flags }} --all-targets --all
 
       - name: Doctests
         run: cargo test --doc ${{ matrix.flags }}
