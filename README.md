@@ -234,12 +234,6 @@ Reedline has now all the basic features to become the primary line editor for [n
 
 For more ideas check out the [feature discussion](https://github.com/nushell/reedline/issues/63) or hop on the `#reedline` channel of the [nushell discord](https://discordapp.com/invite/NtAbbGn).
 
-### Development history
-
-If you want to follow along with the history of how reedline got started, you can watch the [recordings](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv) of [JT](https://github.com/jntrnr)'s [live-coding streams](https://www.twitch.tv/jntrnr).
-
-[Playlist: Creating a line editor in Rust](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv)
-
 ### Alternatives
 
 For currently more mature Rust line editing check out:
