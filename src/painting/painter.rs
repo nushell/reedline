@@ -507,36 +507,21 @@ impl Painter {
         self.stdout.flush()
     }
 
-    /// <placeholder docs>
-    pub(crate) fn clear_display(&mut self) -> Result<()> {
-        self.stdout.queue(cursor::Hide)?;
-        self.stdout.queue(Clear(ClearType::All))?;
-        self.stdout.queue(MoveTo(0, 0))?;
-        self.stdout.queue(cursor::Show)?;
-        self.stdout.flush()?;
-        self.initialize_prompt_position(None)
-    }
-
     /// Clear the screen by printing enough whitespace to start the prompt or
     /// other output back at the first line of the terminal.
     pub(crate) fn clear_screen(&mut self) -> Result<()> {
-        self.stdout.queue(cursor::Hide)?;
-        let (_, num_lines) = terminal::size()?;
-        for _ in 0..2 * num_lines {
-            self.stdout.queue(Print("\n"))?;
-        }
-        self.stdout.queue(MoveTo(0, 0))?;
-        self.stdout.queue(cursor::Show)?;
-
-        self.stdout.flush()?;
+        self.stdout
+            .queue(Clear(ClearType::All))?
+            .queue(MoveTo(0, 0))?
+            .flush()?;
         self.initialize_prompt_position(None)
     }
 
     pub(crate) fn clear_scrollback(&mut self) -> Result<()> {
         self.stdout
-            .queue(crossterm::terminal::Clear(ClearType::All))?
-            .queue(crossterm::terminal::Clear(ClearType::Purge))?
-            .queue(cursor::MoveTo(0, 0))?
+            .queue(Clear(ClearType::All))?
+            .queue(Clear(ClearType::Purge))?
+            .queue(MoveTo(0, 0))?
             .flush()?;
         self.initialize_prompt_position(None)
     }
