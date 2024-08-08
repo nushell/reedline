@@ -1,5 +1,4 @@
 use {
-    crossterm::style::Color,
     serde::{Deserialize, Serialize},
     std::{
         borrow::Cow,
@@ -7,12 +6,6 @@ use {
     },
     strum_macros::EnumIter,
 };
-
-/// The default color for the prompt, indicator, and right prompt
-pub static DEFAULT_PROMPT_COLOR: Color = Color::Green;
-pub static DEFAULT_PROMPT_MULTILINE_COLOR: nu_ansi_term::Color = nu_ansi_term::Color::LightBlue;
-pub static DEFAULT_INDICATOR_COLOR: Color = Color::Cyan;
-pub static DEFAULT_PROMPT_RIGHT_COLOR: Color = Color::AnsiValue(5);
 
 /// The current success/failure of the history search
 pub enum PromptHistorySearchStatus {
@@ -97,22 +90,6 @@ pub trait Prompt: Send {
         &self,
         history_search: PromptHistorySearch,
     ) -> Cow<str>;
-    /// Get the default prompt color
-    fn get_prompt_color(&self) -> Color {
-        DEFAULT_PROMPT_COLOR
-    }
-    /// Get the default multiline prompt color
-    fn get_prompt_multiline_color(&self) -> nu_ansi_term::Color {
-        DEFAULT_PROMPT_MULTILINE_COLOR
-    }
-    /// Get the default indicator color
-    fn get_indicator_color(&self) -> Color {
-        DEFAULT_INDICATOR_COLOR
-    }
-    /// Get the default right prompt color
-    fn get_prompt_right_color(&self) -> Color {
-        DEFAULT_PROMPT_RIGHT_COLOR
-    }
 
     /// Whether to render right prompt on the last line
     fn right_prompt_on_last_line(&self) -> bool {
