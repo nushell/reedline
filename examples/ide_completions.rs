@@ -17,7 +17,7 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
         KeyCode::Tab,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::Menu("completion_menu".to_string()),
-            ReedlineEvent::MenuNext,
+            ReedlineEvent::MenuAccept,
         ]),
     );
     keybindings.add_binding(
@@ -96,7 +96,10 @@ fn main() -> io::Result<()> {
         .with_min_description_width(min_description_width)
         .with_max_description_width(max_description_width)
         .with_description_offset(description_offset)
-        .with_correct_cursor_pos(correct_cursor_pos);
+        .with_correct_cursor_pos(correct_cursor_pos)
+        .with_activate_on_start(true)
+        .with_keep_active_after_accept(true)
+        .with_treat_submit_as_accept(false);
 
     if border {
         ide_menu = ide_menu.with_default_border();

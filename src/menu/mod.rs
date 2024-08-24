@@ -160,6 +160,9 @@ pub struct MenuSettings {
     /// Calls the completer using only the line buffer difference difference
     /// after the menu was activated
     only_buffer_difference: bool,
+    pub(crate) activate_on_start: bool,
+    pub(crate) keep_active_after_accept: bool,
+    pub(crate) treat_submit_as_accept: bool,
 }
 
 impl Default for MenuSettings {
@@ -169,6 +172,9 @@ impl Default for MenuSettings {
             color: MenuTextStyle::default(),
             marker: "| ".to_string(),
             only_buffer_difference: false,
+            activate_on_start: false,
+            keep_active_after_accept: false,
+            treat_submit_as_accept: true,
         }
     }
 }
@@ -266,6 +272,27 @@ pub trait MenuBuilder: Menu + Sized {
     #[must_use]
     fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
         self.settings_mut().only_buffer_difference = only_buffer_difference;
+        self
+    }
+
+    /// Menu builder with new value for activate_on_start
+    #[must_use]
+    fn with_activate_on_start(mut self, activate_on_start: bool) -> Self {
+        self.settings_mut().activate_on_start = activate_on_start;
+        self
+    }
+
+    /// Menu builder with new value for keep_active_after_accept
+    #[must_use]
+    fn with_keep_active_after_accept(mut self, keep_active_after_accept: bool) -> Self {
+        self.settings_mut().keep_active_after_accept = keep_active_after_accept;
+        self
+    }
+
+    /// Menu builder with new value for treat_submit_as_accept
+    #[must_use]
+    fn with_treat_submit_as_accept(mut self, treat_submit_as_accept: bool) -> Self {
+        self.settings_mut().treat_submit_as_accept = treat_submit_as_accept;
         self
     }
 }

@@ -516,6 +516,9 @@ impl Reedline {
     #[must_use]
     pub fn with_menu(mut self, menu: ReedlineMenu) -> Self {
         self.menus.push(menu);
+        if self.active_menu().is_none() {
+            self.activate_menus_on_start();
+        }
         self
     }
 
@@ -915,6 +918,7 @@ impl Reedline {
             | ReedlineEvent::HistoryHintWordComplete
             | ReedlineEvent::OpenEditor
             | ReedlineEvent::Menu(_)
+            | ReedlineEvent::MenuAccept
             | ReedlineEvent::MenuNext
             | ReedlineEvent::MenuPrevious
             | ReedlineEvent::MenuUp
@@ -964,6 +968,24 @@ impl Reedline {
                     }
                 }
                 Ok(EventStatus::Inapplicable)
+            }
+            ReedlineEvent::MenuAccept => {
+                match self.menus.iter_mut().find(|menu| menu.is_active()) {
+                    None => Ok(EventStatus::Inapplicable),
+                    Some(menu) => {
+                        menu.replace_in_buffer(&mut self.editor);
+                        if !menu.settings().keep_active_after_accept {
+                            menu.menu_event(MenuEvent::Deactivate);
+                        } else {
+                            menu.update_values(
+                                &mut self.editor,
+                                self.completer.as_mut(),
+                                self.history.as_ref(),
+                            );
+                        }
+                        Ok(EventStatus::Handled)
+                    }
+                }
             }
             ReedlineEvent::MenuNext => match self.active_menu() {
                 None => Ok(EventStatus::Inapplicable),
@@ -1083,13 +1105,23 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Enter | ReedlineEvent::Submit | ReedlineEvent::SubmitOrNewline
-                if self.menus.iter().any(|menu| menu.is_active()) =>
+                if self
+                    .menus
+                    .iter()
+                    .any(|menu| menu.is_active() && menu.settings().treat_submit_as_accept) =>
             {
                 for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
+                    if menu.is_active() && menu.settings().treat_submit_as_accept {
                         menu.replace_in_buffer(&mut self.editor);
-                        menu.menu_event(MenuEvent::Deactivate);
-
+                        if !menu.settings().keep_active_after_accept {
+                            menu.menu_event(MenuEvent::Deactivate);
+                        } else {
+                            menu.update_values(
+                                &mut self.editor,
+                                self.completer.as_mut(),
+                                self.history.as_ref(),
+                            );
+                        }
                         return Ok(EventStatus::Handled);
                     }
                 }
@@ -1269,6 +1301,13 @@ impl Reedline {
         self.menus
             .iter_mut()
             .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
+    }
+
+    fn activate_menus_on_start(&mut self) {
+        self.menus
+            .iter_mut()
+            .filter(|menu| menu.settings().activate_on_start)
+            .for_each(|menu| menu.menu_event(MenuEvent::Activate(false)));
     }
 
     fn previous_history(&mut self) {
@@ -1875,6 +1914,7 @@ impl Reedline {
         }
         self.run_edit_commands(&[EditCommand::Clear]);
         self.editor.reset_undo_stack();
+        self.activate_menus_on_start();
 
         Ok(EventStatus::Exits(Signal::Success(buffer)))
     }

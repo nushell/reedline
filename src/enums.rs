@@ -615,6 +615,9 @@ pub enum ReedlineEvent {
     /// Trigger a menu event. It activates a menu with the event name
     Menu(String),
 
+    /// Accepts the current menu suggestion
+    MenuAccept,
+
     /// Next element in the menu
     MenuNext,
 
@@ -677,6 +680,7 @@ impl Display for ReedlineEvent {
             ReedlineEvent::Multiple(_) => write!(f, "Multiple[ {{ ReedLineEvents, }} ]"),
             ReedlineEvent::UntilFound(_) => write!(f, "UntilFound [ {{ ReedLineEvents, }} ]"),
             ReedlineEvent::Menu(_) => write!(f, "Menu Name: <string>"),
+            ReedlineEvent::MenuAccept => write!(f, "MenuAccept"),
             ReedlineEvent::MenuNext => write!(f, "MenuNext"),
             ReedlineEvent::MenuPrevious => write!(f, "MenuPrevious"),
             ReedlineEvent::MenuUp => write!(f, "MenuUp"),
