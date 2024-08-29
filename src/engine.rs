@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
@@ -163,6 +166,9 @@ pub struct Reedline {
 
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
+
+    crossterm_events: Arc<Mutex<Vec<ReedlineRawEvent>>>,
+    reedline_events: Arc<Mutex<Vec<ReedlineEvent>>>,
 }
 
 struct BufferEditor {
@@ -236,7 +242,27 @@ impl Reedline {
             kitty_protocol: KittyProtocolGuard::default(),
             #[cfg(feature = "external_printer")]
             external_printer: None,
+            crossterm_events: Arc::new(Vec::new().into()),
+            reedline_events: Arc::new(Vec::new().into()),
         }
+    }
+
+    /// Setup a queue for reedline events that can be written from other places.
+    pub fn with_reedline_event_queue(
+        mut self,
+        reedline_events: Arc<Mutex<Vec<ReedlineEvent>>>,
+    ) -> Self {
+        self.reedline_events = reedline_events;
+        self
+    }
+
+    /// Setup a queue for reedline events that can be written from other places.
+    pub fn with_crossterm_event_queue(
+        mut self,
+        crossterm_events: Arc<Mutex<Vec<ReedlineRawEvent>>>,
+    ) -> Self {
+        self.crossterm_events = crossterm_events;
+        self
     }
 
     /// Get a new history session id based on the current time and the first commit datetime of reedline
@@ -718,6 +744,9 @@ impl Reedline {
 
             let mut latest_resize = None;
             loop {
+                if !self.reedline_events.lock().unwrap().is_empty() {
+                    break;
+                }
                 match event::read()? {
                     Event::Resize(x, y) => {
                         latest_resize = Some((x, y));
@@ -763,6 +792,11 @@ impl Reedline {
             //
             // (Text should only be `EditCommand::InsertChar`s)
             let mut last_edit_commands = None;
+
+            for event in self.crossterm_events.lock().unwrap().drain(..) {
+                crossterm_events.push(event);
+            }
+
             for event in crossterm_events.drain(..) {
                 match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
                     (None, ReedlineEvent::Edit(ec)) => {
@@ -783,6 +817,11 @@ impl Reedline {
             }
             if let Some(ec) = last_edit_commands {
                 reedline_events.push(ReedlineEvent::Edit(ec));
+            }
+
+            for event in self.reedline_events.lock().unwrap().drain(..) {
+                println!("Got event from queue: {}", event);
+                reedline_events.push(event);
             }
 
             for event in reedline_events.drain(..) {
