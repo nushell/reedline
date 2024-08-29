@@ -167,8 +167,7 @@ pub struct Reedline {
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
 
-    crossterm_events: Arc<Mutex<Vec<ReedlineRawEvent>>>,
-    reedline_events: Arc<Mutex<Vec<ReedlineEvent>>>,
+    reedline_event_queue: Arc<Mutex<Vec<ReedlineEvent>>>,
 }
 
 struct BufferEditor {
@@ -242,8 +241,7 @@ impl Reedline {
             kitty_protocol: KittyProtocolGuard::default(),
             #[cfg(feature = "external_printer")]
             external_printer: None,
-            crossterm_events: Arc::new(Vec::new().into()),
-            reedline_events: Arc::new(Vec::new().into()),
+            reedline_event_queue: Arc::new(Vec::new().into()),
         }
     }
 
@@ -252,16 +250,7 @@ impl Reedline {
         mut self,
         reedline_events: Arc<Mutex<Vec<ReedlineEvent>>>,
     ) -> Self {
-        self.reedline_events = reedline_events;
-        self
-    }
-
-    /// Setup a queue for reedline events that can be written from other places.
-    pub fn with_crossterm_event_queue(
-        mut self,
-        crossterm_events: Arc<Mutex<Vec<ReedlineRawEvent>>>,
-    ) -> Self {
-        self.crossterm_events = crossterm_events;
+        self.reedline_event_queue = reedline_events;
         self
     }
 
@@ -744,7 +733,7 @@ impl Reedline {
 
             let mut latest_resize = None;
             loop {
-                if !self.reedline_events.lock().unwrap().is_empty() {
+                if !self.reedline_event_queue.lock().unwrap().is_empty() {
                     break;
                 }
                 match event::read()? {
@@ -793,10 +782,6 @@ impl Reedline {
             // (Text should only be `EditCommand::InsertChar`s)
             let mut last_edit_commands = None;
 
-            for event in self.crossterm_events.lock().unwrap().drain(..) {
-                crossterm_events.push(event);
-            }
-
             for event in crossterm_events.drain(..) {
                 match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
                     (None, ReedlineEvent::Edit(ec)) => {
@@ -819,7 +804,7 @@ impl Reedline {
                 reedline_events.push(ReedlineEvent::Edit(ec));
             }
 
-            for event in self.reedline_events.lock().unwrap().drain(..) {
+            for event in self.reedline_event_queue.lock().unwrap().drain(..) {
                 println!("Got event from queue: {}", event);
                 reedline_events.push(event);
             }
