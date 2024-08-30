@@ -733,8 +733,10 @@ impl Reedline {
 
             let mut latest_resize = None;
             loop {
-                if !self.reedline_event_queue.lock().unwrap().is_empty() {
-                    break;
+                if let Ok(queue) = self.reedline_event_queue.lock() {
+                    if !queue.is_empty() {
+                        break;
+                    }
                 }
                 match event::read()? {
                     Event::Resize(x, y) => {
@@ -804,9 +806,11 @@ impl Reedline {
                 reedline_events.push(ReedlineEvent::Edit(ec));
             }
 
-            for event in self.reedline_event_queue.lock().unwrap().drain(..) {
-                println!("Got event from queue: {}", event);
-                reedline_events.push(event);
+            if let Ok(mut queue) = self.reedline_event_queue.lock() {
+                for event in queue.drain(..) {
+                    println!("Got event from queue: {}", event);
+                    reedline_events.push(event);
+                }
             }
 
             for event in reedline_events.drain(..) {
