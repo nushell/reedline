@@ -808,7 +808,6 @@ impl Reedline {
 
             if let Ok(mut queue) = self.reedline_event_queue.lock() {
                 for event in queue.drain(..) {
-                    println!("Got event from queue: {}", event);
                     reedline_events.push(event);
                 }
             }
