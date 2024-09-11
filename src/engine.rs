@@ -250,15 +250,6 @@ impl Reedline {
         }
     }
 
-    /// Setup a queue for reedline events that can be written from other places.
-    pub fn with_reedline_event_queue(
-        mut self,
-        reedline_events: Arc<Mutex<Vec<ReedlineEvent>>>,
-    ) -> Self {
-        self.reedline_event_queue = reedline_events;
-        self
-    }
-
     /// Get a new history session id based on the current time and the first commit datetime of reedline
     pub fn create_history_session_id() -> Option<HistorySessionId> {
         let nanos = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
@@ -811,12 +802,6 @@ impl Reedline {
             }
             if let Some(ec) = last_edit_commands {
                 reedline_events.push(ReedlineEvent::Edit(ec));
-            }
-
-            if let Ok(mut queue) = self.reedline_event_queue.lock() {
-                for event in queue.drain(..) {
-                    reedline_events.push(event);
-                }
             }
 
             for event in reedline_events.drain(..) {
