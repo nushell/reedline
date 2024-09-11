@@ -1,6 +1,6 @@
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::mpsc::{channel, Receiver, Sender},
 };
 
 use itertools::Itertools;
@@ -167,7 +167,9 @@ pub struct Reedline {
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
 
-    reedline_event_queue: Arc<Mutex<Vec<ReedlineEvent>>>,
+    /// A ReedlineEvent Sender, use this to submit events to the queue
+    pub reedline_event_sender: Sender<ReedlineEvent>,
+    reedline_event_receiver: Receiver<ReedlineEvent>,
 }
 
 struct BufferEditor {
@@ -207,6 +209,8 @@ impl Reedline {
         let edit_mode = Box::<Emacs>::default();
         let hist_session_id = None;
 
+        let (reedline_event_sender, reedline_event_receiver) = channel();
+
         Reedline {
             editor: Editor::default(),
             history,
@@ -241,17 +245,9 @@ impl Reedline {
             kitty_protocol: KittyProtocolGuard::default(),
             #[cfg(feature = "external_printer")]
             external_printer: None,
-            reedline_event_queue: Arc::new(Vec::new().into()),
+            reedline_event_receiver,
+            reedline_event_sender,
         }
-    }
-
-    /// Setup a queue for reedline events that can be written from other places.
-    pub fn with_reedline_event_queue(
-        mut self,
-        reedline_events: Arc<Mutex<Vec<ReedlineEvent>>>,
-    ) -> Self {
-        self.reedline_event_queue = reedline_events;
-        self
     }
 
     /// Get a new history session id based on the current time and the first commit datetime of reedline
@@ -733,11 +729,13 @@ impl Reedline {
 
             let mut latest_resize = None;
             loop {
-                if let Ok(queue) = self.reedline_event_queue.lock() {
-                    if !queue.is_empty() {
-                        break;
-                    }
+                while let Ok(reedline_event) = self.reedline_event_receiver.try_recv() {
+                    reedline_events.push(reedline_event);
                 }
+                if !reedline_events.is_empty() {
+                    break;
+                }
+
                 match event::read()? {
                     Event::Resize(x, y) => {
                         latest_resize = Some((x, y));
@@ -804,12 +802,6 @@ impl Reedline {
             }
             if let Some(ec) = last_edit_commands {
                 reedline_events.push(ReedlineEvent::Edit(ec));
-            }
-
-            if let Ok(mut queue) = self.reedline_event_queue.lock() {
-                for event in queue.drain(..) {
-                    reedline_events.push(event);
-                }
             }
 
             for event in reedline_events.drain(..) {
