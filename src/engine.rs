@@ -804,6 +804,10 @@ impl Reedline {
                 reedline_events.push(ReedlineEvent::Edit(ec));
             }
 
+            while let Ok(reedline_event) = self.reedline_event_receiver.try_recv() {
+                reedline_events.push(reedline_event);
+            }
+
             for event in reedline_events.drain(..) {
                 match self.handle_event(prompt, event)? {
                     EventStatus::Exits(signal) => {
