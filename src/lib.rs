@@ -185,7 +185,7 @@
 //!
 //! ## Are we prompt yet? (Development status)
 //!
-//! Nushell has now all the basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
+//! Reedline has now all the basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
 //! )
 //!
 //! - General editing functionality, that should feel familiar coming from other shells (e.g. bash, fish, zsh).
