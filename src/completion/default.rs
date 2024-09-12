@@ -118,6 +118,16 @@ impl Completer for DefaultCompleter {
                     }
                 }
             }
+        } else {
+            let span = Span::new(0, 0);
+            completions.extend(self.root.collect("").into_iter().map(|value| Suggestion {
+                value,
+                description: None,
+                style: None,
+                extra: None,
+                span,
+                append_whitespace: false,
+            }));
         }
         completions.dedup();
         completions
