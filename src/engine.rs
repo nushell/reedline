@@ -1663,7 +1663,7 @@ impl Reedline {
             });
 
         // TODO: discuss breaking change and possibly make configurable
-        if let Err(e) = self.reedline_event_sender.send(ReedlineEvent::Submit) {
+        if let Err(_e) = self.reedline_event_sender.send(ReedlineEvent::Submit) {
             // log::warn!("Could not sumbit bashism: {e:?}");
         }
 
