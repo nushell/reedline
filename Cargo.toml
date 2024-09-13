@@ -6,7 +6,7 @@ license = "MIT"
 name = "reedline"
 repository = "https://github.com/nushell/reedline"
 rust-version = "1.63.0"
-version = "0.32.0"
+version = "0.34.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
@@ -21,7 +21,7 @@ chrono = { version = "0.4.19", default-features = false, features = [
     "serde",
 ] }
 crossbeam = { version = "0.8.2", optional = true }
-crossterm = { version = "0.27.0", features = ["serde"] }
+crossterm = { version = "0.28.1", features = ["serde"] }
 fd-lock = "4.0.2"
 itertools = "0.12.0"
 nu-ansi-term = "0.50.0"

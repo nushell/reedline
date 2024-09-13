@@ -212,10 +212,10 @@ impl Command {
             },
             Self::Change => {
                 let op = match motion {
-                    Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::ClearToLineEnd)]),
+                    Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)]),
                     Motion::Line => Some(vec![
-                        ReedlineOption::Edit(EditCommand::MoveToStart { select: false }),
-                        ReedlineOption::Edit(EditCommand::ClearToLineEnd),
+                        ReedlineOption::Edit(EditCommand::MoveToLineStart { select: false }),
+                        ReedlineOption::Edit(EditCommand::CutToLineEnd),
                     ]),
                     Motion::NextWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)]),
                     Motion::NextBigWord => {
