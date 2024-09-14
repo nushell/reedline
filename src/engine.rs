@@ -170,8 +170,6 @@ pub struct Reedline {
     /// A ReedlineEvent Sender, use this to submit events to the queue
     pub reedline_event_sender: Sender<ReedlineEvent>,
     reedline_event_receiver: Receiver<ReedlineEvent>,
-    #[cfg(feature = "bashisms")]
-    immediately_accept_bashisms: bool,
 }
 
 struct BufferEditor {
@@ -249,15 +247,7 @@ impl Reedline {
             external_printer: None,
             reedline_event_receiver,
             reedline_event_sender,
-            #[cfg(feature = "bashisms")]
-            immediately_accept_bashisms: false,
         }
-    }
-
-    #[cfg(feature = "bashisms")]
-    pub fn with_immediately_accept_bashisms(mut self, accept: bool) -> Self {
-        self.immediately_accept_bashisms = accept;
-        self
     }
 
     /// Get a new history session id based on the current time and the first commit datetime of reedline
@@ -1672,11 +1662,11 @@ impl Reedline {
                     .map(|token| (parsed.remainder.len(), indicator.len(), token.to_string())),
             });
 
-        if self.immediately_accept_bashisms {
-            if let Err(_e) = self.reedline_event_sender.send(ReedlineEvent::Submit) {
-                // handle or log _e
-            }
-        }
+        // if self.immediately_accept_bashisms {
+        //     if let Err(_e) = self.reedline_event_sender.send(ReedlineEvent::Submit) {
+        //         // handle or log _e
+        //     }
+        // }
 
         if let Some((start, size, history)) = history_result {
             let edits = vec![
