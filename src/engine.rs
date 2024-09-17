@@ -967,8 +967,9 @@ impl Reedline {
             }
             ReedlineEvent::MenuNext => {
                 if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
-                    if self.quick_completions && menu.can_quick_complete() {
-                        menu.update_values(
+                    if self.partial_completions {
+                        menu.can_partially_complete(
+                            self.quick_completions,
                             &mut self.editor,
                             self.completer.as_mut(),
                             self.history.as_ref(),
