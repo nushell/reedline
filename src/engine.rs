@@ -965,17 +965,25 @@ impl Reedline {
                 }
                 Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::MenuNext => match self.active_menu() {
-                None => Ok(EventStatus::Inapplicable),
-                Some(menu) => {
+            ReedlineEvent::MenuNext => {
+                if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
+                    if self.quick_completions && menu.can_quick_complete() {
+                        menu.update_values(
+                            &mut self.editor,
+                            self.completer.as_mut(),
+                            self.history.as_ref(),
+                        );
+                    };
                     if menu.get_values().len() == 1 && menu.can_quick_complete() {
                         self.handle_editor_event(prompt, ReedlineEvent::Enter)
                     } else {
                         menu.menu_event(MenuEvent::NextElement);
                         Ok(EventStatus::Handled)
                     }
+                } else {
+                    Ok(EventStatus::Inapplicable)
                 }
-            },
+            }
             ReedlineEvent::MenuPrevious => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
