@@ -252,6 +252,32 @@ mod test {
     }
 
     #[test]
+    fn keybinding_with_super_modifier_test() {
+        let mut keybindings = default_vi_normal_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::SUPER,
+            KeyCode::Char('$'),
+            ReedlineEvent::CtrlD,
+        );
+
+        let mut vi = Vi {
+            insert_keybindings: default_vi_insert_keybindings(),
+            normal_keybindings: keybindings,
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('$'),
+            KeyModifiers::SUPER,
+        )))
+        .unwrap();
+        let result = vi.parse_event(esc);
+
+        assert_eq!(result, ReedlineEvent::CtrlD);
+    }
+
+    #[test]
     fn non_register_modifier_test() {
         let keybindings = default_vi_normal_keybindings();
         let mut vi = Vi {
