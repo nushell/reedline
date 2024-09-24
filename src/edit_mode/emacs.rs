@@ -121,6 +121,7 @@ impl EditMode for Emacs {
             Event::Key(KeyEvent {
                 code, modifiers, ..
             }) => match (modifiers, code) {
+                (KeyModifiers::CONTROL, KeyCode::Char('j')) => ReedlineEvent::Enter,
                 (modifier, KeyCode::Char(c)) => {
                     // Note. The modifier can also be a combination of modifiers, for
                     // example:
