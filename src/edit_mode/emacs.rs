@@ -52,7 +52,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
         edit_bind(EC::PasteCutBufferBefore),
     );
     kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
-    kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::CutToEnd));
+    kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::CutToLineEnd));
     kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
     kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
     // Edits
