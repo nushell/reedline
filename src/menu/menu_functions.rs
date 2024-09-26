@@ -327,7 +327,8 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
         let matching = &value[0..index];
 
         // make sure that the partial completion does not overwrite user entered input
-        let extends_input = matching.starts_with(&editor.get_buffer()[span.start..span.end]);
+        let extends_input = matching.starts_with(&editor.get_buffer()[span.start..span.end])
+            && matching != &editor.get_buffer()[span.start..span.end];
 
         if !matching.is_empty() && extends_input {
             let mut line_buffer = editor.line_buffer().clone();
