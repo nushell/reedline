@@ -94,6 +94,7 @@ pub struct Painter {
     terminal_size: (u16, u16),
     last_required_lines: u16,
     large_buffer: bool,
+    just_resized: bool,
     after_cursor_lines: Option<String>,
 }
 
@@ -105,6 +106,7 @@ impl Painter {
             terminal_size: (0, 0),
             last_required_lines: 0,
             large_buffer: false,
+            just_resized: false,
             after_cursor_lines: None,
         }
     }
@@ -196,6 +198,15 @@ impl Painter {
 
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();
+
+        // Handle resize for multi line prompt
+        if self.just_resized {
+            self.prompt_start_row = self.prompt_start_row.saturating_sub(
+                (lines.prompt_str_left.matches('\n').count()
+                    + lines.prompt_indicator.matches('\n').count()) as u16,
+            );
+            self.just_resized = false;
+        }
 
         // Lines and distance parameters
         let remaining_lines = self.remaining_lines();
@@ -488,6 +499,7 @@ impl Painter {
         // out yet.
         if let Ok(position) = cursor::position() {
             self.prompt_start_row = position.1;
+            self.just_resized = true;
         }
     }
 
