@@ -1,4 +1,7 @@
 //! Collection of common functions that can be used to create menus
+use nu_ansi_term::{AnsiStrings, Style};
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::{Editor, Suggestion, UndoBehavior};
 
 /// Index result obtained from parsing a string with an index marker
@@ -354,6 +357,42 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
     }
 }
 
+/// Style a suggestion to be shown in a completer menu
+///
+/// * `match_indices` - Indices of bytes that matched the typed text
+pub fn style_suggestion(
+    suggestion: &str,
+    match_indices: &[usize],
+    match_style: &Style,
+    text_style: &Style,
+) -> String {
+    let mut parts = Vec::new();
+    let mut prev_styled = false;
+    let mut part_start = 0;
+    for (grapheme_start, grapheme) in suggestion.grapheme_indices(true) {
+        let is_match =
+            (grapheme_start..(grapheme_start + grapheme.len())).any(|i| match_indices.contains(&i));
+        if is_match && !prev_styled {
+            if part_start < grapheme_start {
+                parts.push(text_style.paint(&suggestion[part_start..grapheme_start]));
+            }
+            part_start = grapheme_start;
+            prev_styled = true;
+        } else if !is_match && prev_styled {
+            if part_start < grapheme_start {
+                parts.push(match_style.paint(&suggestion[part_start..grapheme_start]));
+            }
+            part_start = grapheme_start;
+            prev_styled = false;
+        }
+    }
+
+    let last_style = if prev_styled { match_style } else { text_style };
+    parts.push(last_style.paint(&suggestion[part_start..]));
+
+    AnsiStrings(&parts).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -612,6 +651,7 @@ mod tests {
                 extra: None,
                 span: Span::new(0, s.len()),
                 append_whitespace: false,
+                match_indices: None,
             })
             .collect();
         let res = find_common_string(&input);
@@ -632,6 +672,7 @@ mod tests {
                 extra: None,
                 span: Span::new(0, s.len()),
                 append_whitespace: false,
+                match_indices: None,
             })
             .collect();
         let res = find_common_string(&input);
@@ -687,6 +728,7 @@ mod tests {
                 extra: None,
                 span: Span::new(start, end),
                 append_whitespace: false,
+                match_indices: None,
             }),
             &mut editor,
         );
@@ -696,5 +738,30 @@ mod tests {
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(orig_buffer, editor.get_buffer());
         assert_eq!(orig_insertion_point, editor.insertion_point());
+    }
+
+    #[test]
+    fn style_fuzzy_suggestion() {
+        let match_style = Style::new().italic();
+        let text_style = Style::new().dimmed();
+
+        let expected = AnsiStrings(&[
+            match_style.paint("ab"),
+            text_style.paint("c"),
+            match_style.paint("汉"),
+            text_style.paint("d"),
+            match_style.paint("y̆"),
+            text_style.paint("e"),
+        ])
+        .to_string();
+        let match_indices = &[
+            0, 1, // ab
+            5, // the last (third) byte of 汉
+            7, // the first byte of y̆
+        ];
+        assert_eq!(
+            expected,
+            style_suggestion("abc汉dy̆e", match_indices, &match_style, &text_style)
+        );
     }
 }
