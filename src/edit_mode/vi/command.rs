@@ -9,7 +9,15 @@ where
     match input.peek() {
         Some('d') => {
             let _ = input.next();
-            Some(Command::Delete)
+            if let Some('i') = input.peek() {
+                let _ = input.next();
+                match input.next() {
+                    Some(c) => Some(Command::DeleteInside(*c)),
+                    None => Some(Command::Incomplete),
+                }
+            } else {
+                Some(Command::Delete)
+            }
         }
         Some('p') => {
             let _ = input.next();
@@ -33,7 +41,15 @@ where
         }
         Some('c') => {
             let _ = input.next();
-            Some(Command::Change)
+            if let Some('i') = input.peek() {
+                let _ = input.next();
+                match input.next() {
+                    Some(c) => Some(Command::ChangeInside(*c)),
+                    None => Some(Command::Incomplete),
+                }
+            } else {
+                Some(Command::Change)
+            }
         }
         Some('x') => {
             let _ = input.next();
@@ -107,6 +123,8 @@ pub enum Command {
     HistorySearch,
     Switchcase,
     RepeatLastAction,
+    ChangeInside(char),
+    DeleteInside(char),
 }
 
 impl Command {
@@ -150,10 +168,24 @@ impl Command {
             // Whenever a motion is required to finish the command we must be in visual mode
             Self::Delete | Self::Change => vec![ReedlineOption::Edit(EditCommand::CutSelection)],
             Self::Incomplete => vec![ReedlineOption::Incomplete],
-            Command::RepeatLastAction => match &vi_state.previous {
+            Self::RepeatLastAction => match &vi_state.previous {
                 Some(event) => vec![ReedlineOption::Event(event.clone())],
                 None => vec![],
             },
+            Self::ChangeInside(char) => {
+                let right = right_bracket_for(char);
+                vec![
+                    ReedlineOption::Edit(EditCommand::CutLeftBefore(*char)),
+                    ReedlineOption::Edit(EditCommand::CutRightBefore(right)),
+                ]
+            }
+            Self::DeleteInside(char) => {
+                let right = right_bracket_for(char);
+                vec![
+                    ReedlineOption::Edit(EditCommand::CutLeftBefore(*char)),
+                    ReedlineOption::Edit(EditCommand::CutRightBefore(right)),
+                ]
+            }
         }
     }
 
@@ -274,5 +306,14 @@ impl Command {
             }
             _ => None,
         }
+    }
+}
+
+fn right_bracket_for(c: &char) -> char {
+    match *c {
+        '(' => ')',
+        '[' => ']',
+        '{' => '}',
+        _ => *c,
     }
 }

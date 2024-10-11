@@ -101,6 +101,7 @@ impl ParsedViSequence {
             (Some(Command::EnterViInsert), ParseResult::Incomplete)
             | (Some(Command::EnterViAppend), ParseResult::Incomplete)
             | (Some(Command::ChangeToLineEnd), ParseResult::Incomplete)
+            | (Some(Command::ChangeInside(_)), ParseResult::Incomplete)
             | (Some(Command::AppendToEnd), ParseResult::Incomplete)
             | (Some(Command::PrependToStart), ParseResult::Incomplete)
             | (Some(Command::RewriteCurrentLine), ParseResult::Incomplete)
