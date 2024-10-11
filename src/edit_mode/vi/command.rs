@@ -12,8 +12,8 @@ where
             if let Some('i') = input.peek() {
                 let _ = input.next();
                 match input.next() {
-                    Some(c) => Some(Command::DeleteInside(*c)),
-                    None => Some(Command::Incomplete),
+                    Some(c) if is_valid_change_in(c) => Some(Command::DeleteInside(*c)),
+                    _ => None,
                 }
             } else {
                 Some(Command::Delete)
@@ -44,8 +44,8 @@ where
             if let Some('i') = input.peek() {
                 let _ = input.next();
                 match input.next() {
-                    Some(c) => Some(Command::ChangeInside(*c)),
-                    None => Some(Command::Incomplete),
+                    Some(c) if is_valid_change_in(c) => Some(Command::ChangeInside(*c)),
+                    _ => None,
                 }
             } else {
                 Some(Command::Change)
@@ -315,5 +315,12 @@ fn right_bracket_for(c: &char) -> char {
         '[' => ']',
         '{' => '}',
         _ => *c,
+    }
+}
+
+fn is_valid_change_in(c: &char) -> bool {
+    match *c {
+        '(' | '[' | '{' | ')' | ']' | '}' | '"' | '\'' | '`' => true,
+        _ => false,
     }
 }
