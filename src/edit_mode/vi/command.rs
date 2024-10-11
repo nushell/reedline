@@ -319,8 +319,8 @@ fn right_bracket_for(c: &char) -> char {
 }
 
 fn is_valid_change_in(c: &char) -> bool {
-    match *c {
-        '(' | '[' | '{' | ')' | ']' | '}' | '"' | '\'' | '`' | '<' => true,
-        _ => false,
-    }
+    matches!(
+        c,
+        '(' | '[' | '{' | ')' | ']' | '}' | '"' | '\'' | '`' | '<'
+    )
 }
