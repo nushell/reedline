@@ -13,7 +13,7 @@ where
                 let _ = input.next();
                 match input.next() {
                     Some(c)
-                        if is_valid_change_inside_right(c) || is_valid_change_inside_right(c) =>
+                        if is_valid_change_inside_left(c) || is_valid_change_inside_right(c) =>
                     {
                         Some(Command::DeleteInside(*c))
                     }
