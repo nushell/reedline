@@ -57,6 +57,11 @@ const POLL_WAIT: Duration = Duration::from_millis(100);
 // before it is considered a paste. 10 events is conservative enough.
 const EVENTS_THRESHOLD: usize = 10;
 
+/// Maximum time Reedline will block on input before yielding control to
+/// external printers.
+#[cfg(feature = "external_printer")]
+const EXTERNAL_PRINTER_WAIT: Duration = Duration::from_millis(100);
+
 /// Determines if inputs should be used to extend the regular line buffer,
 /// traverse the history in the standard prompt or edit the search string in the
 /// reverse search
@@ -729,7 +734,14 @@ impl Reedline {
 
             let mut events: Vec<Event> = vec![];
 
-            // Block until we receive an event.
+            // If the `external_printer` feature is enabled, we need to
+            // periodically yield so that external printers get a chance to
+            // print. Otherwise, we can just block until we receive an event.
+            #[cfg(feature = "external_printer")]
+            if event::poll(EXTERNAL_PRINTER_WAIT)? {
+                events.push(crossterm::event::read()?);
+            }
+            #[cfg(not(feature = "external_printer"))]
             events.push(crossterm::event::read()?);
 
             // Receive all events in the queue without blocking. Will stop when
