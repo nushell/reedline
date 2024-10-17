@@ -9,7 +9,19 @@ where
     match input.peek() {
         Some('d') => {
             let _ = input.next();
-            Some(Command::Delete)
+            if let Some('i') = input.peek() {
+                let _ = input.next();
+                match input.next() {
+                    Some(c)
+                        if is_valid_change_inside_left(c) || is_valid_change_inside_right(c) =>
+                    {
+                        Some(Command::DeleteInside(*c))
+                    }
+                    _ => None,
+                }
+            } else {
+                Some(Command::Delete)
+            }
         }
         Some('p') => {
             let _ = input.next();
@@ -33,7 +45,19 @@ where
         }
         Some('c') => {
             let _ = input.next();
-            Some(Command::Change)
+            if let Some('i') = input.peek() {
+                let _ = input.next();
+                match input.next() {
+                    Some(c)
+                        if is_valid_change_inside_left(c) || is_valid_change_inside_right(c) =>
+                    {
+                        Some(Command::ChangeInside(*c))
+                    }
+                    _ => None,
+                }
+            } else {
+                Some(Command::Change)
+            }
         }
         Some('x') => {
             let _ = input.next();
@@ -107,6 +131,8 @@ pub enum Command {
     HistorySearch,
     Switchcase,
     RepeatLastAction,
+    ChangeInside(char),
+    DeleteInside(char),
 }
 
 impl Command {
@@ -150,10 +176,44 @@ impl Command {
             // Whenever a motion is required to finish the command we must be in visual mode
             Self::Delete | Self::Change => vec![ReedlineOption::Edit(EditCommand::CutSelection)],
             Self::Incomplete => vec![ReedlineOption::Incomplete],
-            Command::RepeatLastAction => match &vi_state.previous {
+            Self::RepeatLastAction => match &vi_state.previous {
                 Some(event) => vec![ReedlineOption::Event(event.clone())],
                 None => vec![],
             },
+            Self::ChangeInside(left) if is_valid_change_inside_left(left) => {
+                let right = bracket_for(left);
+                vec![
+                    ReedlineOption::Edit(EditCommand::CutLeftBefore(*left)),
+                    ReedlineOption::Edit(EditCommand::CutRightBefore(right)),
+                ]
+            }
+            Self::ChangeInside(right) if is_valid_change_inside_right(right) => {
+                let left = bracket_for(right);
+                vec![
+                    ReedlineOption::Edit(EditCommand::CutLeftBefore(left)),
+                    ReedlineOption::Edit(EditCommand::CutRightBefore(*right)),
+                ]
+            }
+            Self::ChangeInside(_) => {
+                vec![]
+            }
+            Self::DeleteInside(left) if is_valid_change_inside_left(left) => {
+                let right = bracket_for(left);
+                vec![
+                    ReedlineOption::Edit(EditCommand::CutLeftBefore(*left)),
+                    ReedlineOption::Edit(EditCommand::CutRightBefore(right)),
+                ]
+            }
+            Self::DeleteInside(right) if is_valid_change_inside_right(right) => {
+                let left = bracket_for(right);
+                vec![
+                    ReedlineOption::Edit(EditCommand::CutLeftBefore(left)),
+                    ReedlineOption::Edit(EditCommand::CutRightBefore(*right)),
+                ]
+            }
+            Self::DeleteInside(_) => {
+                vec![]
+            }
         }
     }
 
@@ -275,4 +335,26 @@ impl Command {
             _ => None,
         }
     }
+}
+
+fn bracket_for(c: &char) -> char {
+    match *c {
+        '(' => ')',
+        '[' => ']',
+        '{' => '}',
+        '<' => '>',
+        ')' => '(',
+        ']' => '[',
+        '}' => '{',
+        '>' => '<',
+        _ => *c,
+    }
+}
+
+pub(crate) fn is_valid_change_inside_left(c: &char) -> bool {
+    matches!(c, '(' | '[' | '{' | '"' | '\'' | '`' | '<')
+}
+
+pub(crate) fn is_valid_change_inside_right(c: &char) -> bool {
+    matches!(c, ')' | ']' | '}' | '"' | '\'' | '`' | '>')
 }

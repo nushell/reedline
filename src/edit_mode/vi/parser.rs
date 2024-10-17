@@ -1,4 +1,6 @@
-use super::command::{parse_command, Command};
+use super::command::{
+    is_valid_change_inside_left, is_valid_change_inside_right, parse_command, Command,
+};
 use super::motion::{parse_motion, Motion};
 use crate::{edit_mode::vi::ViMode, EditCommand, ReedlineEvent, Vi};
 use std::iter::Peekable;
@@ -107,6 +109,11 @@ impl ParsedViSequence {
             | (Some(Command::SubstituteCharWithInsert), ParseResult::Incomplete)
             | (Some(Command::HistorySearch), ParseResult::Incomplete)
             | (Some(Command::Change), ParseResult::Valid(_)) => Some(ViMode::Insert),
+            (Some(Command::ChangeInside(char)), ParseResult::Incomplete)
+                if is_valid_change_inside_left(char) || is_valid_change_inside_right(char) =>
+            {
+                Some(ViMode::Insert)
+            }
             (Some(Command::Delete), ParseResult::Incomplete) => Some(ViMode::Normal),
             _ => None,
         }
