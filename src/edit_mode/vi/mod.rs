@@ -185,11 +185,9 @@ mod test {
     #[test]
     fn esc_leads_to_normal_mode_test() {
         let mut vi = Vi::default();
-        let esc = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Esc,
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
+        let esc =
+            ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+                .unwrap();
         let result = vi.parse_event(esc);
 
         assert_eq!(
