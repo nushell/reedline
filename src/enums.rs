@@ -697,41 +697,40 @@ pub(crate) enum EventStatus {
     Exits(Signal),
 }
 
-/// A simple wrapper for [crossterm::event::Event]
+/// A wrapper for [crossterm::event::Event].
 ///
-/// Which will make sure that the given event doesn't contain [KeyEventKind::Release]
-/// and convert from [KeyEventKind::Repeat] to [KeyEventKind::Press]
-pub struct ReedlineRawEvent {
-    inner: Event,
-}
+/// It ensures that the given event doesn't contain [KeyEventKind::Release]
+/// (which is rejected) or [KeyEventKind::Repeat] (which is converted to
+/// [KeyEventKind::Press]).
+pub struct ReedlineRawEvent(Event);
 
-impl ReedlineRawEvent {
-    /// It will return None if `evt` is released Key.
-    pub fn convert_from(evt: Event) -> Option<Self> {
-        match evt {
+impl TryFrom<Event> for ReedlineRawEvent {
+    type Error = ();
+
+    fn try_from(event: Event) -> Result<Self, Self::Error> {
+        match event {
             Event::Key(KeyEvent {
                 kind: KeyEventKind::Release,
                 ..
-            }) => None,
+            }) => Err(()),
             Event::Key(KeyEvent {
                 code,
                 modifiers,
                 kind: KeyEventKind::Repeat,
                 state,
-            }) => Some(Self {
-                inner: Event::Key(KeyEvent {
-                    code,
-                    modifiers,
-                    kind: KeyEventKind::Press,
-                    state,
-                }),
-            }),
-            other => Some(Self { inner: other }),
+            }) => Ok(Self(Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind: KeyEventKind::Press,
+                state,
+            }))),
+            other => Ok(Self(other)),
         }
     }
+}
 
-    /// Consume and get crossterm event object.
-    pub fn into(self) -> Event {
-        self.inner
+impl From<ReedlineRawEvent> for Event {
+    fn from(event: ReedlineRawEvent) -> Self {
+        event.0
     }
 }

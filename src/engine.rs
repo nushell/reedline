@@ -51,12 +51,16 @@ use {
 // a POLL_WAIT of zero means that every single event is treated as soon as it
 // arrives. This doesn't allow for the possibility of more than 1 event
 // happening at the same time.
-const POLL_WAIT: u64 = 10;
-// Since a paste event is multiple Event::Key events happening at the same time, we specify
-// how many events should be in the crossterm_events vector before it is considered
-// a paste. 10 events in 10 milliseconds is conservative enough (unlikely somebody
-// will type more than 10 characters in 10 milliseconds)
+const POLL_WAIT: Duration = Duration::from_millis(100);
+// Since a paste event is multiple `Event::Key` events happening at the same
+// time, we specify how many events should be in the `crossterm_events` vector
+// before it is considered a paste. 10 events is conservative enough.
 const EVENTS_THRESHOLD: usize = 10;
+
+/// Maximum time Reedline will block on input before yielding control to
+/// external printers.
+#[cfg(feature = "external_printer")]
+const EXTERNAL_PRINTER_WAIT: Duration = Duration::from_millis(100);
 
 /// Determines if inputs should be used to extend the regular line buffer,
 /// traverse the history in the standard prompt or edit the search string in the
@@ -695,12 +699,7 @@ impl Reedline {
 
         self.repaint(prompt)?;
 
-        let mut crossterm_events: Vec<ReedlineRawEvent> = vec![];
-        let mut reedline_events: Vec<ReedlineEvent> = vec![];
-
         loop {
-            let mut paste_enter_state = false;
-
             #[cfg(feature = "external_printer")]
             if let Some(ref external_printer) = self.external_printer {
                 // get messages from printer as crlf separated "lines"
@@ -716,76 +715,81 @@ impl Reedline {
                 }
             }
 
-            let mut latest_resize = None;
-            loop {
-                // There could be multiple events queued up!
-                // pasting text, resizes, blocking this thread (e.g. during debugging)
-                // We should be able to handle all of them as quickly as possible without causing unnecessary output steps.
-                if !event::poll(Duration::from_millis(POLL_WAIT))? {
-                    break;
+            // Helper function that returns true if the input is complete and
+            // can be sent to the hosting application.
+            fn completed(events: &[Event]) -> bool {
+                if let Some(event) = events.last() {
+                    matches!(
+                        event,
+                        Event::Key(KeyEvent {
+                            code: KeyCode::Enter,
+                            modifiers: KeyModifiers::NONE,
+                            ..
+                        })
+                    )
+                } else {
+                    false
                 }
+            }
 
-                match event::read()? {
-                    Event::Resize(x, y) => {
-                        latest_resize = Some((x, y));
-                    }
-                    enter @ Event::Key(KeyEvent {
-                        code: KeyCode::Enter,
-                        modifiers: KeyModifiers::NONE,
-                        ..
-                    }) => {
-                        let enter = ReedlineRawEvent::convert_from(enter);
-                        if let Some(enter) = enter {
-                            crossterm_events.push(enter);
-                            // Break early to check if the input is complete and
-                            // can be send to the hosting application. If
-                            // multiple complete entries are submitted, events
-                            // are still in the crossterm queue for us to
-                            // process.
-                            paste_enter_state = crossterm_events.len() > EVENTS_THRESHOLD;
-                            break;
-                        }
-                    }
-                    x => {
-                        let raw_event = ReedlineRawEvent::convert_from(x);
-                        if let Some(evt) = raw_event {
-                            crossterm_events.push(evt);
+            let mut events: Vec<Event> = vec![];
+
+            // If the `external_printer` feature is enabled, we need to
+            // periodically yield so that external printers get a chance to
+            // print. Otherwise, we can just block until we receive an event.
+            #[cfg(feature = "external_printer")]
+            if event::poll(EXTERNAL_PRINTER_WAIT)? {
+                events.push(crossterm::event::read()?);
+            }
+            #[cfg(not(feature = "external_printer"))]
+            events.push(crossterm::event::read()?);
+
+            // Receive all events in the queue without blocking. Will stop when
+            // a line of input is completed.
+            while !completed(&events) && event::poll(Duration::from_millis(0))? {
+                events.push(crossterm::event::read()?);
+            }
+
+            // If we believe there's text pasting or resizing going on, batch
+            // more events at the cost of a slight delay.
+            if events.len() > EVENTS_THRESHOLD
+                || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
+            {
+                while !completed(&events) && event::poll(POLL_WAIT)? {
+                    events.push(crossterm::event::read()?);
+                }
+            }
+
+            // Convert `Event` into `ReedlineEvent`. Also, fuse consecutive
+            // `ReedlineEvent::EditCommand` into one. Also, if there're multiple
+            // `ReedlineEvent::Resize`, only keep the last one.
+            let mut reedline_events: Vec<ReedlineEvent> = vec![];
+            let mut edits = vec![];
+            let mut resize = None;
+            for event in events {
+                if let Ok(event) = ReedlineRawEvent::try_from(event) {
+                    match self.edit_mode.parse_event(event) {
+                        ReedlineEvent::Edit(edit) => edits.extend(edit),
+                        ReedlineEvent::Resize(x, y) => resize = Some((x, y)),
+                        event => {
+                            if !edits.is_empty() {
+                                reedline_events
+                                    .push(ReedlineEvent::Edit(std::mem::take(&mut edits)));
+                            }
+                            reedline_events.push(event);
                         }
                     }
                 }
             }
-
-            if let Some((x, y)) = latest_resize {
+            if !edits.is_empty() {
+                reedline_events.push(ReedlineEvent::Edit(edits));
+            }
+            if let Some((x, y)) = resize {
                 reedline_events.push(ReedlineEvent::Resize(x, y));
             }
 
-            // Accelerate pasted text by fusing `EditCommand`s
-            //
-            // (Text should only be `EditCommand::InsertChar`s)
-            let mut last_edit_commands = None;
-            for event in crossterm_events.drain(..) {
-                match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
-                    (None, ReedlineEvent::Edit(ec)) => {
-                        last_edit_commands = Some(ec);
-                    }
-                    (None, other_event) => {
-                        reedline_events.push(other_event);
-                    }
-                    (Some(ref mut last_ecs), ReedlineEvent::Edit(ec)) => {
-                        last_ecs.extend(ec);
-                    }
-                    (ref mut a @ Some(_), other_event) => {
-                        reedline_events.push(ReedlineEvent::Edit(a.take().unwrap()));
-
-                        reedline_events.push(other_event);
-                    }
-                }
-            }
-            if let Some(ec) = last_edit_commands {
-                reedline_events.push(ReedlineEvent::Edit(ec));
-            }
-
-            for event in reedline_events.drain(..) {
+            // Handle reedline events.
+            for event in reedline_events {
                 match self.handle_event(prompt, event)? {
                     EventStatus::Exits(signal) => {
                         // Check if we are merely suspended (to process an ExecuteHostCommand event)
@@ -798,9 +802,7 @@ impl Reedline {
                         return Ok(signal);
                     }
                     EventStatus::Handled => {
-                        if !paste_enter_state {
-                            self.repaint(prompt)?;
-                        }
+                        self.repaint(prompt)?;
                     }
                     EventStatus::Inapplicable => {
                         // Nothing changed, no need to repaint
