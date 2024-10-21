@@ -28,10 +28,7 @@ fn prints_prompt() -> std::io::Result<()> {
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
 
     let text = extract_text(terminal.inner());
-    #[cfg(not(windows))]
-    assert_eq!(&text[0][..13], "~/reedline〉");
-    #[cfg(windows)]
-    assert_eq!(&text[0][..13], "~\\reedline〉");
+    assert_eq!(&text[0][..11], "Reedline〉");
 
     Ok(())
 }
@@ -47,7 +44,7 @@ fn echos_input() -> std::io::Result<()> {
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
     let text = extract_text(terminal.inner());
 
-    assert_eq!(&text[0][13..25], "Hello World!");
+    assert_eq!(&text[0][..23], "Reedline〉Hello World!");
     assert_eq!(&text[1][0..26], "We processed: Hello World!");
 
     Ok(())
@@ -66,7 +63,7 @@ fn backspace() -> std::io::Result<()> {
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
 
     let text = extract_text(terminal.inner());
-    assert_eq!(&text[0][13..25], "Hello Bread!");
+    assert_eq!(&text[0][..23], "Reedline〉Hello Bread!");
     assert_eq!(&text[1][0..26], "We processed: Hello Bread!");
 
     Ok(())
@@ -88,7 +85,7 @@ fn history() -> std::io::Result<()> {
     pty.write_all(b"\x1b[A")?;
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
     let text = extract_text(terminal.inner());
-    assert_eq!(&text[4][13..21], "Goodbye!");
+    assert_eq!(&text[4][..19], "Reedline〉Goodbye!");
 
     // press Enter to execute it
     pty.write_all(b"\r")?;
@@ -100,19 +97,19 @@ fn history() -> std::io::Result<()> {
     pty.write_all(b"\x1b[A\x1b[A")?;
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
     let text = extract_text(terminal.inner());
-    assert_eq!(&text[6][13..25], "Hello World!");
+    assert_eq!(&text[6][..23], "Reedline〉Hello World!");
 
     // arrow down twice
     pty.write_all(b"\x1b[B\x1b[B")?;
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
     let text = extract_text(terminal.inner());
-    assert_eq!(&text[6][13..25], "            ");
+    assert_eq!(&text[6][..23], "Reedline〉            ");
 
     // type "Hell" then arrow up
     pty.write_all(b"Hell\x1b[A")?;
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
     let text = extract_text(terminal.inner());
-    assert_eq!(&text[6][13..25], "Hello World!");
+    assert_eq!(&text[6][..23], "Reedline〉Hello World!");
 
     // TODO: not sure how reverse search works in Reedline
 
@@ -139,7 +136,7 @@ fn word_movement() -> std::io::Result<()> {
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
 
     let text = extract_text(terminal.inner());
-    assert_eq!(&text[0][13..26], "foo bazar baz");
+    assert_eq!(&text[0][..24], "Reedline〉foo bazar baz");
     assert_eq!(&text[1][..27], "We processed: foo bazar baz");
 
     Ok(())
@@ -159,7 +156,7 @@ fn clear_screen() -> std::io::Result<()> {
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
 
     let text = extract_text(terminal.inner());
-    assert_eq!(&text[0][13..25], "Hello again!");
+    assert_eq!(&text[0][..23], "Reedline〉Hello again!");
 
     Ok(())
 }
@@ -177,25 +174,25 @@ fn emacs_keybinds() -> std::io::Result<()> {
     pty.write_all(b"\x1a")?;
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
     let text = extract_text(terminal.inner());
-    assert_eq!(&text[0][13..25], "Hello       ");
+    assert_eq!(&text[0][..23], "Reedline〉Hello       ");
 
     // redo with Ctrl-g
     pty.write_all(b"\x07")?;
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
     let text = extract_text(terminal.inner());
-    assert_eq!(&text[0][13..25], "Hello World!");
+    assert_eq!(&text[0][..23], "Reedline〉Hello World!");
 
     // delete "World" with alt+left, alt+backspace
     pty.write_all(b"\x1b[1;3D\x1b\x7f")?;
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
     let text = extract_text(terminal.inner());
-    assert_eq!(&text[0][13..25], "Hello !     ");
+    assert_eq!(&text[0][..23], "Reedline〉Hello !     ");
 
     // make "Hello" ALL CAPS with alt+b, alt+u
     pty.write_all(b"\x1bb\x1bu")?;
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
     let text = extract_text(terminal.inner());
-    assert_eq!(&text[0][13..25], "HELLO !     ");
+    assert_eq!(&text[0][..23], "Reedline〉HELLO !     ");
 
     Ok(())
 }
