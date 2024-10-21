@@ -1,11 +1,8 @@
 //! Measure the typing latency of Reedline with default configurations.
 
-use alacritty_test::{pty_spawn, EventedReadWrite, Terminal};
+use alacritty_test::{pty_spawn, PtyExt, Terminal};
 use reedline::{DefaultPrompt, Reedline, Signal};
-use std::{
-    io::Write,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 fn child() -> ! {
     let mut line_editor = Reedline::create();
@@ -43,7 +40,7 @@ fn main() -> std::io::Result<()> {
         let old_cursor = terminal.inner().grid().cursor.point;
 
         // input a single keystroke
-        pty.writer().write_all(b"A").unwrap();
+        pty.write_all(b"A").unwrap();
 
         let start_time = Instant::now();
         loop {
@@ -63,7 +60,7 @@ fn main() -> std::io::Result<()> {
         );
 
         // delete the keystroke
-        pty.writer().write_all(b"\x7f\x7f\x7f\x7f").unwrap();
+        pty.write_all(b"\x7f\x7f\x7f\x7f").unwrap();
         terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
     }
 
