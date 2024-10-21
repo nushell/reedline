@@ -1,10 +1,29 @@
 use alacritty_test::{extract_text, pty_spawn, PtyExt, Terminal};
 use std::time::Duration;
 
+/// Return the absolute path to the test binary.
+fn testbin() -> String {
+    if let Ok(nextest) = std::env::var("NEXTEST") {
+        if nextest == "1" {
+            return std::env::var("NEXTEST_BIN_EXE_testbin").unwrap();
+        }
+    }
+
+    #[cfg(not(windows))]
+    let path = "target/debug/testbin";
+    #[cfg(windows)]
+    let path = "target/debug/testbin.exe";
+
+    std::fs::canonicalize(path)
+        .unwrap()
+        .to_string_lossy()
+        .to_string()
+}
+
 /// Test if Reedline prints the prompt at startup.
 #[test]
 fn prints_prompt() -> std::io::Result<()> {
-    let mut pty = pty_spawn("target/debug/examples/basic", vec![], None)?;
+    let mut pty = pty_spawn(&testbin(), vec![], None)?;
     let mut terminal = Terminal::new();
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
 
@@ -20,7 +39,7 @@ fn prints_prompt() -> std::io::Result<()> {
 /// Test if Reedline echos back input when the user presses Enter.
 #[test]
 fn echos_input() -> std::io::Result<()> {
-    let mut pty = pty_spawn("target/debug/examples/basic", vec![], None)?;
+    let mut pty = pty_spawn(&testbin(), vec![], None)?;
     let mut terminal = Terminal::new();
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
 
@@ -37,7 +56,7 @@ fn echos_input() -> std::io::Result<()> {
 /// Test if Reedline handles backspace correctly.
 #[test]
 fn backspace() -> std::io::Result<()> {
-    let mut pty = pty_spawn("target/debug/examples/basic", vec![], None)?;
+    let mut pty = pty_spawn(&testbin(), vec![], None)?;
     let mut terminal = Terminal::new();
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
 
@@ -56,7 +75,7 @@ fn backspace() -> std::io::Result<()> {
 /// Test if Reedline supports history via up/down arrow.
 #[test]
 fn history() -> std::io::Result<()> {
-    let mut pty = pty_spawn("target/debug/examples/basic", vec![], None)?;
+    let mut pty = pty_spawn(&testbin(), vec![], None)?;
     let mut terminal = Terminal::new();
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
 
@@ -89,8 +108,8 @@ fn history() -> std::io::Result<()> {
     let text = extract_text(terminal.inner());
     assert_eq!(&text[6][13..25], "            ");
 
-    // type "Hel" then arrow up
-    pty.write_all(b"Hel\x1b[A")?;
+    // type "Hell" then arrow up
+    pty.write_all(b"Hell\x1b[A")?;
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
     let text = extract_text(terminal.inner());
     assert_eq!(&text[6][13..25], "Hello World!");
@@ -103,7 +122,7 @@ fn history() -> std::io::Result<()> {
 /// Test if Reedline supports ctrl-b/ctrl-f/ctrl-left/ctrl-right style movement.
 #[test]
 fn word_movement() -> std::io::Result<()> {
-    let mut pty = pty_spawn("target/debug/examples/basic", vec![], None)?;
+    let mut pty = pty_spawn(&testbin(), vec![], None)?;
     let mut terminal = Terminal::new();
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
 
@@ -129,7 +148,7 @@ fn word_movement() -> std::io::Result<()> {
 /// Test if Ctrl-l clears the screen while keeping current entry.
 #[test]
 fn clear_screen() -> std::io::Result<()> {
-    let mut pty = pty_spawn("target/debug/examples/basic", vec![], None)?;
+    let mut pty = pty_spawn(&testbin(), vec![], None)?;
     let mut terminal = Terminal::new();
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
 
@@ -148,7 +167,7 @@ fn clear_screen() -> std::io::Result<()> {
 /// Test if Reedline supports common Emacs keybindings.
 #[test]
 fn emacs_keybinds() -> std::io::Result<()> {
-    let mut pty = pty_spawn("target/debug/examples/basic", vec![], None)?;
+    let mut pty = pty_spawn(&testbin(), vec![], None)?;
     let mut terminal = Terminal::new();
     terminal.read_from_pty(&mut pty, Some(Duration::from_millis(50)))?;
 
