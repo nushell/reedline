@@ -26,7 +26,7 @@ dependencies = [
 [[package]]
 name = "alacritty-test"
 version = "0.1.0"
-source = "git+https://github.com/YizhePKU/alacritty-test.git?rev=2f63ebe#2f63ebe293c7026e24342a3b934bc747065c5240"
+source = "git+https://github.com/YizhePKU/alacritty-test.git?rev=1c6dabc#1c6dabc3feaa8421cc5f557c9dae94382861e5da"
 dependencies = [
  "alacritty_terminal",
  "polling",
