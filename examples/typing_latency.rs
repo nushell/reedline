@@ -1,4 +1,7 @@
 //! Measure the typing latency of Reedline with default configurations.
+//!
+//! The result is not accurate on Windows, since alacritty has very bad latency
+//! response on Windows due to the way it implemented async-IO without IOCP.
 
 use alacritty_test::{pty_spawn, PtyExt, Terminal};
 use reedline::{DefaultPrompt, Reedline, Signal};
@@ -52,11 +55,13 @@ fn main() -> std::io::Result<()> {
                 break;
             }
         }
-        total_latency += start_time.elapsed();
+        let latency = start_time.elapsed();
+        total_latency += latency;
 
         println!(
-            "single keystroke latency = {:.2}ms, averaging over {loop_cnt} iterations",
-            (total_latency.as_millis() as f64) / (loop_cnt as f64),
+            "single keystroke latency = {:.2}ms, average latency = {:.2}ms over {loop_cnt} iterations",
+            (latency.as_millis() as f64),
+            (total_latency.as_millis() as f64) / (loop_cnt as f64)
         );
 
         // delete the keystroke
