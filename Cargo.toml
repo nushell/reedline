@@ -36,6 +36,7 @@ unicode-segmentation = "1.9.0"
 unicode-width = "0.1.9"
 
 [dev-dependencies]
+alacritty-test = { git = "https://github.com/YizhePKU/alacritty-test.git", rev = "6c4df50" }
 gethostname = "0.4.0"
 pretty_assertions = "1.4.0"
 rstest = { version = "0.18.0", default-features = false }
