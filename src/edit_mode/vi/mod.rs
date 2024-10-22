@@ -185,11 +185,9 @@ mod test {
     #[test]
     fn esc_leads_to_normal_mode_test() {
         let mut vi = Vi::default();
-        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
-            KeyCode::Esc,
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
+        let esc =
+            ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+                .unwrap();
         let result = vi.parse_event(esc);
 
         assert_eq!(
@@ -215,7 +213,7 @@ mod test {
             ..Default::default()
         };
 
-        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let esc = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('e'),
             KeyModifiers::NONE,
         )))
@@ -241,7 +239,7 @@ mod test {
             ..Default::default()
         };
 
-        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let esc = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('$'),
             KeyModifiers::SHIFT,
         )))
@@ -267,7 +265,7 @@ mod test {
             ..Default::default()
         };
 
-        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let esc = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('$'),
             KeyModifiers::SUPER,
         )))
@@ -287,7 +285,7 @@ mod test {
             ..Default::default()
         };
 
-        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let esc = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('q'),
             KeyModifiers::NONE,
         )))
