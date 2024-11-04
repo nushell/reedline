@@ -12,11 +12,7 @@ where
             if let Some('i') = input.peek() {
                 let _ = input.next();
                 match input.next() {
-                    Some(c)
-                        if is_valid_change_inside_left(c) || is_valid_change_inside_right(c) =>
-                    {
-                        Some(Command::DeleteInside(*c))
-                    }
+                    Some(c) if is_valid_change_inside(c) => Some(Command::DeleteInside(*c)),
                     _ => None,
                 }
             } else {
@@ -48,11 +44,7 @@ where
             if let Some('i') = input.peek() {
                 let _ = input.next();
                 match input.next() {
-                    Some(c)
-                        if is_valid_change_inside_left(c) || is_valid_change_inside_right(c) =>
-                    {
-                        Some(Command::ChangeInside(*c))
-                    }
+                    Some(c) if is_valid_change_inside(c) => Some(Command::ChangeInside(*c)),
                     _ => None,
                 }
             } else {
@@ -180,6 +172,12 @@ impl Command {
                 Some(event) => vec![ReedlineOption::Event(event.clone())],
                 None => vec![],
             },
+            Self::ChangeInside('w') => {
+                vec![
+                    ReedlineOption::Edit(EditCommand::BackspaceWord),
+                    ReedlineOption::Edit(EditCommand::DeleteWord),
+                ]
+            }
             Self::ChangeInside(left) if is_valid_change_inside_left(left) => {
                 let right = bracket_for(left);
                 vec![
@@ -196,6 +194,12 @@ impl Command {
             }
             Self::ChangeInside(_) => {
                 vec![]
+            }
+            Self::DeleteInside('w') => {
+                vec![
+                    ReedlineOption::Edit(EditCommand::BackspaceWord),
+                    ReedlineOption::Edit(EditCommand::DeleteWord),
+                ]
             }
             Self::DeleteInside(left) if is_valid_change_inside_left(left) => {
                 let right = bracket_for(left);
@@ -349,6 +353,10 @@ fn bracket_for(c: &char) -> char {
         '>' => '<',
         _ => *c,
     }
+}
+
+pub(crate) fn is_valid_change_inside(c: &char) -> bool {
+    *c == 'w' && is_valid_change_inside_left(c) && is_valid_change_inside_right(c)
 }
 
 pub(crate) fn is_valid_change_inside_left(c: &char) -> bool {
