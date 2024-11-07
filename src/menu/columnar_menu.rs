@@ -299,7 +299,7 @@ impl ColumnarMenu {
         use_ansi_coloring: bool,
     ) -> String {
         if use_ansi_coloring {
-            let match_len = self.working_details.shortest_base_string.width();
+            let match_len = self.working_details.shortest_base_string.len();
 
             // Split string so the match text can be styled
             let (match_str, remaining_str) = suggestion.value.split_at(match_len);
