@@ -356,7 +356,7 @@ fn bracket_for(c: &char) -> char {
 }
 
 pub(crate) fn is_valid_change_inside(c: &char) -> bool {
-    *c == 'w' && is_valid_change_inside_left(c) && is_valid_change_inside_right(c)
+    *c == 'w' || is_valid_change_inside_left(c) || is_valid_change_inside_right(c)
 }
 
 pub(crate) fn is_valid_change_inside_left(c: &char) -> bool {
