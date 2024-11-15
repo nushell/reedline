@@ -31,14 +31,12 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Setup Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1.3.4
       - name: Setup nextest
         uses: taiki-e/install-action@nextest
-      - name: Setup cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Rustfmt
         run: cargo fmt --all -- --check
@@ -47,7 +45,18 @@ jobs:
         run: cargo clippy ${{ matrix.flags }} --all-targets --all -- -D warnings
 
       - name: Tests
-        run: cargo llvm-cov nextest --all ${{ matrix.flags }} --lcov --output-path lcov.info
+        run: cargo nextest run --all ${{ matrix.flags }}
+
+      - name: Check for clean repo
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "there are changes";
+            git status --porcelain
+            exit 1
+          else
+            echo "no changes in working directory";
+          fi
 
       - name: Check lockfile
         run: cargo check --locked ${{ matrix.flags }} --all-targets --all
