@@ -234,7 +234,7 @@ pub fn add_common_edit_bindings(kb: &mut Keybindings) {
     );
     kb.add_binding(KM::ALT, KC::Enter, edit_bind(EC::InsertNewline));
     kb.add_binding(KM::SHIFT, KC::Enter, edit_bind(EC::InsertNewline));
-    kb.add_binding(KM::CONTROL, KC::Char('j'), edit_bind(EC::InsertNewline));
+    kb.add_binding(KM::CONTROL, KC::Char('j'), ReedlineEvent::Enter);
 }
 
 pub fn add_common_selection_bindings(kb: &mut Keybindings) {
