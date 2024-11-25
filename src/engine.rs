@@ -881,7 +881,7 @@ impl Reedline {
             ReedlineEvent::Mouse => Ok(EventStatus::Handled),
             ReedlineEvent::Resize(width, height) => {
                 self.painter.handle_resize(width, height);
-                Ok(EventStatus::Inapplicable)
+                Ok(EventStatus::Handled)
             }
             ReedlineEvent::Repaint => {
                 // A handled Event causes a repaint
@@ -1199,7 +1199,7 @@ impl Reedline {
             ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),
             ReedlineEvent::Resize(width, height) => {
                 self.painter.handle_resize(width, height);
-                Ok(EventStatus::Inapplicable)
+                Ok(EventStatus::Handled)
             }
             ReedlineEvent::Repaint => {
                 // A handled Event causes a repaint
