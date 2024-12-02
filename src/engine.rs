@@ -1182,7 +1182,7 @@ impl Reedline {
                             Some(&EditCommand::Backspace)
                             | Some(&EditCommand::BackspaceWord)
                             | Some(&EditCommand::MoveToLineStart { select: false }) => {
-                                menu.menu_event(MenuEvent::Deactivate(self.modal_mode))
+                                menu.menu_event(MenuEvent::Deactivate(false))
                             }
                             _ => {
                                 menu.menu_event(MenuEvent::Edit(self.quick_completions));
