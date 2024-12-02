@@ -28,7 +28,7 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
     keybindings.add_binding(
         KeyModifiers::ALT,
         KeyCode::Char('f'),
-        ReedlineEvent::ForceDeactivate,
+        ReedlineEvent::Multiple(vec![ReedlineEvent::ForceDeactivate, ReedlineEvent::Enter]),
     );
 }
 
