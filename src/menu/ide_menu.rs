@@ -617,9 +617,11 @@ impl Menu for IdeMenu {
     fn menu_event(&mut self, event: MenuEvent) {
         match &event {
             MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => {
-                self.active = false;
-                self.input = None;
+            MenuEvent::Deactivate(modal_mode) => {
+                if !modal_mode {
+                    self.active = false;
+                    self.input = None;
+                }
             }
             _ => {}
         }
@@ -671,7 +673,11 @@ impl Menu for IdeMenu {
                         self.update_values(editor, completer);
                     }
                 }
-                MenuEvent::Deactivate => self.active = false,
+                MenuEvent::Deactivate(modal_mode) => {
+                    if !modal_mode {
+                        self.active = false;
+                    }
+                }
                 MenuEvent::Edit(updated) => {
                     self.reset_position();
 

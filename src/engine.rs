@@ -113,6 +113,8 @@ pub struct Reedline {
     history_cursor_on_excluded: bool,
     input_mode: InputMode,
 
+    modal_mode: bool,
+
     // State of the painter after a `ReedlineEvent::ExecuteHostCommand` was requested, used after
     // execution to decide if we can re-use the previous prompt or paint a new one.
     suspended_state: Option<PainterSuspendedState>,
@@ -219,6 +221,7 @@ impl Reedline {
             history_excluded_item: None,
             history_cursor_on_excluded: false,
             input_mode: InputMode::Regular,
+            modal_mode: false,
             suspended_state: None,
             painter,
             transient_prompt: None,
@@ -534,6 +537,12 @@ impl Reedline {
     #[must_use]
     pub fn with_history_session_id(mut self, session: Option<HistorySessionId>) -> Self {
         self.history_session_id = session;
+        self
+    }
+
+    /// A builder which configures the modal mode for your instance of the Reedline engine
+    pub fn with_modal_mode(mut self, modal: bool) -> Self {
+        self.modal_mode = modal;
         self
     }
 
@@ -858,6 +867,7 @@ impl Reedline {
                 self.painter.clear_scrollback()?;
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::ForceDeactivate => Ok(EventStatus::Handled), // Not sure what to do here
             ReedlineEvent::Enter
             | ReedlineEvent::HistoryHintComplete
             | ReedlineEvent::Submit
@@ -1093,13 +1103,24 @@ impl Reedline {
                 self.painter.clear_scrollback()?;
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::ForceDeactivate => {
+                for menu in self.menus.iter_mut() {
+                    if menu.is_active() {
+                        menu.replace_in_buffer(&mut self.editor);
+                        menu.menu_event(MenuEvent::Deactivate(false));
+
+                        return Ok(EventStatus::Handled);
+                    }
+                }
+                Ok(EventStatus::Handled)
+            }
             ReedlineEvent::Enter | ReedlineEvent::Submit | ReedlineEvent::SubmitOrNewline
                 if self.menus.iter().any(|menu| menu.is_active()) =>
             {
                 for menu in self.menus.iter_mut() {
                     if menu.is_active() {
                         menu.replace_in_buffer(&mut self.editor);
-                        menu.menu_event(MenuEvent::Deactivate);
+                        menu.menu_event(MenuEvent::Deactivate(self.modal_mode));
 
                         return Ok(EventStatus::Handled);
                     }
@@ -1161,7 +1182,7 @@ impl Reedline {
                             Some(&EditCommand::Backspace)
                             | Some(&EditCommand::BackspaceWord)
                             | Some(&EditCommand::MoveToLineStart { select: false }) => {
-                                menu.menu_event(MenuEvent::Deactivate)
+                                menu.menu_event(MenuEvent::Deactivate(self.modal_mode))
                             }
                             _ => {
                                 menu.menu_event(MenuEvent::Edit(self.quick_completions));
@@ -1189,7 +1210,7 @@ impl Reedline {
                         }
                     }
                     if self.editor.line_buffer().get_buffer().is_empty() {
-                        menu.menu_event(MenuEvent::Deactivate);
+                        menu.menu_event(MenuEvent::Deactivate(self.modal_mode));
                     } else {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
                     }
@@ -1279,7 +1300,7 @@ impl Reedline {
     fn deactivate_menus(&mut self) {
         self.menus
             .iter_mut()
-            .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
+            .for_each(|menu| menu.menu_event(MenuEvent::Deactivate(self.modal_mode)));
     }
 
     fn previous_history(&mut self) {

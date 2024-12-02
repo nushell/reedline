@@ -429,10 +429,12 @@ impl Menu for DescriptionMenu {
     fn menu_event(&mut self, event: MenuEvent) {
         match &event {
             MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => {
-                self.active = false;
-                self.input = None;
-                self.values = Vec::new();
+            MenuEvent::Deactivate(modal_mode) => {
+                if !modal_mode {
+                    self.active = false;
+                    self.input = None;
+                    self.values = Vec::new();
+                }
             }
             _ => {}
         };
@@ -468,7 +470,11 @@ impl Menu for DescriptionMenu {
                     self.input = Some(editor.get_buffer().to_string());
                     self.update_values(editor, completer);
                 }
-                MenuEvent::Deactivate => self.active = false,
+                MenuEvent::Deactivate(modal_mode) => {
+                    if !modal_mode {
+                        self.active = false;
+                    }
+                }
                 MenuEvent::Edit(_) => {
                     self.reset_position();
                     self.update_values(editor, completer);

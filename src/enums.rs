@@ -569,6 +569,9 @@ pub enum ReedlineEvent {
     /// Submit at the end of the *complete* text, otherwise newline
     SubmitOrNewline,
 
+    /// Force deactivate - used for modal menus
+    ForceDeactivate,
+
     /// Esc event
     Esc,
 
@@ -659,6 +662,7 @@ impl Display for ReedlineEvent {
             ReedlineEvent::Enter => write!(f, "Enter"),
             ReedlineEvent::Submit => write!(f, "Submit"),
             ReedlineEvent::SubmitOrNewline => write!(f, "SubmitOrNewline"),
+            ReedlineEvent::ForceDeactivate => write!(f, "ForceDeactivate"),
             ReedlineEvent::Esc => write!(f, "Esc"),
             ReedlineEvent::Mouse => write!(f, "Mouse"),
             ReedlineEvent::Resize(_, _) => write!(f, "Resize <int> <int>"),

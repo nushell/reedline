@@ -334,9 +334,11 @@ impl Menu for ListMenu {
     fn menu_event(&mut self, event: MenuEvent) {
         match &event {
             MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => {
-                self.active = false;
-                self.input = None;
+            MenuEvent::Deactivate(modal_mode) => {
+                if !modal_mode {
+                    self.active = false;
+                    self.input = None;
+                }
             }
             _ => {}
         }
@@ -435,9 +437,11 @@ impl Menu for ListMenu {
                         full: false,
                     });
                 }
-                MenuEvent::Deactivate => {
-                    self.active = false;
-                    self.input = None;
+                MenuEvent::Deactivate(modal_mode) => {
+                    if !modal_mode {
+                        self.active = false;
+                        self.input = None;
+                    }
                 }
                 MenuEvent::Edit(_) => {
                     self.update_values(editor, completer);
