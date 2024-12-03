@@ -221,7 +221,7 @@ impl Reedline {
             history_excluded_item: None,
             history_cursor_on_excluded: false,
             input_mode: InputMode::Regular,
-            modal_mode: true,
+            modal_mode: false,
             suspended_state: None,
             painter,
             transient_prompt: None,
