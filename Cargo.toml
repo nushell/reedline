@@ -6,7 +6,7 @@ license = "MIT"
 name = "reedline"
 repository = "https://github.com/nushell/reedline"
 rust-version = "1.63.0"
-version = "0.37.0"
+version = "0.38.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
