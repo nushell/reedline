@@ -13,7 +13,7 @@ pub(crate) struct HistoryCompleter<'menu>(&'menu dyn History);
 
 // Safe to implement Send since the HistoryCompleter should only be used when
 // updating the menu and that must happen in the same thread
-unsafe impl<'menu> Send for HistoryCompleter<'menu> {}
+unsafe impl Send for HistoryCompleter<'_> {}
 
 fn search_unique(
     completer: &HistoryCompleter,
@@ -30,7 +30,7 @@ fn search_unique(
         .filter(move |value| seen_matching_command_lines.insert(value.command_line.clone())))
 }
 
-impl<'menu> Completer for HistoryCompleter<'menu> {
+impl Completer for HistoryCompleter<'_> {
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
         match search_unique(self, line) {
             Err(_) => vec![],
