@@ -183,8 +183,6 @@ pub trait History: Send {
     /// load a history item by its id
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem>;
 
-    /// retrieves the next unused session id
-
     /// count the results of a query
     fn count(&self, query: SearchQuery) -> Result<i64>;
     /// return the total number of history items
