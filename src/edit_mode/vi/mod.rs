@@ -31,6 +31,7 @@ pub struct Vi {
     previous: Option<ReedlineEvent>,
     // last f, F, t, T motion for ; and ,
     last_char_search: Option<ViCharSearch>,
+    seq_completed: bool,
 }
 
 impl Default for Vi {
@@ -42,6 +43,7 @@ impl Default for Vi {
             mode: ViMode::Insert,
             previous: None,
             last_char_search: None,
+            seq_completed: true,
         }
     }
 }
@@ -71,12 +73,13 @@ impl EditMode for Vi {
                 (ViMode::Normal | ViMode::Visual, modifier, KeyCode::Char(c)) => {
                     let c = c.to_ascii_lowercase();
 
-                    if let Some(event) = self
+                    let binding = self
                         .normal_keybindings
-                        .find_binding(modifiers, KeyCode::Char(c))
+                        .find_binding(modifiers, KeyCode::Char(c));
+                    if !self.seq_completed
+                        || binding.is_none()
+                            && (modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT)
                     {
-                        event
-                    } else if modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT {
                         self.cache.push(if modifier == KeyModifiers::SHIFT {
                             c.to_ascii_uppercase()
                         } else {
@@ -84,7 +87,7 @@ impl EditMode for Vi {
                         });
 
                         let res = parse(&mut self.cache.iter().peekable());
-
+                        self.seq_completed = res.is_complete();
                         if !res.is_valid() {
                             self.cache.clear();
                             ReedlineEvent::None
@@ -99,6 +102,8 @@ impl EditMode for Vi {
                         } else {
                             ReedlineEvent::None
                         }
+                    } else if let Some(event) = binding {
+                        event
                     } else {
                         ReedlineEvent::None
                     }
@@ -293,5 +298,46 @@ mod test {
         let result = vi.parse_event(esc);
 
         assert_eq!(result, ReedlineEvent::None);
+    }
+
+    #[test]
+    fn find_custom_keybinding_test() {
+        let mut keybindings = default_vi_normal_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::SHIFT,
+            KeyCode::Char('B'),
+            ReedlineEvent::Edit(vec![EditCommand::MoveBigWordLeft { select: false }]),
+        );
+        let mut vi = Vi {
+            insert_keybindings: default_vi_insert_keybindings(),
+            normal_keybindings: keybindings,
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let _ = vi.parse_event(
+            ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+                KeyCode::Char('f'),
+                KeyModifiers::NONE,
+            )))
+            .unwrap(),
+        );
+        let res = vi.parse_event(
+            ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+                KeyCode::Char('B'),
+                KeyModifiers::SHIFT,
+            )))
+            .unwrap(),
+        );
+
+        assert_eq!(
+            res,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![
+                EditCommand::MoveRightUntil {
+                    c: 'B',
+                    select: false
+                }
+            ])])
+        );
     }
 }
