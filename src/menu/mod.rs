@@ -307,7 +307,7 @@ impl ReedlineMenu {
         values_updated: bool,
         editor: &mut Editor,
         completer: &mut dyn Completer,
-        history: &dyn History,
+        history: &(dyn History + Send + Sync),
     ) -> bool {
         match self {
             Self::EngineCompleter(menu) => {
@@ -328,7 +328,7 @@ impl ReedlineMenu {
         &mut self,
         editor: &mut Editor,
         completer: &mut dyn Completer,
-        history: &dyn History,
+        history: &(dyn History + Send + Sync),
     ) {
         match self {
             Self::EngineCompleter(menu) => menu.update_values(editor, completer),
@@ -349,7 +349,7 @@ impl ReedlineMenu {
         &mut self,
         editor: &mut Editor,
         completer: &mut dyn Completer,
-        history: &dyn History,
+        history: &(dyn History + Send + Sync),
         painter: &Painter,
     ) {
         match self {

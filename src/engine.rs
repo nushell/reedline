@@ -103,7 +103,7 @@ pub struct Reedline {
     editor: Editor,
 
     // History
-    history: Box<dyn History>,
+    history: Box<dyn History + Send + Sync>,
     history_cursor: HistoryCursor,
     history_session_id: Option<HistorySessionId>,
     // none if history doesn't support this
@@ -420,7 +420,7 @@ impl Reedline {
     ///     .with_history(history);
     /// ```
     #[must_use]
-    pub fn with_history(mut self, history: Box<dyn History>) -> Self {
+    pub fn with_history(mut self, history: Box<dyn History + Send + Sync>) -> Self {
         self.history = history;
         self
     }
