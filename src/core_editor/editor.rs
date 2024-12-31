@@ -564,10 +564,17 @@ impl Editor {
     /// The range is guaranteed to be ascending.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
         self.selection_anchor.map(|selection_anchor| {
+            let buffer_len = self.line_buffer.len();
             if self.insertion_point() > selection_anchor {
-                (selection_anchor, self.insertion_point())
+                (
+                    selection_anchor,
+                    (self.insertion_point() + 1).min(buffer_len),
+                )
             } else {
-                (self.insertion_point(), selection_anchor)
+                (
+                    self.insertion_point(),
+                    (selection_anchor + 1).min(buffer_len),
+                )
             }
         })
     }

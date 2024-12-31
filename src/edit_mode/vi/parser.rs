@@ -108,7 +108,8 @@ impl ParsedViSequence {
             | (Some(Command::RewriteCurrentLine), ParseResult::Incomplete)
             | (Some(Command::SubstituteCharWithInsert), ParseResult::Incomplete)
             | (Some(Command::HistorySearch), ParseResult::Incomplete)
-            | (Some(Command::Change), ParseResult::Valid(_)) => Some(ViMode::Insert),
+            | (Some(Command::Change), ParseResult::Valid(_))
+            | (Some(Command::Change), ParseResult::Incomplete) => Some(ViMode::Insert),
             (Some(Command::ChangeInside(char)), ParseResult::Incomplete)
                 if is_valid_change_inside_left(char) || is_valid_change_inside_right(char) =>
             {
