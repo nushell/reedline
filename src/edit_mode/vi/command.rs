@@ -166,7 +166,13 @@ impl Command {
                 select: false,
             })],
             Self::RewriteCurrentLine => vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)],
-            Self::DeleteChar => vec![ReedlineOption::Edit(EditCommand::CutChar)],
+            Self::DeleteChar => {
+                if vi_state.mode == ViMode::Visual {
+                    vec![ReedlineOption::Edit(EditCommand::CutSelection)]
+                } else {
+                    vec![ReedlineOption::Edit(EditCommand::CutChar)]
+                }
+            }
             Self::ReplaceChar(c) => {
                 vec![ReedlineOption::Edit(EditCommand::ReplaceChar(*c))]
             }
