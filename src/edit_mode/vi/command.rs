@@ -1,4 +1,4 @@
-use super::{motion::Motion, motion::ViCharSearch, parser::ReedlineOption};
+use super::{motion::Motion, motion::ViCharSearch, parser::ReedlineOption, ViMode};
 use crate::{EditCommand, ReedlineEvent, Vi};
 use std::iter::Peekable;
 
@@ -170,7 +170,18 @@ impl Command {
             Self::ReplaceChar(c) => {
                 vec![ReedlineOption::Edit(EditCommand::ReplaceChar(*c))]
             }
-            Self::SubstituteCharWithInsert => vec![ReedlineOption::Edit(EditCommand::CutChar)],
+            Self::SubstituteCharWithInsert => {
+                println!("Command::to_reedline - SubstituteCharWithInsert executing with mode: {:?}", vi_state.mode);
+                let result = if vi_state.mode == ViMode::Visual {
+                    println!("Command::to_reedline - Executing CutSelection in Visual mode");
+                    vec![ReedlineOption::Edit(EditCommand::CutSelection)]
+                } else {
+                    println!("Command::to_reedline - Executing CutChar in Normal mode");
+                    vec![ReedlineOption::Edit(EditCommand::CutChar)]
+                };
+                println!("Command::to_reedline - Command execution complete");
+                result
+            }
             Self::HistorySearch => vec![ReedlineOption::Event(ReedlineEvent::SearchHistory)],
             Self::Switchcase => vec![ReedlineOption::Edit(EditCommand::SwitchcaseChar)],
             // Whenever a motion is required to finish the command we must be in visual mode

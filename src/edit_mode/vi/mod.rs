@@ -89,11 +89,12 @@ impl EditMode for Vi {
                             self.cache.clear();
                             ReedlineEvent::None
                         } else if res.is_complete(self.mode) {
+                            println!("Vi parse_event - Before command execution: {:?}", self.mode);
+                            let event = res.to_reedline_event(self);
                             if let Some(mode) = res.changes_mode() {
+                                println!("Vi parse_event - Changing mode to: {:?}", mode);
                                 self.mode = mode;
                             }
-
-                            let event = res.to_reedline_event(self);
                             self.cache.clear();
                             event
                         } else {
