@@ -267,6 +267,57 @@ pub enum EditCommand {
     /// Paste content from local buffer at the current cursor position
     Paste,
 
+    /// Copy from the start of the buffer to the insertion point
+    CopyFromStart,
+
+    /// Copy from the start of the current line to the insertion point
+    CopyFromLineStart,
+
+    /// Copy from the insertion point to the end of the buffer
+    CopyToEnd,
+
+    /// Copy from the insertion point to the end of the current line
+    CopyToLineEnd,
+
+    /// Copy the current line
+    CopyCurrentLine,
+
+    /// Copy the word left of the insertion point
+    CopyWordLeft,
+
+    /// Copy the WORD left of the insertion point
+    CopyBigWordLeft,
+
+    /// Copy the word right of the insertion point
+    CopyWordRight,
+
+    /// Copy the WORD right of the insertion point
+    CopyBigWordRight,
+
+    /// Copy the word right of the insertion point and any following space
+    CopyWordRightToNext,
+
+    /// Copy the WORD right of the insertion point and any following space
+    CopyBigWordRightToNext,
+
+    /// Copy one character to the left
+    CopyLeft,
+
+    /// Copy one character to the right
+    CopyRight,
+
+    /// Copy until right until char
+    CopyRightUntil(char),
+
+    /// Copy right before char
+    CopyRightBefore(char),
+
+    /// Copy left until char
+    CopyLeftUntil(char),
+
+    /// Copy left before char
+    CopyLeftBefore(char),
+
     /// Cut selection to system clipboard
     #[cfg(feature = "system_clipboard")]
     CutSelectionSystem,
@@ -281,6 +332,13 @@ pub enum EditCommand {
 
     /// Delete text between matching characters atomically
     CutInside {
+        /// Left character of the pair
+        left: char,
+        /// Right character of the pair (usually matching bracket)
+        right: char,
+    },
+    /// Yank text between matching characters atomically
+    YankInside {
         /// Left character of the pair
         left: char,
         /// Right character of the pair (usually matching bracket)
@@ -373,6 +431,23 @@ impl Display for EditCommand {
             EditCommand::CutSelection => write!(f, "CutSelection"),
             EditCommand::CopySelection => write!(f, "CopySelection"),
             EditCommand::Paste => write!(f, "Paste"),
+            EditCommand::CopyFromStart => write!(f, "CopyFromStart"),
+            EditCommand::CopyFromLineStart => write!(f, "CopyFromLineStart"),
+            EditCommand::CopyToEnd => write!(f, "CopyToEnd"),
+            EditCommand::CopyToLineEnd => write!(f, "CopyToLineEnd"),
+            EditCommand::CopyCurrentLine => write!(f, "CopyCurrentLine"),
+            EditCommand::CopyWordLeft => write!(f, "CopyWordLeft"),
+            EditCommand::CopyBigWordLeft => write!(f, "CopyBigWordLeft"),
+            EditCommand::CopyWordRight => write!(f, "CopyWordRight"),
+            EditCommand::CopyBigWordRight => write!(f, "CopyBigWordRight"),
+            EditCommand::CopyWordRightToNext => write!(f, "CopyWordRightToNext"),
+            EditCommand::CopyBigWordRightToNext => write!(f, "CopyBigWordRightToNext"),
+            EditCommand::CopyLeft => write!(f, "CopyLeft"),
+            EditCommand::CopyRight => write!(f, "CopyRight"),
+            EditCommand::CopyRightUntil(_) => write!(f, "CopyRightUntil Value: <char>"),
+            EditCommand::CopyRightBefore(_) => write!(f, "CopyRightBefore Value: <char>"),
+            EditCommand::CopyLeftUntil(_) => write!(f, "CopyLeftUntil Value: <char>"),
+            EditCommand::CopyLeftBefore(_) => write!(f, "CopyLeftBefore Value: <char>"),
             #[cfg(feature = "system_clipboard")]
             EditCommand::CutSelectionSystem => write!(f, "CutSelectionSystem"),
             #[cfg(feature = "system_clipboard")]
@@ -380,6 +455,7 @@ impl Display for EditCommand {
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => write!(f, "PasteSystem"),
             EditCommand::CutInside { .. } => write!(f, "CutInside Value: <char> <char>"),
+            EditCommand::YankInside { .. } => write!(f, "YankInside Value: <char> <char>"),
         }
     }
 }
@@ -461,6 +537,24 @@ impl EditCommand {
             #[cfg(feature = "system_clipboard")]
             EditCommand::CopySelectionSystem => EditType::NoOp,
             EditCommand::CutInside { .. } => EditType::EditText,
+            EditCommand::YankInside { .. } => EditType::EditText,
+            EditCommand::CopyFromStart
+            | EditCommand::CopyFromLineStart
+            | EditCommand::CopyToEnd
+            | EditCommand::CopyToLineEnd
+            | EditCommand::CopyCurrentLine
+            | EditCommand::CopyWordLeft
+            | EditCommand::CopyBigWordLeft
+            | EditCommand::CopyWordRight
+            | EditCommand::CopyBigWordRight
+            | EditCommand::CopyWordRightToNext
+            | EditCommand::CopyBigWordRightToNext
+            | EditCommand::CopyLeft
+            | EditCommand::CopyRight
+            | EditCommand::CopyRightUntil(_)
+            | EditCommand::CopyRightBefore(_)
+            | EditCommand::CopyLeftUntil(_)
+            | EditCommand::CopyLeftBefore(_) => EditType::NoOp,
         }
     }
 }

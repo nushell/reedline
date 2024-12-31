@@ -120,6 +120,49 @@ impl Editor {
             EditCommand::CutSelection => self.cut_selection_to_cut_buffer(),
             EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
             EditCommand::Paste => self.paste_cut_buffer(),
+            EditCommand::CopyFromStart => self.copy_from_start(),
+            EditCommand::CopyFromLineStart => self.copy_from_line_start(),
+            EditCommand::CopyToEnd => self.copy_from_end(),
+            EditCommand::CopyToLineEnd => self.copy_to_line_end(),
+            EditCommand::CopyWordLeft => self.copy_word_left(),
+            EditCommand::CopyBigWordLeft => self.copy_big_word_left(),
+            EditCommand::CopyWordRight => self.copy_word_right(),
+            EditCommand::CopyBigWordRight => self.copy_big_word_right(),
+            EditCommand::CopyWordRightToNext => self.copy_word_right_to_next(),
+            EditCommand::CopyBigWordRightToNext => self.copy_big_word_right_to_next(),
+            EditCommand::CopyRightUntil(c) => self.copy_right_until_char(*c, false, true),
+            EditCommand::CopyRightBefore(c) => self.copy_right_until_char(*c, true, true),
+            EditCommand::CopyLeftUntil(c) => self.copy_left_until_char(*c, false, true),
+            EditCommand::CopyLeftBefore(c) => self.copy_left_until_char(*c, true, true),
+            EditCommand::CopyCurrentLine => {
+                let range = self.line_buffer.current_line_range();
+                let copy_slice = &self.line_buffer.get_buffer()[range];
+                if !copy_slice.is_empty() {
+                    self.cut_buffer.set(copy_slice, ClipboardMode::Lines);
+                }
+            }
+            EditCommand::CopyLeft => {
+                let insertion_offset = self.line_buffer.insertion_point();
+                if insertion_offset > 0 {
+                    let left_index = self.line_buffer.grapheme_left_index();
+                    let copy_range = left_index..insertion_offset;
+                    self.cut_buffer.set(
+                        &self.line_buffer.get_buffer()[copy_range],
+                        ClipboardMode::Normal,
+                    );
+                }
+            }
+            EditCommand::CopyRight => {
+                let insertion_offset = self.line_buffer.insertion_point();
+                let right_index = self.line_buffer.grapheme_right_index();
+                if right_index > insertion_offset {
+                    let copy_range = insertion_offset..right_index;
+                    self.cut_buffer.set(
+                        &self.line_buffer.get_buffer()[copy_range],
+                        ClipboardMode::Normal,
+                    );
+                }
+            }
             #[cfg(feature = "system_clipboard")]
             EditCommand::CutSelectionSystem => self.cut_selection_to_system(),
             #[cfg(feature = "system_clipboard")]
@@ -127,6 +170,7 @@ impl Editor {
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => self.paste_from_system(),
             EditCommand::CutInside { left, right } => self.cut_inside(*left, *right),
+            EditCommand::YankInside { left, right } => self.yank_inside(*left, *right),
         }
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
             self.selection_anchor = None;
@@ -687,6 +731,165 @@ impl Editor {
             }
         }
     }
+
+    pub(crate) fn copy_from_start(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        if insertion_offset > 0 {
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[..insertion_offset],
+                ClipboardMode::Normal,
+            );
+        }
+    }
+
+    pub(crate) fn copy_from_line_start(&mut self) {
+        let previous_offset = self.line_buffer.insertion_point();
+        let start_offset = {
+            let temp_pos = self.line_buffer.insertion_point();
+            self.line_buffer.move_to_line_start();
+            let start = self.line_buffer.insertion_point();
+            self.line_buffer.set_insertion_point(temp_pos);
+            start
+        };
+        let copy_range = start_offset..previous_offset;
+        let copy_slice = &self.line_buffer.get_buffer()[copy_range];
+        if !copy_slice.is_empty() {
+            self.cut_buffer.set(copy_slice, ClipboardMode::Normal);
+        }
+    }
+
+    pub(crate) fn copy_from_end(&mut self) {
+        let copy_slice = &self.line_buffer.get_buffer()[self.line_buffer.insertion_point()..];
+        if !copy_slice.is_empty() {
+            self.cut_buffer.set(copy_slice, ClipboardMode::Normal);
+        }
+    }
+
+    pub(crate) fn copy_to_line_end(&mut self) {
+        let copy_slice = &self.line_buffer.get_buffer()
+            [self.line_buffer.insertion_point()..self.line_buffer.find_current_line_end()];
+        if !copy_slice.is_empty() {
+            self.cut_buffer.set(copy_slice, ClipboardMode::Normal);
+        }
+    }
+
+    pub(crate) fn copy_word_left(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let left_index = self.line_buffer.word_left_index();
+        if left_index < insertion_offset {
+            let copy_range = left_index..insertion_offset;
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[copy_range],
+                ClipboardMode::Normal,
+            );
+        }
+    }
+
+    pub(crate) fn copy_big_word_left(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let left_index = self.line_buffer.big_word_left_index();
+        if left_index < insertion_offset {
+            let copy_range = left_index..insertion_offset;
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[copy_range],
+                ClipboardMode::Normal,
+            );
+        }
+    }
+
+    pub(crate) fn copy_word_right(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let right_index = self.line_buffer.word_right_index();
+        if right_index > insertion_offset {
+            let copy_range = insertion_offset..right_index;
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[copy_range],
+                ClipboardMode::Normal,
+            );
+        }
+    }
+
+    pub(crate) fn copy_big_word_right(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let right_index = self.line_buffer.next_whitespace();
+        if right_index > insertion_offset {
+            let copy_range = insertion_offset..right_index;
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[copy_range],
+                ClipboardMode::Normal,
+            );
+        }
+    }
+
+    pub(crate) fn copy_word_right_to_next(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let right_index = self.line_buffer.word_right_start_index();
+        if right_index > insertion_offset {
+            let copy_range = insertion_offset..right_index;
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[copy_range],
+                ClipboardMode::Normal,
+            );
+        }
+    }
+
+    pub(crate) fn copy_big_word_right_to_next(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let right_index = self.line_buffer.big_word_right_start_index();
+        if right_index > insertion_offset {
+            let copy_range = insertion_offset..right_index;
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[copy_range],
+                ClipboardMode::Normal,
+            );
+        }
+    }
+
+    pub(crate) fn copy_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
+        if let Some(index) = self.line_buffer.find_char_right(c, current_line) {
+            let extra = if before_char { 0 } else { c.len_utf8() };
+            let copy_slice =
+                &self.line_buffer.get_buffer()[self.line_buffer.insertion_point()..index + extra];
+            if !copy_slice.is_empty() {
+                self.cut_buffer.set(copy_slice, ClipboardMode::Normal);
+            }
+        }
+    }
+
+    pub(crate) fn copy_left_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
+        if let Some(index) = self.line_buffer.find_char_left(c, current_line) {
+            let extra = if before_char { c.len_utf8() } else { 0 };
+            let copy_slice =
+                &self.line_buffer.get_buffer()[index + extra..self.line_buffer.insertion_point()];
+            if !copy_slice.is_empty() {
+                self.cut_buffer.set(copy_slice, ClipboardMode::Normal);
+            }
+        }
+    }
+
+    /// Yank text strictly between matching `left_char` and `right_char`.
+    /// Copies it into the cut buffer without removing anything.
+    /// Leaves the buffer unchanged and restores the original cursor.
+    pub(crate) fn yank_inside(&mut self, left_char: char, right_char: char) {
+        let old_pos = self.insertion_point();
+        let buffer_len = self.line_buffer.len();
+
+        if let Some((lp, rp)) =
+            self.line_buffer
+                .find_matching_pair(left_char, right_char, self.insertion_point())
+        {
+            let inside_start = lp + left_char.len_utf8();
+            if inside_start < rp && rp <= buffer_len {
+                let inside_slice = &self.line_buffer.get_buffer()[inside_start..rp];
+                if !inside_slice.is_empty() {
+                    self.cut_buffer.set(inside_slice, ClipboardMode::Normal);
+                }
+            }
+        }
+
+        // Always restore the cursor position
+        self.line_buffer.set_insertion_point(old_pos);
+    }
 }
 
 fn insert_clipboard_content_before(line_buffer: &mut LineBuffer, clipboard: &mut dyn Clipboard) {
@@ -1003,5 +1206,63 @@ mod test {
         assert_eq!(editor.get_buffer(), "foo()quux");
         assert_eq!(editor.insertion_point(), 4);
         assert_eq!(editor.cut_buffer.get().0, "bar()qux");
+    }
+
+    #[test]
+    fn test_yank_inside_brackets() {
+        let mut editor = editor_with("foo(bar)baz");
+        editor.move_to_position(5, false); // Move inside brackets
+        editor.yank_inside('(', ')');
+        assert_eq!(editor.get_buffer(), "foo(bar)baz"); // Buffer shouldn't change
+        assert_eq!(editor.insertion_point(), 5); // Cursor should return to original position
+
+        // Test yanked content by pasting
+        editor.paste_cut_buffer();
+        assert_eq!(editor.get_buffer(), "foo(bbarar)baz");
+
+        // Test with cursor outside brackets
+        let mut editor = editor_with("foo(bar)baz");
+        editor.move_to_position(0, false);
+        editor.yank_inside('(', ')');
+        assert_eq!(editor.get_buffer(), "foo(bar)baz");
+        assert_eq!(editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn test_yank_inside_quotes() {
+        let mut editor = editor_with("foo\"bar\"baz");
+        editor.move_to_position(5, false); // Move inside quotes
+        editor.yank_inside('"', '"');
+        assert_eq!(editor.get_buffer(), "foo\"bar\"baz"); // Buffer shouldn't change
+        assert_eq!(editor.insertion_point(), 5); // Cursor should return to original position
+        assert_eq!(editor.cut_buffer.get().0, "bar");
+
+        // Test with no matching quotes
+        let mut editor = editor_with("foo bar baz");
+        editor.move_to_position(4, false);
+        editor.yank_inside('"', '"');
+        assert_eq!(editor.get_buffer(), "foo bar baz");
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.cut_buffer.get().0, "");
+    }
+
+    #[test]
+    fn test_yank_inside_nested() {
+        let mut editor = editor_with("foo(bar(baz)qux)quux");
+        editor.move_to_position(8, false); // Move inside inner brackets
+        editor.yank_inside('(', ')');
+        assert_eq!(editor.get_buffer(), "foo(bar(baz)qux)quux"); // Buffer shouldn't change
+        assert_eq!(editor.insertion_point(), 8);
+        assert_eq!(editor.cut_buffer.get().0, "baz");
+
+        // Test yanked content by pasting
+        editor.paste_cut_buffer();
+        assert_eq!(editor.get_buffer(), "foo(bar(bazbaz)qux)quux");
+
+        editor.move_to_position(4, false); // Move inside outer brackets
+        editor.yank_inside('(', ')');
+        assert_eq!(editor.get_buffer(), "foo(bar(bazbaz)qux)quux");
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.cut_buffer.get().0, "bar(bazbaz)qux");
     }
 }

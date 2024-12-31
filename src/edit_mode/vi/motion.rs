@@ -295,4 +295,13 @@ impl ViCharSearch {
             ViCharSearch::TillLeft(c) => EditCommand::CutLeftBefore(*c),
         }
     }
+
+    pub fn to_copy(&self) -> EditCommand {
+        match self {
+            ViCharSearch::ToRight(c) => EditCommand::CopyRightUntil(*c),
+            ViCharSearch::TillRight(c) => EditCommand::CopyRightBefore(*c),
+            ViCharSearch::ToLeft(c) => EditCommand::CopyLeftUntil(*c),
+            ViCharSearch::TillLeft(c) => EditCommand::CopyLeftBefore(*c),
+        }
+    }
 }
