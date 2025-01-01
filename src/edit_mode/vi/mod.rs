@@ -90,7 +90,7 @@ impl EditMode for Vi {
                             ReedlineEvent::None
                         } else if res.is_complete(self.mode) {
                             let event = res.to_reedline_event(self);
-                            if let Some(mode) = res.changes_mode() {
+                            if let Some(mode) = res.changes_mode(self.mode) {
                                 self.mode = mode;
                             }
                             self.cache.clear();
