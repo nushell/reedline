@@ -143,12 +143,7 @@ impl EditMode for Vi {
                     self.cache.clear();
                     self.mode = ViMode::Normal;
                     ReedlineEvent::Multiple(vec![
-                        // Move left then right to clear the selection.
-                        // Order matters here: this makes sure cursor does not move at end of line
-                        ReedlineEvent::Edit(vec![
-                            EditCommand::MoveLeft { select: false },
-                            EditCommand::MoveRight { select: false },
-                        ]),
+                        ReedlineEvent::ResetSelection,
                         ReedlineEvent::Esc,
                         ReedlineEvent::Repaint,
                     ])
@@ -201,10 +196,7 @@ mod test {
         assert_eq!(
             result,
             ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![
-                    EditCommand::MoveLeft { select: false },
-                    EditCommand::MoveRight { select: false }
-                ]),
+                ReedlineEvent::ResetSelection,
                 ReedlineEvent::Esc,
                 ReedlineEvent::Repaint
             ])

@@ -644,6 +644,9 @@ pub enum ReedlineEvent {
 
     /// Open text editor
     OpenEditor,
+
+    /// Reset the current text selection
+    ResetSelection,
 }
 
 impl Display for ReedlineEvent {
@@ -687,6 +690,7 @@ impl Display for ReedlineEvent {
             ReedlineEvent::MenuPagePrevious => write!(f, "MenuPagePrevious"),
             ReedlineEvent::ExecuteHostCommand(_) => write!(f, "ExecuteHostCommand"),
             ReedlineEvent::OpenEditor => write!(f, "OpenEditor"),
+            ReedlineEvent::ResetSelection => write!(f, "ResetSelection"),
         }
     }
 }

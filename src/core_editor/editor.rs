@@ -655,6 +655,10 @@ impl Editor {
         self.delete_selection();
         insert_clipboard_content_before(&mut self.line_buffer, self.cut_buffer.deref_mut());
     }
+
+    pub(crate) fn reset_selection(&mut self) {
+        self.selection_anchor = None;
+    }
 }
 
 fn insert_clipboard_content_before(line_buffer: &mut LineBuffer, clipboard: &mut dyn Clipboard) {
