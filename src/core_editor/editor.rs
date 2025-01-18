@@ -568,12 +568,14 @@ impl Editor {
             if self.insertion_point() > selection_anchor {
                 (
                     selection_anchor,
-                    (self.insertion_point() + 1).min(buffer_len),
+                    self.line_buffer.grapheme_right_index().min(buffer_len),
                 )
             } else {
                 (
                     self.insertion_point(),
-                    (selection_anchor + 1).min(buffer_len),
+                    self.line_buffer
+                        .grapheme_right_index_from_pos(selection_anchor)
+                        .min(buffer_len),
                 )
             }
         })
