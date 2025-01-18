@@ -776,6 +776,119 @@ impl LineBuffer {
             self.insertion_point = index + c.len_utf8();
         }
     }
+
+    /// Attempts to find the matching `(left_char, right_char)` pair *enclosing*
+    /// the cursor position, respecting nested pairs.
+    ///
+    /// Algorithm:
+    /// 1. Walk left from `cursor` until we find the "outermost" `left_char`,
+    ///    ignoring any extra `right_char` we see (i.e., we keep a depth counter).
+    /// 2. Then from that left bracket, walk right to find the matching `right_char`,
+    ///    also respecting nesting.
+    ///
+    /// Returns `Some((left_index, right_index))` if found, or `None` otherwise.
+    pub fn find_matching_pair(
+        &self,
+        left_char: char,
+        right_char: char,
+        cursor: usize,
+    ) -> Option<(usize, usize)> {
+        // Special case: quotes or the same char for left & right
+        // (Vi doesn't do nested quotes, so no depth counting).
+        if left_char == right_char {
+            // 1) Walk left to find the first matching quote
+            let mut scan_pos = cursor;
+            while scan_pos > 0 {
+                // Move left by one grapheme
+                let mut tmp = LineBuffer {
+                    lines: self.lines.clone(),
+                    insertion_point: scan_pos,
+                };
+                tmp.move_left();
+                scan_pos = tmp.insertion_point;
+
+                if scan_pos >= self.lines.len() {
+                    break;
+                }
+                let ch = self.lines[scan_pos..].chars().next().unwrap_or('\0');
+                if ch == left_char {
+                    // Found the "left quote"
+                    let left_index = scan_pos;
+                    // 2) Now walk right to find the next matching quote
+                    let mut scan_pos_r = left_index + left_char.len_utf8();
+                    while scan_pos_r < self.lines.len() {
+                        let next_ch = self.lines[scan_pos_r..].chars().next().unwrap();
+                        if next_ch == right_char {
+                            return Some((left_index, scan_pos_r));
+                        }
+                        scan_pos_r += next_ch.len_utf8();
+                    }
+                    return None; // no right quote found
+                }
+            }
+            return None; // no left quote found
+        }
+
+        // Step 1: search left
+        let mut scan_pos = cursor;
+        let mut depth = 0;
+
+        while scan_pos > 0 {
+            // Move left by one grapheme
+            scan_pos = {
+                // a small helper to move left from an arbitrary position
+                let mut tmp = LineBuffer {
+                    lines: self.lines.clone(),
+                    insertion_point: scan_pos,
+                };
+                tmp.move_left();
+                tmp.insertion_point
+            };
+            if scan_pos >= self.lines.len() {
+                break;
+            }
+
+            let ch = self.lines[scan_pos..].chars().next().unwrap_or('\0');
+
+            if ch == left_char && depth == 0 {
+                // Found the "outermost" left bracket
+                let left_index = scan_pos;
+                // Step 2: search right from `left_index + left_char.len_utf8()` to find matching
+                let mut scan_pos_r = left_index + left_char.len_utf8();
+                let mut depth_r = 0;
+
+                while scan_pos_r < self.lines.len() {
+                    let next_ch = self.lines[scan_pos_r..].chars().next().unwrap();
+                    if next_ch == left_char {
+                        depth_r += 1;
+                    } else if next_ch == right_char {
+                        if depth_r == 0 {
+                            // Found the matching close
+                            let right_index = scan_pos_r;
+                            return Some((left_index, right_index));
+                        } else {
+                            depth_r -= 1;
+                        }
+                    }
+                    scan_pos_r += next_ch.len_utf8();
+                }
+                // Matching right bracket not found
+                return None;
+            } else if ch == right_char {
+                // This means we are "inside" nested parentheses, so increment nesting
+                depth += 1;
+            } else if ch == left_char {
+                // If we see another left_char while depth>0, it just closes one nesting level
+                if depth > 0 {
+                    depth -= 1;
+                } else {
+                    // That would be the outer bracket if depth==0,
+                    // but we handle that in the `if ch == left_char && depth == 0` above
+                }
+            }
+        }
+        None
+    }
 }
 
 /// Match any sequence of characters that are considered a word boundary

@@ -126,6 +126,10 @@ impl Editor {
             EditCommand::CopySelectionSystem => self.copy_selection_to_system(),
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => self.paste_from_system(),
+            EditCommand::CutInside {
+                left_char,
+                right_char,
+            } => self.cut_inside(*left_char, *right_char),
         }
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
             self.selection_anchor = None;
@@ -661,6 +665,35 @@ impl Editor {
     pub(crate) fn reset_selection(&mut self) {
         self.selection_anchor = None;
     }
+
+    /// Delete text strictly between matching `left_char` and `right_char`.
+    /// Places deleted text into the cut buffer.
+    /// Leaves the parentheses/quotes/etc. themselves.
+    /// On success, move the cursor just after the `left_char`.
+    /// If matching chars can't be found, restore the original cursor.
+    pub(crate) fn cut_inside(&mut self, left_char: char, right_char: char) {
+        let old_pos = self.insertion_point();
+        let buffer_len = self.line_buffer.len();
+
+        if let Some((lp, rp)) =
+            self.line_buffer
+                .find_matching_pair(left_char, right_char, self.insertion_point())
+        {
+            let inside_start = lp + left_char.len_utf8();
+            if inside_start < rp && rp <= buffer_len {
+                let inside_slice = &self.line_buffer.get_buffer()[inside_start..rp];
+                if !inside_slice.is_empty() {
+                    self.cut_buffer.set(inside_slice, ClipboardMode::Normal);
+                    self.line_buffer.clear_range_safe(inside_start, rp);
+                }
+                self.line_buffer
+                    .set_insertion_point(lp + left_char.len_utf8());
+                return;
+            }
+        }
+        // If no valid pair was found, restore original cursor
+        self.line_buffer.set_insertion_point(old_pos);
+    }
 }
 
 fn insert_clipboard_content_before(line_buffer: &mut LineBuffer, clipboard: &mut dyn Clipboard) {
@@ -910,5 +943,72 @@ mod test {
             editor.run_edit_command(&EditCommand::PasteSystem);
             pretty_assertions::assert_eq!(editor.line_buffer.len(), s.len() * 2);
         }
+    }
+
+    #[test]
+    fn test_cut_inside_brackets() {
+        let mut editor = editor_with("foo(bar)baz");
+        editor.move_to_position(5, false); // Move inside brackets
+        editor.cut_inside('(', ')');
+        assert_eq!(editor.get_buffer(), "foo()baz");
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.cut_buffer.get().0, "bar");
+
+        // Test with cursor outside brackets
+        let mut editor = editor_with("foo(bar)baz");
+        editor.move_to_position(0, false);
+        editor.cut_inside('(', ')');
+        assert_eq!(editor.get_buffer(), "foo(bar)baz");
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.cut_buffer.get().0, "");
+
+        // Test with no matching brackets
+        let mut editor = editor_with("foo bar baz");
+        editor.move_to_position(4, false);
+        editor.cut_inside('(', ')');
+        assert_eq!(editor.get_buffer(), "foo bar baz");
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.cut_buffer.get().0, "");
+    }
+
+    #[test]
+    fn test_cut_inside_quotes() {
+        let mut editor = editor_with("foo\"bar\"baz");
+        editor.move_to_position(5, false); // Move inside quotes
+        editor.cut_inside('"', '"');
+        assert_eq!(editor.get_buffer(), "foo\"\"baz");
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.cut_buffer.get().0, "bar");
+
+        // Test with cursor outside quotes
+        let mut editor = editor_with("foo\"bar\"baz");
+        editor.move_to_position(0, false);
+        editor.cut_inside('"', '"');
+        assert_eq!(editor.get_buffer(), "foo\"bar\"baz");
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.cut_buffer.get().0, "");
+
+        // Test with no matching quotes
+        let mut editor = editor_with("foo bar baz");
+        editor.move_to_position(4, false);
+        editor.cut_inside('"', '"');
+        assert_eq!(editor.get_buffer(), "foo bar baz");
+        assert_eq!(editor.insertion_point(), 4);
+    }
+
+    #[test]
+    fn test_cut_inside_nested() {
+        let mut editor = editor_with("foo(bar(baz)qux)quux");
+        editor.move_to_position(8, false); // Move inside inner brackets
+        editor.cut_inside('(', ')');
+        assert_eq!(editor.get_buffer(), "foo(bar()qux)quux");
+        assert_eq!(editor.insertion_point(), 8);
+        assert_eq!(editor.cut_buffer.get().0, "baz");
+
+        editor.move_to_position(4, false); // Move inside outer brackets
+        editor.cut_inside('(', ')');
+        assert_eq!(editor.get_buffer(), "foo()quux");
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.cut_buffer.get().0, "bar()qux");
     }
 }
