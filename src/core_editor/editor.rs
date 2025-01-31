@@ -1127,6 +1127,31 @@ mod test {
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(editor.get_buffer(), "This \r\n is a test");
     }
+
+    #[test]
+    fn test_swap_cursor_and_anchor() {
+        let mut editor = editor_with("This is some test content");
+        editor.line_buffer.set_insertion_point(0);
+        editor.update_selection_anchor(true);
+
+        for _ in 0..3 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+        assert_eq!(editor.selection_anchor, Some(0));
+        assert_eq!(editor.insertion_point(), 3);
+        assert_eq!(editor.get_selection(), Some((0, 4)));
+
+        editor.run_edit_command(&EditCommand::SwapCursorAndAnchor);
+        assert_eq!(editor.selection_anchor, Some(3));
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.get_selection(), Some((0, 4)));
+
+        editor.run_edit_command(&EditCommand::SwapCursorAndAnchor);
+        assert_eq!(editor.selection_anchor, Some(0));
+        assert_eq!(editor.insertion_point(), 3);
+        assert_eq!(editor.get_selection(), Some((0, 4)));
+    }
+
     #[cfg(feature = "system_clipboard")]
     mod without_system_clipboard {
         use super::*;
