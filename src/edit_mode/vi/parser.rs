@@ -98,7 +98,7 @@ impl ParsedViSequence {
         }
     }
 
-    pub fn changes_mode(&self) -> Option<ViMode> {
+    pub fn changes_mode(&self, mode: ViMode) -> Option<ViMode> {
         match (&self.command, &self.motion) {
             (Some(Command::EnterViInsert), ParseResult::Incomplete)
             | (Some(Command::EnterViAppend), ParseResult::Incomplete)
@@ -109,12 +109,17 @@ impl ParsedViSequence {
             | (Some(Command::SubstituteCharWithInsert), ParseResult::Incomplete)
             | (Some(Command::HistorySearch), ParseResult::Incomplete)
             | (Some(Command::Change), ParseResult::Valid(_)) => Some(ViMode::Insert),
-            (Some(Command::ChangeInside(char)), ParseResult::Incomplete)
+            (Some(Command::Change), ParseResult::Incomplete) if mode == ViMode::Visual => {
+                Some(ViMode::Insert)
+            }
+            (Some(Command::Delete), ParseResult::Incomplete) if mode == ViMode::Visual => {
+                Some(ViMode::Normal)
+            }
+            (Some(Command::ChangeInside(char)), ParseResult::Valid(_))
                 if is_valid_change_inside_left(char) || is_valid_change_inside_right(char) =>
             {
                 Some(ViMode::Insert)
             }
-            (Some(Command::Delete), ParseResult::Incomplete) => Some(ViMode::Normal),
             _ => None,
         }
     }

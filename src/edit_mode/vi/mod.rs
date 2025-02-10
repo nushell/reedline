@@ -89,11 +89,10 @@ impl EditMode for Vi {
                             self.cache.clear();
                             ReedlineEvent::None
                         } else if res.is_complete(self.mode) {
-                            if let Some(mode) = res.changes_mode() {
+                            let event = res.to_reedline_event(self);
+                            if let Some(mode) = res.changes_mode(self.mode) {
                                 self.mode = mode;
                             }
-
-                            let event = res.to_reedline_event(self);
                             self.cache.clear();
                             event
                         } else {
@@ -143,7 +142,11 @@ impl EditMode for Vi {
                 (_, KeyModifiers::NONE, KeyCode::Esc) => {
                     self.cache.clear();
                     self.mode = ViMode::Normal;
-                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+                    ReedlineEvent::Multiple(vec![
+                        ReedlineEvent::ResetSelection,
+                        ReedlineEvent::Esc,
+                        ReedlineEvent::Repaint,
+                    ])
                 }
                 (_, KeyModifiers::NONE, KeyCode::Enter) => {
                     self.mode = ViMode::Insert;
@@ -192,7 +195,11 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::ResetSelection,
+                ReedlineEvent::Esc,
+                ReedlineEvent::Repaint
+            ])
         );
         assert!(matches!(vi.mode, ViMode::Normal));
     }

@@ -168,6 +168,15 @@ impl LineBuffer {
             .unwrap_or(0)
     }
 
+    /// Cursor position *behind* the next unicode grapheme to the right from the given position
+    pub fn grapheme_right_index_from_pos(&self, pos: usize) -> usize {
+        self.lines[pos..]
+            .grapheme_indices(true)
+            .nth(1)
+            .map(|(i, _)| pos + i)
+            .unwrap_or_else(|| self.lines.len())
+    }
+
     /// Cursor position *behind* the next word to the right
     pub fn word_right_index(&self) -> usize {
         self.lines[self.insertion_point..]
@@ -1596,5 +1605,27 @@ mod test {
         let index = line_buffer.next_whitespace();
 
         assert_eq!(index, expected);
+    }
+
+    #[rstest]
+    #[case("abc", 0, 1)] // Basic ASCII
+    #[case("abc", 1, 2)] // From middle position
+    #[case("abc", 2, 3)] // From last char
+    #[case("abc", 3, 3)] // From end of string
+    #[case("🦀rust", 0, 4)] // Unicode emoji
+    #[case("🦀rust", 4, 5)] // After emoji
+    #[case("é́", 0, 4)] // Combining characters
+    fn test_grapheme_right_index_from_pos(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line = LineBuffer::new();
+        line.insert_str(input);
+        assert_eq!(
+            line.grapheme_right_index_from_pos(position),
+            expected,
+            "input: {input:?}, pos: {position}"
+        );
     }
 }
