@@ -693,7 +693,6 @@ impl Reedline {
         prompt: &dyn Prompt,
         immediately_execute: bool,
     ) -> Result<Signal> {
-        dbg!(immediately_execute);
         self.painter
             .initialize_prompt_position(self.suspended_state.as_ref())?;
         if self.suspended_state.is_some() {
@@ -759,7 +758,7 @@ impl Reedline {
             // If we believe there's text pasting or resizing going on, batch
             // more events at the cost of a slight delay.
             if events.len() > EVENTS_THRESHOLD
-                || events.iter().any(|e| matches!(e, Event::Resize(_, _))) && !immediately_execute
+                || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
             {
                 while !completed(&events) && event::poll(POLL_WAIT)? {
                     events.push(crossterm::event::read()?);
@@ -795,6 +794,7 @@ impl Reedline {
             }
             println!("Checking and pushing Submit");
             if immediately_execute {
+                dbg!(self.current_buffer_contents());
                 reedline_events.push(ReedlineEvent::Submit);
             }
 
