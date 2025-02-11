@@ -643,7 +643,6 @@ impl Reedline {
     /// Returns a [`std::io::Result`] in which the `Err` type is [`std::io::Result`]
     /// and the `Ok` variant wraps a [`Signal`] which handles user inputs.
     pub fn read_line(&mut self, prompt: &dyn Prompt, immediately_execute: bool) -> Result<Signal> {
-        dbg!(immediately_execute);
         terminal::enable_raw_mode()?;
         self.bracketed_paste.enter();
         self.kitty_protocol.enter();
@@ -739,7 +738,6 @@ impl Reedline {
 
             let mut events: Vec<Event> = vec![];
 
-            dbg!(self.current_buffer_contents());
             if !immediately_execute {
                 // If the `external_printer` feature is enabled, we need to
                 // periodically yield so that external printers get a chance to
@@ -795,7 +793,6 @@ impl Reedline {
             if let Some((x, y)) = resize {
                 reedline_events.push(ReedlineEvent::Resize(x, y));
             }
-            println!("Checking and pushing Submit");
             if immediately_execute {
                 reedline_events.push(ReedlineEvent::Submit);
             }
