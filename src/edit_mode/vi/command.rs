@@ -12,16 +12,10 @@ where
             // Checking for "di(" or "di)" etc.
             if let Some('i') = input.peek() {
                 let _ = input.next();
-                match input.next() {
-                    Some(&c) => {
-                        if let Some((l, r)) = bracket_pair_for(c) {
-                            Some(Command::DeleteInsidePair { left: l, right: r })
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
+                input
+                    .next()
+                    .and_then(|c| bracket_pair_for(*c))
+                    .map(|(left, right)| Command::DeleteInsidePair { left, right })
             } else {
                 Some(Command::Delete)
             }
@@ -51,16 +45,10 @@ where
             let _ = input.next();
             if let Some('i') = input.peek() {
                 let _ = input.next();
-                match input.next() {
-                    Some(&c) => {
-                        if let Some((l, r)) = bracket_pair_for(c) {
-                            Some(Command::ChangeInsidePair { left: l, right: r })
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
+                input
+                    .next()
+                    .and_then(|c| bracket_pair_for(*c))
+                    .map(|(left, right)| Command::ChangeInsidePair { left, right })
             } else {
                 Some(Command::Change)
             }
@@ -71,10 +59,10 @@ where
         }
         Some('r') => {
             let _ = input.next();
-            match input.next() {
-                Some(c) => Some(Command::ReplaceChar(*c)),
-                None => Some(Command::Incomplete),
-            }
+            input
+                .next()
+                .map(|c| Command::ReplaceChar(*c))
+                .or(Some(Command::Incomplete))
         }
         Some('s') => {
             let _ = input.next();
