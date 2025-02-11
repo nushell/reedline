@@ -756,7 +756,6 @@ impl Reedline {
                 events.push(crossterm::event::read()?);
             }
 
-            println!("Pre second read");
             // If we believe there's text pasting or resizing going on, batch
             // more events at the cost of a slight delay.
             if events.len() > EVENTS_THRESHOLD
@@ -766,7 +765,6 @@ impl Reedline {
                     events.push(crossterm::event::read()?);
                 }
             }
-            println!("Post second read");
 
             // Convert `Event` into `ReedlineEvent`. Also, fuse consecutive
             // `ReedlineEvent::EditCommand` into one. Also, if there're multiple
@@ -789,15 +787,15 @@ impl Reedline {
                     }
                 }
             }
-            println!("Checking and pushing Submit");
-            if immediately_execute {
-                reedline_events.push(ReedlineEvent::Submit);
-            }
             if !edits.is_empty() {
                 reedline_events.push(ReedlineEvent::Edit(edits));
             }
             if let Some((x, y)) = resize {
                 reedline_events.push(ReedlineEvent::Resize(x, y));
+            }
+            println!("Checking and pushing Submit");
+            if immediately_execute {
+                reedline_events.push(ReedlineEvent::Submit);
             }
 
             // Handle reedline events.
