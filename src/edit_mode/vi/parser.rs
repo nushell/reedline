@@ -120,7 +120,10 @@ impl ParsedViSequence {
             | (Some(Command::Delete), ParseResult::Valid(_))
             | (Some(Command::DeleteChar), ParseResult::Valid(_))
             | (Some(Command::DeleteToEnd), ParseResult::Valid(_))
-            | (Some(Command::DeleteInsidePair { .. }), _) => Some(ViMode::Normal),
+            | (Some(Command::Yank), ParseResult::Valid(_))
+            | (Some(Command::Yank), ParseResult::Incomplete)
+            | (Some(Command::DeleteInsidePair { .. }), _)
+            | (Some(Command::YankInsidePair { .. }), _) => Some(ViMode::Normal),
             _ => None,
         }
     }
