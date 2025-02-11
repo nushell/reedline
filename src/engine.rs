@@ -643,6 +643,7 @@ impl Reedline {
     /// Returns a [`std::io::Result`] in which the `Err` type is [`std::io::Result`]
     /// and the `Ok` variant wraps a [`Signal`] which handles user inputs.
     pub fn read_line(&mut self, prompt: &dyn Prompt, immediately_execute: bool) -> Result<Signal> {
+        dbg!(immediately_execute);
         terminal::enable_raw_mode()?;
         self.bracketed_paste.enter();
         self.kitty_protocol.enter();
@@ -692,6 +693,7 @@ impl Reedline {
         prompt: &dyn Prompt,
         immediately_execute: bool,
     ) -> Result<Signal> {
+        dbg!(immediately_execute);
         self.painter
             .initialize_prompt_position(self.suspended_state.as_ref())?;
         if self.suspended_state.is_some() {

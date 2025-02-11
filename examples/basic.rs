@@ -12,7 +12,7 @@ fn main() -> io::Result<()> {
     let prompt = DefaultPrompt::default();
 
     loop {
-        let sig = line_editor.read_line(&prompt)?;
+        let sig = line_editor.read_line(&prompt, false)?;
         match sig {
             Signal::Success(buffer) => {
                 println!("We processed: {buffer}");
