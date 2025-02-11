@@ -739,23 +739,24 @@ impl Reedline {
 
             let mut events: Vec<Event> = vec![];
 
-            // If the `external_printer` feature is enabled, we need to
-            // periodically yield so that external printers get a chance to
-            // print. Otherwise, we can just block until we receive an event.
-            #[cfg(feature = "external_printer")]
-            if event::poll(EXTERNAL_PRINTER_WAIT)? {
-                events.push(crossterm::event::read()?);
-            }
-            #[cfg(not(feature = "external_printer"))]
-            events.push(crossterm::event::read()?);
-
-            // Receive all events in the queue without blocking. Will stop when
-            // a line of input is completed.
-            while !completed(&events) && event::poll(Duration::from_millis(0))? {
-                events.push(crossterm::event::read()?);
-            }
-
+            dbg!(self.current_buffer_contents());
             if !immediately_execute {
+                // If the `external_printer` feature is enabled, we need to
+                // periodically yield so that external printers get a chance to
+                // print. Otherwise, we can just block until we receive an event.
+                #[cfg(feature = "external_printer")]
+                if event::poll(EXTERNAL_PRINTER_WAIT)? {
+                    events.push(crossterm::event::read()?);
+                }
+                #[cfg(not(feature = "external_printer"))]
+                events.push(crossterm::event::read()?);
+
+                // a line of input is completed.
+                // Receive all events in the queue without blocking. Will stop when
+                while !completed(&events) && event::poll(Duration::from_millis(0))? {
+                    events.push(crossterm::event::read()?);
+                }
+
                 // If we believe there's text pasting or resizing going on, batch
                 // more events at the cost of a slight delay.
                 if events.len() > EVENTS_THRESHOLD
