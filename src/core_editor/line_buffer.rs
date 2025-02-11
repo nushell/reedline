@@ -793,102 +793,51 @@ impl LineBuffer {
         right_char: char,
         cursor: usize,
     ) -> Option<(usize, usize)> {
-        // Special case: quotes or the same char for left & right
-        // (Vi doesn't do nested quotes, so no depth counting).
-        if left_char == right_char {
-            // 1) Walk left to find the first matching quote
-            let mut scan_pos = cursor;
-            while scan_pos > 0 {
-                // Move left by one grapheme
-                let mut tmp = LineBuffer {
-                    lines: self.lines.clone(),
-                    insertion_point: scan_pos,
-                };
-                tmp.move_left();
-                scan_pos = tmp.insertion_point;
+        // encode to &str so we can compare with &strs later
+        let mut tmp = ([0u8; 4], [0u8, 4]);
+        let left_str = left_char.encode_utf8(&mut tmp.0);
+        let right_str = right_char.encode_utf8(&mut tmp.1);
+        // search left for left char
+        let to_cursor = self.lines.get(..=cursor)?;
+        let left_index = find_with_depth(to_cursor, left_str, right_str, true)?;
 
-                if scan_pos >= self.lines.len() {
-                    break;
-                }
-                let ch = self.lines[scan_pos..].chars().next().unwrap_or('\0');
-                if ch == left_char {
-                    // Found the "left quote"
-                    let left_index = scan_pos;
-                    // 2) Now walk right to find the next matching quote
-                    let mut scan_pos_r = left_index + left_char.len_utf8();
-                    while scan_pos_r < self.lines.len() {
-                        let next_ch = self.lines[scan_pos_r..].chars().next().unwrap();
-                        if next_ch == right_char {
-                            return Some((left_index, scan_pos_r));
-                        }
-                        scan_pos_r += next_ch.len_utf8();
-                    }
-                    return None; // no right quote found
-                }
-            }
-            return None; // no left quote found
-        }
+        // search right for right char
+        let scan_start = left_index + left_char.len_utf8();
+        let after_left = self.lines.get(scan_start..)?;
+        let right_offset = find_with_depth(after_left, right_str, left_str, false)?;
 
-        // Step 1: search left
-        let mut scan_pos = cursor;
-        let mut depth = 0;
-
-        while scan_pos > 0 {
-            // Move left by one grapheme
-            scan_pos = {
-                // a small helper to move left from an arbitrary position
-                let mut tmp = LineBuffer {
-                    lines: self.lines.clone(),
-                    insertion_point: scan_pos,
-                };
-                tmp.move_left();
-                tmp.insertion_point
-            };
-            if scan_pos >= self.lines.len() {
-                break;
-            }
-
-            let ch = self.lines[scan_pos..].chars().next().unwrap_or('\0');
-
-            if ch == left_char && depth == 0 {
-                // Found the "outermost" left bracket
-                let left_index = scan_pos;
-                // Step 2: search right from `left_index + left_char.len_utf8()` to find matching
-                let mut scan_pos_r = left_index + left_char.len_utf8();
-                let mut depth_r = 0;
-
-                while scan_pos_r < self.lines.len() {
-                    let next_ch = self.lines[scan_pos_r..].chars().next().unwrap();
-                    if next_ch == left_char {
-                        depth_r += 1;
-                    } else if next_ch == right_char {
-                        if depth_r == 0 {
-                            // Found the matching close
-                            let right_index = scan_pos_r;
-                            return Some((left_index, right_index));
-                        } else {
-                            depth_r -= 1;
-                        }
-                    }
-                    scan_pos_r += next_ch.len_utf8();
-                }
-                // Matching right bracket not found
-                return None;
-            } else if ch == right_char {
-                // This means we are "inside" nested parentheses, so increment nesting
-                depth += 1;
-            } else if ch == left_char {
-                // If we see another left_char while depth>0, it just closes one nesting level
-                if depth > 0 {
-                    depth -= 1;
-                } else {
-                    // That would be the outer bracket if depth==0,
-                    // but we handle that in the `if ch == left_char && depth == 0` above
-                }
-            }
-        }
-        None
+        Some((left_index, scan_start + right_offset))
     }
+}
+
+/// Helper function for [`LineBuffer::find_matching_pair`]
+fn find_with_depth(
+    slice: &str,
+    deep_char: &str,
+    shallow_char: &str,
+    reverse: bool,
+) -> Option<usize> {
+    let mut depth: i32 = 0;
+
+    let mut indices: Vec<_> = slice.grapheme_indices(true).collect();
+    if reverse {
+        indices.reverse();
+    }
+
+    for (idx, c) in indices.into_iter() {
+        match c {
+            c if c == deep_char && depth == 0 => return Some(idx),
+            c if c == deep_char => depth -= 1,
+            // special case: shallow char at end of slice shouldn't affect depth.
+            // cursor over right bracket should be counted as the end of the pair,
+            // not as a closing a separate nested pair
+            c if c == shallow_char && idx == (slice.len() - 1) => (),
+            c if c == shallow_char => depth += 1,
+            _ => (),
+        }
+    }
+
+    None
 }
 
 /// Match any sequence of characters that are considered a word boundary
@@ -1739,6 +1688,38 @@ mod test {
             line.grapheme_right_index_from_pos(position),
             expected,
             "input: {input:?}, pos: {position}"
+        );
+    }
+
+    #[rstest]
+    #[case("(abc)", 0, '(', ')', Some((0, 4)))] // Basic matching
+    #[case("(abc)", 4, '(', ')', Some((0, 4)))] // Cursor at end
+    #[case("(abc)", 2, '(', ')', Some((0, 4)))] // Cursor in middle
+    #[case("((abc))", 0, '(', ')', Some((0, 6)))] // Nested pairs outer
+    #[case("((abc))", 1, '(', ')', Some((1, 5)))] // Nested pairs inner
+    #[case("(abc)(def)", 0, '(', ')', Some((0, 4)))] // Multiple pairs first
+    #[case("(abc)(def)", 5, '(', ')', Some((5, 9)))] // Multiple pairs second
+    #[case("(abc", 0, '(', ')', None)] // Incomplete open
+    #[case("abc)", 3, '(', ')', None)] // Incomplete close
+    #[case("()", 0, '(', ')', Some((0, 1)))] // Empty pair
+    #[case("()", 1, '(', ')', Some((0, 1)))] // Empty pair from end
+    #[case("(αβγ)", 0, '(', ')', Some((0, 7)))] // Unicode content
+    #[case("([)]", 0, '(', ')', Some((0, 2)))] // Mixed brackets
+    #[case("\"abc\"", 0, '"', '"', Some((0, 4)))] // Quotes
+    fn test_find_matching_pair(
+        #[case] input: &str,
+        #[case] cursor: usize,
+        #[case] left_char: char,
+        #[case] right_char: char,
+        #[case] expected: Option<(usize, usize)>,
+    ) {
+        let buf = LineBuffer::from(input);
+        assert_eq!(
+            buf.find_matching_pair(left_char, right_char, cursor),
+            expected,
+            "Failed for input: {}, cursor: {}",
+            input,
+            cursor
         );
     }
 }
