@@ -669,7 +669,6 @@ impl Editor {
     /// On success, move the cursor just after the `left_char`.
     /// If matching chars can't be found, restore the original cursor.
     pub(crate) fn cut_inside(&mut self, left_char: char, right_char: char) {
-        let old_pos = self.insertion_point();
         let buffer_len = self.line_buffer.len();
 
         if let Some((lp, rp)) =
@@ -685,11 +684,8 @@ impl Editor {
                 }
                 self.line_buffer
                     .set_insertion_point(lp + left_char.len_utf8());
-                return;
             }
         }
-        // If no valid pair was found, restore original cursor
-        self.line_buffer.set_insertion_point(old_pos);
     }
 }
 
