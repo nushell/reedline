@@ -126,10 +126,7 @@ impl Editor {
             EditCommand::CopySelectionSystem => self.copy_selection_to_system(),
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => self.paste_from_system(),
-            EditCommand::CutInside {
-                left_char,
-                right_char,
-            } => self.cut_inside(*left_char, *right_char),
+            EditCommand::CutInside { left, right } => self.cut_inside(*left, *right),
         }
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
             self.selection_anchor = None;

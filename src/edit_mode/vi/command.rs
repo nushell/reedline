@@ -201,14 +201,14 @@ impl Command {
             },
             Self::ChangeInsidePair { left, right } => {
                 vec![ReedlineOption::Edit(EditCommand::CutInside {
-                    left_char: *left,
-                    right_char: *right,
+                    left: *left,
+                    right: *right,
                 })]
             }
             Self::DeleteInsidePair { left, right } => {
                 vec![ReedlineOption::Edit(EditCommand::CutInside {
-                    left_char: *left,
-                    right_char: *right,
+                    left: *left,
+                    right: *right,
                 })]
             }
         }

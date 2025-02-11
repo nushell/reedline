@@ -282,9 +282,9 @@ pub enum EditCommand {
     /// Delete text between matching characters atomically
     CutInside {
         /// Left character of the pair
-        left_char: char,
+        left: char,
         /// Right character of the pair (usually matching bracket)
-        right_char: char,
+        right: char,
     },
 }
 
