@@ -776,6 +776,68 @@ impl LineBuffer {
             self.insertion_point = index + c.len_utf8();
         }
     }
+
+    /// Attempts to find the matching `(left_char, right_char)` pair *enclosing*
+    /// the cursor position, respecting nested pairs.
+    ///
+    /// Algorithm:
+    /// 1. Walk left from `cursor` until we find the "outermost" `left_char`,
+    ///    ignoring any extra `right_char` we see (i.e., we keep a depth counter).
+    /// 2. Then from that left bracket, walk right to find the matching `right_char`,
+    ///    also respecting nesting.
+    ///
+    /// Returns `Some((left_index, right_index))` if found, or `None` otherwise.
+    pub fn find_matching_pair(
+        &self,
+        left_char: char,
+        right_char: char,
+        cursor: usize,
+    ) -> Option<(usize, usize)> {
+        // encode to &str so we can compare with &strs later
+        let mut tmp = ([0u8; 4], [0u8, 4]);
+        let left_str = left_char.encode_utf8(&mut tmp.0);
+        let right_str = right_char.encode_utf8(&mut tmp.1);
+        // search left for left char
+        let to_cursor = self.lines.get(..=cursor)?;
+        let left_index = find_with_depth(to_cursor, left_str, right_str, true)?;
+
+        // search right for right char
+        let scan_start = left_index + left_char.len_utf8();
+        let after_left = self.lines.get(scan_start..)?;
+        let right_offset = find_with_depth(after_left, right_str, left_str, false)?;
+
+        Some((left_index, scan_start + right_offset))
+    }
+}
+
+/// Helper function for [`LineBuffer::find_matching_pair`]
+fn find_with_depth(
+    slice: &str,
+    deep_char: &str,
+    shallow_char: &str,
+    reverse: bool,
+) -> Option<usize> {
+    let mut depth: i32 = 0;
+
+    let mut indices: Vec<_> = slice.grapheme_indices(true).collect();
+    if reverse {
+        indices.reverse();
+    }
+
+    for (idx, c) in indices.into_iter() {
+        match c {
+            c if c == deep_char && depth == 0 => return Some(idx),
+            c if c == deep_char => depth -= 1,
+            // special case: shallow char at end of slice shouldn't affect depth.
+            // cursor over right bracket should be counted as the end of the pair,
+            // not as a closing a separate nested pair
+            c if c == shallow_char && idx == (slice.len() - 1) => (),
+            c if c == shallow_char => depth += 1,
+            _ => (),
+        }
+    }
+
+    None
 }
 
 /// Match any sequence of characters that are considered a word boundary
@@ -1626,6 +1688,38 @@ mod test {
             line.grapheme_right_index_from_pos(position),
             expected,
             "input: {input:?}, pos: {position}"
+        );
+    }
+
+    #[rstest]
+    #[case("(abc)", 0, '(', ')', Some((0, 4)))] // Basic matching
+    #[case("(abc)", 4, '(', ')', Some((0, 4)))] // Cursor at end
+    #[case("(abc)", 2, '(', ')', Some((0, 4)))] // Cursor in middle
+    #[case("((abc))", 0, '(', ')', Some((0, 6)))] // Nested pairs outer
+    #[case("((abc))", 1, '(', ')', Some((1, 5)))] // Nested pairs inner
+    #[case("(abc)(def)", 0, '(', ')', Some((0, 4)))] // Multiple pairs first
+    #[case("(abc)(def)", 5, '(', ')', Some((5, 9)))] // Multiple pairs second
+    #[case("(abc", 0, '(', ')', None)] // Incomplete open
+    #[case("abc)", 3, '(', ')', None)] // Incomplete close
+    #[case("()", 0, '(', ')', Some((0, 1)))] // Empty pair
+    #[case("()", 1, '(', ')', Some((0, 1)))] // Empty pair from end
+    #[case("(αβγ)", 0, '(', ')', Some((0, 7)))] // Unicode content
+    #[case("([)]", 0, '(', ')', Some((0, 2)))] // Mixed brackets
+    #[case("\"abc\"", 0, '"', '"', Some((0, 4)))] // Quotes
+    fn test_find_matching_pair(
+        #[case] input: &str,
+        #[case] cursor: usize,
+        #[case] left_char: char,
+        #[case] right_char: char,
+        #[case] expected: Option<(usize, usize)>,
+    ) {
+        let buf = LineBuffer::from(input);
+        assert_eq!(
+            buf.find_matching_pair(left_char, right_char, cursor),
+            expected,
+            "Failed for input: {}, cursor: {}",
+            input,
+            cursor
         );
     }
 }

@@ -9,16 +9,13 @@ where
     match input.peek() {
         Some('d') => {
             let _ = input.next();
+            // Checking for "di(" or "di)" etc.
             if let Some('i') = input.peek() {
                 let _ = input.next();
-                match input.next() {
-                    Some(c)
-                        if is_valid_change_inside_left(c) || is_valid_change_inside_right(c) =>
-                    {
-                        Some(Command::DeleteInside(*c))
-                    }
-                    _ => None,
-                }
+                input
+                    .next()
+                    .and_then(|c| bracket_pair_for(*c))
+                    .map(|(left, right)| Command::DeleteInsidePair { left, right })
             } else {
                 Some(Command::Delete)
             }
@@ -43,18 +40,15 @@ where
             let _ = input.next();
             Some(Command::Undo)
         }
+        // Checking for "ci(" or "ci)" etc.
         Some('c') => {
             let _ = input.next();
             if let Some('i') = input.peek() {
                 let _ = input.next();
-                match input.next() {
-                    Some(c)
-                        if is_valid_change_inside_left(c) || is_valid_change_inside_right(c) =>
-                    {
-                        Some(Command::ChangeInside(*c))
-                    }
-                    _ => None,
-                }
+                input
+                    .next()
+                    .and_then(|c| bracket_pair_for(*c))
+                    .map(|(left, right)| Command::ChangeInsidePair { left, right })
             } else {
                 Some(Command::Change)
             }
@@ -65,10 +59,10 @@ where
         }
         Some('r') => {
             let _ = input.next();
-            match input.next() {
-                Some(c) => Some(Command::ReplaceChar(*c)),
-                None => Some(Command::Incomplete),
-            }
+            input
+                .next()
+                .map(|c| Command::ReplaceChar(*c))
+                .or(Some(Command::Incomplete))
         }
         Some('s') => {
             let _ = input.next();
@@ -131,8 +125,9 @@ pub enum Command {
     HistorySearch,
     Switchcase,
     RepeatLastAction,
-    ChangeInside(char),
-    DeleteInside(char),
+    // These DoSthInsidePair commands are agnostic to whether user pressed the left char or right char
+    ChangeInsidePair { left: char, right: char },
+    DeleteInsidePair { left: char, right: char },
 }
 
 impl Command {
@@ -192,39 +187,17 @@ impl Command {
                 Some(event) => vec![ReedlineOption::Event(event.clone())],
                 None => vec![],
             },
-            Self::ChangeInside(left) if is_valid_change_inside_left(left) => {
-                let right = bracket_for(left);
-                vec![
-                    ReedlineOption::Edit(EditCommand::CutLeftBefore(*left)),
-                    ReedlineOption::Edit(EditCommand::CutRightBefore(right)),
-                ]
+            Self::ChangeInsidePair { left, right } => {
+                vec![ReedlineOption::Edit(EditCommand::CutInside {
+                    left: *left,
+                    right: *right,
+                })]
             }
-            Self::ChangeInside(right) if is_valid_change_inside_right(right) => {
-                let left = bracket_for(right);
-                vec![
-                    ReedlineOption::Edit(EditCommand::CutLeftBefore(left)),
-                    ReedlineOption::Edit(EditCommand::CutRightBefore(*right)),
-                ]
-            }
-            Self::ChangeInside(_) => {
-                vec![]
-            }
-            Self::DeleteInside(left) if is_valid_change_inside_left(left) => {
-                let right = bracket_for(left);
-                vec![
-                    ReedlineOption::Edit(EditCommand::CutLeftBefore(*left)),
-                    ReedlineOption::Edit(EditCommand::CutRightBefore(right)),
-                ]
-            }
-            Self::DeleteInside(right) if is_valid_change_inside_right(right) => {
-                let left = bracket_for(right);
-                vec![
-                    ReedlineOption::Edit(EditCommand::CutLeftBefore(left)),
-                    ReedlineOption::Edit(EditCommand::CutRightBefore(*right)),
-                ]
-            }
-            Self::DeleteInside(_) => {
-                vec![]
+            Self::DeleteInsidePair { left, right } => {
+                vec![ReedlineOption::Edit(EditCommand::CutInside {
+                    left: *left,
+                    right: *right,
+                })]
             }
         }
     }
@@ -349,24 +322,16 @@ impl Command {
     }
 }
 
-fn bracket_for(c: &char) -> char {
-    match *c {
-        '(' => ')',
-        '[' => ']',
-        '{' => '}',
-        '<' => '>',
-        ')' => '(',
-        ']' => '[',
-        '}' => '{',
-        '>' => '<',
-        _ => *c,
+fn bracket_pair_for(c: char) -> Option<(char, char)> {
+    match c {
+        '(' | ')' => Some(('(', ')')),
+        '[' | ']' => Some(('[', ']')),
+        '{' | '}' => Some(('{', '}')),
+        '<' | '>' => Some(('<', '>')),
+        '"' => Some(('"', '"')),
+        '$' => Some(('$', '$')),
+        '\'' => Some(('\'', '\'')),
+        '`' => Some(('`', '`')),
+        _ => None,
     }
-}
-
-pub(crate) fn is_valid_change_inside_left(c: &char) -> bool {
-    matches!(c, '(' | '[' | '{' | '"' | '\'' | '`' | '<')
-}
-
-pub(crate) fn is_valid_change_inside_right(c: &char) -> bool {
-    matches!(c, ')' | ']' | '}' | '"' | '\'' | '`' | '>')
 }
