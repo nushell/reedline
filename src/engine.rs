@@ -786,6 +786,7 @@ impl Reedline {
                 }
             }
             if immediately_execute {
+                println!("Reedline: pushing submit!");
                 reedline_events.push(ReedlineEvent::Submit);
             }
             if !edits.is_empty() {
