@@ -642,12 +642,12 @@ impl Reedline {
     ///
     /// Returns a [`std::io::Result`] in which the `Err` type is [`std::io::Result`]
     /// and the `Ok` variant wraps a [`Signal`] which handles user inputs.
-    pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    pub fn read_line(&mut self, prompt: &dyn Prompt, immediately_execute: bool) -> Result<Signal> {
         terminal::enable_raw_mode()?;
         self.bracketed_paste.enter();
         self.kitty_protocol.enter();
 
-        let result = self.read_line_helper(prompt);
+        let result = self.read_line_helper(prompt, immediately_execute);
 
         self.bracketed_paste.exit();
         self.kitty_protocol.exit();
@@ -687,7 +687,11 @@ impl Reedline {
 
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
-    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    fn read_line_helper(
+        &mut self,
+        prompt: &dyn Prompt,
+        immediately_execute: bool,
+    ) -> Result<Signal> {
         self.painter
             .initialize_prompt_position(self.suspended_state.as_ref())?;
         if self.suspended_state.is_some() {
@@ -780,6 +784,9 @@ impl Reedline {
                         }
                     }
                 }
+            }
+            if immediately_execute {
+                reedline_events.push(ReedlineEvent::Submit);
             }
             if !edits.is_empty() {
                 reedline_events.push(ReedlineEvent::Edit(edits));
