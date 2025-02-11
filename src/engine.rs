@@ -755,6 +755,7 @@ impl Reedline {
                 events.push(crossterm::event::read()?);
             }
 
+            dbg!(self.current_buffer_contents());
             // If we believe there's text pasting or resizing going on, batch
             // more events at the cost of a slight delay.
             if events.len() > EVENTS_THRESHOLD
@@ -794,7 +795,6 @@ impl Reedline {
             }
             println!("Checking and pushing Submit");
             if immediately_execute {
-                dbg!(self.current_buffer_contents());
                 reedline_events.push(ReedlineEvent::Submit);
             }
 
