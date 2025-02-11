@@ -760,7 +760,7 @@ impl Reedline {
             // If we believe there's text pasting or resizing going on, batch
             // more events at the cost of a slight delay.
             if events.len() > EVENTS_THRESHOLD
-                || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
+                || events.iter().any(|e| matches!(e, Event::Resize(_, _))) && !immediately_execute
             {
                 while !completed(&events) && event::poll(POLL_WAIT)? {
                     events.push(crossterm::event::read()?);
