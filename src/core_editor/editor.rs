@@ -202,12 +202,6 @@ impl Editor {
             None
         };
     }
-
-    /// Sets the selection anchor to None, clearing the selection
-    pub fn clear_selection_anchor(&mut self) {
-        self.selection_anchor = None;
-    }
-
     fn move_to_position(&mut self, position: usize, select: bool) {
         self.update_selection_anchor(select);
         self.line_buffer.set_insertion_point(position)

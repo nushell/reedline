@@ -909,10 +909,6 @@ impl Reedline {
                 self.input_mode = InputMode::Regular;
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::ResetSelection => {
-                self.editor.reset_selection();
-                Ok(EventStatus::Handled)
-            }
             // TODO: Check if events should be handled
             ReedlineEvent::Right
             | ReedlineEvent::Left
@@ -1070,7 +1066,7 @@ impl Reedline {
             }
             ReedlineEvent::Esc => {
                 self.deactivate_menus();
-                self.editor.clear_selection_anchor();
+                self.editor.reset_selection();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::CtrlD => {
@@ -1202,10 +1198,6 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),
-            ReedlineEvent::ResetSelection => {
-                self.editor.reset_selection();
-                Ok(EventStatus::Handled)
-            }
             ReedlineEvent::Resize(width, height) => {
                 self.painter.handle_resize(width, height);
                 Ok(EventStatus::Handled)
