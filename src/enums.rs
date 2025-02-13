@@ -317,6 +317,8 @@ pub enum EditCommand {
 
     /// Copy left before char
     CopyLeftBefore(char),
+    /// Swap the positions of the cursor and anchor
+    SwapCursorAndAnchor,
 
     /// Cut selection to system clipboard
     #[cfg(feature = "system_clipboard")]
@@ -448,6 +450,7 @@ impl Display for EditCommand {
             EditCommand::CopyRightBefore(_) => write!(f, "CopyRightBefore Value: <char>"),
             EditCommand::CopyLeftUntil(_) => write!(f, "CopyLeftUntil Value: <char>"),
             EditCommand::CopyLeftBefore(_) => write!(f, "CopyLeftBefore Value: <char>"),
+            EditCommand::SwapCursorAndAnchor => write!(f, "SwapCursorAndAnchor"),
             #[cfg(feature = "system_clipboard")]
             EditCommand::CutSelectionSystem => write!(f, "CutSelectionSystem"),
             #[cfg(feature = "system_clipboard")]
@@ -486,6 +489,7 @@ impl EditCommand {
             | EditCommand::MoveLeftBefore { select, .. } => {
                 EditType::MoveCursor { select: *select }
             }
+            EditCommand::SwapCursorAndAnchor => EditType::MoveCursor { select: true },
 
             EditCommand::SelectAll => EditType::MoveCursor { select: true },
             // Text edits
