@@ -88,7 +88,7 @@ enum InputMode {
 /// let mut line_editor = Reedline::create();
 /// let prompt = DefaultPrompt::default();
 ///
-/// let out = line_editor.read_line(&prompt).unwrap();
+/// let out = line_editor.read_line(&prompt, false).unwrap();
 /// match out {
 ///    Signal::Success(content) => {
 ///        // process content
