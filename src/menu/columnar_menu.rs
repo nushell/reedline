@@ -793,10 +793,7 @@ mod tests {
         let mut editor = Editor::default();
 
         editor.set_buffer("おは".to_string(), UndoBehavior::CreateUndoPoint);
-
         menu.update_values(&mut editor, &mut completer);
-
-        // After replacing the editor, make sure insertion_point is at the right spot
         assert!(menu.menu_string(2, true).contains("`おは"));
     }
 }
