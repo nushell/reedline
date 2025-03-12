@@ -299,10 +299,23 @@ impl ColumnarMenu {
         use_ansi_coloring: bool,
     ) -> String {
         if use_ansi_coloring {
-            let match_len = self.working_details.shortest_base_string.len();
+            // strip quotes
+            let is_quote = |c: char| "`'\"".contains(c);
+            let shortest_base = &self.working_details.shortest_base_string;
+            let shortest_base = shortest_base
+                .strip_prefix(is_quote)
+                .unwrap_or(shortest_base);
+            let match_len = shortest_base.len();
 
             // Split string so the match text can be styled
-            let (match_str, remaining_str) = suggestion.value.split_at(match_len);
+            let skip_len = suggestion
+                .value
+                .chars()
+                .take_while(|c| is_quote(*c))
+                .count();
+            let (match_str, remaining_str) = suggestion
+                .value
+                .split_at((match_len + skip_len).min(suggestion.value.len()));
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -772,5 +785,17 @@ mod tests {
             editor.is_cursor_at_buffer_end(),
             "cursor should be at the end after completion"
         );
+    }
+
+    #[test]
+    fn test_menu_create_string() {
+        // https://github.com/nushell/nushell/issues/13951
+        let mut completer = FakeCompleter::new(&["おはよう", "`おはよう(`"]);
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+
+        editor.set_buffer("おは".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.menu_string(2, true).contains("`おは"));
     }
 }
