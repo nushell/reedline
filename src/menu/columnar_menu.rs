@@ -313,7 +313,9 @@ impl ColumnarMenu {
                 .chars()
                 .take_while(|c| is_quote(*c))
                 .count();
-            let (match_str, remaining_str) = suggestion.value.split_at(match_len + skip_len);
+            let (match_str, remaining_str) = suggestion
+                .value
+                .split_at((match_len + skip_len).min(suggestion.value.len()));
 
             let suggestion_style_prefix = suggestion
                 .style

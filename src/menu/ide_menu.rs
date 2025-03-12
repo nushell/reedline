@@ -512,14 +512,18 @@ impl IdeMenu {
         };
 
         if use_ansi_coloring {
-            let match_len = self
-                .working_details
-                .shortest_base_string
-                .len()
-                .min(string.len());
+            // strip quotes
+            let is_quote = |c: char| "`'\"".contains(c);
+            let shortest_base = &self.working_details.shortest_base_string;
+            let shortest_base = shortest_base
+                .strip_prefix(is_quote)
+                .unwrap_or(shortest_base);
+            let match_len = shortest_base.len().min(string.len());
 
             // Split string so the match text can be styled
-            let (match_str, remaining_str) = string.split_at(match_len);
+            let skip_len = string.chars().take_while(|c| is_quote(*c)).count();
+            let (match_str, remaining_str) =
+                string.split_at((match_len + skip_len).min(string.len()));
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -1440,5 +1444,28 @@ mod tests {
         menu.update_values(&mut editor, &mut *completer);
 
         menu.menu_string(500, true);
+    }
+
+    #[test]
+    fn test_menu_create_value_string() {
+        // https://github.com/nushell/nushell/issues/13951
+        let mut completer = FakeCompleter::new(&["おはよう", "`おはよう(`"]);
+        let mut menu = IdeMenu::default().with_name("testmenu");
+        menu.working_details = IdeMenuDetails {
+            cursor_col: 50,
+            menu_width: 50,
+            completion_width: 50,
+            description_width: 50,
+            description_is_right: true,
+            space_left: 50,
+            space_right: 50,
+            description_offset: 50,
+            shortest_base_string: String::new(),
+        };
+        let mut editor = Editor::default();
+
+        editor.set_buffer("おは".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.menu_string(2, true).contains("`おは"));
     }
 }
