@@ -126,7 +126,7 @@ struct IdeMenuDetails {
     /// Corrected description offset, based on the available space
     pub description_offset: u16,
     /// The display width of the shortest string, which the suggestions are based on
-    pub shortest_base_string: usize,
+    pub match_width: usize,
 }
 
 /// Menu to present suggestions like similar to Ide completion menus
@@ -512,8 +512,8 @@ impl IdeMenu {
         };
 
         if use_ansi_coloring {
-            let match_width = self.working_details.shortest_base_string;
-            let (match_str, remaining_str) = split_suggestion(&suggestion.value, match_width);
+            let (match_str, remaining_str) =
+                split_suggestion(&suggestion.value, self.working_details.match_width);
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -632,7 +632,7 @@ impl Menu for IdeMenu {
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 
         self.values = values;
-        self.working_details.shortest_base_string = base_ranges
+        self.working_details.match_width = base_ranges
             .iter()
             .map(|range| {
                 let s = &editor.get_buffer()[range.clone()];
@@ -696,8 +696,7 @@ impl Menu for IdeMenu {
             let mut cursor_pos = self.working_details.cursor_col;
 
             if self.default_details.correct_cursor_pos {
-                cursor_pos =
-                    cursor_pos.saturating_sub(self.working_details.shortest_base_string as u16);
+                cursor_pos = cursor_pos.saturating_sub(self.working_details.match_width as u16);
             }
 
             let border_width = if self.default_details.border.is_some() {
@@ -1424,7 +1423,7 @@ mod tests {
             space_left: 50,
             space_right: 50,
             description_offset: 50,
-            shortest_base_string: 0,
+            match_width: 0,
         };
         let mut editor = Editor::default();
         // backtick at the end of the line
@@ -1452,7 +1451,7 @@ mod tests {
             space_left: 50,
             space_right: 50,
             description_offset: 50,
-            shortest_base_string: 0,
+            match_width: 0,
         };
         let mut editor = Editor::default();
 

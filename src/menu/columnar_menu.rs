@@ -39,7 +39,7 @@ struct ColumnDetails {
     /// Column width
     pub col_width: usize,
     /// The display width of the shortest string, which the suggestions are based on
-    pub shortest_base_string: usize,
+    pub match_width: usize,
 }
 
 /// Menu to present suggestions in a columnar fashion
@@ -299,8 +299,8 @@ impl ColumnarMenu {
         use_ansi_coloring: bool,
     ) -> String {
         if use_ansi_coloring {
-            let match_width = self.working_details.shortest_base_string;
-            let (match_str, remaining_str) = split_suggestion(&suggestion.value, match_width);
+            let (match_str, remaining_str) =
+                split_suggestion(&suggestion.value, self.working_details.match_width);
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -495,7 +495,7 @@ impl Menu for ColumnarMenu {
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 
         self.values = values;
-        self.working_details.shortest_base_string = base_ranges
+        self.working_details.match_width = base_ranges
             .iter()
             .map(|range| {
                 let s = &editor.get_buffer()[range.clone()];
