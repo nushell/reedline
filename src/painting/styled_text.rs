@@ -1,6 +1,6 @@
 use nu_ansi_term::Style;
 
-use crate::Prompt;
+use crate::{engine::ReedlineTheme, Prompt};
 
 use super::utils::strip_ansi;
 
@@ -101,14 +101,14 @@ impl StyledText {
         insertion_point: usize,
         prompt: &dyn Prompt,
         // multiline_prompt: &str,
-        use_ansi_coloring: bool,
+        theme: &ReedlineTheme,
     ) -> (String, String) {
         let mut current_idx = 0;
         let mut left_string = String::new();
         let mut right_string = String::new();
 
         let multiline_prompt = prompt.render_prompt_multiline_indicator();
-        let prompt_style = Style::new().fg(prompt.get_prompt_multiline_color());
+        let prompt_style = Style::new().fg(theme.prompt_multiline);
 
         for pair in &self.buffer {
             if current_idx >= insertion_point {
@@ -135,7 +135,7 @@ impl StyledText {
             current_idx += pair.1.len();
         }
 
-        if use_ansi_coloring {
+        if theme.use_ansi_coloring {
             (left_string, right_string)
         } else {
             (strip_ansi(&left_string), strip_ansi(&right_string))
