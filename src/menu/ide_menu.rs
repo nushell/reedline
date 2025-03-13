@@ -1,4 +1,4 @@
-use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
+use super::{menu_functions::split_suggestion, Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{can_partially_complete, completer_input, replace_in_buffer},
@@ -125,8 +125,8 @@ struct IdeMenuDetails {
     pub space_right: u16,
     /// Corrected description offset, based on the available space
     pub description_offset: u16,
-    /// The shortest of the strings, which the suggestions are based on
-    pub shortest_base_string: String,
+    /// The display width of the shortest string, which the suggestions are based on
+    pub shortest_base_string: usize,
 }
 
 /// Menu to present suggestions like similar to Ide completion menus
@@ -512,18 +512,8 @@ impl IdeMenu {
         };
 
         if use_ansi_coloring {
-            // strip quotes
-            let is_quote = |c: char| "`'\"".contains(c);
-            let shortest_base = &self.working_details.shortest_base_string;
-            let shortest_base = shortest_base
-                .strip_prefix(is_quote)
-                .unwrap_or(shortest_base);
-            let match_len = shortest_base.len().min(string.len());
-
-            // Split string so the match text can be styled
-            let skip_len = string.chars().take_while(|c| is_quote(*c)).count();
-            let (match_str, remaining_str) =
-                string.split_at((match_len + skip_len).min(string.len()));
+            let match_width = self.working_details.shortest_base_string;
+            let (match_str, remaining_str) = split_suggestion(&suggestion.value, match_width);
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -644,8 +634,11 @@ impl Menu for IdeMenu {
         self.values = values;
         self.working_details.shortest_base_string = base_ranges
             .iter()
-            .map(|range| editor.get_buffer()[range.clone()].to_string())
-            .min_by_key(|s| s.len())
+            .map(|range| {
+                let s = &editor.get_buffer()[range.clone()];
+                s.strip_prefix(['`', '\'', '"']).unwrap_or(s).width()
+            })
+            .min()
             .unwrap_or_default();
 
         self.reset_position();
@@ -703,9 +696,8 @@ impl Menu for IdeMenu {
             let mut cursor_pos = self.working_details.cursor_col;
 
             if self.default_details.correct_cursor_pos {
-                let base_string = &self.working_details.shortest_base_string;
-
-                cursor_pos = cursor_pos.saturating_sub(base_string.width() as u16);
+                cursor_pos =
+                    cursor_pos.saturating_sub(self.working_details.shortest_base_string as u16);
             }
 
             let border_width = if self.default_details.border.is_some() {
@@ -1432,7 +1424,7 @@ mod tests {
             space_left: 50,
             space_right: 50,
             description_offset: 50,
-            shortest_base_string: String::new(),
+            shortest_base_string: 0,
         };
         let mut editor = Editor::default();
         // backtick at the end of the line
@@ -1460,7 +1452,7 @@ mod tests {
             space_left: 50,
             space_right: 50,
             description_offset: 50,
-            shortest_base_string: String::new(),
+            shortest_base_string: 0,
         };
         let mut editor = Editor::default();
 

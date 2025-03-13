@@ -1,4 +1,7 @@
 //! Collection of common functions that can be used to create menus
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
 use crate::{Editor, Suggestion, UndoBehavior};
 
 /// Index result obtained from parsing a string with an index marker
@@ -354,6 +357,27 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
     }
 }
 
+/// Split suggestion based on the display width of the matched part
+///
+/// For highlighting prefix-matched suggestions
+pub fn split_suggestion(sugg: &str, match_width: usize) -> (&str, &str) {
+    let mut match_end = sugg.len();
+    let mut curr_width = 0;
+    for (offset, grapheme) in sugg.grapheme_indices(true) {
+        if curr_width >= match_width {
+            match_end = offset;
+            break;
+        }
+        // Strip quotes from the beginning
+        if offset == 0 && (grapheme == "`" || grapheme == "'" || grapheme == "\"") {
+            continue;
+        }
+        curr_width += grapheme.width();
+    }
+
+    sugg.split_at(match_end)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,5 +720,19 @@ mod tests {
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(orig_buffer, editor.get_buffer());
         assert_eq!(orig_insertion_point, editor.insertion_point());
+    }
+
+    #[rstest]
+    #[case("おはよう", "おは", "おは")]
+    #[case("`'おはよう)", "'お", "`'お")]
+    #[case("おはよう", "a", "お")]
+    #[case("abcd", "お", "ab")]
+    fn test_split_suggestions(
+        #[case] sugg: &str,
+        #[case] typed: &str,
+        #[case] exp_match_str: &str,
+    ) {
+        let (got_match_str, _) = split_suggestion(sugg, typed.width());
+        assert_eq!(exp_match_str, got_match_str)
     }
 }

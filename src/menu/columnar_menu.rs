@@ -1,4 +1,4 @@
-use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
+use super::{menu_functions::split_suggestion, Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{can_partially_complete, completer_input, replace_in_buffer},
@@ -38,8 +38,8 @@ struct ColumnDetails {
     pub columns: u16,
     /// Column width
     pub col_width: usize,
-    /// The shortest of the strings, which the suggestions are based on
-    pub shortest_base_string: String,
+    /// The display width of the shortest string, which the suggestions are based on
+    pub shortest_base_string: usize,
 }
 
 /// Menu to present suggestions in a columnar fashion
@@ -299,23 +299,8 @@ impl ColumnarMenu {
         use_ansi_coloring: bool,
     ) -> String {
         if use_ansi_coloring {
-            // strip quotes
-            let is_quote = |c: char| "`'\"".contains(c);
-            let shortest_base = &self.working_details.shortest_base_string;
-            let shortest_base = shortest_base
-                .strip_prefix(is_quote)
-                .unwrap_or(shortest_base);
-            let match_len = shortest_base.len();
-
-            // Split string so the match text can be styled
-            let skip_len = suggestion
-                .value
-                .chars()
-                .take_while(|c| is_quote(*c))
-                .count();
-            let (match_str, remaining_str) = suggestion
-                .value
-                .split_at((match_len + skip_len).min(suggestion.value.len()));
+            let match_width = self.working_details.shortest_base_string;
+            let (match_str, remaining_str) = split_suggestion(&suggestion.value, match_width);
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -512,8 +497,11 @@ impl Menu for ColumnarMenu {
         self.values = values;
         self.working_details.shortest_base_string = base_ranges
             .iter()
-            .map(|range| editor.get_buffer()[range.clone()].to_string())
-            .min_by_key(|s| s.width())
+            .map(|range| {
+                let s = &editor.get_buffer()[range.clone()];
+                s.strip_prefix(['`', '\'', '"']).unwrap_or(s).width()
+            })
+            .min()
             .unwrap_or_default();
 
         self.reset_position();
