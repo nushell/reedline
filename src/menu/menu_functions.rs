@@ -735,4 +735,12 @@ mod tests {
         let (got_match_str, _) = split_suggestion(sugg, typed.width());
         assert_eq!(exp_match_str, got_match_str)
     }
+
+    #[test]
+    fn test_split_suggestions_shorter_than_typed() {
+        let sugg = "a";
+        let typed = "abcd";
+        let (got_match_str, _) = split_suggestion(sugg, typed.width());
+        assert_eq!("a", got_match_str)
+    }
 }
