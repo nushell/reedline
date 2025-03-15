@@ -93,6 +93,7 @@ pub struct Painter {
     prompt_start_row: u16,
     terminal_size: (u16, u16),
     last_required_lines: u16,
+    last_cursor_distance: u16,
     large_buffer: bool,
     just_resized: bool,
     after_cursor_lines: Option<String>,
@@ -105,6 +106,7 @@ impl Painter {
             prompt_start_row: 0,
             terminal_size: (0, 0),
             last_required_lines: 0,
+            last_cursor_distance: 0,
             large_buffer: false,
             just_resized: false,
             after_cursor_lines: None,
@@ -296,22 +298,15 @@ impl Painter {
         Ok(())
     }
 
-    fn print_menu(
-        &mut self,
-        menu: &dyn Menu,
-        lines: &PromptLines,
-        use_ansi_coloring: bool,
-    ) -> Result<()> {
-        let screen_width = self.screen_width();
+    pub(crate) fn print_menu(&mut self, menu: &dyn Menu, use_ansi_coloring: bool) -> Result<()> {
         let screen_height = self.screen_height();
-        let cursor_distance = lines.distance_from_prompt(screen_width);
 
         // If there is not enough space to print the menu, then the starting
         // drawing point for the menu will overwrite the last rows in the buffer
-        let starting_row = if cursor_distance >= screen_height.saturating_sub(1) {
+        let starting_row = if self.last_cursor_distance >= screen_height.saturating_sub(1) {
             screen_height.saturating_sub(menu.min_rows())
         } else {
-            self.prompt_start_row + cursor_distance + 1
+            self.prompt_start_row + self.last_cursor_distance + 1
         };
 
         let remaining_lines = screen_height.saturating_sub(starting_row);
@@ -319,8 +314,10 @@ impl Painter {
         self.stdout
             .queue(cursor::MoveTo(0, starting_row))?
             .queue(Clear(ClearType::FromCursorDown))?
-            .queue(Print(menu_string.trim_end_matches('\n')))?;
+            .queue(Print(menu_string.trim_end_matches('\n')))?
+            .queue(RestorePosition)?;
 
+        self.stdout.flush()?;
         Ok(())
     }
 
@@ -367,7 +364,9 @@ impl Painter {
             .queue(Print(&lines.after_cursor))?;
 
         if let Some(menu) = menu {
-            self.print_menu(menu, lines, use_ansi_coloring)?;
+            let screen_width = self.screen_width();
+            self.last_cursor_distance = lines.distance_from_prompt(screen_width);
+            self.print_menu(menu, use_ansi_coloring)?;
         } else {
             self.stdout.queue(Print(&lines.hint))?;
         }
@@ -464,7 +463,9 @@ impl Painter {
             } else {
                 self.stdout.queue(Print(&lines.after_cursor))?;
             }
-            self.print_menu(menu, lines, use_ansi_coloring)?;
+            let screen_width = self.screen_width();
+            self.last_cursor_distance = lines.distance_from_prompt(screen_width);
+            self.print_menu(menu, use_ansi_coloring)?;
         } else {
             // Selecting lines for the hint
             // The -1 subtraction is done because the remaining lines consider the line where the
