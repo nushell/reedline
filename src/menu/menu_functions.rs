@@ -164,12 +164,24 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
 pub fn find_common_string(values: &[Suggestion]) -> (Option<&Suggestion>, Option<usize>) {
     let first = values.iter().next();
 
+    let mut new_index: Option<usize> = match first {
+        Some(first) => Some(first.value.len()),
+        None => Some(0),
+    };
+
+    if values.len() <= 1 {
+        return (first, new_index);
+    }
+
     let index = first.and_then(|first| {
-        values.iter().skip(1).fold(None, |index, suggestion| {
-            if suggestion.value.starts_with(&first.value) {
-                Some(first.value.len())
-            } else {
-                first
+        let vals = values
+            .iter()
+            .skip(1)
+            .try_fold(None, |index: Option<usize>, suggestion| {
+                if first.value.get(..1) != suggestion.value.get(..1) {
+                    return Err(0);
+                }
+                let tmp_index = first
                     .value
                     .char_indices()
                     .zip(suggestion.value.char_indices())
@@ -188,9 +200,18 @@ pub fn find_common_string(values: &[Suggestion]) -> (Option<&Suggestion>, Option
                             }
                         }
                         None => new_index,
-                    })
-            }
-        })
+                    });
+
+                if tmp_index > Some(0) {
+                    new_index = tmp_index;
+                }
+                Ok(new_index)
+            });
+
+        match vals {
+            Ok(index) => index,
+            Err(_) => Some(0),
+        }
     });
 
     (first, index)
@@ -356,6 +377,8 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
+
     use super::*;
     use crate::{EditCommand, LineBuffer, Span};
     use rstest::rstest;
@@ -603,9 +626,28 @@ mod tests {
     fn find_common_string_with_ansi() {
         use crate::Span;
 
-        let input: Vec<_> = ["nushell", "null"]
+        let source = [
+            "qml",
+            "qmake",
+            "qmltc",
+            "qmlls",
+            "qmldom",
+            "qmake6",
+            "qmltime",
+            "qmllint",
+            "qmlscene",
+            "qmlformat",
+            "qmleasing",
+            "qmlpreview",
+            "qmlprofiler",
+            "qmlplugindump",
+            "qmltestrunner",
+        ];
+        // Test against empty haystack
+        let input: Vec<_> = source
             .into_iter()
-            .map(|s| Suggestion {
+            .take(0)
+            .map(|s: &str| Suggestion {
                 value: s.into(),
                 description: None,
                 style: None,
@@ -616,7 +658,101 @@ mod tests {
             .collect();
         let res = find_common_string(&input);
 
-        assert!(matches!(res, (Some(elem), Some(2)) if elem == &input[0]));
+        match res.0 {
+            Some(_) => assert!(false, "There shouldn't be any elements"),
+            None => assert!(res.1 == Some(0)),
+        }
+
+        // Test against haystack of size 1
+        let input: Vec<_> = source
+            .into_iter()
+            .take(1)
+            .map(|s: &str| Suggestion {
+                value: s.into(),
+                description: None,
+                extra: None,
+                span: Span::new(0, s.len()),
+                append_whitespace: false,
+            })
+            .collect();
+        let res = find_common_string(&input);
+
+        match res {
+            (Some(first), Some(index)) => assert!(
+                first.value == input.first().unwrap().value && index == first.value.len()),
+            _ => assert!(false, "There should be a result with both options as some with one element to check against"),
+        }
+
+        // Test against entire haystack that's originally errored
+        let input: Vec<_> = source
+            .into_iter()
+            .map(|s: &str| Suggestion {
+                value: s.into(),
+                description: None,
+                extra: None,
+                span: Span::new(0, s.len()),
+                append_whitespace: false,
+            })
+            .collect();
+        let res = find_common_string(&input);
+
+        match res {
+            (Some(first), Some(index)) => {
+                assert!(res.1 == Some(2), "Index check failed for full haystack");
+                input.iter().for_each(|suggestion| {
+                    assert!(first.value.chars().take(index - 1).collect::<String>() == suggestion.value.chars().take(index - 1).collect::<String>())
+                })
+            },
+            _ => assert!(false, "There should be a result with both options as some with one element to check against for full haystack"),
+        }
+
+        // Test against reduced haystack
+        let input: Vec<_> = source
+            .into_iter()
+            .filter(|i| i.starts_with("qma"))
+            .collect_vec()
+            .into_iter()
+            .map(|s: &str| Suggestion {
+                value: s.into(),
+                description: None,
+                extra: None,
+                span: Span::new(0, s.len()),
+                append_whitespace: false,
+            })
+            .into_iter()
+            .collect();
+        let res = find_common_string(&input);
+
+        match res {
+            (Some(first), Some(index)) => {
+                assert!(res.1 == Some(5), "Index check failed for haystack of 'qma*'");
+                input.iter().for_each(|suggestion| {
+                    assert!(first.value.chars().take(index - 1).collect::<String>() == suggestion.value.chars().take(index - 1).collect::<String>())
+                })
+            },
+            _ => assert!(false, "There should be a result with both options as some with one element to check against for reduced haystack"),
+        }
+
+        // Test against reduced haystack that differs at first character
+        let input: Vec<_> = ["qma", "lsf"]
+            .into_iter()
+            .map(|s: &str| Suggestion {
+                value: s.into(),
+                description: None,
+                extra: None,
+                span: Span::new(0, s.len()),
+                append_whitespace: false,
+            })
+            .into_iter()
+            .collect();
+        let res = find_common_string(&input);
+
+        match res {
+            (Some(_), Some(_)) => {
+                assert!(res.1 == Some(0), "Index check failed for haystack of different first chars");
+            },
+            _ => assert!(false, "There should be a result with both options as some with one element to check against for different first chars"),
+        }
     }
 
     #[test]
