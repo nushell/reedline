@@ -724,6 +724,7 @@ mod tests {
     #[rstest]
     #[case("おはよう", "おは", "おは")]
     #[case("`'おはよう)", "'お", "`'お")]
+    #[case("'a", "", "")]
     #[case("おはよう", "a", "お")]
     #[case("abcd", "お", "a")]
     fn test_split_suggestions(
