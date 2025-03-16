@@ -125,8 +125,8 @@ struct IdeMenuDetails {
     pub space_right: u16,
     /// Corrected description offset, based on the available space
     pub description_offset: u16,
-    /// The display width of the shortest string, which the suggestions are based on
-    pub match_width: usize,
+    /// Number of graphemes in the shortest string, which the suggestions are based on
+    pub match_len: usize,
 }
 
 /// Menu to present suggestions like similar to Ide completion menus
@@ -513,7 +513,7 @@ impl IdeMenu {
 
         if use_ansi_coloring {
             let (match_str, remaining_str) =
-                split_suggestion(&suggestion.value, self.working_details.match_width);
+                split_suggestion(&suggestion.value, self.working_details.match_len);
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -632,11 +632,14 @@ impl Menu for IdeMenu {
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 
         self.values = values;
-        self.working_details.match_width = base_ranges
+        self.working_details.match_len = base_ranges
             .iter()
             .map(|range| {
                 let s = &editor.get_buffer()[range.clone()];
-                s.strip_prefix(['`', '\'', '"']).unwrap_or(s).width()
+                s.strip_prefix(['`', '\'', '"'])
+                    .unwrap_or(s)
+                    .graphemes(true)
+                    .count()
             })
             .min()
             .unwrap_or_default();
@@ -696,7 +699,7 @@ impl Menu for IdeMenu {
             let mut cursor_pos = self.working_details.cursor_col;
 
             if self.default_details.correct_cursor_pos {
-                cursor_pos = cursor_pos.saturating_sub(self.working_details.match_width as u16);
+                cursor_pos = cursor_pos.saturating_sub(self.working_details.match_len as u16);
             }
 
             let border_width = if self.default_details.border.is_some() {
@@ -1423,7 +1426,7 @@ mod tests {
             space_left: 50,
             space_right: 50,
             description_offset: 50,
-            match_width: 0,
+            match_len: 0,
         };
         let mut editor = Editor::default();
         // backtick at the end of the line
@@ -1451,7 +1454,7 @@ mod tests {
             space_left: 50,
             space_right: 50,
             description_offset: 50,
-            match_width: 0,
+            match_len: 0,
         };
         let mut editor = Editor::default();
 

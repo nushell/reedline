@@ -6,6 +6,7 @@ use crate::{
     Completer, Suggestion,
 };
 use nu_ansi_term::ansi::RESET;
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 /// Default values used as reference for the menu. These values are set during
@@ -38,8 +39,8 @@ struct ColumnDetails {
     pub columns: u16,
     /// Column width
     pub col_width: usize,
-    /// The display width of the shortest string, which the suggestions are based on
-    pub match_width: usize,
+    /// Number of graphemes in the shortest string, which the suggestions are based on
+    pub match_len: usize,
 }
 
 /// Menu to present suggestions in a columnar fashion
@@ -300,7 +301,7 @@ impl ColumnarMenu {
     ) -> String {
         if use_ansi_coloring {
             let (match_str, remaining_str) =
-                split_suggestion(&suggestion.value, self.working_details.match_width);
+                split_suggestion(&suggestion.value, self.working_details.match_len);
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -495,11 +496,14 @@ impl Menu for ColumnarMenu {
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 
         self.values = values;
-        self.working_details.match_width = base_ranges
+        self.working_details.match_len = base_ranges
             .iter()
             .map(|range| {
                 let s = &editor.get_buffer()[range.clone()];
-                s.strip_prefix(['`', '\'', '"']).unwrap_or(s).width()
+                s.strip_prefix(['`', '\'', '"'])
+                    .unwrap_or(s)
+                    .graphemes(true)
+                    .count()
             })
             .min()
             .unwrap_or_default();
