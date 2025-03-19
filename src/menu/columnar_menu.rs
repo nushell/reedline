@@ -63,6 +63,8 @@ pub struct ColumnarMenu {
     col_pos: u16,
     /// row position in the menu. Starts from 0
     row_pos: u16,
+    /// Number of values that need to be skipped (based on selected & terminal height)
+    skip_values: u16,
     /// Event sent to the menu
     event: Option<MenuEvent>,
     /// Longest suggestion found in the values
@@ -82,6 +84,7 @@ impl Default for ColumnarMenu {
             values: Vec::new(),
             col_pos: 0,
             row_pos: 0,
+            skip_values: 0,
             event: None,
             longest_suggestion: 0,
             input: None,
@@ -619,6 +622,27 @@ impl Menu for ColumnarMenu {
                     self.working_details.columns = possible_cols;
                 }
             }
+
+            let available_lines = painter.remaining_lines().saturating_sub(1); // Not sure why this is 1 less than the `available_lines` from [`Menu::menu_string`]
+
+            // The skip values represent the number of lines that should be skipped
+            // while printing the menu
+
+            // Calculate the current first visible row
+            let first_visible_row = self.skip_values / self.get_cols();
+
+            // The skip values represent the number of lines that should be skipped
+            // while printing the menu
+            self.skip_values = if self.row_pos < first_visible_row {
+                // Selection is above the visible area, scroll up to make it visible
+                self.row_pos * self.get_cols()
+            } else if self.row_pos >= first_visible_row + available_lines {
+                // Selection is below the visible area, scroll down to make it visible
+                (self.row_pos.saturating_sub(available_lines) + 1) * self.get_cols()
+            } else {
+                // Selection is within the visible area, maintain current scroll position
+                self.skip_values
+            };
         }
     }
 
@@ -645,27 +669,18 @@ impl Menu for ColumnarMenu {
         if self.get_values().is_empty() {
             self.no_records_msg(use_ansi_coloring)
         } else {
-            // The skip values represent the number of lines that should be skipped
-            // while printing the menu
-            let skip_values = if self.row_pos >= available_lines {
-                let skip_lines = self.row_pos.saturating_sub(available_lines) + 1;
-                (skip_lines * self.get_cols()) as usize
-            } else {
-                0
-            };
-
             // It seems that crossterm prefers to have a complete string ready to be printed
             // rather than looping through the values and printing multiple things
             // This reduces the flickering when printing the menu
             let available_values = (available_lines * self.get_cols()) as usize;
             self.get_values()
                 .iter()
-                .skip(skip_values)
+                .skip(self.skip_values as usize)
                 .take(available_values)
                 .enumerate()
                 .map(|(index, suggestion)| {
                     // Correcting the enumerate index based on the number of skipped values
-                    let index = index + skip_values;
+                    let index = index + self.skip_values as usize;
                     let column = index as u16 % self.get_cols();
                     let empty_space = self.get_width().saturating_sub(suggestion.value.width());
 

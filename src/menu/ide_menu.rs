@@ -811,8 +811,11 @@ impl Menu for IdeMenu {
             self.working_details.space_left = space_left;
             self.working_details.space_right = space_right;
 
-            let available_lines = painter.remaining_lines().min(self.default_details.max_completion_height)
-                .saturating_sub(1); // Not sure why this is 1 less than the `available_lines` from [`Menu::menu_string`] 
+            let available_lines = painter
+                .remaining_lines()
+                .min(self.default_details.max_completion_height)
+                .saturating_sub(1); // Not sure why this is 1 less than the `available_lines` from [`Menu::menu_string`]
+            
             let visible_items = available_lines.saturating_sub(border_width);
 
             self.skip_values = if self.selected < self.skip_values {
@@ -857,7 +860,6 @@ impl Menu for IdeMenu {
                 0
             };
 
-            
             let available_lines = available_lines.min(self.default_details.max_completion_height);
             let skip_values = self.skip_values as usize;
 
