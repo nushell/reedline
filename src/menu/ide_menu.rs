@@ -144,7 +144,8 @@ pub struct IdeMenu {
     values: Vec<Suggestion>,
     /// Selected value. Starts at 0
     selected: u16,
-    /// Number of values that need to be skipped (based on selected & terminal height)
+    /// Number of values that are skipped when printing,
+    /// depending on selected value and terminal height
     skip_values: u16,
     /// Event sent to the menu
     event: Option<MenuEvent>,
@@ -814,18 +815,18 @@ impl Menu for IdeMenu {
             let available_lines = painter
                 .remaining_lines()
                 .min(self.default_details.max_completion_height)
-                .saturating_sub(1); // Not sure why this is 1 less than the `available_lines` from [`Menu::menu_string`]
+                .saturating_sub(1);
 
             let visible_items = available_lines.saturating_sub(border_width);
 
             self.skip_values = if self.selected <= self.skip_values {
-                // Selection is above the visible area, scroll up to make it visible
+                // Selection is above the visible area
                 self.selected
             } else if self.selected >= self.skip_values + visible_items {
-                // Selection is below the visible area, scroll down to make it visible
+                // Selection is below the visible area
                 self.selected.saturating_sub(visible_items) + 1
             } else {
-                // Selection is within the visible area, maintain current scroll position
+                // Selection is within the visible area
                 self.skip_values
             }
         }

@@ -63,7 +63,8 @@ pub struct ColumnarMenu {
     col_pos: u16,
     /// row position in the menu. Starts from 0
     row_pos: u16,
-    /// Number of values that need to be skipped (based on selected & terminal height)
+    /// Number of values that are skipped when printing,
+    /// depending on selected value and terminal height
     skip_values: u16,
     /// Event sent to the menu
     event: Option<MenuEvent>,
@@ -623,24 +624,18 @@ impl Menu for ColumnarMenu {
                 }
             }
 
-            let available_lines = painter.remaining_lines().saturating_sub(1); // Not sure why this is 1 less than the `available_lines` from [`Menu::menu_string`]
+            let available_lines = painter.remaining_lines().saturating_sub(1);
 
-            // The skip values represent the number of lines that should be skipped
-            // while printing the menu
-
-            // Calculate the current first visible row
             let first_visible_row = self.skip_values / self.get_cols();
 
-            // The skip values represent the number of lines that should be skipped
-            // while printing the menu
             self.skip_values = if self.row_pos <= first_visible_row {
-                // Selection is above the visible area, scroll up to make it visible
+                // Selection is above the visible area, scroll up
                 self.row_pos * self.get_cols()
             } else if self.row_pos >= first_visible_row + available_lines {
-                // Selection is below the visible area, scroll down to make it visible
+                // Selection is below the visible area, scroll down
                 (self.row_pos.saturating_sub(available_lines) + 1) * self.get_cols()
             } else {
-                // Selection is within the visible area, maintain current scroll position
+                // Selection is within the visible area
                 self.skip_values
             };
         }
