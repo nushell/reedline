@@ -815,7 +815,7 @@ impl Menu for IdeMenu {
                 .remaining_lines()
                 .min(self.default_details.max_completion_height)
                 .saturating_sub(1); // Not sure why this is 1 less than the `available_lines` from [`Menu::menu_string`]
-            
+
             let visible_items = available_lines.saturating_sub(border_width);
 
             self.skip_values = if self.selected < self.skip_values {
