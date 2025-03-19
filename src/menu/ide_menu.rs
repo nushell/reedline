@@ -144,6 +144,8 @@ pub struct IdeMenu {
     values: Vec<Suggestion>,
     /// Selected value. Starts at 0
     selected: u16,
+    /// Number of values that need to be skipped (based on selected & terminal height)
+    skip_values: u16,
     /// Event sent to the menu
     event: Option<MenuEvent>,
     /// Longest suggestion found in the values
@@ -161,6 +163,7 @@ impl Default for IdeMenu {
             working_details: IdeMenuDetails::default(),
             values: Vec::new(),
             selected: 0,
+            skip_values: 0,
             event: None,
             longest_suggestion: 0,
             input: None,
@@ -807,6 +810,21 @@ impl Menu for IdeMenu {
 
             self.working_details.space_left = space_left;
             self.working_details.space_right = space_right;
+
+            let available_lines = painter.remaining_lines().min(self.default_details.max_completion_height)
+                .saturating_sub(1); // Not sure why this is 1 less than the `available_lines` from [`Menu::menu_string`] 
+            let visible_items = available_lines.saturating_sub(border_width);
+
+            self.skip_values = if self.selected < self.skip_values {
+                // Selection is above the visible area, scroll up to make it visible
+                self.selected
+            } else if self.selected >= self.skip_values + visible_items {
+                // Selection is below the visible area, scroll down to make it visible
+                self.selected.saturating_sub(visible_items) + 1
+            } else {
+                // Selection is within the visible area, maintain current scroll position
+                self.skip_values
+            }
         }
     }
 
@@ -839,18 +857,9 @@ impl Menu for IdeMenu {
                 0
             };
 
+            
             let available_lines = available_lines.min(self.default_details.max_completion_height);
-            // The skip values represent the number of lines that should be skipped
-            // while printing the menu
-            let skip_values = if self.selected >= available_lines.saturating_sub(border_width) {
-                let skip_lines = self
-                    .selected
-                    .saturating_sub(available_lines.saturating_sub(border_width))
-                    + 1;
-                skip_lines as usize
-            } else {
-                0
-            };
+            let skip_values = self.skip_values as usize;
 
             let available_values = available_lines.saturating_sub(border_width) as usize;
 
