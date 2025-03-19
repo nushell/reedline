@@ -317,8 +317,7 @@ impl Painter {
             .queue(Print(menu_string.trim_end_matches('\n')))?
             .queue(RestorePosition)?;
 
-        self.stdout.flush()?;
-        Ok(())
+        self.stdout.flush()
     }
 
     fn print_small_buffer(
