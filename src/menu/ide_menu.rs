@@ -818,7 +818,7 @@ impl Menu for IdeMenu {
 
             let visible_items = available_lines.saturating_sub(border_width);
 
-            self.skip_values = if self.selected < self.skip_values {
+            self.skip_values = if self.selected <= self.skip_values {
                 // Selection is above the visible area, scroll up to make it visible
                 self.selected
             } else if self.selected >= self.skip_values + visible_items {

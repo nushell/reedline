@@ -633,7 +633,7 @@ impl Menu for ColumnarMenu {
 
             // The skip values represent the number of lines that should be skipped
             // while printing the menu
-            self.skip_values = if self.row_pos < first_visible_row {
+            self.skip_values = if self.row_pos <= first_visible_row {
                 // Selection is above the visible area, scroll up to make it visible
                 self.row_pos * self.get_cols()
             } else if self.row_pos >= first_visible_row + available_lines {
