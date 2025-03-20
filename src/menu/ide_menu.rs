@@ -814,8 +814,8 @@ impl Menu for IdeMenu {
 
             let available_lines = painter
                 .remaining_lines()
-                .min(self.default_details.max_completion_height)
-                .saturating_sub(1);
+                .saturating_sub(1)
+                .min(self.default_details.max_completion_height);
 
             let visible_items = available_lines.saturating_sub(border_width);
 
