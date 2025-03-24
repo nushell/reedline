@@ -210,7 +210,8 @@ impl Painter {
         {
             self.prompt_start_row = self.prompt_start_row.saturating_sub(
                 (lines.prompt_str_left.matches('\n').count()
-                    + lines.prompt_indicator.matches('\n').count()) as u16,
+                    + lines.prompt_indicator.matches('\n').count()
+                    + lines.before_cursor.matches('\n').count()) as u16,
             );
             // If the right prompt gets wrapped with smaller terminal width,
             // move the prompt one row up to avoid left prompt glitches.
