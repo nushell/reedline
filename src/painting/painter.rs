@@ -86,6 +86,10 @@ fn select_prompt_row(
     PromptRowSelector::MakeNewPrompt { new_row }
 }
 
+struct ResizeResult {
+    width_decreased: bool,
+}
+
 /// Implementation of the output to the terminal
 pub struct Painter {
     // Stdout
@@ -94,7 +98,7 @@ pub struct Painter {
     terminal_size: (u16, u16),
     last_required_lines: u16,
     large_buffer: bool,
-    just_resized: bool,
+    just_resized: Option<ResizeResult>,
     after_cursor_lines: Option<String>,
 }
 
@@ -106,7 +110,7 @@ impl Painter {
             terminal_size: (0, 0),
             last_required_lines: 0,
             large_buffer: false,
-            just_resized: false,
+            just_resized: None,
             after_cursor_lines: None,
         }
     }
@@ -200,12 +204,20 @@ impl Painter {
         let screen_height = self.screen_height();
 
         // Handle resize for multi line prompt
-        if self.just_resized {
+        if let Some(ResizeResult {
+            width_decreased, ..
+        }) = self.just_resized
+        {
             self.prompt_start_row = self.prompt_start_row.saturating_sub(
                 (lines.prompt_str_left.matches('\n').count()
                     + lines.prompt_indicator.matches('\n').count()) as u16,
             );
-            self.just_resized = false;
+            // If the right prompt gets wrapped with smaller terminal width,
+            // move the prompt one row up to avoid left prompt glitches.
+            if width_decreased && line_width(&lines.prompt_str_right) > 0 {
+                self.prompt_start_row = self.prompt_start_row.saturating_sub(1);
+            }
+            self.just_resized = None;
         }
 
         // Lines and distance parameters
@@ -484,6 +496,9 @@ impl Painter {
 
     /// Updates prompt origin and offset to handle a screen resize event
     pub(crate) fn handle_resize(&mut self, width: u16, height: u16) {
+        self.just_resized = Some(ResizeResult {
+            width_decreased: width < self.terminal_size.0,
+        });
         self.terminal_size = (width, height);
 
         // `cursor::position() is blocking and can timeout.
@@ -499,7 +514,6 @@ impl Painter {
         // out yet.
         if let Ok(position) = cursor::position() {
             self.prompt_start_row = position.1;
-            self.just_resized = true;
         }
     }
 
