@@ -1,4 +1,6 @@
 //! Collection of common functions that can be used to create menus
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::{Editor, Suggestion, UndoBehavior};
 
 /// Index result obtained from parsing a string with an index marker
@@ -354,6 +356,27 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
     }
 }
 
+/// Split suggestion based on number of graphemes in shortest matched string
+///
+/// For highlighting prefix-matched suggestions
+pub fn split_suggestion(sugg: &str, match_len: usize) -> (&str, &str) {
+    let mut graphemes = sugg.grapheme_indices(true).peekable();
+    let Some((_, first)) = graphemes.peek() else {
+        return ("", "");
+    };
+    let skip = if match_len > 0 && (*first == "`" || *first == "'" || *first == "\"") {
+        1 + match_len
+    } else {
+        match_len
+    };
+
+    if let Some((ind, _)) = graphemes.nth(skip) {
+        sugg.split_at(ind)
+    } else {
+        (sugg, "")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,5 +719,27 @@ mod tests {
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(orig_buffer, editor.get_buffer());
         assert_eq!(orig_insertion_point, editor.insertion_point());
+    }
+
+    #[rstest]
+    #[case("おはよう", "おは", "おは")]
+    #[case("`'おはよう)", "'お", "`'お")]
+    #[case("おはよう", "a", "お")]
+    #[case("abcd", "お", "a")]
+    fn test_split_suggestions(
+        #[case] sugg: &str,
+        #[case] typed: &str,
+        #[case] exp_match_str: &str,
+    ) {
+        let (got_match_str, _) = split_suggestion(sugg, typed.graphemes(true).count());
+        assert_eq!(exp_match_str, got_match_str)
+    }
+
+    #[test]
+    fn test_split_suggestions_shorter_than_typed() {
+        let sugg = "a";
+        let typed = "abcd";
+        let (got_match_str, _) = split_suggestion(sugg, typed.graphemes(true).count());
+        assert_eq!("a", got_match_str)
     }
 }
