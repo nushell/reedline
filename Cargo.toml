@@ -31,7 +31,7 @@ serde_json = { version = "1.0.79", optional = true }
 strip-ansi-escapes = "0.2.0"
 strum = "0.26"
 strum_macros = "0.26"
-thiserror = "1.0.31"
+thiserror = "2.0.12"
 unicode-segmentation = "1.9.0"
 unicode-width = "0.2"
 
