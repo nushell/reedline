@@ -163,6 +163,10 @@ pub enum EditCommand {
     /// Cut from the insertion point to the end of the current line
     CutToLineEnd,
 
+    /// Cut from the insertion point to the end of the current line
+    /// If the cursor is already at the end of the line, remove the newline character
+    KillLine,
+
     /// Cut the word left of the insertion point
     CutWordLeft,
 
@@ -407,6 +411,7 @@ impl Display for EditCommand {
             EditCommand::CutFromLineStart => write!(f, "CutFromLineStart"),
             EditCommand::CutToEnd => write!(f, "CutToEnd"),
             EditCommand::CutToLineEnd => write!(f, "CutToLineEnd"),
+            EditCommand::KillLine => write!(f, "KillLine"),
             EditCommand::CutWordLeft => write!(f, "CutWordLeft"),
             EditCommand::CutBigWordLeft => write!(f, "CutBigWordLeft"),
             EditCommand::CutWordRight => write!(f, "CutWordRight"),
@@ -510,6 +515,7 @@ impl EditCommand {
             | EditCommand::CutFromStart
             | EditCommand::CutFromLineStart
             | EditCommand::CutToLineEnd
+            | EditCommand::KillLine
             | EditCommand::CutToEnd
             | EditCommand::CutWordLeft
             | EditCommand::CutBigWordLeft

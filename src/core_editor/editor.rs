@@ -84,6 +84,7 @@ impl Editor {
             EditCommand::CutFromLineStart => self.cut_from_line_start(),
             EditCommand::CutToEnd => self.cut_from_end(),
             EditCommand::CutToLineEnd => self.cut_to_line_end(),
+            EditCommand::KillLine => self.kill_line(),
             EditCommand::CutWordLeft => self.cut_word_left(),
             EditCommand::CutBigWordLeft => self.cut_big_word_left(),
             EditCommand::CutWordRight => self.cut_word_right(),
@@ -360,6 +361,14 @@ impl Editor {
         if !cut_slice.is_empty() {
             self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
             self.line_buffer.clear_to_line_end();
+        }
+    }
+
+    fn kill_line(&mut self) {
+        if self.line_buffer.insertion_point() == self.line_buffer.find_current_line_end() {
+            self.cut_char()
+        } else {
+            self.cut_to_line_end()
         }
     }
 
