@@ -288,4 +288,18 @@ mod test {
             ReedlineEvent::Edit(vec![EditCommand::InsertChar('😀')])
         );
     }
+
+    #[test]
+    fn kill_line() {
+        let mut emacs = Emacs::default();
+
+        let ctrl_k = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        let result = emacs.parse_event(ctrl_k);
+
+        assert_eq!(result, ReedlineEvent::Edit(vec![EditCommand::KillLine]));
+    }
 }

@@ -1308,4 +1308,20 @@ mod test {
         assert_eq!(editor.insertion_point(), 4);
         assert_eq!(editor.cut_buffer.get().0, "bar(bazbaz)qux");
     }
+
+    #[test]
+    fn test_kill_line() {
+        let mut editor = editor_with("foo\nbar");
+        editor.move_to_position(1, false);
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "f\nbar"); // Just cut until the end of line
+        assert_eq!(editor.insertion_point(), 1); // Cursor should return to original position
+        assert_eq!(editor.cut_buffer.get().0, "oo");
+
+        // continue kill line at current position.
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "fbar"); // Just cut the new line character
+        assert_eq!(editor.insertion_point(), 1);
+        assert_eq!(editor.cut_buffer.get().0, "\n");
+    }
 }
