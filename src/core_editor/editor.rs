@@ -1323,5 +1323,25 @@ mod test {
         assert_eq!(editor.get_buffer(), "fbar"); // Just cut the new line character
         assert_eq!(editor.insertion_point(), 1);
         assert_eq!(editor.cut_buffer.get().0, "\n");
+
+        // Test when editor start with newline character point.
+        let mut editor = editor_with("foo\nbar");
+        editor.move_to_position(3, false);
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "foobar"); // Just cut the new line character
+        assert_eq!(editor.insertion_point(), 3); // Cursor should return to original position
+        assert_eq!(editor.cut_buffer.get().0, "\n");
+
+        // continue kill line at current position.
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "foo"); // Just cut until line end.
+        assert_eq!(editor.insertion_point(), 3);
+        assert_eq!(editor.cut_buffer.get().0, "bar");
+
+        // continue kill line, all remains the same.
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "foo");
+        assert_eq!(editor.insertion_point(), 3);
+        assert_eq!(editor.cut_buffer.get().0, "bar");
     }
 }
