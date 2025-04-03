@@ -624,7 +624,7 @@ impl Menu for ColumnarMenu {
                 }
             }
 
-            let available_lines = painter.remaining_lines().saturating_sub(1);
+            let available_lines = painter.remaining_lines();
 
             let first_visible_row = self.skip_values / self.get_cols();
 

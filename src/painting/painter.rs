@@ -91,6 +91,8 @@ pub struct Painter {
     // Stdout
     stdout: W,
     prompt_start_row: u16,
+    // The number of lines that the prompt takes up
+    prompt_height: u16,
     terminal_size: (u16, u16),
     last_required_lines: u16,
     large_buffer: bool,
@@ -103,6 +105,7 @@ impl Painter {
         Painter {
             stdout,
             prompt_start_row: 0,
+            prompt_height: 0,
             terminal_size: (0, 0),
             last_required_lines: 0,
             large_buffer: false,
@@ -123,7 +126,7 @@ impl Painter {
 
     /// Returns the available lines from the prompt down
     pub fn remaining_lines(&self) -> u16 {
-        self.screen_height().saturating_sub(self.prompt_start_row)
+        self.screen_height().saturating_sub(self.prompt_height)
     }
 
     /// Returns the state necessary before suspending the painter (to run a host command event).
@@ -198,6 +201,8 @@ impl Painter {
 
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();
+
+        self.prompt_height = lines.prompt_lines_with_wrap(screen_width);
 
         // Handle resize for multi line prompt
         if self.just_resized {

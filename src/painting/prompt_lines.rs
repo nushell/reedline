@@ -120,7 +120,9 @@ impl<'prompt> PromptLines<'prompt> {
     pub(crate) fn prompt_lines_with_wrap(&self, screen_width: u16) -> u16 {
         let complete_prompt = self.prompt_str_left.to_string() + &self.prompt_indicator;
         let lines = estimate_required_lines(&complete_prompt, screen_width);
-        lines.saturating_sub(1) as u16
+        // TODO: make sure this doesnt cause any problems in other places
+        // lines.saturating_sub(1) as u16
+        lines as u16
     }
 
     /// Estimated width of the line where right prompt will be rendered
