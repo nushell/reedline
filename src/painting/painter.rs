@@ -126,7 +126,9 @@ impl Painter {
 
     /// Returns the available lines from the prompt down
     pub fn remaining_lines(&self) -> u16 {
-        self.screen_height().saturating_sub(self.prompt_height)
+        self.screen_height()
+            .saturating_sub(self.prompt_start_row)
+            .saturating_sub(self.prompt_height)
     }
 
     /// Returns the state necessary before suspending the painter (to run a host command event).
@@ -202,7 +204,8 @@ impl Painter {
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();
 
-        self.prompt_height = lines.prompt_lines_with_wrap(screen_width);
+        // We add one here as [`PromptLines::prompt_lines_with_wrap`] intentionally subtracts 1 from the real value.
+        self.prompt_height = lines.prompt_lines_with_wrap(screen_width) + 1;
 
         // Handle resize for multi line prompt
         if self.just_resized {
