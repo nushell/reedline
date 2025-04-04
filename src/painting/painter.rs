@@ -217,7 +217,7 @@ impl Painter {
         }
 
         // Lines and distance parameters
-        let remaining_lines = self.remaining_lines();
+        let remaining_lines = self.remaining_lines() + self.prompt_height;
         let required_lines = lines.required_lines(screen_width, menu);
 
         // Marking the painter state as larger buffer to avoid animations
