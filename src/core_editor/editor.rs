@@ -1317,7 +1317,6 @@ mod test {
         assert_eq!(editor.get_buffer(), "f\nbar"); // Just cut until the end of line
         assert_eq!(editor.insertion_point(), 1); // Cursor should return to original position
         assert_eq!(editor.cut_buffer.get().0, "oo");
-
         // continue kill line at current position.
         editor.kill_line();
         assert_eq!(editor.get_buffer(), "fbar"); // Just cut the new line character
@@ -1331,17 +1330,37 @@ mod test {
         assert_eq!(editor.get_buffer(), "foobar"); // Just cut the new line character
         assert_eq!(editor.insertion_point(), 3); // Cursor should return to original position
         assert_eq!(editor.cut_buffer.get().0, "\n");
-
         // continue kill line at current position.
         editor.kill_line();
         assert_eq!(editor.get_buffer(), "foo"); // Just cut until line end.
         assert_eq!(editor.insertion_point(), 3);
         assert_eq!(editor.cut_buffer.get().0, "bar");
-
         // continue kill line, all remains the same.
         editor.kill_line();
         assert_eq!(editor.get_buffer(), "foo");
         assert_eq!(editor.insertion_point(), 3);
         assert_eq!(editor.cut_buffer.get().0, "bar");
+    }
+
+    #[test]
+    fn test_kill_line_with_windows_newline() {
+        let mut editor = editor_with("foo\r\nbar");
+        editor.move_to_position(1, false);
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "f\r\nbar"); // Just cut until the end of line
+        assert_eq!(editor.insertion_point(), 1); // Cursor should return to original position
+        assert_eq!(editor.cut_buffer.get().0, "oo");
+        // continue kill line at current position.
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "fbar"); // Just cut the new line character
+        assert_eq!(editor.insertion_point(), 1);
+        assert_eq!(editor.cut_buffer.get().0, "\r\n");
+
+        let mut editor = editor_with("foo\r\nbar");
+        editor.move_to_position(3, false);
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "foobar"); // Just cut the newline
+        assert_eq!(editor.insertion_point(), 3); // Cursor should return to original position
+        assert_eq!(editor.cut_buffer.get().0, "\r\n");
     }
 }
