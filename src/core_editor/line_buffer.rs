@@ -163,7 +163,7 @@ impl LineBuffer {
     pub fn grapheme_left_index(&self) -> usize {
         self.lines[..self.insertion_point]
             .grapheme_indices(true)
-            .last()
+            .next_back()
             .map(|(i, _)| i)
             .unwrap_or(0)
     }
@@ -213,7 +213,7 @@ impl LineBuffer {
             .unwrap_or_else(|| {
                 self.lines
                     .grapheme_indices(true)
-                    .last()
+                    .next_back()
                     .map(|x| x.0)
                     .unwrap_or(0)
             })
@@ -238,7 +238,7 @@ impl LineBuffer {
             .unwrap_or_else(|| {
                 self.lines
                     .grapheme_indices(true)
-                    .last()
+                    .next_back()
                     .map(|x| x.0)
                     .unwrap_or(0)
             })
@@ -272,7 +272,7 @@ impl LineBuffer {
         self.lines[..self.insertion_point]
             .split_word_bound_indices()
             .filter(|(_, word)| !is_whitespace_str(word))
-            .last()
+            .next_back()
             .map(|(i, _)| i)
             .unwrap_or(0)
     }
@@ -471,7 +471,7 @@ impl LineBuffer {
         let left_index = self.lines[..right_index]
             .split_word_bound_indices()
             .filter(|(_, word)| !is_whitespace_str(word))
-            .last()
+            .next_back()
             .map(|(i, _)| i)
             .unwrap_or(0);
 
