@@ -124,11 +124,20 @@ impl Painter {
         self.terminal_size.0
     }
 
-    /// Returns the available lines from the prompt down
-    pub fn remaining_lines(&self) -> u16 {
+    /// Returns the empty lines from the prompt down.
+    pub fn remaining_lines_real(&self) -> u16 {
         self.screen_height()
             .saturating_sub(self.prompt_start_row)
             .saturating_sub(self.prompt_height)
+    }
+
+    /// Returns the number of lines that are available or can be made available by
+    /// stripping the prompt.
+    ///
+    /// If you want the number of empty lines below the prompt,
+    /// use [`Painter::remaining_lines_real`] instead.
+    pub fn remaining_lines(&self) -> u16 {
+        self.screen_height().saturating_sub(self.prompt_start_row)
     }
 
     /// Returns the state necessary before suspending the painter (to run a host command event).
@@ -217,7 +226,7 @@ impl Painter {
         }
 
         // Lines and distance parameters
-        let remaining_lines = self.remaining_lines() + self.prompt_height;
+        let remaining_lines = self.remaining_lines();
         let required_lines = lines.required_lines(screen_width, menu);
 
         // Marking the painter state as larger buffer to avoid animations

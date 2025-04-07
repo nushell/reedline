@@ -812,9 +812,15 @@ impl Menu for IdeMenu {
             self.working_details.space_left = space_left;
             self.working_details.space_right = space_right;
 
-            let available_lines = painter
-                .remaining_lines()
+            let mut available_lines = painter
+                .remaining_lines_real()
                 .min(self.default_details.max_completion_height);
+
+            // Handle the case where a prompt uses the entire screen.
+            // Drawing the menu has priority over the drawing the prompt.
+            if available_lines == 0 {
+                available_lines = painter.remaining_lines().min(self.min_rows());
+            }
 
             let visible_items = available_lines.saturating_sub(border_width);
 

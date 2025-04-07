@@ -624,7 +624,12 @@ impl Menu for ColumnarMenu {
                 }
             }
 
-            let available_lines = painter.remaining_lines();
+            let mut available_lines = painter.remaining_lines_real();
+            // Handle the case where a prompt uses the entire screen.
+            // Drawing the menu has priority over the drawing the prompt.
+            if available_lines == 0 {
+                available_lines = painter.remaining_lines().min(self.min_rows());
+            }
 
             let first_visible_row = self.skip_values / self.get_cols();
 
@@ -668,14 +673,16 @@ impl Menu for ColumnarMenu {
             // rather than looping through the values and printing multiple things
             // This reduces the flickering when printing the menu
             let available_values = (available_lines * self.get_cols()) as usize;
+            let skip_values = self.skip_values as usize;
+
             self.get_values()
                 .iter()
-                .skip(self.skip_values as usize)
+                .skip(skip_values)
                 .take(available_values)
                 .enumerate()
                 .map(|(index, suggestion)| {
                     // Correcting the enumerate index based on the number of skipped values
-                    let index = index + self.skip_values as usize;
+                    let index = index + skip_values;
                     let column = index as u16 % self.get_cols();
                     let empty_space = self.get_width().saturating_sub(suggestion.value.width());
 
