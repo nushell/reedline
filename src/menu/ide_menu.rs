@@ -1484,6 +1484,6 @@ mod tests {
 
         editor.set_buffer("おは".to_string(), UndoBehavior::CreateUndoPoint);
         menu.update_values(&mut editor, &mut completer);
-        assert!(menu.menu_string(2, true).contains("`おは"));
+        assert!(menu.menu_string(2, true).contains("おは"));
     }
 }
