@@ -520,10 +520,18 @@ impl IdeMenu {
                 .unwrap_or(shortest_base);
             let match_len = shortest_base.len().min(string.len());
 
-            // Split string so the match text can be styled
-            let skip_len = string.chars().take_while(|c| is_quote(*c)).count();
-            let (match_str, remaining_str) =
-                string.split_at((match_len + skip_len).min(string.len()));
+            // Find match position - look for the base string in the suggestion
+            // Use rfind to match from the end (for file paths, this will match the filename)
+            let match_position = string.rfind(shortest_base).unwrap_or(0);
+            
+            // The match is just the part that matches the shortest_base
+            let match_str = &string[match_position..match_position + match_len.min(string.len() - match_position)];
+            
+            // Prefix is everything before the match
+            let prefix = &string[..match_position];
+            
+            // Remaining is everything after the match
+            let remaining_str = &string[match_position + match_str.len()..];
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -532,8 +540,13 @@ impl IdeMenu {
 
             if index == self.index() {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
                     vertical_border,
+                    suggestion_style_prefix,
+                    self.settings.color.selected_text_style.prefix(),
+                    prefix,
+                    " ".repeat(padding_right),
+                    RESET,
                     suggestion_style_prefix,
                     " ".repeat(padding),
                     self.settings.color.selected_match_style.prefix(),
@@ -548,8 +561,12 @@ impl IdeMenu {
                 )
             } else {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
                     vertical_border,
+                    suggestion_style_prefix,
+                    prefix,
+                    " ".repeat(padding_right),
+                    RESET,
                     suggestion_style_prefix,
                     " ".repeat(padding),
                     self.settings.color.match_style.prefix(),
