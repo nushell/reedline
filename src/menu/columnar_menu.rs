@@ -308,17 +308,18 @@ impl ColumnarMenu {
             let match_len = shortest_base.len();
 
             let suggestion_value = &suggestion.value;
-            
+
             // Find match position - look for the base string in the suggestion
             // Use rfind to match from the end (for file paths, this will match the filename)
             let match_position = suggestion_value.rfind(shortest_base).unwrap_or(0);
-            
+
             // The match is just the part that matches the shortest_base
-            let match_str = &suggestion_value[match_position..match_position + match_len.min(suggestion_value.len() - match_position)];
-            
+            let match_str = &suggestion_value[match_position
+                ..match_position + match_len.min(suggestion_value.len() - match_position)];
+
             // Prefix is everything before the match
             let prefix = &suggestion_value[..match_position];
-            
+
             // Remaining is everything after the match
             let remaining_str = &suggestion_value[match_position + match_str.len()..];
 
