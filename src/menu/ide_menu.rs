@@ -520,8 +520,12 @@ impl IdeMenu {
                 .unwrap_or(shortest_base);
             let match_len = shortest_base.len().min(string.len());
 
-            // Find match position - look for the base string in the suggestion
-            let match_position = string.find(shortest_base).unwrap_or(0);
+            // Find match position - look for the base string in the suggestion (case-insensitive)
+            let match_position = suggestion
+                .value
+                .to_lowercase()
+                .find(&shortest_base.to_lowercase())
+                .unwrap_or(0);
 
             // The match is just the part that matches the shortest_base
             let match_str = &string
