@@ -521,8 +521,7 @@ impl IdeMenu {
             let match_len = shortest_base.len().min(string.len());
 
             // Find match position - look for the base string in the suggestion
-            // Use rfind to match from the end (for file paths, this will match the filename)
-            let match_position = string.rfind(shortest_base).unwrap_or(0);
+            let match_position = string.find(shortest_base).unwrap_or(0);
 
             // The match is just the part that matches the shortest_base
             let match_str = &string
@@ -541,12 +540,11 @@ impl IdeMenu {
 
             if index == self.index() {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
                     vertical_border,
                     suggestion_style_prefix,
                     self.settings.color.selected_text_style.prefix(),
                     prefix,
-                    " ".repeat(padding_right),
                     RESET,
                     suggestion_style_prefix,
                     " ".repeat(padding),
@@ -562,11 +560,10 @@ impl IdeMenu {
                 )
             } else {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
                     vertical_border,
                     suggestion_style_prefix,
                     prefix,
-                    " ".repeat(padding_right),
                     RESET,
                     suggestion_style_prefix,
                     " ".repeat(padding),
