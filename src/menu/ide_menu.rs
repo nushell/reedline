@@ -1,7 +1,9 @@
 use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
-    menu_functions::{can_partially_complete, completer_input, replace_in_buffer},
+    menu_functions::{
+        can_partially_complete, completer_input, replace_in_buffer, style_suggestion,
+    },
     painting::Painter,
     Completer, Suggestion,
 };
@@ -520,43 +522,42 @@ impl IdeMenu {
                 .unwrap_or(shortest_base);
             let match_len = shortest_base.len().min(string.len());
 
-            // Split string so the match text can be styled
-            let skip_len = string.chars().take_while(|c| is_quote(*c)).count();
-            let (match_str, remaining_str) =
-                string.split_at((match_len + skip_len).min(string.len()));
+            let default_indices = (0..match_len).collect();
+            let match_indices = suggestion
+                .match_indices
+                .as_ref()
+                .unwrap_or(&default_indices);
 
-            let suggestion_style_prefix = suggestion
-                .style
-                .unwrap_or(self.settings.color.text_style)
-                .prefix();
+            let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
 
             if index == self.index() {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}",
                     vertical_border,
-                    suggestion_style_prefix,
+                    suggestion_style.prefix(),
                     " ".repeat(padding),
-                    self.settings.color.selected_match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    self.settings.color.selected_text_style.prefix(),
-                    remaining_str,
+                    style_suggestion(
+                        &suggestion.value,
+                        match_indices,
+                        &self.settings.color.selected_match_style,
+                        &self.settings.color.selected_text_style
+                    ),
                     " ".repeat(padding_right),
                     RESET,
                     vertical_border,
                 )
             } else {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}",
                     vertical_border,
-                    suggestion_style_prefix,
+                    suggestion_style.prefix(),
                     " ".repeat(padding),
-                    self.settings.color.match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    remaining_str,
+                    style_suggestion(
+                        &suggestion.value,
+                        match_indices,
+                        &self.settings.color.match_style,
+                        &suggestion_style
+                    ),
                     " ".repeat(padding_right),
                     RESET,
                     vertical_border,
@@ -1386,6 +1387,7 @@ mod tests {
             extra: None,
             span: Span { start: 0, end: pos },
             append_whitespace: false,
+            match_indices: None,
         }
     }
 
