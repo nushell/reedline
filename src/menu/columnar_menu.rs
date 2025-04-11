@@ -332,7 +332,7 @@ impl ColumnarMenu {
             let left_text_size = self.longest_suggestion + self.default_details.col_padding;
             let right_text_size = self.get_width().saturating_sub(left_text_size);
 
-            let max_remaining = left_text_size.saturating_sub(match_str.width());
+            let max_remaining = left_text_size.saturating_sub(match_str.width() + prefix.width());
             let max_match = max_remaining.saturating_sub(remaining_str.width());
 
             if index == self.index() {
