@@ -520,10 +520,22 @@ impl IdeMenu {
                 .unwrap_or(shortest_base);
             let match_len = shortest_base.len().min(string.len());
 
-            // Split string so the match text can be styled
-            let skip_len = string.chars().take_while(|c| is_quote(*c)).count();
-            let (match_str, remaining_str) =
-                string.split_at((match_len + skip_len).min(string.len()));
+            // Find match position - look for the base string in the suggestion (case-insensitive)
+            let match_position = suggestion
+                .value
+                .to_lowercase()
+                .find(&shortest_base.to_lowercase())
+                .unwrap_or(0);
+
+            // The match is just the part that matches the shortest_base
+            let match_str = &string
+                [match_position..match_position + match_len.min(string.len() - match_position)];
+
+            // Prefix is everything before the match
+            let prefix = &string[..match_position];
+
+            // Remaining is everything after the match
+            let remaining_str = &string[match_position + match_str.len()..];
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -532,8 +544,12 @@ impl IdeMenu {
 
             if index == self.index() {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
                     vertical_border,
+                    suggestion_style_prefix,
+                    self.settings.color.selected_text_style.prefix(),
+                    prefix,
+                    RESET,
                     suggestion_style_prefix,
                     " ".repeat(padding),
                     self.settings.color.selected_match_style.prefix(),
@@ -548,8 +564,11 @@ impl IdeMenu {
                 )
             } else {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
                     vertical_border,
+                    suggestion_style_prefix,
+                    prefix,
+                    RESET,
                     suggestion_style_prefix,
                     " ".repeat(padding),
                     self.settings.color.match_style.prefix(),
@@ -1466,6 +1485,6 @@ mod tests {
 
         editor.set_buffer("おは".to_string(), UndoBehavior::CreateUndoPoint);
         menu.update_values(&mut editor, &mut completer);
-        assert!(menu.menu_string(2, true).contains("`おは"));
+        assert!(menu.menu_string(2, true).contains("おは"));
     }
 }

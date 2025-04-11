@@ -307,15 +307,22 @@ impl ColumnarMenu {
                 .unwrap_or(shortest_base);
             let match_len = shortest_base.len();
 
-            // Split string so the match text can be styled
-            let skip_len = suggestion
+            // Find match position - look for the base string in the suggestion (case-insensitive)
+            let match_position = suggestion
                 .value
-                .chars()
-                .take_while(|c| is_quote(*c))
-                .count();
-            let (match_str, remaining_str) = suggestion
-                .value
-                .split_at((match_len + skip_len).min(suggestion.value.len()));
+                .to_lowercase()
+                .find(&shortest_base.to_lowercase())
+                .unwrap_or(0);
+
+            // The match is just the part that matches the shortest_base
+            let match_str = &suggestion.value[match_position
+                ..match_position + match_len.min(suggestion.value.len() - match_position)];
+
+            // Prefix is everything before the match
+            let prefix = &suggestion.value[..match_position];
+
+            // Remaining is everything after the match
+            let remaining_str = &suggestion.value[match_position + match_str.len()..];
 
             let suggestion_style_prefix = suggestion
                 .style
@@ -325,20 +332,24 @@ impl ColumnarMenu {
             let left_text_size = self.longest_suggestion + self.default_details.col_padding;
             let right_text_size = self.get_width().saturating_sub(left_text_size);
 
-            let max_remaining = left_text_size.saturating_sub(match_str.width());
+            let max_remaining = left_text_size.saturating_sub(match_str.width() + prefix.width());
             let max_match = max_remaining.saturating_sub(remaining_str.width());
 
             if index == self.index() {
                 if let Some(description) = &suggestion.description {
                     format!(
-                        "{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}{}{}",
+                        "{}{}{}{}{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}{}{}",
+                        suggestion_style_prefix,
+                        self.settings.color.selected_text_style.prefix(),
+                        prefix,
+                        RESET,
                         suggestion_style_prefix,
                         self.settings.color.selected_match_style.prefix(),
                         match_str,
                         RESET,
                         suggestion_style_prefix,
                         self.settings.color.selected_text_style.prefix(),
-                        &remaining_str,
+                        remaining_str,
                         RESET,
                         self.settings.color.description_style.prefix(),
                         self.settings.color.selected_text_style.prefix(),
@@ -352,7 +363,11 @@ impl ColumnarMenu {
                     )
                 } else {
                     format!(
-                        "{}{}{}{}{}{}{}{}{:>empty$}{}",
+                        "{}{}{}{}{}{}{}{}{}{}{}{}{:>empty$}{}",
+                        suggestion_style_prefix,
+                        self.settings.color.selected_text_style.prefix(),
+                        prefix,
+                        RESET,
                         suggestion_style_prefix,
                         self.settings.color.selected_match_style.prefix(),
                         match_str,
@@ -368,7 +383,10 @@ impl ColumnarMenu {
                 }
             } else if let Some(description) = &suggestion.description {
                 format!(
-                    "{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}{}",
+                    suggestion_style_prefix,
+                    prefix,
+                    RESET,
                     suggestion_style_prefix,
                     self.settings.color.match_style.prefix(),
                     match_str,
@@ -387,7 +405,10 @@ impl ColumnarMenu {
                 )
             } else {
                 format!(
-                    "{}{}{}{}{}{}{}{}{:>empty$}{}{}",
+                    "{}{}{}{}{}{}{}{}{}{}{}{:>empty$}{}{}",
+                    suggestion_style_prefix,
+                    prefix,
+                    RESET,
                     suggestion_style_prefix,
                     self.settings.color.match_style.prefix(),
                     match_str,
@@ -796,6 +817,6 @@ mod tests {
 
         editor.set_buffer("おは".to_string(), UndoBehavior::CreateUndoPoint);
         menu.update_values(&mut editor, &mut completer);
-        assert!(menu.menu_string(2, true).contains("`おは"));
+        assert!(menu.menu_string(2, true).contains("おは"));
     }
 }
