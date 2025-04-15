@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT"
 name = "reedline"
 repository = "https://github.com/nushell/reedline"
-rust-version = "1.63.0"
+rust-version = "1.86.0"
 version = "0.39.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -24,6 +24,7 @@ crossbeam = { version = "0.8.2", optional = true }
 crossterm = { version = "0.28.1", features = ["serde"] }
 fd-lock = "4.0.2"
 itertools = "0.13.0"
+modalkit = "0.0.20"
 nu-ansi-term = "0.50.0"
 rusqlite = { version = "0.31.0", optional = true }
 serde = { version = "1.0", features = ["derive"] }
