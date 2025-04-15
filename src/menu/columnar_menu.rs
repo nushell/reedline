@@ -1,4 +1,4 @@
-use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
+use super::{MatchDirection, Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{can_partially_complete, completer_input, replace_in_buffer},
@@ -18,6 +18,8 @@ struct DefaultColumnDetails {
     pub col_width: Option<usize>,
     /// Column padding
     pub col_padding: usize,
+    /// Optional direction to search for matches in suggestions. If None, uses find() (forward search)
+    pub match_direction: Option<MatchDirection>,
 }
 
 impl Default for DefaultColumnDetails {
@@ -26,6 +28,7 @@ impl Default for DefaultColumnDetails {
             columns: 4,
             col_width: None,
             col_padding: 2,
+            match_direction: Some(MatchDirection::Forward),
         }
     }
 }
@@ -116,6 +119,13 @@ impl ColumnarMenu {
     #[must_use]
     pub fn with_column_padding(mut self, col_padding: usize) -> Self {
         self.default_details.col_padding = col_padding;
+        self
+    }
+
+    /// Menu builder with new match direction
+    #[must_use]
+    pub fn with_match_direction(mut self, match_direction: MatchDirection) -> Self {
+        self.default_details.match_direction = Some(match_direction);
         self
     }
 }
@@ -308,11 +318,19 @@ impl ColumnarMenu {
             let match_len = shortest_base.len();
 
             // Find match position - look for the base string in the suggestion (case-insensitive)
-            let match_position = suggestion
-                .value
-                .to_lowercase()
-                .find(&shortest_base.to_lowercase())
-                .unwrap_or(0);
+            let match_position = match self.default_details.match_direction {
+                Some(MatchDirection::Forward) => suggestion
+                    .value
+                    .to_lowercase()
+                    .find(&shortest_base.to_lowercase())
+                    .unwrap_or(0),
+                Some(MatchDirection::Backward) => suggestion
+                    .value
+                    .to_lowercase()
+                    .rfind(&shortest_base.to_lowercase())
+                    .unwrap_or(0),
+                None => 0,
+            };
 
             // The match is just the part that matches the shortest_base
             let match_str = &suggestion.value[match_position

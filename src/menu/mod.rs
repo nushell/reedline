@@ -470,3 +470,12 @@ impl Menu for ReedlineMenu {
         self.as_mut().set_cursor_pos(pos);
     }
 }
+
+/// The direction to search for matches in suggestions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchDirection {
+    /// Search from the start of the string
+    Forward,
+    /// Search from the end of the string
+    Backward,
+}
