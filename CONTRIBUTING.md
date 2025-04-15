@@ -51,3 +51,5 @@ Before submitting a PR make sure to run:
   ```shell
   cargo test
   ```
+
+When upgrading `rust-version`, please do not exceed the version specified in the most recent version of Nushell.
