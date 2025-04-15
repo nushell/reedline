@@ -1,4 +1,4 @@
-use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
+use super::{MatchDirection, Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{can_partially_complete, completer_input, replace_in_buffer},
@@ -85,6 +85,8 @@ struct DefaultIdeMenuDetails {
     ///      str split
     /// ```
     pub correct_cursor_pos: bool,
+    /// Optional direction to search for matches in suggestions. If None, uses find() (forward search)
+    pub match_direction: Option<MatchDirection>,
 }
 
 impl Default for DefaultIdeMenuDetails {
@@ -102,6 +104,7 @@ impl Default for DefaultIdeMenuDetails {
             max_description_height: 10,
             description_offset: 1,
             correct_cursor_pos: false,
+            match_direction: Some(MatchDirection::Forward),
         }
     }
 }
@@ -280,6 +283,13 @@ impl IdeMenu {
     #[must_use]
     pub fn with_correct_cursor_pos(mut self, correct_cursor_pos: bool) -> Self {
         self.default_details.correct_cursor_pos = correct_cursor_pos;
+        self
+    }
+
+    /// Menu builder with new match direction
+    #[must_use]
+    pub fn with_match_direction(mut self, match_direction: MatchDirection) -> Self {
+        self.default_details.match_direction = Some(match_direction);
         self
     }
 }
@@ -521,11 +531,19 @@ impl IdeMenu {
             let match_len = shortest_base.len().min(string.len());
 
             // Find match position - look for the base string in the suggestion (case-insensitive)
-            let match_position = suggestion
-                .value
-                .to_lowercase()
-                .find(&shortest_base.to_lowercase())
-                .unwrap_or(0);
+            let match_position = match self.default_details.match_direction {
+                Some(MatchDirection::Forward) => suggestion
+                    .value
+                    .to_lowercase()
+                    .find(&shortest_base.to_lowercase())
+                    .unwrap_or(0),
+                Some(MatchDirection::Backward) => suggestion
+                    .value
+                    .to_lowercase()
+                    .rfind(&shortest_base.to_lowercase())
+                    .unwrap_or(0),
+                None => 0,
+            };
 
             // The match is just the part that matches the shortest_base
             let match_str = &string
