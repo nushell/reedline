@@ -71,7 +71,7 @@ fn main() -> io::Result<()> {
         } else {
             std::env::set_current_dir(&home_dir).unwrap();
         }
-        let sig = line_editor.read_line(&prompt)?;
+        let sig = line_editor.read_line(&prompt, false)?;
         match sig {
             Signal::Success(buffer) => {
                 println!("We processed: {buffer}");
