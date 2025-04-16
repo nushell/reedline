@@ -437,6 +437,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "lazy_static"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+
+[[package]]
 name = "libc"
 version = "0.2.153"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -628,6 +634,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "parse-ansi"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50c48b4d524f8a10bf6ab37dc0b7583f17c8ec88b617b364ddfc3baee4dcf878"
+dependencies = [
+ "lazy_static",
+ "regex",
+]
+
+[[package]]
 name = "petgraph"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -701,6 +717,7 @@ dependencies = [
  "gethostname",
  "itertools",
  "nu-ansi-term",
+ "parse-ansi",
  "pretty_assertions",
  "rstest",
  "rusqlite",

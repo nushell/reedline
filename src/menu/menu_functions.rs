@@ -1,4 +1,7 @@
 //! Collection of common functions that can be used to create menus
+use nu_ansi_term::{ansi::RESET, Style};
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::{Editor, Suggestion, UndoBehavior};
 
 /// Index result obtained from parsing a string with an index marker
@@ -354,10 +357,64 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
     }
 }
 
+/// Style a suggestion to be shown in a completer menu
+///
+/// * `match_indices` - Indices of bytes that matched the typed text
+pub fn style_suggestion(suggestion: &str, match_indices: &[usize], match_style: &Style) -> String {
+    let escapes = parse_ansi::parse_bytes(suggestion.as_bytes()).collect::<Vec<_>>();
+    let mut segments = Vec::new();
+    if escapes.is_empty() {
+        segments.push((0, 0, suggestion.len()));
+    } else if escapes[0].start() > 0 {
+        segments.push((0, 0, escapes[0].start()));
+    }
+    for (i, m) in escapes.iter().enumerate() {
+        let next = if i + 1 == escapes.len() {
+            suggestion.len()
+        } else {
+            escapes[i + 1].start()
+        };
+        segments.push((m.start(), m.end(), next));
+    }
+
+    let mut res = String::new();
+
+    let mut offset = 0;
+    for (escape_start, text_start, text_end) in segments {
+        let escape = &suggestion[escape_start..text_start];
+        let text = &suggestion[text_start..text_end];
+        let graphemes = text.graphemes(true).collect::<Vec<_>>();
+        let mut prev_matched = false;
+
+        res.push_str(escape);
+        for (i, grapheme) in graphemes.iter().enumerate() {
+            let is_match = match_indices.contains(&(i + offset));
+
+            if is_match && !prev_matched {
+                res.push_str(&match_style.prefix().to_string());
+            } else if !is_match && prev_matched && i != 0 {
+                res.push_str(RESET);
+                res.push_str(escape);
+            }
+            res.push_str(grapheme);
+            prev_matched = is_match;
+        }
+
+        if prev_matched {
+            res.push_str(RESET);
+        }
+
+        offset += graphemes.len();
+    }
+
+    res
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{EditCommand, LineBuffer, Span};
+    use nu_ansi_term::Color;
     use rstest::rstest;
 
     #[test]
@@ -612,6 +669,7 @@ mod tests {
                 extra: None,
                 span: Span::new(0, s.len()),
                 append_whitespace: false,
+                ..Default::default()
             })
             .collect();
         let res = find_common_string(&input);
@@ -632,6 +690,7 @@ mod tests {
                 extra: None,
                 span: Span::new(0, s.len()),
                 append_whitespace: false,
+                ..Default::default()
             })
             .collect();
         let res = find_common_string(&input);
@@ -687,6 +746,7 @@ mod tests {
                 extra: None,
                 span: Span::new(start, end),
                 append_whitespace: false,
+                ..Default::default()
             }),
             &mut editor,
         );
@@ -696,5 +756,42 @@ mod tests {
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(orig_buffer, editor.get_buffer());
         assert_eq!(orig_insertion_point, editor.insertion_point());
+    }
+
+    #[test]
+    fn style_fuzzy_suggestion() {
+        let match_style = Style::new().underline();
+        let style1 = Style::new().on(Color::Blue);
+        let style2 = Style::new().on(Color::Green);
+
+        let expected = format!(
+            "{}{}{}{}{}{}{}{}{}{}{}{}{}",
+            style1.prefix(),
+            "ab",
+            match_style.paint("汉"),
+            style1.prefix(),
+            "d",
+            RESET,
+            style2.prefix(),
+            match_style.paint("y̆👩🏾"),
+            style2.prefix(),
+            "e",
+            RESET,
+            "b@",
+            match_style.paint("r"),
+        );
+        let match_indices = &[
+            2, // 汉
+            4, 5, // y̆👩🏾
+            9, // r
+        ];
+        assert_eq!(
+            expected,
+            style_suggestion(
+                &format!("{}{}{}", style1.paint("ab汉d"), style2.paint("y̆👩🏾e"), "b@r"),
+                match_indices,
+                &match_style
+            )
+        );
     }
 }
