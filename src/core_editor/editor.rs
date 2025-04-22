@@ -84,6 +84,7 @@ impl Editor {
             EditCommand::CutFromLineStart => self.cut_from_line_start(),
             EditCommand::CutToEnd => self.cut_from_end(),
             EditCommand::CutToLineEnd => self.cut_to_line_end(),
+            EditCommand::KillLine => self.kill_line(),
             EditCommand::CutWordLeft => self.cut_word_left(),
             EditCommand::CutBigWordLeft => self.cut_big_word_left(),
             EditCommand::CutWordRight => self.cut_word_right(),
@@ -360,6 +361,14 @@ impl Editor {
         if !cut_slice.is_empty() {
             self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
             self.line_buffer.clear_to_line_end();
+        }
+    }
+
+    fn kill_line(&mut self) {
+        if self.line_buffer.insertion_point() == self.line_buffer.find_current_line_end() {
+            self.cut_char()
+        } else {
+            self.cut_to_line_end()
         }
     }
 
@@ -1298,5 +1307,60 @@ mod test {
         assert_eq!(editor.get_buffer(), "foo(bar(bazbaz)qux)quux");
         assert_eq!(editor.insertion_point(), 4);
         assert_eq!(editor.cut_buffer.get().0, "bar(bazbaz)qux");
+    }
+
+    #[test]
+    fn test_kill_line() {
+        let mut editor = editor_with("foo\nbar");
+        editor.move_to_position(1, false);
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "f\nbar"); // Just cut until the end of line
+        assert_eq!(editor.insertion_point(), 1); // Cursor should return to original position
+        assert_eq!(editor.cut_buffer.get().0, "oo");
+        // continue kill line at current position.
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "fbar"); // Just cut the new line character
+        assert_eq!(editor.insertion_point(), 1);
+        assert_eq!(editor.cut_buffer.get().0, "\n");
+
+        // Test when editor start with newline character point.
+        let mut editor = editor_with("foo\nbar");
+        editor.move_to_position(3, false);
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "foobar"); // Just cut the new line character
+        assert_eq!(editor.insertion_point(), 3); // Cursor should return to original position
+        assert_eq!(editor.cut_buffer.get().0, "\n");
+        // continue kill line at current position.
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "foo"); // Just cut until line end.
+        assert_eq!(editor.insertion_point(), 3);
+        assert_eq!(editor.cut_buffer.get().0, "bar");
+        // continue kill line, all remains the same.
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "foo");
+        assert_eq!(editor.insertion_point(), 3);
+        assert_eq!(editor.cut_buffer.get().0, "bar");
+    }
+
+    #[test]
+    fn test_kill_line_with_windows_newline() {
+        let mut editor = editor_with("foo\r\nbar");
+        editor.move_to_position(1, false);
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "f\r\nbar"); // Just cut until the end of line
+        assert_eq!(editor.insertion_point(), 1); // Cursor should return to original position
+        assert_eq!(editor.cut_buffer.get().0, "oo");
+        // continue kill line at current position.
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "fbar"); // Just cut the new line character
+        assert_eq!(editor.insertion_point(), 1);
+        assert_eq!(editor.cut_buffer.get().0, "\r\n");
+
+        let mut editor = editor_with("foo\r\nbar");
+        editor.move_to_position(3, false);
+        editor.kill_line();
+        assert_eq!(editor.get_buffer(), "foobar"); // Just cut the newline
+        assert_eq!(editor.insertion_point(), 3); // Cursor should return to original position
+        assert_eq!(editor.cut_buffer.get().0, "\r\n");
     }
 }

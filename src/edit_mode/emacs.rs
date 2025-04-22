@@ -52,7 +52,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
         edit_bind(EC::PasteCutBufferBefore),
     );
     kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
-    kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::CutToLineEnd));
+    kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::KillLine));
     kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
     kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
     // Edits
@@ -287,5 +287,19 @@ mod test {
             result,
             ReedlineEvent::Edit(vec![EditCommand::InsertChar('😀')])
         );
+    }
+
+    #[test]
+    fn kill_line() {
+        let mut emacs = Emacs::default();
+
+        let ctrl_k = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        let result = emacs.parse_event(ctrl_k);
+
+        assert_eq!(result, ReedlineEvent::Edit(vec![EditCommand::KillLine]));
     }
 }
