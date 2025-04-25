@@ -1,16 +1,16 @@
 //! Collection of common functions that can be used to create menus
 use nu_ansi_term::{ansi::RESET, Style};
 use regex::Regex;
-use std::sync::LazyLock;
+use lazy_static::lazy_static;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{Editor, Suggestion, UndoBehavior};
 
-/// Matches ANSI escapes. Stolen from https://github.com/dbkaplun/parse-ansi, which got it from
-/// https://github.com/nodejs/node/blob/641d4a4159aaa96eece8356e03ec6c7248ae3e73/lib/internal/readline.js#L9
-static ANSI_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"[\x1b\x9b]\[[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]").unwrap()
-});
+lazy_static! {
+    /// Matches ANSI escapes. Stolen from https://github.com/dbkaplun/parse-ansi, which got it from
+    /// https://github.com/nodejs/node/blob/641d4a4159aaa96eece8356e03ec6c7248ae3e73/lib/internal/readline.js#L9
+    static ref ANSI_REGEX: Regex = Regex::new(r"[\x1b\x9b]\[[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]").unwrap();
+}
 
 /// Index result obtained from parsing a string with an index marker
 /// For example, the next string:
