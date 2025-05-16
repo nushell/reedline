@@ -2,7 +2,8 @@ use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
-        can_partially_complete, completer_input, replace_in_buffer, style_suggestion,
+        can_partially_complete, completer_input, floor_char_boundary, replace_in_buffer,
+        style_suggestion,
     },
     painting::Painter,
     Completer, Suggestion,
@@ -518,19 +519,45 @@ impl IdeMenu {
         };
 
         if use_ansi_coloring {
-            // strip quotes
+            // TODO(ysthakur): let the user strip quotes, rather than doing it here
             let is_quote = |c: char| "`'\"".contains(c);
             let shortest_base = &self.working_details.shortest_base_string;
             let shortest_base = shortest_base
                 .strip_prefix(is_quote)
                 .unwrap_or(shortest_base);
-            let match_len = shortest_base.chars().count().min(string.chars().count());
 
-            let default_indices = (0..match_len).collect();
+            // Highlight the first match of the shortest base string by default
+            let match_len = shortest_base
+                .graphemes(true)
+                .count()
+                .min(string.graphemes(true).count());
+            let default_indices = string
+                .to_lowercase()
+                .find(shortest_base)
+                .map(|match_pos| (match_pos..match_pos + match_len).collect())
+                .unwrap_or_default();
             let match_indices = suggestion
                 .match_indices
                 .as_ref()
                 .unwrap_or(&default_indices);
+            let match_len = shortest_base.chars().count().min(string.chars().count());
+
+            // Find match position - look for the base string in the suggestion (case-insensitive)
+            let match_position = string
+                .to_lowercase()
+                .find(&shortest_base.to_lowercase())
+                .unwrap_or(0);
+
+            // The match is just the part that matches the shortest_base
+            let match_str = {
+                let match_str = &string[match_position..];
+                let match_len_bytes = match_str
+                    .char_indices()
+                    .nth(match_len)
+                    .map(|(i, _)| i)
+                    .unwrap_or_else(|| match_str.len());
+                &string[match_position..match_position + match_len_bytes]
+            };
 
             let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
 
@@ -545,7 +572,7 @@ impl IdeMenu {
                             .settings
                             .color
                             .selected_text_style
-                            .paint(&suggestion.value)
+                            .paint(&string)
                             .to_string(),
                         match_indices,
                         &self.settings.color.selected_match_style,
@@ -561,7 +588,7 @@ impl IdeMenu {
                     suggestion_style.prefix(),
                     " ".repeat(padding),
                     style_suggestion(
-                        &suggestion_style.paint(&suggestion.value).to_string(),
+                        &suggestion_style.paint(&string).to_string(),
                         match_indices,
                         &self.settings.color.match_style,
                     ),

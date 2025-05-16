@@ -1,13 +1,17 @@
+use std::borrow::Cow;
+
 use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
-        can_partially_complete, completer_input, replace_in_buffer, style_suggestion,
+        can_partially_complete, completer_input, floor_char_boundary, replace_in_buffer,
+        style_suggestion,
     },
     painting::Painter,
     Completer, Suggestion,
 };
 use nu_ansi_term::ansi::RESET;
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 /// The traversal direction of the menu
@@ -377,98 +381,70 @@ impl ColumnarMenu {
         &self,
         suggestion: &Suggestion,
         index: usize,
-        empty_space: usize,
         use_ansi_coloring: bool,
     ) -> String {
+        let selected = index == self.index();
+        let empty_space = self.get_width().saturating_sub(suggestion.value.width());
+
         if use_ansi_coloring {
-            // strip quotes
+            // TODO(ysthakur): let the user strip quotes, rather than doing it here
             let is_quote = |c: char| "`'\"".contains(c);
             let shortest_base = &self.working_details.shortest_base_string;
             let shortest_base = shortest_base
                 .strip_prefix(is_quote)
                 .unwrap_or(shortest_base);
-            let match_len = shortest_base.chars().count();
 
-            let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
+            let match_indices = if let Some(match_indices) = &suggestion.match_indices {
+                Cow::Borrowed(match_indices)
+            } else if let Some(match_pos) = suggestion
+                .value
+                .to_lowercase()
+                .find(&shortest_base.to_lowercase())
+            {
+                // Highlight matched substring if one is found
+                let match_len = shortest_base.graphemes(true).count();
+                Cow::Owned((match_pos..match_pos + match_len).collect())
+            } else {
+                // Don't highlight anything if no match
+                Cow::Owned(vec![])
+            };
 
             let left_text_size = self.longest_suggestion + self.default_details.col_padding;
-            let right_text_size = self.get_width().saturating_sub(left_text_size);
+            let description_size = self.get_width().saturating_sub(left_text_size);
+            let padding = left_text_size.saturating_sub(suggestion.value.len());
 
-            let default_indices = (0..match_len).collect();
-            let match_indices = suggestion
-                .match_indices
-                .as_ref()
-                .unwrap_or(&default_indices);
+            let value_style = if selected {
+                &self.settings.color.selected_text_style
+            } else {
+                &suggestion.style.unwrap_or(self.settings.color.text_style)
+            };
+            let styled_value = style_suggestion(
+                value_style.paint(&suggestion.value).as_str(),
+                match_indices.as_ref(),
+                &self.settings.color.match_style,
+            );
 
-            if index == self.index() {
-                if let Some(description) = &suggestion.description {
-                    format!(
-                        "{:left_text_size$}{}{}{}{}{}",
-                        style_suggestion(
-                            &self
-                                .settings
-                                .color
-                                .selected_text_style
-                                .paint(&suggestion.value)
-                                .to_string(),
-                            match_indices,
-                            &self.settings.color.selected_match_style,
-                        ),
-                        self.settings.color.description_style.prefix(),
-                        self.settings.color.selected_text_style.prefix(),
-                        description
-                            .chars()
-                            .take(right_text_size)
-                            .collect::<String>()
-                            .replace('\n', " "),
-                        RESET,
-                    )
-                } else {
-                    format!(
-                        "{}{:>empty$}{}",
-                        style_suggestion(
-                            &self
-                                .settings
-                                .color
-                                .selected_text_style
-                                .paint(&suggestion.value)
-                                .to_string(),
-                            match_indices,
-                            &self.settings.color.selected_match_style,
-                        ),
-                        "",
-                        empty = empty_space,
-                    )
-                }
-            } else if let Some(description) = &suggestion.description {
-                format!(
-                    "{:left_text_size$}{}{}{}{}",
-                    style_suggestion(
-                        &suggestion_style.paint(&suggestion.value).to_string(),
-                        match_indices,
-                        &self.settings.color.match_style,
-                    ),
-                    self.settings.color.description_style.prefix(),
+            if let Some(description) = &suggestion.description {
+                let styled_desc = self.settings.color.description_style.paint(
                     description
                         .chars()
-                        .take(right_text_size)
+                        .take(description_size)
                         .collect::<String>()
                         .replace('\n', " "),
-                    RESET,
-                )
+                );
+                if selected {
+                    format!(
+                        "{}{}{}{}",
+                        styled_value,
+                        " ".repeat(padding),
+                        self.settings.color.selected_text_style.prefix(),
+                        styled_desc,
+                    )
+                } else {
+                    format!("{}{}{}", styled_value, " ".repeat(padding), styled_desc)
+                }
             } else {
-                format!(
-                    "{}{}{:>empty$}{}{}",
-                    style_suggestion(
-                        &suggestion_style.paint(&suggestion.value).to_string(),
-                        match_indices,
-                        &self.settings.color.match_style,
-                    ),
-                    self.settings.color.description_style.prefix(),
-                    "",
-                    RESET,
-                    empty = empty_space,
-                )
+                format!("{}{:>empty$}", styled_value, "", empty = empty_space,)
             }
         } else {
             // If no ansi coloring is found, then the selection word is the line in uppercase
@@ -500,7 +476,7 @@ impl ColumnarMenu {
                 )
             };
 
-            if index == self.index() {
+            if selected {
                 line.to_uppercase()
             } else {
                 line
@@ -751,14 +727,7 @@ impl Menu for ColumnarMenu {
                             .step_by(num_rows)
                             .take(self.get_cols().into())
                             .map(|(index, suggestion)| {
-                                let empty_space =
-                                    self.get_width().saturating_sub(suggestion.value.width());
-                                self.create_string(
-                                    suggestion,
-                                    index,
-                                    empty_space,
-                                    use_ansi_coloring,
-                                )
+                                self.create_string(suggestion, index, use_ansi_coloring)
                             })
                             .collect();
                         menu_string.push_str(&row_string);
@@ -779,8 +748,6 @@ impl Menu for ColumnarMenu {
                             // Correcting the enumerate index based on the number of skipped values
                             let index = index + skip_values;
                             let column = index % self.get_cols() as usize;
-                            let empty_space =
-                                self.get_width().saturating_sub(suggestion.value.width());
 
                             let end_of_line =
                                 if column == self.get_cols().saturating_sub(1) as usize {
@@ -790,12 +757,7 @@ impl Menu for ColumnarMenu {
                                 };
                             format!(
                                 "{}{}",
-                                self.create_string(
-                                    suggestion,
-                                    index,
-                                    empty_space,
-                                    use_ansi_coloring
-                                ),
+                                self.create_string(suggestion, index, use_ansi_coloring),
                                 end_of_line
                             )
                         })

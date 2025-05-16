@@ -1,16 +1,11 @@
 //! Collection of common functions that can be used to create menus
+use std::borrow::Cow;
+
+use itertools::Itertools;
 use nu_ansi_term::{ansi::RESET, Style};
-use regex::Regex;
-use lazy_static::lazy_static;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{Editor, Suggestion, UndoBehavior};
-
-lazy_static! {
-    /// Matches ANSI escapes. Stolen from https://github.com/dbkaplun/parse-ansi, which got it from
-    /// https://github.com/nodejs/node/blob/641d4a4159aaa96eece8356e03ec6c7248ae3e73/lib/internal/readline.js#L9
-    static ref ANSI_REGEX: Regex = Regex::new(r"[\x1b\x9b]\[[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]").unwrap();
-}
 
 /// Index result obtained from parsing a string with an index marker
 /// For example, the next string:
@@ -383,31 +378,51 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
     }
 }
 
+/// Parse ANSI sequences for setting display attributes in the given string.
+/// Each returned item is a tuple (escape start, escape end, text end), for
+/// finding each sequence and the text affected by it.
+///
+/// Essentially just looks for 'ESC [' followed by /[0-9;]*m/, ignoring other ANSI sequences.
+fn parse_ansi(s: &str) -> Vec<(usize, usize, usize)> {
+    let mut segments = Vec::new();
+
+    let mut last_escape_start = 0;
+    let mut last_escape_end = 0;
+    let mut offset = 0;
+    while offset < s.len() {
+        let Some(start) = &s[offset..].find("\x1b[") else {
+            break;
+        };
+        let escape_start = offset + start;
+
+        let after_params = &s[escape_start + 2..]
+            .trim_start_matches(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ';']);
+        if !after_params.starts_with('m') {
+            // Not a valid Select Graphic Rendition sequence
+            offset = s.len() - after_params.len();
+            continue;
+        }
+
+        if escape_start != 0 {
+            segments.push((last_escape_start, last_escape_end, escape_start));
+        }
+        last_escape_start = escape_start;
+        last_escape_end = s.len() - after_params.len() + 1;
+        offset = last_escape_end;
+    }
+
+    segments.push((last_escape_start, last_escape_end, s.len()));
+    segments
+}
+
 /// Style a suggestion to be shown in a completer menu
 ///
 /// * `match_indices` - Indices of graphemes (NOT bytes or chars) that matched the typed text
 /// * `match_style` - Style to use for matched characters
 pub fn style_suggestion(suggestion: &str, match_indices: &[usize], match_style: &Style) -> String {
-    let escapes = ANSI_REGEX.find_iter(suggestion).collect::<Vec<_>>();
-    let mut segments = Vec::new();
-    if escapes.is_empty() {
-        segments.push((0, 0, suggestion.len()));
-    } else if escapes[0].start() > 0 {
-        segments.push((0, 0, escapes[0].start()));
-    }
-    for (i, m) in escapes.iter().enumerate() {
-        let next = if i + 1 == escapes.len() {
-            suggestion.len()
-        } else {
-            escapes[i + 1].start()
-        };
-        segments.push((m.start(), m.end(), next));
-    }
-
     let mut res = String::new();
-
     let mut offset = 0;
-    for (escape_start, text_start, text_end) in segments {
+    for (escape_start, text_start, text_end) in parse_ansi(suggestion) {
         let escape = &suggestion[escape_start..text_start];
         let text = &suggestion[text_start..text_end];
         let graphemes = text.graphemes(true).collect::<Vec<_>>();
@@ -435,6 +450,23 @@ pub fn style_suggestion(suggestion: &str, match_indices: &[usize], match_style: 
     }
 
     res
+}
+
+pub fn get_match_indices<'a>(
+    value: &str,
+    match_indices: &'a Option<Vec<usize>>,
+    typed_text: &str,
+) -> Cow<'a, Vec<usize>> {
+    if let Some(inds) = match_indices {
+        Cow::Borrowed(inds)
+    } else {
+        let Some(match_pos) = value.to_lowercase().find(&typed_text.to_lowercase()) else {
+            // Don't highlight anything if no match
+            return Cow::Owned(vec![]);
+        };
+        let match_len = typed_text.graphemes(true).count();
+        Cow::Owned((match_pos..match_pos + match_len).collect())
+    }
 }
 
 #[cfg(test)]
@@ -785,15 +817,13 @@ mod tests {
         assert_eq!(orig_insertion_point, editor.insertion_point());
     }
 
-    #[test]
-    fn parse_ansi() {
-        assert_eq!(
-            ANSI_REGEX
-                .find_iter("before \x1b[31;4mred underline\x1b[0m after")
-                .map(|m| (m.start(), m.end(), m.as_str()))
-                .collect::<Vec<_>>(),
-            vec![(7, 14, "\x1b[31;4m"), (27, 31, "\x1b[0m")]
-        );
+    #[rstest]
+    #[case("plain", vec![(0, 0, 5)])]
+    #[case("\x1b[mempty", vec![(0, 3, 8)])]
+    #[case("\x1b[\x1b[minvalid", vec![(0, 0, 2), (2, 5, 12)])]
+    #[case("a\x1b[1;mb\x1b[;mc", vec![(0, 0, 1), (1, 6, 7), (7, 11, 12)])]
+    fn test_parse_ansi(#[case] s: &str, #[case] expected: Vec<(usize, usize, usize)>) {
+        assert_eq!(parse_ansi(s), expected);
     }
 
     #[test]
@@ -830,6 +860,34 @@ mod tests {
                 match_indices,
                 &match_style
             )
+        );
+    }
+
+    #[test]
+    fn style_fuzzy_suggestion_out_of_bounds() {
+        let match_style = Style::new().underline();
+        let style1 = Style::new().on(Color::Blue);
+        let style2 = Style::new().on(Color::Green);
+
+        let expected = format!(
+            "{}{}{}{}{}{}{}{}{}{}{}{}{}",
+            style1.prefix(),
+            "ab",
+            match_style.paint("汉"),
+            style1.prefix(),
+            "d",
+            RESET,
+            style2.prefix(),
+            match_style.paint("y̆👩🏾"),
+            style2.prefix(),
+            "e",
+            RESET,
+            "b@",
+            match_style.paint("r"),
+        );
+        assert_eq!(
+            expected,
+            style_suggestion("foo", &[2, 3, 4, 6], &match_style)
         );
     }
 }
