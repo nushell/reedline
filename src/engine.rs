@@ -1752,7 +1752,9 @@ impl Reedline {
         let mut styled_text = self
             .highlighter
             .highlight(buffer_to_paint, cursor_position_in_buffer);
-        if let Some((from, to)) = self.editor.get_selection() {
+        // Use context-aware selection with current edit mode
+        let edit_mode = self.edit_mode.edit_mode();
+        if let Some((from, to)) = self.editor.get_selection_with_mode(&edit_mode) {
             styled_text.style_range(from, to, self.visual_selection_style);
         }
 
