@@ -1379,155 +1379,152 @@ mod test {
         assert_eq!(editor.cut_buffer.get().0, "\r\n");
     }
 
-    #[test]
-    fn test_selection_emacs_mode() {
+    #[rstest]
+    #[case(crate::PromptEditMode::Emacs)]
+    #[case(crate::PromptEditMode::Vi(crate::PromptViMode::Insert))]
+    fn test_selection_non_vi_normal_modes(#[case] edit_mode: crate::PromptEditMode) {
         let mut editor = editor_with("123456789");
 
-        // Test selection moving right from position 3
+        // Test selection moving right from position 3 (123|456789)
         editor.line_buffer.set_insertion_point(3);
         editor.update_selection_anchor(true);
-        editor.move_right(true);
+        editor.move_right(true); // select to the right
 
-        // In Emacs mode, selection should be exactly between positions (no extra character)
-        let emacs_mode = crate::PromptEditMode::Emacs;
-        assert_eq!(editor.get_selection_with_mode(&emacs_mode), Some((3, 4)));
-
-        // Move right again
-        editor.move_right(true);
-        assert_eq!(editor.get_selection_with_mode(&emacs_mode), Some((3, 5)));
-    }
-
-    #[test]
-    fn test_selection_vi_insert_mode() {
-        let mut editor = editor_with("123456789");
-
-        // Test selection moving right from position 3
-        editor.line_buffer.set_insertion_point(3);
-        editor.update_selection_anchor(true);
-        editor.move_right(true);
-
-        // In Vi Insert mode, selection should be exactly between positions (no extra character)
-        let vi_insert_mode = crate::PromptEditMode::Vi(crate::PromptViMode::Insert);
+        // Selection should be exactly between cursor and anchor (3, 4)
         assert_eq!(
-            editor.get_selection_with_mode(&vi_insert_mode),
-            Some((3, 4))
+            editor.get_selection_with_mode(&edit_mode),
+            Some((3, 4)),
+            "Mode: {:?}, right selection from 3 failed",
+            edit_mode
         );
 
-        // Move right again
+        // Move right again (1234|56789)
         editor.move_right(true);
         assert_eq!(
-            editor.get_selection_with_mode(&vi_insert_mode),
-            Some((3, 5))
+            editor.get_selection_with_mode(&edit_mode),
+            Some((3, 5)),
+            "Mode: {:?}, right selection from 3 failed",
+            edit_mode
+        );
+
+        // Test selection moving left from position 5 (12345|6789)
+        let mut editor = editor_with("123456789");
+        editor.line_buffer.set_insertion_point(5);
+        editor.update_selection_anchor(true);
+        editor.move_left(true); // select to the left
+
+        // Selection should be exactly between cursor and anchor (4, 5)
+        assert_eq!(
+            editor.get_selection_with_mode(&edit_mode),
+            Some((4, 5)),
+            "Mode: {:?}, left selection from 5 failed",
+            edit_mode
+        );
+
+        // Move left again (123|456789)
+        editor.move_left(true);
+        assert_eq!(
+            editor.get_selection_with_mode(&edit_mode),
+            Some((3, 5)),
+            "Mode: {:?}, left selection from 5 failed",
+            edit_mode
         );
     }
 
     #[test]
     fn test_selection_vi_normal_mode() {
+        let edit_mode = crate::PromptEditMode::Vi(crate::PromptViMode::Normal);
         let mut editor = editor_with("123456789");
 
-        // Test selection moving right from position 3
+        // Test selection moving right from position 3 (123|456789)
         editor.line_buffer.set_insertion_point(3);
         editor.update_selection_anchor(true);
-        editor.move_right(true);
+        editor.move_right(true); // select to the right
 
-        // In Vi Normal mode, selection should include the character under cursor (extend by one)
-        let vi_normal_mode = crate::PromptEditMode::Vi(crate::PromptViMode::Normal);
+        // Selection should include the character under the cursor (extend by one) (3, 5)
         assert_eq!(
-            editor.get_selection_with_mode(&vi_normal_mode),
-            Some((3, 5))
+            editor.get_selection_with_mode(&edit_mode),
+            Some((3, 5)),
+            "Mode: {:?}, right selection from 3 failed",
+            edit_mode
         );
 
-        // Move right again
+        // Move right again (1234|56789)
         editor.move_right(true);
         assert_eq!(
-            editor.get_selection_with_mode(&vi_normal_mode),
-            Some((3, 6))
+            editor.get_selection_with_mode(&edit_mode),
+            Some((3, 6)),
+            "Mode: {:?}, right selection from 3 failed",
+            edit_mode
         );
-    }
 
-    #[test]
-    fn test_selection_left_direction_emacs() {
+        // Test selection moving left from position 5 (12345|6789)
         let mut editor = editor_with("123456789");
-
-        // Test selection moving left from position 5
         editor.line_buffer.set_insertion_point(5);
         editor.update_selection_anchor(true);
-        editor.move_left(true);
+        editor.move_left(true); // select to the left
 
-        // In Emacs mode, selection should be exactly between positions
-        let emacs_mode = crate::PromptEditMode::Emacs;
-        assert_eq!(editor.get_selection_with_mode(&emacs_mode), Some((4, 5)));
-
-        // Move left again
-        editor.move_left(true);
-        assert_eq!(editor.get_selection_with_mode(&emacs_mode), Some((3, 5)));
-    }
-
-    #[test]
-    fn test_selection_left_direction_vi_normal() {
-        let mut editor = editor_with("123456789");
-
-        // Test selection moving left from position 5
-        editor.line_buffer.set_insertion_point(5);
-        editor.update_selection_anchor(true);
-        editor.move_left(true);
-
-        // In Vi Normal mode, selection should include the character under cursor
-        let vi_normal_mode = crate::PromptEditMode::Vi(crate::PromptViMode::Normal);
+        // Selection should include the character under the cursor (extend by one) (4, 6)
         assert_eq!(
-            editor.get_selection_with_mode(&vi_normal_mode),
-            Some((4, 6))
+            editor.get_selection_with_mode(&edit_mode),
+            Some((4, 6)),
+            "Mode: {:?}, left selection from 5 failed",
+            edit_mode
         );
 
-        // Move left again
+        // Move left again (123|456789)
         editor.move_left(true);
         assert_eq!(
-            editor.get_selection_with_mode(&vi_normal_mode),
-            Some((3, 6))
+            editor.get_selection_with_mode(&edit_mode),
+            Some((3, 6)),
+            "Mode: {:?}, left selection from 5 failed",
+            edit_mode
         );
     }
 
-    #[test]
-    fn test_selection_at_buffer_end() {
+    #[rstest]
+    #[case(crate::PromptEditMode::Emacs, Some((2, 3)))]
+    #[case(crate::PromptEditMode::Vi(crate::PromptViMode::Insert), Some((2, 3)))]
+    #[case(crate::PromptEditMode::Vi(crate::PromptViMode::Normal), Some((2, 3)))] // Vi normal doesn't extend beyond buffer end
+    fn test_selection_at_buffer_end(
+        #[case] edit_mode: crate::PromptEditMode,
+        #[case] expected_selection: Option<(usize, usize)>,
+    ) {
         let mut editor = editor_with("123");
 
-        // Test selection at the end of buffer
+        // Test selection moving right from position 2 (12|3) to end
         editor.line_buffer.set_insertion_point(2);
         editor.update_selection_anchor(true);
-        editor.move_right(true); // Move to end of buffer
+        editor.move_right(true); // Move to end of buffer (position 3)
 
-        let emacs_mode = crate::PromptEditMode::Emacs;
-        let vi_normal_mode = crate::PromptEditMode::Vi(crate::PromptViMode::Normal);
-
-        // In Emacs mode, selection should be exactly between positions
-        assert_eq!(editor.get_selection_with_mode(&emacs_mode), Some((2, 3)));
-
-        // In Vi Normal mode, it should not extend beyond buffer
         assert_eq!(
-            editor.get_selection_with_mode(&vi_normal_mode),
-            Some((2, 3))
+            editor.get_selection_with_mode(&edit_mode),
+            expected_selection,
+            "Mode: {:?}, selection at buffer end failed",
+            edit_mode
         );
     }
 
-    #[test]
-    fn test_selection_with_unicode() {
+    #[rstest]
+    #[case(crate::PromptEditMode::Emacs, Some((0, 4)))] // Selects just the grapheme
+    #[case(crate::PromptEditMode::Vi(crate::PromptViMode::Insert), Some((0, 4)))] // Selects just the grapheme
+    #[case(crate::PromptEditMode::Vi(crate::PromptViMode::Normal), Some((0, 5)))] // Selects grapheme + next char
+    fn test_selection_with_unicode(
+        #[case] edit_mode: crate::PromptEditMode,
+        #[case] expected_selection: Option<(usize, usize)>,
+    ) {
         let mut editor = editor_with("🦀rust");
 
-        // Test selection with unicode characters
+        // Test selection moving right from position 0 to after the emoji
         editor.line_buffer.set_insertion_point(0);
         editor.update_selection_anchor(true);
-        editor.move_right(true); // Move past the crab emoji
+        editor.move_right(true); // Move past the crab emoji (position 4)
 
-        let emacs_mode = crate::PromptEditMode::Emacs;
-        let vi_normal_mode = crate::PromptEditMode::Vi(crate::PromptViMode::Normal);
-
-        // In Emacs mode, selection should be exactly between positions
-        assert_eq!(editor.get_selection_with_mode(&emacs_mode), Some((0, 4)));
-
-        // In Vi Normal mode, should include the next character
         assert_eq!(
-            editor.get_selection_with_mode(&vi_normal_mode),
-            Some((0, 5))
+            editor.get_selection_with_mode(&edit_mode),
+            expected_selection,
+            "Mode: {:?}, unicode selection failed",
+            edit_mode
         );
     }
 
@@ -1542,39 +1539,6 @@ mod test {
 
         // Default get_selection should behave like Vi Normal mode (extend by one)
         assert_eq!(editor.get_selection(), Some((3, 5)));
-    }
-
-    #[test]
-    fn test_issue_893_regression() {
-        // Reproduce the exact issue described in #893
-        let mut editor = editor_with("123456789");
-
-        // Position cursor after "3" (position 3, so "123|456789")
-        editor.line_buffer.set_insertion_point(3);
-
-        // Start selection and move left (shift + left arrow equivalent)
-        editor.update_selection_anchor(true);
-        editor.move_left(true);
-
-        // In Emacs mode, should only select character "3" (position 2 to 3)
-        let emacs_mode = crate::PromptEditMode::Emacs;
-        assert_eq!(editor.get_selection_with_mode(&emacs_mode), Some((2, 3)));
-
-        // Reset and test moving right
-        let mut editor = editor_with("123456789");
-        editor.line_buffer.set_insertion_point(3);
-        editor.update_selection_anchor(true);
-        editor.move_right(true);
-
-        // In Emacs mode, should only select character "4" (position 3 to 4)
-        assert_eq!(editor.get_selection_with_mode(&emacs_mode), Some((3, 4)));
-
-        // But in Vi normal mode, should include the character under cursor (as per #843)
-        let vi_normal_mode = crate::PromptEditMode::Vi(crate::PromptViMode::Normal);
-        assert_eq!(
-            editor.get_selection_with_mode(&vi_normal_mode),
-            Some((3, 5))
-        );
     }
 
     #[test]
