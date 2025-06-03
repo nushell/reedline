@@ -585,7 +585,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case(&["nushell", "NULL"], 2)]
+    #[case(&["nushell", "nush", "NULL"], 2)]
     #[case(&["ｎｕｓｈｅｌｌ", "ｎｕｌｌ"], 6)]
     #[case(&["nushell", "nu"], 2)]
     #[case(&["nu", "nushell"], 2)]
