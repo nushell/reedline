@@ -162,38 +162,23 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
 
 /// Finds index for the common string in a list of suggestions
 pub fn find_common_string(values: &[Suggestion]) -> (Option<&Suggestion>, Option<usize>) {
-    let first = values.iter().next();
+    let Some(first) = values.iter().next() else {
+        return (None, None);
+    };
 
-    let index = first.and_then(|first| {
-        values.iter().skip(1).fold(None, |index, suggestion| {
-            if suggestion.value.starts_with(&first.value) {
-                Some(first.value.len())
-            } else {
-                first
-                    .value
-                    .char_indices()
-                    .zip(suggestion.value.char_indices())
-                    .find(|((_, mut lhs), (_, mut rhs))| {
-                        lhs.make_ascii_lowercase();
-                        rhs.make_ascii_lowercase();
+    let index = values
+        .iter()
+        .skip(1)
+        .fold(first.value.len(), |index, suggestion| {
+            first.value[0..index]
+                .char_indices()
+                .zip(suggestion.value.char_indices())
+                .find(|((_, lhs), (_, rhs))| !lhs.eq_ignore_ascii_case(rhs))
+                .map(|((new_index, _), _)| new_index)
+                .unwrap_or(first.value.len().min(suggestion.value.len()))
+        });
 
-                        lhs != rhs
-                    })
-                    .map(|((new_index, _), _)| match index {
-                        Some(index) => {
-                            if index <= new_index {
-                                index
-                            } else {
-                                new_index
-                            }
-                        }
-                        None => new_index,
-                    })
-            }
-        })
-    });
-
-    (first, index)
+    (Some(first), Some(index))
 }
 
 /// Finds different string between two strings
@@ -599,44 +584,26 @@ mod tests {
         assert_eq!(res, (1, "e"));
     }
 
-    #[test]
-    fn find_common_string_with_ansi() {
+    #[rstest]
+    #[case(&["nushell", "NULL"], 2)]
+    #[case(&["ｎｕｓｈｅｌｌ", "ｎｕｌｌ"], 6)]
+    #[case(&["nushell", "nu"], 2)]
+    #[case(&["nu", "nushell"], 2)]
+    fn test_find_common_string(#[case] input: &[&str], #[case] expected: usize) {
         use crate::Span;
 
-        let input: Vec<_> = ["nushell", "null"]
+        let input: Vec<_> = input
             .into_iter()
             .map(|s| Suggestion {
-                value: s.into(),
-                description: None,
-                style: None,
-                extra: None,
+                value: (*s).into(),
                 span: Span::new(0, s.len()),
-                append_whitespace: false,
+                ..Default::default()
             })
             .collect();
-        let res = find_common_string(&input);
+        let (first, index) = find_common_string(&input);
 
-        assert!(matches!(res, (Some(elem), Some(2)) if elem == &input[0]));
-    }
-
-    #[test]
-    fn find_common_string_with_non_ansi() {
-        use crate::Span;
-
-        let input: Vec<_> = ["ｎｕｓｈｅｌｌ", "ｎｕｌｌ"]
-            .into_iter()
-            .map(|s| Suggestion {
-                value: s.into(),
-                description: None,
-                style: None,
-                extra: None,
-                span: Span::new(0, s.len()),
-                append_whitespace: false,
-            })
-            .collect();
-        let res = find_common_string(&input);
-
-        assert!(matches!(res, (Some(elem), Some(6)) if elem == &input[0]));
+        assert_eq!(Some(&input[0].value), first.map(|s| &s.value));
+        assert_eq!(Some(expected), index);
     }
 
     #[rstest]
