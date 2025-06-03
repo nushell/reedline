@@ -593,7 +593,7 @@ mod tests {
         use crate::Span;
 
         let input: Vec<_> = input
-            .into_iter()
+            .iter()
             .map(|s| Suggestion {
                 value: (*s).into(),
                 span: Span::new(0, s.len()),
