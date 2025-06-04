@@ -520,9 +520,17 @@ impl IdeMenu {
             let shortest_base = shortest_base
                 .strip_prefix(is_quote)
                 .unwrap_or(shortest_base);
-            let match_len = shortest_base.len().min(string.len());
 
-            let default_indices = (0..match_len).collect();
+            // Highlight the first match of the shortest base string by default
+            let match_len = shortest_base
+                .graphemes(true)
+                .count()
+                .min(string.graphemes(true).count());
+            let default_indices = string
+                .to_lowercase()
+                .find(shortest_base)
+                .map(|match_pos| (match_pos..match_pos + match_len).collect())
+                .unwrap_or_default();
             let match_indices = suggestion
                 .match_indices
                 .as_ref()
@@ -541,7 +549,7 @@ impl IdeMenu {
                             .settings
                             .color
                             .selected_text_style
-                            .paint(&suggestion.value)
+                            .paint(&string)
                             .to_string(),
                         match_indices,
                         &self.settings.color.selected_match_style,
@@ -557,7 +565,7 @@ impl IdeMenu {
                     suggestion_style.prefix(),
                     " ".repeat(padding),
                     style_suggestion(
-                        &suggestion_style.paint(&suggestion.value).to_string(),
+                        &suggestion_style.paint(&string).to_string(),
                         match_indices,
                         &self.settings.color.match_style,
                     ),

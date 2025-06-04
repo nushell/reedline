@@ -8,6 +8,7 @@ use crate::{
     Completer, Suggestion,
 };
 use nu_ansi_term::ansi::RESET;
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 /// Default values used as reference for the menu. These values are set during
@@ -307,7 +308,6 @@ impl ColumnarMenu {
             let shortest_base = shortest_base
                 .strip_prefix(is_quote)
                 .unwrap_or(shortest_base);
-            let match_len = shortest_base.len();
 
             let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
 
@@ -315,7 +315,17 @@ impl ColumnarMenu {
             let right_text_size = self.get_width().saturating_sub(left_text_size);
             let padding = left_text_size.saturating_sub(suggestion.value.len());
 
-            let default_indices = (0..match_len).collect();
+            // Highlight the first match of the shortest base string by default
+            let match_len = shortest_base
+                .graphemes(true)
+                .count()
+                .min(suggestion.value.graphemes(true).count());
+            let default_indices = suggestion
+                .value
+                .to_lowercase()
+                .find(shortest_base)
+                .map(|match_pos| (match_pos..match_pos + match_len).collect())
+                .unwrap_or_default();
             let match_indices = suggestion
                 .match_indices
                 .as_ref()
@@ -507,7 +517,7 @@ impl Menu for ColumnarMenu {
         self.values = values;
         self.working_details.shortest_base_string = base_ranges
             .iter()
-            .map(|range| editor.get_buffer()[range.clone()].to_string())
+            .map(|range| editor.get_buffer()[range.clone()].to_ascii_lowercase())
             .min_by_key(|s| s.width())
             .unwrap_or_default();
 
