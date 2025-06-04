@@ -313,6 +313,7 @@ impl ColumnarMenu {
 
             let left_text_size = self.longest_suggestion + self.default_details.col_padding;
             let right_text_size = self.get_width().saturating_sub(left_text_size);
+            let padding = left_text_size.saturating_sub(suggestion.value.len());
 
             let default_indices = (0..match_len).collect();
             let match_indices = suggestion
@@ -323,7 +324,7 @@ impl ColumnarMenu {
             if index == self.index() {
                 if let Some(description) = &suggestion.description {
                     format!(
-                        "{:left_text_size$}{}{}{}{}{}",
+                        "{}{}{}{}{}{}{}",
                         style_suggestion(
                             &self
                                 .settings
@@ -334,6 +335,7 @@ impl ColumnarMenu {
                             match_indices,
                             &self.settings.color.selected_match_style,
                         ),
+                        " ".repeat(padding),
                         self.settings.color.description_style.prefix(),
                         self.settings.color.selected_text_style.prefix(),
                         description
@@ -364,12 +366,13 @@ impl ColumnarMenu {
                 }
             } else if let Some(description) = &suggestion.description {
                 format!(
-                    "{:left_text_size$}{}{}{}{}",
+                    "{}{}{}{}{}{}",
                     style_suggestion(
                         &suggestion_style.paint(&suggestion.value).to_string(),
                         match_indices,
                         &self.settings.color.match_style,
                     ),
+                    " ".repeat(padding),
                     self.settings.color.description_style.prefix(),
                     description
                         .chars()
