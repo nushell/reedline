@@ -320,8 +320,8 @@ pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
         ..
     }) = value
     {
-        let start = floor_char_boundary(editor.get_buffer(), span.start);
         let end = floor_char_boundary(editor.get_buffer(), span.end);
+        let start = floor_char_boundary(editor.get_buffer(), span.start).min(end);
         if append_whitespace {
             value.push(' ');
         }
@@ -341,8 +341,8 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
     if let (Some(Suggestion { value, span, .. }), Some(index)) = find_common_string(values) {
         let index = index.min(value.len());
         let matching = &value[0..index];
-        let start = floor_char_boundary(editor.get_buffer(), span.start);
         let end = floor_char_boundary(editor.get_buffer(), span.end);
+        let start = floor_char_boundary(editor.get_buffer(), span.start).min(end);
 
         // make sure that the partial completion does not overwrite user entered input
         let extends_input = matching.starts_with(&editor.get_buffer()[start..end])
