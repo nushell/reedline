@@ -1,7 +1,9 @@
 use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
-    menu_functions::{can_partially_complete, completer_input, replace_in_buffer},
+    menu_functions::{
+        can_partially_complete, completer_input, floor_char_boundary, replace_in_buffer,
+    },
     painting::Painter,
     Completer, Suggestion,
 };
@@ -533,7 +535,11 @@ impl Menu for ColumnarMenu {
         self.values = values;
         self.working_details.shortest_base_string = base_ranges
             .iter()
-            .map(|range| editor.get_buffer()[range.clone()].to_string())
+            .map(|range| {
+                let end = floor_char_boundary(editor.get_buffer(), range.end);
+                let start = floor_char_boundary(editor.get_buffer(), range.start).min(end);
+                editor.get_buffer()[start..end].to_string()
+            })
             .min_by_key(|s| s.width())
             .unwrap_or_default();
 
