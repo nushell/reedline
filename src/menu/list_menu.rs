@@ -346,6 +346,10 @@ impl Menu for ListMenu {
 
     /// Collecting the value from the completer to be shown in the menu
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
+        if self.settings.only_buffer_difference && self.input.is_none() {
+            self.input = Some(editor.get_buffer().to_string());
+        }
+
         let (input, pos) = completer_input(
             editor.get_buffer(),
             editor.insertion_point(),
@@ -422,12 +426,6 @@ impl Menu for ListMenu {
                 MenuEvent::Activate(_) => {
                     self.reset_position();
 
-                    self.input = if self.settings.only_buffer_difference {
-                        Some(editor.get_buffer().to_string())
-                    } else {
-                        None
-                    };
-
                     self.update_values(editor, completer);
 
                     self.pages.push(Page {
@@ -435,10 +433,7 @@ impl Menu for ListMenu {
                         full: false,
                     });
                 }
-                MenuEvent::Deactivate => {
-                    self.active = false;
-                    self.input = None;
-                }
+                MenuEvent::Deactivate => {}
                 MenuEvent::Edit(_) => {
                     self.update_values(editor, completer);
                     self.pages.push(Page {
