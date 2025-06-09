@@ -88,7 +88,7 @@ enum InputMode {
 /// let mut line_editor = Reedline::create();
 /// let prompt = DefaultPrompt::default();
 ///
-/// let out = line_editor.read_line(&prompt).unwrap();
+/// let out = line_editor.read_line(&prompt, false).unwrap();
 /// match out {
 ///    Signal::Success(content) => {
 ///        // process content
@@ -642,12 +642,12 @@ impl Reedline {
     ///
     /// Returns a [`std::io::Result`] in which the `Err` type is [`std::io::Result`]
     /// and the `Ok` variant wraps a [`Signal`] which handles user inputs.
-    pub fn read_line(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    pub fn read_line(&mut self, prompt: &dyn Prompt, immediately_execute: bool) -> Result<Signal> {
         terminal::enable_raw_mode()?;
         self.bracketed_paste.enter();
         self.kitty_protocol.enter();
 
-        let result = self.read_line_helper(prompt);
+        let result = self.read_line_helper(prompt, immediately_execute);
 
         self.bracketed_paste.exit();
         self.kitty_protocol.exit();
@@ -687,7 +687,11 @@ impl Reedline {
 
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
-    fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
+    fn read_line_helper(
+        &mut self,
+        prompt: &dyn Prompt,
+        immediately_execute: bool,
+    ) -> Result<Signal> {
         self.painter
             .initialize_prompt_position(self.suspended_state.as_ref())?;
         if self.suspended_state.is_some() {
@@ -734,29 +738,31 @@ impl Reedline {
 
             let mut events: Vec<Event> = vec![];
 
-            // If the `external_printer` feature is enabled, we need to
-            // periodically yield so that external printers get a chance to
-            // print. Otherwise, we can just block until we receive an event.
-            #[cfg(feature = "external_printer")]
-            if event::poll(EXTERNAL_PRINTER_WAIT)? {
-                events.push(crossterm::event::read()?);
-            }
-            #[cfg(not(feature = "external_printer"))]
-            events.push(crossterm::event::read()?);
-
-            // Receive all events in the queue without blocking. Will stop when
-            // a line of input is completed.
-            while !completed(&events) && event::poll(Duration::from_millis(0))? {
-                events.push(crossterm::event::read()?);
-            }
-
-            // If we believe there's text pasting or resizing going on, batch
-            // more events at the cost of a slight delay.
-            if events.len() > EVENTS_THRESHOLD
-                || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
-            {
-                while !completed(&events) && event::poll(POLL_WAIT)? {
+            if !immediately_execute {
+                // If the `external_printer` feature is enabled, we need to
+                // periodically yield so that external printers get a chance to
+                // print. Otherwise, we can just block until we receive an event.
+                #[cfg(feature = "external_printer")]
+                if event::poll(EXTERNAL_PRINTER_WAIT)? {
                     events.push(crossterm::event::read()?);
+                }
+                #[cfg(not(feature = "external_printer"))]
+                events.push(crossterm::event::read()?);
+
+                // a line of input is completed.
+                // Receive all events in the queue without blocking. Will stop when
+                while !completed(&events) && event::poll(Duration::from_millis(0))? {
+                    events.push(crossterm::event::read()?);
+                }
+
+                // If we believe there's text pasting or resizing going on, batch
+                // more events at the cost of a slight delay.
+                if events.len() > EVENTS_THRESHOLD
+                    || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
+                {
+                    while !completed(&events) && event::poll(POLL_WAIT)? {
+                        events.push(crossterm::event::read()?);
+                    }
                 }
             }
 
@@ -786,6 +792,9 @@ impl Reedline {
             }
             if let Some((x, y)) = resize {
                 reedline_events.push(ReedlineEvent::Resize(x, y));
+            }
+            if immediately_execute {
+                reedline_events.push(ReedlineEvent::Submit);
             }
 
             // Handle reedline events.
