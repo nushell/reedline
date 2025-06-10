@@ -1324,6 +1324,7 @@ impl Reedline {
         self.editor.move_to_line_end(false);
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
+        self.editor.move_to_end(false);
     }
 
     fn next_history(&mut self) {
