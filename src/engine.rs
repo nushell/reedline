@@ -237,7 +237,7 @@ impl Reedline {
             buffer_editor: None,
             cursor_shapes: None,
             bracketed_paste: BracketedPasteGuard::default(),
-            kitty_protocol: KittyProtocolGuard::default(),
+            kitty_protocol: KittyProtocolGuard::new(),
             #[cfg(feature = "external_printer")]
             external_printer: None,
         }
