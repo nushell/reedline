@@ -1525,4 +1525,27 @@ mod tests {
         menu.update_values(&mut editor, &mut completer);
         assert!(menu.menu_string(10, true).contains("验"));
     }
+
+    #[test]
+    fn test_menu_create_value_string_long_unicode_string() {
+        // https://github.com/nushell/reedline/pull/918
+        let mut completer = FakeCompleter::new(&["验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验abcdef/", "abcdef/"]);
+        let mut menu = IdeMenu::default().with_name("testmenu");
+        menu.working_details = IdeMenuDetails {
+            cursor_col: 50,
+            menu_width: 50,
+            completion_width: 50,
+            description_width: 50,
+            description_is_right: true,
+            space_left: 50,
+            space_right: 50,
+            description_offset: 50,
+            shortest_base_string: String::new(),
+        };
+        let mut editor = Editor::default();
+
+        editor.set_buffer("a".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.menu_string(10, true).contains("验"));
+    }
 }

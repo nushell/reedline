@@ -838,4 +838,16 @@ mod tests {
         menu.update_values(&mut editor, &mut completer);
         assert!(menu.menu_string(10, true).contains("验"));
     }
+
+    #[test]
+    fn test_menu_create_string_long_unicode_string() {
+        // https://github.com/nushell/reedline/pull/918
+        let mut completer = FakeCompleter::new(&["验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验abcdef/", "abcdef/"]);
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+
+        editor.set_buffer("a".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.menu_string(10, true).contains("验"));
+    }
 }
