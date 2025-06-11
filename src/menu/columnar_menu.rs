@@ -826,4 +826,16 @@ mod tests {
         menu.update_values(&mut editor, &mut completer);
         assert!(menu.menu_string(2, true).contains("おは"));
     }
+
+    #[test]
+    fn test_menu_create_string_starting_with_multibyte_char() {
+        // https://github.com/nushell/nushell/issues/15938
+        let mut completer = FakeCompleter::new(&["验abcdef/", "abcdef/"]);
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+
+        editor.set_buffer("ac".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.menu_string(10, true).contains("验"));
+    }
 }
