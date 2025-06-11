@@ -521,19 +521,10 @@ impl IdeMenu {
             let match_len = shortest_base.chars().count().min(string.chars().count());
 
             // Find match position - look for the base string in the suggestion (case-insensitive)
-            let match_position = suggestion
-                .value
+            let match_position = string
                 .to_lowercase()
                 .find(&shortest_base.to_lowercase())
                 .unwrap_or(0);
-
-            // If match_position is beyond the end of string the match is no longer visible
-            // (as string has been truncated due to max_string_width)
-            let match_position = if match_position > string.len() {
-                0
-            } else {
-                match_position
-            };
 
             // The match is just the part that matches the shortest_base
             let match_str = {
