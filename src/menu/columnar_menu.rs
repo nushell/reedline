@@ -305,7 +305,7 @@ impl ColumnarMenu {
             let shortest_base = shortest_base
                 .strip_prefix(is_quote)
                 .unwrap_or(shortest_base);
-            let match_len = shortest_base.len();
+            let match_len = shortest_base.chars().count();
 
             // Find match position - look for the base string in the suggestion (case-insensitive)
             let match_position = suggestion
@@ -315,8 +315,15 @@ impl ColumnarMenu {
                 .unwrap_or(0);
 
             // The match is just the part that matches the shortest_base
-            let match_str = &suggestion.value[match_position
-                ..match_position + match_len.min(suggestion.value.len() - match_position)];
+            let match_str = {
+                let match_str = &suggestion.value[match_position..];
+                let match_len_bytes = match_str
+                    .char_indices()
+                    .nth(match_len)
+                    .map(|(i, _)| i)
+                    .unwrap_or_else(|| match_str.len());
+                &suggestion.value[match_position..match_position + match_len_bytes]
+            };
 
             // Prefix is everything before the match
             let prefix = &suggestion.value[..match_position];
