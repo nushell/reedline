@@ -55,26 +55,46 @@ impl Completer for DefaultCompleter {
     /// assert_eq!(
     ///     completions.complete("bat",3),
     ///     vec![
-    ///         Suggestion {value: "batcave".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
-    ///         Suggestion {value: "batman".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
-    ///         Suggestion {value: "batmobile".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
+    ///         Suggestion {value: "batcave".into(), span: Span { start: 0, end: 3 }, ..Default::default()},
+    ///         Suggestion {value: "batman".into(), span: Span { start: 0, end: 3 }, ..Default::default()},
+    ///         Suggestion {value: "batmobile".into(), span: Span { start: 0, end: 3 }, ..Default::default()},
     ///     ]);
     ///
     /// assert_eq!(
     ///     completions.complete("to the\r\nbat",11),
     ///     vec![
-    ///         Suggestion {value: "batcave".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false},
-    ///         Suggestion {value: "batman".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false},
-    ///         Suggestion {value: "batmobile".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false},
+    ///         Suggestion {value: "batcave".into(), span: Span { start: 8, end: 11 }, ..Default::default()},
+    ///         Suggestion {value: "batman".into(), span: Span { start: 8, end: 11 }, ..Default::default()},
+    ///         Suggestion {value: "batmobile".into(), span: Span { start: 8, end: 11 }, ..Default::default()},
+    ///     ]);
+    /// assert_eq!(
+    ///     completions.complete("", 0),
+    ///     vec![
+    ///         Suggestion {value: "batcave".into(), span: Span { start: 0, end: 0 }, ..Default::default()},
+    ///         Suggestion {value: "batman".into(), span: Span { start: 0, end: 0 }, ..Default::default()},
+    ///         Suggestion {value: "batmobile".into(), span: Span { start: 0, end: 0 }, ..Default::default()},
+    ///         Suggestion {value: "robber".into(), span: Span { start: 0, end: 0 }, ..Default::default()},
+    ///         Suggestion {value: "robin".into(), span: Span { start: 0, end: 0 }, ..Default::default()},
     ///     ]);
     /// ```
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
         let mut span_line_whitespaces = 0;
-        let mut completions = vec![];
         // Trimming in case someone passes in text containing stuff after the cursor, if
         // `only_buffer_difference` is false
         let line = if line.len() > pos { &line[..pos] } else { line };
-        if !line.is_empty() {
+        if line.chars().all(|c| c == ' ') {
+            self.root
+                .complete("".chars())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|value| Suggestion {
+                    value,
+                    span: Span::new(pos, pos),
+                    ..Default::default()
+                })
+                .collect()
+        } else {
+            let mut completions = vec![];
             // When editing a multiline buffer, there can be new line characters in it.
             // Also, by replacing the new line character with a space, the insert
             // position is maintain in the line buffer.
@@ -105,22 +125,18 @@ impl Completer for DefaultCompleter {
 
                                     Suggestion {
                                         value: format!("{span_line}{ext}"),
-                                        description: None,
-                                        style: None,
-                                        extra: None,
                                         span,
-                                        append_whitespace: false,
+                                        ..Default::default()
                                     }
                                 })
-                                .filter(|t| t.value.len() > (t.span.end - t.span.start))
-                                .collect::<Vec<Suggestion>>(),
+                                .filter(|t| t.value.len() > (t.span.end - t.span.start)),
                         );
                     }
                 }
             }
+            completions.dedup();
+            completions
         }
-        completions.dedup();
-        completions
     }
 }
 
