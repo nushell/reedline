@@ -830,7 +830,7 @@ mod tests {
     #[test]
     fn test_menu_create_string_starting_with_multibyte_char() {
         // https://github.com/nushell/nushell/issues/15938
-        let mut completer = FakeCompleter::new(&["验abcdef/", "abcdef/"]);
+        let mut completer = FakeCompleter::new(&["验abc/"]);
         let mut menu = ColumnarMenu::default().with_name("testmenu");
         let mut editor = Editor::default();
 
@@ -841,8 +841,8 @@ mod tests {
 
     #[test]
     fn test_menu_create_string_long_unicode_string() {
-        // https://github.com/nushell/reedline/pull/918
-        let mut completer = FakeCompleter::new(&["验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验abcdef/", "abcdef/"]);
+        // Test for possible panic if a long filename gets truncated
+        let mut completer = FakeCompleter::new(&[&("验".repeat(205) + "abc/")]);
         let mut menu = ColumnarMenu::default().with_name("testmenu");
         let mut editor = Editor::default();
 

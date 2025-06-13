@@ -1497,19 +1497,9 @@ mod tests {
     #[test]
     fn test_menu_create_value_string_starting_with_multibyte_char() {
         // https://github.com/nushell/nushell/issues/15938
-        let mut completer = FakeCompleter::new(&["验abcdef/", "abcdef/"]);
+        let mut completer = FakeCompleter::new(&["验abc/"]);
         let mut menu = IdeMenu::default().with_name("testmenu");
-        menu.working_details = IdeMenuDetails {
-            cursor_col: 50,
-            menu_width: 50,
-            completion_width: 50,
-            description_width: 50,
-            description_is_right: true,
-            space_left: 50,
-            space_right: 50,
-            description_offset: 50,
-            shortest_base_string: String::new(),
-        };
+        menu.working_details.completion_width = 50;
         let mut editor = Editor::default();
 
         editor.set_buffer("ac".to_string(), UndoBehavior::CreateUndoPoint);
@@ -1519,20 +1509,10 @@ mod tests {
 
     #[test]
     fn test_menu_create_value_string_long_unicode_string() {
-        // https://github.com/nushell/reedline/pull/918
-        let mut completer = FakeCompleter::new(&["验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验验abcdef/", "abcdef/"]);
+        // Test for possible panic if a long filename gets truncated
+        let mut completer = FakeCompleter::new(&[&("验".repeat(205) + "abc/")]);
         let mut menu = IdeMenu::default().with_name("testmenu");
-        menu.working_details = IdeMenuDetails {
-            cursor_col: 50,
-            menu_width: 50,
-            completion_width: 50,
-            description_width: 50,
-            description_is_right: true,
-            space_left: 50,
-            space_right: 50,
-            description_offset: 50,
-            shortest_base_string: String::new(),
-        };
+        menu.working_details.completion_width = 50;
         let mut editor = Editor::default();
 
         editor.set_buffer("a".to_string(), UndoBehavior::CreateUndoPoint);
