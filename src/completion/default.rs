@@ -67,6 +67,7 @@ impl Completer for DefaultCompleter {
     ///         Suggestion {value: "batman".into(), span: Span { start: 8, end: 11 }, ..Default::default()},
     ///         Suggestion {value: "batmobile".into(), span: Span { start: 8, end: 11 }, ..Default::default()},
     ///     ]);
+    ///
     /// assert_eq!(
     ///     completions.complete("", 0),
     ///     vec![
