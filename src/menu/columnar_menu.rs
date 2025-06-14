@@ -305,7 +305,7 @@ impl ColumnarMenu {
             let shortest_base = shortest_base
                 .strip_prefix(is_quote)
                 .unwrap_or(shortest_base);
-            let match_len = shortest_base.len();
+            let match_len = shortest_base.chars().count();
 
             // Find match position - look for the base string in the suggestion (case-insensitive)
             let match_position = suggestion
@@ -315,8 +315,15 @@ impl ColumnarMenu {
                 .unwrap_or(0);
 
             // The match is just the part that matches the shortest_base
-            let match_str = &suggestion.value[match_position
-                ..match_position + match_len.min(suggestion.value.len() - match_position)];
+            let match_str = {
+                let match_str = &suggestion.value[match_position..];
+                let match_len_bytes = match_str
+                    .char_indices()
+                    .nth(match_len)
+                    .map(|(i, _)| i)
+                    .unwrap_or_else(|| match_str.len());
+                &suggestion.value[match_position..match_position + match_len_bytes]
+            };
 
             // Prefix is everything before the match
             let prefix = &suggestion.value[..match_position];
@@ -818,5 +825,29 @@ mod tests {
         editor.set_buffer("おは".to_string(), UndoBehavior::CreateUndoPoint);
         menu.update_values(&mut editor, &mut completer);
         assert!(menu.menu_string(2, true).contains("おは"));
+    }
+
+    #[test]
+    fn test_menu_create_string_starting_with_multibyte_char() {
+        // https://github.com/nushell/nushell/issues/15938
+        let mut completer = FakeCompleter::new(&["验abc/"]);
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+
+        editor.set_buffer("ac".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.menu_string(10, true).contains("验"));
+    }
+
+    #[test]
+    fn test_menu_create_string_long_unicode_string() {
+        // Test for possible panic if a long filename gets truncated
+        let mut completer = FakeCompleter::new(&[&("验".repeat(205) + "abc/")]);
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+
+        editor.set_buffer("a".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.menu_string(10, true).contains("验"));
     }
 }
