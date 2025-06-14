@@ -144,6 +144,9 @@ pub struct IdeMenu {
     values: Vec<Suggestion>,
     /// Selected value. Starts at 0
     selected: u16,
+    /// Number of values that are skipped when printing,
+    /// depending on selected value and terminal height
+    skip_values: u16,
     /// Event sent to the menu
     event: Option<MenuEvent>,
     /// Longest suggestion found in the values
@@ -161,6 +164,7 @@ impl Default for IdeMenu {
             working_details: IdeMenuDetails::default(),
             values: Vec::new(),
             selected: 0,
+            skip_values: 0,
             event: None,
             longest_suggestion: 0,
             input: None,
@@ -832,6 +836,29 @@ impl Menu for IdeMenu {
 
             self.working_details.space_left = space_left;
             self.working_details.space_right = space_right;
+
+            let mut available_lines = painter
+                .remaining_lines_real()
+                .min(self.default_details.max_completion_height);
+
+            // Handle the case where a prompt uses the entire screen.
+            // Drawing the menu has priority over the drawing the prompt.
+            if available_lines == 0 {
+                available_lines = painter.remaining_lines().min(self.min_rows());
+            }
+
+            let visible_items = available_lines.saturating_sub(border_width);
+
+            self.skip_values = if self.selected <= self.skip_values {
+                // Selection is above the visible area
+                self.selected
+            } else if self.selected >= self.skip_values + visible_items {
+                // Selection is below the visible area
+                self.selected.saturating_sub(visible_items) + 1
+            } else {
+                // Selection is within the visible area
+                self.skip_values
+            }
         }
     }
 
@@ -865,17 +892,7 @@ impl Menu for IdeMenu {
             };
 
             let available_lines = available_lines.min(self.default_details.max_completion_height);
-            // The skip values represent the number of lines that should be skipped
-            // while printing the menu
-            let skip_values = if self.selected >= available_lines.saturating_sub(border_width) {
-                let skip_lines = self
-                    .selected
-                    .saturating_sub(available_lines.saturating_sub(border_width))
-                    + 1;
-                skip_lines as usize
-            } else {
-                0
-            };
+            let skip_values = self.skip_values as usize;
 
             let available_values = available_lines.saturating_sub(border_width) as usize;
 
