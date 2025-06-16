@@ -134,7 +134,7 @@ fn main() -> reedline::Result<()> {
     let prompt = DefaultPrompt::default();
 
     loop {
-        let sig = line_editor.read_line(&prompt, false);
+        let sig = line_editor.read_line(&prompt);
 
         match sig {
             Ok(Signal::CtrlD) => {
