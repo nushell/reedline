@@ -42,7 +42,7 @@ fn main() {
     let prompt = DefaultPrompt::default();
 
     loop {
-        if let Ok(sig) = line_editor.read_line(&prompt, false) {
+        if let Ok(sig) = line_editor.read_line(&prompt) {
             match sig {
                 Signal::Success(buffer) => {
                     println!("We processed: {buffer}");
