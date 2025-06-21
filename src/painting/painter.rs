@@ -91,6 +91,8 @@ pub struct Painter {
     // Stdout
     stdout: W,
     prompt_start_row: u16,
+    // The number of lines that the prompt takes up
+    prompt_height: u16,
     terminal_size: (u16, u16),
     last_required_lines: u16,
     large_buffer: bool,
@@ -103,6 +105,7 @@ impl Painter {
         Painter {
             stdout,
             prompt_start_row: 0,
+            prompt_height: 0,
             terminal_size: (0, 0),
             last_required_lines: 0,
             large_buffer: false,
@@ -121,7 +124,18 @@ impl Painter {
         self.terminal_size.0
     }
 
-    /// Returns the available lines from the prompt down
+    /// Returns the empty lines from the prompt down.
+    pub fn remaining_lines_real(&self) -> u16 {
+        self.screen_height()
+            .saturating_sub(self.prompt_start_row)
+            .saturating_sub(self.prompt_height)
+    }
+
+    /// Returns the number of lines that are available or can be made available by
+    /// stripping the prompt.
+    ///
+    /// If you want the number of empty lines below the prompt,
+    /// use [`Painter::remaining_lines_real`] instead.
     pub fn remaining_lines(&self) -> u16 {
         self.screen_height().saturating_sub(self.prompt_start_row)
     }
@@ -198,6 +212,9 @@ impl Painter {
 
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();
+
+        // We add one here as [`PromptLines::prompt_lines_with_wrap`] intentionally subtracts 1 from the real value.
+        self.prompt_height = lines.prompt_lines_with_wrap(screen_width) + 1;
 
         // Handle resize for multi line prompt
         if self.just_resized {
