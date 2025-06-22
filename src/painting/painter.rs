@@ -220,7 +220,8 @@ impl Painter {
         if self.just_resized {
             self.prompt_start_row = self.prompt_start_row.saturating_sub(
                 (lines.prompt_str_left.matches('\n').count()
-                    + lines.prompt_indicator.matches('\n').count()) as u16,
+                    + lines.prompt_indicator.matches('\n').count()
+                    + lines.before_cursor.matches('\n').count()) as u16,
             );
             self.just_resized = false;
         }
