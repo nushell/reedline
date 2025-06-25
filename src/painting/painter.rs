@@ -243,6 +243,9 @@ impl Painter {
 
         // Moving the start position of the cursor based on the size of the required lines
         if self.large_buffer || is_reset() {
+            for _ in 0..screen_height - lines.required_lines(screen_width, None) {
+                self.stdout.queue(Print(&coerce_crlf("\n")))?;
+            }
             self.prompt_start_row = 0;
         } else if required_lines >= remaining_lines {
             let extra = required_lines.saturating_sub(remaining_lines);
