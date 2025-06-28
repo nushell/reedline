@@ -626,20 +626,12 @@ impl Editor {
     /// If a selection is active returns the selected range, otherwise None.
     /// The range is guaranteed to be ascending.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
-        self.selection_anchor.map(|selection_anchor| {
-            let buffer_len = self.line_buffer.len();
-            if self.insertion_point() > selection_anchor {
-                (
-                    selection_anchor,
-                    self.line_buffer.grapheme_right_index().min(buffer_len),
-                )
+        self.selection_anchor.map(|anchor| {
+            let current = self.insertion_point();
+            if anchor <= current {
+                (anchor, current)
             } else {
-                (
-                    self.insertion_point(),
-                    self.line_buffer
-                        .grapheme_right_index_from_pos(selection_anchor)
-                        .min(buffer_len),
-                )
+                (current, anchor)
             }
         })
     }
@@ -1148,17 +1140,17 @@ mod test {
         }
         assert_eq!(editor.selection_anchor, Some(0));
         assert_eq!(editor.insertion_point(), 3);
-        assert_eq!(editor.get_selection(), Some((0, 4)));
+        assert_eq!(editor.get_selection(), Some((0, 3)));
 
         editor.run_edit_command(&EditCommand::SwapCursorAndAnchor);
         assert_eq!(editor.selection_anchor, Some(3));
         assert_eq!(editor.insertion_point(), 0);
-        assert_eq!(editor.get_selection(), Some((0, 4)));
+        assert_eq!(editor.get_selection(), Some((0, 3)));
 
         editor.run_edit_command(&EditCommand::SwapCursorAndAnchor);
         assert_eq!(editor.selection_anchor, Some(0));
         assert_eq!(editor.insertion_point(), 3);
-        assert_eq!(editor.get_selection(), Some((0, 4)));
+        assert_eq!(editor.get_selection(), Some((0, 3)));
     }
 
     #[cfg(feature = "system_clipboard")]
@@ -1362,5 +1354,37 @@ mod test {
         assert_eq!(editor.get_buffer(), "foobar"); // Just cut the newline
         assert_eq!(editor.insertion_point(), 3); // Cursor should return to original position
         assert_eq!(editor.cut_buffer.get().0, "\r\n");
+    }
+
+    #[test]
+    fn test_shift_arrow_selection_regression() {
+        // Test the specific issue from #893: shift+arrow should select only one character
+        let mut editor = editor_with("123456789");
+        editor.line_buffer.set_insertion_point(3); // After "3"
+        editor.selection_anchor = Some(3); // Start selection at position 3
+        
+        // Simulate shift+left (move left with selection)
+        editor.run_edit_command(&EditCommand::MoveLeft { select: true });
+        
+        // Should select only the character '3' (position 2-3), not '34'
+        assert_eq!(editor.get_selection(), Some((2, 3)));
+    }
+
+    #[test]
+    fn test_selection_operations_work_correctly() {
+        let mut editor = editor_with("hello world");
+        editor.line_buffer.set_insertion_point(5); // After "hello"
+        editor.selection_anchor = Some(0); // From start
+        
+        // Copy operation
+        editor.copy_selection_to_cut_buffer();
+        assert_eq!(editor.cut_buffer.get().0, "hello");
+        
+        // Cut operation  
+        editor.line_buffer.set_insertion_point(11); // At end
+        editor.selection_anchor = Some(6); // From " world"
+        editor.cut_selection_to_cut_buffer();
+        assert_eq!(editor.get_buffer(), "hello ");
+        assert_eq!(editor.cut_buffer.get().0, "world");
     }
 }
