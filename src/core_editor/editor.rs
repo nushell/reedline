@@ -1358,14 +1358,13 @@ mod test {
 
     #[test]
     fn test_shift_arrow_selection_regression() {
-        // Test the specific issue from #893: shift+arrow should select only one character
         let mut editor = editor_with("123456789");
         editor.line_buffer.set_insertion_point(3); // After "3"
         editor.selection_anchor = Some(3); // Start selection at position 3
-        
+
         // Simulate shift+left (move left with selection)
         editor.run_edit_command(&EditCommand::MoveLeft { select: true });
-        
+
         // Should select only the character '3' (position 2-3), not '34'
         assert_eq!(editor.get_selection(), Some((2, 3)));
     }
@@ -1375,12 +1374,12 @@ mod test {
         let mut editor = editor_with("hello world");
         editor.line_buffer.set_insertion_point(5); // After "hello"
         editor.selection_anchor = Some(0); // From start
-        
+
         // Copy operation
         editor.copy_selection_to_cut_buffer();
         assert_eq!(editor.cut_buffer.get().0, "hello");
-        
-        // Cut operation  
+
+        // Cut operation
         editor.line_buffer.set_insertion_point(11); // At end
         editor.selection_anchor = Some(6); // From " world"
         editor.cut_selection_to_cut_buffer();
