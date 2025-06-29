@@ -2,7 +2,7 @@ use crate::{
     edit_mode::{
         keybindings::{
             add_common_control_bindings, add_common_edit_bindings, add_common_navigation_bindings,
-            edit_bind, Keybindings,
+            add_common_selection_bindings, edit_bind, Keybindings,
         },
         EditMode,
     },
@@ -21,6 +21,7 @@ pub fn default_emacs_keybindings() -> Keybindings {
     add_common_control_bindings(&mut kb);
     add_common_navigation_bindings(&mut kb);
     add_common_edit_bindings(&mut kb);
+    add_common_selection_bindings(&mut kb);
 
     // This could be in common, but in Vi it also changes the mode
     kb.add_binding(KM::NONE, KC::Enter, ReedlineEvent::Enter);
@@ -51,29 +52,38 @@ pub fn default_emacs_keybindings() -> Keybindings {
         edit_bind(EC::PasteCutBufferBefore),
     );
     kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
-    kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::CutToEnd));
+    kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::KillLine));
     kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
+    kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
     // Edits
     kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
 
     // *** ALT ***
     // Moves
-    kb.add_binding(KM::ALT, KC::Left, edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::ALT,
+        KC::Left,
+        edit_bind(EC::MoveWordLeft { select: false }),
+    );
     kb.add_binding(
         KM::ALT,
         KC::Right,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWordRight),
+            edit_bind(EC::MoveWordRight { select: false }),
         ]),
     );
-    kb.add_binding(KM::ALT, KC::Char('b'), edit_bind(EC::MoveWordLeft));
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('b'),
+        edit_bind(EC::MoveWordLeft { select: false }),
+    );
     kb.add_binding(
         KM::ALT,
         KC::Char('f'),
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWordRight),
+            edit_bind(EC::MoveWordRight { select: false }),
         ]),
     );
     // Edits
@@ -84,8 +94,6 @@ pub fn default_emacs_keybindings() -> Keybindings {
         KC::Char('m'),
         ReedlineEvent::Edit(vec![EditCommand::BackspaceWord]),
     );
-    // Cutting
-    kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
     // Case changes
     kb.add_binding(KM::ALT, KC::Char('u'), edit_bind(EC::UppercaseWord));
     kb.add_binding(KM::ALT, KC::Char('l'), edit_bind(EC::LowercaseWord));
@@ -186,7 +194,7 @@ mod test {
     #[test]
     fn ctrl_l_leads_to_clear_screen_event() {
         let mut emacs = Emacs::default();
-        let ctrl_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let ctrl_l = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('l'),
             KeyModifiers::CONTROL,
         )))
@@ -206,7 +214,7 @@ mod test {
         );
 
         let mut emacs = Emacs::new(keybindings);
-        let ctrl_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let ctrl_l = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('l'),
             KeyModifiers::CONTROL,
         )))
@@ -219,7 +227,7 @@ mod test {
     #[test]
     fn inserting_character_works() {
         let mut emacs = Emacs::default();
-        let l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let l = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('l'),
             KeyModifiers::NONE,
         )))
@@ -236,7 +244,7 @@ mod test {
     fn inserting_capital_character_works() {
         let mut emacs = Emacs::default();
 
-        let uppercase_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let uppercase_l = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('l'),
             KeyModifiers::SHIFT,
         )))
@@ -254,7 +262,7 @@ mod test {
         let keybindings = Keybindings::default();
 
         let mut emacs = Emacs::new(keybindings);
-        let ctrl_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let ctrl_l = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('l'),
             KeyModifiers::CONTROL,
         )))
@@ -268,7 +276,7 @@ mod test {
     fn inserting_capital_character_for_non_ascii_remains_as_is() {
         let mut emacs = Emacs::default();
 
-        let uppercase_l = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let uppercase_l = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('😀'),
             KeyModifiers::SHIFT,
         )))
@@ -279,5 +287,19 @@ mod test {
             result,
             ReedlineEvent::Edit(vec![EditCommand::InsertChar('😀')])
         );
+    }
+
+    #[test]
+    fn kill_line() {
+        let mut emacs = Emacs::default();
+
+        let ctrl_k = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        let result = emacs.parse_event(ctrl_k);
+
+        assert_eq!(result, ReedlineEvent::Edit(vec![EditCommand::KillLine]));
     }
 }

@@ -146,24 +146,14 @@ impl SearchQuery {
         ))
     }
 
-    /// Get the most recent entry starting with the `prefix` and `cwd` same as the current cwd
+    /// Get the most recent entry starting with the `prefix` and `cwd`
     pub fn last_with_prefix_and_cwd(
         prefix: String,
+        cwd: String,
         session: Option<HistorySessionId>,
     ) -> SearchQuery {
-        let cwd = std::env::current_dir();
-        if let Ok(cwd) = cwd {
-            SearchQuery::last_with_search(SearchFilter::from_text_search_cwd(
-                cwd.to_string_lossy().to_string(),
-                CommandLineSearch::Prefix(prefix),
-                session,
-            ))
-        } else {
-            SearchQuery::last_with_search(SearchFilter::from_text_search(
-                CommandLineSearch::Prefix(prefix),
-                session,
-            ))
-        }
+        let prefix = CommandLineSearch::Prefix(prefix);
+        SearchQuery::last_with_search(SearchFilter::from_text_search_cwd(cwd, prefix, session))
     }
 
     /// Query to get all entries in the given [`SearchDirection`]
@@ -192,8 +182,6 @@ pub trait History: Send {
     fn save(&mut self, h: HistoryItem) -> Result<HistoryItem>;
     /// load a history item by its id
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem>;
-
-    /// retrieves the next unused session id
 
     /// count the results of a query
     fn count(&self, query: SearchQuery) -> Result<i64>;
@@ -350,6 +338,24 @@ mod test {
     }
 
     #[test]
+    fn search_prefix_is_case_sensitive() -> Result<()> {
+        // Basic prefix search should preserve case
+        //
+        // https://github.com/nushell/nushell/issues/10131
+        let history = create_filled_example_history()?;
+        let res = history.search(SearchQuery {
+            filter: SearchFilter::from_text_search(
+                CommandLineSearch::Prefix("LS ".to_string()),
+                None,
+            ),
+            ..SearchQuery::everything(SearchDirection::Backward, None)
+        })?;
+        search_returned(&*history, res, vec![])?;
+
+        Ok(())
+    }
+
+    #[test]
     fn search_includes() -> Result<()> {
         let history = create_filled_example_history()?;
         let res = history.search(SearchQuery {
@@ -426,5 +432,26 @@ mod test {
         assert_eq!(history.count_all()?, 0);
 
         Ok(())
+    }
+
+    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+    #[test]
+    fn history_size_zero() -> Result<()> {
+        let mut history = crate::FileBackedHistory::new(0)?;
+        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?;
+        assert_eq!(history.count_all()?, 0);
+        let _ = history.sync();
+        history.clear()?;
+        drop(history);
+
+        Ok(())
+    }
+
+    #[test]
+    fn create_file_backed_history() {
+        use crate::HISTORY_SIZE;
+
+        assert!(crate::FileBackedHistory::new(usize::MAX).is_err());
+        assert!(crate::FileBackedHistory::new(HISTORY_SIZE).is_ok());
     }
 }

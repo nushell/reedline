@@ -17,49 +17,94 @@ pub enum Signal {
 /// Editing actions which can be mapped to key bindings.
 ///
 /// Executed by `Reedline::run_edit_commands()`
+#[non_exhaustive]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq, EnumIter)]
 pub enum EditCommand {
     /// Move to the start of the buffer
-    MoveToStart,
+    MoveToStart {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Move to the start of the current line
-    MoveToLineStart,
+    MoveToLineStart {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Move to the end of the buffer
-    MoveToEnd,
+    MoveToEnd {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Move to the end of the current line
-    MoveToLineEnd,
+    MoveToLineEnd {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Move one character to the left
-    MoveLeft,
+    MoveLeft {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Move one character to the right
-    MoveRight,
+    MoveRight {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Move one word to the left
-    MoveWordLeft,
+    MoveWordLeft {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Move one WORD to the left
-    MoveBigWordLeft,
+    MoveBigWordLeft {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Move one word to the right
-    MoveWordRight,
+    MoveWordRight {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Move one word to the right, stop at start of word
-    MoveWordRightStart,
+    MoveWordRightStart {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Move one WORD to the right, stop at start of WORD
-    MoveBigWordRightStart,
+    MoveBigWordRightStart {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Move one word to the right, stop at end of word
-    MoveWordRightEnd,
+    MoveWordRightEnd {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Move one WORD to the right, stop at end of WORD
-    MoveBigWordRightEnd,
+    MoveBigWordRightEnd {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Move to position
-    MoveToPosition(usize),
+    MoveToPosition {
+        /// Position to move to
+        position: usize,
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// Insert a character at the current insertion point
     InsertChar(char),
@@ -118,6 +163,10 @@ pub enum EditCommand {
     /// Cut from the insertion point to the end of the current line
     CutToLineEnd,
 
+    /// Cut from the insertion point to the end of the current line
+    /// If the cursor is already at the end of the line, remove the newline character
+    KillLine,
+
     /// Cut the word left of the insertion point
     CutWordLeft,
 
@@ -173,10 +222,20 @@ pub enum EditCommand {
     CutRightBefore(char),
 
     /// CutUntil right until char
-    MoveRightUntil(char),
+    MoveRightUntil {
+        /// Char to move towards
+        c: char,
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// CutUntil right before char
-    MoveRightBefore(char),
+    MoveRightBefore {
+        /// Char to move towards
+        c: char,
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
     /// CutUntil left until char
     CutLeftUntil(char),
@@ -184,30 +243,156 @@ pub enum EditCommand {
     /// CutUntil left before char
     CutLeftBefore(char),
 
-    /// CutUntil left until char
-    MoveLeftUntil(char),
+    /// Move left until char
+    MoveLeftUntil {
+        /// Char to move towards
+        c: char,
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
 
-    /// CutUntil left before char
-    MoveLeftBefore(char),
+    /// Move left before char
+    MoveLeftBefore {
+        /// Char to move towards
+        c: char,
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Select whole input buffer
+    SelectAll,
+
+    /// Cut selection to local buffer
+    CutSelection,
+
+    /// Copy selection to local buffer
+    CopySelection,
+
+    /// Paste content from local buffer at the current cursor position
+    Paste,
+
+    /// Copy from the start of the buffer to the insertion point
+    CopyFromStart,
+
+    /// Copy from the start of the current line to the insertion point
+    CopyFromLineStart,
+
+    /// Copy from the insertion point to the end of the buffer
+    CopyToEnd,
+
+    /// Copy from the insertion point to the end of the current line
+    CopyToLineEnd,
+
+    /// Copy the current line
+    CopyCurrentLine,
+
+    /// Copy the word left of the insertion point
+    CopyWordLeft,
+
+    /// Copy the WORD left of the insertion point
+    CopyBigWordLeft,
+
+    /// Copy the word right of the insertion point
+    CopyWordRight,
+
+    /// Copy the WORD right of the insertion point
+    CopyBigWordRight,
+
+    /// Copy the word right of the insertion point and any following space
+    CopyWordRightToNext,
+
+    /// Copy the WORD right of the insertion point and any following space
+    CopyBigWordRightToNext,
+
+    /// Copy one character to the left
+    CopyLeft,
+
+    /// Copy one character to the right
+    CopyRight,
+
+    /// Copy until right until char
+    CopyRightUntil(char),
+
+    /// Copy right before char
+    CopyRightBefore(char),
+
+    /// Copy left until char
+    CopyLeftUntil(char),
+
+    /// Copy left before char
+    CopyLeftBefore(char),
+    /// Swap the positions of the cursor and anchor
+    SwapCursorAndAnchor,
+
+    /// Cut selection to system clipboard
+    #[cfg(feature = "system_clipboard")]
+    CutSelectionSystem,
+
+    /// Copy selection to system clipboard
+    #[cfg(feature = "system_clipboard")]
+    CopySelectionSystem,
+
+    /// Paste content from system clipboard at the current cursor position
+    #[cfg(feature = "system_clipboard")]
+    PasteSystem,
+
+    /// Delete text between matching characters atomically
+    CutInside {
+        /// Left character of the pair
+        left: char,
+        /// Right character of the pair (usually matching bracket)
+        right: char,
+    },
+    /// Yank text between matching characters atomically
+    YankInside {
+        /// Left character of the pair
+        left: char,
+        /// Right character of the pair (usually matching bracket)
+        right: char,
+    },
 }
 
 impl Display for EditCommand {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            EditCommand::MoveToStart => write!(f, "MoveToStart"),
-            EditCommand::MoveToLineStart => write!(f, "MoveToLineStart"),
-            EditCommand::MoveToEnd => write!(f, "MoveToEnd"),
-            EditCommand::MoveToLineEnd => write!(f, "MoveToLineEnd"),
-            EditCommand::MoveLeft => write!(f, "MoveLeft"),
-            EditCommand::MoveRight => write!(f, "MoveRight"),
-            EditCommand::MoveWordLeft => write!(f, "MoveWordLeft"),
-            EditCommand::MoveBigWordLeft => write!(f, "MoveBigWordLeft"),
-            EditCommand::MoveWordRight => write!(f, "MoveWordRight"),
-            EditCommand::MoveWordRightEnd => write!(f, "MoveWordRightEnd"),
-            EditCommand::MoveBigWordRightEnd => write!(f, "MoveBigWordRightEnd"),
-            EditCommand::MoveWordRightStart => write!(f, "MoveWordRightStart"),
-            EditCommand::MoveBigWordRightStart => write!(f, "MoveBigWordRightStart"),
-            EditCommand::MoveToPosition(_) => write!(f, "MoveToPosition  Value: <int>"),
+            EditCommand::MoveToStart { .. } => write!(f, "MoveToStart Optional[select: <bool>]"),
+            EditCommand::MoveToLineStart { .. } => {
+                write!(f, "MoveToLineStart Optional[select: <bool>]")
+            }
+            EditCommand::MoveToEnd { .. } => write!(f, "MoveToEnd Optional[select: <bool>]"),
+            EditCommand::MoveToLineEnd { .. } => {
+                write!(f, "MoveToLineEnd Optional[select: <bool>]")
+            }
+            EditCommand::MoveLeft { .. } => write!(f, "MoveLeft Optional[select: <bool>]"),
+            EditCommand::MoveRight { .. } => write!(f, "MoveRight Optional[select: <bool>]"),
+            EditCommand::MoveWordLeft { .. } => write!(f, "MoveWordLeft Optional[select: <bool>]"),
+            EditCommand::MoveBigWordLeft { .. } => {
+                write!(f, "MoveBigWordLeft Optional[select: <bool>]")
+            }
+            EditCommand::MoveWordRight { .. } => {
+                write!(f, "MoveWordRight Optional[select: <bool>]")
+            }
+            EditCommand::MoveWordRightEnd { .. } => {
+                write!(f, "MoveWordRightEnd Optional[select: <bool>]")
+            }
+            EditCommand::MoveBigWordRightEnd { .. } => {
+                write!(f, "MoveBigWordRightEnd Optional[select: <bool>]")
+            }
+            EditCommand::MoveWordRightStart { .. } => {
+                write!(f, "MoveWordRightStart Optional[select: <bool>]")
+            }
+            EditCommand::MoveBigWordRightStart { .. } => {
+                write!(f, "MoveBigWordRightStart Optional[select: <bool>]")
+            }
+            EditCommand::MoveToPosition { .. } => {
+                write!(f, "MoveToPosition  Value: <int>, Optional[select: <bool>]")
+            }
+            EditCommand::MoveLeftUntil { .. } => {
+                write!(f, "MoveLeftUntil Value: <char>, Optional[select: <bool>]")
+            }
+            EditCommand::MoveLeftBefore { .. } => {
+                write!(f, "MoveLeftBefore Value: <char>, Optional[select: <bool>]")
+            }
             EditCommand::InsertChar(_) => write!(f, "InsertChar  Value: <char>"),
             EditCommand::InsertString(_) => write!(f, "InsertString Value: <string>"),
             EditCommand::InsertNewline => write!(f, "InsertNewline"),
@@ -226,6 +411,7 @@ impl Display for EditCommand {
             EditCommand::CutFromLineStart => write!(f, "CutFromLineStart"),
             EditCommand::CutToEnd => write!(f, "CutToEnd"),
             EditCommand::CutToLineEnd => write!(f, "CutToLineEnd"),
+            EditCommand::KillLine => write!(f, "KillLine"),
             EditCommand::CutWordLeft => write!(f, "CutWordLeft"),
             EditCommand::CutBigWordLeft => write!(f, "CutBigWordLeft"),
             EditCommand::CutWordRight => write!(f, "CutWordRight"),
@@ -244,12 +430,40 @@ impl Display for EditCommand {
             EditCommand::Redo => write!(f, "Redo"),
             EditCommand::CutRightUntil(_) => write!(f, "CutRightUntil Value: <char>"),
             EditCommand::CutRightBefore(_) => write!(f, "CutRightBefore Value: <char>"),
-            EditCommand::MoveRightUntil(_) => write!(f, "MoveRightUntil Value: <char>"),
-            EditCommand::MoveRightBefore(_) => write!(f, "MoveRightBefore Value: <char>"),
+            EditCommand::MoveRightUntil { .. } => write!(f, "MoveRightUntil Value: <char>"),
+            EditCommand::MoveRightBefore { .. } => write!(f, "MoveRightBefore Value: <char>"),
             EditCommand::CutLeftUntil(_) => write!(f, "CutLeftUntil Value: <char>"),
             EditCommand::CutLeftBefore(_) => write!(f, "CutLeftBefore Value: <char>"),
-            EditCommand::MoveLeftUntil(_) => write!(f, "MoveLeftUntil Value: <char>"),
-            EditCommand::MoveLeftBefore(_) => write!(f, "MoveLeftBefore Value: <char>"),
+            EditCommand::SelectAll => write!(f, "SelectAll"),
+            EditCommand::CutSelection => write!(f, "CutSelection"),
+            EditCommand::CopySelection => write!(f, "CopySelection"),
+            EditCommand::Paste => write!(f, "Paste"),
+            EditCommand::CopyFromStart => write!(f, "CopyFromStart"),
+            EditCommand::CopyFromLineStart => write!(f, "CopyFromLineStart"),
+            EditCommand::CopyToEnd => write!(f, "CopyToEnd"),
+            EditCommand::CopyToLineEnd => write!(f, "CopyToLineEnd"),
+            EditCommand::CopyCurrentLine => write!(f, "CopyCurrentLine"),
+            EditCommand::CopyWordLeft => write!(f, "CopyWordLeft"),
+            EditCommand::CopyBigWordLeft => write!(f, "CopyBigWordLeft"),
+            EditCommand::CopyWordRight => write!(f, "CopyWordRight"),
+            EditCommand::CopyBigWordRight => write!(f, "CopyBigWordRight"),
+            EditCommand::CopyWordRightToNext => write!(f, "CopyWordRightToNext"),
+            EditCommand::CopyBigWordRightToNext => write!(f, "CopyBigWordRightToNext"),
+            EditCommand::CopyLeft => write!(f, "CopyLeft"),
+            EditCommand::CopyRight => write!(f, "CopyRight"),
+            EditCommand::CopyRightUntil(_) => write!(f, "CopyRightUntil Value: <char>"),
+            EditCommand::CopyRightBefore(_) => write!(f, "CopyRightBefore Value: <char>"),
+            EditCommand::CopyLeftUntil(_) => write!(f, "CopyLeftUntil Value: <char>"),
+            EditCommand::CopyLeftBefore(_) => write!(f, "CopyLeftBefore Value: <char>"),
+            EditCommand::SwapCursorAndAnchor => write!(f, "SwapCursorAndAnchor"),
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::CutSelectionSystem => write!(f, "CutSelectionSystem"),
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::CopySelectionSystem => write!(f, "CopySelectionSystem"),
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::PasteSystem => write!(f, "PasteSystem"),
+            EditCommand::CutInside { .. } => write!(f, "CutInside Value: <char> <char>"),
+            EditCommand::YankInside { .. } => write!(f, "YankInside Value: <char> <char>"),
         }
     }
 }
@@ -260,25 +474,29 @@ impl EditCommand {
     pub fn edit_type(&self) -> EditType {
         match self {
             // Cursor moves
-            EditCommand::MoveToStart
-            | EditCommand::MoveToEnd
-            | EditCommand::MoveToLineStart
-            | EditCommand::MoveToLineEnd
-            | EditCommand::MoveToPosition(_)
-            | EditCommand::MoveLeft
-            | EditCommand::MoveRight
-            | EditCommand::MoveWordLeft
-            | EditCommand::MoveBigWordLeft
-            | EditCommand::MoveWordRight
-            | EditCommand::MoveWordRightStart
-            | EditCommand::MoveBigWordRightStart
-            | EditCommand::MoveWordRightEnd
-            | EditCommand::MoveBigWordRightEnd
-            | EditCommand::MoveRightUntil(_)
-            | EditCommand::MoveRightBefore(_)
-            | EditCommand::MoveLeftUntil(_)
-            | EditCommand::MoveLeftBefore(_) => EditType::MoveCursor,
+            EditCommand::MoveToStart { select, .. }
+            | EditCommand::MoveToEnd { select, .. }
+            | EditCommand::MoveToLineStart { select, .. }
+            | EditCommand::MoveToLineEnd { select, .. }
+            | EditCommand::MoveToPosition { select, .. }
+            | EditCommand::MoveLeft { select, .. }
+            | EditCommand::MoveRight { select, .. }
+            | EditCommand::MoveWordLeft { select, .. }
+            | EditCommand::MoveBigWordLeft { select, .. }
+            | EditCommand::MoveWordRight { select, .. }
+            | EditCommand::MoveWordRightStart { select, .. }
+            | EditCommand::MoveBigWordRightStart { select, .. }
+            | EditCommand::MoveWordRightEnd { select, .. }
+            | EditCommand::MoveBigWordRightEnd { select, .. }
+            | EditCommand::MoveRightUntil { select, .. }
+            | EditCommand::MoveRightBefore { select, .. }
+            | EditCommand::MoveLeftUntil { select, .. }
+            | EditCommand::MoveLeftBefore { select, .. } => {
+                EditType::MoveCursor { select: *select }
+            }
+            EditCommand::SwapCursorAndAnchor => EditType::MoveCursor { select: true },
 
+            EditCommand::SelectAll => EditType::MoveCursor { select: true },
             // Text edits
             EditCommand::InsertChar(_)
             | EditCommand::Backspace
@@ -297,6 +515,7 @@ impl EditCommand {
             | EditCommand::CutFromStart
             | EditCommand::CutFromLineStart
             | EditCommand::CutToLineEnd
+            | EditCommand::KillLine
             | EditCommand::CutToEnd
             | EditCommand::CutWordLeft
             | EditCommand::CutBigWordLeft
@@ -315,9 +534,37 @@ impl EditCommand {
             | EditCommand::CutRightUntil(_)
             | EditCommand::CutRightBefore(_)
             | EditCommand::CutLeftUntil(_)
-            | EditCommand::CutLeftBefore(_) => EditType::EditText,
+            | EditCommand::CutLeftBefore(_)
+            | EditCommand::CutSelection
+            | EditCommand::Paste => EditType::EditText,
+
+            #[cfg(feature = "system_clipboard")] // Sadly cfg attributes in patterns don't work
+            EditCommand::CutSelectionSystem | EditCommand::PasteSystem => EditType::EditText,
 
             EditCommand::Undo | EditCommand::Redo => EditType::UndoRedo,
+
+            EditCommand::CopySelection => EditType::NoOp,
+            #[cfg(feature = "system_clipboard")]
+            EditCommand::CopySelectionSystem => EditType::NoOp,
+            EditCommand::CutInside { .. } => EditType::EditText,
+            EditCommand::YankInside { .. } => EditType::EditText,
+            EditCommand::CopyFromStart
+            | EditCommand::CopyFromLineStart
+            | EditCommand::CopyToEnd
+            | EditCommand::CopyToLineEnd
+            | EditCommand::CopyCurrentLine
+            | EditCommand::CopyWordLeft
+            | EditCommand::CopyBigWordLeft
+            | EditCommand::CopyWordRight
+            | EditCommand::CopyBigWordRight
+            | EditCommand::CopyWordRightToNext
+            | EditCommand::CopyBigWordRightToNext
+            | EditCommand::CopyLeft
+            | EditCommand::CopyRight
+            | EditCommand::CopyRightUntil(_)
+            | EditCommand::CopyRightBefore(_)
+            | EditCommand::CopyLeftUntil(_)
+            | EditCommand::CopyLeftBefore(_) => EditType::NoOp,
         }
     }
 }
@@ -327,11 +574,13 @@ impl EditCommand {
 #[derive(PartialEq, Eq)]
 pub enum EditType {
     /// Cursor movement commands
-    MoveCursor,
+    MoveCursor { select: bool },
     /// Undo/Redo commands
     UndoRedo,
     /// Text editing commands
     EditText,
+    /// No effect on line buffer
+    NoOp,
 }
 
 /// Every line change should come with an `UndoBehavior` tag, which can be used to
@@ -562,41 +811,40 @@ pub(crate) enum EventStatus {
     Exits(Signal),
 }
 
-/// A simple wrapper for [crossterm::event::Event]
+/// A wrapper for [crossterm::event::Event].
 ///
-/// Which will make sure that the given event doesn't contain [KeyEventKind::Release]
-/// and convert from [KeyEventKind::Repeat] to [KeyEventKind::Press]
-pub struct ReedlineRawEvent {
-    inner: Event,
-}
+/// It ensures that the given event doesn't contain [KeyEventKind::Release]
+/// (which is rejected) or [KeyEventKind::Repeat] (which is converted to
+/// [KeyEventKind::Press]).
+pub struct ReedlineRawEvent(Event);
 
-impl ReedlineRawEvent {
-    /// It will return None if `evt` is released Key.
-    pub fn convert_from(evt: Event) -> Option<Self> {
-        match evt {
+impl TryFrom<Event> for ReedlineRawEvent {
+    type Error = ();
+
+    fn try_from(event: Event) -> Result<Self, Self::Error> {
+        match event {
             Event::Key(KeyEvent {
                 kind: KeyEventKind::Release,
                 ..
-            }) => None,
+            }) => Err(()),
             Event::Key(KeyEvent {
                 code,
                 modifiers,
                 kind: KeyEventKind::Repeat,
                 state,
-            }) => Some(Self {
-                inner: Event::Key(KeyEvent {
-                    code,
-                    modifiers,
-                    kind: KeyEventKind::Press,
-                    state,
-                }),
-            }),
-            other => Some(Self { inner: other }),
+            }) => Ok(Self(Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind: KeyEventKind::Press,
+                state,
+            }))),
+            other => Ok(Self(other)),
         }
     }
+}
 
-    /// Consume and get crossterm event object.
-    pub fn into(self) -> Event {
-        self.inner
+impl From<ReedlineRawEvent> for Event {
+    fn from(event: ReedlineRawEvent) -> Self {
+        event.0
     }
 }

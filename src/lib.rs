@@ -96,7 +96,7 @@
 //! ```rust
 //! // Create a reedline object with tab completions support
 //!
-//! use reedline::{default_emacs_keybindings, ColumnarMenu, DefaultCompleter, Emacs, KeyCode, KeyModifiers, Reedline, ReedlineEvent, ReedlineMenu};
+//! use reedline::{default_emacs_keybindings, ColumnarMenu, DefaultCompleter, Emacs, KeyCode, KeyModifiers, Reedline, ReedlineEvent, ReedlineMenu, MenuBuilder};
 //!
 //! let commands = vec![
 //!   "test".into(),
@@ -186,7 +186,7 @@
 //!
 //! ## Are we prompt yet? (Development status)
 //!
-//! Nushell has now all the basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
+//! Reedline has now all the basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
 //! )
 //!
 //! - General editing functionality, that should feel familiar coming from other shells (e.g. bash, fish, zsh).
@@ -240,7 +240,7 @@ mod engine;
 pub use engine::Reedline;
 
 mod result;
-pub use result::{ReedlineError, Result};
+pub use result::{ReedlineError, ReedlineErrorVariants, Result};
 
 mod history;
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
@@ -278,7 +278,8 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
 pub use menu::{
-    menu_functions, ColumnarMenu, ListMenu, Menu, MenuEvent, MenuTextStyle, ReedlineMenu,
+    menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, IdeMenu, ListMenu, Menu,
+    MenuBuilder, MenuEvent, MenuTextStyle, ReedlineMenu,
 };
 
 mod terminal_extensions;

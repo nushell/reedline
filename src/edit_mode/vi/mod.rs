@@ -19,6 +19,7 @@ use crate::{
 enum ViMode {
     Normal,
     Insert,
+    Visual,
 }
 
 /// This parses incoming input `Event`s like a Vi-Style editor
@@ -106,6 +107,11 @@ impl EditMode for Vi {
                         ReedlineEvent::Edit(vec![EditCommand::InsertChar(code)]),
                     ])
                 }
+                (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v'), _, _) => {
+                    self.cache.clear();
+                    self.mode = ViMode::Visual;
+                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+                }
 
                 (ViMode::Normal, modifier, KeyCode::Char(c), _, _) => {
                     let c = c.to_ascii_lowercase();
@@ -127,12 +133,11 @@ impl EditMode for Vi {
                         if !res.is_valid() {
                             self.cache.clear();
                             ReedlineEvent::None
-                        } else if res.is_complete() {
-                            if res.enters_insert_mode() {
-                                self.mode = ViMode::Insert;
-                            }
-
+                        } else if res.is_complete(self.mode) {
                             let event = res.to_reedline_event(self);
+                            if let Some(mode) = res.changes_mode(self.mode) {
+                                self.mode = mode;
+                            }
                             self.cache.clear();
                             event
                         } else {
@@ -185,7 +190,7 @@ impl EditMode for Vi {
                     self.mode = ViMode::Insert;
                     ReedlineEvent::Enter
                 }
-                (ViMode::Normal, _, _, _, _) => self
+                (ViMode::Normal | ViMode::Visual, _, _, _, _) => self
                     .normal_keybindings
                     .find_binding(modifiers, code)
                     .unwrap_or(ReedlineEvent::None),
@@ -207,7 +212,7 @@ impl EditMode for Vi {
 
     fn edit_mode(&self) -> PromptEditMode {
         match self.mode {
-            ViMode::Normal => PromptEditMode::Vi(PromptViMode::Normal),
+            ViMode::Normal | ViMode::Visual => PromptEditMode::Vi(PromptViMode::Normal),
             ViMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
         }
     }
@@ -221,11 +226,9 @@ mod test {
     #[test]
     fn esc_leads_to_normal_mode_test() {
         let mut vi = Vi::default();
-        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
-            KeyCode::Esc,
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
+        let esc =
+            ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+                .unwrap();
         let result = vi.parse_event(esc);
 
         assert_eq!(
@@ -251,7 +254,7 @@ mod test {
             ..Default::default()
         };
 
-        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let esc = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('e'),
             KeyModifiers::NONE,
         )))
@@ -277,9 +280,35 @@ mod test {
             ..Default::default()
         };
 
-        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let esc = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('$'),
             KeyModifiers::SHIFT,
+        )))
+        .unwrap();
+        let result = vi.parse_event(esc);
+
+        assert_eq!(result, ReedlineEvent::CtrlD);
+    }
+
+    #[test]
+    fn keybinding_with_super_modifier_test() {
+        let mut keybindings = default_vi_normal_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::SUPER,
+            KeyCode::Char('$'),
+            ReedlineEvent::CtrlD,
+        );
+
+        let mut vi = Vi {
+            insert_keybindings: default_vi_insert_keybindings(),
+            normal_keybindings: keybindings,
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let esc = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('$'),
+            KeyModifiers::SUPER,
         )))
         .unwrap();
         let result = vi.parse_event(esc);
@@ -297,7 +326,7 @@ mod test {
             ..Default::default()
         };
 
-        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let esc = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('q'),
             KeyModifiers::NONE,
         )))

@@ -15,6 +15,7 @@ impl Hinter for DefaultHinter {
         #[allow(unused_variables)] pos: usize,
         history: &dyn History,
         use_ansi_coloring: bool,
+        _cwd: &str,
     ) -> String {
         self.current_hint = if line.chars().count() >= self.min_chars {
             history
@@ -23,7 +24,7 @@ impl Hinter for DefaultHinter {
                     history.session(),
                 ))
                 .expect("todo: error handling")
-                .get(0)
+                .first()
                 .map_or_else(String::new, |entry| {
                     entry
                         .command_line

@@ -5,10 +5,11 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Display, time::Duration};
 
 /// Unique ID for the [`HistoryItem`]. More recent items have higher ids than older ones.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct HistoryItemId(pub(crate) i64);
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct HistoryItemId(pub i64);
 impl HistoryItemId {
-    pub(crate) const fn new(i: i64) -> HistoryItemId {
+    /// Create a new `HistoryItemId` value
+    pub const fn new(i: i64) -> HistoryItemId {
         HistoryItemId(i)
     }
 }
@@ -20,7 +21,7 @@ impl Display for HistoryItemId {
 }
 
 /// Unique ID for the session in which reedline was run to disambiguate different sessions
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistorySessionId(pub(crate) i64);
 impl HistorySessionId {
     pub(crate) const fn new(i: i64) -> HistorySessionId {
@@ -77,7 +78,7 @@ impl<'de> Deserialize<'de> for IgnoreAllExtraInfo {
 impl HistoryItemExtraInfo for IgnoreAllExtraInfo {}
 
 /// Represents one run command with some optional additional context
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
     /// primary key, unique across one history
     pub id: Option<HistoryItemId>,
@@ -97,6 +98,10 @@ pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
     /// the exit status of the command
     pub exit_status: Option<i64>,
     /// arbitrary additional information that might be interesting
+    /// NOTE: this attribute is required because of
+    /// <https://github.com/rust-lang/rust/issues/41617>
+    ///       (see <https://github.com/serde-rs/serde/issues/1296#issuecomment-394056188> for the fix)
+    #[serde(deserialize_with = "Option::<ExtraInfo>::deserialize")]
     pub more_info: Option<ExtraInfo>,
 }
 

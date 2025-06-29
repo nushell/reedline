@@ -1,5 +1,5 @@
 //! Collection of common functions that can be used to create menus
-use crate::Suggestion;
+use crate::{Editor, Suggestion, UndoBehavior};
 
 /// Index result obtained from parsing a string with an index marker
 /// For example, the next string:
@@ -17,6 +17,8 @@ pub struct ParseResult<'buffer> {
     pub marker: Option<&'buffer str>,
     /// Direction of the search based on the marker
     pub action: ParseAction,
+    /// Prefix to search for
+    pub prefix: Option<&'buffer str>,
 }
 
 /// Direction of the index found in the string
@@ -30,6 +32,8 @@ pub enum ParseAction {
     LastToken,
     /// Last executed command.
     LastCommand,
+    /// Backward search for a prefix
+    BackwardPrefixSearch,
 }
 
 /// Splits a string that contains a marker character
@@ -46,7 +50,8 @@ pub enum ParseAction {
 ///         remainder: "this is an example",
 ///         index: Some(10),
 ///         marker: Some("!10"),
-///         action: ParseAction::ForwardSearch
+///         action: ParseAction::ForwardSearch,
+///         prefix: None,
 ///     }
 /// )
 ///
@@ -58,6 +63,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
             index: None,
             marker: None,
             action: ParseAction::ForwardSearch,
+            prefix: None,
         };
     }
 
@@ -75,6 +81,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                         index: Some(0),
                         marker: Some(&buffer[index..index + 2 * marker.len_utf8()]),
                         action: ParseAction::LastCommand,
+                        prefix: None,
                     }
                 }
                 #[cfg(feature = "bashisms")]
@@ -84,6 +91,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                         index: Some(0),
                         marker: Some(&buffer[index..index + 2]),
                         action: ParseAction::LastToken,
+                        prefix: None,
                     }
                 }
                 Some(&x) if x.is_ascii_digit() || x == '-' => {
@@ -106,6 +114,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                                 index: Some(count),
                                 marker: Some(&buffer[index..index + size]),
                                 action,
+                                prefix: None,
                             };
                         }
                     }
@@ -114,7 +123,18 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                         index: Some(count),
                         marker: Some(&buffer[index..index + size]),
                         action,
+                        prefix: None,
                     };
+                }
+                #[cfg(feature = "bashisms")]
+                Some(&x) if x.is_ascii_alphabetic() => {
+                    return ParseResult {
+                        remainder: &buffer[0..index],
+                        index: Some(0),
+                        marker: Some(&buffer[index..index + marker.len_utf8()]),
+                        action: ParseAction::BackwardPrefixSearch,
+                        prefix: Some(&buffer[index + marker.len_utf8()..buffer.len()]),
+                    }
                 }
                 None => {
                     return ParseResult {
@@ -122,6 +142,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                         index: Some(0),
                         marker: Some(&buffer[index..buffer.len()]),
                         action,
+                        prefix: Some(&buffer[index..buffer.len()]),
                     }
                 }
                 _ => {}
@@ -135,6 +156,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
         index: None,
         marker: None,
         action,
+        prefix: None,
     }
 }
 
@@ -209,7 +231,7 @@ pub fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &
                     false
                 }
             } else {
-                *c == old_chars[old_char_index].1
+                old_char_index == new_char_index && *c == old_chars[old_char_index].1
             };
 
             if equal {
@@ -245,9 +267,98 @@ pub fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &
     }
 }
 
+/// Get the part of the line that should be given as input to the completer, as well
+/// as the index of the end of that piece of text
+///
+/// `prev_input` is the text in the buffer when the menu was activated. Needed if only_buffer_difference is true
+pub fn completer_input(
+    buffer: &str,
+    insertion_point: usize,
+    prev_input: Option<&str>,
+    only_buffer_difference: bool,
+) -> (String, usize) {
+    if only_buffer_difference {
+        if let Some(old_string) = prev_input {
+            let (start, input) = string_difference(buffer, old_string);
+            if !input.is_empty() {
+                (input.to_owned(), start + input.len())
+            } else {
+                (String::new(), insertion_point)
+            }
+        } else {
+            (String::new(), insertion_point)
+        }
+    } else {
+        // TODO previously, all but the list menu replaced newlines with spaces here
+        // The completers should be adapted to account for this, and tests need to be added
+        (buffer[..insertion_point].to_owned(), insertion_point)
+    }
+}
+
+/// Helper to accept a completion suggestion and edit the buffer
+pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
+    if let Some(Suggestion {
+        mut value,
+        span,
+        append_whitespace,
+        ..
+    }) = value
+    {
+        let start = span.start.min(editor.line_buffer().len());
+        let end = span.end.min(editor.line_buffer().len());
+        if append_whitespace {
+            value.push(' ');
+        }
+
+        let mut line_buffer = editor.line_buffer().clone();
+        line_buffer.replace_range(start..end, &value);
+        let mut offset = line_buffer.insertion_point();
+        offset = offset.saturating_add(value.len());
+        offset = offset.saturating_sub(end.saturating_sub(start));
+        line_buffer.set_insertion_point(offset);
+        editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
+    }
+}
+
+/// Helper for `Menu::can_partially_complete`
+pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> bool {
+    if let (Some(Suggestion { value, span, .. }), Some(index)) = find_common_string(values) {
+        let index = index.min(value.len());
+        let matching = &value[0..index];
+
+        // make sure that the partial completion does not overwrite user entered input
+        let extends_input = matching.starts_with(&editor.get_buffer()[span.start..span.end])
+            && matching != &editor.get_buffer()[span.start..span.end];
+
+        if !matching.is_empty() && extends_input {
+            let mut line_buffer = editor.line_buffer().clone();
+            line_buffer.replace_range(span.start..span.end, matching);
+
+            let offset = if matching.len() < (span.end - span.start) {
+                line_buffer
+                    .insertion_point()
+                    .saturating_sub((span.end - span.start) - matching.len())
+            } else {
+                line_buffer.insertion_point() + matching.len() - (span.end - span.start)
+            };
+
+            line_buffer.set_insertion_point(offset);
+            editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
+
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{EditCommand, LineBuffer, Span};
+    use rstest::rstest;
 
     #[test]
     fn parse_row_test() {
@@ -480,6 +591,15 @@ mod tests {
     }
 
     #[test]
+    fn string_difference_with_repeat() {
+        let new_string = "ee";
+        let old_string = "e";
+
+        let res = string_difference(new_string, old_string);
+        assert_eq!(res, (1, "e"));
+    }
+
+    #[test]
     fn find_common_string_with_ansi() {
         use crate::Span;
 
@@ -488,6 +608,7 @@ mod tests {
             .map(|s| Suggestion {
                 value: s.into(),
                 description: None,
+                style: None,
                 extra: None,
                 span: Span::new(0, s.len()),
                 append_whitespace: false,
@@ -507,6 +628,7 @@ mod tests {
             .map(|s| Suggestion {
                 value: s.into(),
                 description: None,
+                style: None,
                 extra: None,
                 span: Span::new(0, s.len()),
                 append_whitespace: false,
@@ -515,5 +637,64 @@ mod tests {
         let res = find_common_string(&input);
 
         assert!(matches!(res, (Some(elem), Some(6)) if elem == &input[0]));
+    }
+
+    #[rstest]
+    #[case("foobar", 6, None, false, "foobar", 6)]
+    #[case("foo\r\nbar", 5, None, false, "foo\r\n", 5)]
+    #[case("foo\nbar", 4, None, false, "foo\n", 4)]
+    #[case("foobar", 6, None, true, "", 6)]
+    #[case("foobar", 3, Some("foobar"), true, "", 3)]
+    #[case("foobar", 6, Some("foo"), true, "bar", 6)]
+    #[case("foobar", 6, Some("for"), true, "oba", 5)]
+    fn test_completer_input(
+        #[case] buffer: String,
+        #[case] insertion_point: usize,
+        #[case] prev_input: Option<&str>,
+        #[case] only_buffer_difference: bool,
+        #[case] output: String,
+        #[case] pos: usize,
+    ) {
+        assert_eq!(
+            (output, pos),
+            completer_input(&buffer, insertion_point, prev_input, only_buffer_difference)
+        )
+    }
+
+    #[rstest]
+    #[case("foobar baz", 6, "foobleh baz", 7, "bleh", 3, 6)]
+    #[case("foobar baz", 6, "foo baz", 3, "", 3, 6)]
+    #[case("foobar baz", 10, "foobleh", 7, "bleh", 3, 1000)]
+    fn test_replace_in_buffer(
+        #[case] orig_buffer: &str,
+        #[case] orig_insertion_point: usize,
+        #[case] new_buffer: &str,
+        #[case] new_insertion_point: usize,
+        #[case] value: String,
+        #[case] start: usize,
+        #[case] end: usize,
+    ) {
+        let mut editor = Editor::default();
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.set_buffer(orig_buffer.to_owned());
+        line_buffer.set_insertion_point(orig_insertion_point);
+        editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
+        replace_in_buffer(
+            Some(Suggestion {
+                value,
+                description: None,
+                style: None,
+                extra: None,
+                span: Span::new(start, end),
+                append_whitespace: false,
+            }),
+            &mut editor,
+        );
+        assert_eq!(new_buffer, editor.get_buffer());
+        assert_eq!(new_insertion_point, editor.insertion_point());
+
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(orig_buffer, editor.get_buffer());
+        assert_eq!(orig_insertion_point, editor.insertion_point());
     }
 }

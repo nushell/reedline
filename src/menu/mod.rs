@@ -1,4 +1,6 @@
 mod columnar_menu;
+mod description_menu;
+mod ide_menu;
 mod list_menu;
 pub mod menu_functions;
 
@@ -6,6 +8,9 @@ use crate::core_editor::Editor;
 use crate::History;
 use crate::{completion::history::HistoryCompleter, painting::Painter, Completer, Suggestion};
 pub use columnar_menu::ColumnarMenu;
+pub use description_menu::DescriptionMenu;
+pub use ide_menu::DescriptionMode;
+pub use ide_menu::IdeMenu;
 pub use list_menu::ListMenu;
 use nu_ansi_term::{Color, Style};
 
@@ -17,6 +22,12 @@ pub struct MenuTextStyle {
     pub text_style: Style,
     /// Text style for the item description
     pub description_style: Style,
+    /// Text style of the parts of the suggestions that match the
+    /// typed text when the suggestion is selected
+    pub selected_match_style: Style,
+    /// Text style of the parts of the suggestions that match the
+    /// typed text
+    pub match_style: Style,
 }
 
 impl Default for MenuTextStyle {
@@ -25,6 +36,8 @@ impl Default for MenuTextStyle {
             selected_text_style: Color::Green.bold().reverse(),
             text_style: Color::DarkGray.normal(),
             description_style: Color::Yellow.normal(),
+            selected_match_style: Color::Green.bold().reverse().underline(),
+            match_style: Style::default().underline(),
         }
     }
 }
@@ -60,11 +73,23 @@ pub enum MenuEvent {
 
 /// Trait that defines how a menu will be printed by the painter
 pub trait Menu: Send {
+    /// Get MenuSettings
+    fn settings(&self) -> &MenuSettings {
+        // We panic here, so this function has base implementation
+        // so existing menus will not break.
+        // if a breaking change is ok, this can be removed
+        panic!("`settings` requires a manual implementation per menu. It has a base implementation to not break existing menus")
+    }
+
     /// Menu name
-    fn name(&self) -> &str;
+    fn name(&self) -> &str {
+        &self.settings().name
+    }
 
     /// Menu indicator
-    fn indicator(&self) -> &str;
+    fn indicator(&self) -> &str {
+        &self.settings().marker
+    }
 
     /// Checks if the menu is active
     fn is_active(&self) -> bool;
@@ -119,6 +144,130 @@ pub trait Menu: Send {
 
     /// Gets cached values from menu that will be displayed
     fn get_values(&self) -> &[Suggestion];
+    /// Sets the position of the cursor (currently only required by the IDE menu)
+    fn set_cursor_pos(&mut self, _pos: (u16, u16)) {
+        // empty implementation to make it optional
+    }
+}
+
+pub struct MenuSettings {
+    /// Menu name
+    name: String,
+    /// Menu coloring
+    color: MenuTextStyle,
+    /// Menu marker when active
+    marker: String,
+    /// Calls the completer using only the line buffer difference difference
+    /// after the menu was activated
+    only_buffer_difference: bool,
+}
+
+impl Default for MenuSettings {
+    fn default() -> Self {
+        Self {
+            name: "menu".to_string(),
+            color: MenuTextStyle::default(),
+            marker: "| ".to_string(),
+            only_buffer_difference: false,
+        }
+    }
+}
+
+impl MenuSettings {
+    /// MenuSettings builder with name
+    #[must_use]
+    pub fn with_name(mut self, name: &str) -> Self {
+        self.name = name.to_string();
+        self
+    }
+
+    /// MenuSettings builder with color
+    #[must_use]
+    pub fn with_color(mut self, color: MenuTextStyle) -> Self {
+        self.color = color;
+        self
+    }
+
+    /// MenuSettings builder with marker
+    #[must_use]
+    pub fn with_marker(mut self, marker: &str) -> Self {
+        self.marker = marker.to_string();
+        self
+    }
+
+    /// MenuSettings builder with only_buffer_difference
+    #[must_use]
+    pub fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
+        self.only_buffer_difference = only_buffer_difference;
+        self
+    }
+}
+
+/// Common builder for all menus
+pub trait MenuBuilder: Menu + Sized {
+    /// Get mutable MenuSettings
+    /// required for the builder functions
+    fn settings_mut(&mut self) -> &mut MenuSettings;
+
+    /// Menu builder with new name
+    #[must_use]
+    fn with_name(mut self, name: &str) -> Self {
+        self.settings_mut().name = name.to_string();
+        self
+    }
+
+    /// Menu builder with new value for text style
+    #[must_use]
+    fn with_text_style(mut self, color: Style) -> Self {
+        self.settings_mut().color.text_style = color;
+        self
+    }
+
+    /// Menu builder with new value for selected text style
+    #[must_use]
+    fn with_selected_text_style(mut self, color: Style) -> Self {
+        self.settings_mut().color.selected_text_style = color;
+        self
+    }
+
+    /// Menu builder with new value for description style
+    #[must_use]
+    fn with_description_text_style(mut self, color: Style) -> Self {
+        self.settings_mut().color.description_style = color;
+        self
+    }
+
+    /// Menu builder with new value for match style
+    /// This is the style of the part of the input text, the suggestions
+    /// are based on
+    #[must_use]
+    fn with_match_text_style(mut self, color: Style) -> Self {
+        self.settings_mut().color.match_style = color;
+        self
+    }
+
+    /// Menu builder with new value for selected match style
+    /// This is the style of the part of the input text, the suggestions
+    /// are based on
+    #[must_use]
+    fn with_selected_match_text_style(mut self, color: Style) -> Self {
+        self.settings_mut().color.selected_match_style = color;
+        self
+    }
+
+    /// Menu builder with new value for marker
+    #[must_use]
+    fn with_marker(mut self, marker: &str) -> Self {
+        self.settings_mut().marker = marker.to_string();
+        self
+    }
+
+    /// Menu builder with new value for only_buffer_difference
+    #[must_use]
+    fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
+        self.settings_mut().only_buffer_difference = only_buffer_difference;
+        self
+    }
 }
 
 /// Allowed menus in Reedline
@@ -222,6 +371,10 @@ impl ReedlineMenu {
 }
 
 impl Menu for ReedlineMenu {
+    fn settings(&self) -> &MenuSettings {
+        self.as_ref().settings()
+    }
+
     fn name(&self) -> &str {
         self.as_ref().name()
     }
@@ -311,5 +464,9 @@ impl Menu for ReedlineMenu {
 
     fn get_values(&self) -> &[Suggestion] {
         self.as_ref().get_values()
+    }
+
+    fn set_cursor_pos(&mut self, pos: (u16, u16)) {
+        self.as_mut().set_cursor_pos(pos);
     }
 }

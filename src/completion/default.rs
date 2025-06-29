@@ -55,24 +55,31 @@ impl Completer for DefaultCompleter {
     /// assert_eq!(
     ///     completions.complete("bat",3),
     ///     vec![
-    ///         Suggestion {value: "batcave".into(), description: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
-    ///         Suggestion {value: "batman".into(), description: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
-    ///         Suggestion {value: "batmobile".into(), description: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
+    ///         Suggestion {value: "batcave".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
+    ///         Suggestion {value: "batman".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
+    ///         Suggestion {value: "batmobile".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
     ///     ]);
     ///
     /// assert_eq!(
-    ///     completions.complete("to the bat",10),
+    ///     completions.complete("to the\r\nbat",11),
     ///     vec![
-    ///         Suggestion {value: "batcave".into(), description: None, extra: None, span: Span { start: 7, end: 10 }, append_whitespace: false},
-    ///         Suggestion {value: "batman".into(), description: None, extra: None, span: Span { start: 7, end: 10 }, append_whitespace: false},
-    ///         Suggestion {value: "batmobile".into(), description: None, extra: None, span: Span { start: 7, end: 10 }, append_whitespace: false},
+    ///         Suggestion {value: "batcave".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false},
+    ///         Suggestion {value: "batman".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false},
+    ///         Suggestion {value: "batmobile".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false},
     ///     ]);
     /// ```
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
         let mut span_line_whitespaces = 0;
         let mut completions = vec![];
+        // Trimming in case someone passes in text containing stuff after the cursor, if
+        // `only_buffer_difference` is false
+        let line = if line.len() > pos { &line[..pos] } else { line };
         if !line.is_empty() {
-            let mut split = line[0..pos].split(' ').rev();
+            // When editing a multiline buffer, there can be new line characters in it.
+            // Also, by replacing the new line character with a space, the insert
+            // position is maintain in the line buffer.
+            let line = line.replace("\r\n", "  ").replace('\n', " ");
+            let mut split = line.split(' ').rev();
             let mut span_line: String = String::new();
             for _ in 0..split.clone().count() {
                 if let Some(s) = split.next() {
@@ -99,6 +106,7 @@ impl Completer for DefaultCompleter {
                                     Suggestion {
                                         value: format!("{span_line}{ext}"),
                                         description: None,
+                                        style: None,
                                         extra: None,
                                         span,
                                         append_whitespace: false,
@@ -115,6 +123,7 @@ impl Completer for DefaultCompleter {
         completions
     }
 }
+
 impl DefaultCompleter {
     /// Construct the default completer with a list of commands/keywords to highlight
     pub fn new(external_commands: Vec<String>) -> Self {
@@ -173,15 +182,15 @@ impl DefaultCompleter {
     /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
     ///     completions.complete("te",2),
-    ///     vec![Suggestion {value: "test".into(), description: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false}]);
+    ///     vec![Suggestion {value: "test".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false}]);
     ///
     /// let mut completions = DefaultCompleter::with_inclusions(&['-', '_']);
     /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
     ///     completions.complete("te",2),
     ///     vec![
-    ///         Suggestion {value: "test-hyphen".into(), description: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false},
-    ///         Suggestion {value: "test_underscore".into(), description: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false},
+    ///         Suggestion {value: "test-hyphen".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false},
+    ///         Suggestion {value: "test_underscore".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false},
     ///     ]);
     /// ```
     pub fn with_inclusions(incl: &[char]) -> Self {
@@ -353,10 +362,10 @@ impl CompletionNode {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
     #[test]
     fn default_completer_with_non_ansi() {
-        use super::*;
-
         let mut completions = DefaultCompleter::default();
         completions.insert(
             ["ｎｕｓｈｅｌｌ", "ｎｕｌｌ", "ｎｕｍｂｅｒ"]
@@ -371,6 +380,7 @@ mod tests {
                 Suggestion {
                     value: "ｎｕｌｌ".into(),
                     description: None,
+                    style: None,
                     extra: None,
                     span: Span { start: 0, end: 3 },
                     append_whitespace: false,
@@ -378,6 +388,7 @@ mod tests {
                 Suggestion {
                     value: "ｎｕｍｂｅｒ".into(),
                     description: None,
+                    style: None,
                     extra: None,
                     span: Span { start: 0, end: 3 },
                     append_whitespace: false,
@@ -385,11 +396,62 @@ mod tests {
                 Suggestion {
                     value: "ｎｕｓｈｅｌｌ".into(),
                     description: None,
+                    style: None,
                     extra: None,
                     span: Span { start: 0, end: 3 },
                     append_whitespace: false,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn default_completer_with_start_strings() {
+        let mut completions = DefaultCompleter::default();
+        completions.insert(
+            ["this is the reedline crate", "test"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        );
+
+        let buffer = "this is t";
+
+        let (suggestions, ranges) = completions.complete_with_base_ranges(buffer, 9);
+        assert_eq!(
+            suggestions,
+            [
+                Suggestion {
+                    value: "test".into(),
+                    description: None,
+                    style: None,
+                    extra: None,
+                    span: Span { start: 8, end: 9 },
+                    append_whitespace: false,
+                },
+                Suggestion {
+                    value: "this is the reedline crate".into(),
+                    description: None,
+                    style: None,
+                    extra: None,
+                    span: Span { start: 8, end: 9 },
+                    append_whitespace: false,
+                },
+                Suggestion {
+                    value: "this is the reedline crate".into(),
+                    description: None,
+                    style: None,
+                    extra: None,
+                    span: Span { start: 0, end: 9 },
+                    append_whitespace: false,
+                },
+            ]
+        );
+
+        assert_eq!(ranges, [8..9, 0..9]);
+        assert_eq!(
+            ["t", "this is t"],
+            [&buffer[ranges[0].clone()], &buffer[ranges[1].clone()]]
         );
     }
 }
