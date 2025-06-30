@@ -470,15 +470,20 @@ impl Editor {
     }
 
     fn cut_char(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let right_index = self.line_buffer.grapheme_right_index();
-        if right_index > insertion_offset {
-            let cut_range = insertion_offset..right_index;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[cut_range.clone()],
-                ClipboardMode::Normal,
-            );
-            self.line_buffer.clear_range(cut_range);
+        // If there's a selection, cut it instead of a single character
+        if self.selection_anchor.is_some() {
+            self.cut_selection_to_cut_buffer();
+        } else {
+            let insertion_offset = self.line_buffer.insertion_point();
+            let right_index = self.line_buffer.grapheme_right_index();
+            if right_index > insertion_offset {
+                let cut_range = insertion_offset..right_index;
+                self.cut_buffer.set(
+                    &self.line_buffer.get_buffer()[cut_range.clone()],
+                    ClipboardMode::Normal,
+                );
+                self.line_buffer.clear_range(cut_range);
+            }
         }
     }
 
@@ -1260,9 +1265,7 @@ mod test {
 
         // In vi normal mode, this should be inclusive selection
         // So we should select "hello" (positions 0-4, inclusive of position 4)
-        let selection = editor.get_selection();
-        println!("Selection: {:?}", selection);
-        assert_eq!(selection, Some((0, 5))); // should include character at position 4
+        assert_eq!(editor.get_selection(), Some((0, 5))); // should include character at position 4
 
         // Now simulate pressing 'c' - this should cut the selection
         editor.run_edit_command(&EditCommand::CutSelection);
@@ -1563,6 +1566,29 @@ mod test {
         // Simulate vi 'c' command: mode switches to insert then cuts selection
         editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Insert));
         editor.run_edit_command(&EditCommand::CutSelection);
+
+        assert_eq!(editor.get_buffer(), " world");
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.cut_buffer.get().0, "hello");
+    }
+
+    #[test]
+    fn test_vi_x_command_with_shift_selection() {
+        // Test that 'x' (cut char) works with shift+selection in vi normal mode
+        let mut editor = editor_with("hello world");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+
+        editor.line_buffer.set_insertion_point(0);
+        editor.update_selection_anchor(true);
+
+        for _ in 0..4 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+
+        assert_eq!(editor.get_selection(), Some((0, 5))); // inclusive selection
+
+        // Simulate vi 'x' command - should cut the selection, not just one character
+        editor.run_edit_command(&EditCommand::CutChar);
 
         assert_eq!(editor.get_buffer(), " world");
         assert_eq!(editor.insertion_point(), 0);
