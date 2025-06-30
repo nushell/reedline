@@ -451,7 +451,7 @@ impl IdeMenu {
                         RESET
                     );
                 } else {
-                    *line = format!("{}{}", line, padding);
+                    *line = format!("{line}{padding}");
                 }
             }
         }
@@ -980,7 +980,7 @@ impl Menu for IdeMenu {
                             )
                         }
                         Left(suggestion_line) => {
-                            strings[idx] = format!("{}{}", distance_left, suggestion_line);
+                            strings[idx] = format!("{distance_left}{suggestion_line}");
                         }
                         Right(description_line) => strings.push(format!(
                             "{}{}",
@@ -1022,7 +1022,7 @@ impl Menu for IdeMenu {
                             );
                         }
                         Right(description_line) => {
-                            strings.push(format!("{}{}", distance_left, description_line,))
+                            strings.push(format!("{distance_left}{description_line}",))
                         }
                     }
                 }
