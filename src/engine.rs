@@ -1070,7 +1070,7 @@ impl Reedline {
             }
             ReedlineEvent::Esc => {
                 self.deactivate_menus();
-                self.editor.reset_selection();
+                self.editor.clear_selection();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::CtrlD => {
