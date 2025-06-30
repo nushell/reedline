@@ -2,6 +2,7 @@ use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
 use crate::enums::{EditType, UndoBehavior};
+use crate::prompt::{PromptEditMode, PromptViMode};
 use crate::{core_editor::get_local_clipboard, EditCommand};
 use std::ops::DerefMut;
 
@@ -17,6 +18,8 @@ pub struct Editor {
     edit_stack: EditStack<LineBuffer>,
     last_undo_behavior: UndoBehavior,
     selection_anchor: Option<usize>,
+    selection_mode: Option<PromptEditMode>,
+    edit_mode: PromptEditMode,
 }
 
 impl Default for Editor {
@@ -29,6 +32,8 @@ impl Default for Editor {
             edit_stack: EditStack::new(),
             last_undo_behavior: UndoBehavior::CreateUndoPoint,
             selection_anchor: None,
+            selection_mode: None,
+            edit_mode: PromptEditMode::Default,
         }
     }
 }
@@ -175,7 +180,7 @@ impl Editor {
             EditCommand::YankInside { left, right } => self.yank_inside(*left, *right),
         }
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
-            self.selection_anchor = None;
+            self.clear_selection();
         }
         if let EditType::MoveCursor { select: true } = command.edit_type() {}
 
@@ -204,13 +209,25 @@ impl Editor {
         }
     }
 
+    pub(crate) fn clear_selection(&mut self) {
+        self.selection_anchor = None;
+        self.selection_mode = None;
+    }
+
     fn update_selection_anchor(&mut self, select: bool) {
-        self.selection_anchor = if select {
-            self.selection_anchor
-                .or_else(|| Some(self.insertion_point()))
+        if select {
+            if self.selection_anchor.is_none() {
+                self.selection_anchor = Some(self.insertion_point());
+                self.selection_mode = Some(self.edit_mode.clone());
+            }
         } else {
-            None
-        };
+            self.clear_selection();
+        }
+    }
+
+    /// Set the current edit mode
+    pub fn set_edit_mode(&mut self, mode: PromptEditMode) {
+        self.edit_mode = mode;
     }
     fn move_to_position(&mut self, position: usize, select: bool) {
         self.update_selection_anchor(select);
@@ -453,15 +470,20 @@ impl Editor {
     }
 
     fn cut_char(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let right_index = self.line_buffer.grapheme_right_index();
-        if right_index > insertion_offset {
-            let cut_range = insertion_offset..right_index;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[cut_range.clone()],
-                ClipboardMode::Normal,
-            );
-            self.line_buffer.clear_range(cut_range);
+        // If there's a selection, cut it instead of a single character
+        if self.selection_anchor.is_some() {
+            self.cut_selection_to_cut_buffer();
+        } else {
+            let insertion_offset = self.line_buffer.insertion_point();
+            let right_index = self.line_buffer.grapheme_right_index();
+            if right_index > insertion_offset {
+                let cut_range = insertion_offset..right_index;
+                self.cut_buffer.set(
+                    &self.line_buffer.get_buffer()[cut_range.clone()],
+                    ClipboardMode::Normal,
+                );
+                self.line_buffer.clear_range(cut_range);
+            }
         }
     }
 
@@ -595,7 +617,7 @@ impl Editor {
             let cut_slice = &self.line_buffer.get_buffer()[start..end];
             self.system_clipboard.set(cut_slice, ClipboardMode::Normal);
             self.line_buffer.clear_range_safe(start, end);
-            self.selection_anchor = None;
+            self.clear_selection();
         }
     }
 
@@ -604,7 +626,7 @@ impl Editor {
             let cut_slice = &self.line_buffer.get_buffer()[start..end];
             self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
             self.line_buffer.clear_range_safe(start, end);
-            self.selection_anchor = None;
+            self.clear_selection();
         }
     }
 
@@ -627,19 +649,29 @@ impl Editor {
     /// The range is guaranteed to be ascending.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
         self.selection_anchor.map(|selection_anchor| {
+            // Use the mode that was active when the selection was created, not the current mode
+            let inclusive = matches!(
+                self.selection_mode.as_ref().unwrap_or(&self.edit_mode),
+                PromptEditMode::Vi(PromptViMode::Normal)
+            );
             let buffer_len = self.line_buffer.len();
+
             if self.insertion_point() > selection_anchor {
-                (
-                    selection_anchor,
-                    self.line_buffer.grapheme_right_index().min(buffer_len),
-                )
+                let end_pos = if inclusive {
+                    self.line_buffer.grapheme_right_index().min(buffer_len)
+                } else {
+                    self.insertion_point().min(buffer_len)
+                };
+                (selection_anchor, end_pos)
             } else {
-                (
-                    self.insertion_point(),
+                let end_pos = if inclusive {
                     self.line_buffer
                         .grapheme_right_index_from_pos(selection_anchor)
-                        .min(buffer_len),
-                )
+                        .min(buffer_len)
+                } else {
+                    selection_anchor.min(buffer_len)
+                };
+                (self.insertion_point(), end_pos)
             }
         })
     }
@@ -647,7 +679,7 @@ impl Editor {
     fn delete_selection(&mut self) {
         if let Some((start, end)) = self.get_selection() {
             self.line_buffer.clear_range_safe(start, end);
-            self.selection_anchor = None;
+            self.clear_selection();
         }
     }
 
@@ -719,10 +751,6 @@ impl Editor {
     fn paste_cut_buffer(&mut self) {
         self.delete_selection();
         insert_clipboard_content_before(&mut self.line_buffer, self.cut_buffer.deref_mut());
-    }
-
-    pub(crate) fn reset_selection(&mut self) {
-        self.selection_anchor = None;
     }
 
     /// Delete text strictly between matching `left_char` and `right_char`.
@@ -1148,17 +1176,125 @@ mod test {
         }
         assert_eq!(editor.selection_anchor, Some(0));
         assert_eq!(editor.insertion_point(), 3);
-        assert_eq!(editor.get_selection(), Some((0, 4)));
+        assert_eq!(editor.get_selection(), Some((0, 3)));
 
         editor.run_edit_command(&EditCommand::SwapCursorAndAnchor);
         assert_eq!(editor.selection_anchor, Some(3));
         assert_eq!(editor.insertion_point(), 0);
-        assert_eq!(editor.get_selection(), Some((0, 4)));
+        assert_eq!(editor.get_selection(), Some((0, 3)));
 
         editor.run_edit_command(&EditCommand::SwapCursorAndAnchor);
         assert_eq!(editor.selection_anchor, Some(0));
         assert_eq!(editor.insertion_point(), 3);
+        assert_eq!(editor.get_selection(), Some((0, 3)));
+    }
+
+    #[test]
+    fn test_vi_normal_mode_inclusive_selection() {
+        let mut editor = editor_with("This is some test content");
+        editor.line_buffer.set_insertion_point(0);
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.update_selection_anchor(true);
+
+        for _ in 0..3 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+        assert_eq!(editor.selection_anchor, Some(0));
+        assert_eq!(editor.insertion_point(), 3);
+        // In Vi normal mode, selection should be inclusive (include character at position 3)
         assert_eq!(editor.get_selection(), Some((0, 4)));
+    }
+
+    #[test]
+    fn test_vi_normal_mode_inclusive_selection_backward() {
+        let mut editor = editor_with("This is some test content");
+        editor.line_buffer.set_insertion_point(4); // Start at position 4 ('i')
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.update_selection_anchor(true);
+
+        for _ in 0..3 {
+            editor.run_edit_command(&EditCommand::MoveLeft { select: true });
+        }
+        assert_eq!(editor.selection_anchor, Some(4));
+        assert_eq!(editor.insertion_point(), 1); // cursor at position 1 ('h')
+                                                 // In Vi normal mode, selection should be inclusive from cursor to anchor+1
+                                                 // So it should select from position 1 to 5 (inclusive of char at position 4)
+        assert_eq!(editor.get_selection(), Some((1, 5)));
+    }
+
+    #[test]
+    fn test_vi_normal_mode_cut_selection_backward() {
+        let mut editor = editor_with("This is some test content");
+
+        editor.line_buffer.set_insertion_point(4); // Start at position 4 (' ')
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.update_selection_anchor(true);
+
+        for _ in 0..3 {
+            editor.run_edit_command(&EditCommand::MoveLeft { select: true });
+        }
+
+        // Should select "his " (from position 1 to 5, inclusive of char at position 4)
+        assert_eq!(editor.get_selection(), Some((1, 5)));
+
+        editor.run_edit_command(&EditCommand::CutSelection);
+
+        // After cutting, should have "Tis some test content" (removed "his ")
+        assert_eq!(editor.get_buffer(), "Tis some test content");
+        assert_eq!(editor.insertion_point(), 1); // cursor should be at start of cut
+    }
+
+    #[test]
+    fn test_vi_visual_mode_c_command() {
+        // Test the exact scenario: select in visual mode, then press 'c'
+        let mut editor = editor_with("hello world");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+
+        // Start at position 0, enter visual mode by selecting
+        editor.line_buffer.set_insertion_point(0);
+        editor.update_selection_anchor(true);
+
+        // Move right 4 characters to select "hello" (from pos 0 to pos 4)
+        for _ in 0..4 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+
+        // In vi normal mode, this should be inclusive selection
+        // So we should select "hello" (positions 0-4, inclusive of position 4)
+        assert_eq!(editor.get_selection(), Some((0, 5))); // should include character at position 4
+
+        // Now simulate pressing 'c' - this should cut the selection
+        editor.run_edit_command(&EditCommand::CutSelection);
+
+        // Should have " world" left (removed "hello")
+        assert_eq!(editor.get_buffer(), " world");
+        assert_eq!(editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn test_vi_normal_mode_c_command_with_selection() {
+        // Test the exact issue: c command in vi normal mode with selection
+        let mut editor = editor_with("hello world");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+
+        // Start at position 0, create selection by moving cursor
+        editor.line_buffer.set_insertion_point(0);
+        editor.update_selection_anchor(true);
+
+        // Move right to select "hello" (positions 0-4, should be inclusive of pos 4)
+        for _ in 0..4 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+
+        // In vi normal mode, selection should include character at cursor position
+        assert_eq!(editor.get_selection(), Some((0, 5))); // inclusive selection
+
+        // Now simulate pressing 'c' - this should cut the selection
+        editor.run_edit_command(&EditCommand::CutSelection);
+
+        // Should have " world" left (removed "hello" including the 'o')
+        assert_eq!(editor.get_buffer(), " world");
+        assert_eq!(editor.insertion_point(), 0);
     }
 
     #[cfg(feature = "system_clipboard")]
@@ -1362,5 +1498,96 @@ mod test {
         assert_eq!(editor.get_buffer(), "foobar"); // Just cut the newline
         assert_eq!(editor.insertion_point(), 3); // Cursor should return to original position
         assert_eq!(editor.cut_buffer.get().0, "\r\n");
+    }
+
+    #[test]
+    fn test_vi_normal_mode_shift_select_right_c_command() {
+        // Test vi normal mode inclusive selection with cut operation
+        let mut editor = editor_with("hello world");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+
+        editor.line_buffer.set_insertion_point(0);
+        editor.update_selection_anchor(true);
+
+        for _ in 0..4 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.selection_anchor, Some(0));
+        assert_eq!(editor.get_selection(), Some((0, 5))); // inclusive selection
+
+        editor.run_edit_command(&EditCommand::CutSelection);
+
+        assert_eq!(editor.get_buffer(), " world");
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.cut_buffer.get().0, "hello");
+    }
+
+    #[test]
+    fn test_vi_mode_selection_calculation_bug() {
+        // Test selection calculation preserves original mode after mode switch
+        let mut editor = editor_with("hello world");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+
+        editor.line_buffer.set_insertion_point(0);
+        editor.update_selection_anchor(true);
+
+        for _ in 0..4 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+
+        assert_eq!(editor.get_selection(), Some((0, 5))); // inclusive in normal mode
+
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Insert));
+
+        assert_eq!(editor.get_selection(), Some((0, 5))); // still inclusive after mode switch
+    }
+
+    #[test]
+    fn test_vi_c_command_mode_switch_bug_fix() {
+        // Test vi 'c' command selection behavior with mode switching
+        let mut editor = editor_with("hello world");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+
+        editor.line_buffer.set_insertion_point(0);
+        editor.update_selection_anchor(true);
+
+        for _ in 0..4 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+
+        assert_eq!(editor.get_selection(), Some((0, 5))); // inclusive selection
+
+        // Simulate vi 'c' command: mode switches to insert then cuts selection
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Insert));
+        editor.run_edit_command(&EditCommand::CutSelection);
+
+        assert_eq!(editor.get_buffer(), " world");
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.cut_buffer.get().0, "hello");
+    }
+
+    #[test]
+    fn test_vi_x_command_with_shift_selection() {
+        // Test that 'x' (cut char) works with shift+selection in vi normal mode
+        let mut editor = editor_with("hello world");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+
+        editor.line_buffer.set_insertion_point(0);
+        editor.update_selection_anchor(true);
+
+        for _ in 0..4 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+
+        assert_eq!(editor.get_selection(), Some((0, 5))); // inclusive selection
+
+        // Simulate vi 'x' command - should cut the selection, not just one character
+        editor.run_edit_command(&EditCommand::CutChar);
+
+        assert_eq!(editor.get_buffer(), " world");
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.cut_buffer.get().0, "hello");
     }
 }
