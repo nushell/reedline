@@ -1759,11 +1759,7 @@ impl Reedline {
         let mut styled_text = self
             .highlighter
             .highlight(buffer_to_paint, cursor_position_in_buffer);
-        let inclusive_selection = matches!(
-            self.edit_mode.edit_mode(),
-            crate::prompt::PromptEditMode::Vi(crate::prompt::PromptViMode::Normal)
-        );
-        if let Some((from, to)) = self.editor.get_selection_with_mode(inclusive_selection) {
+        if let Some((from, to)) = self.editor.get_selection() {
             styled_text.style_range(from, to, self.visual_selection_style);
         }
 

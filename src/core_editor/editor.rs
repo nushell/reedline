@@ -635,17 +635,10 @@ impl Editor {
     /// The range is guaranteed to be ascending.
     /// Automatically determines inclusive/exclusive based on current edit mode.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
-        let inclusive = matches!(self.edit_mode, PromptEditMode::Vi(PromptViMode::Normal));
-        self.get_selection_with_mode(inclusive)
-    }
-
-    /// If a selection is active returns the selected range, otherwise None.
-    /// The range is guaranteed to be ascending.
-    /// `inclusive` controls whether the selection includes the character at the end position (Vi-style)
-    /// or excludes it (Emacs-style).
-    pub fn get_selection_with_mode(&self, inclusive: bool) -> Option<(usize, usize)> {
         self.selection_anchor.map(|selection_anchor| {
+            let inclusive = matches!(self.edit_mode, PromptEditMode::Vi(PromptViMode::Normal));
             let buffer_len = self.line_buffer.len();
+
             if self.insertion_point() > selection_anchor {
                 let end_pos = if inclusive {
                     // Vi normal mode: extend selection to include character under cursor
