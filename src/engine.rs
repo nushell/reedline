@@ -1481,6 +1481,9 @@ impl Reedline {
             self.input_mode = InputMode::Regular;
         }
 
+        // Update editor with current edit mode for mode-aware selection behavior
+        self.editor.set_edit_mode(self.edit_mode.edit_mode());
+
         // Run the commands over the edit buffer
         for command in commands {
             self.editor.run_edit_command(command);
@@ -1756,7 +1759,11 @@ impl Reedline {
         let mut styled_text = self
             .highlighter
             .highlight(buffer_to_paint, cursor_position_in_buffer);
-        if let Some((from, to)) = self.editor.get_selection() {
+        let inclusive_selection = matches!(
+            self.edit_mode.edit_mode(),
+            crate::prompt::PromptEditMode::Vi(crate::prompt::PromptViMode::Normal)
+        );
+        if let Some((from, to)) = self.editor.get_selection_with_mode(inclusive_selection) {
             styled_text.style_range(from, to, self.visual_selection_style);
         }
 

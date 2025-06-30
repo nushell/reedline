@@ -2,6 +2,7 @@ use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
 use crate::enums::{EditType, UndoBehavior};
+use crate::prompt::{PromptEditMode, PromptViMode};
 use crate::{core_editor::get_local_clipboard, EditCommand};
 use std::ops::DerefMut;
 
@@ -17,6 +18,7 @@ pub struct Editor {
     edit_stack: EditStack<LineBuffer>,
     last_undo_behavior: UndoBehavior,
     selection_anchor: Option<usize>,
+    edit_mode: PromptEditMode,
 }
 
 impl Default for Editor {
@@ -29,6 +31,7 @@ impl Default for Editor {
             edit_stack: EditStack::new(),
             last_undo_behavior: UndoBehavior::CreateUndoPoint,
             selection_anchor: None,
+            edit_mode: PromptEditMode::Default,
         }
     }
 }
@@ -211,6 +214,11 @@ impl Editor {
         } else {
             None
         };
+    }
+
+    /// Updates the current edit mode for mode-aware selection behavior
+    pub fn set_edit_mode(&mut self, mode: PromptEditMode) {
+        self.edit_mode = mode;
     }
     fn move_to_position(&mut self, position: usize, select: bool) {
         self.update_selection_anchor(select);
@@ -625,21 +633,39 @@ impl Editor {
 
     /// If a selection is active returns the selected range, otherwise None.
     /// The range is guaranteed to be ascending.
+    /// Automatically determines inclusive/exclusive based on current edit mode.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
+        let inclusive = matches!(self.edit_mode, PromptEditMode::Vi(PromptViMode::Normal));
+        self.get_selection_with_mode(inclusive)
+    }
+
+    /// If a selection is active returns the selected range, otherwise None.
+    /// The range is guaranteed to be ascending.
+    /// `inclusive` controls whether the selection includes the character at the end position (Vi-style)
+    /// or excludes it (Emacs-style).
+    pub fn get_selection_with_mode(&self, inclusive: bool) -> Option<(usize, usize)> {
         self.selection_anchor.map(|selection_anchor| {
             let buffer_len = self.line_buffer.len();
             if self.insertion_point() > selection_anchor {
-                (
-                    selection_anchor,
-                    self.line_buffer.grapheme_right_index().min(buffer_len),
-                )
+                let end_pos = if inclusive {
+                    // Vi normal mode: extend selection to include character under cursor
+                    self.line_buffer.grapheme_right_index().min(buffer_len)
+                } else {
+                    // Emacs/Vi insert mode: cursor is between characters
+                    self.insertion_point().min(buffer_len)
+                };
+                (selection_anchor, end_pos)
             } else {
-                (
-                    self.insertion_point(),
+                let end_pos = if inclusive {
+                    // Vi normal mode: extend selection to include character under cursor
                     self.line_buffer
                         .grapheme_right_index_from_pos(selection_anchor)
-                        .min(buffer_len),
-                )
+                        .min(buffer_len)
+                } else {
+                    // Emacs/Vi insert mode: cursor is between characters
+                    selection_anchor.min(buffer_len)
+                };
+                (self.insertion_point(), end_pos)
             }
         })
     }
@@ -1148,16 +1174,32 @@ mod test {
         }
         assert_eq!(editor.selection_anchor, Some(0));
         assert_eq!(editor.insertion_point(), 3);
-        assert_eq!(editor.get_selection(), Some((0, 4)));
+        assert_eq!(editor.get_selection(), Some((0, 3)));
 
         editor.run_edit_command(&EditCommand::SwapCursorAndAnchor);
         assert_eq!(editor.selection_anchor, Some(3));
         assert_eq!(editor.insertion_point(), 0);
-        assert_eq!(editor.get_selection(), Some((0, 4)));
+        assert_eq!(editor.get_selection(), Some((0, 3)));
 
         editor.run_edit_command(&EditCommand::SwapCursorAndAnchor);
         assert_eq!(editor.selection_anchor, Some(0));
         assert_eq!(editor.insertion_point(), 3);
+        assert_eq!(editor.get_selection(), Some((0, 3)));
+    }
+
+    #[test]
+    fn test_vi_normal_mode_inclusive_selection() {
+        let mut editor = editor_with("This is some test content");
+        editor.line_buffer.set_insertion_point(0);
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.update_selection_anchor(true);
+
+        for _ in 0..3 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+        assert_eq!(editor.selection_anchor, Some(0));
+        assert_eq!(editor.insertion_point(), 3);
+        // In Vi normal mode, selection should be inclusive (include character at position 3)
         assert_eq!(editor.get_selection(), Some((0, 4)));
     }
 
