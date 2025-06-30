@@ -209,7 +209,7 @@ impl Editor {
         }
     }
 
-    fn clear_selection(&mut self) {
+    pub(crate) fn clear_selection(&mut self) {
         self.selection_anchor = None;
         self.selection_mode = None;
     }
@@ -751,10 +751,6 @@ impl Editor {
     fn paste_cut_buffer(&mut self) {
         self.delete_selection();
         insert_clipboard_content_before(&mut self.line_buffer, self.cut_buffer.deref_mut());
-    }
-
-    pub(crate) fn reset_selection(&mut self) {
-        self.clear_selection();
     }
 
     /// Delete text strictly between matching `left_char` and `right_char`.
