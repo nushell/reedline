@@ -18,6 +18,7 @@ pub struct Editor {
     edit_stack: EditStack<LineBuffer>,
     last_undo_behavior: UndoBehavior,
     selection_anchor: Option<usize>,
+    selection_mode: Option<PromptEditMode>,
     edit_mode: PromptEditMode,
 }
 
@@ -31,6 +32,7 @@ impl Default for Editor {
             edit_stack: EditStack::new(),
             last_undo_behavior: UndoBehavior::CreateUndoPoint,
             selection_anchor: None,
+            selection_mode: None,
             edit_mode: PromptEditMode::Default,
         }
     }
@@ -178,7 +180,7 @@ impl Editor {
             EditCommand::YankInside { left, right } => self.yank_inside(*left, *right),
         }
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
-            self.selection_anchor = None;
+            self.clear_selection();
         }
         if let EditType::MoveCursor { select: true } = command.edit_type() {}
 
@@ -207,13 +209,19 @@ impl Editor {
         }
     }
 
+    fn clear_selection(&mut self) {
+        self.selection_anchor = None;
+        self.selection_mode = None;
+    }
+
     fn update_selection_anchor(&mut self, select: bool) {
         if select {
             if self.selection_anchor.is_none() {
                 self.selection_anchor = Some(self.insertion_point());
+                self.selection_mode = Some(self.edit_mode.clone());
             }
         } else {
-            self.selection_anchor = None;
+            self.clear_selection();
         }
     }
 
@@ -604,7 +612,7 @@ impl Editor {
             let cut_slice = &self.line_buffer.get_buffer()[start..end];
             self.system_clipboard.set(cut_slice, ClipboardMode::Normal);
             self.line_buffer.clear_range_safe(start, end);
-            self.selection_anchor = None;
+            self.clear_selection();
         }
     }
 
@@ -613,7 +621,7 @@ impl Editor {
             let cut_slice = &self.line_buffer.get_buffer()[start..end];
             self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
             self.line_buffer.clear_range_safe(start, end);
-            self.selection_anchor = None;
+            self.clear_selection();
         }
     }
 
@@ -636,7 +644,11 @@ impl Editor {
     /// The range is guaranteed to be ascending.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
         self.selection_anchor.map(|selection_anchor| {
-            let inclusive = matches!(self.edit_mode, PromptEditMode::Vi(PromptViMode::Normal));
+            // Use the mode that was active when the selection was created, not the current mode
+            let inclusive = matches!(
+                self.selection_mode.as_ref().unwrap_or(&self.edit_mode),
+                PromptEditMode::Vi(PromptViMode::Normal)
+            );
             let buffer_len = self.line_buffer.len();
 
             if self.insertion_point() > selection_anchor {
@@ -662,7 +674,7 @@ impl Editor {
     fn delete_selection(&mut self) {
         if let Some((start, end)) = self.get_selection() {
             self.line_buffer.clear_range_safe(start, end);
-            self.selection_anchor = None;
+            self.clear_selection();
         }
     }
 
@@ -737,7 +749,7 @@ impl Editor {
     }
 
     pub(crate) fn reset_selection(&mut self) {
-        self.selection_anchor = None;
+        self.clear_selection();
     }
 
     /// Delete text strictly between matching `left_char` and `right_char`.
@@ -1487,5 +1499,73 @@ mod test {
         assert_eq!(editor.get_buffer(), "foobar"); // Just cut the newline
         assert_eq!(editor.insertion_point(), 3); // Cursor should return to original position
         assert_eq!(editor.cut_buffer.get().0, "\r\n");
+    }
+
+    #[test]
+    fn test_vi_normal_mode_shift_select_right_c_command() {
+        // Test vi normal mode inclusive selection with cut operation
+        let mut editor = editor_with("hello world");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+
+        editor.line_buffer.set_insertion_point(0);
+        editor.update_selection_anchor(true);
+
+        for _ in 0..4 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.selection_anchor, Some(0));
+        assert_eq!(editor.get_selection(), Some((0, 5))); // inclusive selection
+
+        editor.run_edit_command(&EditCommand::CutSelection);
+
+        assert_eq!(editor.get_buffer(), " world");
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.cut_buffer.get().0, "hello");
+    }
+
+    #[test]
+    fn test_vi_mode_selection_calculation_bug() {
+        // Test selection calculation preserves original mode after mode switch
+        let mut editor = editor_with("hello world");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+
+        editor.line_buffer.set_insertion_point(0);
+        editor.update_selection_anchor(true);
+
+        for _ in 0..4 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+
+        assert_eq!(editor.get_selection(), Some((0, 5))); // inclusive in normal mode
+
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Insert));
+
+        assert_eq!(editor.get_selection(), Some((0, 5))); // still inclusive after mode switch
+    }
+
+    #[test]
+    fn test_vi_c_command_mode_switch_bug_fix() {
+        // Test vi 'c' command selection behavior with mode switching
+        let mut editor = editor_with("hello world");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+
+        editor.line_buffer.set_insertion_point(0);
+        editor.update_selection_anchor(true);
+
+        for _ in 0..4 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+
+        assert_eq!(editor.get_selection(), Some((0, 5))); // inclusive selection
+
+        // Simulate vi 'c' command: mode switches to insert then cuts selection
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Insert));
+        editor.run_edit_command(&EditCommand::CutSelection);
+
+        assert_eq!(editor.get_buffer(), " world");
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.cut_buffer.get().0, "hello");
     }
 }
