@@ -1,7 +1,9 @@
 use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
-    menu_functions::{can_partially_complete, completer_input, replace_in_buffer},
+    menu_functions::{
+        can_partially_complete, completer_input, replace_in_buffer, style_suggestion,
+    },
     painting::Painter,
     Completer, Suggestion,
 };
@@ -522,6 +524,21 @@ impl IdeMenu {
             let shortest_base = shortest_base
                 .strip_prefix(is_quote)
                 .unwrap_or(shortest_base);
+
+            // Highlight the first match of the shortest base string by default
+            let match_len = shortest_base
+                .graphemes(true)
+                .count()
+                .min(string.graphemes(true).count());
+            let default_indices = string
+                .to_lowercase()
+                .find(shortest_base)
+                .map(|match_pos| (match_pos..match_pos + match_len).collect())
+                .unwrap_or_default();
+            let match_indices = suggestion
+                .match_indices
+                .as_ref()
+                .unwrap_or(&default_indices);
             let match_len = shortest_base.chars().count().min(string.chars().count());
 
             // Find match position - look for the base string in the suggestion (case-insensitive)
@@ -547,45 +564,39 @@ impl IdeMenu {
             // Remaining is everything after the match
             let remaining_str = &string[match_position + match_str.len()..];
 
-            let suggestion_style_prefix = suggestion
-                .style
-                .unwrap_or(self.settings.color.text_style)
-                .prefix();
+            let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
 
             if index == self.index() {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}",
                     vertical_border,
-                    suggestion_style_prefix,
-                    self.settings.color.selected_text_style.prefix(),
-                    prefix,
-                    RESET,
-                    suggestion_style_prefix,
+                    suggestion_style.prefix(),
                     " ".repeat(padding),
-                    self.settings.color.selected_match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    self.settings.color.selected_text_style.prefix(),
-                    remaining_str,
+                    style_suggestion(
+                        &self
+                            .settings
+                            .color
+                            .selected_text_style
+                            .paint(&string)
+                            .to_string(),
+                        match_indices,
+                        &self.settings.color.selected_match_style,
+                    ),
                     " ".repeat(padding_right),
                     RESET,
                     vertical_border,
                 )
             } else {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}",
                     vertical_border,
-                    suggestion_style_prefix,
-                    prefix,
-                    RESET,
-                    suggestion_style_prefix,
+                    suggestion_style.prefix(),
                     " ".repeat(padding),
-                    self.settings.color.match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    remaining_str,
+                    style_suggestion(
+                        &suggestion_style.paint(&string).to_string(),
+                        match_indices,
+                        &self.settings.color.match_style,
+                    ),
                     " ".repeat(padding_right),
                     RESET,
                     vertical_border,
@@ -1428,6 +1439,7 @@ mod tests {
             extra: None,
             span: Span { start: 0, end: pos },
             append_whitespace: false,
+            ..Default::default()
         }
     }
 
