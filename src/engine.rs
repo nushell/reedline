@@ -789,6 +789,7 @@ impl Reedline {
             }
 
             // Handle reedline events.
+            let mut need_repaint = false;
             for event in reedline_events {
                 match self.handle_event(prompt, event)? {
                     EventStatus::Exits(signal) => {
@@ -802,12 +803,15 @@ impl Reedline {
                         return Ok(signal);
                     }
                     EventStatus::Handled => {
-                        self.repaint(prompt)?;
+                        need_repaint = true;
                     }
                     EventStatus::Inapplicable => {
                         // Nothing changed, no need to repaint
                     }
                 }
+            }
+            if need_repaint {
+                self.repaint(prompt)?;
             }
         }
     }
