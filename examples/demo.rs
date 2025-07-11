@@ -114,7 +114,11 @@ fn main() -> reedline::Result<()> {
 
         add_newline_keybinding(&mut insert_keybindings);
 
-        Box::new(Vi::new(insert_keybindings, normal_keybindings))
+        Box::new(Vi::new(
+            insert_keybindings,
+            normal_keybindings,
+            (KeyCode::Null, KeyCode::Null),
+        ))
     } else {
         let mut keybindings = default_emacs_keybindings();
         add_menu_keybindings(&mut keybindings);
