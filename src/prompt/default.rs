@@ -116,21 +116,17 @@ impl DefaultPrompt {
 }
 
 fn get_working_dir() -> Result<String, std::io::Error> {
-    let path = env::current_dir()?;
-    let path_str = path.display().to_string();
-    let homedir: String = match env::var("USERPROFILE") {
-        Ok(win_home) => win_home,
-        Err(_) => match env::var("HOME") {
-            Ok(maclin_home) => maclin_home,
-            Err(_) => path_str.clone(),
-        },
-    };
-    let new_path = if path_str != homedir {
-        path_str.replace(&homedir, "~")
-    } else {
-        path_str
-    };
-    Ok(new_path)
+    let mut path = env::current_dir()?;
+
+    if let Some(home) = env::home_dir() {
+        if let Ok(suffix) = path.clone().strip_prefix(home) {
+            path = std::path::PathBuf::from("~");
+            if !suffix.as_os_str().is_empty() {
+                path = path.join(suffix);
+            }
+        }
+    }
+    Ok(path.display().to_string())
 }
 
 fn get_now() -> String {
