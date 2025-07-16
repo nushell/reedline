@@ -165,6 +165,9 @@ pub struct Reedline {
     // Manage optional kitty protocol
     kitty_protocol: KittyProtocolGuard,
 
+    // Whether lines should be accepted immediately
+    immediately_accept: bool,
+
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
 }
@@ -238,6 +241,7 @@ impl Reedline {
             cursor_shapes: None,
             bracketed_paste: BracketedPasteGuard::default(),
             kitty_protocol: KittyProtocolGuard::default(),
+            immediately_accept: false,
             #[cfg(feature = "external_printer")]
             external_printer: None,
         }
@@ -545,6 +549,12 @@ impl Reedline {
         self
     }
 
+    /// A builder that configures whether reedline should immediately accept the input.
+    pub fn with_immediately_accept(mut self, immediately_accept: bool) -> Self {
+        self.immediately_accept = immediately_accept;
+        self
+    }
+
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
         self.edit_mode.edit_mode()
@@ -734,29 +744,31 @@ impl Reedline {
 
             let mut events: Vec<Event> = vec![];
 
-            // If the `external_printer` feature is enabled, we need to
-            // periodically yield so that external printers get a chance to
-            // print. Otherwise, we can just block until we receive an event.
-            #[cfg(feature = "external_printer")]
-            if event::poll(EXTERNAL_PRINTER_WAIT)? {
-                events.push(crossterm::event::read()?);
-            }
-            #[cfg(not(feature = "external_printer"))]
-            events.push(crossterm::event::read()?);
-
-            // Receive all events in the queue without blocking. Will stop when
-            // a line of input is completed.
-            while !completed(&events) && event::poll(Duration::from_millis(0))? {
-                events.push(crossterm::event::read()?);
-            }
-
-            // If we believe there's text pasting or resizing going on, batch
-            // more events at the cost of a slight delay.
-            if events.len() > EVENTS_THRESHOLD
-                || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
-            {
-                while !completed(&events) && event::poll(POLL_WAIT)? {
+            if !self.immediately_accept {
+                // If the `external_printer` feature is enabled, we need to
+                // periodically yield so that external printers get a chance to
+                // print. Otherwise, we can just block until we receive an event.
+                #[cfg(feature = "external_printer")]
+                if event::poll(EXTERNAL_PRINTER_WAIT)? {
                     events.push(crossterm::event::read()?);
+                }
+                #[cfg(not(feature = "external_printer"))]
+                events.push(crossterm::event::read()?);
+
+                // a line of input is completed.
+                // Receive all events in the queue without blocking. Will stop when
+                while !completed(&events) && event::poll(Duration::from_millis(0))? {
+                    events.push(crossterm::event::read()?);
+                }
+
+                // If we believe there's text pasting or resizing going on, batch
+                // more events at the cost of a slight delay.
+                if events.len() > EVENTS_THRESHOLD
+                    || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
+                {
+                    while !completed(&events) && event::poll(POLL_WAIT)? {
+                        events.push(crossterm::event::read()?);
+                    }
                 }
             }
 
@@ -786,6 +798,9 @@ impl Reedline {
             }
             if let Some((x, y)) = resize {
                 reedline_events.push(ReedlineEvent::Resize(x, y));
+            }
+            if self.immediately_accept {
+                reedline_events.push(ReedlineEvent::Submit);
             }
 
             // Handle reedline events.
