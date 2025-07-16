@@ -758,6 +758,9 @@ pub enum ReedlineEvent {
 
     /// Open text editor
     OpenEditor,
+
+    /// Change mode (vi mode only)
+    ViChangeMode(String),
 }
 
 impl Display for ReedlineEvent {
@@ -801,11 +804,12 @@ impl Display for ReedlineEvent {
             ReedlineEvent::MenuPagePrevious => write!(f, "MenuPagePrevious"),
             ReedlineEvent::ExecuteHostCommand(_) => write!(f, "ExecuteHostCommand"),
             ReedlineEvent::OpenEditor => write!(f, "OpenEditor"),
+            ReedlineEvent::ViChangeMode(_) => write!(f, "ViChangeMode mode: <string>"),
         }
     }
 }
 
-pub(crate) enum EventStatus {
+pub enum EventStatus {
     Handled,
     Inapplicable,
     Exits(Signal),

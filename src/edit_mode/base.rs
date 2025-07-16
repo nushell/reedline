@@ -1,5 +1,5 @@
 use crate::{
-    enums::{ReedlineEvent, ReedlineRawEvent},
+    enums::{EventStatus, ReedlineEvent, ReedlineRawEvent},
     PromptEditMode,
 };
 
@@ -13,4 +13,9 @@ pub trait EditMode: Send {
 
     /// What to display in the prompt indicator
     fn edit_mode(&self) -> PromptEditMode;
+
+    /// Handles events that apply only to specific edit modes (e.g changing vi mode)
+    fn handle_mode_specific_event(&mut self, _event: ReedlineEvent) -> EventStatus {
+        EventStatus::Inapplicable
+    }
 }

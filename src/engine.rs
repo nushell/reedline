@@ -928,7 +928,8 @@ impl Reedline {
             | ReedlineEvent::MenuLeft
             | ReedlineEvent::MenuRight
             | ReedlineEvent::MenuPageNext
-            | ReedlineEvent::MenuPagePrevious => Ok(EventStatus::Inapplicable),
+            | ReedlineEvent::MenuPagePrevious
+            | ReedlineEvent::ViChangeMode(_) => Ok(EventStatus::Inapplicable),
         }
     }
 
@@ -1273,6 +1274,7 @@ impl Reedline {
                 // Exhausting the event handlers is still considered handled
                 Ok(EventStatus::Inapplicable)
             }
+            ReedlineEvent::ViChangeMode(_) => Ok(self.edit_mode.handle_mode_specific_event(event)),
             ReedlineEvent::None | ReedlineEvent::Mouse => Ok(EventStatus::Inapplicable),
         }
     }
