@@ -11,7 +11,7 @@ use self::motion::ViCharSearch;
 use super::EditMode;
 use crate::{
     edit_mode::{keybindings::Keybindings, vi::parser::parse},
-    enums::{EditCommand, ReedlineEvent, ReedlineRawEvent},
+    enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
     PromptEditMode, PromptViMode,
 };
 
@@ -20,6 +20,17 @@ enum ViMode {
     Normal,
     Insert,
     Visual,
+}
+
+impl ViMode {
+    pub fn from_str<S: AsRef<str>>(s: S) -> Option<ViMode> {
+        match s.as_ref() {
+            "normal" => Some(ViMode::Normal),
+            "insert" => Some(ViMode::Insert),
+            "visual" => Some(ViMode::Visual),
+            _ => None,
+        }
+    }
 }
 
 /// This parses incoming input `Event`s like a Vi-Style editor
@@ -172,6 +183,19 @@ impl EditMode for Vi {
         match self.mode {
             ViMode::Normal | ViMode::Visual => PromptEditMode::Vi(PromptViMode::Normal),
             ViMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
+        }
+    }
+
+    fn handle_mode_specific_event(&mut self, event: ReedlineEvent) -> EventStatus {
+        match event {
+            ReedlineEvent::ViChangeMode(mode_str) => match ViMode::from_str(mode_str) {
+                Some(mode) => {
+                    self.mode = mode;
+                    EventStatus::Handled
+                }
+                None => EventStatus::Inapplicable,
+            },
+            _ => EventStatus::Inapplicable,
         }
     }
 }
