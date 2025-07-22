@@ -234,25 +234,25 @@ impl Command {
                 None => vec![],
             },
             Self::ChangeInsidePair { left, right } => {
-                vec![ReedlineOption::Edit(EditCommand::CutInside {
+                vec![ReedlineOption::Edit(EditCommand::CutInsidePair {
                     left: *left,
                     right: *right,
                 })]
             }
             Self::DeleteInsidePair { left, right } => {
-                vec![ReedlineOption::Edit(EditCommand::CutInside {
+                vec![ReedlineOption::Edit(EditCommand::CutInsidePair {
                     left: *left,
                     right: *right,
                 })]
             }
             Self::YankInsidePair { left, right } => {
-                vec![ReedlineOption::Edit(EditCommand::YankInside {
+                vec![ReedlineOption::Edit(EditCommand::YankInsidePair {
                     left: *left,
                     right: *right,
                 })]
             }
             Self::ChangeInsideTextObject { text_object } => {
-                vec![ReedlineOption::Edit(EditCommand::ChangeInsideTextObject {
+                vec![ReedlineOption::Edit(EditCommand::CutInsideTextObject {
                     text_object: *text_object
                 })]
             }
@@ -262,12 +262,12 @@ impl Command {
                 })]
             }
             Self::DeleteInsideTextObject { text_object } => {
-                vec![ReedlineOption::Edit(EditCommand::DeleteInsideTextObject {
+                vec![ReedlineOption::Edit(EditCommand::CutInsideTextObject {
                     text_object: *text_object
                 })]
             }
             Self::ChangeAroundTextObject { text_object } => {
-                vec![ReedlineOption::Edit(EditCommand::ChangeAroundTextObject {
+                vec![ReedlineOption::Edit(EditCommand::CutAroundTextObject {
                     text_object: *text_object
                 })]
             }
@@ -277,7 +277,7 @@ impl Command {
                 })]
             }
             Self::DeleteAroundTextObject { text_object } => {
-                vec![ReedlineOption::Edit(EditCommand::DeleteAroundTextObject {
+                vec![ReedlineOption::Edit(EditCommand::CutAroundTextObject {
                     text_object: *text_object
                 })]
             }

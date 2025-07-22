@@ -337,21 +337,21 @@ pub enum EditCommand {
     PasteSystem,
 
     /// Delete text between matching characters atomically
-    CutInside {
+    CutInsidePair {
         /// Left character of the pair
         left: char,
         /// Right character of the pair (usually matching bracket)
         right: char,
     },
     /// Yank text between matching characters atomically
-    YankInside {
+    YankInsidePair {
         /// Left character of the pair
         left: char,
         /// Right character of the pair (usually matching bracket)
         right: char,
     },
     /// Cut text inside a text object (e.g. word)
-    ChangeInsideTextObject {
+    CutInsideTextObject {
         /// The text object character ('w' for word, 'W' for WORD, etc.)
         text_object: char
     },
@@ -360,23 +360,13 @@ pub enum EditCommand {
         /// The text object character ('w' for word, 'W' for WORD, etc.)
         text_object: char
     },
-    /// Delete text inside a text object (e.g. word)
-    DeleteInsideTextObject {
-        /// The text object character ('w' for word, 'W' for WORD, etc.)
-        text_object: char
-    },
     /// Cut text around a text object including surrounding whitespace
-    ChangeAroundTextObject {
+    CutAroundTextObject {
         /// The text object character ('w' for word, 'W' for WORD, etc.)
         text_object: char
     },
     /// Yank text around a text object including surrounding whitespace
     YankAroundTextObject {
-        /// The text object character ('w' for word, 'W' for WORD, etc.)
-        text_object: char
-    },
-    /// Delete text around a text object including surrounding whitespace
-    DeleteAroundTextObject {
         /// The text object character ('w' for word, 'W' for WORD, etc.)
         text_object: char
     },
@@ -492,14 +482,12 @@ impl Display for EditCommand {
             EditCommand::CopySelectionSystem => write!(f, "CopySelectionSystem"),
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => write!(f, "PasteSystem"),
-            EditCommand::CutInside { .. } => write!(f, "CutInside Value: <char> <char>"),
-            EditCommand::YankInside { .. } => write!(f, "YankInside Value: <char> <char>"),
-            EditCommand::ChangeInsideTextObject { .. } => write!(f, "CutInsideTextObject"),
+            EditCommand::CutInsidePair { .. } => write!(f, "CutInside Value: <char> <char>"),
+            EditCommand::YankInsidePair { .. } => write!(f, "YankInside Value: <char> <char>"),
+            EditCommand::CutInsideTextObject { .. } => write!(f, "CutInsideTextObject"),
             EditCommand::YankInsideTextObject { .. } => write!(f, "YankInsideTextObject"),
-            EditCommand::DeleteInsideTextObject { .. } => write!(f, "DeleteInsideTextObject"),
-            EditCommand::ChangeAroundTextObject { .. } => write!(f, "CutAroundTextObject"),
+            EditCommand::CutAroundTextObject { .. } => write!(f, "CutAroundTextObject"),
             EditCommand::YankAroundTextObject { .. } => write!(f, "YankAroundTextObject"),
-            EditCommand::DeleteAroundTextObject { .. } => write!(f, "DeleteAroundTextObject"),
         }
     }
 }
@@ -582,14 +570,12 @@ impl EditCommand {
             EditCommand::CopySelection => EditType::NoOp,
             #[cfg(feature = "system_clipboard")]
             EditCommand::CopySelectionSystem => EditType::NoOp,
-            EditCommand::CutInside { .. } => EditType::EditText,
-            EditCommand::YankInside { .. } => EditType::EditText,
-            EditCommand::ChangeInsideTextObject { .. } => EditType::EditText,
-            EditCommand::ChangeAroundTextObject { .. } => EditType::EditText,
+            EditCommand::CutInsidePair { .. } => EditType::EditText,
+            EditCommand::YankInsidePair { .. } => EditType::EditText,
+            EditCommand::CutInsideTextObject { .. } => EditType::EditText,
+            EditCommand::CutAroundTextObject { .. } => EditType::EditText,
             EditCommand::YankInsideTextObject { .. } => EditType::NoOp,
-            EditCommand::DeleteInsideTextObject { .. } => EditType::NoOp,
             EditCommand::YankAroundTextObject { .. } => EditType::NoOp,
-            EditCommand::DeleteAroundTextObject { .. } => EditType::NoOp,
             EditCommand::CopyFromStart
             | EditCommand::CopyFromLineStart
             | EditCommand::CopyToEnd

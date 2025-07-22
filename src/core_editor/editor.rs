@@ -171,27 +171,19 @@ impl Editor {
             EditCommand::CopySelectionSystem => self.copy_selection_to_system(),
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => self.paste_from_system(),
-            EditCommand::CutInside { left, right } => self.cut_inside(*left, *right),
-            EditCommand::YankInside { left, right } => self.yank_inside(*left, *right),
-            EditCommand::ChangeInsideTextObject { text_object } => {
+            EditCommand::CutInsidePair { left, right } => self.cut_inside_pair(*left, *right),
+            EditCommand::YankInsidePair { left, right } => self.yank_inside_pair(*left, *right),
+            EditCommand::CutInsideTextObject { text_object } => {
                 self.cut_inside_text_object(*text_object)
             },
             EditCommand::YankInsideTextObject { text_object } => {
                 self.yank_inside_text_object(*text_object)
             }
-            EditCommand::DeleteInsideTextObject { text_object } => {
-
-                self.delete_inside_text_object(*text_object)
-            }
-            EditCommand::ChangeAroundTextObject { text_object } => {
+            EditCommand::CutAroundTextObject { text_object } => {
                 self.cut_around_text_object(*text_object)
             },
             EditCommand::YankAroundTextObject { text_object } => {
                 self.yank_around_text_object(*text_object)
-            }
-            EditCommand::DeleteAroundTextObject { text_object } => {
-
-                self.delete_around_text_object(*text_object)
             }
         }
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
@@ -614,7 +606,7 @@ impl Editor {
         if let Some((start, end)) = self.get_selection() {
             let cut_slice = &self.line_buffer.get_buffer()[start..end];
             self.system_clipboard.set(cut_slice, ClipboardMode::Normal);
-            self.line_buffer.clear_range_safe(start, end);
+            self.line_buffer.clear_range_safe(start..end);
             self.selection_anchor = None;
         }
     }
@@ -623,7 +615,7 @@ impl Editor {
         if let Some((start, end)) = self.get_selection() {
             let cut_slice = &self.line_buffer.get_buffer()[start..end];
             self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
-            self.line_buffer.clear_range_safe(start, end);
+            self.line_buffer.clear_range_safe(start..end);
             self.selection_anchor = None;
         }
     }
@@ -666,7 +658,7 @@ impl Editor {
 
     fn delete_selection(&mut self) {
         if let Some((start, end)) = self.get_selection() {
-            self.line_buffer.clear_range_safe(start, end);
+            self.line_buffer.clear_range_safe(start..end);
             self.selection_anchor = None;
         }
     }
@@ -745,12 +737,28 @@ impl Editor {
         self.selection_anchor = None;
     }
 
+    fn cut_range(&mut self, range: std::ops::Range<usize>) {
+        self.yank_range(range.clone());
+        self.line_buffer.clear_range_safe(range.clone());
+        // Redundant as clear_range_safe should place insertion point at
+        // start of clear range but this ensures it's in the right place
+        self.line_buffer.set_insertion_point(range.start);
+    }
+
+    fn yank_range(&mut self, range: std::ops::Range<usize>) {
+        let slice = &self.line_buffer.get_buffer()[range];
+        if !slice.is_empty() {
+            self.cut_buffer.set(slice, ClipboardMode::Normal);
+        }
+    }
+
+
     /// Delete text strictly between matching `left_char` and `right_char`.
     /// Places deleted text into the cut buffer.
     /// Leaves the parentheses/quotes/etc. themselves.
     /// On success, move the cursor just after the `left_char`.
     /// If matching chars can't be found, restore the original cursor.
-    pub(crate) fn cut_inside(&mut self, left_char: char, right_char: char) {
+    pub(crate) fn cut_inside_pair(&mut self, left_char: char, right_char: char) {
         let buffer_len = self.line_buffer.len();
 
         if let Some((lp, rp)) =
@@ -759,13 +767,7 @@ impl Editor {
         {
             let inside_start = lp + left_char.len_utf8();
             if inside_start < rp && rp <= buffer_len {
-                let inside_slice = &self.line_buffer.get_buffer()[inside_start..rp];
-                if !inside_slice.is_empty() {
-                    self.cut_buffer.set(inside_slice, ClipboardMode::Normal);
-                    self.line_buffer.clear_range_safe(inside_start, rp);
-                }
-                self.line_buffer
-                    .set_insertion_point(lp + left_char.len_utf8());
+                self.cut_range(inside_start..rp);
             }
         }
     }
@@ -866,58 +868,26 @@ impl Editor {
 
     fn cut_inside_text_object(&mut self, text_object: char) {
         if let Some(range) = self.text_object_range(text_object, false) {
-            let cut_slice = &self.line_buffer.get_buffer()[range.clone()];
-            if !cut_slice.is_empty() {
-                self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
-                self.line_buffer.clear_range(range.clone());
-                self.line_buffer.set_insertion_point(range.start);
-            }
+            self.cut_range(range);
         }
     }
 
     fn yank_inside_text_object(&mut self, text_object: char) {
-        let old_pos = self.insertion_point();
         if let Some(range) = self.text_object_range(text_object, false) {
-            let yank_slice = &self.line_buffer.get_buffer()[range];
-            if !yank_slice.is_empty() {
-                self.cut_buffer.set(yank_slice, ClipboardMode::Normal);
-            }
+            self.yank_range(range)
         }
-        // Always restore cursor position for yank operations
-        self.line_buffer.set_insertion_point(old_pos);
-    }
-
-    fn delete_inside_text_object(&mut self, text_object: char) {
-        // Delete is the same as cut for text objects
-        self.cut_inside_text_object(text_object);
     }
 
     fn cut_around_text_object(&mut self, text_object: char) {
         if let Some(range) = self.text_object_range(text_object, true) {
-            let cut_slice = &self.line_buffer.get_buffer()[range.clone()];
-            if !cut_slice.is_empty() {
-                self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
-                self.line_buffer.clear_range(range.clone());
-                self.line_buffer.set_insertion_point(range.start);
-            }
+            self.cut_range(range);
         }
     }
 
     fn yank_around_text_object(&mut self, text_object: char) {
-        let old_pos = self.insertion_point();
         if let Some(range) = self.text_object_range(text_object, true) {
-            let yank_slice = &self.line_buffer.get_buffer()[range];
-            if !yank_slice.is_empty() {
-                self.cut_buffer.set(yank_slice, ClipboardMode::Normal);
-            }
+            self.yank_range(range);
         }
-        // Always restore cursor position for yank operations
-        self.line_buffer.set_insertion_point(old_pos);
-    }
-
-    fn delete_around_text_object(&mut self, text_object: char) {
-        // Delete is the same as cut for text objects
-        self.cut_around_text_object(text_object);
     }
 
     pub(crate) fn copy_from_start(&mut self) {
@@ -1058,8 +1028,7 @@ impl Editor {
     /// Yank text strictly between matching `left_char` and `right_char`.
     /// Copies it into the cut buffer without removing anything.
     /// Leaves the buffer unchanged and restores the original cursor.
-    pub(crate) fn yank_inside(&mut self, left_char: char, right_char: char) {
-        let old_pos = self.insertion_point();
+    pub(crate) fn yank_inside_pair(&mut self, left_char: char, right_char: char) {
         let buffer_len = self.line_buffer.len();
 
         if let Some((lp, rp)) =
@@ -1068,15 +1037,9 @@ impl Editor {
         {
             let inside_start = lp + left_char.len_utf8();
             if inside_start < rp && rp <= buffer_len {
-                let inside_slice = &self.line_buffer.get_buffer()[inside_start..rp];
-                if !inside_slice.is_empty() {
-                    self.cut_buffer.set(inside_slice, ClipboardMode::Normal);
-                }
+                self.yank_range(inside_start..rp)
             }
         }
-
-        // Always restore the cursor position
-        self.line_buffer.set_insertion_point(old_pos);
     }
 }
 
@@ -1358,7 +1321,7 @@ mod test {
     fn test_cut_inside_brackets() {
         let mut editor = editor_with("foo(bar)baz");
         editor.move_to_position(5, false); // Move inside brackets
-        editor.cut_inside('(', ')');
+        editor.cut_inside_pair('(', ')');
         assert_eq!(editor.get_buffer(), "foo()baz");
         assert_eq!(editor.insertion_point(), 4);
         assert_eq!(editor.cut_buffer.get().0, "bar");
@@ -1366,7 +1329,7 @@ mod test {
         // Test with cursor outside brackets
         let mut editor = editor_with("foo(bar)baz");
         editor.move_to_position(0, false);
-        editor.cut_inside('(', ')');
+        editor.cut_inside_pair('(', ')');
         assert_eq!(editor.get_buffer(), "foo(bar)baz");
         assert_eq!(editor.insertion_point(), 0);
         assert_eq!(editor.cut_buffer.get().0, "");
@@ -1374,7 +1337,7 @@ mod test {
         // Test with no matching brackets
         let mut editor = editor_with("foo bar baz");
         editor.move_to_position(4, false);
-        editor.cut_inside('(', ')');
+        editor.cut_inside_pair('(', ')');
         assert_eq!(editor.get_buffer(), "foo bar baz");
         assert_eq!(editor.insertion_point(), 4);
         assert_eq!(editor.cut_buffer.get().0, "");
@@ -1384,7 +1347,7 @@ mod test {
     fn test_cut_inside_quotes() {
         let mut editor = editor_with("foo\"bar\"baz");
         editor.move_to_position(5, false); // Move inside quotes
-        editor.cut_inside('"', '"');
+        editor.cut_inside_pair('"', '"');
         assert_eq!(editor.get_buffer(), "foo\"\"baz");
         assert_eq!(editor.insertion_point(), 4);
         assert_eq!(editor.cut_buffer.get().0, "bar");
@@ -1392,7 +1355,7 @@ mod test {
         // Test with cursor outside quotes
         let mut editor = editor_with("foo\"bar\"baz");
         editor.move_to_position(0, false);
-        editor.cut_inside('"', '"');
+        editor.cut_inside_pair('"', '"');
         assert_eq!(editor.get_buffer(), "foo\"bar\"baz");
         assert_eq!(editor.insertion_point(), 0);
         assert_eq!(editor.cut_buffer.get().0, "");
@@ -1400,7 +1363,7 @@ mod test {
         // Test with no matching quotes
         let mut editor = editor_with("foo bar baz");
         editor.move_to_position(4, false);
-        editor.cut_inside('"', '"');
+        editor.cut_inside_pair('"', '"');
         assert_eq!(editor.get_buffer(), "foo bar baz");
         assert_eq!(editor.insertion_point(), 4);
     }
@@ -1409,13 +1372,13 @@ mod test {
     fn test_cut_inside_nested() {
         let mut editor = editor_with("foo(bar(baz)qux)quux");
         editor.move_to_position(8, false); // Move inside inner brackets
-        editor.cut_inside('(', ')');
+        editor.cut_inside_pair('(', ')');
         assert_eq!(editor.get_buffer(), "foo(bar()qux)quux");
         assert_eq!(editor.insertion_point(), 8);
         assert_eq!(editor.cut_buffer.get().0, "baz");
 
         editor.move_to_position(4, false); // Move inside outer brackets
-        editor.cut_inside('(', ')');
+        editor.cut_inside_pair('(', ')');
         assert_eq!(editor.get_buffer(), "foo()quux");
         assert_eq!(editor.insertion_point(), 4);
         assert_eq!(editor.cut_buffer.get().0, "bar()qux");
@@ -1425,7 +1388,7 @@ mod test {
     fn test_yank_inside_brackets() {
         let mut editor = editor_with("foo(bar)baz");
         editor.move_to_position(5, false); // Move inside brackets
-        editor.yank_inside('(', ')');
+        editor.yank_inside_pair('(', ')');
         assert_eq!(editor.get_buffer(), "foo(bar)baz"); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), 5); // Cursor should return to original position
 
@@ -1436,7 +1399,7 @@ mod test {
         // Test with cursor outside brackets
         let mut editor = editor_with("foo(bar)baz");
         editor.move_to_position(0, false);
-        editor.yank_inside('(', ')');
+        editor.yank_inside_pair('(', ')');
         assert_eq!(editor.get_buffer(), "foo(bar)baz");
         assert_eq!(editor.insertion_point(), 0);
     }
@@ -1445,7 +1408,7 @@ mod test {
     fn test_yank_inside_quotes() {
         let mut editor = editor_with("foo\"bar\"baz");
         editor.move_to_position(5, false); // Move inside quotes
-        editor.yank_inside('"', '"');
+        editor.yank_inside_pair('"', '"');
         assert_eq!(editor.get_buffer(), "foo\"bar\"baz"); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), 5); // Cursor should return to original position
         assert_eq!(editor.cut_buffer.get().0, "bar");
@@ -1453,7 +1416,7 @@ mod test {
         // Test with no matching quotes
         let mut editor = editor_with("foo bar baz");
         editor.move_to_position(4, false);
-        editor.yank_inside('"', '"');
+        editor.yank_inside_pair('"', '"');
         assert_eq!(editor.get_buffer(), "foo bar baz");
         assert_eq!(editor.insertion_point(), 4);
         assert_eq!(editor.cut_buffer.get().0, "");
@@ -1463,7 +1426,7 @@ mod test {
     fn test_yank_inside_nested() {
         let mut editor = editor_with("foo(bar(baz)qux)quux");
         editor.move_to_position(8, false); // Move inside inner brackets
-        editor.yank_inside('(', ')');
+        editor.yank_inside_pair('(', ')');
         assert_eq!(editor.get_buffer(), "foo(bar(baz)qux)quux"); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), 8);
         assert_eq!(editor.cut_buffer.get().0, "baz");
@@ -1473,7 +1436,7 @@ mod test {
         assert_eq!(editor.get_buffer(), "foo(bar(bazbaz)qux)quux");
 
         editor.move_to_position(4, false); // Move inside outer brackets
-        editor.yank_inside('(', ')');
+        editor.yank_inside_pair('(', ')');
         assert_eq!(editor.get_buffer(), "foo(bar(bazbaz)qux)quux");
         assert_eq!(editor.insertion_point(), 4);
         assert_eq!(editor.cut_buffer.get().0, "bar(bazbaz)qux");
@@ -1719,6 +1682,18 @@ mod test {
     }
 
     #[rstest]
+    fn test_cut_text_object_unicode_safety() {
+        let mut editor = editor_with("hello 🦀end");
+        editor.move_to_position(10, false); // Position after the emoji
+        editor.move_to_position(6, false);  // Move to the emoji
+
+        editor.cut_inside_text_object('w'); // Cut the emoji
+
+        assert!(editor.line_buffer.is_valid()); // Should not panic or be invalid
+    }
+
+
+    #[rstest]
     // Test operations when cursor is IN WHITESPACE (middle of spaces)
     #[case("hello world test", 5, 'w', "helloworld test", 5, " ")] // single space
     #[case("hello  world", 6, 'w', "helloworld", 5, "  ")] // multiple spaces, cursor on second
@@ -1729,8 +1704,8 @@ mod test {
     #[case("hello\nworld", 5, 'w', "helloworld", 5, "\n")] // newline character
     #[case("hello world test", 5, 'W', "helloworld test", 5, " ")] // single space (big word)
     #[case("hello  world", 6, 'W', "helloworld", 5, "  ")] // multiple spaces (big word)
-    #[case("  ", 0, 'w', "  ", 0, "")] // only whitespace at start
-    #[case("  ", 1, 'w', "  ", 0, "")] // only whitespace at end
+    #[case("  ", 0, 'w', "", 0, "  ")] // only whitespace at start
+    #[case("  ", 1, 'w', "", 0, "  ")] // only whitespace at end
     #[case("hello  ", 5, 'w', "hello", 5, "  ")] // trailing whitespace at string end
     #[case("  hello", 0, 'w', "hello", 0, "  ")] // leading whitespace at string start
     fn test_text_object_in_whitespace(

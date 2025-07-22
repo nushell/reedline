@@ -476,11 +476,11 @@ impl LineBuffer {
     ///
     /// If the cursor is located between `start` and `end` it is adjusted to `start`.
     /// If the cursor is located after `end` it is adjusted to stay at its current char boundary.
-    pub fn clear_range_safe(&mut self, start: usize, end: usize) {
-        let (start, end) = if start > end {
-            (end, start)
+    pub fn clear_range_safe(&mut self, range: Range<usize>) {
+        let (start, end) = if range.start > range.end {
+            (range.end, range.start)
         } else {
-            (start, end)
+            (range.start, range.end)
         };
         if self.insertion_point <= start {
             // No action necessary
