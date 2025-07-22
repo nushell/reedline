@@ -350,6 +350,36 @@ pub enum EditCommand {
         /// Right character of the pair (usually matching bracket)
         right: char,
     },
+    /// Cut text inside a text object (e.g. word)
+    ChangeInsideTextObject {
+        /// The text object character ('w' for word, 'W' for WORD, etc.)
+        text_object: char
+    },
+    /// Yank text inside a text object (e.g. word)
+    YankInsideTextObject {
+        /// The text object character ('w' for word, 'W' for WORD, etc.)
+        text_object: char
+    },
+    /// Delete text inside a text object (e.g. word)
+    DeleteInsideTextObject {
+        /// The text object character ('w' for word, 'W' for WORD, etc.)
+        text_object: char
+    },
+    /// Cut text around a text object including surrounding whitespace
+    ChangeAroundTextObject {
+        /// The text object character ('w' for word, 'W' for WORD, etc.)
+        text_object: char
+    },
+    /// Yank text around a text object including surrounding whitespace
+    YankAroundTextObject {
+        /// The text object character ('w' for word, 'W' for WORD, etc.)
+        text_object: char
+    },
+    /// Delete text around a text object including surrounding whitespace
+    DeleteAroundTextObject {
+        /// The text object character ('w' for word, 'W' for WORD, etc.)
+        text_object: char
+    },
 }
 
 impl Display for EditCommand {
@@ -464,6 +494,12 @@ impl Display for EditCommand {
             EditCommand::PasteSystem => write!(f, "PasteSystem"),
             EditCommand::CutInside { .. } => write!(f, "CutInside Value: <char> <char>"),
             EditCommand::YankInside { .. } => write!(f, "YankInside Value: <char> <char>"),
+            EditCommand::ChangeInsideTextObject { .. } => write!(f, "CutInsideTextObject"),
+            EditCommand::YankInsideTextObject { .. } => write!(f, "YankInsideTextObject"),
+            EditCommand::DeleteInsideTextObject { .. } => write!(f, "DeleteInsideTextObject"),
+            EditCommand::ChangeAroundTextObject { .. } => write!(f, "CutAroundTextObject"),
+            EditCommand::YankAroundTextObject { .. } => write!(f, "YankAroundTextObject"),
+            EditCommand::DeleteAroundTextObject { .. } => write!(f, "DeleteAroundTextObject"),
         }
     }
 }
@@ -548,6 +584,12 @@ impl EditCommand {
             EditCommand::CopySelectionSystem => EditType::NoOp,
             EditCommand::CutInside { .. } => EditType::EditText,
             EditCommand::YankInside { .. } => EditType::EditText,
+            EditCommand::ChangeInsideTextObject { .. } => EditType::EditText,
+            EditCommand::ChangeAroundTextObject { .. } => EditType::EditText,
+            EditCommand::YankInsideTextObject { .. } => EditType::NoOp,
+            EditCommand::DeleteInsideTextObject { .. } => EditType::NoOp,
+            EditCommand::YankAroundTextObject { .. } => EditType::NoOp,
+            EditCommand::DeleteAroundTextObject { .. } => EditType::NoOp,
             EditCommand::CopyFromStart
             | EditCommand::CopyFromLineStart
             | EditCommand::CopyToEnd

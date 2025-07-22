@@ -173,6 +173,26 @@ impl Editor {
             EditCommand::PasteSystem => self.paste_from_system(),
             EditCommand::CutInside { left, right } => self.cut_inside(*left, *right),
             EditCommand::YankInside { left, right } => self.yank_inside(*left, *right),
+            EditCommand::ChangeInsideTextObject { text_object } => {
+                self.cut_inside_text_object(*text_object)
+            },
+            EditCommand::YankInsideTextObject { text_object } => {
+                self.yank_inside_text_object(*text_object)
+            }
+            EditCommand::DeleteInsideTextObject { text_object } => {
+
+                self.delete_inside_text_object(*text_object)
+            }
+            EditCommand::ChangeAroundTextObject { text_object } => {
+                self.cut_around_text_object(*text_object)
+            },
+            EditCommand::YankAroundTextObject { text_object } => {
+                self.yank_around_text_object(*text_object)
+            }
+            EditCommand::DeleteAroundTextObject { text_object } => {
+
+                self.delete_around_text_object(*text_object)
+            }
         }
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
             self.selection_anchor = None;
@@ -748,6 +768,156 @@ impl Editor {
                     .set_insertion_point(lp + left_char.len_utf8());
             }
         }
+    }
+
+    /// Get the bounds for a text object operation
+    fn get_text_object_bounds(&self, text_object: char, around: bool) -> Option<std::ops::Range<usize>> {
+
+        match text_object {
+            'w' => {
+                if self.line_buffer.is_in_whitespace_block() {
+                    Some(self.line_buffer.current_whitespace_range())
+                } else {
+                    let word_range = self.line_buffer.current_word_range();
+                    if around {
+                        self.expand_range_with_whitespace(word_range)
+                    } else {
+                        Some(word_range)
+                    }
+                }
+            }
+            'W' => {
+                if self.line_buffer.is_in_whitespace_block() {
+                    Some(self.line_buffer.current_whitespace_range())
+                } else {
+                    let big_word_range = self.get_current_big_word_range();
+                    if around {
+                        self.expand_range_with_whitespace(big_word_range)
+                    } else {
+                        Some(big_word_range)
+                    }
+                }
+            }
+            _ => None, // Unsupported text object
+        }
+    }
+
+    /// Get the range of the current big word (WORD) at cursor position
+    fn get_current_big_word_range(&self) -> std::ops::Range<usize> {
+        // Get the end of the current big word
+        let right_index = self.line_buffer.big_word_right_end_index();
+
+        // Find start by searching backwards for whitespace (same pattern as current_word_range)
+        let buffer = self.line_buffer.get_buffer();
+        let mut left_index = 0;
+        for (i, ch) in buffer[..right_index].char_indices().rev() {
+            if ch.is_whitespace() {
+                left_index = i + ch.len_utf8();
+                break;
+            }
+        }
+
+        // right_end_index returns position ON the last character, we need position AFTER it
+        left_index..(right_index + 1)
+    }
+
+    /// Expand a word range to include surrounding whitespace for "around" operations
+    /// Prioritizes whitespace after the word, falls back to whitespace before if none after
+    fn expand_range_with_whitespace(&self, range: std::ops::Range<usize>) -> Option<std::ops::Range<usize>> {
+        let buffer = self.line_buffer.get_buffer();
+        let mut start = range.start;
+        let mut end = range.end;
+
+        // First, try to extend right to include following whitespace
+        let original_end = end;
+        while end < buffer.len() {
+            if let Some(ch) = buffer[end..].chars().next() {
+                if ch.is_whitespace() {
+                    end += ch.len_utf8();
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        // If no whitespace was found after the word, try to include whitespace before
+        if end == original_end {
+            while start > 0 {
+                let prev_char_start = buffer.char_indices().rev()
+                    .find(|(i, _)| *i < start)
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                if let Some(ch) = buffer[prev_char_start..start].chars().next() {
+                    if ch.is_whitespace() {
+                        start = prev_char_start;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+
+        Some(start..end)
+    }
+
+    fn cut_inside_text_object(&mut self, text_object: char) {
+        if let Some(range) = self.get_text_object_bounds(text_object, false) {
+            let cut_slice = &self.line_buffer.get_buffer()[range.clone()];
+            if !cut_slice.is_empty() {
+                self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
+                self.line_buffer.clear_range(range.clone());
+                self.line_buffer.set_insertion_point(range.start);
+            }
+        }
+    }
+
+    fn yank_inside_text_object(&mut self, text_object: char) {
+        let old_pos = self.insertion_point();
+        if let Some(range) = self.get_text_object_bounds(text_object, false) {
+            let yank_slice = &self.line_buffer.get_buffer()[range];
+            if !yank_slice.is_empty() {
+                self.cut_buffer.set(yank_slice, ClipboardMode::Normal);
+            }
+        }
+        // Always restore cursor position for yank operations
+        self.line_buffer.set_insertion_point(old_pos);
+    }
+
+    fn delete_inside_text_object(&mut self, text_object: char) {
+        // Delete is the same as cut for text objects
+        self.cut_inside_text_object(text_object);
+    }
+
+    fn cut_around_text_object(&mut self, text_object: char) {
+        if let Some(range) = self.get_text_object_bounds(text_object, true) {
+            let cut_slice = &self.line_buffer.get_buffer()[range.clone()];
+            if !cut_slice.is_empty() {
+                self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
+                self.line_buffer.clear_range(range.clone());
+                self.line_buffer.set_insertion_point(range.start);
+            }
+        }
+    }
+
+    fn yank_around_text_object(&mut self, text_object: char) {
+        let old_pos = self.insertion_point();
+        if let Some(range) = self.get_text_object_bounds(text_object, true) {
+            let yank_slice = &self.line_buffer.get_buffer()[range];
+            if !yank_slice.is_empty() {
+                self.cut_buffer.set(yank_slice, ClipboardMode::Normal);
+            }
+        }
+        // Always restore cursor position for yank operations
+        self.line_buffer.set_insertion_point(old_pos);
+    }
+
+    fn delete_around_text_object(&mut self, text_object: char) {
+        // Delete is the same as cut for text objects
+        self.cut_around_text_object(text_object);
     }
 
     pub(crate) fn copy_from_start(&mut self) {
@@ -1363,4 +1533,230 @@ mod test {
         assert_eq!(editor.insertion_point(), 3); // Cursor should return to original position
         assert_eq!(editor.cut_buffer.get().0, "\r\n");
     }
+
+    #[rstest]
+    #[case("hello world test", 7, "hello  test", 6, "world")] // cursor inside word
+    #[case("hello world test", 6, "hello  test", 6, "world")] // cursor at start of word
+    #[case("hello world test", 10, "hello  test", 6, "world")] // cursor at end of word
+    fn test_cut_inside_word(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected_buffer: &str,
+        #[case] expected_cursor: usize,
+        #[case] expected_cut: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+        editor.cut_inside_text_object('w');
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.insertion_point(), expected_cursor);
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    #[rstest]
+    #[case("hello world test", 7, "world")] // cursor inside word
+    #[case("hello world test", 6, "world")] // cursor at start of word
+    #[case("hello world test", 10, "world")] // cursor at end of word
+    fn test_yank_inside_word(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected_yank: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+        editor.yank_inside_text_object('w');
+        assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
+        assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
+        assert_eq!(editor.cut_buffer.get().0, expected_yank);
+    }
+
+    #[rstest]
+    #[case("hello world test", 7, "hello test", 6, "world ")] // word with following space
+    #[case("hello world", 7, "hello", 5, " world")] // word at end, gets preceding space
+    #[case("word test", 2, "test", 0, "word ")] // first word with following space
+    #[case("hello word", 7, "hello", 5, " word")] // last word gets preceding space
+    // Edge cases at end of string
+    #[case("word", 2, "", 0, "word")] // single word, no whitespace
+    #[case(" word", 2, "", 0, " word")] // word with only leading space
+    // Edge cases with punctuation boundaries
+    #[case("word.", 2, ".", 0, "word")] // word followed by punctuation
+    #[case(".word", 2, ".", 1, "word")] // word preceded by punctuation
+    #[case("(word)", 2, "()", 1, "word")] // word surrounded by punctuation
+    #[case("hello,world", 2, ",world", 0, "hello")] // word followed by punct+word
+    #[case("hello,world", 7, "hello,", 6, "world")] // word preceded by word+punct
+    fn test_cut_around_word(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected_buffer: &str,
+        #[case] expected_cursor: usize,
+        #[case] expected_cut: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+        editor.cut_around_text_object('w');
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.insertion_point(), expected_cursor);
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    #[rstest]
+    #[case("hello world test", 7, "world ")] // word with following space
+    #[case("hello world", 7, " world")] // word at end, gets preceding space
+    #[case("word test", 2, "word ")] // first word with following space
+    fn test_yank_around_word(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected_yank: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+        editor.yank_around_text_object('w');
+        assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
+        assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
+        assert_eq!(editor.cut_buffer.get().0, expected_yank);
+    }
+
+    #[rstest]
+    #[case("hello big-word test", 10, "hello  test", 6, "big-word")] // big word with punctuation
+    #[case("hello BIGWORD test", 10, "hello  test", 6, "BIGWORD")] // simple big word
+    #[case("test@example.com file", 8, " file", 0, "test@example.com")] // big word - cursor on email address
+    #[case("test@example.com file", 17, "test@example.com ", 17, "file")] // cursor on "file" - now working correctly
+    fn test_cut_inside_big_word(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected_buffer: &str,
+        #[case] expected_cursor: usize,
+        #[case] expected_cut: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+        editor.cut_inside_text_object('W');
+
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.insertion_point(), expected_cursor);
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    #[rstest]
+    #[case("hello-world test", 2, "-world test", 0, "hello")] // cursor on "hello"
+    #[case("hello-world test", 5, "helloworld test", 5, "-")] // cursor on "-"
+    #[case("hello-world test", 8, "hello- test", 6, "world")] // cursor on "world"
+    #[case("a-b-c test", 0, "-b-c test", 0, "a")] // single char "a"
+    #[case("a-b-c test", 2, "a--c test", 2, "b")] // single char "b"
+    fn test_cut_inside_word_with_punctuation(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected_buffer: &str,
+        #[case] expected_cursor: usize,
+        #[case] expected_cut: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+        editor.cut_inside_text_object('w');
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.insertion_point(), expected_cursor);
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    #[rstest]
+    #[case("hello-world test", 2, 'w', "-world test", "hello")] // small word gets just "hello"
+    #[case("hello-world test", 2, 'W', " test", "hello-world")] // big word gets "hello-world"
+    #[case("test@example.com", 6, 'w', "test@", "example.com")] // small word in email (UAX#29 extends across punct)
+    #[case("test@example.com", 6, 'W', "", "test@example.com")] // big word gets entire email
+    fn test_word_vs_big_word_comparison(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] text_object: char,
+        #[case] expected_buffer: &str,
+        #[case] expected_cut: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+        editor.cut_inside_text_object(text_object);
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    #[rstest]
+    // Test inside operations (iw) at word boundaries
+    #[case("hello world", 0, "hello")] // start of first word
+    #[case("hello world", 4, "hello")] // end of first word
+    #[case("hello world", 6, "world")] // start of second word
+    #[case("hello world", 10, "world")] // end of second word
+    // Test at exact word boundaries with punctuation
+    #[case("hello-world", 4, "hello")] // just before punctuation
+    #[case("hello-world", 5, "-")] // on punctuation
+    #[case("hello-world", 6, "world")] // just after punctuation
+    fn test_cut_inside_word_boundaries(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected_cut: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+        editor.cut_inside_text_object('w');
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    #[rstest]
+    // Test around operations (aw) at word boundaries
+    #[case("hello world", 0, "hello ")] // start of first word
+    #[case("hello world", 4, "hello ")] // end of first word
+    #[case("hello world", 6, " world")] // start of second word (gets preceding space)
+    #[case("hello world", 10, " world")] // end of second word
+    #[case("word", 0, "word")] // single word, no whitespace
+    #[case("word ", 0, "word ")] // word with trailing space
+    #[case(" word", 1, " word")] // word with leading space
+    fn test_cut_around_word_boundaries(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected_cut: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+        editor.cut_around_text_object('w');
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    #[rstest]
+    // Test operations when cursor is IN WHITESPACE (middle of spaces)
+    #[case("hello world test", 5, 'w', "helloworld test", 5, " ")] // single space
+    #[case("hello  world", 6, 'w', "helloworld", 5, "  ")] // multiple spaces, cursor on second
+    #[case("hello   world", 7, 'w', "helloworld", 5, "   ")] // multiple spaces, cursor on middle
+    #[case("   hello", 1, 'w', "hello", 0, "   ")] // leading spaces, cursor on middle
+    #[case("hello   ", 7, 'w', "hello", 5, "   ")] // trailing spaces, cursor on middle
+    #[case("hello\tworld", 5, 'w', "helloworld", 5, "\t")] // tab character
+    #[case("hello\nworld", 5, 'w', "helloworld", 5, "\n")] // newline character
+    #[case("hello world test", 5, 'W', "helloworld test", 5, " ")] // single space (big word)
+    #[case("hello  world", 6, 'W', "helloworld", 5, "  ")] // multiple spaces (big word)
+    #[case("  ", 0, 'w', "  ", 0, "")] // only whitespace at start
+    #[case("  ", 1, 'w', "  ", 0, "")] // only whitespace at end
+    #[case("hello  ", 5, 'w', "hello", 5, "  ")] // trailing whitespace at string end
+    #[case("  hello", 0, 'w', "hello", 0, "  ")] // leading whitespace at string start
+    fn test_text_object_in_whitespace(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] text_object: char,
+        #[case] expected_buffer: &str,
+        #[case] expected_cursor: usize,
+        #[case] expected_cut: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+        editor.cut_inside_text_object(text_object);
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.insertion_point(), expected_cursor);
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    // TODO: Punctuation boundary handling - due to UAX#29 word boundary limitations it currently
+    // behaves different to vim.
+    // Known issues with current implementation:
+    // 1. When cursor is on alphanumeric chars adjacent to punctuation (like 'l' in "example.com"),
+    //    the word extends across the punctuation due to Unicode word boundaries
+    // 2. Sequential punctuation is not treated as a single word (each punct char is separate)
+    // 3. This differs from vim's word definition where punctuation breaks words consistently
+    //
+    // #[test]
+    // fn test_yank_inside_word_with_punctuation() { ... }
 }

@@ -307,6 +307,73 @@ impl LineBuffer {
             .unwrap_or_else(|| self.lines.len())
     }
 
+    /// Returns true if cursor is at the end of the buffer with preceding whitespace.
+    ///
+    /// This handles the edge case where the cursor is positioned after the last character
+    /// in a buffer that ends with whitespace. In vim, this position is still considered
+    /// part of the trailing whitespace block for text object operations.
+    fn at_end_of_line_with_preceding_whitespace(&self) -> bool {
+        !self.is_empty() // No point checking if empty
+        && self.insertion_point == self.lines.len()
+        && self.lines.chars().last().map_or(false, |c| c.is_whitespace())
+    }
+
+    /// Returns true if the cursor is positioned within a whitespace block.
+    ///
+    /// This includes being on a whitespace character or at the end of trailing whitespace.
+    /// Used for vim-style text object operations where whitespace itself is a text object.
+    pub fn is_in_whitespace_block(&self) -> bool {
+        self.on_whitespace() || self.at_end_of_line_with_preceding_whitespace()
+    }
+
+    /// Cursor position at the end of the current whitespace block.
+    ///
+    /// Searches forward from cursor position to find where the current whitespace
+    /// block ends (first non-whitespace character). Returns buffer length if
+    /// whitespace extends to end of buffer.
+    fn current_whitespace_end_index(&self) -> usize {
+        self.lines[self.insertion_point..]
+            .char_indices()
+            .find(|(_, ch)| !ch.is_whitespace())
+            .map(|(i, _)| self.insertion_point + i)
+            .unwrap_or(self.lines.len())
+    }
+
+    /// Cursor position at the start of the current whitespace block.
+    ///
+    /// Searches backward from cursor position to find where the current whitespace
+    /// block starts (position after last non-whitespace character). Returns 0 if
+    /// whitespace extends to start of buffer.
+    fn current_whitespace_start_index(&self) -> usize {
+        self.lines[..self.insertion_point]
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !ch.is_whitespace())
+            .map(|(i, _)| i + 1)
+            .unwrap_or(self.lines.len())
+    }
+
+    /// Gets the range of the current whitespace block at cursor position.
+    ///
+    /// Returns the complete range of consecutive whitespace characters that includes
+    /// the cursor position. If cursor is at the end of trailing whitespace, includes
+    /// that trailing block. Returns an empty range (0..0) if not in a whitespace context.
+    ///
+    /// Used for vim-style text object operations (iw/aw when cursor is on whitespace).
+    pub fn current_whitespace_range(&self) -> Range<usize> {
+        if self.on_whitespace() {
+            let right_index = self.current_whitespace_end_index();
+            let left_index = self.current_whitespace_start_index();
+            left_index..right_index
+        } else if self.at_end_of_line_with_preceding_whitespace() {
+            let left_index = self.current_whitespace_start_index();
+            left_index..self.insertion_point
+        }
+        else {
+            0..0
+        }
+    }
+
     /// Move cursor position *behind* the next unicode grapheme to the right
     pub fn move_right(&mut self) {
         self.insertion_point = self.grapheme_right_index();
