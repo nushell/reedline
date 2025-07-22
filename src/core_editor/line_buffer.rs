@@ -331,7 +331,7 @@ impl LineBuffer {
     /// Searches forward from cursor position to find where the current whitespace
     /// block ends (first non-whitespace character). Returns buffer length if
     /// whitespace extends to end of buffer.
-    fn current_whitespace_end_index(&self) -> usize {
+    fn current_whitespace_range_end(&self) -> usize {
         self.lines[self.insertion_point..]
             .char_indices()
             .find(|(_, ch)| !ch.is_whitespace())
@@ -344,13 +344,13 @@ impl LineBuffer {
     /// Searches backward from cursor position to find where the current whitespace
     /// block starts (position after last non-whitespace character). Returns 0 if
     /// whitespace extends to start of buffer.
-    fn current_whitespace_start_index(&self) -> usize {
+    fn current_whitespace_range_start(&self) -> usize {
         self.lines[..self.insertion_point]
             .char_indices()
             .rev()
             .find(|(_, ch)| !ch.is_whitespace())
             .map(|(i, _)| i + 1)
-            .unwrap_or(self.lines.len())
+            .unwrap_or(0)
     }
 
     /// Gets the range of the current whitespace block at cursor position.
@@ -362,12 +362,12 @@ impl LineBuffer {
     /// Used for vim-style text object operations (iw/aw when cursor is on whitespace).
     pub fn current_whitespace_range(&self) -> Range<usize> {
         if self.on_whitespace() {
-            let right_index = self.current_whitespace_end_index();
-            let left_index = self.current_whitespace_start_index();
-            left_index..right_index
+            let range_end = self.current_whitespace_range_end();
+            let range_start = self.current_whitespace_range_start();
+            range_start..range_end
         } else if self.at_end_of_line_with_preceding_whitespace() {
-            let left_index = self.current_whitespace_start_index();
-            left_index..self.insertion_point
+            let range_start = self.current_whitespace_range_start();
+            range_start..self.insertion_point
         }
         else {
             0..0

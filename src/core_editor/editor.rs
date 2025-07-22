@@ -771,7 +771,7 @@ impl Editor {
     }
 
     /// Get the bounds for a text object operation
-    fn get_text_object_bounds(&self, text_object: char, around: bool) -> Option<std::ops::Range<usize>> {
+    fn text_object_range(&self, text_object: char, around: bool) -> Option<std::ops::Range<usize>> {
 
         match text_object {
             'w' => {
@@ -790,7 +790,7 @@ impl Editor {
                 if self.line_buffer.is_in_whitespace_block() {
                     Some(self.line_buffer.current_whitespace_range())
                 } else {
-                    let big_word_range = self.get_current_big_word_range();
+                    let big_word_range = self.current_big_word_range();
                     if around {
                         self.expand_range_with_whitespace(big_word_range)
                     } else {
@@ -803,7 +803,7 @@ impl Editor {
     }
 
     /// Get the range of the current big word (WORD) at cursor position
-    fn get_current_big_word_range(&self) -> std::ops::Range<usize> {
+    fn current_big_word_range(&self) -> std::ops::Range<usize> {
         // Get the end of the current big word
         let right_index = self.line_buffer.big_word_right_end_index();
 
@@ -865,7 +865,7 @@ impl Editor {
     }
 
     fn cut_inside_text_object(&mut self, text_object: char) {
-        if let Some(range) = self.get_text_object_bounds(text_object, false) {
+        if let Some(range) = self.text_object_range(text_object, false) {
             let cut_slice = &self.line_buffer.get_buffer()[range.clone()];
             if !cut_slice.is_empty() {
                 self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
@@ -877,7 +877,7 @@ impl Editor {
 
     fn yank_inside_text_object(&mut self, text_object: char) {
         let old_pos = self.insertion_point();
-        if let Some(range) = self.get_text_object_bounds(text_object, false) {
+        if let Some(range) = self.text_object_range(text_object, false) {
             let yank_slice = &self.line_buffer.get_buffer()[range];
             if !yank_slice.is_empty() {
                 self.cut_buffer.set(yank_slice, ClipboardMode::Normal);
@@ -893,7 +893,7 @@ impl Editor {
     }
 
     fn cut_around_text_object(&mut self, text_object: char) {
-        if let Some(range) = self.get_text_object_bounds(text_object, true) {
+        if let Some(range) = self.text_object_range(text_object, true) {
             let cut_slice = &self.line_buffer.get_buffer()[range.clone()];
             if !cut_slice.is_empty() {
                 self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
@@ -905,7 +905,7 @@ impl Editor {
 
     fn yank_around_text_object(&mut self, text_object: char) {
         let old_pos = self.insertion_point();
-        if let Some(range) = self.get_text_object_bounds(text_object, true) {
+        if let Some(range) = self.text_object_range(text_object, true) {
             let yank_slice = &self.line_buffer.get_buffer()[range];
             if !yank_slice.is_empty() {
                 self.cut_buffer.set(yank_slice, ClipboardMode::Normal);
