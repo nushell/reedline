@@ -322,7 +322,7 @@ impl LineBuffer {
     ///
     /// This includes being on a whitespace character or at the end of trailing whitespace.
     /// Used for vim-style text object operations where whitespace itself is a text object.
-    pub fn is_in_whitespace_block(&self) -> bool {
+    pub(crate) fn in_whitespace_block(&self) -> bool {
         self.on_whitespace() || self.at_end_of_line_with_preceding_whitespace()
     }
 
@@ -360,7 +360,7 @@ impl LineBuffer {
     /// that trailing block. Returns an empty range (0..0) if not in a whitespace context.
     ///
     /// Used for vim-style text object operations (iw/aw when cursor is on whitespace).
-    pub fn current_whitespace_range(&self) -> Range<usize> {
+    pub(crate) fn current_whitespace_range(&self) -> Range<usize> {
         if self.on_whitespace() {
             let range_end = self.current_whitespace_range_end();
             let range_start = self.current_whitespace_range_start();

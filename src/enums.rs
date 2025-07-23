@@ -14,6 +14,42 @@ pub enum Signal {
     CtrlD, // End terminal session
 }
 
+/// Scope of text object operation ("i" inner or "a" around)
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum TextObjectScope {
+    /// Just the text object itself
+    Inner,
+    /// Expanded to include surrounding based on object type
+    Around,
+}
+
+/// Type of text object to operate on
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum TextObjectType {
+    /// word (delimited by non-alphanumeric characters)
+    Word,
+    /// WORD (delimited only by whitespace)
+    BigWord,
+}
+
+/// Text objects that can be operated on with vim-style commands
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct TextObject {
+    /// Whether to include surrounding context
+    pub scope: TextObjectScope,
+    /// The type of text object
+    pub object_type: TextObjectType,
+}
+
+impl Default for TextObject {
+    fn default() -> Self {
+        Self {
+            scope: TextObjectScope::Inner,
+            object_type: TextObjectType::Word,
+        }
+    }
+}
+
 /// Editing actions which can be mapped to key bindings.
 ///
 /// Executed by `Reedline::run_edit_commands()`
@@ -344,31 +380,21 @@ pub enum EditCommand {
         right: char,
     },
     /// Yank text between matching characters atomically
-    YankInsidePair {
+    CopyInsidePair {
         /// Left character of the pair
         left: char,
         /// Right character of the pair (usually matching bracket)
         right: char,
     },
-    /// Cut text inside a text object (e.g. word)
-    CutInsideTextObject {
-        /// The text object character ('w' for word, 'W' for WORD, etc.)
-        text_object: char
+    /// Cut the specified text object
+    CutTextObject {
+        /// The text object to operate on
+        text_object: TextObject
     },
-    /// Yank text inside a text object (e.g. word)
-    YankInsideTextObject {
-        /// The text object character ('w' for word, 'W' for WORD, etc.)
-        text_object: char
-    },
-    /// Cut text around a text object including surrounding whitespace
-    CutAroundTextObject {
-        /// The text object character ('w' for word, 'W' for WORD, etc.)
-        text_object: char
-    },
-    /// Yank text around a text object including surrounding whitespace
-    YankAroundTextObject {
-        /// The text object character ('w' for word, 'W' for WORD, etc.)
-        text_object: char
+    /// Copy the specified text object
+    CopyTextObject {
+        /// The text object to operate on
+        text_object: TextObject
     },
 }
 
@@ -483,11 +509,9 @@ impl Display for EditCommand {
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => write!(f, "PasteSystem"),
             EditCommand::CutInsidePair { .. } => write!(f, "CutInside Value: <char> <char>"),
-            EditCommand::YankInsidePair { .. } => write!(f, "YankInside Value: <char> <char>"),
-            EditCommand::CutInsideTextObject { .. } => write!(f, "CutInsideTextObject"),
-            EditCommand::YankInsideTextObject { .. } => write!(f, "YankInsideTextObject"),
-            EditCommand::CutAroundTextObject { .. } => write!(f, "CutAroundTextObject"),
-            EditCommand::YankAroundTextObject { .. } => write!(f, "YankAroundTextObject"),
+            EditCommand::CopyInsidePair { .. } => write!(f, "YankInside Value: <char> <char>"),
+            EditCommand::CutTextObject { .. } => write!(f, "CutTextObject"),
+            EditCommand::CopyTextObject { .. } => write!(f, "CopyTextObject"),
         }
     }
 }
@@ -571,11 +595,9 @@ impl EditCommand {
             #[cfg(feature = "system_clipboard")]
             EditCommand::CopySelectionSystem => EditType::NoOp,
             EditCommand::CutInsidePair { .. } => EditType::EditText,
-            EditCommand::YankInsidePair { .. } => EditType::EditText,
-            EditCommand::CutInsideTextObject { .. } => EditType::EditText,
-            EditCommand::CutAroundTextObject { .. } => EditType::EditText,
-            EditCommand::YankInsideTextObject { .. } => EditType::NoOp,
-            EditCommand::YankAroundTextObject { .. } => EditType::NoOp,
+            EditCommand::CopyInsidePair { .. } => EditType::EditText,
+            EditCommand::CutTextObject { .. } => EditType::EditText,
+            EditCommand::CopyTextObject { .. } => EditType::NoOp,
             EditCommand::CopyFromStart
             | EditCommand::CopyFromLineStart
             | EditCommand::CopyToEnd

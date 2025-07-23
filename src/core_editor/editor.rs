@@ -1,7 +1,7 @@
 use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
-use crate::enums::{EditType, UndoBehavior};
+use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
 use crate::{core_editor::get_local_clipboard, EditCommand};
 use std::ops::DerefMut;
 
@@ -172,20 +172,15 @@ impl Editor {
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => self.paste_from_system(),
             EditCommand::CutInsidePair { left, right } => self.cut_inside_pair(*left, *right),
-            EditCommand::YankInsidePair { left, right } => self.yank_inside_pair(*left, *right),
-            EditCommand::CutInsideTextObject { text_object } => {
-                self.cut_inside_text_object(*text_object)
+            EditCommand::CopyInsidePair { left, right } => self.yank_inside_pair(*left, *right),
+            EditCommand::CutTextObject { text_object } => {
+                self.cut_text_object(*text_object)
             },
-            EditCommand::YankInsideTextObject { text_object } => {
-                self.yank_inside_text_object(*text_object)
+            EditCommand::CopyTextObject { text_object } => {
+                self.yank_text_object(*text_object)
             }
-            EditCommand::CutAroundTextObject { text_object } => {
-                self.cut_around_text_object(*text_object)
-            },
-            EditCommand::YankAroundTextObject { text_object } => {
-                self.yank_around_text_object(*text_object)
-            }
-        }
+            ,
+                    }
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
             self.selection_anchor = None;
         }
@@ -386,95 +381,44 @@ impl Editor {
 
     fn cut_word_left(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let left_index = self.line_buffer.word_left_index();
-        if left_index < insertion_offset {
-            let cut_range = left_index..insertion_offset;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[cut_range.clone()],
-                ClipboardMode::Normal,
-            );
-            self.line_buffer.clear_range(cut_range);
-            self.line_buffer.set_insertion_point(left_index);
-        }
+        let word_start = self.line_buffer.word_left_index();
+        self.cut_range(word_start..insertion_offset);
     }
 
     fn cut_big_word_left(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let left_index = self.line_buffer.big_word_left_index();
-        if left_index < insertion_offset {
-            let cut_range = left_index..insertion_offset;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[cut_range.clone()],
-                ClipboardMode::Normal,
-            );
-            self.line_buffer.clear_range(cut_range);
-            self.line_buffer.set_insertion_point(left_index);
-        }
+        let big_word_start = self.line_buffer.big_word_left_index();
+        self.cut_range(big_word_start..insertion_offset);
     }
 
     fn cut_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let right_index = self.line_buffer.word_right_index();
-        if right_index > insertion_offset {
-            let cut_range = insertion_offset..right_index;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[cut_range.clone()],
-                ClipboardMode::Normal,
-            );
-            self.line_buffer.clear_range(cut_range);
-        }
+        let word_end = self.line_buffer.word_right_index();
+        self.cut_range(insertion_offset..word_end);
     }
 
     fn cut_big_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let right_index = self.line_buffer.next_whitespace();
-        if right_index > insertion_offset {
-            let cut_range = insertion_offset..right_index;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[cut_range.clone()],
-                ClipboardMode::Normal,
-            );
-            self.line_buffer.clear_range(cut_range);
-        }
+        let big_word_end = self.line_buffer.next_whitespace();
+        self.cut_range(insertion_offset..big_word_end);
     }
 
     fn cut_word_right_to_next(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let right_index = self.line_buffer.word_right_start_index();
-        if right_index > insertion_offset {
-            let cut_range = insertion_offset..right_index;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[cut_range.clone()],
-                ClipboardMode::Normal,
-            );
-            self.line_buffer.clear_range(cut_range);
-        }
+        let next_word_start = self.line_buffer.word_right_start_index();
+        self.cut_range(insertion_offset..next_word_start);
     }
 
     fn cut_big_word_right_to_next(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let right_index = self.line_buffer.big_word_right_start_index();
-        if right_index > insertion_offset {
-            let cut_range = insertion_offset..right_index;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[cut_range.clone()],
-                ClipboardMode::Normal,
-            );
-            self.line_buffer.clear_range(cut_range);
-        }
+        let next_big_word_start = self.line_buffer.big_word_right_start_index();
+        self.cut_range(insertion_offset..next_big_word_start);
     }
 
     fn cut_char(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let right_index = self.line_buffer.grapheme_right_index();
-        if right_index > insertion_offset {
-            let cut_range = insertion_offset..right_index;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[cut_range.clone()],
-                ClipboardMode::Normal,
-            );
-            self.line_buffer.clear_range(cut_range);
-        }
+        let next_char = self.line_buffer.grapheme_right_index();
+        self.cut_range(insertion_offset..next_char);
     }
 
     fn insert_cut_buffer_before(&mut self) {
@@ -604,18 +548,13 @@ impl Editor {
     #[cfg(feature = "system_clipboard")]
     fn cut_selection_to_system(&mut self) {
         if let Some((start, end)) = self.get_selection() {
-            let cut_slice = &self.line_buffer.get_buffer()[start..end];
-            self.system_clipboard.set(cut_slice, ClipboardMode::Normal);
-            self.line_buffer.clear_range_safe(start..end);
-            self.selection_anchor = None;
+            self.cut_range(start..end);
         }
     }
 
     fn cut_selection_to_cut_buffer(&mut self) {
         if let Some((start, end)) = self.get_selection() {
-            let cut_slice = &self.line_buffer.get_buffer()[start..end];
-            self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
-            self.line_buffer.clear_range_safe(start..end);
+            self.cut_range(start..end);
             self.selection_anchor = None;
         }
     }
@@ -738,16 +677,18 @@ impl Editor {
     }
 
     fn cut_range(&mut self, range: std::ops::Range<usize>) {
-        self.yank_range(range.clone());
-        self.line_buffer.clear_range_safe(range.clone());
-        // Redundant as clear_range_safe should place insertion point at
-        // start of clear range but this ensures it's in the right place
-        self.line_buffer.set_insertion_point(range.start);
+        if range.start < range.end {
+            self.yank_range(range.clone());
+            self.line_buffer.clear_range_safe(range.clone());
+            // Redundant as clear_range_safe should place insertion point at
+            // start of clear range but this ensures it's in the right place
+            self.line_buffer.set_insertion_point(range.start);
+        }
     }
 
     fn yank_range(&mut self, range: std::ops::Range<usize>) {
-        let slice = &self.line_buffer.get_buffer()[range];
-        if !slice.is_empty() {
+        if range.start < range.end {
+            let slice = &self.line_buffer.get_buffer()[range];
             self.cut_buffer.set(slice, ClipboardMode::Normal);
         }
     }
@@ -773,34 +714,30 @@ impl Editor {
     }
 
     /// Get the bounds for a text object operation
-    fn text_object_range(&self, text_object: char, around: bool) -> Option<std::ops::Range<usize>> {
-
-        match text_object {
-            'w' => {
-                if self.line_buffer.is_in_whitespace_block() {
+    fn text_object_range(&self, text_object: TextObject) -> Option<std::ops::Range<usize>> {
+        match text_object.object_type {
+            TextObjectType::Word => {
+                if self.line_buffer.in_whitespace_block() {
                     Some(self.line_buffer.current_whitespace_range())
                 } else {
                     let word_range = self.line_buffer.current_word_range();
-                    if around {
-                        self.expand_range_with_whitespace(word_range)
-                    } else {
-                        Some(word_range)
+                    match text_object.scope {
+                        TextObjectScope::Inner => Some(word_range),
+                        TextObjectScope::Around => self.expand_range_with_whitespace(word_range),
                     }
                 }
             }
-            'W' => {
-                if self.line_buffer.is_in_whitespace_block() {
+            TextObjectType::BigWord => {
+                if self.line_buffer.in_whitespace_block() {
                     Some(self.line_buffer.current_whitespace_range())
                 } else {
                     let big_word_range = self.current_big_word_range();
-                    if around {
-                        self.expand_range_with_whitespace(big_word_range)
-                    } else {
-                        Some(big_word_range)
+                    match text_object.scope {
+                        TextObjectScope::Inner => Some(big_word_range),
+                        TextObjectScope::Around => self.expand_range_with_whitespace(big_word_range),
                     }
                 }
             }
-            _ => None, // Unsupported text object
         }
     }
 
@@ -866,26 +803,14 @@ impl Editor {
         Some(start..end)
     }
 
-    fn cut_inside_text_object(&mut self, text_object: char) {
-        if let Some(range) = self.text_object_range(text_object, false) {
+    fn cut_text_object(&mut self, text_object: TextObject) {
+        if let Some(range) = self.text_object_range(text_object) {
             self.cut_range(range);
         }
     }
 
-    fn yank_inside_text_object(&mut self, text_object: char) {
-        if let Some(range) = self.text_object_range(text_object, false) {
-            self.yank_range(range)
-        }
-    }
-
-    fn cut_around_text_object(&mut self, text_object: char) {
-        if let Some(range) = self.text_object_range(text_object, true) {
-            self.cut_range(range);
-        }
-    }
-
-    fn yank_around_text_object(&mut self, text_object: char) {
-        if let Some(range) = self.text_object_range(text_object, true) {
+    fn yank_text_object(&mut self, text_object: TextObject) {
+        if let Some(range) = self.text_object_range(text_object) {
             self.yank_range(range);
         }
     }
@@ -910,118 +835,68 @@ impl Editor {
             start
         };
         let copy_range = start_offset..previous_offset;
-        let copy_slice = &self.line_buffer.get_buffer()[copy_range];
-        if !copy_slice.is_empty() {
-            self.cut_buffer.set(copy_slice, ClipboardMode::Normal);
-        }
+        self.yank_range(copy_range);
     }
 
     pub(crate) fn copy_from_end(&mut self) {
-        let copy_slice = &self.line_buffer.get_buffer()[self.line_buffer.insertion_point()..];
-        if !copy_slice.is_empty() {
-            self.cut_buffer.set(copy_slice, ClipboardMode::Normal);
-        }
+        let copy_range = self.line_buffer.insertion_point()..self.line_buffer.len();
+        self.yank_range(copy_range);
     }
 
     pub(crate) fn copy_to_line_end(&mut self) {
-        let copy_slice = &self.line_buffer.get_buffer()
-            [self.line_buffer.insertion_point()..self.line_buffer.find_current_line_end()];
-        if !copy_slice.is_empty() {
-            self.cut_buffer.set(copy_slice, ClipboardMode::Normal);
-        }
+        let copy_range = self.line_buffer.insertion_point()..self.line_buffer.find_current_line_end();
+        self.yank_range(copy_range);
     }
 
     pub(crate) fn copy_word_left(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let left_index = self.line_buffer.word_left_index();
-        if left_index < insertion_offset {
-            let copy_range = left_index..insertion_offset;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[copy_range],
-                ClipboardMode::Normal,
-            );
-        }
+        let word_start = self.line_buffer.word_left_index();
+        self.yank_range(word_start..insertion_offset);
     }
 
     pub(crate) fn copy_big_word_left(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let left_index = self.line_buffer.big_word_left_index();
-        if left_index < insertion_offset {
-            let copy_range = left_index..insertion_offset;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[copy_range],
-                ClipboardMode::Normal,
-            );
-        }
+        let big_word_start = self.line_buffer.big_word_left_index();
+        self.yank_range(big_word_start..insertion_offset);
     }
 
     pub(crate) fn copy_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let right_index = self.line_buffer.word_right_index();
-        if right_index > insertion_offset {
-            let copy_range = insertion_offset..right_index;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[copy_range],
-                ClipboardMode::Normal,
-            );
-        }
+        let word_end = self.line_buffer.word_right_index();
+        self.yank_range(insertion_offset..word_end);
     }
 
     pub(crate) fn copy_big_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let right_index = self.line_buffer.next_whitespace();
-        if right_index > insertion_offset {
-            let copy_range = insertion_offset..right_index;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[copy_range],
-                ClipboardMode::Normal,
-            );
-        }
+        let big_word_end = self.line_buffer.next_whitespace();
+        self.yank_range(insertion_offset..big_word_end);
     }
 
     pub(crate) fn copy_word_right_to_next(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let right_index = self.line_buffer.word_right_start_index();
-        if right_index > insertion_offset {
-            let copy_range = insertion_offset..right_index;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[copy_range],
-                ClipboardMode::Normal,
-            );
-        }
+        let next_word_start = self.line_buffer.word_right_start_index();
+        self.yank_range(insertion_offset..next_word_start);
     }
 
     pub(crate) fn copy_big_word_right_to_next(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let right_index = self.line_buffer.big_word_right_start_index();
-        if right_index > insertion_offset {
-            let copy_range = insertion_offset..right_index;
-            self.cut_buffer.set(
-                &self.line_buffer.get_buffer()[copy_range],
-                ClipboardMode::Normal,
-            );
-        }
+        let next_big_word_start = self.line_buffer.big_word_right_start_index();
+        self.yank_range(insertion_offset..next_big_word_start);
     }
 
     pub(crate) fn copy_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
         if let Some(index) = self.line_buffer.find_char_right(c, current_line) {
             let extra = if before_char { 0 } else { c.len_utf8() };
-            let copy_slice =
-                &self.line_buffer.get_buffer()[self.line_buffer.insertion_point()..index + extra];
-            if !copy_slice.is_empty() {
-                self.cut_buffer.set(copy_slice, ClipboardMode::Normal);
-            }
+            let copy_range = self.line_buffer.insertion_point()..index + extra;
+            self.yank_range(copy_range);
         }
     }
 
     pub(crate) fn copy_left_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
         if let Some(index) = self.line_buffer.find_char_left(c, current_line) {
             let extra = if before_char { c.len_utf8() } else { 0 };
-            let copy_slice =
-                &self.line_buffer.get_buffer()[index + extra..self.line_buffer.insertion_point()];
-            if !copy_slice.is_empty() {
-                self.cut_buffer.set(copy_slice, ClipboardMode::Normal);
-            }
+            let copy_range = index + extra..self.line_buffer.insertion_point();
+            self.yank_range(copy_range);
         }
     }
 
@@ -1510,7 +1385,7 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_inside_text_object('w');
+        editor.cut_text_object(TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word });
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
@@ -1527,7 +1402,7 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.yank_inside_text_object('w');
+        editor.yank_text_object(TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word });
         assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
         assert_eq!(editor.cut_buffer.get().0, expected_yank);
@@ -1556,7 +1431,7 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_around_text_object('w');
+        editor.cut_text_object(TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Word });
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
@@ -1573,7 +1448,7 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.yank_around_text_object('w');
+        editor.yank_text_object(TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Word });
         assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
         assert_eq!(editor.cut_buffer.get().0, expected_yank);
@@ -1593,7 +1468,7 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_inside_text_object('W');
+        editor.cut_text_object(TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord });
 
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
@@ -1615,27 +1490,27 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_inside_text_object('w');
+        editor.cut_text_object(TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word });
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
     }
 
     #[rstest]
-    #[case("hello-world test", 2, 'w', "-world test", "hello")] // small word gets just "hello"
-    #[case("hello-world test", 2, 'W', " test", "hello-world")] // big word gets "hello-world"
-    #[case("test@example.com", 6, 'w', "test@", "example.com")] // small word in email (UAX#29 extends across punct)
-    #[case("test@example.com", 6, 'W', "", "test@example.com")] // big word gets entire email
+    #[case("hello-world test", 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "-world test", "hello")] // small word gets just "hello"
+    #[case("hello-world test", 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord }, " test", "hello-world")] // big word gets "hello-word"
+    #[case("test@example.com", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "test@", "example.com")] // small word in email (UAX#29 extends across punct)
+    #[case("test@example.com", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord }, "", "test@example.com")] // big word gets entire email
     fn test_word_vs_big_word_comparison(
         #[case] input: &str,
         #[case] cursor_pos: usize,
-        #[case] text_object: char,
+        #[case] text_object: TextObject,
         #[case] expected_buffer: &str,
         #[case] expected_cut: &str,
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_inside_text_object(text_object);
+        editor.cut_text_object(text_object);
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
     }
@@ -1657,7 +1532,7 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_inside_text_object('w');
+        editor.cut_text_object(TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word });
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
     }
 
@@ -1677,7 +1552,7 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_around_text_object('w');
+        editor.cut_text_object(TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Word });
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
     }
 
@@ -1687,7 +1562,7 @@ mod test {
         editor.move_to_position(10, false); // Position after the emoji
         editor.move_to_position(6, false);  // Move to the emoji
 
-        editor.cut_inside_text_object('w'); // Cut the emoji
+        editor.cut_text_object(TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }); // Cut the emoji
 
         assert!(editor.line_buffer.is_valid()); // Should not panic or be invalid
     }
@@ -1695,30 +1570,30 @@ mod test {
 
     #[rstest]
     // Test operations when cursor is IN WHITESPACE (middle of spaces)
-    #[case("hello world test", 5, 'w', "helloworld test", 5, " ")] // single space
-    #[case("hello  world", 6, 'w', "helloworld", 5, "  ")] // multiple spaces, cursor on second
-    #[case("hello   world", 7, 'w', "helloworld", 5, "   ")] // multiple spaces, cursor on middle
-    #[case("   hello", 1, 'w', "hello", 0, "   ")] // leading spaces, cursor on middle
-    #[case("hello   ", 7, 'w', "hello", 5, "   ")] // trailing spaces, cursor on middle
-    #[case("hello\tworld", 5, 'w', "helloworld", 5, "\t")] // tab character
-    #[case("hello\nworld", 5, 'w', "helloworld", 5, "\n")] // newline character
-    #[case("hello world test", 5, 'W', "helloworld test", 5, " ")] // single space (big word)
-    #[case("hello  world", 6, 'W', "helloworld", 5, "  ")] // multiple spaces (big word)
-    #[case("  ", 0, 'w', "", 0, "  ")] // only whitespace at start
-    #[case("  ", 1, 'w', "", 0, "  ")] // only whitespace at end
-    #[case("hello  ", 5, 'w', "hello", 5, "  ")] // trailing whitespace at string end
-    #[case("  hello", 0, 'w', "hello", 0, "  ")] // leading whitespace at string start
+    #[case("hello world test", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld test", 5, " ")] // single space
+    #[case("hello  world", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld", 5, "  ")] // multiple spaces, cursor on second
+    #[case("hello   world", 7, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld", 5, "   ")] // multiple spaces, cursor on middle
+    #[case("   hello", 1, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "hello", 0, "   ")] // leading spaces, cursor on middle
+    #[case("hello   ", 7, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "hello", 5, "   ")] // trailing spaces, cursor on middle
+    #[case("hello\tworld", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld", 5, "\t")] // tab character
+    #[case("hello\nworld", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld", 5, "\n")] // newline character
+    #[case("hello world test", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord }, "helloworld test", 5, " ")] // single space (big word)
+    #[case("hello  world", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord }, "helloworld", 5, "  ")] // multiple spaces (big word)
+    #[case("  ", 0, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "", 0, "  ")] // only whitespace at start
+    #[case("  ", 1, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "", 0, "  ")] // only whitespace at end
+    #[case("hello  ", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "hello", 5, "  ")] // trailing whitespace at string end
+    #[case("  hello", 0, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "hello", 0, "  ")] // leading whitespace at string start
     fn test_text_object_in_whitespace(
         #[case] input: &str,
         #[case] cursor_pos: usize,
-        #[case] text_object: char,
+        #[case] text_object: TextObject,
         #[case] expected_buffer: &str,
         #[case] expected_cursor: usize,
         #[case] expected_cut: &str,
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_inside_text_object(text_object);
+        editor.cut_text_object(text_object);
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
         assert_eq!(editor.cut_buffer.get().0, expected_cut);

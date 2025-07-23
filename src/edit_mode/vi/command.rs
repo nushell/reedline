@@ -1,6 +1,15 @@
 use super::{motion::Motion, motion::ViCharSearch, parser::ReedlineOption, ViMode};
 use crate::{EditCommand, ReedlineEvent, Vi};
+use crate::enums::{TextObject, TextObjectScope, TextObjectType};
 use std::iter::Peekable;
+
+fn char_to_text_object(c: char, scope: TextObjectScope) -> Option<TextObject> {
+    match c {
+        'w' => Some(TextObject { scope, object_type: TextObjectType::Word }),
+        'W' => Some(TextObject { scope, object_type: TextObjectType::BigWord }),
+        _ => None,
+    }
+}
 
 pub fn parse_command<'iter, I>(input: &mut Peekable<I>) -> Option<Command>
 where
@@ -12,16 +21,21 @@ where
             // Checking for "di(" or "diw" etc.
             if let Some('i') = input.peek() {
                 let _ = input.next();
-                input.next().map(|c| {
-                    if let Some((left, right)) = bracket_pair_for(*c) {
-                        Command::DeleteInsidePair { left, right }
-                    } else {
-                        Command::DeleteInsideTextObject { text_object: *c }
-                    }
+                input.next().and_then(|c| {
+                    bracket_pair_for(*c)
+                    .map(|(left, right)|
+                        Command::DeleteInsidePair { left, right })
+                    .or_else(|| {
+                        char_to_text_object(*c, TextObjectScope::Inner)
+                        .map(|text_object| Command::DeleteTextObject { text_object })
+                    })
                 })
+
             } else if let Some('a') = input.peek() {
                 let _ = input.next();
-                input.next().map(|c| Command::DeleteAroundTextObject { text_object: *c })
+                input.next().and_then(|c| {
+                    char_to_text_object(*c, TextObjectScope::Around).map(|text_object| Command::DeleteTextObject { text_object })
+                })
             } else {
                 Some(Command::Delete)
             }
@@ -31,16 +45,19 @@ where
             let _ = input.next();
             if let Some('i') = input.peek() {
                 let _ = input.next();
-                input.next().map(|c| {
-                    if let Some((left, right)) = bracket_pair_for(*c) {
-                        Command::YankInsidePair { left, right }
-                    } else {
-                        Command::YankInsideTextObject { text_object: *c }
-                    }
+                input.next().and_then(|c| {
+                    bracket_pair_for(*c)
+                    .map(|(left, right)|  Command::YankInsidePair { left, right })
+                    .or_else(|| {
+                        char_to_text_object(*c, TextObjectScope::Inner)
+                        .map(|text_object|  Command::YankTextObject { text_object })
+                    })
                 })
             } else if let Some('a') = input.peek() {
                 let _ = input.next();
-                input.next().map(|c| Command::YankAroundTextObject { text_object: *c })
+                input.next().and_then(|c| {
+                    char_to_text_object(*c, TextObjectScope::Around).map(|text_object| Command::YankTextObject { text_object })
+                })
             } else {
                 Some(Command::Yank)
             }
@@ -70,16 +87,19 @@ where
             let _ = input.next();
             if let Some('i') = input.peek() {
                 let _ = input.next();
-                input.next().map(|c| {
-                    if let Some((left, right)) = bracket_pair_for(*c) {
-                        Command::ChangeInsidePair { left, right }
-                    } else {
-                        Command::ChangeInsideTextObject { text_object: *c }
-                    }
+                input.next().and_then(|c| {
+                    bracket_pair_for(*c)
+                    .map(|(left, right)| Command::ChangeInsidePair { left, right })
+                    .or_else(|| {
+                        char_to_text_object(*c, TextObjectScope::Inner)
+                        .map(|text_object|Command::ChangeTextObject { text_object })
+                    })
                 })
             } else if let Some('a') = input.peek() {
                 let _ = input.next();
-                input.next().map(|c| Command::ChangeAroundTextObject { text_object: *c })
+                input.next().and_then(|c| {
+                    char_to_text_object(*c, TextObjectScope::Around).map(|text_object| Command::ChangeTextObject { text_object })
+                })
             } else {
                 Some(Command::Change)
             }
@@ -165,12 +185,9 @@ pub enum Command {
     ChangeInsidePair { left: char, right: char },
     DeleteInsidePair { left: char, right: char },
     YankInsidePair { left: char, right: char },
-    ChangeInsideTextObject { text_object: char },
-    YankInsideTextObject { text_object: char },
-    DeleteInsideTextObject { text_object: char },
-    ChangeAroundTextObject { text_object: char },
-    YankAroundTextObject { text_object: char },
-    DeleteAroundTextObject { text_object: char },
+    ChangeTextObject { text_object: TextObject },
+    YankTextObject { text_object: TextObject },
+    DeleteTextObject { text_object: TextObject },
     SwapCursorAndAnchor,
 }
 
@@ -246,38 +263,23 @@ impl Command {
                 })]
             }
             Self::YankInsidePair { left, right } => {
-                vec![ReedlineOption::Edit(EditCommand::YankInsidePair {
+                vec![ReedlineOption::Edit(EditCommand::CopyInsidePair {
                     left: *left,
                     right: *right,
                 })]
             }
-            Self::ChangeInsideTextObject { text_object } => {
-                vec![ReedlineOption::Edit(EditCommand::CutInsideTextObject {
+            Self::ChangeTextObject { text_object } => {
+                vec![ReedlineOption::Edit(EditCommand::CutTextObject {
                     text_object: *text_object
                 })]
             }
-            Self::YankInsideTextObject { text_object } => {
-                vec![ReedlineOption::Edit(EditCommand::YankInsideTextObject {
+            Self::YankTextObject { text_object } => {
+                vec![ReedlineOption::Edit(EditCommand::CopyTextObject {
                     text_object: *text_object
                 })]
             }
-            Self::DeleteInsideTextObject { text_object } => {
-                vec![ReedlineOption::Edit(EditCommand::CutInsideTextObject {
-                    text_object: *text_object
-                })]
-            }
-            Self::ChangeAroundTextObject { text_object } => {
-                vec![ReedlineOption::Edit(EditCommand::CutAroundTextObject {
-                    text_object: *text_object
-                })]
-            }
-            Self::YankAroundTextObject { text_object } => {
-                vec![ReedlineOption::Edit(EditCommand::YankAroundTextObject {
-                    text_object: *text_object
-                })]
-            }
-            Self::DeleteAroundTextObject { text_object } => {
-                vec![ReedlineOption::Edit(EditCommand::CutAroundTextObject {
+            Self::DeleteTextObject { text_object } => {
+                vec![ReedlineOption::Edit(EditCommand::CutTextObject {
                     text_object: *text_object
                 })]
             }
@@ -287,7 +289,7 @@ impl Command {
         }
     }
 
-    pub fn to_reedline_with_motion(
+     pub fn to_reedline_with_motion(
         &self,
         motion: &Motion,
         vi_state: &mut Vi,
