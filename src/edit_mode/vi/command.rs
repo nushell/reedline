@@ -7,6 +7,8 @@ fn char_to_text_object(c: char, scope: TextObjectScope) -> Option<TextObject> {
     match c {
         'w' => Some(TextObject { scope, object_type: TextObjectType::Word }),
         'W' => Some(TextObject { scope, object_type: TextObjectType::BigWord }),
+        'b' => Some(TextObject { scope, object_type: TextObjectType::Brackets }),
+        'q' => Some(TextObject { scope, object_type: TextObjectType::Quote }),
         _ => None,
     }
 }

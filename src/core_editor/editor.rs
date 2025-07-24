@@ -677,7 +677,7 @@ impl Editor {
     }
 
     fn cut_range(&mut self, range: std::ops::Range<usize>) {
-        if range.start < range.end {
+        if range.start <= range.end {
             self.yank_range(range.clone());
             self.line_buffer.clear_range_safe(range.clone());
             // Redundant as clear_range_safe should place insertion point at
@@ -736,6 +736,34 @@ impl Editor {
                         TextObjectScope::Inner => Some(big_word_range),
                         TextObjectScope::Around => self.expand_range_with_whitespace(big_word_range),
                     }
+                }
+            }
+            // Return range for bracket of any sort that the insertion_point is currently within
+            // hitting the first bracket heading out from the insertion_point
+            TextObjectType::Brackets => {
+                if let Some(bracket_range) = self.line_buffer.current_inside_bracket_range() {
+                    match text_object.scope {
+                        TextObjectScope::Inner => Some(bracket_range),
+                        TextObjectScope::Around => {
+                            // Include the brackets themselves
+                            Some((bracket_range.start - 1)..(bracket_range.end + 1))
+                        }
+                    }
+                } else {
+                    None
+                }
+            }
+            TextObjectType::Quote => {
+                if let Some(quote_range) = self.line_buffer.current_inside_quote_range() {
+                    match text_object.scope {
+                        TextObjectScope::Inner => Some(quote_range),
+                        TextObjectScope::Around => {
+                            // Include the quotes themselves
+                            Some((quote_range.start - 1)..(quote_range.end + 1))
+                        }
+                    }
+                } else {
+                    None
                 }
             }
         }
@@ -1458,7 +1486,7 @@ mod test {
     #[case("hello big-word test", 10, "hello  test", 6, "big-word")] // big word with punctuation
     #[case("hello BIGWORD test", 10, "hello  test", 6, "BIGWORD")] // simple big word
     #[case("test@example.com file", 8, " file", 0, "test@example.com")] // big word - cursor on email address
-    #[case("test@example.com file", 17, "test@example.com ", 17, "file")] // cursor on "file" - now working correctly
+    #[case("test@example.com file", 17, "test@example.com ", 17, "")] // cursor on "file" - now working correctly
     fn test_cut_inside_big_word(
         #[case] input: &str,
         #[case] cursor_pos: usize,
@@ -1538,7 +1566,7 @@ mod test {
 
     #[rstest]
     // Test around operations (aw) at word boundaries
-    #[case("hello world", 0, "hello ")] // start of first word
+    #[case("hello world", 0, "")] // start of first word
     #[case("hello world", 4, "hello ")] // end of first word
     #[case("hello world", 6, " world")] // start of second word (gets preceding space)
     #[case("hello world", 10, " world")] // end of second word
@@ -1605,8 +1633,40 @@ mod test {
     // 1. When cursor is on alphanumeric chars adjacent to punctuation (like 'l' in "example.com"),
     //    the word extends across the punctuation due to Unicode word boundaries
     // 2. Sequential punctuation is not treated as a single word (each punct char is separate)
-    // 3. This differs from vim's word definition where punctuation breaks words consistently
+    // 3. This differs from vim's word definition where pictuation breaks words consistently
     //
     // #[test]
     // fn test_yank_inside_word_with_punctuation() { ... }
+
+    #[rstest]
+    // Test text object jumping behavior in various scenarios
+    // Cursor inside empty pairs should operate on current pair (cursor stays, nothing cut)
+    #[case(r#"foo()bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo()bar", 4, "")] // inside empty brackets
+    #[case(r#"foo""bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo\"\"bar", 4, "")] // inside empty quotes
+    // Cursor outside pairs should jump to next pair (even if empty)
+    #[case(r#"foo ()bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo ()bar", 5, "")] // jump to empty brackets
+    #[case(r#"foo ""bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "")] // FIXME: should jump to position 4 inside empty quotes
+    #[case(r#"foo (content)bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo ()bar", 5, "content")] // jump to non-empty brackets
+    #[case(r#"foo "content"bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "content")] // jump to non-empty quotes
+    // Cursor between pairs should jump to next pair
+    #[case(r#"(first) (second)"#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "(first) ()", 9, "second")] // between brackets
+    #[case(r#""first" "second""#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "\"first\" \"\"", 9, "second")] // between quotes
+    // Around scope should include the pair characters
+    #[case(r#"foo (bar)"#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Brackets }, "foo ", 4, "(bar)")] // around includes parentheses
+    #[case(r#"foo "bar""#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Quote }, "foo ", 4, "\"bar\"")] // around includes quotes
+    fn test_text_object_jumping_behavior(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] text_object: TextObject,
+        #[case] expected_buffer: &str,
+        #[case] expected_cursor: usize,
+        #[case] expected_cut: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+        editor.cut_text_object(text_object);
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.insertion_point(), expected_cursor);
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
 }

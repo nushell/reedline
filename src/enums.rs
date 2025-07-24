@@ -30,6 +30,10 @@ pub enum TextObjectType {
     Word,
     /// WORD (delimited only by whitespace)
     BigWord,
+    /// (, ), [, ], {, }
+    Brackets,
+    /// ", ', `
+    Quote,
 }
 
 /// Text objects that can be operated on with vim-style commands

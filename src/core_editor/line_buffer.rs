@@ -875,6 +875,145 @@ impl LineBuffer {
 
         Some((left_index, scan_start + right_offset))
     }
+
+
+    /// Return range of current bracket text object
+    pub fn current_inside_bracket_range(&self) -> Option<Range<usize>> {
+        // First, check if we're currently inside any bracket pair
+        if let Some(inside_range) = self.find_current_inside_bracket_pair() {
+            return Some(inside_range);
+        }
+
+        // If not inside any pair, jump forward to next bracket pair
+        self.find_inside_next_bracket_pair()
+    }
+
+    /// Check if cursor is currently inside a bracket pair
+    fn find_current_inside_bracket_pair(&self) -> Option<Range<usize>> {
+        const BRACKET_PAIRS: &[(char, char)] = &[
+            ('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')
+        ];
+
+        let mut innermost_pair: Option<(Range<usize>, usize)> = None;
+
+        // Check all bracket types and find the innermost pair containing the cursor
+        for &(left, right) in BRACKET_PAIRS {
+            if let Some((start, end)) = self.find_matching_pair(left, right, self.insertion_point) {
+                // Check if cursor is inside this pair OR on the bracket boundaries
+                if start <= self.insertion_point && self.insertion_point <= end {
+                    let inside_range = (start + left.len_utf8())..end;
+                    let range_size = end - start;
+
+                    // Keep track of the smallest (innermost) range
+                    match innermost_pair {
+                        None => innermost_pair = Some((inside_range, range_size)),
+                        Some((_, current_size)) if range_size < current_size => {
+                            innermost_pair = Some((inside_range, range_size));
+                        }
+                        _ => {} // Keep the current innermost
+                    }
+                }
+            }
+        }
+
+        innermost_pair.map(|(range, _)| range)
+    }
+
+    /// Jump forward to find next bracket pair
+    fn find_inside_next_bracket_pair(&self) -> Option<Range<usize>> {
+        const OPENING_BRACKETS: &[char] = &['(', '[', '{', '<'];
+
+        // Find bracket positions using grapheme indices (compatible with insertion_point)
+        for (grapheme_pos, grapheme_str) in self.lines.grapheme_indices(true) {
+            if grapheme_pos >= self.insertion_point {
+                if let Some(c) = grapheme_str.chars().next() {
+                    if OPENING_BRACKETS.contains(&c) {
+                        // Found an opening bracket, find its matching closing bracket
+                        let right_char = match c {
+                            '(' => ')',
+                            '[' => ']',
+                            '{' => '}',
+                            '<' => '>',
+                            _ => continue,
+                        };
+
+                        if let Some((start, end)) = self.find_matching_pair(c, right_char, grapheme_pos) {
+                            return Some((start + c.len_utf8())..end);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Return range of current quote text object
+    pub fn current_inside_quote_range(&self) -> Option<Range<usize>> {
+        // First, check if we're currently inside any quote pair
+        if let Some(inside_range) = self.find_current_inside_quote_pair() {
+            return Some(inside_range);
+        }
+
+        // If not inside any pair, jump forward to next quote pair
+        self.find_inside_next_quote_pair()
+    }
+
+    /// Check if cursor is currently inside a quote pair
+    fn find_current_inside_quote_pair(&self) -> Option<Range<usize>> {
+        const QUOTE_CHARS: &[char] = &['"', '\'', '`'];
+
+        let mut innermost_pair: Option<(Range<usize>, usize)> = None;
+
+        // Check all quote types and find the innermost pair containing the cursor
+        for &quote_char in QUOTE_CHARS {
+            // First check for consecutive quotes (empty quotes) at cursor position
+            if self.insertion_point > 0 &&
+               self.insertion_point < self.lines.len() &&
+               self.lines.chars().nth(self.insertion_point - 1) == Some(quote_char) &&
+               self.lines.chars().nth(self.insertion_point) == Some(quote_char) {
+                // Found empty quotes at cursor position
+                return Some(self.insertion_point..self.insertion_point);
+            }
+
+            if let Some((start, end)) = self.find_matching_pair(quote_char, quote_char, self.insertion_point) {
+                // Check if cursor is inside this pair OR on the quote boundaries
+                if start <= self.insertion_point && self.insertion_point <= end {
+                    let inside_range = (start + quote_char.len_utf8())..end;
+                    let range_size = end - start;
+
+                    // Keep track of the smallest (innermost) range
+                    match innermost_pair {
+                        None => innermost_pair = Some((inside_range, range_size)),
+                        Some((_, current_size)) if range_size < current_size => {
+                            innermost_pair = Some((inside_range, range_size));
+                        }
+                        _ => {} // Keep the current innermost
+                    }
+                }
+            }
+        }
+
+        innermost_pair.map(|(range, _)| range)
+    }
+
+    /// Jump forward to find next quote pair
+    fn find_inside_next_quote_pair(&self) -> Option<Range<usize>> {
+        const QUOTE_CHARS: &[char] = &['"', '\'', '`'];
+
+        self.lines[self.insertion_point..]
+            .grapheme_indices(true)
+            .find_map(|(grapheme_pos, grapheme_str)| {
+                let c = grapheme_str.chars().next()?;
+                if !QUOTE_CHARS.contains(&c) {
+                    return None;
+                }
+
+                let (start, end) = self.find_matching_pair(c, c, grapheme_pos)?;
+                let inside_start = start + c.len_utf8();
+                let inside_end = end;
+                Some(inside_start..inside_end)
+            })
+    }
 }
 
 /// Helper function for [`LineBuffer::find_matching_pair`]
@@ -1788,5 +1927,115 @@ mod test {
             input,
             cursor
         );
+    }
+
+    // Tests for bracket text object functionality
+    #[rstest]
+    // Basic bracket pairs - cursor inside
+    #[case("foo(bar)baz", 5, Some(4..7))] // cursor on 'a' in "bar"
+    #[case("foo[bar]baz", 5, Some(4..7))] // square brackets
+    #[case("foo{bar}baz", 5, Some(4..7))] // curly brackets
+    #[case("foo<bar>baz", 5, Some(4..7))] // angle brackets
+    #[case("foo(bar(baz)qux)end", 9, Some(8..11))] // cursor on 'a' in "baz", finds inner
+    #[case("foo(bar(baz)qux)end", 5, Some(4..15))] // cursor on 'a' in "bar", finds outer
+    #[case("foo([bar])baz", 6, Some(5..8))] // mixed bracket types, cursor on 'a' - should find [bar], not (...)
+    #[case("foo[(bar)]baz", 6, Some(5..8))] // reversed nesting, cursor on 'a' - should find (bar), not [...]
+    #[case("foo(bar)baz", 4, Some(4..7))] // cursor just after opening bracket
+    #[case("foo(bar)baz", 7, Some(4..7))] // cursor just before closing bracket
+    #[case("foo()bar", 4, Some(4..4))] // empty brackets
+    #[case("foo[]bar", 4, Some(4..4))] // empty square brackets
+    #[case("foo (bar) baz", 1, Some(5..8))] // cursor before brackets, should jump forward
+    #[case("foo bar (baz)", 2, Some(9..12))] // cursor in middle, should jump to next pair
+    #[case("start (first) (second)", 2, Some(7..12))] // should find "first"
+    #[case("(content)", 2, Some(1..8))] // brackets at buffer start/end
+    #[case("a(b)c", 2, Some(2..3))] // minimal case - cursor inside brackets
+    #[case("no brackets here", 5, None)] // no brackets in buffer
+    #[case("unclosed (brackets", 10, None)] // unmatched brackets
+    #[case("foo(🦀bar)baz", 7, Some(4..11))] // emoji inside brackets - cursor after emoji
+    #[case("🦀(bar)🦀", 5, Some(5..8))] // emoji outside brackets - cursor after opening bracket
+    fn test_current_inside_bracket_range(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected: Option<std::ops::Range<usize>>,
+    ) {
+        let mut buf = LineBuffer::from(input);
+        buf.set_insertion_point(cursor_pos);
+        assert_eq!(buf.current_inside_bracket_range(), expected);
+    }
+
+    // Tests for quote text object functionality
+    #[rstest]
+    // Basic quote pairs - cursor inside
+    #[case(r#"foo"bar"baz"#, 5, Some(4..7))] // cursor on 'a' in "bar"
+    #[case("foo'bar'baz", 5, Some(4..7))] // single quotes
+    #[case("foo`bar`baz", 5, Some(4..7))] // backticks
+    #[case(r#"foo"bar"'baz'"#, 5, Some(4..7))] // cursor in double quotes
+    #[case(r#"foo"bar"'baz'"#, 11, Some(9..12))] // cursor in single quotes
+    #[case(r#"foo"bar"baz"#, 4, Some(4..7))] // cursor just after opening quote
+    #[case(r#"foo"bar"baz"#, 7, None)] // cursor just before closing quote
+    #[case(r#"foo""bar"#, 4, Some(4..4))] // empty double quotes
+    #[case("foo''bar", 4, Some(4..4))] // empty single quotes
+    #[case(r#"foo "bar" baz"#, 1, Some(5..8))] // cursor before quotes, should jump forward
+    #[case(r#"foo bar "baz""#, 2, Some(9..12))] // cursor in middle, should jump to next pair
+    #[case(r#"start "first" "second""#, 2, Some(7..12))] // should find "first"
+    #[case(r#""content""#, 2, Some(1..8))] // quotes at buffer start/end
+    #[case(r#"a"b"c"#, 3, None)] // minimal case
+    #[case("no quotes here", 5, None)] // no quotes in buffer
+    #[case(r#"unclosed "quotes"#, 10, None)] // unmatched quotes (if find_matching_pair handles this)
+    #[case(r#"foo"🦀bar"baz"#, 4, Some(4..11))] // emoji inside quotes
+    #[case(r#"🦀"bar"🦀"#, 4, Some(5..8))] // emoji outside quotes
+    #[case(r#"foo ""bar"#, 2, Some(5..5))]
+    fn test_current_inside_quote_range(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected: Option<std::ops::Range<usize>>,
+    ) {
+        let mut buf = LineBuffer::from(input);
+        buf.set_insertion_point(cursor_pos);
+        assert_eq!(buf.current_inside_quote_range(), expected);
+    }
+
+    // Edge case tests for bracket boundaries and complex nesting
+    #[rstest]
+    // Cursor on bracket characters themselves
+    #[case("foo(bar)baz", 3, Some(4..7))] // cursor on opening bracket - should jump forward
+    #[case("foo(bar)baz", 8, None)] // cursor on closing bracket - no more brackets ahead
+    #[case("(a(b(c)d)e)", 6, Some(5..6))] // deeply nested, cursor on 'c'
+    #[case("(a(b(c)d)e)", 4, Some(5..6))] // cursor on 'b', should find middle level
+    #[case("(a(b(c)d)e)", 2, Some(3..8))] // cursor on 'a', should find outermost
+    #[case(r#"foo("bar")baz"#, 6, Some(4..9))] // quotes inside brackets
+    #[case(r#"foo"(bar)"baz"#, 6, Some(5..8))] // brackets inside quotes
+    #[case("", 0, None)] // empty buffer
+    #[case("(", 0, None)] // single opening bracket
+    #[case(")", 0, None)] // single closing bracket
+    #[case("())", 1, Some(1..1))] // extra closing bracket
+    fn test_bracket_edge_cases(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected: Option<std::ops::Range<usize>>,
+    ) {
+        let mut buf = LineBuffer::from(input);
+        buf.set_insertion_point(cursor_pos);
+        assert_eq!(buf.current_inside_bracket_range(), expected);
+    }
+
+    // Edge case tests for quotes
+    #[rstest]
+    // Cursor on quote characters themselves
+    #[case(r#"foo"bar"baz"#, 3, Some(4..7))] // cursor on opening quote - should jump forward
+    #[case(r#"foo"bar"baz"#, 8, None)] // cursor on closing quote - no more quotes ahead
+    #[case("", 0, None)] // empty buffer
+    #[case(r#""""#, 0, Some(1..1))] // single quote pair (empty)
+    #[case(r#"""asdf"#, 0, Some(1..1))] // unmatched quote
+    #[case(r#""foo"'bar'`baz`"#, 1, Some(1..4))] // cursor before any quotes, should find first (double)
+    #[case(r#""foo"'bar'`baz`"#, 6, Some(6..9))] // cursor between quotes, should find single quotes
+    fn test_quote_edge_cases(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected: Option<std::ops::Range<usize>>,
+    ) {
+        let mut buf = LineBuffer::from(input);
+        buf.set_insertion_point(cursor_pos);
+        assert_eq!(buf.current_inside_quote_range(), expected);
     }
 }
