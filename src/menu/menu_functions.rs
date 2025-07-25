@@ -295,6 +295,22 @@ pub fn completer_input(
     }
 }
 
+/// Find the closest index less than or equal to the current index that's a
+/// character boundary
+///
+/// This is already a method on `str`, but it's nightly-only. Once that becomes
+/// stable, this function will be removed.
+pub fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        s.len()
+    } else {
+        (1..=index)
+            .rev()
+            .find(|i| s.is_char_boundary(*i))
+            .unwrap_or(0)
+    }
+}
+
 /// Helper to accept a completion suggestion and edit the buffer
 pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
     if let Some(Suggestion {
@@ -304,8 +320,8 @@ pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
         ..
     }) = value
     {
-        let start = span.start.min(editor.line_buffer().len());
-        let end = span.end.min(editor.line_buffer().len());
+        let end = floor_char_boundary(editor.get_buffer(), span.end);
+        let start = floor_char_boundary(editor.get_buffer(), span.start).min(end);
         if append_whitespace {
             value.push(' ');
         }
@@ -325,21 +341,23 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
     if let (Some(Suggestion { value, span, .. }), Some(index)) = find_common_string(values) {
         let index = index.min(value.len());
         let matching = &value[0..index];
+        let end = floor_char_boundary(editor.get_buffer(), span.end);
+        let start = floor_char_boundary(editor.get_buffer(), span.start).min(end);
 
         // make sure that the partial completion does not overwrite user entered input
-        let extends_input = matching.starts_with(&editor.get_buffer()[span.start..span.end])
-            && matching != &editor.get_buffer()[span.start..span.end];
+        let extends_input = matching.starts_with(&editor.get_buffer()[start..end])
+            && matching != &editor.get_buffer()[start..end];
 
         if !matching.is_empty() && extends_input {
             let mut line_buffer = editor.line_buffer().clone();
-            line_buffer.replace_range(span.start..span.end, matching);
+            line_buffer.replace_range(start..end, matching);
 
-            let offset = if matching.len() < (span.end - span.start) {
+            let offset = if matching.len() < (end - start) {
                 line_buffer
                     .insertion_point()
-                    .saturating_sub((span.end - span.start) - matching.len())
+                    .saturating_sub((end - start) - matching.len())
             } else {
-                line_buffer.insertion_point() + matching.len() - (span.end - span.start)
+                line_buffer.insertion_point() + matching.len() - (end - start)
             };
 
             line_buffer.set_insertion_point(offset);
