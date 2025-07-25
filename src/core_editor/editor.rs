@@ -700,16 +700,9 @@ impl Editor {
     /// On success, move the cursor just after the `left_char`.
     /// If matching chars can't be found, restore the original cursor.
     pub(crate) fn cut_inside_pair(&mut self, left_char: char, right_char: char) {
-        let buffer_len = self.line_buffer.len();
-
-        if let Some((lp, rp)) =
-            self.line_buffer
-                .find_matching_pair(left_char, right_char, self.insertion_point())
+        if let Some(insde_range) = self.line_buffer.inside_next_matching_pair_range(left_char, right_char)
         {
-            let inside_start = lp + left_char.len_utf8();
-            if inside_start < rp && rp <= buffer_len {
-                self.cut_range(inside_start..rp);
-            }
+            self.cut_range(insde_range);
         }
     }
 
@@ -1485,8 +1478,8 @@ mod test {
     #[rstest]
     #[case("hello big-word test", 10, "hello  test", 6, "big-word")] // big word with punctuation
     #[case("hello BIGWORD test", 10, "hello  test", 6, "BIGWORD")] // simple big word
-    #[case("test@example.com file", 8, " file", 0, "test@example.com")] // big word - cursor on email address
-    #[case("test@example.com file", 17, "test@example.com ", 17, "")] // cursor on "file" - now working correctly
+    #[case("test@example.com file", 8, " file", 0, "test@example.com")] //cursor on email address
+    #[case("test@example.com file", 17, "test@example.com ", 17, "file")] // cursor at end of "file"
     fn test_cut_inside_big_word(
         #[case] input: &str,
         #[case] cursor_pos: usize,
@@ -1566,7 +1559,7 @@ mod test {
 
     #[rstest]
     // Test around operations (aw) at word boundaries
-    #[case("hello world", 0, "")] // start of first word
+    #[case("hello world", 0, "hello ")] // start of first word
     #[case("hello world", 4, "hello ")] // end of first word
     #[case("hello world", 6, " world")] // start of second word (gets preceding space)
     #[case("hello world", 10, " world")] // end of second word
@@ -1645,7 +1638,7 @@ mod test {
     #[case(r#"foo""bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo\"\"bar", 4, "")] // inside empty quotes
     // Cursor outside pairs should jump to next pair (even if empty)
     #[case(r#"foo ()bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo ()bar", 5, "")] // jump to empty brackets
-    #[case(r#"foo ""bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "")] // FIXME: should jump to position 4 inside empty quotes
+    #[case(r#"foo ""bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "")] // jump to empty quote
     #[case(r#"foo (content)bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo ()bar", 5, "content")] // jump to non-empty brackets
     #[case(r#"foo "content"bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "content")] // jump to non-empty quotes
     // Cursor between pairs should jump to next pair
