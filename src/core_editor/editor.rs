@@ -700,7 +700,7 @@ impl Editor {
     /// On success, move the cursor just after the `left_char`.
     /// If matching chars can't be found, restore the original cursor.
     pub(crate) fn cut_inside_pair(&mut self, left_char: char, right_char: char) {
-        if let Some(insde_range) = self.line_buffer.inside_next_matching_pair_range(left_char, right_char)
+        if let Some(insde_range) = self.line_buffer.inside_matching_pair_range(left_char, right_char)
         {
             self.cut_range(insde_range);
         }
@@ -925,16 +925,9 @@ impl Editor {
     /// Copies it into the cut buffer without removing anything.
     /// Leaves the buffer unchanged and restores the original cursor.
     pub(crate) fn yank_inside_pair(&mut self, left_char: char, right_char: char) {
-        let buffer_len = self.line_buffer.len();
-
-        if let Some((lp, rp)) =
-            self.line_buffer
-                .find_matching_pair(left_char, right_char, self.insertion_point())
+        if let Some(pair_range) = self.line_buffer.inside_matching_pair_range(left_char, right_char)
         {
-            let inside_start = lp + left_char.len_utf8();
-            if inside_start < rp && rp <= buffer_len {
-                self.yank_range(inside_start..rp)
-            }
+            self.yank_range(pair_range);
         }
     }
 }
@@ -1226,9 +1219,9 @@ mod test {
         let mut editor = editor_with("foo(bar)baz");
         editor.move_to_position(0, false);
         editor.cut_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo(bar)baz");
-        assert_eq!(editor.insertion_point(), 0);
-        assert_eq!(editor.cut_buffer.get().0, "");
+        assert_eq!(editor.get_buffer(), "foo()baz");
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.cut_buffer.get().0, "bar");
 
         // Test with no matching brackets
         let mut editor = editor_with("foo bar baz");
@@ -1252,9 +1245,9 @@ mod test {
         let mut editor = editor_with("foo\"bar\"baz");
         editor.move_to_position(0, false);
         editor.cut_inside_pair('"', '"');
-        assert_eq!(editor.get_buffer(), "foo\"bar\"baz");
-        assert_eq!(editor.insertion_point(), 0);
-        assert_eq!(editor.cut_buffer.get().0, "");
+        assert_eq!(editor.get_buffer(), "foo\"\"baz");
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.cut_buffer.get().0, "bar");
 
         // Test with no matching quotes
         let mut editor = editor_with("foo bar baz");
@@ -1643,7 +1636,7 @@ mod test {
     #[case(r#"foo "content"bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "content")] // jump to non-empty quotes
     // Cursor between pairs should jump to next pair
     #[case(r#"(first) (second)"#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "(first) ()", 9, "second")] // between brackets
-    #[case(r#""first" "second""#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "\"first\" \"\"", 9, "second")] // between quotes
+    #[case(r#""first" "second""#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "\"first\"\"second\"", 7, " ")] // between quotes
     // Around scope should include the pair characters
     #[case(r#"foo (bar)"#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Brackets }, "foo ", 4, "(bar)")] // around includes parentheses
     #[case(r#"foo "bar""#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Quote }, "foo ", 4, "\"bar\"")] // around includes quotes
