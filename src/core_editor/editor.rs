@@ -173,14 +173,11 @@ impl Editor {
             EditCommand::PasteSystem => self.paste_from_system(),
             EditCommand::CutInsidePair { left, right } => self.cut_inside_pair(*left, *right),
             EditCommand::CopyInsidePair { left, right } => self.yank_inside_pair(*left, *right),
-            EditCommand::CutTextObject { text_object } => {
-                self.cut_text_object(*text_object)
-            },
-            EditCommand::CopyTextObject { text_object } => {
-                self.yank_text_object(*text_object)
-            }
-            ,
-                    }
+            EditCommand::CutAroundPair { left, right } => self.cut_around_pair(*left, *right),
+            EditCommand::CopyAroundPair { left, right } => self.yank_around_pair(*left, *right),
+            EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
+            EditCommand::CopyTextObject { text_object } => self.yank_text_object(*text_object),
+        }
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
             self.selection_anchor = None;
         }
@@ -693,17 +690,18 @@ impl Editor {
         }
     }
 
-
     /// Delete text strictly between matching `left_char` and `right_char`.
     /// Places deleted text into the cut buffer.
     /// Leaves the parentheses/quotes/etc. themselves.
     /// On success, move the cursor just after the `left_char`.
     /// If matching chars can't be found, restore the original cursor.
     pub(crate) fn cut_inside_pair(&mut self, left_char: char, right_char: char) {
-        if let Some(insde_range) = self.line_buffer.inside_matching_pair_range(left_char, right_char)
+        if let Some(range) = self.line_buffer.range_inside_current_pair(left_char, right_char)
+                       .or_else(|| self.line_buffer.range_inside_next_pair(left_char, right_char))
         {
-            self.cut_range(insde_range);
+            self.cut_range(range);
         }
+
     }
 
     /// Get the bounds for a text object operation
@@ -727,14 +725,18 @@ impl Editor {
                     let big_word_range = self.current_big_word_range();
                     match text_object.scope {
                         TextObjectScope::Inner => Some(big_word_range),
-                        TextObjectScope::Around => self.expand_range_with_whitespace(big_word_range),
+                        TextObjectScope::Around => {
+                            self.expand_range_with_whitespace(big_word_range)
+                        }
                     }
                 }
             }
             // Return range for bracket of any sort that the insertion_point is currently within
             // hitting the first bracket heading out from the insertion_point
             TextObjectType::Brackets => {
-                if let Some(bracket_range) = self.line_buffer.current_inside_bracket_range() {
+                if let Some(bracket_range) = self.line_buffer.range_inside_current_bracket()
+                    .or_else(|| self.line_buffer.range_inside_next_bracket())
+                {
                     match text_object.scope {
                         TextObjectScope::Inner => Some(bracket_range),
                         TextObjectScope::Around => {
@@ -747,7 +749,11 @@ impl Editor {
                 }
             }
             TextObjectType::Quote => {
-                if let Some(quote_range) = self.line_buffer.current_inside_quote_range() {
+                if let Some(quote_range) = self
+                    .line_buffer
+                    .range_inside_current_quote()
+                    .or_else(|| self.line_buffer.range_inside_next_quote())
+                {
                     match text_object.scope {
                         TextObjectScope::Inner => Some(quote_range),
                         TextObjectScope::Around => {
@@ -770,9 +776,9 @@ impl Editor {
         // Find start by searching backwards for whitespace (same pattern as current_word_range)
         let buffer = self.line_buffer.get_buffer();
         let mut left_index = 0;
-        for (i, ch) in buffer[..right_index].char_indices().rev() {
-            if ch.is_whitespace() {
-                left_index = i + ch.len_utf8();
+        for (i, char) in buffer[..right_index].char_indices().rev() {
+            if char.is_whitespace() {
+                left_index = i + char.len_utf8();
                 break;
             }
         }
@@ -783,17 +789,26 @@ impl Editor {
 
     /// Expand a word range to include surrounding whitespace for "around" operations
     /// Prioritizes whitespace after the word, falls back to whitespace before if none after
-    fn expand_range_with_whitespace(&self, range: std::ops::Range<usize>) -> Option<std::ops::Range<usize>> {
+    fn expand_range_with_whitespace(
+        &self,
+        range: std::ops::Range<usize>,
+    ) -> Option<std::ops::Range<usize>> {
         let buffer = self.line_buffer.get_buffer();
-        let mut start = range.start;
-        let mut end = range.end;
+        let end = self.extend_range_right(buffer, range.end);
+        let start = if end == range.end {
+            self.extend_range_left(buffer, range.start)
+        } else {
+            range.start
+        };
+        Some(start..end)
+    }
 
-        // First, try to extend right to include following whitespace
-        let original_end = end;
-        while end < buffer.len() {
-            if let Some(ch) = buffer[end..].chars().next() {
-                if ch.is_whitespace() {
-                    end += ch.len_utf8();
+    /// Extend range rightward to include trailing whitespace
+    fn extend_range_right(&self, buffer: &str, mut pos: usize) -> usize {
+        while pos < buffer.len() {
+            if let Some(char) = buffer[pos..].chars().next() {
+                if char.is_whitespace() {
+                    pos += char.len_utf8();
                 } else {
                     break;
                 }
@@ -801,27 +816,29 @@ impl Editor {
                 break;
             }
         }
+        pos
+    }
 
-        // If no whitespace was found after the word, try to include whitespace before
-        if end == original_end {
-            while start > 0 {
-                let prev_char_start = buffer.char_indices().rev()
-                    .find(|(i, _)| *i < start)
-                    .map(|(i, _)| i)
-                    .unwrap_or(0);
-                if let Some(ch) = buffer[prev_char_start..start].chars().next() {
-                    if ch.is_whitespace() {
-                        start = prev_char_start;
-                    } else {
-                        break;
-                    }
+    /// Extend range leftward to include leading whitespace
+    fn extend_range_left(&self, buffer: &str, mut pos: usize) -> usize {
+        while pos > 0 {
+            let prev_char_start = buffer
+                .char_indices()
+                .rev()
+                .find(|(i, _)| *i < pos)
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            if let Some(char) = buffer[prev_char_start..pos].chars().next() {
+                if char.is_whitespace() {
+                    pos = prev_char_start;
                 } else {
                     break;
                 }
+            } else {
+                break;
             }
         }
-
-        Some(start..end)
+        pos
     }
 
     fn cut_text_object(&mut self, text_object: TextObject) {
@@ -925,9 +942,51 @@ impl Editor {
     /// Copies it into the cut buffer without removing anything.
     /// Leaves the buffer unchanged and restores the original cursor.
     pub(crate) fn yank_inside_pair(&mut self, left_char: char, right_char: char) {
-        if let Some(pair_range) = self.line_buffer.inside_matching_pair_range(left_char, right_char)
+        if let Some(range) = self
+            .line_buffer
+            .range_inside_current_pair(left_char, right_char)
+            .or_else(|| {
+                self.line_buffer
+                    .range_inside_next_pair(left_char, right_char)
+            })
         {
-            self.yank_range(pair_range);
+            self.yank_range(range);
+        }
+    }
+
+    /// Delete text around matching `left_char` and `right_char` (including the pair characters).
+    /// Places deleted text into the cut buffer.
+    /// On success, move the cursor to the position where the opening character was.
+    /// If matching chars can't be found, restore the original cursor.
+    pub(crate) fn cut_around_pair(&mut self, left_char: char, right_char: char) {
+        if let Some(range) = self
+            .line_buffer
+            .range_inside_current_pair(left_char, right_char)
+            .or_else(|| {
+                self.line_buffer.range_inside_next_pair(left_char, right_char)
+            })
+        {
+            // Expand range to include the pair characters themselves
+            let around_range = (range.start - 1)..(range.end + 1);
+            self.cut_range(around_range);
+        }
+    }
+
+    /// Yank text around matching `left_char` and `right_char` (including the pair characters).
+    /// Places yanked text into the cut buffer.
+    /// Cursor position is unchanged.
+    /// If matching chars can't be found, do nothing.
+    pub(crate) fn yank_around_pair(&mut self, left_char: char, right_char: char) {
+        if let Some(range) = self
+            .line_buffer
+            .range_inside_current_pair(left_char, right_char)
+            .or_else(|| {
+                self.line_buffer.range_inside_next_pair(left_char, right_char)
+            })
+        {
+            // Expand range to include the pair characters themselves
+            let around_range = (range.start - 1)..(range.end + 1);
+            self.yank_range(around_range);
         }
     }
 }
@@ -1580,7 +1639,6 @@ mod test {
 
         assert!(editor.line_buffer.is_valid()); // Should not panic or be invalid
     }
-
 
     #[rstest]
     // Test operations when cursor is IN WHITESPACE (middle of spaces)

@@ -368,8 +368,7 @@ impl LineBuffer {
         } else if self.at_end_of_line_with_preceding_whitespace() {
             let range_start = self.current_whitespace_range_start();
             range_start..self.insertion_point
-        }
-        else {
+        } else {
             0..0
         }
     }
@@ -861,7 +860,7 @@ impl LineBuffer {
         cursor: usize,
     ) -> Option<(usize, usize)> {
         // encode to &str so we can compare with &strs later
-        let mut tmp = ([0u8; 4], [0u8, 4]);
+        let mut tmp = ([0u8; 4], [0u8; 4]);
         let left_str = left_char.encode_utf8(&mut tmp.0);
         let right_str = right_char.encode_utf8(&mut tmp.1);
         // search left for left char
@@ -876,117 +875,164 @@ impl LineBuffer {
         Some((left_index, scan_start + right_offset))
     }
 
-    /// Return the range of the matching pair enclosing the cursor position
-    /// or if the cursor is not enclosed return the range of the next matching pair
-    pub fn inside_matching_pair_range(&self, left_char: char, right_char: char) -> Option<Range<usize>> {
-        // Search for pair surrounding cursor
-        self.matching_pair_range_at_depth(self.insertion_point, left_char, right_char, 0)
-        .or_else(|| {
-            // Search for next pair after cursor
-            self.matching_pair_range_at_depth(self.insertion_point, left_char, right_char, 1)
+    /// Find the range inside the current pair of characters at the cursor position.
+    ///
+    /// This method searches for a matching pair of `left_char` and `right_char` characters
+    /// that either contains the cursor position or starts immediately after the cursor.
+    /// Returns the range of text inside those characters.
+    ///
+    /// For symmetric characters (e.g. quotes), the search is restricted to the current line only.
+    /// For asymmetric characters (e.g. brackets), the search spans the entire buffer.
+    ///
+    /// # Special Cases
+    /// - If cursor is positioned just before an opening character, treats it as being "inside" that pair
+    /// - For quotes: `"|text"` (cursor before quote) → returns range inside the quotes
+    /// - For brackets: `|(text)` (cursor before bracket) → returns range inside the brackets
+    ///
+    /// Returns `Some(Range<usize>)` containing the range inside the pair, `None` if no pair is found
+    pub fn range_inside_current_pair(
+        &self,
+        open_char: char,
+        close_char: char,
+    ) -> Option<Range<usize>> {
+        let only_search_current_line: bool = open_char == close_char;
+        let find_range_between_pair_at_position = |pos| {
+            self.range_between_matching_pair(pos, only_search_current_line, open_char, close_char)
+        };
+
+        // First attempt: try to find pair from current cursor position
+        find_range_between_pair_at_position(self.insertion_point).or_else(|| {
+            // Second attempt: if cursor is positioned just before the opening character,
+            // treat it as being "inside" that pair and try from the next position
+            let current_char = self.grapheme_right().chars().next()?;
+            if current_char == open_char {
+                let next_char_position = self.grapheme_right_index();
+                find_range_between_pair_at_position(next_char_position)
+            } else {
+                None
+            }
         })
     }
 
-    fn matching_pair_range_at_depth(
+    /// Find the range inside the next pair of characters after the cursor position.
+    ///
+    /// This method searches forward from the cursor to find the next occurrence of `left_char`,
+    /// then finds its matching `right_char` and returns the range of text inside those characters.
+    /// Unlike `range_inside_current_pair`, this always looks for pairs that start after the cursor.
+    ///
+    /// For symmetric characters (e.g. quotes), the search is restricted to the current line only.
+    /// For asymmetric characters (e.g. brackets), the search spans the entire buffer.
+    ///
+    /// Returns `Some(Range<usize>)` containing the range inside the next pair, `None` if no pair is found
+    pub fn range_inside_next_pair(
         &self,
-        insertion_point: usize,
-        left_char: char,
-        right_char: char,
-        mut depth: i64
+        open_char: char,
+        close_char: char,
     ) -> Option<Range<usize>> {
-        let search_range = if left_char == right_char {
-            depth = depth * (-1);
-            self.current_line_range() // For equal pairs only match on current line
+        let only_search_current_line: bool = open_char == close_char;
+
+        let found_open_char = self.find_char_right(open_char, only_search_current_line);
+
+        // If found, get the range inside that pair
+        found_open_char.and_then(|open_pair_index| {
+            self.range_between_matching_pair(
+                open_pair_index + 1,
+                only_search_current_line,
+                open_char,
+                close_char,
+            )
+        })
+    }
+
+    /// Core implementation for finding ranges inside character pairs.
+    ///
+    /// This is the underlying algorithm used by both `range_inside_current_pair` and
+    /// `range_inside_next_pair`. It uses a forward-first search approach:
+    /// 1. Search forward from cursor to find the closing character
+    /// 2. Search backward from closing to find the opening character
+    /// 3. Return the range between them
+    ///
+    /// # Returns
+    /// `Some(Range<usize>)` containing the range inside the pair, `None` if no valid pair is found
+    fn range_between_matching_pair(
+        &self,
+        cursor: usize,
+        only_search_current_line: bool,
+        open_char: char,
+        close_char: char,
+    ) -> Option<Range<usize>> {
+        let search_range = if only_search_current_line {
+            self.current_line_range()
         } else {
-            0..self.lines.len() // Unequal pairs like brackets can be multi line
+            0..self.lines.len()
         };
-        let slice_after_cursor = &self.lines[insertion_point..search_range.end];
-        let right_pair_in_slice_idx = self.find_matching_pair_index(
-            slice_after_cursor, left_char, right_char, depth)?;
 
-        let right_pair_in_buff_idx = insertion_point + right_pair_in_slice_idx;
-        let start_to_right_pair = &self.lines[search_range.start..right_pair_in_buff_idx];
+        let after_cursor = &self.lines[cursor..search_range.end];
+        let close_pair_index_after_cursor =
+            Self::find_index_of_matching_char(after_cursor, open_char, close_char, false)?;
+        let close_char_index_in_buffer = cursor + close_pair_index_after_cursor;
 
-        self.find_left_pair_index(start_to_right_pair, left_char, right_char)
-        .map(|left_pair_rev_index| (search_range.start + left_pair_rev_index + 1)..right_pair_in_buff_idx)
+        let start_to_close_char = &self.lines[search_range.start..close_char_index_in_buffer];
+
+        Self::find_index_of_matching_char(start_to_close_char, open_char, close_char, true).map(
+            |open_char_index_from_start| {
+                let open_char_index_in_buffer = search_range.start + open_char_index_from_start;
+                (open_char_index_in_buffer + 1)..close_char_index_in_buffer
+            },
+        )
     }
 
-    fn find_left_pair_index(&self, slice: &str, open_char: char, close_char: char) -> Option<usize> {
-        println!("find_left_pair_index: slice='{:?}', open='{:?}', close='{:?}'", slice, open_char, close_char);
-        let mut depth_count: i64 = 0;
-        let graphemes: Vec<_> = slice.grapheme_indices(true).rev().collect();
-        println!("  graphemes: {:?}", graphemes);
+    /// Find the index of a matching character using depth counting to handle nested pairs.
+    /// Helper for [`LineBuffer::range_inside_matching_pair`]
+    ///
+    /// Forward search: find close_char at same level of nesting as start of slice
+    /// Backward search: find open_char at same level of nesting as end of slice
+    ///
+    /// Returns index of the target char from start of slice if found, or `None` if not found.
+    fn find_index_of_matching_char(
+        slice: &str,
+        open_char: char,
+        close_char: char,
+        search_backwards: bool,
+    ) -> Option<usize> {
+        let mut depth = 0;
+        let mut graphemes: Vec<(usize, &str)> = slice.grapheme_indices(true).collect();
+
+        if search_backwards {
+            graphemes.reverse();
+        }
+
+        let (target, increment) = if search_backwards {
+            (open_char, close_char)
+        } else {
+            (close_char, open_char)
+        };
 
         for (index, grapheme) in graphemes {
-            if let Some(ch) = grapheme.chars().next() {
-                println!("  checking index {} char '{}', depth={}", index, ch, depth_count);
-                if ch == open_char {
-                    if depth_count == 0 {
-                        println!("  -> found opening at index {}", index);
+            if let Some(char) = grapheme.chars().next() {
+                if char == target {
+                    if depth == 0 {
                         return Some(index);
-                    } else {
-                        depth_count -= 1;
                     }
-                } else if ch == close_char && index > 0 {
-                        depth_count += 1;
+                    depth -= 1;
+                } else if char == increment && index > 0 {
+                    depth += 1;
                 }
             }
         }
-        println!("  -> no match found");
         None
-    }
-
-    // Return tuple of the index of right_char and the number of left_chars
-    // passed to reach it from the cursor
-    fn find_matching_pair_index(&self, slice: &str, open_char: char, close_char: char, pair_offset: i64) -> Option<usize> {
-        println!("find_matching_pair_index: slice='{:?}', open='{:?}', close='{:?}', pair_offset={}", slice, open_char, close_char, pair_offset);
-        let mut depth_count: i64 = 0;
-        let graphemes: Vec<_> = slice.grapheme_indices(true).collect();
-        println!("  graphemes: {:?}", graphemes);
-
-        for (index, grapheme) in graphemes {
-            if let Some(ch) = grapheme.chars().next() {
-                println!("  checking index {} char '{}', depth={}", index, ch, depth_count);
-                if ch == close_char {
-                    if depth_count == pair_offset {
-                        println!("  -> found closing at index {}", index);
-                        return Some(index);
-                    } else {
-                        depth_count -= 1;
-                    }
-                }
-                else if ch == open_char && index > 0 {
-                        depth_count += 1;
-                }
-            }
-        }
-        println!("  -> no match found");
-        None
-    }
-
-
-    /// Return range of current bracket text object
-    pub fn current_inside_bracket_range(&self) -> Option<Range<usize>> {
-        // First, check if we're currently inside any bracket pair
-        if let Some(inside_range) = self.find_current_inside_bracket_pair() {
-            return Some(inside_range);
-        }
-
-        // If not inside any pair, jump forward to next bracket pair
-        self.find_inside_next_bracket_pair()
     }
 
     /// Check if cursor is currently inside a bracket pair
-    fn find_current_inside_bracket_pair(&self) -> Option<Range<usize>> {
-        const BRACKET_PAIRS: &[(char, char)] = &[
-            ('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')
-        ];
+    pub(crate) fn range_inside_current_bracket(&self) -> Option<Range<usize>> {
+        const BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
 
         let mut innermost_pair: Option<(Range<usize>, usize)> = None;
 
         // Check all bracket types and find the innermost pair containing the cursor
         for &(left, right) in BRACKET_PAIRS {
-            if let Some(range) = self.inside_matching_pair_range(left, right) {
+            if let Some(range) = self.range_inside_current_pair(left, right)
+            {
                 let range_size = range.end - range.start;
 
                 // Keep track of the smallest (innermost) range
@@ -998,13 +1044,13 @@ impl LineBuffer {
                     _ => {} // Keep the current innermost
                 }
             }
-       }
+        }
 
         innermost_pair.map(|(range, _)| range)
     }
 
     /// Jump forward to find next bracket pair
-    fn find_inside_next_bracket_pair(&self) -> Option<Range<usize>> {
+    pub(crate) fn range_inside_next_bracket(&self) -> Option<Range<usize>> {
         const OPENING_BRACKETS: &[char] = &['(', '[', '{', '<'];
 
         // Find bracket positions using grapheme indices (compatible with insertion_point)
@@ -1020,10 +1066,7 @@ impl LineBuffer {
                             '<' => '>',
                             _ => continue,
                         };
-
-                        if let Some(range) = self.inside_matching_pair_range(c, right_char) {
-                            return Some(range);
-                        }
+                        return self.range_inside_next_pair(c, right_char);
                     }
                 }
             }
@@ -1031,19 +1074,8 @@ impl LineBuffer {
         None
     }
 
-    /// Return range of current quote text object
-    pub fn current_inside_quote_range(&self) -> Option<Range<usize>> {
-        // First, check if we're currently inside any quote pair
-        if let Some(inside_range) = self.find_current_inside_quote_pair() {
-            return Some(inside_range);
-        }
-
-        // If not inside any pair, jump forward to next quote pair
-        self.find_inside_next_quote_pair()
-    }
-
     /// Check if cursor is currently inside a quote pair
-    fn find_current_inside_quote_pair(&self) -> Option<Range<usize>> {
+    pub(crate) fn range_inside_current_quote(&self) -> Option<Range<usize>> {
         const QUOTE_CHARS: &[char] = &['"', '\'', '`'];
 
         let mut innermost_pair: Option<(Range<usize>, usize)> = None;
@@ -1051,15 +1083,19 @@ impl LineBuffer {
         // Check all quote types and find the innermost pair containing the cursor
         for &quote_char in QUOTE_CHARS {
             // First check for consecutive quotes (empty quotes) at cursor position
-            if self.insertion_point > 0 &&
-               self.insertion_point < self.lines.len() &&
-               self.lines.chars().nth(self.insertion_point - 1) == Some(quote_char) &&
-               self.lines.chars().nth(self.insertion_point) == Some(quote_char) {
+            if self.insertion_point > 0
+                && self.insertion_point < self.lines.len()
+                && self.lines.chars().nth(self.insertion_point - 1) == Some(quote_char)
+                && self.lines.chars().nth(self.insertion_point) == Some(quote_char)
+            {
                 // Found empty quotes at cursor position
                 return Some(self.insertion_point..self.insertion_point);
             }
 
-            if let Some(inside_range) = self.inside_matching_pair_range(quote_char, quote_char) {
+            if let Some(inside_range) = self
+                .range_inside_current_pair(quote_char, quote_char)
+                .or_else(|| self.range_inside_next_pair(quote_char, quote_char))
+            {
                 let range_size = inside_range.len();
                 // Keep track of the smallest (innermost) range
                 match innermost_pair {
@@ -1076,17 +1112,17 @@ impl LineBuffer {
     }
 
     /// Jump forward to find next quote pair
-    fn find_inside_next_quote_pair(&self) -> Option<Range<usize>> {
+    pub(crate) fn range_inside_next_quote(&self) -> Option<Range<usize>> {
         const QUOTE_CHARS: &[char] = &['"', '\'', '`'];
 
         self.lines[self.insertion_point..]
             .grapheme_indices(true)
-            .find_map(|(grapheme_pos, grapheme_str)| {
+            .find_map(|(_grapheme_pos, grapheme_str)| {
                 let c = grapheme_str.chars().next()?;
                 if !QUOTE_CHARS.contains(&c) {
                     return None;
                 }
-                self.inside_matching_pair_range(c, c)
+                return self.range_inside_next_pair(c, c);
             })
     }
 }
@@ -2013,6 +2049,7 @@ mod test {
         );
     }
 
+    // Basic quote pairs - cursor inside
     // Tests for bracket text object functionality
     #[rstest]
     // Basic bracket pairs - cursor inside
@@ -2049,7 +2086,6 @@ mod test {
 
     // Tests for quote text object functionality
     #[rstest]
-    // Basic quote pairs - cursor inside
     #[case(r#"foo"bar"baz"#, 5, Some(4..7))] // cursor on 'a' in "bar"
     #[case("foo'bar'baz", 5, Some(4..7))] // single quotes
     #[case("foo`bar`baz", 5, Some(4..7))] // backticks
@@ -2089,6 +2125,7 @@ mod test {
     #[case("(a(b(c)d)e)", 2, Some(3..8))] // cursor on 'a', should find outermost
     #[case(r#"foo("bar")baz"#, 6, Some(4..9))] // quotes inside brackets
     #[case(r#"foo"(bar)"baz"#, 6, Some(5..8))] // brackets inside quotes
+    // Basic tests
     #[case("", 0, None)] // empty buffer
     #[case("(", 0, None)] // single opening bracket
     #[case(")", 0, None)] // single closing bracket
@@ -2120,12 +2157,11 @@ mod test {
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
-        assert_eq!(buf.current_inside_quote_range(), expected);
+        assert_eq!(buf.range_inside_next_quote(), expected);
     }
 
     // Tests for your new inside_next_matching_pair_range function
     #[rstest]
-    // Basic tests
     #[case("(abc)", 1, '(', ')', Some(1..4))] // cursor inside simple pair
     #[case("(abc)", 0, '(', ')', Some(1..4))] // cursor at start
     #[case("foo(bar)baz", 2, '(', ')', Some(4..7))] // cursor before pair

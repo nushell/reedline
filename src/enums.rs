@@ -390,6 +390,20 @@ pub enum EditCommand {
         /// Right character of the pair (usually matching bracket)
         right: char,
     },
+    /// Delete text around matching characters atomically (including the pair characters)
+    CutAroundPair {
+        /// Left character of the pair
+        left: char,
+        /// Right character of the pair (usually matching bracket)
+        right: char,
+    },
+    /// Yank text around matching characters atomically (including the pair characters)
+    CopyAroundPair {
+        /// Left character of the pair
+        left: char,
+        /// Right character of the pair (usually matching bracket)
+        right: char,
+    },
     /// Cut the specified text object
     CutTextObject {
         /// The text object to operate on
@@ -514,6 +528,8 @@ impl Display for EditCommand {
             EditCommand::PasteSystem => write!(f, "PasteSystem"),
             EditCommand::CutInsidePair { .. } => write!(f, "CutInside Value: <char> <char>"),
             EditCommand::CopyInsidePair { .. } => write!(f, "YankInside Value: <char> <char>"),
+            EditCommand::CutAroundPair { .. } => write!(f, "CutAround Value: <char> <char>"),
+            EditCommand::CopyAroundPair { .. } => write!(f, "YankAround Value: <char> <char>"),
             EditCommand::CutTextObject { .. } => write!(f, "CutTextObject"),
             EditCommand::CopyTextObject { .. } => write!(f, "CopyTextObject"),
         }
@@ -600,6 +616,8 @@ impl EditCommand {
             EditCommand::CopySelectionSystem => EditType::NoOp,
             EditCommand::CutInsidePair { .. } => EditType::EditText,
             EditCommand::CopyInsidePair { .. } => EditType::EditText,
+            EditCommand::CutAroundPair { .. } => EditType::EditText,
+            EditCommand::CopyAroundPair { .. } => EditType::EditText,
             EditCommand::CutTextObject { .. } => EditType::EditText,
             EditCommand::CopyTextObject { .. } => EditType::NoOp,
             EditCommand::CopyFromStart

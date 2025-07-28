@@ -36,7 +36,13 @@ where
             } else if let Some('a') = input.peek() {
                 let _ = input.next();
                 input.next().and_then(|c| {
-                    char_to_text_object(*c, TextObjectScope::Around).map(|text_object| Command::DeleteTextObject { text_object })
+                    bracket_pair_for(*c)
+                    .map(|(left, right)|  Command::DeleteAroundPair { left, right })
+                    .or_else(|| {
+                        char_to_text_object(*c, TextObjectScope::Around)
+                        .map(|text_object| Command::DeleteTextObject { text_object })
+                    })
+
                 })
             } else {
                 Some(Command::Delete)
@@ -58,7 +64,12 @@ where
             } else if let Some('a') = input.peek() {
                 let _ = input.next();
                 input.next().and_then(|c| {
-                    char_to_text_object(*c, TextObjectScope::Around).map(|text_object| Command::YankTextObject { text_object })
+                    bracket_pair_for(*c)
+                    .map(|(left, right)|  Command::YankAroundPair { left, right })
+                    .or_else(|| {
+                        char_to_text_object(*c, TextObjectScope::Around)
+                        .map(|text_object| Command::YankTextObject { text_object })
+                    })
                 })
             } else {
                 Some(Command::Yank)
@@ -187,6 +198,8 @@ pub enum Command {
     ChangeInsidePair { left: char, right: char },
     DeleteInsidePair { left: char, right: char },
     YankInsidePair { left: char, right: char },
+    DeleteAroundPair { left: char, right: char },
+    YankAroundPair { left: char, right: char },
     ChangeTextObject { text_object: TextObject },
     YankTextObject { text_object: TextObject },
     DeleteTextObject { text_object: TextObject },
@@ -266,6 +279,18 @@ impl Command {
             }
             Self::YankInsidePair { left, right } => {
                 vec![ReedlineOption::Edit(EditCommand::CopyInsidePair {
+                    left: *left,
+                    right: *right,
+                })]
+            }
+            Self::DeleteAroundPair { left, right } => {
+                vec![ReedlineOption::Edit(EditCommand::CutAroundPair {
+                    left: *left,
+                    right: *right,
+                })]
+            }
+            Self::YankAroundPair { left, right } => {
+                vec![ReedlineOption::Edit(EditCommand::CopyAroundPair {
                     left: *left,
                     right: *right,
                 })]
