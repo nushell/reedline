@@ -809,7 +809,7 @@ impl Display for ReedlineEvent {
     }
 }
 
-pub enum EventStatus {
+pub(crate) enum EventStatus {
     Handled,
     Inapplicable,
     Exits(Signal),
