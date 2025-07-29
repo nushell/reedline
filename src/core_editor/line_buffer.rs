@@ -4,6 +4,10 @@ use {
     unicode_segmentation::UnicodeSegmentation,
 };
 
+// Character pairs for text object operations
+static BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
+static QUOTE_CHARS: &[char] = &['"', '\'', '`'];
+
 /// In memory representation of the entered line(s) including a cursor position to facilitate cursor based editing.
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct LineBuffer {
@@ -308,30 +312,14 @@ impl LineBuffer {
     }
 
     /// Returns true if cursor is at the end of the buffer with preceding whitespace.
-    ///
-    /// This handles the edge case where the cursor is positioned after the last character
-    /// in a buffer that ends with whitespace. In vim, this position is still considered
-    /// part of the trailing whitespace block for text object operations.
     fn at_end_of_line_with_preceding_whitespace(&self) -> bool {
         !self.is_empty() // No point checking if empty
         && self.insertion_point == self.lines.len()
         && self.lines.chars().last().map_or(false, |c| c.is_whitespace())
     }
 
-    /// Returns true if the cursor is positioned within a whitespace block.
-    ///
-    /// This includes being on a whitespace character or at the end of trailing whitespace.
-    /// Used for vim-style text object operations where whitespace itself is a text object.
-    pub(crate) fn in_whitespace_block(&self) -> bool {
-        self.on_whitespace() || self.at_end_of_line_with_preceding_whitespace()
-    }
-
     /// Cursor position at the end of the current whitespace block.
-    ///
-    /// Searches forward from cursor position to find where the current whitespace
-    /// block ends (first non-whitespace character). Returns buffer length if
-    /// whitespace extends to end of buffer.
-    fn current_whitespace_range_end(&self) -> usize {
+    fn current_whitespace_end_index(&self) -> usize {
         self.lines[self.insertion_point..]
             .char_indices()
             .find(|(_, ch)| !ch.is_whitespace())
@@ -340,11 +328,7 @@ impl LineBuffer {
     }
 
     /// Cursor position at the start of the current whitespace block.
-    ///
-    /// Searches backward from cursor position to find where the current whitespace
-    /// block starts (position after last non-whitespace character). Returns 0 if
-    /// whitespace extends to start of buffer.
-    fn current_whitespace_range_start(&self) -> usize {
+    fn current_whitespace_start_index(&self) -> usize {
         self.lines[..self.insertion_point]
             .char_indices()
             .rev()
@@ -360,16 +344,16 @@ impl LineBuffer {
     /// that trailing block. Returns an empty range (0..0) if not in a whitespace context.
     ///
     /// Used for vim-style text object operations (iw/aw when cursor is on whitespace).
-    pub(crate) fn current_whitespace_range(&self) -> Range<usize> {
+    pub(crate) fn current_whitespace_range(&self) -> Option<Range<usize>> {
         if self.on_whitespace() {
-            let range_end = self.current_whitespace_range_end();
-            let range_start = self.current_whitespace_range_start();
-            range_start..range_end
+            let range_end = self.current_whitespace_end_index();
+            let range_start = self.current_whitespace_start_index();
+            Some(range_start..range_end)
         } else if self.at_end_of_line_with_preceding_whitespace() {
-            let range_start = self.current_whitespace_range_start();
-            range_start..self.insertion_point
+            let range_start = self.current_whitespace_start_index();
+            Some(range_start..self.insertion_point)
         } else {
-            0..0
+            None
         }
     }
 
@@ -865,23 +849,29 @@ impl LineBuffer {
     ) -> Option<Range<usize>> {
         let only_search_current_line: bool = open_char == close_char;
         let find_range_between_pair_at_position = |pos| {
-            self.range_between_matching_pair(pos, only_search_current_line, open_char, close_char)
+            self.range_between_matching_pair_at_pos(
+                pos,
+                only_search_current_line,
+                open_char,
+                close_char,
+            )
         };
 
         // First try to find pair from current cursor position
         find_range_between_pair_at_position(self.insertion_point).or_else(|| {
-            // Second try, if cursor is positioned just before the opening character,
+            // Second try, if cursor is positioned just before an opening character,
             // treat it as being "inside" that pair and try from the next position
-            self.grapheme_right().starts_with(open_char)
-            .then(|| find_range_between_pair_at_position(self.grapheme_right_index()))
-            .flatten()
+            self.grapheme_right()
+                .starts_with(open_char)
+                .then(|| find_range_between_pair_at_position(self.grapheme_right_index()))
+                .flatten()
         })
     }
 
     /// Find the range inside the next pair of characters after the cursor position.
     ///
-    /// This method searches forward from the cursor to find the next occurrence of `left_char`,
-    /// then finds its matching `right_char` and returns the range of text inside those characters.
+    /// This method searches forward from the cursor to find the next occurrence of `open_char`,
+    /// then finds its matching `close_char` and returns the range of text inside those characters.
     /// Unlike `range_inside_current_pair`, this always looks for pairs that start after the cursor.
     ///
     /// For symmetric characters (e.g. quotes), the search is restricted to the current line only.
@@ -905,7 +895,7 @@ impl LineBuffer {
         };
 
         // Now find the range between this opening character and its matching closing character
-        self.range_between_matching_pair(
+        self.range_between_matching_pair_at_pos(
             self.grapheme_right_index_from_pos(open_pair_index),
             only_search_current_line,
             open_char,
@@ -921,11 +911,10 @@ impl LineBuffer {
     /// 2. Search backward from closing to find the opening character
     /// 3. Return the range between them
     ///
-    /// # Returns
-    /// `Some(Range<usize>)` containing the range inside the pair, `None` if no valid pair is found
-    fn range_between_matching_pair(
+    /// Returns `Some(Range<usize>)` containing the range inside the pair, `None` if no valid pair is found
+    fn range_between_matching_pair_at_pos(
         &self,
-        cursor: usize,
+        position: usize,
         only_search_current_line: bool,
         open_char: char,
         close_char: char,
@@ -936,10 +925,10 @@ impl LineBuffer {
             0..self.lines.len()
         };
 
-        let after_cursor = &self.lines[cursor..search_range.end];
+        let after_cursor = &self.lines[position..search_range.end];
         let close_pair_index_after_cursor =
             Self::find_index_of_matching_pair(after_cursor, open_char, close_char, false)?;
-        let close_char_index_in_buffer = cursor + close_pair_index_after_cursor;
+        let close_char_index_in_buffer = position + close_pair_index_after_cursor;
 
         let start_to_close_char = &self.lines[search_range.start..close_char_index_in_buffer];
 
@@ -952,7 +941,7 @@ impl LineBuffer {
     }
 
     /// Find the index of a matching character using depth counting to handle nested pairs.
-    /// Helper for [`LineBuffer::range_inside_matching_pair`]
+    /// Helper for [`LineBuffer::range_between_matching_pair_at_pos`]
     ///
     /// Forward search: find close_char at same level of nesting as start of slice
     /// Backward search: find open_char at same level of nesting as end of slice
@@ -999,27 +988,12 @@ impl LineBuffer {
     ///
     /// Returns `Some(Range<usize>)` with the byte range inside the brackets, or `None` if cursor is not inside any bracket pair.
     pub(crate) fn range_inside_current_bracket(&self) -> Option<Range<usize>> {
-        const BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
-
-        let mut innermost_pair: Option<(Range<usize>, usize)> = None;
-
-        // Check all bracket types and find the innermost pair containing the cursor
-        for &(left, right) in BRACKET_PAIRS {
-            if let Some(range) = self.range_inside_current_pair(left, right) {
-                let range_size = range.end - range.start;
-
-                // Keep track of the smallest (innermost) range
-                match innermost_pair {
-                    None => innermost_pair = Some((range, range_size)),
-                    Some((_, current_size)) if range_size < current_size => {
-                        innermost_pair = Some((range, range_size));
-                    }
-                    _ => {} // Keep the current innermost
-                }
-            }
-        }
-
-        innermost_pair.map(|(range, _)| range)
+        BRACKET_PAIRS
+            .iter()
+            .filter_map(|(open_char, close_char)| {
+                self.range_inside_current_pair(*open_char, *close_char)
+            })
+            .min_by_key(|range| range.len())
     }
 
     /// Find the range inside the next bracket pair forward from the cursor.
@@ -1030,19 +1004,12 @@ impl LineBuffer {
     ///
     /// Returns `Some(Range<usize>)` with the byte range inside the next bracket pair, or `None` if no pair found.
     pub(crate) fn range_inside_next_bracket(&self) -> Option<Range<usize>> {
-        self.lines[self.insertion_point..]
-            .grapheme_indices(true)
-            .filter_map(|(_, grapheme_str)| grapheme_str.chars().next())
-            .find_map(|c| {
-                let close = match c {
-                    '(' => ')',
-                    '[' => ']',
-                    '{' => '}',
-                    '<' => '>',
-                    _ => return None,
-                };
-                self.range_inside_next_pair(c, close)
+        BRACKET_PAIRS
+            .iter()
+            .filter_map(|(open_char, close_char)| {
+                self.range_inside_next_pair(*open_char, *close_char)
             })
+            .min_by_key(|range| range.start)
     }
 
     /// Find the range inside the innermost quote pair surrounding the cursor.
@@ -1055,36 +1022,10 @@ impl LineBuffer {
     /// Returns `Some(Range<usize>)` with the byte range inside the quotes
     /// or `None` if cursor is not inside any quote pair.
     pub(crate) fn range_inside_current_quote(&self) -> Option<Range<usize>> {
-        const QUOTE_CHARS: &[char] = &['"', '\'', '`'];
-
-        let mut innermost_pair: Option<(Range<usize>, usize)> = None;
-
-        // Check all quote types and find the innermost pair containing the cursor
-        for &quote_char in QUOTE_CHARS {
-            // First check for consecutive quotes (empty quotes) at cursor position
-            if self.insertion_point > 0
-                && self.insertion_point < self.lines.len()
-                && self.lines.chars().nth(self.insertion_point - 1) == Some(quote_char)
-                && self.lines.chars().nth(self.insertion_point) == Some(quote_char)
-            {
-                // Found empty quotes at cursor position
-                return Some(self.insertion_point..self.insertion_point);
-            }
-
-            if let Some(inside_range) = self.range_inside_current_pair(quote_char, quote_char) {
-                let range_size = inside_range.len();
-                // Keep track of the smallest (innermost) range
-                match innermost_pair {
-                    None => innermost_pair = Some((inside_range, range_size)),
-                    Some((_, current_size)) if range_size < current_size => {
-                        innermost_pair = Some((inside_range, range_size));
-                    }
-                    _ => {} // Keep the current innermost
-                }
-            }
-        }
-
-        innermost_pair.map(|(range, _)| range)
+        QUOTE_CHARS
+            .iter()
+            .filter_map(|&quote| self.range_inside_current_pair(quote, quote))
+            .min_by_key(|range| range.len())
     }
 
     /// Find the range inside the next quote pair forward from the cursor.
@@ -1096,17 +1037,10 @@ impl LineBuffer {
     ///
     /// Returns `Some(Range<usize>)` with the byte range inside the next quote pair, or `None` if no pair found.
     pub(crate) fn range_inside_next_quote(&self) -> Option<Range<usize>> {
-        const QUOTE_CHARS: &[char] = &['"', '\'', '`'];
-
-        self.lines[self.insertion_point..]
-            .grapheme_indices(true)
-            .find_map(|(_, grapheme_str)| {
-                let c = grapheme_str.chars().next()?;
-                if !QUOTE_CHARS.contains(&c) {
-                    return None;
-                }
-                self.range_inside_next_pair(c, c)
-            })
+        QUOTE_CHARS
+            .iter()
+            .filter_map(|&quote| self.range_inside_next_pair(quote, quote))
+            .min_by_key(|range| range.start)
     }
 }
 
@@ -2067,17 +2001,17 @@ mod test {
     fn test_range_inside_current_pair(
         #[case] input: &str,
         #[case] cursor_pos: usize,
-        #[case] left_char: char,
-        #[case] right_char: char,
+        #[case] open_char: char,
+        #[case] close_char: char,
         #[case] expected: Option<std::ops::Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_current_pair(left_char, right_char);
+        let result = buf.range_inside_current_pair(open_char, close_char);
         assert_eq!(
             result, expected,
             "Failed for input: '{}', cursor: {}, chars: '{}' '{}'",
-            input, cursor_pos, left_char, right_char
+            input, cursor_pos, open_char, close_char
         );
     }
 
@@ -2102,17 +2036,17 @@ mod test {
     fn test_range_inside_next_pair(
         #[case] input: &str,
         #[case] cursor_pos: usize,
-        #[case] left_char: char,
-        #[case] right_char: char,
+        #[case] open_char: char,
+        #[case] close_char: char,
         #[case] expected: Option<std::ops::Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_next_pair(left_char, right_char);
+        let result = buf.range_inside_next_pair(open_char, close_char);
         assert_eq!(
             result, expected,
             "Failed for input: '{}', cursor: {}, chars: '{}' '{}'",
-            input, cursor_pos, left_char, right_char
+            input, cursor_pos, open_char, close_char
         );
     }
 
@@ -2125,21 +2059,21 @@ mod test {
     fn test_multiline_quote_behavior(
         #[case] input: &str,
         #[case] cursor_pos: usize,
-        #[case] left_char: char,
-        #[case] right_char: char,
+        #[case] open_char: char,
+        #[case] close_char: char,
         #[case] expected: Option<std::ops::Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_current_pair(left_char, right_char);
+        let result = buf.range_inside_current_pair(open_char, close_char);
         assert_eq!(
             result,
             expected,
             "MULTILINE TEST - Input: {:?}, cursor: {}, chars: '{}' '{}', lines: {:?}",
             input,
             cursor_pos,
-            left_char,
-            right_char,
+            open_char,
+            close_char,
             input.lines().collect::<Vec<_>>()
         );
     }
@@ -2153,21 +2087,21 @@ mod test {
     fn test_multiline_next_quote_behavior(
         #[case] input: &str,
         #[case] cursor_pos: usize,
-        #[case] left_char: char,
-        #[case] right_char: char,
+        #[case] open_char: char,
+        #[case] close_char: char,
         #[case] expected: Option<std::ops::Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_next_pair(left_char, right_char);
+        let result = buf.range_inside_next_pair(open_char, close_char);
         assert_eq!(
             result,
             expected,
             "MULTILINE TEST - Input: {:?}, cursor: {}, chars: '{}' '{}', lines: {:?}",
             input,
             cursor_pos,
-            left_char,
-            right_char,
+            open_char,
+            close_char,
             input.lines().collect::<Vec<_>>()
         );
     }
@@ -2185,21 +2119,21 @@ mod test {
     fn test_multiline_bracket_behavior(
         #[case] input: &str,
         #[case] cursor_pos: usize,
-        #[case] left_char: char,
-        #[case] right_char: char,
+        #[case] open_char: char,
+        #[case] close_char: char,
         #[case] expected: Option<std::ops::Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_current_pair(left_char, right_char);
+        let result = buf.range_inside_current_pair(open_char, close_char);
         assert_eq!(
             result,
             expected,
             "MULTILINE BRACKET TEST - Input: {:?}, cursor: {}, chars: '{}' '{}', lines: {:?}",
             input,
             cursor_pos,
-            left_char,
-            right_char,
+            open_char,
+            close_char,
             input.lines().collect::<Vec<_>>()
         );
     }
@@ -2213,21 +2147,21 @@ mod test {
     fn test_multiline_next_bracket_behavior(
         #[case] input: &str,
         #[case] cursor_pos: usize,
-        #[case] left_char: char,
-        #[case] right_char: char,
+        #[case] open_char: char,
+        #[case] close_char: char,
         #[case] expected: Option<std::ops::Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_next_pair(left_char, right_char);
+        let result = buf.range_inside_next_pair(open_char, close_char);
         assert_eq!(
             result,
             expected,
             "MULTILINE BRACKET TEST - Input: {:?}, cursor: {}, chars: '{}' '{}', lines: {:?}",
             input,
             cursor_pos,
-            left_char,
-            right_char,
+            open_char,
+            close_char,
             input.lines().collect::<Vec<_>>()
         );
     }

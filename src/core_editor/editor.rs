@@ -690,90 +690,72 @@ impl Editor {
         }
     }
 
-    /// Delete text strictly between matching `left_char` and `right_char`.
-    /// Places deleted text into the cut buffer.
-    /// Leaves the parentheses/quotes/etc. themselves.
-    /// On success, move the cursor just after the `left_char`.
-    /// If matching chars can't be found, restore the original cursor.
-    pub(crate) fn cut_inside_pair(&mut self, left_char: char, right_char: char) {
-        if let Some(range) = self.line_buffer.range_inside_current_pair(left_char, right_char)
-                       .or_else(|| self.line_buffer.range_inside_next_pair(left_char, right_char))
+    /// Delete text strictly between matching `open_char` and `close_char`.
+    pub(crate) fn cut_inside_pair(&mut self, open_char: char, close_char: char) {
+        if let Some(range) = self.line_buffer
+            .range_inside_current_pair(open_char, close_char)
+            .or_else(|| {
+                self.line_buffer.range_inside_next_pair(open_char, close_char)
+            })
         {
-            self.cut_range(range);
+            self.cut_range(range)
         }
-
     }
 
     /// Get the bounds for a text object operation
     fn text_object_range(&self, text_object: TextObject) -> Option<std::ops::Range<usize>> {
         match text_object.object_type {
-            TextObjectType::Word => {
-                if self.line_buffer.in_whitespace_block() {
-                    Some(self.line_buffer.current_whitespace_range())
-                } else {
-                    let word_range = self.line_buffer.current_word_range();
-                    match text_object.scope {
-                        TextObjectScope::Inner => Some(word_range),
-                        TextObjectScope::Around => self.expand_range_with_whitespace(word_range),
+            TextObjectType::Word => self.line_buffer.current_whitespace_range().or_else(|| {
+                let word_range = self.line_buffer.current_word_range();
+                match text_object.scope {
+                    TextObjectScope::Inner => Some(word_range),
+                    TextObjectScope::Around => Some(self.expand_range_with_whitespace(word_range)),
+                }
+            }),
+            TextObjectType::BigWord => self.line_buffer.current_whitespace_range().or_else(|| {
+                let big_word_range = self.current_big_word_range();
+                match text_object.scope {
+                    TextObjectScope::Inner => Some(big_word_range),
+                    TextObjectScope::Around => {
+                        Some(self.expand_range_with_whitespace(big_word_range))
                     }
                 }
-            }
-            TextObjectType::BigWord => {
-                if self.line_buffer.in_whitespace_block() {
-                    Some(self.line_buffer.current_whitespace_range())
-                } else {
-                    let big_word_range = self.current_big_word_range();
-                    match text_object.scope {
-                        TextObjectScope::Inner => Some(big_word_range),
-                        TextObjectScope::Around => {
-                            self.expand_range_with_whitespace(big_word_range)
-                        }
-                    }
-                }
-            }
-            // Return range for bracket of any sort that the insertion_point is currently within
-            // hitting the first bracket heading out from the insertion_point
+            }),
             TextObjectType::Brackets => {
-                if let Some(bracket_range) = self.line_buffer.range_inside_current_bracket()
+                self.line_buffer
+                    .range_inside_current_bracket()
                     .or_else(|| self.line_buffer.range_inside_next_bracket())
-                {
-                    match text_object.scope {
-                        TextObjectScope::Inner => Some(bracket_range),
-                        TextObjectScope::Around => {
-                            // Include the brackets themselves
-                            Some((bracket_range.start - 1)..(bracket_range.end + 1))
+                    .map(|bracket_range| {
+                        match text_object.scope {
+                            TextObjectScope::Inner => bracket_range,
+                            TextObjectScope::Around => {
+                                // Include the brackets themselves
+                                (bracket_range.start - 1)..(bracket_range.end + 1)
+                            }
                         }
-                    }
-                } else {
-                    None
-                }
+                    })
             }
             TextObjectType::Quote => {
-                if let Some(quote_range) = self
-                    .line_buffer
+                self.line_buffer
                     .range_inside_current_quote()
                     .or_else(|| self.line_buffer.range_inside_next_quote())
-                {
-                    match text_object.scope {
-                        TextObjectScope::Inner => Some(quote_range),
-                        TextObjectScope::Around => {
-                            // Include the quotes themselves
-                            Some((quote_range.start - 1)..(quote_range.end + 1))
+                    .map(|quote_range| {
+                        match text_object.scope {
+                            TextObjectScope::Inner => quote_range,
+                            TextObjectScope::Around => {
+                                // Include the quotes themselves
+                                (quote_range.start - 1)..(quote_range.end + 1)
+                            }
                         }
-                    }
-                } else {
-                    None
-                }
+                    })
             }
         }
     }
 
     /// Get the range of the current big word (WORD) at cursor position
     fn current_big_word_range(&self) -> std::ops::Range<usize> {
-        // Get the end of the current big word
         let right_index = self.line_buffer.big_word_right_end_index();
 
-        // Find start by searching backwards for whitespace (same pattern as current_word_range)
         let buffer = self.line_buffer.get_buffer();
         let mut left_index = 0;
         for (i, char) in buffer[..right_index].char_indices().rev() {
@@ -782,63 +764,40 @@ impl Editor {
                 break;
             }
         }
-
-        // right_end_index returns position ON the last character, we need position AFTER it
         left_index..(right_index + 1)
     }
 
-    /// Expand a word range to include surrounding whitespace for "around" operations
+    /// Return range of `range` expanded with neighbouring whitespace for "around" operations
     /// Prioritizes whitespace after the word, falls back to whitespace before if none after
     fn expand_range_with_whitespace(
         &self,
         range: std::ops::Range<usize>,
-    ) -> Option<std::ops::Range<usize>> {
-        let buffer = self.line_buffer.get_buffer();
-        let end = self.extend_range_right(buffer, range.end);
+    ) -> std::ops::Range<usize> {
+        let end = self.next_non_whitespace_index(range.end);
         let start = if end == range.end {
-            self.extend_range_left(buffer, range.start)
+            self.prev_non_whitespace_index(range.start)
         } else {
             range.start
         };
-        Some(start..end)
+        start..end
     }
 
-    /// Extend range rightward to include trailing whitespace
-    fn extend_range_right(&self, buffer: &str, mut pos: usize) -> usize {
-        while pos < buffer.len() {
-            if let Some(char) = buffer[pos..].chars().next() {
-                if char.is_whitespace() {
-                    pos += char.len_utf8();
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-        pos
+    /// Return next non-whitespace character index after `pos`
+    fn next_non_whitespace_index(&self, pos: usize) -> usize {
+        let buffer = self.line_buffer.get_buffer();
+        buffer[pos..]
+            .char_indices()
+            .find(|(_, char)| !char.is_whitespace())
+            .map_or(buffer.len(), |(i, _)| pos + i)
     }
 
     /// Extend range leftward to include leading whitespace
-    fn extend_range_left(&self, buffer: &str, mut pos: usize) -> usize {
-        while pos > 0 {
-            let prev_char_start = buffer
-                .char_indices()
-                .rev()
-                .find(|(i, _)| *i < pos)
-                .map(|(i, _)| i)
-                .unwrap_or(0);
-            if let Some(char) = buffer[prev_char_start..pos].chars().next() {
-                if char.is_whitespace() {
-                    pos = prev_char_start;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-        pos
+    fn prev_non_whitespace_index(&self, pos: usize) -> usize {
+        self.line_buffer.get_buffer()[..pos]
+            .char_indices()
+            .rev()
+            .find(|(_, char)| !char.is_whitespace())
+            .map_or(0, |(i, char)| i + char.len_utf8())
     }
 
     fn cut_text_object(&mut self, text_object: TextObject) {
@@ -882,7 +841,8 @@ impl Editor {
     }
 
     pub(crate) fn copy_to_line_end(&mut self) {
-        let copy_range = self.line_buffer.insertion_point()..self.line_buffer.find_current_line_end();
+        let copy_range =
+            self.line_buffer.insertion_point()..self.line_buffer.find_current_line_end();
         self.yank_range(copy_range);
     }
 
@@ -938,32 +898,28 @@ impl Editor {
         }
     }
 
-    /// Yank text strictly between matching `left_char` and `right_char`.
-    /// Copies it into the cut buffer without removing anything.
-    /// Leaves the buffer unchanged and restores the original cursor.
-    pub(crate) fn yank_inside_pair(&mut self, left_char: char, right_char: char) {
+    /// Yank text strictly between matching `open_char` and `close_char`.
+    pub(crate) fn yank_inside_pair(&mut self, open_char: char, close_char: char) {
         if let Some(range) = self
             .line_buffer
-            .range_inside_current_pair(left_char, right_char)
+            .range_inside_current_pair(open_char, close_char)
             .or_else(|| {
                 self.line_buffer
-                    .range_inside_next_pair(left_char, right_char)
+                    .range_inside_next_pair(open_char, close_char)
             })
         {
             self.yank_range(range);
         }
     }
 
-    /// Delete text around matching `left_char` and `right_char` (including the pair characters).
-    /// Places deleted text into the cut buffer.
-    /// On success, move the cursor to the position where the opening character was.
-    /// If matching chars can't be found, restore the original cursor.
-    pub(crate) fn cut_around_pair(&mut self, left_char: char, right_char: char) {
+    /// Delete text around matching `open_char` and `close_char` (including the pair characters).
+    pub(crate) fn cut_around_pair(&mut self, open_char: char, close_char: char) {
         if let Some(range) = self
             .line_buffer
-            .range_inside_current_pair(left_char, right_char)
+            .range_inside_current_pair(open_char, close_char)
             .or_else(|| {
-                self.line_buffer.range_inside_next_pair(left_char, right_char)
+                self.line_buffer
+                    .range_inside_next_pair(open_char, close_char)
             })
         {
             // Expand range to include the pair characters themselves
@@ -972,16 +928,14 @@ impl Editor {
         }
     }
 
-    /// Yank text around matching `left_char` and `right_char` (including the pair characters).
-    /// Places yanked text into the cut buffer.
-    /// Cursor position is unchanged.
-    /// If matching chars can't be found, do nothing.
-    pub(crate) fn yank_around_pair(&mut self, left_char: char, right_char: char) {
+    /// Yank text around matching `open_char` and `close_char` (including the pair characters).
+    pub(crate) fn yank_around_pair(&mut self, open_char: char, close_char: char) {
         if let Some(range) = self
             .line_buffer
-            .range_inside_current_pair(left_char, right_char)
+            .range_inside_current_pair(open_char, close_char)
             .or_else(|| {
-                self.line_buffer.range_inside_next_pair(left_char, right_char)
+                self.line_buffer
+                    .range_inside_next_pair(open_char, close_char)
             })
         {
             // Expand range to include the pair characters themselves
@@ -1458,7 +1412,10 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word });
+        editor.cut_text_object(TextObject {
+            scope: TextObjectScope::Inner,
+            object_type: TextObjectType::Word,
+        });
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
@@ -1475,7 +1432,10 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.yank_text_object(TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word });
+        editor.yank_text_object(TextObject {
+            scope: TextObjectScope::Inner,
+            object_type: TextObjectType::Word,
+        });
         assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
         assert_eq!(editor.cut_buffer.get().0, expected_yank);
@@ -1504,7 +1464,10 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Word });
+        editor.cut_text_object(TextObject {
+            scope: TextObjectScope::Around,
+            object_type: TextObjectType::Word,
+        });
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
@@ -1521,7 +1484,10 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.yank_text_object(TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Word });
+        editor.yank_text_object(TextObject {
+            scope: TextObjectScope::Around,
+            object_type: TextObjectType::Word,
+        });
         assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
         assert_eq!(editor.cut_buffer.get().0, expected_yank);
@@ -1541,7 +1507,10 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord });
+        editor.cut_text_object(TextObject {
+            scope: TextObjectScope::Inner,
+            object_type: TextObjectType::BigWord,
+        });
 
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
@@ -1563,7 +1532,10 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word });
+        editor.cut_text_object(TextObject {
+            scope: TextObjectScope::Inner,
+            object_type: TextObjectType::Word,
+        });
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
@@ -1605,7 +1577,10 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word });
+        editor.cut_text_object(TextObject {
+            scope: TextObjectScope::Inner,
+            object_type: TextObjectType::Word,
+        });
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
     }
 
@@ -1625,7 +1600,10 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Word });
+        editor.cut_text_object(TextObject {
+            scope: TextObjectScope::Around,
+            object_type: TextObjectType::Word,
+        });
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
     }
 
@@ -1633,9 +1611,12 @@ mod test {
     fn test_cut_text_object_unicode_safety() {
         let mut editor = editor_with("hello 🦀end");
         editor.move_to_position(10, false); // Position after the emoji
-        editor.move_to_position(6, false);  // Move to the emoji
+        editor.move_to_position(6, false); // Move to the emoji
 
-        editor.cut_text_object(TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }); // Cut the emoji
+        editor.cut_text_object(TextObject {
+            scope: TextObjectScope::Inner,
+            object_type: TextObjectType::Word,
+        }); // Cut the emoji
 
         assert!(editor.line_buffer.is_valid()); // Should not panic or be invalid
     }
@@ -1670,17 +1651,6 @@ mod test {
         assert_eq!(editor.insertion_point(), expected_cursor);
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
     }
-
-    // TODO: Punctuation boundary handling - due to UAX#29 word boundary limitations it currently
-    // behaves different to vim.
-    // Known issues with current implementation:
-    // 1. When cursor is on alphanumeric chars adjacent to punctuation (like 'l' in "example.com"),
-    //    the word extends across the punctuation due to Unicode word boundaries
-    // 2. Sequential punctuation is not treated as a single word (each punct char is separate)
-    // 3. This differs from vim's word definition where pictuation breaks words consistently
-    //
-    // #[test]
-    // fn test_yank_inside_word_with_punctuation() { ... }
 
     #[rstest]
     // Test text object jumping behavior in various scenarios

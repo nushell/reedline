@@ -407,12 +407,12 @@ pub enum EditCommand {
     /// Cut the specified text object
     CutTextObject {
         /// The text object to operate on
-        text_object: TextObject
+        text_object: TextObject,
     },
     /// Copy the specified text object
     CopyTextObject {
         /// The text object to operate on
-        text_object: TextObject
+        text_object: TextObject,
     },
 }
 
@@ -530,8 +530,8 @@ impl Display for EditCommand {
             EditCommand::CopyInsidePair { .. } => write!(f, "YankInside Value: <char> <char>"),
             EditCommand::CutAroundPair { .. } => write!(f, "CutAround Value: <char> <char>"),
             EditCommand::CopyAroundPair { .. } => write!(f, "YankAround Value: <char> <char>"),
-            EditCommand::CutTextObject { .. } => write!(f, "CutTextObject"),
-            EditCommand::CopyTextObject { .. } => write!(f, "CopyTextObject"),
+            EditCommand::CutTextObject { .. } => write!(f, "CutTextObject Value: <TextObject>"),
+            EditCommand::CopyTextObject { .. } => write!(f, "CopyTextObject Value: <TextObject>"),
         }
     }
 }
