@@ -1042,6 +1042,49 @@ impl LineBuffer {
             .filter_map(|&quote| self.range_inside_next_pair(quote, quote))
             .min_by_key(|range| range.start)
     }
+
+    /// Get the range of the current big word (WORD) at cursor position
+    pub(crate) fn current_big_word_range(&self) -> Range<usize> {
+        let right_index = self.big_word_right_end_index();
+
+        let mut left_index = 0;
+        for (i, char) in self.lines[..right_index].char_indices().rev() {
+            if char.is_whitespace() {
+                left_index = i + char.len_utf8();
+                break;
+            }
+        }
+        left_index..(right_index + 1)
+    }
+
+    /// Return range of `range` expanded with neighbouring whitespace for "around" operations
+    /// Prioritizes whitespace after the word, falls back to whitespace before if none after
+    pub(crate) fn expand_range_with_whitespace(&self, range: Range<usize>) -> Range<usize> {
+        let end = self.next_non_whitespace_index(range.end);
+        let start = if end == range.end {
+            self.prev_non_whitespace_index(range.start)
+        } else {
+            range.start
+        };
+        start..end
+    }
+
+    /// Return next non-whitespace character index after `pos`
+    fn next_non_whitespace_index(&self, pos: usize) -> usize {
+        self.lines[pos..]
+            .char_indices()
+            .find(|(_, char)| !char.is_whitespace())
+            .map_or(self.lines.len(), |(i, _)| pos + i)
+    }
+
+    /// Extend range leftward to include leading whitespace
+    fn prev_non_whitespace_index(&self, pos: usize) -> usize {
+        self.lines[..pos]
+            .char_indices()
+            .rev()
+            .find(|(_, char)| !char.is_whitespace())
+            .map_or(0, |(i, char)| i + char.len_utf8())
+    }
 }
 
 /// Match any sequence of characters that are considered a word boundary

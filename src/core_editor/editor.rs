@@ -709,15 +709,15 @@ impl Editor {
                 let word_range = self.line_buffer.current_word_range();
                 match text_object.scope {
                     TextObjectScope::Inner => Some(word_range),
-                    TextObjectScope::Around => Some(self.expand_range_with_whitespace(word_range)),
+                    TextObjectScope::Around => Some(self.line_buffer.expand_range_with_whitespace(word_range)),
                 }
             }),
             TextObjectType::BigWord => self.line_buffer.current_whitespace_range().or_else(|| {
-                let big_word_range = self.current_big_word_range();
+                let big_word_range = self.line_buffer.current_big_word_range();
                 match text_object.scope {
                     TextObjectScope::Inner => Some(big_word_range),
                     TextObjectScope::Around => {
-                        Some(self.expand_range_with_whitespace(big_word_range))
+                        Some(self.line_buffer.expand_range_with_whitespace(big_word_range))
                     }
                 }
             }),
@@ -752,53 +752,6 @@ impl Editor {
         }
     }
 
-    /// Get the range of the current big word (WORD) at cursor position
-    fn current_big_word_range(&self) -> std::ops::Range<usize> {
-        let right_index = self.line_buffer.big_word_right_end_index();
-
-        let buffer = self.line_buffer.get_buffer();
-        let mut left_index = 0;
-        for (i, char) in buffer[..right_index].char_indices().rev() {
-            if char.is_whitespace() {
-                left_index = i + char.len_utf8();
-                break;
-            }
-        }
-        left_index..(right_index + 1)
-    }
-
-    /// Return range of `range` expanded with neighbouring whitespace for "around" operations
-    /// Prioritizes whitespace after the word, falls back to whitespace before if none after
-    fn expand_range_with_whitespace(
-        &self,
-        range: std::ops::Range<usize>,
-    ) -> std::ops::Range<usize> {
-        let end = self.next_non_whitespace_index(range.end);
-        let start = if end == range.end {
-            self.prev_non_whitespace_index(range.start)
-        } else {
-            range.start
-        };
-        start..end
-    }
-
-    /// Return next non-whitespace character index after `pos`
-    fn next_non_whitespace_index(&self, pos: usize) -> usize {
-        let buffer = self.line_buffer.get_buffer();
-        buffer[pos..]
-            .char_indices()
-            .find(|(_, char)| !char.is_whitespace())
-            .map_or(buffer.len(), |(i, _)| pos + i)
-    }
-
-    /// Extend range leftward to include leading whitespace
-    fn prev_non_whitespace_index(&self, pos: usize) -> usize {
-        self.line_buffer.get_buffer()[..pos]
-            .char_indices()
-            .rev()
-            .find(|(_, char)| !char.is_whitespace())
-            .map_or(0, |(i, char)| i + char.len_utf8())
-    }
 
     fn cut_text_object(&mut self, text_object: TextObject) {
         if let Some(range) = self.text_object_range(text_object) {
