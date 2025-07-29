@@ -755,8 +755,8 @@ impl Reedline {
                 #[cfg(not(feature = "external_printer"))]
                 events.push(crossterm::event::read()?);
 
-                // a line of input is completed.
                 // Receive all events in the queue without blocking. Will stop when
+                // a line of input is completed.
                 while !completed(&events) && event::poll(Duration::from_millis(0))? {
                     events.push(crossterm::event::read()?);
                 }
