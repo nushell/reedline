@@ -3,6 +3,8 @@ mod motion;
 mod parser;
 mod vi_keybindings;
 
+use std::str::FromStr;
+
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
@@ -22,13 +24,15 @@ enum ViMode {
     Visual,
 }
 
-impl ViMode {
-    pub fn from_str<S: AsRef<str>>(s: S) -> Option<ViMode> {
+impl FromStr for ViMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.as_ref() {
-            "normal" => Some(ViMode::Normal),
-            "insert" => Some(ViMode::Insert),
-            "visual" => Some(ViMode::Visual),
-            _ => None,
+            "normal" => Ok(ViMode::Normal),
+            "insert" => Ok(ViMode::Insert),
+            "visual" => Ok(ViMode::Visual),
+            _ => Err(()),
         }
     }
 }
@@ -188,12 +192,12 @@ impl EditMode for Vi {
 
     fn handle_mode_specific_event(&mut self, event: ReedlineEvent) -> EventStatus {
         match event {
-            ReedlineEvent::ViChangeMode(mode_str) => match ViMode::from_str(mode_str) {
-                Some(mode) => {
+            ReedlineEvent::ViChangeMode(mode_str) => match ViMode::from_str(&mode_str) {
+                Ok(mode) => {
                     self.mode = mode;
                     EventStatus::Handled
                 }
-                None => EventStatus::Inapplicable,
+                Err(_) => EventStatus::Inapplicable,
             },
             _ => EventStatus::Inapplicable,
         }
