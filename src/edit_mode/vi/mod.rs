@@ -3,6 +3,8 @@ mod motion;
 mod parser;
 mod vi_keybindings;
 
+use std::str::FromStr;
+
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
@@ -11,7 +13,7 @@ use self::motion::ViCharSearch;
 use super::EditMode;
 use crate::{
     edit_mode::{keybindings::Keybindings, vi::parser::parse},
-    enums::{EditCommand, ReedlineEvent, ReedlineRawEvent},
+    enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
     PromptEditMode, PromptViMode,
 };
 
@@ -20,6 +22,19 @@ enum ViMode {
     Normal,
     Insert,
     Visual,
+}
+
+impl FromStr for ViMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "normal" => Ok(ViMode::Normal),
+            "insert" => Ok(ViMode::Insert),
+            "visual" => Ok(ViMode::Visual),
+            _ => Err(()),
+        }
+    }
 }
 
 /// This parses incoming input `Event`s like a Vi-Style editor
@@ -172,6 +187,19 @@ impl EditMode for Vi {
         match self.mode {
             ViMode::Normal | ViMode::Visual => PromptEditMode::Vi(PromptViMode::Normal),
             ViMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
+        }
+    }
+
+    fn handle_mode_specific_event(&mut self, event: ReedlineEvent) -> EventStatus {
+        match event {
+            ReedlineEvent::ViChangeMode(mode_str) => match ViMode::from_str(&mode_str) {
+                Ok(mode) => {
+                    self.mode = mode;
+                    EventStatus::Handled
+                }
+                Err(_) => EventStatus::Inapplicable,
+            },
+            _ => EventStatus::Inapplicable,
         }
     }
 }
