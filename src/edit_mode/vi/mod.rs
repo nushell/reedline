@@ -28,7 +28,7 @@ impl FromStr for ViMode {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.as_ref() {
+        match s {
             "normal" => Ok(ViMode::Normal),
             "insert" => Ok(ViMode::Insert),
             "visual" => Ok(ViMode::Visual),
