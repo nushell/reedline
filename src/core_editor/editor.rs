@@ -745,9 +745,40 @@ impl Editor {
             })
     }
 
+    /// Returns `Some(Range<usize>)` for range inside the character pair in `pair_group`
+    /// at or surrounding the cursor, the next pair if no pairs in `pair_group`
+    /// surround the cursor, or `None` if there are no pairs from `pair_group` found.
+    ///
+    /// `text_object_scope` [`TextObjectScope::Inner`] includes only the range inside the pair
+    /// whereas [`TextObjectScope::Around`] also includes the surrounding pair characters
+    ///
+    /// If multiple pair types exist, returns the innermost pair that surrounds
+    /// the cursor. Handles empty pair as zero-length ranges inside pair.
+    /// For asymmetric pairs like `(` `)` the search is multi-line, however,
+    /// for symmetric pairs like `"` `"` the search is restricted to the current line.
+    fn matching_pair_group_text_object_range(
+        &self,
+        text_object_scope: TextObjectScope,
+        matching_pair_group: &[(char, char)],
+    ) -> Option<Range<usize>> {
+        self.line_buffer
+            .range_inside_current_pair_in_group(matching_pair_group)
+            .or_else(|| {
+                self.line_buffer
+                    .range_inside_next_pair_in_group(matching_pair_group)
+            })
+            .and_then(|pair_range| match text_object_scope {
+                TextObjectScope::Inner => Some(pair_range),
+                TextObjectScope::Around => self.expand_range_to_include_pair(pair_range),
+            })
+    }
+
     /// Returns `Some(Range<usize>)` for range inside brackets (`()`, `[]`, `{}`)
     /// at or surrounding the cursor, the next pair of brackets if no brackets
     /// surround the cursor, or `None` if there are no brackets found.
+    ///
+    /// `text_object_scope` [`TextObjectScope::Inner`] includes only the range inside the pair
+    /// whereas [`TextObjectScope::Around`] also includes the surrounding pair characters
     ///
     /// If multiple bracket types exist, returns the innermost pair that surrounds
     /// the cursor. Handles empty brackets as zero-length ranges inside brackets.
@@ -756,21 +787,8 @@ impl Editor {
         &self,
         text_object_scope: TextObjectScope,
     ) -> Option<Range<usize>> {
-        const BRACKET_PAIRS: &[(char, char); 3] = &[('(', ')'), ('[', ']'), ('{', '}')];
-        self.line_buffer
-            .range_inside_current_pair_in_group(*BRACKET_PAIRS)
-            .or_else(|| {
-                self.line_buffer
-                    .range_inside_next_pair_in_group(*BRACKET_PAIRS)
-            })
-            .and_then(|bracket_range| {
-                match text_object_scope {
-                    TextObjectScope::Inner => Some(bracket_range),
-                    TextObjectScope::Around => {
-                        self.expand_range_to_include_pair(bracket_range)
-                    }
-                }
-            })
+        const BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}')];
+        self.matching_pair_group_text_object_range(text_object_scope, BRACKET_PAIRS)
     }
 
     /// Returns `Some(Range<usize>)` for the range inside quotes (`""`, `''` or `\`\`\`)
@@ -779,24 +797,14 @@ impl Editor {
     ///
     /// Quotes are restricted to the current line.
     ///
+    /// `text_object_scope` [`TextObjectScope::Inner`] includes only the range inside the pair
+    /// whereas [`TextObjectScope::Around`] also includes the surrounding pair characters
+    ///
     /// If multiple quote types exist, returns the innermost pair that surrounds
     /// the cursor. Handles empty quotes as zero-length ranges inside quote.
     fn quote_text_object_range(&self, text_object_scope: TextObjectScope) -> Option<Range<usize>> {
-        const QUOTE_PAIRS: &[(char, char); 3] = &[('"', '"'), ('\'', '\''), ('`', '`')];
-        self.line_buffer
-            .range_inside_current_pair_in_group(*QUOTE_PAIRS)
-            .or_else(|| {
-                self.line_buffer
-                    .range_inside_next_pair_in_group(*QUOTE_PAIRS)
-            })
-            .and_then(|quote_range| {
-                match text_object_scope {
-                    TextObjectScope::Inner => Some(quote_range),
-                    TextObjectScope::Around => {
-                        self.expand_range_to_include_pair(quote_range)
-                    }
-                }
-            })
+        const QUOTE_PAIRS: &[(char, char)] = &[('"', '"'), ('\'', '\''), ('`', '`')];
+        self.matching_pair_group_text_object_range(text_object_scope, QUOTE_PAIRS)
     }
 
     /// Get the bounds for a text object operation

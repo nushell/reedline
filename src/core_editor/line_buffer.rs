@@ -979,17 +979,14 @@ impl LineBuffer {
     ///
     /// If multiple pair types are found in the buffer or line, return the innermost
     /// pair that surrounds the cursor. Handles empty quotes as zero-length ranges inside quote.
-    pub(crate) fn range_inside_current_pair_in_group<I>(
+    pub(crate) fn range_inside_current_pair_in_group(
         &self,
-        pair_group: I,
-    ) -> Option<Range<usize>>
-    where
-        I: IntoIterator<Item = (char, char)>,
-    {
-        pair_group
-            .into_iter()
+        matching_pair_group: &[(char, char)],
+    ) -> Option<Range<usize>> {
+        matching_pair_group
+            .iter()
             .filter_map(|(open_char, close_char)| {
-                self.range_inside_current_pair(open_char, close_char)
+                self.range_inside_current_pair(*open_char, *close_char)
             })
             .min_by_key(|range| range.len())
     }
@@ -1003,14 +1000,14 @@ impl LineBuffer {
     /// If multiple pair types are found in the buffer or line, return the innermost
     /// pair that surrounds the cursor. Handles empty pairs as zero-length ranges
     /// inside pair (this enables caller to still get the location of the pair).
-    pub(crate) fn range_inside_next_pair_in_group<I>(&self, pair_group: I) -> Option<Range<usize>>
-    where
-        I: IntoIterator<Item = (char, char)>,
-    {
-        pair_group
-            .into_iter()
+    pub(crate) fn range_inside_next_pair_in_group(
+        &self,
+        matching_pair_group: &[(char, char)],
+    ) -> Option<Range<usize>> {
+        matching_pair_group
+            .iter()
             .filter_map(|(open_char, close_char)| {
-                self.range_inside_next_pair(open_char, close_char)
+                self.range_inside_next_pair(*open_char, *close_char)
             })
             .min_by_key(|range| range.start)
     }
@@ -1949,7 +1946,7 @@ mod test {
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
-        assert_eq!(buf.range_inside_current_pair_in_group(*pairs), expected);
+        assert_eq!(buf.range_inside_current_pair_in_group(pairs), expected);
     }
 
     // Tests for range_inside_next_pair_in_group - cursor before pairs, return range inside next pair if exists
@@ -1983,7 +1980,7 @@ mod test {
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
-        assert_eq!(buf.range_inside_next_pair_in_group(*pairs), expected);
+        assert_eq!(buf.range_inside_next_pair_in_group(pairs), expected);
     }
 
     // Tests for range_inside_current_pair - when cursor is inside a pair
