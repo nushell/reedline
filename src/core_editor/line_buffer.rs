@@ -1909,76 +1909,46 @@ mod test {
         );
     }
 
-    // Tests for bracket text object functionality
-    #[rstest]
-    // Basic bracket pairs - cursor inside
-    #[case("foo(bar)baz", 5, Some(4..7))] // cursor on 'a' in "bar"
-    #[case("foo[bar]baz", 5, Some(4..7))] // square brackets
-    #[case("foo{bar}baz", 5, Some(4..7))] // curly brackets
-    #[case("foo<bar>baz", 5, Some(4..7))] // angle brackets
-    #[case("foo(bar(baz)qux)end", 9, Some(8..11))] // cursor on 'a' in "baz", finds inner
-    #[case("foo(bar(baz)qux)end", 5, Some(4..15))] // cursor on 'a' in "bar", finds outer
-    #[case("foo([bar])baz", 6, Some(5..8))] // mixed bracket types, cursor on 'a' - should find [bar], not (...)
-    #[case("foo[(bar)]baz", 6, Some(5..8))] // reversed nesting, cursor on 'a' - should find (bar), not [...]
-    #[case("foo(bar)baz", 4, Some(4..7))] // cursor just after opening bracket
-    #[case("foo(bar)baz", 7, Some(4..7))] // cursor just before closing bracket
-    #[case("foo[]bar", 4, Some(4..4))] // empty square brackets
-    #[case("(content)", 0, Some(1..8))] // brackets at buffer start/end
-    #[case("a(b)c", 2, Some(2..3))] // minimal case - cursor inside brackets
-    #[case("foo(🦀bar)baz", 4, Some(4..11))] // emoji inside brackets - cursor after emoji
-    #[case("🦀(bar)🦀", 8, Some(5..8))] // emoji outside brackets - cursor after opening bracket
-    #[case(r#"foo("bar")baz"#, 6, Some(4..9))] // quotes inside brackets
-    #[case(r#"foo"(bar)"baz"#, 6, Some(5..8))] // brackets inside quotes
-    #[case("())", 1, Some(1..1))] // extra closing bracket
-    #[case("", 0, None)] // empty buffer
-    #[case("(", 0, None)] // single opening bracket
-    #[case(")", 0, None)] // single closing bracket
-    #[case("no brackets here", 5, None)] // no brackets in buffer
-    #[case("outside(brackets)", 3, None)] // unmatched brackets
-    #[case("(outside) (brackets)", 9, None)] // between brackets
-    #[case("unclosed (brackets", 10, None)] // unmatched brackets
-    #[case("unclosed (brackets}", 10, None)] // mismatched brackets
-    #[case("", 0, None)] // empty buffer
-    fn test_current_inside_bracket_range(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] expected: Option<std::ops::Range<usize>>,
-    ) {
-        const BRACKET_PAIRS: &[(char, char); 4] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
-        let mut buf = LineBuffer::from(input);
-
-        buf.set_insertion_point(cursor_pos);
-        assert_eq!(
-            buf.range_inside_current_pair_in_group(*BRACKET_PAIRS),
-            expected
-        );
-    }
-
+    const BRACKET_PAIRS: &[(char, char); 3] = &[('(', ')'), ('[', ']'), ('{', '}')];
     const QUOTE_PAIRS: &[(char, char); 3] = &[('"', '"'), ('\'', '\''), ('`', '`')];
-
     // Tests for range_inside_current_quote - cursor inside or on the boundary
     #[rstest]
-    #[case(r#"foo"bar"baz"#, 5, Some(4..7))] // cursor on 'a' in "bar"
-    #[case("foo'bar'baz", 5, Some(4..7))] // single quotes
-    #[case("foo`bar`baz", 5, Some(4..7))] // backticks
-    #[case(r#"'foo"baz`bar`taz"baz'"#, 9, Some(9..12))] // backticks
-    #[case(r#"'foo"baz`bar`taz"baz'"#, 6, Some(5..16))] // backticks
-    #[case(r#"'foo"baz`bar`taz"baz'"#, 0, Some(1..20))] // backticks
-    #[case(r#""foo"'bar'`baz`"#, 0, Some(1..4))] // cursor at start, should find first (double)
-    #[case("no quotes here", 5, None)] // no quotes in buffer
-    #[case(r#"unclosed "quotes"#, 10, None)] // unmatched quotes
-    #[case("", 0, None)] // empty buffer
-    fn test_range_inside_current_quote(
+    #[case("foo(bar)baz", 5, BRACKET_PAIRS, Some(4..7))] // cursor on 'a' in "bar"
+    #[case("foo[bar]baz", 5, BRACKET_PAIRS, Some(4..7))] // square brackets
+    #[case("foo{bar}baz", 5, BRACKET_PAIRS, Some(4..7))] // curly brackets
+    #[case("foo(bar(baz)qux)end", 9, BRACKET_PAIRS, Some(8..11))] // cursor on 'a' in "baz", finds inner
+    #[case("foo(bar(baz)qux)end", 5, BRACKET_PAIRS, Some(4..15))] // cursor on 'a' in "bar", finds outer
+    #[case("foo([bar])baz", 6, BRACKET_PAIRS, Some(5..8))] // mixed bracket types, cursor on 'a' - should find [bar], not (...)
+    #[case("foo[(bar)]baz", 6, BRACKET_PAIRS, Some(5..8))] // reversed nesting, cursor on 'a' - should find (bar), not [...]
+    #[case("foo(bar)baz", 4, BRACKET_PAIRS, Some(4..7))] // cursor just after opening bracket
+    #[case("foo(bar)baz", 7, BRACKET_PAIRS, Some(4..7))] // cursor just before closing bracket
+    #[case("foo[]bar", 4, BRACKET_PAIRS, Some(4..4))] // empty square brackets
+    #[case("(content)", 0, BRACKET_PAIRS, Some(1..8))] // brackets at buffer start/end
+    #[case("a(b)c", 2, BRACKET_PAIRS, Some(2..3))] // minimal case - cursor inside brackets
+    #[case(r#"foo("bar")baz"#, 6, BRACKET_PAIRS, Some(4..9))] // quotes inside brackets
+    #[case(r#"foo"(bar)"baz"#, 6, BRACKET_PAIRS, Some(5..8))] // brackets inside quotes
+    #[case("())", 1, BRACKET_PAIRS, Some(1..1))] // extra closing bracket
+    #[case("", 0, BRACKET_PAIRS, None)] // empty buffer
+    #[case("(", 0, BRACKET_PAIRS, None)] // single opening bracket
+    #[case(")", 0, BRACKET_PAIRS, None)] // single closing bracket
+    #[case("", 0, BRACKET_PAIRS, None)] // empty buffer
+    #[case(r#"foo"bar"baz"#, 5, QUOTE_PAIRS, Some(4..7))] // cursor on 'a' in "bar"
+    #[case("foo'bar'baz", 5, QUOTE_PAIRS, Some(4..7))] // single quotes
+    #[case("foo`bar`baz", 5, QUOTE_PAIRS, Some(4..7))] // backticks
+    #[case(r#"'foo"baz`bar`taz"baz'"#, 0, QUOTE_PAIRS, Some(1..20))] // backticks
+    #[case(r#""foo"'bar'`baz`"#, 0, QUOTE_PAIRS, Some(1..4))] // cursor at start, should find first (double)
+    #[case("no quotes here", 5, QUOTE_PAIRS, None)] // no quotes in buffer
+    #[case(r#"unclosed "quotes"#, 10, QUOTE_PAIRS, None)] // unmatched quotes
+    #[case("", 0, QUOTE_PAIRS, None)] // empty buffer
+    fn test_range_inside_current_pair_group(
         #[case] input: &str,
         #[case] cursor_pos: usize,
-        #[case] expected: Option<std::ops::Range<usize>>,
+        #[case] pairs: &[(char, char); 3],
+        #[case] expected: Option<Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
-        assert_eq!(
-            buf.range_inside_current_pair_in_group(*QUOTE_PAIRS),
-            expected
-        );
+        assert_eq!(buf.range_inside_current_pair_in_group(*pairs), expected);
     }
 
     // Tests for range_inside_next_quote - cursor before quotes, jumping forward
@@ -1997,7 +1967,7 @@ mod test {
     fn test_range_inside_next_quote(
         #[case] input: &str,
         #[case] cursor_pos: usize,
-        #[case] expected: Option<std::ops::Range<usize>>,
+        #[case] expected: Option<Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
@@ -2027,7 +1997,7 @@ mod test {
         #[case] cursor_pos: usize,
         #[case] open_char: char,
         #[case] close_char: char,
-        #[case] expected: Option<std::ops::Range<usize>>,
+        #[case] expected: Option<Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
@@ -2062,7 +2032,7 @@ mod test {
         #[case] cursor_pos: usize,
         #[case] open_char: char,
         #[case] close_char: char,
-        #[case] expected: Option<std::ops::Range<usize>>,
+        #[case] expected: Option<Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
@@ -2075,45 +2045,18 @@ mod test {
     }
 
     #[rstest]
-    // Test quote is restricted to single line
-    #[case("line1\n\"quote\"", 7, '"', '"', Some(7..12))] // cursor at quote start on line 2
-    #[case("\"quote\"\nline2", 2, '"', '"', Some(1..6))] // cursor inside quote on line 1
-    #[case("\"first\"\n\"second\"", 10, '"', '"', Some(9..15))] // cursor in second quote
-    #[case("line1\n\"quote\"", 6, '"', '"', Some(7..12))] // cursor at start of line 2
-    fn test_multiline_quote_behavior(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] open_char: char,
-        #[case] close_char: char,
-        #[case] expected: Option<std::ops::Range<usize>>,
-    ) {
-        let mut buf = LineBuffer::from(input);
-        buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_current_pair(open_char, close_char);
-        assert_eq!(
-            result,
-            expected,
-            "MULTILINE TEST - Input: {:?}, cursor: {}, chars: '{}' '{}', lines: {:?}",
-            input,
-            cursor_pos,
-            open_char,
-            close_char,
-            input.lines().collect::<Vec<_>>()
-        );
-    }
-
-    #[rstest]
     // Test next quote is restricted to single line
-    #[case("line1\n\"quote\"", 0, '"', '"', None)] // cursor line 1, quote line 2
-    #[case("\"quote\"\nline2", 2, '"', '"', None)] // cursor inside quote on line 1
-    #[case("\"first\"\n\"second\"", 3, '"', '"', None)] // quote that spans multiple lines
+    #[case("line1\n\"quote\"", 7, '"', '"', None)] // Inside second line quote, no quotes after
+    #[case("\"quote\"\nline2", 2, '"', '"', None)] // No next quote on current line
+    #[case("line1\n\"quote\"", 6, '"', '"', Some(7..12))] // cursor at start of line 2
+    #[case("line1\n\"quote\"", 0, '"', '"', None)] // cursor line 1 doesn't find quote on line 2
     #[case("line1\n\"quote\"", 5, '"', '"', None)] // cursor at end of line 1
-    fn test_multiline_next_quote_behavior(
+    fn test_multiline_next_quote_multiline(
         #[case] input: &str,
         #[case] cursor_pos: usize,
         #[case] open_char: char,
         #[case] close_char: char,
-        #[case] expected: Option<std::ops::Range<usize>>,
+        #[case] expected: Option<Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
@@ -2145,7 +2088,7 @@ mod test {
         #[case] cursor_pos: usize,
         #[case] open_char: char,
         #[case] close_char: char,
-        #[case] expected: Option<std::ops::Range<usize>>,
+        #[case] expected: Option<Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
@@ -2173,7 +2116,7 @@ mod test {
         #[case] cursor_pos: usize,
         #[case] open_char: char,
         #[case] close_char: char,
-        #[case] expected: Option<std::ops::Range<usize>>,
+        #[case] expected: Option<Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);

@@ -1699,22 +1699,27 @@ mod test {
     // Test bracket_text_object_range with Inner scope - just the content inside brackets
     #[case("foo(bar)baz", 5, TextObjectScope::Inner, Some(4..7))] // cursor inside brackets
     #[case("foo[bar]baz", 5, TextObjectScope::Inner, Some(4..7))] // square brackets
-    #[case("{hello}", 3, TextObjectScope::Inner, Some(1..6))] // curly brackets
-    #[case("<world>", 3, TextObjectScope::Inner, Some(1..6))] // angle brackets
+    #[case("foo{bar}baz", 5, TextObjectScope::Inner, Some(4..7))] // square brackets
+    #[case("foo<bar>baz", 5, TextObjectScope::Inner, Some(4..7))] // square brackets
     #[case("foo()bar", 4, TextObjectScope::Inner, Some(4..4))] // empty brackets
-    #[case("(nested(inner)outer)", 8, TextObjectScope::Inner, Some(8..13))] // nested, innermost
-    #[case("foo(bar)baz", 0, TextObjectScope::Inner, Some(4..7))] // cursor outside, jumps to next
-    #[case("(first)(second)", 7, TextObjectScope::Inner, Some(8..14))] // jumps to next pair
+    #[case("(nested[inner]outer)", 8, TextObjectScope::Inner, Some(8..13))] // nested, innermost
+    #[case("(nested[mixed{inner}brackets]outer)", 8, TextObjectScope::Inner, Some(8..28))] // nested, innermost
+    #[case("next(nested[mixed{inner}brackets]outer)", 0, TextObjectScope::Inner, Some(5..38))] // next nested mixed
+    #[case("foo (bar)baz", 0, TextObjectScope::Inner, Some(5..8))] // next pair from line start
+    #[case("    (bar)baz", 1, TextObjectScope::Inner, Some(5..8))] // next pair from whitespace
+    #[case("foo(bar)baz", 2, TextObjectScope::Inner, Some(4..7))] // next pair from word
+    #[case("foo(bar\nbaz)qux", 8, TextObjectScope::Inner, Some(4..11))] // multi-line brackets
+    #[case("foo\n(bar\nbaz)qux", 0, TextObjectScope::Inner, Some(5..12))] // next multi-line brackets
+    #[case("foo\n(bar\nbaz)qux", 3, TextObjectScope::Around, Some(4..13))] // next multi-line brackets
+    #[case("{hello}", 3, TextObjectScope::Around, Some(0..7))] // includes curly brackets
+    #[case("foo()bar", 4, TextObjectScope::Around, Some(3..5))] // around empty brackets
+    #[case("(nested(inner)outer)", 8, TextObjectScope::Around, Some(7..14))] // nested around includes delimiters
+    #[case("start(nested(inner)outer)", 2, TextObjectScope::Around, Some(5..25))] // Next outer nested pair
+    #[case("(mixed{nested)brackets", 1, TextObjectScope::Inner, Some(1..13))] // mixed nesting
+    #[case("(unclosed(nested)brackets", 1, TextObjectScope::Inner, Some(10..16))] // unclosed bracket, find next closed
     #[case("no brackets here", 5, TextObjectScope::Inner, None)] // no brackets found
     #[case("(unclosed", 1, TextObjectScope::Inner, None)] // unclosed bracket
-    #[case("foo(bar\nbaz)qux", 8, TextObjectScope::Inner, Some(4..11))]
-    // multiline brackets
-    // Test bracket_text_object_range with Around scope - includes the bracket characters
-    #[case("foo(bar)baz", 5, TextObjectScope::Around, Some(3..8))] // includes parentheses
-    #[case("foo[bar]baz", 5, TextObjectScope::Around, Some(3..8))] // includes square brackets
-    #[case("{hello}", 3, TextObjectScope::Around, Some(0..7))] // includes curly brackets
-    #[case("foo()bar", 4, TextObjectScope::Around, Some(3..5))] // empty brackets with delimiters
-    #[case("(nested(inner)outer)", 8, TextObjectScope::Around, Some(7..14))] // nested, includes delimiters
+    #[case("(mismatched}", 1, TextObjectScope::Inner, None)] // mismatched brackets
     fn test_bracket_text_object_range(
         #[case] input: &str,
         #[case] cursor_pos: usize,
@@ -1734,18 +1739,24 @@ mod test {
     #[case("foo`bar`baz", 5, TextObjectScope::Inner, Some(4..7))] // backticks
     #[case(r#"foo""bar"#, 4, TextObjectScope::Inner, Some(4..4))] // empty quotes
     #[case(r#""nested'inner'outer""#, 8, TextObjectScope::Inner, Some(8..13))] // nested, innermost
-    #[case(r#"foo"bar"baz"#, 0, TextObjectScope::Inner, Some(4..7))] // cursor outside, jumps to next
-    #[case(r#""first""second""#, 7, TextObjectScope::Inner, Some(7..7))] // jumps to next pair
+    #[case(r#""nested`mixed'inner'backticks`outer""#, 8, TextObjectScope::Inner, Some(8..29))] // nested, innermost
+    #[case(r#"next"nested'mixed`inner`quotes'outer""#, 0, TextObjectScope::Inner, Some(5..36))] // next nested mixed
+    #[case(r#"foo "bar"baz"#, 0, TextObjectScope::Inner, Some(5..8))] // next pair
+    #[case(r#"foo"bar"baz"#, 2, TextObjectScope::Inner, Some(4..7))] // next from inside word
+    #[case(r#"foo"bar"baz"#, 4, TextObjectScope::Around, Some(3..8))] // around includes quotes
+    #[case(r#"foo"bar"baz"#, 3, TextObjectScope::Around, Some(3..8))] // around on opening quote
+    #[case(r#"foo"bar"baz"#, 2, TextObjectScope::Around, Some(3..8))] // around next quotes
+    #[case(r#"foo""bar"#, 4, TextObjectScope::Around, Some(3..5))] // around empty quotes
+    #[case(r#"foo""bar"#, 1, TextObjectScope::Around, Some(3..5))] // around empty quotes
+    #[case(r#""nested"inner"outer""#, 8, TextObjectScope::Around, Some(7..14))] // nested around includes delimiters
+    #[case(r#"start"nested'inner'outer""#, 2, TextObjectScope::Around, Some(5..25))] // Next outer nested pair
     #[case("no quotes here", 5, TextObjectScope::Inner, None)] // no quotes found
-    #[case(r#""unclosed"#, 1, TextObjectScope::Inner, None)] // unclosed quote
-    #[case(r#"'mixed"quotes'"#, 5, TextObjectScope::Inner, Some(1..13))]
-    // mixed quote types
-    // Test quote_text_object_range with Around scope - includes the quote characters
-    #[case(r#"foo"bar"baz"#, 5, TextObjectScope::Around, Some(3..8))] // includes double quotes
-    #[case("foo'bar'baz", 5, TextObjectScope::Around, Some(3..8))] // includes single quotes
-    #[case("foo`bar`baz", 5, TextObjectScope::Around, Some(3..8))] // includes backticks
-    #[case(r#"foo""bar"#, 4, TextObjectScope::Around, Some(3..5))] // empty quotes with delimiters
-    #[case(r#""nested'inner'outer""#, 8, TextObjectScope::Around, Some(7..14))] // nested, includes delimiters
+    #[case(r#"foo"bar"#, 1, TextObjectScope::Inner, None)] // unclosed quote
+    #[case("foo'bar\nbaz'qux", 5, TextObjectScope::Inner, None)] // quotes don't span multiple lines
+    #[case("foo'bar\nbaz'qux", 0, TextObjectScope::Inner, None)] // quotes don't span multiple lines
+    #[case("foobar\n`baz`qux", 6, TextObjectScope::Inner, None)] // quotes don't span multiple lines
+    #[case("foo\n(bar\nbaz)qux", 0, TextObjectScope::Inner, None)] // next multi-line brackets
+    #[case("foo\n(bar\nbaz)qux", 3, TextObjectScope::Around, None)] // next multi-line brackets
     fn test_quote_text_object_range(
         #[case] input: &str,
         #[case] cursor_pos: usize,
