@@ -1951,27 +1951,38 @@ mod test {
         assert_eq!(buf.range_inside_current_pair_in_group(*pairs), expected);
     }
 
-    // Tests for range_inside_next_quote - cursor before quotes, jumping forward
+    // Tests for range_inside_next_pair_in_group - cursor before pairs, return range inside next pair if exists
     #[rstest]
-    #[case(r#"foo "'bar'" baz"#, 1, Some(5..10))] // cursor before nested quotes
-    #[case(r#"foo '' "bar" baz"#, 1, Some(5..5))] // cursor before first quotes
-    #[case(r#""foo"'bar`b'az`"#, 1, Some(6..11))] // cursor inside first quotes, find single quotes
-    #[case(r#""foo"'bar'`baz`"#, 6, Some(11..14))] // cursor after second quotes, find backticks
-    #[case(r#"zaz'foo"b`a`r"baz'zaz"#, 3, Some(4..17))] // range inside outermost nested quotes
-    #[case(r#""""#, 0, Some(1..1))] // single quote pair (empty) - should find it ahead
-    #[case(r#"""asdf"#, 0, Some(1..1))] // unmatched trailing quote
-    #[case(r#""foo"'bar'`baz`"#, 0, Some(1..4))] // cursor at start, should find first quotes
-    #[case(r#"foo'bar""#, 1, None)] // mismatched quotes
-    #[case("no quotes here", 5, None)] // no quotes in buffer
-    #[case("", 0, None)] // empty buffer
-    fn test_range_inside_next_quote(
+    #[case("foo (bar)baz", 1, BRACKET_PAIRS, Some(5..8))] // cursor before brackets
+    #[case("foo []bar", 1, BRACKET_PAIRS, Some(5..5))] // cursor before empty brackets
+    #[case("(first)(second)", 4, BRACKET_PAIRS, Some(8..14))] // inside first, should find second
+    #[case("foo{bar[baz]qux}end", 0, BRACKET_PAIRS, Some(4..15))] // cursor at start, finds outermost
+    #[case("foo{bar[baz]qux}end", 1, BRACKET_PAIRS, Some(4..15))] // cursor before nested, finds innermost
+    #[case("foo{bar[baz]qux}end", 4, BRACKET_PAIRS, Some(8..11))] // cursor before nested, finds innermost
+    #[case("(){}[]", 0, BRACKET_PAIRS, Some(1..1))] // cursor at start, finds first empty pair
+    #[case("(){}[]", 2, BRACKET_PAIRS, Some(3..3))] // cursor between pairs, finds next
+    #[case("no brackets here", 5, BRACKET_PAIRS, None)] // no brackets found
+    #[case("", 0, BRACKET_PAIRS, None)] // empty buffer
+    #[case(r#"foo "'bar'" baz"#, 1, QUOTE_PAIRS, Some(5..10))] // cursor before nested quotes
+    #[case(r#"foo '' "bar" baz"#, 1, QUOTE_PAIRS, Some(5..5))] // cursor before first quotes
+    #[case(r#""foo"'bar`b'az`"#, 1, QUOTE_PAIRS, Some(6..11))] // cursor inside first quotes, find single quotes
+    #[case(r#""foo"'bar'`baz`"#, 6, QUOTE_PAIRS, Some(11..14))] // cursor after second quotes, find backticks
+    #[case(r#"zaz'foo"b`a`r"baz'zaz"#, 3, QUOTE_PAIRS, Some(4..17))] // range inside outermost nested quotes
+    #[case(r#""""#, 0, QUOTE_PAIRS, Some(1..1))] // single quote pair (empty) - should find it ahead
+    #[case(r#"""asdf"#, 0, QUOTE_PAIRS, Some(1..1))] // unmatched trailing quote
+    #[case(r#""foo"'bar'`baz`"#, 0, QUOTE_PAIRS, Some(1..4))] // cursor at start, should find first quotes
+    #[case(r#"foo'bar""#, 1, QUOTE_PAIRS, None)] // mismatched quotes
+    #[case("no quotes here", 5, QUOTE_PAIRS, None)] // no quotes in buffer
+    #[case("", 0, QUOTE_PAIRS, None)] // empty buffer
+    fn test_range_inside_next_pair_in_group(
         #[case] input: &str,
         #[case] cursor_pos: usize,
+        #[case] pairs: &[(char, char); 3],
         #[case] expected: Option<Range<usize>>,
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
-        assert_eq!(buf.range_inside_next_pair_in_group(*QUOTE_PAIRS), expected);
+        assert_eq!(buf.range_inside_next_pair_in_group(*pairs), expected);
     }
 
     // Tests for range_inside_current_pair - when cursor is inside a pair
@@ -1992,6 +2003,7 @@ mod test {
     #[case("no brackets", 5, '(', ')', None)] // no brackets
     #[case("(unclosed", 1, '(', ')', None)] // unclosed bracket
     #[case("unclosed)", 1, '(', ')', None)] // unclosed bracket
+    #[case("end of line", 11, '(', ')', None)] // unclosed bracket
     fn test_range_inside_current_pair(
         #[case] input: &str,
         #[case] cursor_pos: usize,
