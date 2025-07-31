@@ -675,13 +675,13 @@ impl Editor {
 
     fn cut_range(&mut self, range: Range<usize>) {
         if range.start <= range.end {
-            self.yank_range(range.clone());
+            self.copy_range(range.clone());
             self.line_buffer.clear_range_safe(range.clone());
             self.line_buffer.set_insertion_point(range.start);
         }
     }
 
-    fn yank_range(&mut self, range: Range<usize>) {
+    fn copy_range(&mut self, range: Range<usize>) {
         if range.start < range.end {
             let slice = &self.line_buffer.get_buffer()[range];
             self.cut_buffer.set(slice, ClipboardMode::Normal);
@@ -689,7 +689,7 @@ impl Editor {
     }
 
     /// Delete text strictly between matching `open_char` and `close_char`.
-    pub(crate) fn cut_inside_pair(&mut self, open_char: char, close_char: char) {
+    fn cut_inside_pair(&mut self, open_char: char, close_char: char) {
         if let Some(range) = self
             .line_buffer
             .range_inside_current_pair(open_char, close_char)
@@ -825,7 +825,7 @@ impl Editor {
 
     fn copy_text_object(&mut self, text_object: TextObject) {
         if let Some(range) = self.text_object_range(text_object) {
-            self.yank_range(range);
+            self.copy_range(range);
         }
     }
 
@@ -849,61 +849,61 @@ impl Editor {
             start
         };
         let copy_range = start_offset..previous_offset;
-        self.yank_range(copy_range);
+        self.copy_range(copy_range);
     }
 
     pub(crate) fn copy_from_end(&mut self) {
         let copy_range = self.line_buffer.insertion_point()..self.line_buffer.len();
-        self.yank_range(copy_range);
+        self.copy_range(copy_range);
     }
 
     pub(crate) fn copy_to_line_end(&mut self) {
         let copy_range =
             self.line_buffer.insertion_point()..self.line_buffer.find_current_line_end();
-        self.yank_range(copy_range);
+        self.copy_range(copy_range);
     }
 
     pub(crate) fn copy_word_left(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let word_start = self.line_buffer.word_left_index();
-        self.yank_range(word_start..insertion_offset);
+        self.copy_range(word_start..insertion_offset);
     }
 
     pub(crate) fn copy_big_word_left(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let big_word_start = self.line_buffer.big_word_left_index();
-        self.yank_range(big_word_start..insertion_offset);
+        self.copy_range(big_word_start..insertion_offset);
     }
 
     pub(crate) fn copy_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let word_end = self.line_buffer.word_right_index();
-        self.yank_range(insertion_offset..word_end);
+        self.copy_range(insertion_offset..word_end);
     }
 
     pub(crate) fn copy_big_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let big_word_end = self.line_buffer.next_whitespace();
-        self.yank_range(insertion_offset..big_word_end);
+        self.copy_range(insertion_offset..big_word_end);
     }
 
     pub(crate) fn copy_word_right_to_next(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let next_word_start = self.line_buffer.word_right_start_index();
-        self.yank_range(insertion_offset..next_word_start);
+        self.copy_range(insertion_offset..next_word_start);
     }
 
     pub(crate) fn copy_big_word_right_to_next(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let next_big_word_start = self.line_buffer.big_word_right_start_index();
-        self.yank_range(insertion_offset..next_big_word_start);
+        self.copy_range(insertion_offset..next_big_word_start);
     }
 
     pub(crate) fn copy_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
         if let Some(index) = self.line_buffer.find_char_right(c, current_line) {
             let extra = if before_char { 0 } else { c.len_utf8() };
             let copy_range = self.line_buffer.insertion_point()..index + extra;
-            self.yank_range(copy_range);
+            self.copy_range(copy_range);
         }
     }
 
@@ -911,12 +911,12 @@ impl Editor {
         if let Some(index) = self.line_buffer.find_char_left(c, current_line) {
             let extra = if before_char { c.len_utf8() } else { 0 };
             let copy_range = index + extra..self.line_buffer.insertion_point();
-            self.yank_range(copy_range);
+            self.copy_range(copy_range);
         }
     }
 
-    /// Yank text strictly between matching `open_char` and `close_char`.
-    pub(crate) fn copy_inside_pair(&mut self, open_char: char, close_char: char) {
+    /// Copy text strictly between matching `open_char` and `close_char`.
+    fn copy_inside_pair(&mut self, open_char: char, close_char: char) {
         if let Some(range) = self
             .line_buffer
             .range_inside_current_pair(open_char, close_char)
@@ -925,16 +925,13 @@ impl Editor {
                     .range_inside_next_pair(open_char, close_char)
             })
         {
-            self.yank_range(range);
+            self.copy_range(range);
         }
     }
 
     /// Safely expand the range to include `open_char` and `close_char`
     /// This isn't safe against the pair being a grapheme.
-    fn expand_range_to_include_pair(
-        &self,
-        range: Range<usize>,
-    ) -> Option<Range<usize>> {
+    fn expand_range_to_include_pair(&self, range: Range<usize>) -> Option<Range<usize>> {
         let start = self.line_buffer.grapheme_left_index_from_pos(range.start);
         let end = self.line_buffer.grapheme_right_index_from_pos(range.end);
 
@@ -947,7 +944,7 @@ impl Editor {
     }
 
     /// Delete text around matching `open_char` and `close_char` (including the pair characters).
-    pub(crate) fn cut_around_pair(&mut self, open_char: char, close_char: char) {
+    fn cut_around_pair(&mut self, open_char: char, close_char: char) {
         if let Some(around_range) = self
             .line_buffer
             .range_inside_current_pair(open_char, close_char)
@@ -961,8 +958,8 @@ impl Editor {
         }
     }
 
-    /// Yank text around matching `open_char` and `close_char` (including the pair characters).
-    pub(crate) fn copy_around_pair(&mut self, open_char: char, close_char: char) {
+    /// Copy text around matching `open_char` and `close_char` (including the pair characters).
+    fn copy_around_pair(&mut self, open_char: char, close_char: char) {
         if let Some(around_range) = self
             .line_buffer
             .range_inside_current_pair(open_char, close_char)
@@ -972,7 +969,7 @@ impl Editor {
             })
             .and_then(|range| self.expand_range_to_include_pair(range))
         {
-            self.yank_range(around_range);
+            self.copy_range(around_range);
         }
     }
 }
