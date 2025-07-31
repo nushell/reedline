@@ -763,12 +763,11 @@ impl Editor {
                 self.line_buffer
                     .range_inside_next_pair_in_group(*BRACKET_PAIRS)
             })
-            .map(|bracket_range| {
+            .and_then(|bracket_range| {
                 match text_object_scope {
-                    TextObjectScope::Inner => bracket_range,
+                    TextObjectScope::Inner => Some(bracket_range),
                     TextObjectScope::Around => {
-                        // Include the brackets themselves
-                        (bracket_range.start - 1)..(bracket_range.end + 1)
+                        self.expand_range_to_include_pair(bracket_range)
                     }
                 }
             })
@@ -790,12 +789,11 @@ impl Editor {
                 self.line_buffer
                     .range_inside_next_pair_in_group(*QUOTE_PAIRS)
             })
-            .map(|quote_range| {
+            .and_then(|quote_range| {
                 match text_object_scope {
-                    TextObjectScope::Inner => quote_range,
+                    TextObjectScope::Inner => Some(quote_range),
                     TextObjectScope::Around => {
-                        // Include the quotes themselves
-                        (quote_range.start - 1)..(quote_range.end + 1)
+                        self.expand_range_to_include_pair(quote_range)
                     }
                 }
             })
@@ -923,34 +921,49 @@ impl Editor {
         }
     }
 
+    /// Safely expand the range to include `open_char` and `close_char`
+    /// This isn't safe against the pair being a grapheme.
+    fn expand_range_to_include_pair(
+        &self,
+        range: Range<usize>,
+    ) -> Option<Range<usize>> {
+        let start = self.line_buffer.grapheme_left_index_from_pos(range.start);
+        let end = self.line_buffer.grapheme_right_index_from_pos(range.end);
+
+        // Ensure we don't exceed buffer bounds
+        if end > self.line_buffer.len() {
+            return None;
+        }
+
+        Some(start..end)
+    }
+
     /// Delete text around matching `open_char` and `close_char` (including the pair characters).
     pub(crate) fn cut_around_pair(&mut self, open_char: char, close_char: char) {
-        if let Some(range) = self
+        if let Some(around_range) = self
             .line_buffer
             .range_inside_current_pair(open_char, close_char)
             .or_else(|| {
                 self.line_buffer
                     .range_inside_next_pair(open_char, close_char)
             })
+            .and_then(|range| self.expand_range_to_include_pair(range))
         {
-            // Expand range to include the pair characters themselves
-            let around_range = (range.start - 1)..(range.end + 1);
             self.cut_range(around_range);
         }
     }
 
     /// Yank text around matching `open_char` and `close_char` (including the pair characters).
     pub(crate) fn copy_around_pair(&mut self, open_char: char, close_char: char) {
-        if let Some(range) = self
+        if let Some(around_range) = self
             .line_buffer
             .range_inside_current_pair(open_char, close_char)
             .or_else(|| {
                 self.line_buffer
                     .range_inside_next_pair(open_char, close_char)
             })
+            .and_then(|range| self.expand_range_to_include_pair(range))
         {
-            // Expand range to include the pair characters themselves
-            let around_range = (range.start - 1)..(range.end + 1);
             self.yank_range(around_range);
         }
     }

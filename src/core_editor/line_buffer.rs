@@ -152,20 +152,12 @@ impl LineBuffer {
 
     /// Cursor position *behind* the next unicode grapheme to the right
     pub fn grapheme_right_index(&self) -> usize {
-        self.lines[self.insertion_point..]
-            .grapheme_indices(true)
-            .nth(1)
-            .map(|(i, _)| self.insertion_point + i)
-            .unwrap_or_else(|| self.lines.len())
+        self.grapheme_right_index_from_pos(self.insertion_point)
     }
 
     /// Cursor position *in front of* the next unicode grapheme to the left
     pub fn grapheme_left_index(&self) -> usize {
-        self.lines[..self.insertion_point]
-            .grapheme_indices(true)
-            .next_back()
-            .map(|(i, _)| i)
-            .unwrap_or(0)
+        self.grapheme_left_index_from_pos(self.insertion_point)
     }
 
     /// Cursor position *behind* the next unicode grapheme to the right from the given position
@@ -175,6 +167,15 @@ impl LineBuffer {
             .nth(1)
             .map(|(i, _)| pos + i)
             .unwrap_or_else(|| self.lines.len())
+    }
+
+    /// Cursor position *behind* the previous unicode grapheme to the left from the given position
+    pub(crate) fn grapheme_left_index_from_pos(&self, pos: usize) -> usize {
+        self.lines[..pos]
+            .grapheme_indices(true)
+            .next_back()
+            .map(|(i, _)| i)
+            .unwrap_or(0)
     }
 
     /// Cursor position *behind* the next word to the right
@@ -918,7 +919,7 @@ impl LineBuffer {
         Self::find_index_of_matching_pair(start_to_close_char, open_char, close_char, true).map(
             |open_char_index_from_start| {
                 let open_char_index_in_buffer = search_range.start + open_char_index_from_start;
-                (open_char_index_in_buffer + 1)..close_char_index_in_buffer
+                (open_char_index_in_buffer + open_char.len_utf8())..close_char_index_in_buffer
             },
         )
     }
