@@ -1954,7 +1954,7 @@ mod test {
         );
     }
 
-        const QUOTE_PAIRS: &[(char, char); 3] = &[('"', '"'), ('\'', '\''), ('`', '`')];
+    const QUOTE_PAIRS: &[(char, char); 3] = &[('"', '"'), ('\'', '\''), ('`', '`')];
 
     // Tests for range_inside_current_quote - cursor inside or on the boundary
     #[rstest]
