@@ -1694,4 +1694,94 @@ mod test {
         assert_eq!(editor.insertion_point(), expected_cursor);
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
     }
+
+    #[rstest]
+    // Test bracket_text_object_range with Inner scope - just the content inside brackets
+    #[case("foo(bar)baz", 5, TextObjectScope::Inner, Some(4..7))] // cursor inside brackets
+    #[case("foo[bar]baz", 5, TextObjectScope::Inner, Some(4..7))] // square brackets
+    #[case("{hello}", 3, TextObjectScope::Inner, Some(1..6))] // curly brackets
+    #[case("<world>", 3, TextObjectScope::Inner, Some(1..6))] // angle brackets
+    #[case("foo()bar", 4, TextObjectScope::Inner, Some(4..4))] // empty brackets
+    #[case("(nested(inner)outer)", 8, TextObjectScope::Inner, Some(8..13))] // nested, innermost
+    #[case("foo(bar)baz", 0, TextObjectScope::Inner, Some(4..7))] // cursor outside, jumps to next
+    #[case("(first)(second)", 7, TextObjectScope::Inner, Some(8..14))] // jumps to next pair
+    #[case("no brackets here", 5, TextObjectScope::Inner, None)] // no brackets found
+    #[case("(unclosed", 1, TextObjectScope::Inner, None)] // unclosed bracket
+    #[case("foo(bar\nbaz)qux", 8, TextObjectScope::Inner, Some(4..11))]
+    // multiline brackets
+    // Test bracket_text_object_range with Around scope - includes the bracket characters
+    #[case("foo(bar)baz", 5, TextObjectScope::Around, Some(3..8))] // includes parentheses
+    #[case("foo[bar]baz", 5, TextObjectScope::Around, Some(3..8))] // includes square brackets
+    #[case("{hello}", 3, TextObjectScope::Around, Some(0..7))] // includes curly brackets
+    #[case("foo()bar", 4, TextObjectScope::Around, Some(3..5))] // empty brackets with delimiters
+    #[case("(nested(inner)outer)", 8, TextObjectScope::Around, Some(7..14))] // nested, includes delimiters
+    fn test_bracket_text_object_range(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] scope: TextObjectScope,
+        #[case] expected: Option<std::ops::Range<usize>>,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+        let result = editor.bracket_text_object_range(scope);
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    // Test quote_text_object_range with Inner scope - just the content inside quotes
+    #[case(r#"foo"bar"baz"#, 5, TextObjectScope::Inner, Some(4..7))] // cursor inside double quotes
+    #[case("foo'bar'baz", 5, TextObjectScope::Inner, Some(4..7))] // single quotes
+    #[case("foo`bar`baz", 5, TextObjectScope::Inner, Some(4..7))] // backticks
+    #[case(r#"foo""bar"#, 4, TextObjectScope::Inner, Some(4..4))] // empty quotes
+    #[case(r#""nested'inner'outer""#, 8, TextObjectScope::Inner, Some(8..13))] // nested, innermost
+    #[case(r#"foo"bar"baz"#, 0, TextObjectScope::Inner, Some(4..7))] // cursor outside, jumps to next
+    #[case(r#""first""second""#, 7, TextObjectScope::Inner, Some(7..7))] // jumps to next pair
+    #[case("no quotes here", 5, TextObjectScope::Inner, None)] // no quotes found
+    #[case(r#""unclosed"#, 1, TextObjectScope::Inner, None)] // unclosed quote
+    #[case(r#"'mixed"quotes'"#, 5, TextObjectScope::Inner, Some(1..13))]
+    // mixed quote types
+    // Test quote_text_object_range with Around scope - includes the quote characters
+    #[case(r#"foo"bar"baz"#, 5, TextObjectScope::Around, Some(3..8))] // includes double quotes
+    #[case("foo'bar'baz", 5, TextObjectScope::Around, Some(3..8))] // includes single quotes
+    #[case("foo`bar`baz", 5, TextObjectScope::Around, Some(3..8))] // includes backticks
+    #[case(r#"foo""bar"#, 4, TextObjectScope::Around, Some(3..5))] // empty quotes with delimiters
+    #[case(r#""nested'inner'outer""#, 8, TextObjectScope::Around, Some(7..14))] // nested, includes delimiters
+    fn test_quote_text_object_range(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] scope: TextObjectScope,
+        #[case] expected: Option<std::ops::Range<usize>>,
+    ) {
+        let mut editor = editor_with(input);
+        editor.line_buffer.set_insertion_point(cursor_pos);
+        let result = editor.quote_text_object_range(scope);
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    // Test edge cases and complex scenarios for both bracket and quote text objects
+    #[case("", 0, TextObjectScope::Inner, None, None)] // empty buffer
+    #[case("a", 0, TextObjectScope::Inner, None, None)] // single character
+    #[case("()", 1, TextObjectScope::Inner, Some(1..1), None)] // empty brackets, cursor inside
+    #[case(r#""""#, 1, TextObjectScope::Inner, None, Some(1..1))] // empty quotes, cursor inside
+    #[case("([{}])", 3, TextObjectScope::Inner, Some(3..3), None)] // deeply nested brackets
+    #[case(r#""'`text`'""#, 5, TextObjectScope::Inner, None, Some(3..7))] // deeply nested quotes
+    #[case("(text) and [more]", 5, TextObjectScope::Around, Some(0..6), None)] // multiple bracket types
+    #[case(r#""text" and 'more'"#, 5, TextObjectScope::Around, None, Some(0..6))] // multiple quote types
+    fn test_text_object_edge_cases(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] scope: TextObjectScope,
+        #[case] expected_bracket: Option<std::ops::Range<usize>>,
+        #[case] expected_quote: Option<std::ops::Range<usize>>,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+
+        let bracket_result = editor.bracket_text_object_range(scope);
+        let quote_result = editor.quote_text_object_range(scope);
+
+        assert_eq!(bracket_result, expected_bracket);
+        assert_eq!(quote_result, expected_quote);
+    }
 }
