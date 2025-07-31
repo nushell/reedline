@@ -929,16 +929,10 @@ impl Editor {
         }
     }
 
-    /// Safely expand the range to include `open_char` and `close_char`
-    /// This isn't safe against the pair being a grapheme.
+    /// Expand the range to include `open_char` and `close_char`
     fn expand_range_to_include_pair(&self, range: Range<usize>) -> Option<Range<usize>> {
         let start = self.line_buffer.grapheme_left_index_from_pos(range.start);
         let end = self.line_buffer.grapheme_right_index_from_pos(range.end);
-
-        // Ensure we don't exceed buffer bounds
-        if end > self.line_buffer.len() {
-            return None;
-        }
 
         Some(start..end)
     }
