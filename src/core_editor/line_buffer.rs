@@ -2144,4 +2144,50 @@ mod test {
             input.lines().collect::<Vec<_>>()
         );
     }
+
+    // Unicode safety tests for core pair-finding functionality
+    #[rstest]
+    #[case("(🦀)", 1, '(', ')', Some(1..5))] // emoji inside brackets
+    #[case("🦀(text)🦀", 5, '(', ')', Some(5..9))] // emojis outside brackets
+    #[case("(multi👨‍👩‍👧‍👦family)", 1, '(', ')', Some(1..37))] // complex emoji family inside (25 bytes)
+    #[case("(åëïöü)", 1, '(', ')', Some(1..11))] // accented characters
+    #[case("(mixed🦀åëïtext)", 1, '(', ')', Some(1..20))] // mixed unicode content
+    #[case("'🦀emoji🦀'", 1, '\'', '\'', Some(1..14))] // emojis in quotes
+    #[case("'mixed👨‍👩‍👧‍👦åëï'", 1, '\'', '\'', Some(1..37))] // complex 25 byte family emoji
+    fn test_range_inside_current_pair_unicode_safety(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] open_char: char,
+        #[case] close_char: char,
+        #[case] expected: Option<Range<usize>>,
+    ) {
+        let mut buf = LineBuffer::from(input);
+        buf.set_insertion_point(cursor_pos);
+        let result = buf.range_inside_current_pair(open_char, close_char);
+        assert_eq!(result, expected);
+        // Verify buffer remains valid after operations
+        assert!(buf.is_valid());
+    }
+
+    #[rstest]
+    #[case("start🦀(content)end", 0, '(', ')', Some(10..17))] // emoji before brackets
+    #[case("start(🦀)end", 0, '(', ')', Some(6..10))] // emoji inside brackets to find
+    #[case("🦀'text'🦀", 0, '\'', '\'', Some(5..9))] // emoji before quotes
+    #[case("start'🦀text🦀'", 0, '\'', '\'', Some(6..18))] // emoji before quotes
+    #[case("start'multi👨‍👩‍👧‍👦family'end", 0, '\'', '\'', Some(6..42))] // complex 25 byte family emoji
+    #[case("start'👨‍👩‍👧‍👦multifamily'end", 0, '\'', '\'', Some(6..42))] // complex 25 byte family emoji
+    fn test_range_inside_next_pair_unicode_safety(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] open_char: char,
+        #[case] close_char: char,
+        #[case] expected: Option<Range<usize>>,
+    ) {
+        let mut buf = LineBuffer::from(input);
+        buf.set_insertion_point(cursor_pos);
+        let result = buf.range_inside_next_pair(open_char, close_char);
+        assert_eq!(result, expected);
+        // Verify buffer remains valid after operations
+        assert!(buf.is_valid());
+    }
 }
