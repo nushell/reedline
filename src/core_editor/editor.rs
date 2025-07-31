@@ -172,11 +172,11 @@ impl Editor {
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => self.paste_from_system(),
             EditCommand::CutInsidePair { left, right } => self.cut_inside_pair(*left, *right),
-            EditCommand::CopyInsidePair { left, right } => self.yank_inside_pair(*left, *right),
+            EditCommand::CopyInsidePair { left, right } => self.copy_inside_pair(*left, *right),
             EditCommand::CutAroundPair { left, right } => self.cut_around_pair(*left, *right),
-            EditCommand::CopyAroundPair { left, right } => self.yank_around_pair(*left, *right),
+            EditCommand::CopyAroundPair { left, right } => self.copy_around_pair(*left, *right),
             EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
-            EditCommand::CopyTextObject { text_object } => self.yank_text_object(*text_object),
+            EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
         }
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
             self.selection_anchor = None;
@@ -817,7 +817,7 @@ impl Editor {
         }
     }
 
-    fn yank_text_object(&mut self, text_object: TextObject) {
+    fn copy_text_object(&mut self, text_object: TextObject) {
         if let Some(range) = self.text_object_range(text_object) {
             self.yank_range(range);
         }
@@ -910,7 +910,7 @@ impl Editor {
     }
 
     /// Yank text strictly between matching `open_char` and `close_char`.
-    pub(crate) fn yank_inside_pair(&mut self, open_char: char, close_char: char) {
+    pub(crate) fn copy_inside_pair(&mut self, open_char: char, close_char: char) {
         if let Some(range) = self
             .line_buffer
             .range_inside_current_pair(open_char, close_char)
@@ -940,7 +940,7 @@ impl Editor {
     }
 
     /// Yank text around matching `open_char` and `close_char` (including the pair characters).
-    pub(crate) fn yank_around_pair(&mut self, open_char: char, close_char: char) {
+    pub(crate) fn copy_around_pair(&mut self, open_char: char, close_char: char) {
         if let Some(range) = self
             .line_buffer
             .range_inside_current_pair(open_char, close_char)
@@ -1301,7 +1301,7 @@ mod test {
     fn test_yank_inside_brackets() {
         let mut editor = editor_with("foo(bar)baz");
         editor.move_to_position(5, false); // Move inside brackets
-        editor.yank_inside_pair('(', ')');
+        editor.copy_inside_pair('(', ')');
         assert_eq!(editor.get_buffer(), "foo(bar)baz"); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), 5); // Cursor should return to original position
 
@@ -1312,7 +1312,7 @@ mod test {
         // Test with cursor outside brackets
         let mut editor = editor_with("foo(bar)baz");
         editor.move_to_position(0, false);
-        editor.yank_inside_pair('(', ')');
+        editor.copy_inside_pair('(', ')');
         assert_eq!(editor.get_buffer(), "foo(bar)baz");
         assert_eq!(editor.insertion_point(), 0);
     }
@@ -1321,7 +1321,7 @@ mod test {
     fn test_yank_inside_quotes() {
         let mut editor = editor_with("foo\"bar\"baz");
         editor.move_to_position(5, false); // Move inside quotes
-        editor.yank_inside_pair('"', '"');
+        editor.copy_inside_pair('"', '"');
         assert_eq!(editor.get_buffer(), "foo\"bar\"baz"); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), 5); // Cursor should return to original position
         assert_eq!(editor.cut_buffer.get().0, "bar");
@@ -1329,7 +1329,7 @@ mod test {
         // Test with no matching quotes
         let mut editor = editor_with("foo bar baz");
         editor.move_to_position(4, false);
-        editor.yank_inside_pair('"', '"');
+        editor.copy_inside_pair('"', '"');
         assert_eq!(editor.get_buffer(), "foo bar baz");
         assert_eq!(editor.insertion_point(), 4);
         assert_eq!(editor.cut_buffer.get().0, "");
@@ -1339,7 +1339,7 @@ mod test {
     fn test_yank_inside_nested() {
         let mut editor = editor_with("foo(bar(baz)qux)quux");
         editor.move_to_position(8, false); // Move inside inner brackets
-        editor.yank_inside_pair('(', ')');
+        editor.copy_inside_pair('(', ')');
         assert_eq!(editor.get_buffer(), "foo(bar(baz)qux)quux"); // Buffer shouldn't change
         assert_eq!(editor.insertion_point(), 8);
         assert_eq!(editor.cut_buffer.get().0, "baz");
@@ -1349,7 +1349,7 @@ mod test {
         assert_eq!(editor.get_buffer(), "foo(bar(bazbaz)qux)quux");
 
         editor.move_to_position(4, false); // Move inside outer brackets
-        editor.yank_inside_pair('(', ')');
+        editor.copy_inside_pair('(', ')');
         assert_eq!(editor.get_buffer(), "foo(bar(bazbaz)qux)quux");
         assert_eq!(editor.insertion_point(), 4);
         assert_eq!(editor.cut_buffer.get().0, "bar(bazbaz)qux");
@@ -1443,7 +1443,7 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.yank_text_object(TextObject {
+        editor.copy_text_object(TextObject {
             scope: TextObjectScope::Inner,
             object_type: TextObjectType::Word,
         });
@@ -1495,7 +1495,7 @@ mod test {
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        editor.yank_text_object(TextObject {
+        editor.copy_text_object(TextObject {
             scope: TextObjectScope::Around,
             object_type: TextObjectType::Word,
         });
