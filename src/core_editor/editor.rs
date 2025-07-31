@@ -745,7 +745,7 @@ impl Editor {
             })
     }
 
-    /// Returns `Some(Range<usize>)` for range inside brackets (`()`, `[]`, `{}`, `<>`)
+    /// Returns `Some(Range<usize>)` for range inside brackets (`()`, `[]`, `{}`)
     /// at or surrounding the cursor, the next pair of brackets if no brackets
     /// surround the cursor, or `None` if there are no brackets found.
     ///
@@ -756,7 +756,7 @@ impl Editor {
         &self,
         text_object_scope: TextObjectScope,
     ) -> Option<Range<usize>> {
-        const BRACKET_PAIRS: &[(char, char); 4] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
+        const BRACKET_PAIRS: &[(char, char); 3] = &[('(', ')'), ('[', ']'), ('{', '}')];
         self.line_buffer
             .range_inside_current_pair_in_group(*BRACKET_PAIRS)
             .or_else(|| {
@@ -1700,7 +1700,6 @@ mod test {
     #[case("foo(bar)baz", 5, TextObjectScope::Inner, Some(4..7))] // cursor inside brackets
     #[case("foo[bar]baz", 5, TextObjectScope::Inner, Some(4..7))] // square brackets
     #[case("foo{bar}baz", 5, TextObjectScope::Inner, Some(4..7))] // square brackets
-    #[case("foo<bar>baz", 5, TextObjectScope::Inner, Some(4..7))] // square brackets
     #[case("foo()bar", 4, TextObjectScope::Inner, Some(4..4))] // empty brackets
     #[case("(nested[inner]outer)", 8, TextObjectScope::Inner, Some(8..13))] // nested, innermost
     #[case("(nested[mixed{inner}brackets]outer)", 8, TextObjectScope::Inner, Some(8..28))] // nested, innermost
