@@ -3,7 +3,7 @@ use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 use crate::core_editor::get_system_clipboard;
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
 use crate::{core_editor::get_local_clipboard, EditCommand};
-use std::ops::DerefMut;
+use std::ops::{DerefMut, Range};
 
 /// Stateful editor executing changes to the underlying [`LineBuffer`]
 ///
@@ -673,17 +673,15 @@ impl Editor {
         self.selection_anchor = None;
     }
 
-    fn cut_range(&mut self, range: std::ops::Range<usize>) {
+    fn cut_range(&mut self, range: Range<usize>) {
         if range.start <= range.end {
             self.yank_range(range.clone());
             self.line_buffer.clear_range_safe(range.clone());
-            // Redundant as clear_range_safe should place insertion point at
-            // start of clear range but this ensures it's in the right place
             self.line_buffer.set_insertion_point(range.start);
         }
     }
 
-    fn yank_range(&mut self, range: std::ops::Range<usize>) {
+    fn yank_range(&mut self, range: Range<usize>) {
         if range.start < range.end {
             let slice = &self.line_buffer.get_buffer()[range];
             self.cut_buffer.set(slice, ClipboardMode::Normal);
@@ -692,66 +690,126 @@ impl Editor {
 
     /// Delete text strictly between matching `open_char` and `close_char`.
     pub(crate) fn cut_inside_pair(&mut self, open_char: char, close_char: char) {
-        if let Some(range) = self.line_buffer
+        if let Some(range) = self
+            .line_buffer
             .range_inside_current_pair(open_char, close_char)
             .or_else(|| {
-                self.line_buffer.range_inside_next_pair(open_char, close_char)
+                self.line_buffer
+                    .range_inside_next_pair(open_char, close_char)
             })
         {
             self.cut_range(range)
         }
     }
 
-    /// Get the bounds for a text object operation
-    fn text_object_range(&self, text_object: TextObject) -> Option<std::ops::Range<usize>> {
-        match text_object.object_type {
-            TextObjectType::Word => self.line_buffer.current_whitespace_range().or_else(|| {
+    /// Return the range of the word under the cursor.
+    /// A word consists of a sequence of letters, digits and underscores,
+    /// separated with white space.
+    /// A block of whitespace under the cursor is also treated as a word.
+    ///
+    /// `text_object_scope` Inner includes only the word itself
+    /// while Around also includes trailing whitespace,
+    /// or preceding whitespace if there is no trailing whitespace.
+    fn word_text_object_range(&self, text_object_scope: TextObjectScope) -> Range<usize> {
+        self.line_buffer
+            .current_whitespace_range()
+            .unwrap_or_else(|| {
                 let word_range = self.line_buffer.current_word_range();
-                match text_object.scope {
-                    TextObjectScope::Inner => Some(word_range),
-                    TextObjectScope::Around => Some(self.line_buffer.expand_range_with_whitespace(word_range)),
-                }
-            }),
-            TextObjectType::BigWord => self.line_buffer.current_whitespace_range().or_else(|| {
-                let big_word_range = self.line_buffer.current_big_word_range();
-                match text_object.scope {
-                    TextObjectScope::Inner => Some(big_word_range),
+                match text_object_scope {
+                    TextObjectScope::Inner => word_range,
                     TextObjectScope::Around => {
-                        Some(self.line_buffer.expand_range_with_whitespace(big_word_range))
+                        self.line_buffer.expand_range_with_whitespace(word_range)
                     }
                 }
-            }),
-            TextObjectType::Brackets => {
-                self.line_buffer
-                    .range_inside_current_bracket()
-                    .or_else(|| self.line_buffer.range_inside_next_bracket())
-                    .map(|bracket_range| {
-                        match text_object.scope {
-                            TextObjectScope::Inner => bracket_range,
-                            TextObjectScope::Around => {
-                                // Include the brackets themselves
-                                (bracket_range.start - 1)..(bracket_range.end + 1)
-                            }
-                        }
-                    })
-            }
-            TextObjectType::Quote => {
-                self.line_buffer
-                    .range_inside_current_quote()
-                    .or_else(|| self.line_buffer.range_inside_next_quote())
-                    .map(|quote_range| {
-                        match text_object.scope {
-                            TextObjectScope::Inner => quote_range,
-                            TextObjectScope::Around => {
-                                // Include the quotes themselves
-                                (quote_range.start - 1)..(quote_range.end + 1)
-                            }
-                        }
-                    })
-            }
-        }
+            })
     }
 
+    /// Return the range of the WORD under the cursor.
+    /// A WORD consists of a sequence of non-blank characters, separated with white space.
+    /// A block of whitespace under the cursor is also treated as a word.
+    ///
+    /// `text_object_scope` Inner includes only the word itself
+    /// while Around also includes trailing whitespace,
+    /// or preceding whitespace if there is no trailing whitespace.
+    fn big_word_text_object_range(&self, text_object_scope: TextObjectScope) -> Range<usize> {
+        self.line_buffer
+            .current_whitespace_range()
+            .unwrap_or_else(|| {
+                let big_word_range = self.line_buffer.current_big_word_range();
+                match text_object_scope {
+                    TextObjectScope::Inner => big_word_range,
+                    TextObjectScope::Around => self
+                        .line_buffer
+                        .expand_range_with_whitespace(big_word_range),
+                }
+            })
+    }
+
+    /// Returns `Some(Range<usize>)` for range inside brackets (`()`, `[]`, `{}`, `<>`)
+    /// at or surrounding the cursor, the next pair of brackets if no brackets
+    /// surround the cursor, or `None` if there are no brackets found.
+    ///
+    /// If multiple bracket types exist, returns the innermost pair that surrounds
+    /// the cursor. Handles empty brackets as zero-length ranges inside brackets.
+    /// Includes brackets that span multiple lines.
+    fn bracket_text_object_range(
+        &self,
+        text_object_scope: TextObjectScope,
+    ) -> Option<Range<usize>> {
+        const BRACKET_PAIRS: &[(char, char); 4] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
+        self.line_buffer
+            .range_inside_current_pair_in_group(*BRACKET_PAIRS)
+            .or_else(|| {
+                self.line_buffer
+                    .range_inside_next_pair_in_group(*BRACKET_PAIRS)
+            })
+            .map(|bracket_range| {
+                match text_object_scope {
+                    TextObjectScope::Inner => bracket_range,
+                    TextObjectScope::Around => {
+                        // Include the brackets themselves
+                        (bracket_range.start - 1)..(bracket_range.end + 1)
+                    }
+                }
+            })
+    }
+
+    /// Returns `Some(Range<usize>)` for the range inside quotes (`""`, `''` or `\`\`\`)
+    /// at the cursor, the next pair of quotes if the cursor is not within quotes,
+    /// or `None` if there are no quotes found.
+    ///
+    /// Quotes are restricted to the current line.
+    ///
+    /// If multiple quote types exist, returns the innermost pair that surrounds
+    /// the cursor. Handles empty quotes as zero-length ranges inside quote.
+    fn quote_text_object_range(&self, text_object_scope: TextObjectScope) -> Option<Range<usize>> {
+        const QUOTE_PAIRS: &[(char, char); 3] = &[('"', '"'), ('\'', '\''), ('`', '`')];
+        self.line_buffer
+            .range_inside_current_pair_in_group(*QUOTE_PAIRS)
+            .or_else(|| {
+                self.line_buffer
+                    .range_inside_next_pair_in_group(*QUOTE_PAIRS)
+            })
+            .map(|quote_range| {
+                match text_object_scope {
+                    TextObjectScope::Inner => quote_range,
+                    TextObjectScope::Around => {
+                        // Include the quotes themselves
+                        (quote_range.start - 1)..(quote_range.end + 1)
+                    }
+                }
+            })
+    }
+
+    /// Get the bounds for a text object operation
+    fn text_object_range(&self, text_object: TextObject) -> Option<Range<usize>> {
+        match text_object.object_type {
+            TextObjectType::Word => Some(self.word_text_object_range(text_object.scope)),
+            TextObjectType::BigWord => Some(self.big_word_text_object_range(text_object.scope)),
+            TextObjectType::Brackets => self.bracket_text_object_range(text_object.scope),
+            TextObjectType::Quote => self.quote_text_object_range(text_object.scope),
+        }
+    }
 
     fn cut_text_object(&mut self, text_object: TextObject) {
         if let Some(range) = self.text_object_range(text_object) {

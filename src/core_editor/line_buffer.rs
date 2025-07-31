@@ -4,10 +4,6 @@ use {
     unicode_segmentation::UnicodeSegmentation,
 };
 
-// Character pairs for text object operations
-static BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
-static QUOTE_CHARS: &[char] = &['"', '\'', '`'];
-
 /// In memory representation of the entered line(s) including a cursor position to facilitate cursor based editing.
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct LineBuffer {
@@ -337,20 +333,15 @@ impl LineBuffer {
             .unwrap_or(0)
     }
 
-    /// Gets the range of the current whitespace block at cursor position.
-    ///
-    /// Returns the complete range of consecutive whitespace characters that includes
+    /// Returns the range of consecutive whitespace characters that includes
     /// the cursor position. If cursor is at the end of trailing whitespace, includes
-    /// that trailing block. Returns an empty range (0..0) if not in a whitespace context.
-    ///
-    /// Used for vim-style text object operations (iw/aw when cursor is on whitespace).
+    /// that trailing block. Return None if no surrounding whitespace.
     pub(crate) fn current_whitespace_range(&self) -> Option<Range<usize>> {
+        let range_start = self.current_whitespace_start_index();
         if self.on_whitespace() {
             let range_end = self.current_whitespace_end_index();
-            let range_start = self.current_whitespace_start_index();
             Some(range_start..range_end)
         } else if self.at_end_of_line_with_preceding_whitespace() {
-            let range_start = self.current_whitespace_start_index();
             Some(range_start..self.insertion_point)
         } else {
             None
@@ -827,21 +818,14 @@ impl LineBuffer {
         }
     }
 
-    /// Find the range inside the current pair of characters at the cursor position.
+    /// Returns `Some(Range<usize>)` for the range inside the surrounding
+    /// `open_char` and `close_char`, or `None` if no pair is found.
     ///
-    /// This method searches for a matching pair of `open_char` and `close_char` characters
-    /// that either contains the cursor position or starts immediately after the cursor.
-    /// Returns the range of text inside those characters.
+    /// If cursor is positioned just before an opening character, treat it as
+    /// being "inside" that pair.
     ///
     /// For symmetric characters (e.g. quotes), the search is restricted to the current line only.
     /// For asymmetric characters (e.g. brackets), the search spans the entire buffer.
-    ///
-    /// # Special Cases
-    /// - If cursor is positioned just before an opening character, treats it as being "inside" that pair
-    /// - For quotes: `"|text"` (cursor before quote) → returns range inside the quotes
-    /// - For brackets: `|(text)` (cursor before bracket) → returns range inside the brackets
-    ///
-    /// Returns `Some(Range<usize>)` containing the range inside the pair, `None` if no pair is found
     pub(crate) fn range_inside_current_pair(
         &self,
         open_char: char,
@@ -868,16 +852,17 @@ impl LineBuffer {
         })
     }
 
-    /// Find the range inside the next pair of characters after the cursor position.
+    /// Returns `Some(Range<usize>)` for the range inside the next pair
+    /// or `None` if no pair is found
     ///
-    /// This method searches forward from the cursor to find the next occurrence of `open_char`,
-    /// then finds its matching `close_char` and returns the range of text inside those characters.
-    /// Unlike `range_inside_current_pair`, this always looks for pairs that start after the cursor.
+    /// Search forward from the cursor to find the next occurrence of `open_char`
+    /// (including char at cursors current position), then finds its matching
+    /// `close_char` and returns the range of text inside those characters.
+    /// Note the end of Range is exclusive so the end of the range returned so
+    /// the end of the range is index of final char + 1.
     ///
     /// For symmetric characters (e.g. quotes), the search is restricted to the current line only.
     /// For asymmetric characters (e.g. brackets), the search spans the entire buffer.
-    ///
-    /// Returns `Some(Range<usize>)` containing the range inside the next pair, `None` if no pair is found
     pub(crate) fn range_inside_next_pair(
         &self,
         open_char: char,
@@ -887,14 +872,11 @@ impl LineBuffer {
 
         // Find the next opening character, including the current position
         let open_pair_index = if self.grapheme_right().starts_with(open_char) {
-            // Current position is the opening character
             self.insertion_point
         } else {
-            // Search forward for the opening character
             self.find_char_right(open_char, only_search_current_line)?
         };
 
-        // Now find the range between this opening character and its matching closing character
         self.range_between_matching_pair_at_pos(
             self.grapheme_right_index_from_pos(open_pair_index),
             only_search_current_line,
@@ -903,15 +885,16 @@ impl LineBuffer {
         )
     }
 
-    /// Core implementation for finding ranges inside character pairs.
+    /// Returns `Some(Range<usize>)` for the range inside the pair `open_char`
+    /// and `close_char` surrounding the cursor position NOT including the character
+    /// at the current cursor position, or `None` if no valid pair is found.
     ///
     /// This is the underlying algorithm used by both `range_inside_current_pair` and
-    /// `range_inside_next_pair`. It uses a forward-first search approach:
-    /// 1. Search forward from cursor to find the closing character
-    /// 2. Search backward from closing to find the opening character
+    /// `range_inside_next_pair`.
+    /// It uses a forward-first search approach:
+    /// 1. Search forward from cursor to find the closing character (ignoring nested pairs)
+    /// 2. Search backward from closing to find the matching opening character
     /// 3. Return the range between them
-    ///
-    /// Returns `Some(Range<usize>)` containing the range inside the pair, `None` if no valid pair is found
     fn range_between_matching_pair_at_pos(
         &self,
         position: usize,
@@ -940,13 +923,18 @@ impl LineBuffer {
         )
     }
 
-    /// Find the index of a matching character using depth counting to handle nested pairs.
+    /// Find the index of a pair character that matches the nesting depth at the
+    /// start or end of `slice` using depth counting to handle nested pairs.
     /// Helper for [`LineBuffer::range_between_matching_pair_at_pos`]
     ///
-    /// Forward search: find close_char at same level of nesting as start of slice
-    /// Backward search: find open_char at same level of nesting as end of slice
+    /// If `search_backwards` is false:
+    /// Find close_char at same level of nesting as start of slice.
     ///
-    /// Returns index of the target char from start of slice if found, or `None` if not found.
+    /// If `search_backwards` is true:
+    /// Find open_char at same level of nesting as end of slice.
+    ///
+    /// Returns index of the open or closing character that matches the start of slice,
+    /// or `None` if not found.
     fn find_index_of_matching_pair(
         slice: &str,
         open_char: char,
@@ -981,65 +969,48 @@ impl LineBuffer {
         None
     }
 
-    /// Find the range inside the innermost bracket pair surrounding the cursor.
+    /// Returns `Some(Range<usize>)` for the range inside pair in `pair_group`
+    /// at cursor position including pair of character at current cursor position,
+    /// or `None` if cursor is not inside or at a pair included in `pair_group.
     ///
-    /// Searches for bracket pairs `()`, `[]`, `{}`, `<>` that contain the cursor position.
-    /// If multiple nested pairs exist, returns the outermost pair. The cursor does not move.
+    /// If the opening and closing char in the pair are equal then search is
+    /// restricted to the current line.
     ///
-    /// Returns `Some(Range<usize>)` with the byte range inside the brackets, or `None` if cursor is not inside any bracket pair.
-    pub(crate) fn range_inside_current_bracket(&self) -> Option<Range<usize>> {
-        BRACKET_PAIRS
-            .iter()
+    /// If multiple pair types are found in the buffer or line, return the innermost
+    /// pair that surrounds the cursor. Handles empty quotes as zero-length ranges inside quote.
+    pub(crate) fn range_inside_current_pair_in_group<I>(
+        &self,
+        pair_group: I,
+    ) -> Option<Range<usize>>
+    where
+        I: IntoIterator<Item = (char, char)>,
+    {
+        pair_group
+            .into_iter()
             .filter_map(|(open_char, close_char)| {
-                self.range_inside_current_pair(*open_char, *close_char)
+                self.range_inside_current_pair(open_char, close_char)
             })
             .min_by_key(|range| range.len())
     }
 
-    /// Find the range inside the next bracket pair forward from the cursor.
+    /// Returns `Some(Range<usize>)` for the range inside the next pair in `pair_group`
+    /// or `None` if cursor is not inside a pair included in `pair_group`.
     ///
-    /// Searches forward from cursor position (including current character) for bracket pairs `()`, `[]`, `{}`, `<>`.
-    /// If cursor is on an opening bracket, uses that bracket as the start. Handles nested brackets with depth counting.
-    /// The cursor does not move.
+    /// If the opening and closing char in the pair are equal then search is
+    /// restricted to the current line.
     ///
-    /// Returns `Some(Range<usize>)` with the byte range inside the next bracket pair, or `None` if no pair found.
-    pub(crate) fn range_inside_next_bracket(&self) -> Option<Range<usize>> {
-        BRACKET_PAIRS
-            .iter()
+    /// If multiple pair types are found in the buffer or line, return the innermost
+    /// pair that surrounds the cursor. Handles empty pairs as zero-length ranges
+    /// inside pair (this enables caller to still get the location of the pair).
+    pub(crate) fn range_inside_next_pair_in_group<I>(&self, pair_group: I) -> Option<Range<usize>>
+    where
+        I: IntoIterator<Item = (char, char)>,
+    {
+        pair_group
+            .into_iter()
             .filter_map(|(open_char, close_char)| {
-                self.range_inside_next_pair(*open_char, *close_char)
+                self.range_inside_next_pair(open_char, close_char)
             })
-            .min_by_key(|range| range.start)
-    }
-
-    /// Find the range inside the innermost quote pair surrounding the cursor.
-    ///
-    /// Searches for quote pairs `""`, `''`, ``` `` ``` that contain the cursor position.
-    /// If multiple quote types exist, returns the innermost pair.
-    /// Search is restricted to the current line.
-    /// Handles empty quotes as zero-length ranges inside quote.
-    ///
-    /// Returns `Some(Range<usize>)` with the byte range inside the quotes
-    /// or `None` if cursor is not inside any quote pair.
-    pub(crate) fn range_inside_current_quote(&self) -> Option<Range<usize>> {
-        QUOTE_CHARS
-            .iter()
-            .filter_map(|&quote| self.range_inside_current_pair(quote, quote))
-            .min_by_key(|range| range.len())
-    }
-
-    /// Find the range inside the next quote pair forward from the cursor.
-    ///
-    /// Searches forward from cursor position (including current character) for
-    /// quote pairs `""`, `''`, ``` `` ```.
-    /// If cursor is on an opening quote, uses that quote as the start.
-    /// Search is restricted to current line only.
-    ///
-    /// Returns `Some(Range<usize>)` with the byte range inside the next quote pair, or `None` if no pair found.
-    pub(crate) fn range_inside_next_quote(&self) -> Option<Range<usize>> {
-        QUOTE_CHARS
-            .iter()
-            .filter_map(|&quote| self.range_inside_next_pair(quote, quote))
             .min_by_key(|range| range.start)
     }
 
@@ -1973,10 +1944,17 @@ mod test {
         #[case] cursor_pos: usize,
         #[case] expected: Option<std::ops::Range<usize>>,
     ) {
+        const BRACKET_PAIRS: &[(char, char); 4] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
         let mut buf = LineBuffer::from(input);
+
         buf.set_insertion_point(cursor_pos);
-        assert_eq!(buf.range_inside_current_bracket(), expected);
+        assert_eq!(
+            buf.range_inside_current_pair_in_group(*BRACKET_PAIRS),
+            expected
+        );
     }
+
+        const QUOTE_PAIRS: &[(char, char); 3] = &[('"', '"'), ('\'', '\''), ('`', '`')];
 
     // Tests for range_inside_current_quote - cursor inside or on the boundary
     #[rstest]
@@ -1997,7 +1975,10 @@ mod test {
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
-        assert_eq!(buf.range_inside_current_quote(), expected);
+        assert_eq!(
+            buf.range_inside_current_pair_in_group(*QUOTE_PAIRS),
+            expected
+        );
     }
 
     // Tests for range_inside_next_quote - cursor before quotes, jumping forward
@@ -2020,7 +2001,7 @@ mod test {
     ) {
         let mut buf = LineBuffer::from(input);
         buf.set_insertion_point(cursor_pos);
-        assert_eq!(buf.range_inside_next_quote(), expected);
+        assert_eq!(buf.range_inside_next_pair_in_group(*QUOTE_PAIRS), expected);
     }
 
     // Tests for range_inside_current_pair - when cursor is inside a pair
