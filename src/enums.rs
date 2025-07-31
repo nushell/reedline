@@ -527,9 +527,9 @@ impl Display for EditCommand {
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => write!(f, "PasteSystem"),
             EditCommand::CutInsidePair { .. } => write!(f, "CutInside Value: <char> <char>"),
-            EditCommand::CopyInsidePair { .. } => write!(f, "YankInside Value: <char> <char>"),
-            EditCommand::CutAroundPair { .. } => write!(f, "CutAround Value: <char> <char>"),
-            EditCommand::CopyAroundPair { .. } => write!(f, "YankAround Value: <char> <char>"),
+            EditCommand::CopyInsidePair { .. } => write!(f, "CopyInsidePair Value: <char> <char>"),
+            EditCommand::CutAroundPair { .. } => write!(f, "CutAroundPair Value: <char> <char>"),
+            EditCommand::CopyAroundPair { .. } => write!(f, "CopyAroundPair Value: <char> <char>"),
             EditCommand::CutTextObject { .. } => write!(f, "CutTextObject Value: <TextObject>"),
             EditCommand::CopyTextObject { .. } => write!(f, "CopyTextObject Value: <TextObject>"),
         }
