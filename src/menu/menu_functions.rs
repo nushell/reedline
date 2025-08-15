@@ -56,7 +56,7 @@ pub enum ParseAction {
 /// )
 ///
 /// ```
-pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
+pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
     if buffer.is_empty() {
         return ParseResult {
             remainder: buffer,

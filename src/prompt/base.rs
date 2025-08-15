@@ -85,18 +85,18 @@ impl Display for PromptEditMode {
 /// displayed before the `LineBuffer` is drawn.
 pub trait Prompt: Send {
     /// Provide content of the left full prompt
-    fn render_prompt_left(&self) -> Cow<str>;
+    fn render_prompt_left(&self) -> Cow<'_, str>;
     /// Provide content of the right full prompt
-    fn render_prompt_right(&self) -> Cow<str>;
+    fn render_prompt_right(&self) -> Cow<'_, str>;
     /// Render the prompt indicator (Last part of the prompt that changes based on the editor mode)
-    fn render_prompt_indicator(&self, prompt_mode: PromptEditMode) -> Cow<str>;
+    fn render_prompt_indicator(&self, prompt_mode: PromptEditMode) -> Cow<'_, str>;
     /// Indicator to show before explicit new lines
-    fn render_prompt_multiline_indicator(&self) -> Cow<str>;
+    fn render_prompt_multiline_indicator(&self) -> Cow<'_, str>;
     /// Render the prompt indicator for `Ctrl-R` history search
     fn render_prompt_history_search_indicator(
         &self,
         history_search: PromptHistorySearch,
-    ) -> Cow<str>;
+    ) -> Cow<'_, str>;
     /// Get the default prompt color
     fn get_prompt_color(&self) -> Color {
         DEFAULT_PROMPT_COLOR
