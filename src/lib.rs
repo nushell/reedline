@@ -282,6 +282,11 @@ pub use menu::{
 };
 
 mod terminal_extensions;
+
+#[cfg(feature = "execution_filter")]
+mod execution_filter;
+#[cfg(feature = "execution_filter")]
+pub use execution_filter::{ExecutionFilter, FilterDecision};
 pub use terminal_extensions::kitty_protocol_available;
 
 mod utils;
