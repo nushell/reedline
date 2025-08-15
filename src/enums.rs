@@ -12,6 +12,9 @@ pub enum Signal {
     CtrlC, // Interrupt current editing
     /// Abort with `Ctrl+D` signalling `EOF` or abort of a whole interactive session
     CtrlD, // End terminal session
+    /// Command should be executed by external handler (when execution_filter feature is enabled)
+    #[cfg(feature = "execution_filter")]
+    ExecuteHostCommand(String),
 }
 
 /// Editing actions which can be mapped to key bindings.

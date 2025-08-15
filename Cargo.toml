@@ -47,6 +47,8 @@ external_printer = ["crossbeam"]
 sqlite = ["rusqlite/bundled", "serde_json"]
 sqlite-dynlib = ["rusqlite", "serde_json"]
 system_clipboard = ["arboard"]
+execution_filter = []      # Content-based command filtering  
+suspend_control = []       # Terminal state management APIs
 
 [[example]]
 name = "cwd_aware_hinter"

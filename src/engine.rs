@@ -170,6 +170,9 @@ pub struct Reedline {
 
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
+
+    #[cfg(feature = "execution_filter")]
+    execution_filter: Option<std::sync::Arc<dyn crate::ExecutionFilter>>,
 }
 
 struct BufferEditor {
@@ -244,6 +247,8 @@ impl Reedline {
             immediately_accept: false,
             #[cfg(feature = "external_printer")]
             external_printer: None,
+            #[cfg(feature = "execution_filter")]
+            execution_filter: None,
         }
     }
 
@@ -623,6 +628,32 @@ impl Reedline {
         self.history.sync()
     }
 
+    #[cfg(feature = "execution_filter")]
+    /// Set the execution filter for determining when to delegate commands
+    pub fn set_execution_filter(&mut self, filter: std::sync::Arc<dyn crate::ExecutionFilter>) {
+        self.execution_filter = Some(filter);
+    }
+
+    #[cfg(feature = "suspend_control")]
+    /// Suspend the editor (mark state for resumption)
+    pub fn suspend(&mut self) {
+        self.suspended_state = Some(self.painter.state_before_suspension());
+    }
+
+    #[cfg(feature = "suspend_control")]
+    /// Resume the editor (restore suspended state)
+    pub fn resume(&mut self) -> Result<()> {
+        self.suspended_state = None;
+        Ok(())
+    }
+
+    #[cfg(feature = "suspend_control")]
+    /// Force an immediate repaint
+    pub fn force_repaint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+        self.repaint(prompt)?;
+        Ok(())
+    }
+
     /// Check if any commands have been run.
     ///
     /// When no commands have been run, calling [`Self::update_last_command_context`]
@@ -698,8 +729,7 @@ impl Reedline {
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
-        self.painter
-            .initialize_prompt_position(self.suspended_state.as_ref())?;
+        self.painter.initialize_prompt_position(self.suspended_state.as_ref())?;
         if self.suspended_state.is_some() {
             // Last editor was suspended to run a ExecuteHostCommand event,
             // we are resuming operation now.
@@ -882,8 +912,7 @@ impl Reedline {
             | ReedlineEvent::Submit
             | ReedlineEvent::SubmitOrNewline => {
                 if let Some(string) = self.history_cursor.string_at_cursor() {
-                    self.editor
-                        .set_buffer(string, UndoBehavior::CreateUndoPoint);
+                    self.editor.set_buffer(string, UndoBehavior::CreateUndoPoint);
                 }
 
                 self.input_mode = InputMode::Regular;
@@ -907,9 +936,7 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
-                self.history_cursor
-                    .back(self.history.as_ref())
-                    .expect("todo: error handling");
+                self.history_cursor.back(self.history.as_ref()).expect("todo: error handling");
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::NextHistory | ReedlineEvent::Down => {
@@ -918,9 +945,7 @@ impl Reedline {
                     .expect("todo: error handling");
                 // Hacky way to ensure that we don't fall of into failed search going forward
                 if self.history_cursor.string_at_cursor().is_none() {
-                    self.history_cursor
-                        .back(self.history.as_ref())
-                        .expect("todo: error handling");
+                    self.history_cursor.back(self.history.as_ref()).expect("todo: error handling");
                 }
                 Ok(EventStatus::Handled)
             }
@@ -1008,53 +1033,46 @@ impl Reedline {
                 }
             }
             ReedlineEvent::MenuPrevious => {
-                self.active_menu()
-                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.menu_event(MenuEvent::PreviousElement);
-                        Ok(EventStatus::Handled)
-                    })
+                self.active_menu().map_or(Ok(EventStatus::Inapplicable), |menu| {
+                    menu.menu_event(MenuEvent::PreviousElement);
+                    Ok(EventStatus::Handled)
+                })
             }
             ReedlineEvent::MenuUp => {
-                self.active_menu()
-                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.menu_event(MenuEvent::MoveUp);
-                        Ok(EventStatus::Handled)
-                    })
+                self.active_menu().map_or(Ok(EventStatus::Inapplicable), |menu| {
+                    menu.menu_event(MenuEvent::MoveUp);
+                    Ok(EventStatus::Handled)
+                })
             }
             ReedlineEvent::MenuDown => {
-                self.active_menu()
-                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.menu_event(MenuEvent::MoveDown);
-                        Ok(EventStatus::Handled)
-                    })
+                self.active_menu().map_or(Ok(EventStatus::Inapplicable), |menu| {
+                    menu.menu_event(MenuEvent::MoveDown);
+                    Ok(EventStatus::Handled)
+                })
             }
             ReedlineEvent::MenuLeft => {
-                self.active_menu()
-                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.menu_event(MenuEvent::MoveLeft);
-                        Ok(EventStatus::Handled)
-                    })
+                self.active_menu().map_or(Ok(EventStatus::Inapplicable), |menu| {
+                    menu.menu_event(MenuEvent::MoveLeft);
+                    Ok(EventStatus::Handled)
+                })
             }
             ReedlineEvent::MenuRight => {
-                self.active_menu()
-                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.menu_event(MenuEvent::MoveRight);
-                        Ok(EventStatus::Handled)
-                    })
+                self.active_menu().map_or(Ok(EventStatus::Inapplicable), |menu| {
+                    menu.menu_event(MenuEvent::MoveRight);
+                    Ok(EventStatus::Handled)
+                })
             }
             ReedlineEvent::MenuPageNext => {
-                self.active_menu()
-                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.menu_event(MenuEvent::NextPage);
-                        Ok(EventStatus::Handled)
-                    })
+                self.active_menu().map_or(Ok(EventStatus::Inapplicable), |menu| {
+                    menu.menu_event(MenuEvent::NextPage);
+                    Ok(EventStatus::Handled)
+                })
             }
             ReedlineEvent::MenuPagePrevious => {
-                self.active_menu()
-                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
-                        menu.menu_event(MenuEvent::PreviousPage);
-                        Ok(EventStatus::Handled)
-                    })
+                self.active_menu().map_or(Ok(EventStatus::Inapplicable), |menu| {
+                    menu.menu_event(MenuEvent::PreviousPage);
+                    Ok(EventStatus::Handled)
+                })
             }
             ReedlineEvent::HistoryHintComplete => {
                 if let Some(hinter) = self.hinter.as_mut() {
@@ -1299,9 +1317,7 @@ impl Reedline {
     }
 
     fn deactivate_menus(&mut self) {
-        self.menus
-            .iter_mut()
-            .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
+        self.menus.iter_mut().for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
     }
 
     fn previous_history(&mut self) {
@@ -1321,17 +1337,13 @@ impl Reedline {
         }
 
         if !self.history_cursor_on_excluded {
-            self.history_cursor
-                .back(self.history.as_ref())
-                .expect("todo: error handling");
+            self.history_cursor.back(self.history.as_ref()).expect("todo: error handling");
         }
         self.update_buffer_from_history();
         self.editor.move_to_start(false);
-        self.editor
-            .update_undo_state(UndoBehavior::HistoryNavigation);
+        self.editor.update_undo_state(UndoBehavior::HistoryNavigation);
         self.editor.move_to_line_end(false);
-        self.editor
-            .update_undo_state(UndoBehavior::HistoryNavigation);
+        self.editor.update_undo_state(UndoBehavior::HistoryNavigation);
     }
 
     fn next_history(&mut self) {
@@ -1364,8 +1376,7 @@ impl Reedline {
         }
         self.update_buffer_from_history();
         self.editor.move_to_end(false);
-        self.editor
-            .update_undo_state(UndoBehavior::HistoryNavigation)
+        self.editor.update_undo_state(UndoBehavior::HistoryNavigation)
     }
 
     /// Enable the search and navigation through the history from the line buffer prompt
@@ -1420,9 +1431,7 @@ impl Reedline {
                             self.get_history_session_id(),
                         );
                     }
-                    self.history_cursor
-                        .back(self.history.as_mut())
-                        .expect("todo: error handling");
+                    self.history_cursor.back(self.history.as_mut()).expect("todo: error handling");
                 }
                 EditCommand::Backspace => {
                     let navigation = self.history_cursor.get_navigation();
@@ -1453,30 +1462,22 @@ impl Reedline {
     fn update_buffer_from_history(&mut self) {
         match self.history_cursor.get_navigation() {
             _ if self.history_cursor_on_excluded => self.editor.set_buffer(
-                self.history_excluded_item
-                    .as_ref()
-                    .unwrap()
-                    .command_line
-                    .clone(),
+                self.history_excluded_item.as_ref().unwrap().command_line.clone(),
                 UndoBehavior::HistoryNavigation,
             ),
             HistoryNavigationQuery::Normal(original) => {
                 if let Some(buffer_to_paint) = self.history_cursor.string_at_cursor() {
-                    self.editor
-                        .set_buffer(buffer_to_paint, UndoBehavior::HistoryNavigation);
+                    self.editor.set_buffer(buffer_to_paint, UndoBehavior::HistoryNavigation);
                 } else {
                     // Hack
-                    self.editor
-                        .set_line_buffer(original, UndoBehavior::HistoryNavigation);
+                    self.editor.set_line_buffer(original, UndoBehavior::HistoryNavigation);
                 }
             }
             HistoryNavigationQuery::PrefixSearch(prefix) => {
                 if let Some(prefix_result) = self.history_cursor.string_at_cursor() {
-                    self.editor
-                        .set_buffer(prefix_result, UndoBehavior::HistoryNavigation);
+                    self.editor.set_buffer(prefix_result, UndoBehavior::HistoryNavigation);
                 } else {
-                    self.editor
-                        .set_buffer(prefix, UndoBehavior::HistoryNavigation);
+                    self.editor.set_buffer(prefix, UndoBehavior::HistoryNavigation);
                 }
             }
             HistoryNavigationQuery::SubstringSearch(_) => todo!(),
@@ -1491,8 +1492,7 @@ impl Reedline {
                 HistoryNavigationQuery::Normal(_)
             ) {
                 if let Some(string) = self.history_cursor.string_at_cursor() {
-                    self.editor
-                        .set_buffer(string, UndoBehavior::HistoryNavigation);
+                    self.editor.set_buffer(string, UndoBehavior::HistoryNavigation);
                 }
             }
             self.input_mode = InputMode::Regular;
@@ -1553,78 +1553,62 @@ impl Reedline {
             }
         }
 
-        let history_result = parsed
-            .index
-            .zip(parsed.marker)
-            .and_then(|(index, indicator)| match parsed.action {
-                ParseAction::LastCommand => self
-                    .history
-                    .search(SearchQuery {
-                        direction: SearchDirection::Backward,
-                        start_time: None,
-                        end_time: None,
-                        start_id: None,
-                        end_id: None,
-                        limit: Some(1), // fetch the latest one entries
-                        filter: SearchFilter::anything(self.get_history_session_id()),
-                    })
-                    .unwrap_or_else(|_| Vec::new())
-                    .get(index.saturating_sub(1))
-                    .map(|history| {
-                        (
-                            parsed.remainder.len(),
-                            indicator.len(),
-                            history.command_line.clone(),
-                        )
-                    }),
-                ParseAction::BackwardSearch => self
-                    .history
-                    .search(SearchQuery {
-                        direction: SearchDirection::Backward,
-                        start_time: None,
-                        end_time: None,
-                        start_id: None,
-                        end_id: None,
-                        limit: Some(index as i64), // fetch the latest n entries
-                        filter: SearchFilter::anything(self.get_history_session_id()),
-                    })
-                    .unwrap_or_else(|_| Vec::new())
-                    .get(index.saturating_sub(1))
-                    .map(|history| {
-                        (
-                            parsed.remainder.len(),
-                            indicator.len(),
-                            history.command_line.clone(),
-                        )
-                    }),
-                ParseAction::BackwardPrefixSearch => {
-                    let history_search_by_session = self
+        let history_result =
+            parsed
+                .index
+                .zip(parsed.marker)
+                .and_then(|(index, indicator)| match parsed.action {
+                    ParseAction::LastCommand => self
                         .history
-                        .search(SearchQuery::last_with_prefix_and_cwd(
-                            parsed.prefix.unwrap().to_string(),
-                            self.cwd.clone().unwrap_or_else(|| {
-                                std::env::current_dir()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                                    .to_string()
-                            }),
-                            self.get_history_session_id(),
-                        ))
+                        .search(SearchQuery {
+                            direction: SearchDirection::Backward,
+                            start_time: None,
+                            end_time: None,
+                            start_id: None,
+                            end_id: None,
+                            limit: Some(1), // fetch the latest one entries
+                            filter: SearchFilter::anything(self.get_history_session_id()),
+                        })
                         .unwrap_or_else(|_| Vec::new())
                         .get(index.saturating_sub(1))
                         .map(|history| {
                             (
                                 parsed.remainder.len(),
-                                parsed_prefix.len() + parsed_marker.len(),
+                                indicator.len(),
                                 history.command_line.clone(),
                             )
-                        });
-                    // If we don't find any history searching by session id, then let's
-                    // search everything, otherwise use the result from the session search
-                    if history_search_by_session.is_none() {
-                        self.history
-                            .search(SearchQuery::last_with_prefix(
-                                parsed_prefix.clone(),
+                        }),
+                    ParseAction::BackwardSearch => self
+                        .history
+                        .search(SearchQuery {
+                            direction: SearchDirection::Backward,
+                            start_time: None,
+                            end_time: None,
+                            start_id: None,
+                            end_id: None,
+                            limit: Some(index as i64), // fetch the latest n entries
+                            filter: SearchFilter::anything(self.get_history_session_id()),
+                        })
+                        .unwrap_or_else(|_| Vec::new())
+                        .get(index.saturating_sub(1))
+                        .map(|history| {
+                            (
+                                parsed.remainder.len(),
+                                indicator.len(),
+                                history.command_line.clone(),
+                            )
+                        }),
+                    ParseAction::BackwardPrefixSearch => {
+                        let history_search_by_session = self
+                            .history
+                            .search(SearchQuery::last_with_prefix_and_cwd(
+                                parsed.prefix.unwrap().to_string(),
+                                self.cwd.clone().unwrap_or_else(|| {
+                                    std::env::current_dir()
+                                        .unwrap_or_default()
+                                        .to_string_lossy()
+                                        .to_string()
+                                }),
                                 self.get_history_session_id(),
                             ))
                             .unwrap_or_else(|_| Vec::new())
@@ -1635,32 +1619,49 @@ impl Reedline {
                                     parsed_prefix.len() + parsed_marker.len(),
                                     history.command_line.clone(),
                                 )
-                            })
-                    } else {
-                        history_search_by_session
+                            });
+                        // If we don't find any history searching by session id, then let's
+                        // search everything, otherwise use the result from the session search
+                        if history_search_by_session.is_none() {
+                            self.history
+                                .search(SearchQuery::last_with_prefix(
+                                    parsed_prefix.clone(),
+                                    self.get_history_session_id(),
+                                ))
+                                .unwrap_or_else(|_| Vec::new())
+                                .get(index.saturating_sub(1))
+                                .map(|history| {
+                                    (
+                                        parsed.remainder.len(),
+                                        parsed_prefix.len() + parsed_marker.len(),
+                                        history.command_line.clone(),
+                                    )
+                                })
+                        } else {
+                            history_search_by_session
+                        }
                     }
-                }
-                ParseAction::ForwardSearch => self
-                    .history
-                    .search(SearchQuery {
-                        direction: SearchDirection::Forward,
-                        start_time: None,
-                        end_time: None,
-                        start_id: None,
-                        end_id: None,
-                        limit: Some((index + 1) as i64), // fetch the oldest n entries
-                        filter: SearchFilter::anything(self.get_history_session_id()),
-                    })
-                    .unwrap_or_else(|_| Vec::new())
-                    .get(index)
-                    .map(|history| {
-                        (
-                            parsed.remainder.len(),
-                            indicator.len(),
-                            history.command_line.clone(),
-                        )
-                    }),
-                ParseAction::LastToken => self
+                    ParseAction::ForwardSearch => self
+                        .history
+                        .search(SearchQuery {
+                            direction: SearchDirection::Forward,
+                            start_time: None,
+                            end_time: None,
+                            start_id: None,
+                            end_id: None,
+                            limit: Some((index + 1) as i64), // fetch the oldest n entries
+                            filter: SearchFilter::anything(self.get_history_session_id()),
+                        })
+                        .unwrap_or_else(|_| Vec::new())
+                        .get(index)
+                        .map(|history| {
+                            (
+                                parsed.remainder.len(),
+                                indicator.len(),
+                                history.command_line.clone(),
+                            )
+                        }),
+                    ParseAction::LastToken => self
                     .history
                     .search(SearchQuery::last_with_search(SearchFilter::anything(
                         self.get_history_session_id(),
@@ -1670,7 +1671,7 @@ impl Reedline {
                     //BUGBUG: This returns the wrong results with paths with spaces in them
                     .and_then(|history| history.command_line.split_whitespace().next_back())
                     .map(|token| (parsed.remainder.len(), indicator.len(), token.to_string())),
-            });
+                });
 
         if let Some((start, size, history)) = history_result {
             let edits = vec![
@@ -1770,9 +1771,8 @@ impl Reedline {
         let cursor_position_in_buffer = self.editor.insertion_point();
         let buffer_to_paint = self.editor.get_buffer();
 
-        let mut styled_text = self
-            .highlighter
-            .highlight(buffer_to_paint, cursor_position_in_buffer);
+        let mut styled_text =
+            self.highlighter.highlight(buffer_to_paint, cursor_position_in_buffer);
         if let Some((from, to)) = self.editor.get_selection() {
             styled_text.style_range(from, to, self.visual_selection_style);
         }
@@ -1791,10 +1791,7 @@ impl Reedline {
                     self.history.as_ref(),
                     self.use_ansi_coloring,
                     &self.cwd.clone().unwrap_or_else(|| {
-                        std::env::current_dir()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string()
+                        std::env::current_dir().unwrap_or_default().to_string_lossy().to_string()
                     }),
                 )
             })
@@ -1909,6 +1906,20 @@ impl Reedline {
         self.run_edit_commands(&[EditCommand::Clear]);
         self.editor.reset_undo_stack();
 
+        #[cfg(feature = "execution_filter")]
+        if let Some(ref filter) = self.execution_filter {
+            match filter.filter(&buffer) {
+                crate::FilterDecision::Delegate(cmd) => {
+                    // Mark suspended so the next read_line becomes a resume
+                    self.suspended_state = Some(self.painter.state_before_suspension());
+                    return Ok(EventStatus::Exits(Signal::ExecuteHostCommand(cmd)));
+                }
+                crate::FilterDecision::Execute(line) => {
+                    return Ok(EventStatus::Exits(Signal::Success(line)));
+                }
+            }
+        }
+
         Ok(EventStatus::Exits(Signal::Success(buffer)))
     }
 }
@@ -1917,4 +1928,137 @@ impl Reedline {
 fn thread_safe() {
     fn f<S: Send>(_: S) {}
     f(Reedline::create());
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    #[cfg(feature = "execution_filter")]
+    fn test_execution_filter_set() {
+        use crate::{ExecutionFilter, FilterDecision};
+        use std::sync::Arc;
+
+        #[derive(Debug)]
+        struct TestFilter;
+
+        impl ExecutionFilter for TestFilter {
+            fn filter(&self, _command: &str) -> FilterDecision {
+                FilterDecision::Execute("test".to_string())
+            }
+        }
+
+        let mut rl = Reedline::create();
+        assert!(rl.execution_filter.is_none());
+
+        let filter = Arc::new(TestFilter);
+        rl.set_execution_filter(filter);
+        assert!(rl.execution_filter.is_some());
+    }
+
+    #[test]
+    #[cfg(feature = "execution_filter")]
+    fn test_execution_filter_logic() {
+        use crate::{ExecutionFilter, FilterDecision};
+
+        #[derive(Debug)]
+        struct TestFilter {
+            delegate_patterns: Vec<&'static str>,
+        }
+
+        impl ExecutionFilter for TestFilter {
+            fn filter(&self, command: &str) -> FilterDecision {
+                let cmd = command.split_whitespace().next().unwrap_or("");
+                if self.delegate_patterns.iter().any(|&p| cmd == p) {
+                    FilterDecision::Delegate(command.to_string())
+                } else {
+                    FilterDecision::Execute(command.to_string())
+                }
+            }
+        }
+
+        let filter = TestFilter {
+            delegate_patterns: vec!["vim", "ssh"],
+        };
+
+        // Should delegate
+        match filter.filter("vim file.txt") {
+            FilterDecision::Delegate(cmd) => assert_eq!(cmd, "vim file.txt"),
+            _ => panic!("Expected delegation for vim command"),
+        }
+
+        // Should execute normally
+        match filter.filter("ls -la") {
+            FilterDecision::Execute(cmd) => assert_eq!(cmd, "ls -la"),
+            _ => panic!("Expected normal execution for ls command"),
+        }
+
+        // Edge case: empty command
+        match filter.filter("") {
+            FilterDecision::Execute(cmd) => assert_eq!(cmd, ""),
+            _ => panic!("Expected normal execution for empty command"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "suspend_control")]
+    fn test_suspend_and_resume() {
+        let mut rl = Reedline::create();
+
+        // Initially not suspended
+        assert!(rl.suspended_state.is_none());
+
+        // Suspend
+        rl.suspend();
+        assert!(rl.suspended_state.is_some());
+
+        // Resume
+        let result = rl.resume();
+        assert!(result.is_ok());
+        assert!(rl.suspended_state.is_none());
+
+        // Multiple suspend/resume cycles
+        rl.suspend();
+        assert!(rl.suspended_state.is_some());
+        rl.resume().unwrap();
+        assert!(rl.suspended_state.is_none());
+    }
+
+    #[test]
+    #[cfg(all(feature = "execution_filter", feature = "suspend_control"))]
+    fn test_filter_integration_with_suspend() {
+        use crate::{ExecutionFilter, FilterDecision};
+        use std::sync::Arc;
+
+        #[derive(Debug)]
+        struct TestFilter;
+
+        impl ExecutionFilter for TestFilter {
+            fn filter(&self, command: &str) -> FilterDecision {
+                if command == "delegate" {
+                    FilterDecision::Delegate(command.to_string())
+                } else {
+                    FilterDecision::Execute(command.to_string())
+                }
+            }
+        }
+
+        let mut rl = Reedline::create();
+        let filter = Arc::new(TestFilter);
+        rl.set_execution_filter(filter);
+
+        // The actual submit_buffer method is private, but we test the public APIs
+        assert!(rl.execution_filter.is_some());
+        assert!(rl.suspended_state.is_none());
+
+        // Simulate what happens when a command is delegated
+        // (in real usage this happens inside submit_buffer)
+        rl.suspend();
+        assert!(rl.suspended_state.is_some());
+
+        // After external execution, resume
+        rl.resume().unwrap();
+        assert!(rl.suspended_state.is_none());
+    }
 }
