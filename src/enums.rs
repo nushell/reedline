@@ -812,6 +812,7 @@ impl Display for ReedlineEvent {
 pub enum EventStatus {
     Handled,
     Inapplicable,
+    MenuUpdated,
     Exits(Signal),
 }
 
