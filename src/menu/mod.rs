@@ -49,7 +49,7 @@ pub enum MenuEvent {
     /// have already being updated. This is true when the option `quick_completions` is true
     Activate(bool),
     /// Deactivation event
-    Deactivate,
+    Deactivate(bool),
     /// Line buffer edit event. When the bool is true it means that the values
     /// have already being updated. This is true when the option `quick_completions` is true
     Edit(bool),
