@@ -990,4 +990,138 @@ mod tests {
         menu.update_values(&mut editor, &mut completer);
         assert!(menu.menu_string(10, true).contains("验"));
     }
+
+    #[test]
+    fn test_horizontal_menu_selection_position() {
+        // Test selection position update
+        let vs: Vec<String> = (0..10).map(|v| v.to_string()).collect();
+        let vs: Vec<_> = vs.iter().map(|v| v.as_ref()).collect();
+        let mut completer = FakeCompleter::new(&vs);
+        let mut menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Horizontal)
+            .with_name("testmenu");
+        menu.working_details.columns = 4;
+        let mut editor = Editor::default();
+
+        editor.set_buffer("a".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.index() == 0);
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        // Next/previous wrapping
+        menu.move_previous();
+        assert!(menu.index() == vs.len() - 1);
+        assert!(menu.row_pos == 2 && menu.col_pos == 1);
+        menu.move_next();
+        assert!(menu.index() == 0);
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        // Up/down/left/right wrapping for full rows/columns
+        menu.move_up();
+        assert!(menu.row_pos == 2 && menu.col_pos == 0);
+        menu.move_down();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        menu.move_left();
+        assert!(menu.row_pos == 0 && menu.col_pos == 3);
+        menu.move_right();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        // Up/down/left/right wrapping for non-full rows/columns
+        menu.move_left();
+        assert!(menu.row_pos == 0 && menu.col_pos == 3);
+        menu.move_up();
+        assert!(menu.row_pos == 1 && menu.col_pos == 3);
+        menu.move_down();
+        assert!(menu.row_pos == 0 && menu.col_pos == 3);
+        menu.move_right();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        menu.move_up();
+        assert!(menu.row_pos == 2 && menu.col_pos == 0);
+        menu.move_left();
+        assert!(menu.row_pos == 2 && menu.col_pos == 1);
+        menu.move_right();
+        assert!(menu.row_pos == 2 && menu.col_pos == 0);
+    }
+
+    #[test]
+    fn test_vertical_menu_selection_position() {
+        // Test selection position update
+        let vs: Vec<String> = (0..11).map(|v| v.to_string()).collect();
+        let vs: Vec<_> = vs.iter().map(|v| v.as_ref()).collect();
+        let mut completer = FakeCompleter::new(&vs);
+        let mut menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Vertical)
+            .with_name("testmenu");
+        menu.working_details.columns = 4;
+        let mut editor = Editor::default();
+
+        editor.set_buffer("a".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.index() == 0);
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        // Next/previous wrapping
+        menu.move_previous();
+        assert!(menu.index() == vs.len() - 1);
+        assert!(menu.row_pos == 1 && menu.col_pos == 3);
+        menu.move_next();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        // Up/down/left/right wrapping for full rows/columns
+        menu.move_up();
+        assert!(menu.row_pos == 2 && menu.col_pos == 0);
+        menu.move_down();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        menu.move_left();
+        assert!(menu.row_pos == 0 && menu.col_pos == 3);
+        menu.move_right();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        // Up/down/left/right wrapping for non-full rows/columns
+        menu.move_left();
+        assert!(menu.row_pos == 0 && menu.col_pos == 3);
+        menu.move_up();
+        assert!(menu.row_pos == 1 && menu.col_pos == 3);
+        menu.move_down();
+        assert!(menu.row_pos == 0 && menu.col_pos == 3);
+        menu.move_right();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        menu.move_up();
+        assert!(menu.row_pos == 2 && menu.col_pos == 0);
+        menu.move_left();
+        assert!(menu.row_pos == 2 && menu.col_pos == 2);
+        menu.move_right();
+        assert!(menu.row_pos == 2 && menu.col_pos == 0);
+    }
+
+    #[test]
+    fn test_small_menu_selection_position() {
+        // Test selection position update for menus with fewer values than available columns
+        let mut vertical_menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Vertical)
+            .with_name("testmenu");
+        vertical_menu.working_details.columns = 4;
+        let mut horizontal_menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Horizontal)
+            .with_name("testmenu");
+        horizontal_menu.working_details.columns = 4;
+        let mut editor = Editor::default();
+
+        let mut completer = FakeCompleter::new(&["1", "2"]);
+
+        for menu in &mut [vertical_menu, horizontal_menu] {
+            menu.update_values(&mut editor, &mut completer);
+            assert!(menu.index() == 0);
+            assert!(menu.row_pos == 0 && menu.col_pos == 0);
+            menu.move_previous();
+            assert!(menu.index() == menu.get_values().len() - 1);
+            assert!(menu.row_pos == 0 && menu.col_pos == 1);
+            menu.move_next();
+            assert!(menu.row_pos == 0 && menu.col_pos == 0);
+            menu.move_next();
+            assert!(menu.row_pos == 0 && menu.col_pos == 1);
+            menu.move_right();
+            assert!(menu.row_pos == 0 && menu.col_pos == 0);
+            menu.move_left();
+            assert!(menu.row_pos == 0 && menu.col_pos == 1);
+            menu.move_up();
+            assert!(menu.row_pos == 0 && menu.col_pos == 1);
+            menu.move_down();
+            assert!(menu.row_pos == 0 && menu.col_pos == 1);
+        }
+    }
 }
