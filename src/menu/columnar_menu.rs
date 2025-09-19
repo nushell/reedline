@@ -174,14 +174,14 @@ impl ColumnarMenu {
     fn move_up(&mut self) {
         self.row_pos = match self.row_pos.checked_sub(1) {
             Some(index) => index,
-            None => self.get_rows_at_col(self.col_pos),
+            None => self.get_last_row_at_col(self.col_pos),
         }
     }
 
     /// Move menu cursor down
     fn move_down(&mut self) {
         let new_row = self.row_pos + 1;
-        self.row_pos = if new_row > self.get_rows_at_col(self.col_pos) {
+        self.row_pos = if new_row > self.get_last_row_at_col(self.col_pos) {
             0
         } else {
             new_row
@@ -193,14 +193,14 @@ impl ColumnarMenu {
         self.col_pos = if let Some(col) = self.col_pos.checked_sub(1) {
             col
         } else {
-            self.get_cols_at_row(self.row_pos)
+            self.get_last_col_at_row(self.row_pos)
         }
     }
 
     /// Move menu cursor right
     fn move_right(&mut self) {
         let new_col = self.col_pos + 1;
-        self.col_pos = if new_col > self.get_cols_at_row(self.row_pos) {
+        self.col_pos = if new_col > self.get_last_col_at_row(self.row_pos) {
             0
         } else {
             new_col
@@ -223,8 +223,8 @@ impl ColumnarMenu {
         }
     }
 
-    /// Calculates the number of rows containing values for the specified column
-    fn get_rows_at_col(&self, col_pos: u16) -> u16 {
+    /// Calculates the last row containing a value for the specified column
+    fn get_last_row_at_col(&self, col_pos: u16) -> u16 {
         let num_values = self.get_values().len() as u16;
         match self.default_details.traversal_dir {
             TraversalDirection::Vertical => {
@@ -256,8 +256,8 @@ impl ColumnarMenu {
         }
     }
 
-    /// Calculates the number of columns containing values for the specified row
-    fn get_cols_at_row(&self, row_pos: u16) -> u16 {
+    /// Calculates the last column containing a value for the specified row
+    fn get_last_col_at_row(&self, row_pos: u16) -> u16 {
         let num_values = self.get_values().len() as u16;
         match self.default_details.traversal_dir {
             TraversalDirection::Vertical => {
@@ -308,7 +308,7 @@ impl ColumnarMenu {
         let values = self.get_values().len() as u16;
 
         if values == 0 {
-            // When the values are empty the no_records_msg is shown, taking 1 line
+            // When the values are empty the "NO RECORDS FOUND" message is shown, taking 1 line
             return 1;
         }
 
@@ -325,7 +325,7 @@ impl ColumnarMenu {
         let values = self.get_values().len() as u16;
 
         if values == 0 {
-            // When the values are empty the no_records_msg is shown, taking 1 column
+            // When the values are empty the "NO RECORDS FOUND" message is shown, taking 1 column
             return 1;
         }
 
@@ -740,7 +740,7 @@ impl Menu for ColumnarMenu {
                 self.row_pos
             } else if self.row_pos >= self.skip_rows + available_lines {
                 // Selection is below the visible area, scroll down
-                self.row_pos.saturating_sub(available_lines) + 1
+                self.row_pos - available_lines + 1
             } else {
                 // Selection is within the visible area
                 self.skip_rows
