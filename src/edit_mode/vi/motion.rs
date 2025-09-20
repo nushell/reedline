@@ -108,6 +108,21 @@ where
             let _ = input.next();
             ParseResult::Valid(Motion::ReverseCharSearch)
         }
+        Some('g') => {
+            let _ = input.next();
+            match input.peek() {
+                Some('g') => {
+                    input.next();
+                    ParseResult::Valid(Motion::FirstLine)
+                }
+                Some(_) => ParseResult::Invalid,
+                None => ParseResult::Incomplete,
+            }
+        }
+        Some('G') => {
+            let _ = input.next();
+            ParseResult::Valid(Motion::LastLine)
+        }
         ch if ch == command_char.as_ref().as_ref() && command_char.is_some() => {
             let _ = input.next();
             ParseResult::Valid(Motion::Line)
@@ -132,6 +147,8 @@ pub enum Motion {
     Line,
     Start,
     End,
+    FirstLine,
+    LastLine,
     RightUntil(char),
     RightBefore(char),
     LeftUntil(char),
@@ -192,6 +209,12 @@ impl Motion {
                 select: select_mode,
             })],
             Motion::End => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd {
+                select: select_mode,
+            })],
+            Motion::FirstLine => vec![ReedlineOption::Edit(EditCommand::MoveToStart {
+                select: select_mode,
+            })],
+            Motion::LastLine => vec![ReedlineOption::Edit(EditCommand::MoveToEnd {
                 select: select_mode,
             })],
             Motion::RightUntil(ch) => {

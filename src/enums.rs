@@ -194,11 +194,17 @@ pub enum EditCommand {
     /// Cut from the start of the buffer to the insertion point
     CutFromStart,
 
+    /// Cut from the start of the buffer to the line of insertion point
+    CutFromStartLinewise,
+
     /// Cut from the start of the current line to the insertion point
     CutFromLineStart,
 
     /// Cut from the insertion point to the end of the buffer
     CutToEnd,
+
+    /// Cut from the line of insertion point to the end of the buffer
+    CutToEndLinewise,
 
     /// Cut from the insertion point to the end of the current line
     CutToLineEnd,
@@ -314,11 +320,17 @@ pub enum EditCommand {
     /// Copy from the start of the buffer to the insertion point
     CopyFromStart,
 
+    /// Copy from the start of the buffer to the line of insertion point
+    CopyFromStartLinewise,
+
     /// Copy from the start of the current line to the insertion point
     CopyFromLineStart,
 
     /// Copy from the insertion point to the end of the buffer
     CopyToEnd,
+
+    /// Copy from the line of insertion point to the end of the buffer
+    CopyToEndLinewise,
 
     /// Copy from the insertion point to the end of the current line
     CopyToLineEnd,
@@ -472,8 +484,10 @@ impl Display for EditCommand {
             EditCommand::Complete => write!(f, "Complete"),
             EditCommand::CutCurrentLine => write!(f, "CutCurrentLine"),
             EditCommand::CutFromStart => write!(f, "CutFromStart"),
+            EditCommand::CutFromStartLinewise => write!(f, "CutFromStartLinewise"),
             EditCommand::CutFromLineStart => write!(f, "CutFromLineStart"),
             EditCommand::CutToEnd => write!(f, "CutToEnd"),
+            EditCommand::CutToEndLinewise => write!(f, "CutToEndLinewise"),
             EditCommand::CutToLineEnd => write!(f, "CutToLineEnd"),
             EditCommand::KillLine => write!(f, "KillLine"),
             EditCommand::CutWordLeft => write!(f, "CutWordLeft"),
@@ -503,8 +517,10 @@ impl Display for EditCommand {
             EditCommand::CopySelection => write!(f, "CopySelection"),
             EditCommand::Paste => write!(f, "Paste"),
             EditCommand::CopyFromStart => write!(f, "CopyFromStart"),
+            EditCommand::CopyFromStartLinewise => write!(f, "CopyFromStartLinewise"),
             EditCommand::CopyFromLineStart => write!(f, "CopyFromLineStart"),
             EditCommand::CopyToEnd => write!(f, "CopyToEnd"),
+            EditCommand::CopyToEndLinewise => write!(f, "CopyToEndLinewise"),
             EditCommand::CopyToLineEnd => write!(f, "CopyToLineEnd"),
             EditCommand::CopyCurrentLine => write!(f, "CopyCurrentLine"),
             EditCommand::CopyWordLeft => write!(f, "CopyWordLeft"),
@@ -581,10 +597,12 @@ impl EditCommand {
             | EditCommand::Complete
             | EditCommand::CutCurrentLine
             | EditCommand::CutFromStart
+            | EditCommand::CutFromStartLinewise
             | EditCommand::CutFromLineStart
             | EditCommand::CutToLineEnd
             | EditCommand::KillLine
             | EditCommand::CutToEnd
+            | EditCommand::CutToEndLinewise
             | EditCommand::CutWordLeft
             | EditCommand::CutBigWordLeft
             | EditCommand::CutWordRight
@@ -618,8 +636,10 @@ impl EditCommand {
             #[cfg(feature = "system_clipboard")]
             EditCommand::CopySelectionSystem => EditType::NoOp,
             EditCommand::CopyFromStart
+            | EditCommand::CopyFromStartLinewise
             | EditCommand::CopyFromLineStart
             | EditCommand::CopyToEnd
+            | EditCommand::CopyToEndLinewise
             | EditCommand::CopyToLineEnd
             | EditCommand::CopyCurrentLine
             | EditCommand::CopyWordLeft

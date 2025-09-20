@@ -86,8 +86,10 @@ impl Editor {
             EditCommand::ClearToLineEnd => self.line_buffer.clear_to_line_end(),
             EditCommand::CutCurrentLine => self.cut_current_line(),
             EditCommand::CutFromStart => self.cut_from_start(),
+            EditCommand::CutFromStartLinewise => self.cut_from_start_linewise(),
             EditCommand::CutFromLineStart => self.cut_from_line_start(),
             EditCommand::CutToEnd => self.cut_from_end(),
+            EditCommand::CutToEndLinewise => self.cut_from_end_linewise(),
             EditCommand::CutToLineEnd => self.cut_to_line_end(),
             EditCommand::KillLine => self.kill_line(),
             EditCommand::CutWordLeft => self.cut_word_left(),
@@ -127,8 +129,10 @@ impl Editor {
             EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
             EditCommand::Paste => self.paste_cut_buffer(),
             EditCommand::CopyFromStart => self.copy_from_start(),
+            EditCommand::CopyFromStartLinewise => self.copy_from_start_linewise(),
             EditCommand::CopyFromLineStart => self.copy_from_line_start(),
             EditCommand::CopyToEnd => self.copy_from_end(),
+            EditCommand::CopyToEndLinewise => self.copy_from_end_linewise(),
             EditCommand::CopyToLineEnd => self.copy_to_line_end(),
             EditCommand::CopyWordLeft => self.copy_word_left(),
             EditCommand::CopyBigWordLeft => self.copy_big_word_left(),
@@ -357,6 +361,22 @@ impl Editor {
         }
     }
 
+    fn cut_from_start_linewise(&mut self) {
+        // TODO: make delete motion not leave a empty line
+        let insertion_offset = self.line_buffer.insertion_point();
+        let end_offset = self.line_buffer.get_buffer()[insertion_offset..]
+            .find('\n')
+            .map_or(self.line_buffer.len(), |offset| insertion_offset + offset);
+        if end_offset > 0 {
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[..end_offset],
+                ClipboardMode::Lines,
+            );
+            self.line_buffer.clear_range(..end_offset);
+            self.line_buffer.move_to_start();
+        }
+    }
+
     fn cut_from_line_start(&mut self) {
         let previous_offset = self.line_buffer.insertion_point();
         self.line_buffer.move_to_line_start();
@@ -372,6 +392,15 @@ impl Editor {
         let cut_slice = &self.line_buffer.get_buffer()[self.line_buffer.insertion_point()..];
         if !cut_slice.is_empty() {
             self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
+            self.line_buffer.clear_to_end();
+        }
+    }
+
+    fn cut_from_end_linewise(&mut self) {
+        self.line_buffer.move_to_line_start();
+        let cut_slice = &self.line_buffer.get_buffer()[self.line_buffer.insertion_point()..];
+        if !cut_slice.is_empty() {
+            self.cut_buffer.set(cut_slice, ClipboardMode::Lines);
             self.line_buffer.clear_to_end();
         }
     }
@@ -876,6 +905,20 @@ impl Editor {
         }
     }
 
+    pub(crate) fn copy_from_start_linewise(&mut self) {
+        let insertion_point = self.line_buffer.insertion_point();
+        let end_offset = self.line_buffer.get_buffer()[insertion_point..]
+            .find('\n')
+            .map_or(self.line_buffer.len(), |offset| insertion_point + offset);
+        if end_offset > 0 {
+            self.cut_buffer.set(
+                &self.line_buffer.get_buffer()[..end_offset],
+                ClipboardMode::Lines,
+            );
+        }
+        self.line_buffer.move_to_start();
+    }
+
     pub(crate) fn copy_from_line_start(&mut self) {
         let previous_offset = self.line_buffer.insertion_point();
         let start_offset = {
@@ -892,6 +935,15 @@ impl Editor {
     pub(crate) fn copy_from_end(&mut self) {
         let copy_range = self.line_buffer.insertion_point()..self.line_buffer.len();
         self.copy_range(copy_range);
+    }
+
+    pub(crate) fn copy_from_end_linewise(&mut self) {
+        self.line_buffer.move_to_line_start();
+        let copy_range = self.line_buffer.insertion_point()..self.line_buffer.len();
+        if copy_range.start < copy_range.end {
+            let slice = &self.line_buffer.get_buffer()[copy_range];
+            self.cut_buffer.set(slice, ClipboardMode::Lines);
+        }
     }
 
     pub(crate) fn copy_to_line_end(&mut self) {
