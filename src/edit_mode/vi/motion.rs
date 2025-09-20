@@ -52,9 +52,13 @@ where
             let _ = input.next();
             ParseResult::Valid(Motion::NextBigWordEnd)
         }
-        Some('0' | '^') => {
+        Some('0') => {
             let _ = input.next();
             ParseResult::Valid(Motion::Start)
+        }
+        Some('^') => {
+            let _ = input.next();
+            ParseResult::Valid(Motion::NonBlankStart)
         }
         Some('$') => {
             let _ = input.next();
@@ -146,6 +150,7 @@ pub enum Motion {
     PreviousBigWord,
     Line,
     Start,
+    NonBlankStart,
     End,
     FirstLine,
     LastLine,
@@ -208,6 +213,11 @@ impl Motion {
             Motion::Start => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart {
                 select: select_mode,
             })],
+            Motion::NonBlankStart => {
+                vec![ReedlineOption::Edit(EditCommand::MoveToLineNonBlankStart {
+                    select: select_mode,
+                })]
+            }
             Motion::End => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd {
                 select: select_mode,
             })],
