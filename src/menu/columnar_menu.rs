@@ -10,6 +10,15 @@ use crate::{
 use nu_ansi_term::ansi::RESET;
 use unicode_width::UnicodeWidthStr;
 
+/// The traversal direction of the menu
+#[derive(Debug, PartialEq, Eq)]
+pub enum TraversalDirection {
+    /// Traverse horizontally
+    Horizontal,
+    /// Traverse vertically
+    Vertical,
+}
+
 /// Default values used as reference for the menu. These values are set during
 /// the initial declaration of the menu and are always kept as reference for the
 /// changeable [`ColumnDetails`]
@@ -20,6 +29,8 @@ struct DefaultColumnDetails {
     pub col_width: Option<usize>,
     /// Column padding
     pub col_padding: usize,
+    /// Traversal direction
+    pub traversal_dir: TraversalDirection,
 }
 
 impl Default for DefaultColumnDetails {
@@ -28,6 +39,7 @@ impl Default for DefaultColumnDetails {
             columns: 4,
             col_width: None,
             col_padding: 2,
+            traversal_dir: TraversalDirection::Horizontal,
         }
     }
 }
@@ -65,9 +77,9 @@ pub struct ColumnarMenu {
     col_pos: u16,
     /// row position in the menu. Starts from 0
     row_pos: u16,
-    /// Number of values that are skipped when printing,
+    /// Number of rows that are skipped when printing,
     /// depending on selected value and terminal height
-    skip_values: u16,
+    skip_rows: u16,
     /// Event sent to the menu
     event: Option<MenuEvent>,
     /// Longest suggestion found in the values
@@ -87,7 +99,7 @@ impl Default for ColumnarMenu {
             values: Vec::new(),
             col_pos: 0,
             row_pos: 0,
-            skip_values: 0,
+            skip_rows: 0,
             event: None,
             longest_suggestion: 0,
             input: None,
@@ -124,114 +136,166 @@ impl ColumnarMenu {
         self.default_details.col_padding = col_padding;
         self
     }
+
+    /// Menu builder with new traversal direction value
+    #[must_use]
+    pub fn with_traversal_direction(mut self, direction: TraversalDirection) -> Self {
+        self.default_details.traversal_dir = direction;
+        self
+    }
 }
 
 // Menu functionality
 impl ColumnarMenu {
     /// Move menu cursor to the next element
     fn move_next(&mut self) {
-        let mut new_col = self.col_pos + 1;
-        let mut new_row = self.row_pos;
+        let new_index = self.index() + 1;
 
-        if new_col >= self.get_cols() {
-            new_row += 1;
-            new_col = 0;
-        }
-
-        if new_row >= self.get_rows() {
-            new_row = 0;
-            new_col = 0;
-        }
-
-        let position = new_row * self.get_cols() + new_col;
-        if position >= self.get_values().len() as u16 {
-            self.reset_position();
+        let new_index = if new_index >= self.get_values().len() {
+            0
         } else {
-            self.col_pos = new_col;
-            self.row_pos = new_row;
-        }
+            new_index
+        };
+
+        (self.row_pos, self.col_pos) = self.position_from_index(new_index);
     }
 
     /// Move menu cursor to the previous element
     fn move_previous(&mut self) {
-        let new_col = self.col_pos.checked_sub(1);
-
-        let (new_col, new_row) = match new_col {
-            Some(col) => (col, self.row_pos),
-            None => match self.row_pos.checked_sub(1) {
-                Some(row) => (self.get_cols().saturating_sub(1), row),
-                None => (
-                    self.get_cols().saturating_sub(1),
-                    self.get_rows().saturating_sub(1),
-                ),
-            },
+        let new_index = match self.index().checked_sub(1) {
+            Some(index) => index,
+            None => self.values.len().saturating_sub(1),
         };
 
-        let position = new_row * self.get_cols() + new_col;
-        if position >= self.get_values().len() as u16 {
-            self.col_pos = (self.get_values().len() as u16 % self.get_cols()).saturating_sub(1);
-            self.row_pos = self.get_rows().saturating_sub(1);
-        } else {
-            self.col_pos = new_col;
-            self.row_pos = new_row;
-        }
+        (self.row_pos, self.col_pos) = self.position_from_index(new_index);
     }
 
     /// Move menu cursor up
     fn move_up(&mut self) {
-        self.row_pos = if let Some(new_row) = self.row_pos.checked_sub(1) {
-            new_row
-        } else {
-            let new_row = self.get_rows().saturating_sub(1);
-            let index = new_row * self.get_cols() + self.col_pos;
-            if index >= self.values.len() as u16 {
-                new_row.saturating_sub(1)
-            } else {
-                new_row
-            }
+        self.row_pos = match self.row_pos.checked_sub(1) {
+            Some(index) => index,
+            None => self.get_last_row_at_col(self.col_pos),
         }
     }
 
-    /// Move menu cursor left
+    /// Move menu cursor down
     fn move_down(&mut self) {
         let new_row = self.row_pos + 1;
-        self.row_pos = if new_row >= self.get_rows() {
+        self.row_pos = if new_row > self.get_last_row_at_col(self.col_pos) {
             0
         } else {
-            let index = new_row * self.get_cols() + self.col_pos;
-            if index >= self.values.len() as u16 {
-                0
-            } else {
-                new_row
-            }
+            new_row
         }
     }
 
     /// Move menu cursor left
     fn move_left(&mut self) {
-        self.col_pos = if let Some(row) = self.col_pos.checked_sub(1) {
-            row
-        } else if self.index() + 1 == self.values.len() {
-            0
+        self.col_pos = if let Some(col) = self.col_pos.checked_sub(1) {
+            col
         } else {
-            self.get_cols().saturating_sub(1)
+            self.get_last_col_at_row(self.row_pos)
         }
     }
 
-    /// Move menu cursor element
+    /// Move menu cursor right
     fn move_right(&mut self) {
         let new_col = self.col_pos + 1;
-        self.col_pos = if new_col >= self.get_cols() || self.index() + 2 > self.values.len() {
+        self.col_pos = if new_col > self.get_last_col_at_row(self.row_pos) {
             0
         } else {
             new_col
         }
     }
 
+    /// Calculates row and column positions from an index
+    fn position_from_index(&self, index: usize) -> (u16, u16) {
+        match self.default_details.traversal_dir {
+            TraversalDirection::Vertical => {
+                let row = index % self.get_rows() as usize;
+                let col = index / self.get_rows() as usize;
+                (row as u16, col as u16)
+            }
+            TraversalDirection::Horizontal => {
+                let row = index / self.get_used_cols() as usize;
+                let col = index % self.get_used_cols() as usize;
+                (row as u16, col as u16)
+            }
+        }
+    }
+
+    /// Calculates the last row containing a value for the specified column
+    fn get_last_row_at_col(&self, col_pos: u16) -> u16 {
+        let num_values = self.get_values().len() as u16;
+        match self.default_details.traversal_dir {
+            TraversalDirection::Vertical => {
+                if col_pos >= self.get_used_cols() - 1 {
+                    // Last column, might not be full
+                    let mod_val = num_values % self.get_rows();
+                    if mod_val == 0 {
+                        // Full column
+                        self.get_rows().saturating_sub(1)
+                    } else {
+                        // Column with last row empty
+                        mod_val.saturating_sub(1)
+                    }
+                } else {
+                    // Full column
+                    self.get_rows().saturating_sub(1)
+                }
+            }
+            TraversalDirection::Horizontal => {
+                let mod_val = num_values % self.get_used_cols();
+                if mod_val > 0 && col_pos >= mod_val {
+                    // Column with last row empty
+                    self.get_rows().saturating_sub(2)
+                } else {
+                    // Full column
+                    self.get_rows().saturating_sub(1)
+                }
+            }
+        }
+    }
+
+    /// Calculates the last column containing a value for the specified row
+    fn get_last_col_at_row(&self, row_pos: u16) -> u16 {
+        let num_values = self.get_values().len() as u16;
+        match self.default_details.traversal_dir {
+            TraversalDirection::Vertical => {
+                let mod_val = num_values % self.get_rows();
+                if mod_val > 0 && row_pos >= mod_val {
+                    // Row with last column empty
+                    self.get_used_cols().saturating_sub(2)
+                } else {
+                    // Full row
+                    self.get_used_cols().saturating_sub(1)
+                }
+            }
+            TraversalDirection::Horizontal => {
+                if row_pos >= self.get_rows() - 1 {
+                    // Last row, might not be full
+                    let mod_val = num_values % self.get_used_cols();
+                    if mod_val == 0 {
+                        // Full row
+                        self.get_used_cols().saturating_sub(1)
+                    } else {
+                        // Row with some columns empty
+                        mod_val.saturating_sub(1)
+                    }
+                } else {
+                    // Full row
+                    self.get_used_cols().saturating_sub(1)
+                }
+            }
+        }
+    }
+
     /// Menu index based on column and row position
     fn index(&self) -> usize {
-        let index = self.row_pos * self.get_cols() + self.col_pos;
-        index as usize
+        let index = match self.default_details.traversal_dir {
+            TraversalDirection::Vertical => self.col_pos * self.get_rows() + self.row_pos,
+            TraversalDirection::Horizontal => self.row_pos * self.get_used_cols() + self.col_pos,
+        };
+        index.into()
     }
 
     /// Get selected value from the menu
@@ -239,12 +303,12 @@ impl ColumnarMenu {
         self.get_values().get(self.index()).cloned()
     }
 
-    /// Calculates how many rows the Menu will use
+    /// Calculates how many rows the menu will use
     fn get_rows(&self) -> u16 {
         let values = self.get_values().len() as u16;
 
         if values == 0 {
-            // When the values are empty the no_records_msg is shown, taking 1 line
+            // When the values are empty the "NO RECORDS FOUND" message is shown, taking 1 line
             return 1;
         }
 
@@ -253,6 +317,28 @@ impl ColumnarMenu {
             rows + 1
         } else {
             rows
+        }
+    }
+
+    /// Calculates how many columns will be used to display values
+    fn get_used_cols(&self) -> u16 {
+        let values = self.get_values().len() as u16;
+
+        if values == 0 {
+            // When the values are empty the "NO RECORDS FOUND" message is shown, taking 1 column
+            return 1;
+        }
+
+        match self.default_details.traversal_dir {
+            TraversalDirection::Vertical => {
+                let cols = values / self.get_rows();
+                if values % self.get_rows() != 0 {
+                    cols + 1
+                } else {
+                    cols
+                }
+            }
+            TraversalDirection::Horizontal => self.get_cols().min(values),
         }
     }
 
@@ -286,21 +372,11 @@ impl ColumnarMenu {
         self.working_details.columns.max(1)
     }
 
-    /// End of line for menu
-    fn end_of_line(&self, column: u16) -> &str {
-        if column == self.get_cols().saturating_sub(1) {
-            "\r\n"
-        } else {
-            ""
-        }
-    }
-
     /// Creates default string that represents one suggestion from the menu
     fn create_string(
         &self,
         suggestion: &Suggestion,
         index: usize,
-        column: u16,
         empty_space: usize,
         use_ansi_coloring: bool,
     ) -> String {
@@ -351,7 +427,7 @@ impl ColumnarMenu {
             if index == self.index() {
                 if let Some(description) = &suggestion.description {
                     format!(
-                        "{}{}{}{}{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}{}{}",
+                        "{}{}{}{}{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}{}",
                         suggestion_style_prefix,
                         self.settings.color.selected_text_style.prefix(),
                         prefix,
@@ -372,11 +448,10 @@ impl ColumnarMenu {
                             .collect::<String>()
                             .replace('\n', " "),
                         RESET,
-                        self.end_of_line(column),
                     )
                 } else {
                     format!(
-                        "{}{}{}{}{}{}{}{}{}{}{}{}{:>empty$}{}",
+                        "{}{}{}{}{}{}{}{}{}{}{}{}{:>empty$}",
                         suggestion_style_prefix,
                         self.settings.color.selected_text_style.prefix(),
                         prefix,
@@ -390,13 +465,12 @@ impl ColumnarMenu {
                         remaining_str,
                         RESET,
                         "",
-                        self.end_of_line(column),
                         empty = empty_space,
                     )
                 }
             } else if let Some(description) = &suggestion.description {
                 format!(
-                    "{}{}{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}",
                     suggestion_style_prefix,
                     prefix,
                     RESET,
@@ -414,11 +488,10 @@ impl ColumnarMenu {
                         .collect::<String>()
                         .replace('\n', " "),
                     RESET,
-                    self.end_of_line(column),
                 )
             } else {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{:>empty$}{}{}",
+                    "{}{}{}{}{}{}{}{}{}{}{}{:>empty$}{}",
                     suggestion_style_prefix,
                     prefix,
                     RESET,
@@ -432,7 +505,6 @@ impl ColumnarMenu {
                     self.settings.color.description_style.prefix(),
                     "",
                     RESET,
-                    self.end_of_line(column),
                     empty = empty_space,
                 )
             }
@@ -442,7 +514,7 @@ impl ColumnarMenu {
 
             let line = if let Some(description) = &suggestion.description {
                 format!(
-                    "{}{:max$}{}{}",
+                    "{}{:max$}{}",
                     marker,
                     &suggestion.value,
                     description
@@ -450,7 +522,6 @@ impl ColumnarMenu {
                         .take(empty_space)
                         .collect::<String>()
                         .replace('\n', " "),
-                    self.end_of_line(column),
                     max = self.longest_suggestion
                         + self
                             .default_details
@@ -459,11 +530,10 @@ impl ColumnarMenu {
                 )
             } else {
                 format!(
-                    "{}{}{:>empty$}{}",
+                    "{}{}{:>empty$}",
                     marker,
                     &suggestion.value,
                     "",
-                    self.end_of_line(column),
                     empty = empty_space.saturating_sub(marker.width()),
                 )
             };
@@ -665,17 +735,15 @@ impl Menu for ColumnarMenu {
                 available_lines = painter.remaining_lines().min(self.min_rows());
             }
 
-            let first_visible_row = self.skip_values / self.get_cols();
-
-            self.skip_values = if self.row_pos <= first_visible_row {
+            self.skip_rows = if self.row_pos < self.skip_rows {
                 // Selection is above the visible area, scroll up
-                self.row_pos * self.get_cols()
-            } else if self.row_pos >= first_visible_row + available_lines {
+                self.row_pos
+            } else if self.row_pos >= self.skip_rows + available_lines {
                 // Selection is below the visible area, scroll down
-                (self.row_pos.saturating_sub(available_lines) + 1) * self.get_cols()
+                self.row_pos - available_lines + 1
             } else {
                 // Selection is within the visible area
-                self.skip_values
+                self.skip_rows
             };
         }
     }
@@ -706,23 +774,72 @@ impl Menu for ColumnarMenu {
             // It seems that crossterm prefers to have a complete string ready to be printed
             // rather than looping through the values and printing multiple things
             // This reduces the flickering when printing the menu
-            let available_values = (available_lines * self.get_cols()) as usize;
-            let skip_values = self.skip_values as usize;
+            match self.default_details.traversal_dir {
+                TraversalDirection::Vertical => {
+                    let num_rows: usize = self.get_rows().into();
+                    let rows_to_draw = num_rows.min(available_lines.into());
+                    let mut menu_string = String::new();
+                    for line in 0..rows_to_draw {
+                        let skip_value = self.skip_rows as usize + line;
+                        let row_string: String = self
+                            .get_values()
+                            .iter()
+                            .enumerate()
+                            .skip(skip_value)
+                            .step_by(num_rows)
+                            .take(self.get_cols().into())
+                            .map(|(index, suggestion)| {
+                                let empty_space =
+                                    self.get_width().saturating_sub(suggestion.value.width());
+                                self.create_string(
+                                    suggestion,
+                                    index,
+                                    empty_space,
+                                    use_ansi_coloring,
+                                )
+                            })
+                            .collect();
+                        menu_string.push_str(&row_string);
+                        menu_string.push_str("\r\n");
+                    }
+                    menu_string
+                }
+                TraversalDirection::Horizontal => {
+                    let available_values = (available_lines * self.get_cols()) as usize;
+                    let skip_values = (self.skip_rows * self.get_used_cols()) as usize;
 
-            self.get_values()
-                .iter()
-                .skip(skip_values)
-                .take(available_values)
-                .enumerate()
-                .map(|(index, suggestion)| {
-                    // Correcting the enumerate index based on the number of skipped values
-                    let index = index + skip_values;
-                    let column = index as u16 % self.get_cols();
-                    let empty_space = self.get_width().saturating_sub(suggestion.value.width());
+                    self.get_values()
+                        .iter()
+                        .skip(skip_values)
+                        .take(available_values)
+                        .enumerate()
+                        .map(|(index, suggestion)| {
+                            // Correcting the enumerate index based on the number of skipped values
+                            let index = index + skip_values;
+                            let column = index % self.get_cols() as usize;
+                            let empty_space =
+                                self.get_width().saturating_sub(suggestion.value.width());
 
-                    self.create_string(suggestion, index, column, empty_space, use_ansi_coloring)
-                })
-                .collect()
+                            let end_of_line =
+                                if column == self.get_cols().saturating_sub(1) as usize {
+                                    "\r\n"
+                                } else {
+                                    ""
+                                };
+                            format!(
+                                "{}{}",
+                                self.create_string(
+                                    suggestion,
+                                    index,
+                                    empty_space,
+                                    use_ansi_coloring
+                                ),
+                                end_of_line
+                            )
+                        })
+                        .collect()
+                }
+            }
         }
     }
 }
@@ -872,5 +989,139 @@ mod tests {
         editor.set_buffer("a".to_string(), UndoBehavior::CreateUndoPoint);
         menu.update_values(&mut editor, &mut completer);
         assert!(menu.menu_string(10, true).contains("验"));
+    }
+
+    #[test]
+    fn test_horizontal_menu_selection_position() {
+        // Test selection position update
+        let vs: Vec<String> = (0..10).map(|v| v.to_string()).collect();
+        let vs: Vec<_> = vs.iter().map(|v| v.as_ref()).collect();
+        let mut completer = FakeCompleter::new(&vs);
+        let mut menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Horizontal)
+            .with_name("testmenu");
+        menu.working_details.columns = 4;
+        let mut editor = Editor::default();
+
+        editor.set_buffer("a".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.index() == 0);
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        // Next/previous wrapping
+        menu.move_previous();
+        assert!(menu.index() == vs.len() - 1);
+        assert!(menu.row_pos == 2 && menu.col_pos == 1);
+        menu.move_next();
+        assert!(menu.index() == 0);
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        // Up/down/left/right wrapping for full rows/columns
+        menu.move_up();
+        assert!(menu.row_pos == 2 && menu.col_pos == 0);
+        menu.move_down();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        menu.move_left();
+        assert!(menu.row_pos == 0 && menu.col_pos == 3);
+        menu.move_right();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        // Up/down/left/right wrapping for non-full rows/columns
+        menu.move_left();
+        assert!(menu.row_pos == 0 && menu.col_pos == 3);
+        menu.move_up();
+        assert!(menu.row_pos == 1 && menu.col_pos == 3);
+        menu.move_down();
+        assert!(menu.row_pos == 0 && menu.col_pos == 3);
+        menu.move_right();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        menu.move_up();
+        assert!(menu.row_pos == 2 && menu.col_pos == 0);
+        menu.move_left();
+        assert!(menu.row_pos == 2 && menu.col_pos == 1);
+        menu.move_right();
+        assert!(menu.row_pos == 2 && menu.col_pos == 0);
+    }
+
+    #[test]
+    fn test_vertical_menu_selection_position() {
+        // Test selection position update
+        let vs: Vec<String> = (0..11).map(|v| v.to_string()).collect();
+        let vs: Vec<_> = vs.iter().map(|v| v.as_ref()).collect();
+        let mut completer = FakeCompleter::new(&vs);
+        let mut menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Vertical)
+            .with_name("testmenu");
+        menu.working_details.columns = 4;
+        let mut editor = Editor::default();
+
+        editor.set_buffer("a".to_string(), UndoBehavior::CreateUndoPoint);
+        menu.update_values(&mut editor, &mut completer);
+        assert!(menu.index() == 0);
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        // Next/previous wrapping
+        menu.move_previous();
+        assert!(menu.index() == vs.len() - 1);
+        assert!(menu.row_pos == 1 && menu.col_pos == 3);
+        menu.move_next();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        // Up/down/left/right wrapping for full rows/columns
+        menu.move_up();
+        assert!(menu.row_pos == 2 && menu.col_pos == 0);
+        menu.move_down();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        menu.move_left();
+        assert!(menu.row_pos == 0 && menu.col_pos == 3);
+        menu.move_right();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        // Up/down/left/right wrapping for non-full rows/columns
+        menu.move_left();
+        assert!(menu.row_pos == 0 && menu.col_pos == 3);
+        menu.move_up();
+        assert!(menu.row_pos == 1 && menu.col_pos == 3);
+        menu.move_down();
+        assert!(menu.row_pos == 0 && menu.col_pos == 3);
+        menu.move_right();
+        assert!(menu.row_pos == 0 && menu.col_pos == 0);
+        menu.move_up();
+        assert!(menu.row_pos == 2 && menu.col_pos == 0);
+        menu.move_left();
+        assert!(menu.row_pos == 2 && menu.col_pos == 2);
+        menu.move_right();
+        assert!(menu.row_pos == 2 && menu.col_pos == 0);
+    }
+
+    #[test]
+    fn test_small_menu_selection_position() {
+        // Test selection position update for menus with fewer values than available columns
+        let mut vertical_menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Vertical)
+            .with_name("testmenu");
+        vertical_menu.working_details.columns = 4;
+        let mut horizontal_menu = ColumnarMenu::default()
+            .with_traversal_direction(TraversalDirection::Horizontal)
+            .with_name("testmenu");
+        horizontal_menu.working_details.columns = 4;
+        let mut editor = Editor::default();
+
+        let mut completer = FakeCompleter::new(&["1", "2"]);
+
+        for menu in &mut [vertical_menu, horizontal_menu] {
+            menu.update_values(&mut editor, &mut completer);
+            assert!(menu.index() == 0);
+            assert!(menu.row_pos == 0 && menu.col_pos == 0);
+            menu.move_previous();
+            assert!(menu.index() == menu.get_values().len() - 1);
+            assert!(menu.row_pos == 0 && menu.col_pos == 1);
+            menu.move_next();
+            assert!(menu.row_pos == 0 && menu.col_pos == 0);
+            menu.move_next();
+            assert!(menu.row_pos == 0 && menu.col_pos == 1);
+            menu.move_right();
+            assert!(menu.row_pos == 0 && menu.col_pos == 0);
+            menu.move_left();
+            assert!(menu.row_pos == 0 && menu.col_pos == 1);
+            menu.move_up();
+            assert!(menu.row_pos == 0 && menu.col_pos == 1);
+            menu.move_down();
+            assert!(menu.row_pos == 0 && menu.col_pos == 1);
+        }
     }
 }
