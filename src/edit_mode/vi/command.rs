@@ -273,6 +273,7 @@ impl Command {
                     Some(vec![ReedlineOption::Edit(EditCommand::CutLeftBefore(*c))])
                 }
                 Motion::Start => Some(vec![ReedlineOption::Edit(EditCommand::CutFromLineStart)]),
+                Motion::NonBlankStart => None,
                 Motion::Left => Some(vec![ReedlineOption::Edit(EditCommand::Backspace)]),
                 Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
                 Motion::Up => None,
@@ -340,6 +341,7 @@ impl Command {
                     Motion::Start => {
                         Some(vec![ReedlineOption::Edit(EditCommand::CutFromLineStart)])
                     }
+                    Motion::NonBlankStart => None,
                     Motion::Left => Some(vec![ReedlineOption::Edit(EditCommand::Backspace)]),
                     Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
                     Motion::Up => None,
@@ -402,6 +404,7 @@ impl Command {
                     Some(vec![ReedlineOption::Edit(EditCommand::CopyLeftBefore(*c))])
                 }
                 Motion::Start => Some(vec![ReedlineOption::Edit(EditCommand::CopyFromLineStart)]),
+                Motion::NonBlankStart => None,
                 Motion::Left => Some(vec![ReedlineOption::Edit(EditCommand::CopyLeft)]),
                 Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::CopyRight)]),
                 Motion::Up => None,
