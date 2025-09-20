@@ -277,6 +277,18 @@ impl Command {
                 Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
                 Motion::Up => None,
                 Motion::Down => None,
+                Motion::FirstLine => Some(vec![
+                    ReedlineOption::Edit(EditCommand::MoveToLineEnd { select: false }),
+                    // `MoveRight` to include the new line character
+                    ReedlineOption::Edit(EditCommand::MoveRight { select: false }),
+                    ReedlineOption::Edit(EditCommand::CutFromStart),
+                ]),
+                Motion::LastLine => Some(vec![
+                    ReedlineOption::Edit(EditCommand::MoveToLineStart { select: false }),
+                    // `MoveLeft` to include the new line character
+                    ReedlineOption::Edit(EditCommand::MoveLeft { select: false }),
+                    ReedlineOption::Edit(EditCommand::CutToEnd),
+                ]),
                 Motion::ReplayCharSearch => vi_state
                     .last_char_search
                     .as_ref()
@@ -332,6 +344,14 @@ impl Command {
                     Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
                     Motion::Up => None,
                     Motion::Down => None,
+                    Motion::FirstLine => Some(vec![
+                        ReedlineOption::Edit(EditCommand::MoveToLineEnd { select: false }),
+                        ReedlineOption::Edit(EditCommand::CutFromStart),
+                    ]),
+                    Motion::LastLine => Some(vec![
+                        ReedlineOption::Edit(EditCommand::MoveToLineStart { select: false }),
+                        ReedlineOption::Edit(EditCommand::CutToEnd),
+                    ]),
                     Motion::ReplayCharSearch => vi_state
                         .last_char_search
                         .as_ref()
@@ -386,6 +406,17 @@ impl Command {
                 Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::CopyRight)]),
                 Motion::Up => None,
                 Motion::Down => None,
+                Motion::FirstLine => Some(vec![
+                    ReedlineOption::Edit(EditCommand::MoveToLineEnd { select: false }),
+                    // `MoveRight` to include the new line character
+                    ReedlineOption::Edit(EditCommand::MoveRight { select: false }),
+                    ReedlineOption::Edit(EditCommand::CopyFromStart),
+                    ReedlineOption::Edit(EditCommand::MoveToStart { select: false }),
+                ]),
+                Motion::LastLine => Some(vec![
+                    ReedlineOption::Edit(EditCommand::MoveToLineStart { select: false }),
+                    ReedlineOption::Edit(EditCommand::CopyToEnd),
+                ]),
                 Motion::ReplayCharSearch => vi_state
                     .last_char_search
                     .as_ref()
