@@ -1086,7 +1086,7 @@ impl Reedline {
             }
             ReedlineEvent::Esc => {
                 self.deactivate_menus();
-                self.editor.reset_selection();
+                self.editor.clear_selection();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::CtrlD => {
@@ -1498,6 +1498,9 @@ impl Reedline {
             }
             self.input_mode = InputMode::Regular;
         }
+
+        // Update editor with current edit mode for mode-aware selection behavior
+        self.editor.set_edit_mode(self.edit_mode.edit_mode());
 
         // Run the commands over the edit buffer
         for command in commands {
