@@ -121,7 +121,7 @@ Reedline::create().with_highlighter(Box::new(ExampleHighlighter::new(commands)))
 ```rust
 // Create a reedline object with tab completions support
 
-use reedline::{default_emacs_keybindings, ColumnarMenu, DefaultCompleter, Emacs, KeyCode, KeyModifiers, Reedline, ReedlineEvent, ReedlineMenu};
+use reedline::{default_emacs_keybindings, ColumnarMenu, DefaultCompleter, Emacs, KeyCode, KeyModifiers, Reedline, ReedlineEvent, ReedlineMenu, MenuBuilder};
 
 let commands = vec![
   "test".into(),

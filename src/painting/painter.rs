@@ -215,19 +215,19 @@ impl Painter {
 
         // We add one here as [`PromptLines::prompt_lines_with_wrap`] intentionally subtracts 1 from the real value.
         self.prompt_height = lines.prompt_lines_with_wrap(screen_width) + 1;
+        let lines_before_cursor = lines.required_lines(screen_width, true, None);
 
-        // Handle resize for multi line prompt
+        // Calibrate prompt start position for multi-line prompt/content before cursor. Check issue #841/#848/#930
         if self.just_resized {
-            self.prompt_start_row = self.prompt_start_row.saturating_sub(
-                (lines.prompt_str_left.matches('\n').count()
-                    + lines.prompt_indicator.matches('\n').count()) as u16,
-            );
+            self.prompt_start_row = self
+                .prompt_start_row
+                .saturating_sub(lines_before_cursor - 1);
             self.just_resized = false;
         }
 
         // Lines and distance parameters
         let remaining_lines = self.remaining_lines();
-        let required_lines = lines.required_lines(screen_width, menu);
+        let required_lines = lines.required_lines(screen_width, false, menu);
 
         // Marking the painter state as larger buffer to avoid animations
         self.large_buffer = required_lines >= screen_height;
@@ -243,7 +243,7 @@ impl Painter {
 
         // Moving the start position of the cursor based on the size of the required lines
         if self.large_buffer || is_reset() {
-            for _ in 0..screen_height - lines.required_lines(screen_width, None) {
+            for _ in 0..screen_height.saturating_sub(lines_before_cursor) {
                 self.stdout.queue(Print(&coerce_crlf("\n")))?;
             }
             self.prompt_start_row = 0;
