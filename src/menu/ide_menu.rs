@@ -518,7 +518,7 @@ impl IdeMenu {
         };
 
         if use_ansi_coloring {
-            // strip quotes
+            // TODO(ysthakur): let the user strip quotes, rather than doing it here
             let is_quote = |c: char| "`'\"".contains(c);
             let shortest_base = &self.working_details.shortest_base_string;
             let shortest_base = shortest_base
@@ -557,12 +557,6 @@ impl IdeMenu {
                     .unwrap_or_else(|| match_str.len());
                 &string[match_position..match_position + match_len_bytes]
             };
-
-            // Prefix is everything before the match
-            let prefix = &string[..match_position];
-
-            // Remaining is everything after the match
-            let remaining_str = &string[match_position + match_str.len()..];
 
             let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
 

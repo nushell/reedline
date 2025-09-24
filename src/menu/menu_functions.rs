@@ -1,4 +1,7 @@
 //! Collection of common functions that can be used to create menus
+use std::borrow::Cow;
+
+use itertools::Itertools;
 use nu_ansi_term::{ansi::RESET, Style};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -449,6 +452,23 @@ pub fn style_suggestion(suggestion: &str, match_indices: &[usize], match_style: 
     res
 }
 
+pub fn get_match_indices<'a>(
+    value: &str,
+    match_indices: &'a Option<Vec<usize>>,
+    typed_text: &str,
+) -> Cow<'a, Vec<usize>> {
+    if let Some(inds) = match_indices {
+        Cow::Borrowed(inds)
+    } else {
+        let Some(match_pos) = value.to_lowercase().find(&typed_text.to_lowercase()) else {
+            // Don't highlight anything if no match
+            return Cow::Owned(vec![]);
+        };
+        let match_len = typed_text.graphemes(true).count();
+        Cow::Owned((match_pos..match_pos + match_len).collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -840,6 +860,34 @@ mod tests {
                 match_indices,
                 &match_style
             )
+        );
+    }
+
+    #[test]
+    fn style_fuzzy_suggestion_out_of_bounds() {
+        let match_style = Style::new().underline();
+        let style1 = Style::new().on(Color::Blue);
+        let style2 = Style::new().on(Color::Green);
+
+        let expected = format!(
+            "{}{}{}{}{}{}{}{}{}{}{}{}{}",
+            style1.prefix(),
+            "ab",
+            match_style.paint("汉"),
+            style1.prefix(),
+            "d",
+            RESET,
+            style2.prefix(),
+            match_style.paint("y̆👩🏾"),
+            style2.prefix(),
+            "e",
+            RESET,
+            "b@",
+            match_style.paint("r"),
+        );
+        assert_eq!(
+            expected,
+            style_suggestion("foo", &[2, 3, 4, 6], &match_style)
         );
     }
 }
