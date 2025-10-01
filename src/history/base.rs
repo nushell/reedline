@@ -175,7 +175,7 @@ impl SearchQuery {
 
 /// Represents a history file or database
 /// Data could be stored e.g. in a plain text file, in a `JSONL` file, in a `SQLite` database
-pub trait History: Send {
+pub trait History: Send + Sync {
     /// save a history item to the database
     /// if given id is None, a new id is created and set in the return value
     /// if given id is Some, the existing entry is updated
