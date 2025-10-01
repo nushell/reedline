@@ -194,7 +194,7 @@ impl Editor {
                 let deleted_char = self.edit_stack.current().grapheme_left().chars().next();
                 UndoBehavior::Backspace(deleted_char)
             }
-            (_, EditType::UndoRedo) => UndoBehavior::UndoRedo,
+            (_, EditType::UndoRedo | EditType::NoOp) => UndoBehavior::NoOp,
             (_, _) => UndoBehavior::CreateUndoPoint,
         };
 
@@ -307,8 +307,8 @@ impl Editor {
     }
 
     pub(crate) fn update_undo_state(&mut self, undo_behavior: UndoBehavior) {
-        if matches!(undo_behavior, UndoBehavior::UndoRedo) {
-            self.last_undo_behavior = UndoBehavior::UndoRedo;
+        if matches!(undo_behavior, UndoBehavior::NoOp) {
+            self.last_undo_behavior = UndoBehavior::NoOp;
             return;
         }
         if !undo_behavior.create_undo_point_after(&self.last_undo_behavior) {
