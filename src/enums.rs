@@ -615,9 +615,9 @@ impl EditCommand {
             #[cfg(feature = "system_clipboard")]
             EditCommand::CopySelectionSystem => EditType::NoOp,
             EditCommand::CutInsidePair { .. } => EditType::EditText,
-            EditCommand::CopyInsidePair { .. } => EditType::EditText,
+            EditCommand::CopyInsidePair { .. } => EditType::NoOp,
             EditCommand::CutAroundPair { .. } => EditType::EditText,
-            EditCommand::CopyAroundPair { .. } => EditType::EditText,
+            EditCommand::CopyAroundPair { .. } => EditType::NoOp,
             EditCommand::CutTextObject { .. } => EditType::EditText,
             EditCommand::CopyTextObject { .. } => EditType::NoOp,
             EditCommand::CopyFromStart
@@ -674,8 +674,8 @@ pub enum UndoBehavior {
     /// Catch-all for actions that should always form a unique undo point and never be
     /// grouped with later edits
     CreateUndoPoint,
-    /// Undo/Redo actions shouldn't be reflected on the edit stack
-    UndoRedo,
+    /// For actions that shouldn't be reflected on the edit stack e.g. Undo/Redo
+    NoOp,
 }
 
 impl UndoBehavior {
