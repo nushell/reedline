@@ -72,6 +72,12 @@ pub enum EditCommand {
         select: bool,
     },
 
+    /// Move to the start of the current line skipping any whitespace
+    MoveToLineNonBlankStart {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
     /// Move to the end of the buffer
     MoveToEnd {
         /// Select the text between the current cursor position and destination
@@ -197,6 +203,9 @@ pub enum EditCommand {
     /// Cut from the start of the current line to the insertion point
     CutFromLineStart,
 
+    /// Cut from the first non whitespace character of the current line to the insertion point
+    CutFromLineNonBlankStart,
+
     /// Cut from the insertion point to the end of the buffer
     CutToEnd,
 
@@ -317,6 +326,9 @@ pub enum EditCommand {
     /// Copy from the start of the current line to the insertion point
     CopyFromLineStart,
 
+    /// Copy from the first non whitespace character of the current line to the insertion point
+    CopyFromLineNonBlankStart,
+
     /// Copy from the insertion point to the end of the buffer
     CopyToEnd,
 
@@ -423,6 +435,9 @@ impl Display for EditCommand {
             EditCommand::MoveToLineStart { .. } => {
                 write!(f, "MoveToLineStart Optional[select: <bool>]")
             }
+            EditCommand::MoveToLineNonBlankStart { .. } => {
+                write!(f, "MoveToLineNonBlankStart Optional[select: <bool>]")
+            }
             EditCommand::MoveToEnd { .. } => write!(f, "MoveToEnd Optional[select: <bool>]"),
             EditCommand::MoveToLineEnd { .. } => {
                 write!(f, "MoveToLineEnd Optional[select: <bool>]")
@@ -473,6 +488,7 @@ impl Display for EditCommand {
             EditCommand::CutCurrentLine => write!(f, "CutCurrentLine"),
             EditCommand::CutFromStart => write!(f, "CutFromStart"),
             EditCommand::CutFromLineStart => write!(f, "CutFromLineStart"),
+            EditCommand::CutFromLineNonBlankStart => write!(f, "CutFromLineNonBlankStart"),
             EditCommand::CutToEnd => write!(f, "CutToEnd"),
             EditCommand::CutToLineEnd => write!(f, "CutToLineEnd"),
             EditCommand::KillLine => write!(f, "KillLine"),
@@ -504,6 +520,7 @@ impl Display for EditCommand {
             EditCommand::Paste => write!(f, "Paste"),
             EditCommand::CopyFromStart => write!(f, "CopyFromStart"),
             EditCommand::CopyFromLineStart => write!(f, "CopyFromLineStart"),
+            EditCommand::CopyFromLineNonBlankStart => write!(f, "CopyFromLineNonBlankStart"),
             EditCommand::CopyToEnd => write!(f, "CopyToEnd"),
             EditCommand::CopyToLineEnd => write!(f, "CopyToLineEnd"),
             EditCommand::CopyCurrentLine => write!(f, "CopyCurrentLine"),
@@ -546,6 +563,7 @@ impl EditCommand {
             | EditCommand::MoveToEnd { select, .. }
             | EditCommand::MoveToLineStart { select, .. }
             | EditCommand::MoveToLineEnd { select, .. }
+            | EditCommand::MoveToLineNonBlankStart { select, .. }
             | EditCommand::MoveToPosition { select, .. }
             | EditCommand::MoveLeft { select, .. }
             | EditCommand::MoveRight { select, .. }
@@ -582,6 +600,7 @@ impl EditCommand {
             | EditCommand::CutCurrentLine
             | EditCommand::CutFromStart
             | EditCommand::CutFromLineStart
+            | EditCommand::CutFromLineNonBlankStart
             | EditCommand::CutToLineEnd
             | EditCommand::KillLine
             | EditCommand::CutToEnd
@@ -622,6 +641,7 @@ impl EditCommand {
             EditCommand::CopyTextObject { .. } => EditType::NoOp,
             EditCommand::CopyFromStart
             | EditCommand::CopyFromLineStart
+            | EditCommand::CopyFromLineNonBlankStart
             | EditCommand::CopyToEnd
             | EditCommand::CopyToLineEnd
             | EditCommand::CopyCurrentLine
