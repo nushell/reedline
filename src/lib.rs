@@ -230,7 +230,10 @@ pub use core_editor::Editor;
 pub use core_editor::LineBuffer;
 
 mod enums;
-pub use enums::{EditCommand, ReedlineEvent, ReedlineRawEvent, Signal, UndoBehavior};
+pub use enums::{
+    EditCommand, ReedlineEvent, ReedlineRawEvent, Signal, TextObject, TextObjectScope,
+    TextObjectType, UndoBehavior,
+};
 
 mod painting;
 pub use painting::{Painter, StyledText};
