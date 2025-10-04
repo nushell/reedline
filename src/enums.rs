@@ -604,7 +604,10 @@ impl EditCommand {
             | EditCommand::CutLeftUntil(_)
             | EditCommand::CutLeftBefore(_)
             | EditCommand::CutSelection
-            | EditCommand::Paste => EditType::EditText,
+            | EditCommand::Paste
+            | EditCommand::CutInsidePair { .. }
+            | EditCommand::CutAroundPair { .. }
+            | EditCommand::CutTextObject { .. } => EditType::EditText,
 
             #[cfg(feature = "system_clipboard")] // Sadly cfg attributes in patterns don't work
             EditCommand::CutSelectionSystem | EditCommand::PasteSystem => EditType::EditText,
@@ -614,12 +617,6 @@ impl EditCommand {
             EditCommand::CopySelection => EditType::NoOp,
             #[cfg(feature = "system_clipboard")]
             EditCommand::CopySelectionSystem => EditType::NoOp,
-            EditCommand::CutInsidePair { .. } => EditType::EditText,
-            EditCommand::CopyInsidePair { .. } => EditType::EditText,
-            EditCommand::CutAroundPair { .. } => EditType::EditText,
-            EditCommand::CopyAroundPair { .. } => EditType::EditText,
-            EditCommand::CutTextObject { .. } => EditType::EditText,
-            EditCommand::CopyTextObject { .. } => EditType::NoOp,
             EditCommand::CopyFromStart
             | EditCommand::CopyFromLineStart
             | EditCommand::CopyToEnd
@@ -636,7 +633,10 @@ impl EditCommand {
             | EditCommand::CopyRightUntil(_)
             | EditCommand::CopyRightBefore(_)
             | EditCommand::CopyLeftUntil(_)
-            | EditCommand::CopyLeftBefore(_) => EditType::NoOp,
+            | EditCommand::CopyLeftBefore(_)
+            | EditCommand::CopyInsidePair { .. }
+            | EditCommand::CopyAroundPair { .. }
+            | EditCommand::CopyTextObject { .. } => EditType::NoOp,
         }
     }
 }
