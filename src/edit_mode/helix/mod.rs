@@ -61,6 +61,19 @@ impl Helix {
     }
 }
 
+impl Helix {
+    fn enter_insert_mode(&mut self, edit_command: Option<EditCommand>) -> ReedlineEvent {
+        self.mode = HelixMode::Insert;
+        match edit_command {
+            None => ReedlineEvent::Repaint,
+            Some(cmd) => ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![cmd]),
+                ReedlineEvent::Repaint,
+            ]),
+        }
+    }
+}
+
 impl EditMode for Helix {
     fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
         match event.into() {
@@ -68,37 +81,19 @@ impl EditMode for Helix {
                 code, modifiers, ..
             }) => match (self.mode, modifiers, code) {
                 (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('i')) => {
-                    self.mode = HelixMode::Insert;
-                    ReedlineEvent::Repaint
+                    self.enter_insert_mode(None)
                 }
                 (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('a')) => {
-                    self.mode = HelixMode::Insert;
-                    ReedlineEvent::Multiple(vec![
-                        ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }]),
-                        ReedlineEvent::Repaint,
-                    ])
+                    self.enter_insert_mode(Some(EditCommand::MoveRight { select: false }))
                 }
                 (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('i')) => {
-                    self.mode = HelixMode::Insert;
-                    ReedlineEvent::Multiple(vec![
-                        ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: false }]),
-                        ReedlineEvent::Repaint,
-                    ])
+                    self.enter_insert_mode(Some(EditCommand::MoveToLineStart { select: false }))
                 }
                 (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('a')) => {
-                    self.mode = HelixMode::Insert;
-                    ReedlineEvent::Multiple(vec![
-                        ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd { select: false }]),
-                        ReedlineEvent::Repaint,
-                    ])
+                    self.enter_insert_mode(Some(EditCommand::MoveToLineEnd { select: false }))
                 }
-                // Special handling for 'c' - change selection (delete then insert)
                 (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('c')) => {
-                    self.mode = HelixMode::Insert;
-                    ReedlineEvent::Multiple(vec![
-                        ReedlineEvent::Edit(vec![EditCommand::CutSelection]),
-                        ReedlineEvent::Repaint,
-                    ])
+                    self.enter_insert_mode(Some(EditCommand::CutSelection))
                 }
                 (HelixMode::Normal, _, _) => self
                     .normal_keybindings
