@@ -163,17 +163,16 @@ mod test {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    fn make_key_event(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
+        ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(code, modifiers))).unwrap()
+    }
+
     #[test]
     fn i_enters_insert_mode_test() {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let i_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('i'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(i_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('i'), KeyModifiers::NONE));
 
         assert_eq!(result, ReedlineEvent::Repaint);
         assert_eq!(helix.mode, HelixMode::Insert);
@@ -184,10 +183,7 @@ mod test {
         let mut helix = Helix::default();
         helix.mode = HelixMode::Insert;
 
-        let esc =
-            ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
-                .unwrap();
-        let result = helix.parse_event(esc);
+        let result = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
 
         assert_eq!(
             result,
@@ -205,12 +201,7 @@ mod test {
         let mut helix = Helix::default();
         helix.mode = HelixMode::Insert;
 
-        let h_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('h'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(h_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('h'), KeyModifiers::NONE));
 
         assert_eq!(
             result,
@@ -224,13 +215,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        // Use 'q' which is not bound to anything
-        let q_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('q'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(q_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('q'), KeyModifiers::NONE));
 
         assert_eq!(result, ReedlineEvent::None);
         assert_eq!(helix.mode, HelixMode::Normal);
@@ -241,12 +226,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let a_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('a'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(a_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('a'), KeyModifiers::NONE));
 
         assert_eq!(
             result,
@@ -263,12 +243,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let shift_i_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('i'),
-            KeyModifiers::SHIFT,
-        )))
-        .unwrap();
-        let result = helix.parse_event(shift_i_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('i'), KeyModifiers::SHIFT));
 
         assert_eq!(
             result,
@@ -285,12 +260,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let shift_a_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('a'),
-            KeyModifiers::SHIFT,
-        )))
-        .unwrap();
-        let result = helix.parse_event(shift_a_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('a'), KeyModifiers::SHIFT));
 
         assert_eq!(
             result,
@@ -307,12 +277,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let ctrl_c = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('c'),
-            KeyModifiers::CONTROL,
-        )))
-        .unwrap();
-        let result = helix.parse_event(ctrl_c);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('c'), KeyModifiers::CONTROL));
 
         assert_eq!(result, ReedlineEvent::CtrlC);
     }
@@ -322,12 +287,7 @@ mod test {
         let mut helix = Helix::default();
         helix.mode = HelixMode::Insert;
 
-        let ctrl_c = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('c'),
-            KeyModifiers::CONTROL,
-        )))
-        .unwrap();
-        let result = helix.parse_event(ctrl_c);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('c'), KeyModifiers::CONTROL));
 
         assert_eq!(result, ReedlineEvent::CtrlC);
     }
@@ -337,12 +297,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let ctrl_d = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('d'),
-            KeyModifiers::CONTROL,
-        )))
-        .unwrap();
-        let result = helix.parse_event(ctrl_d);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('d'), KeyModifiers::CONTROL));
 
         assert_eq!(result, ReedlineEvent::CtrlD);
     }
@@ -352,12 +307,7 @@ mod test {
         let mut helix = Helix::default();
         helix.mode = HelixMode::Insert;
 
-        let ctrl_d = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('d'),
-            KeyModifiers::CONTROL,
-        )))
-        .unwrap();
-        let result = helix.parse_event(ctrl_d);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('d'), KeyModifiers::CONTROL));
 
         assert_eq!(result, ReedlineEvent::CtrlD);
     }
@@ -367,12 +317,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let h_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('h'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(h_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('h'), KeyModifiers::NONE));
 
         assert_eq!(
             result,
@@ -385,12 +330,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let l_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('l'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(l_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('l'), KeyModifiers::NONE));
 
         assert_eq!(
             result,
@@ -403,12 +343,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let w_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('w'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(w_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('w'), KeyModifiers::NONE));
 
         assert_eq!(
             result,
@@ -421,12 +356,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let b_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('b'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(b_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
 
         assert_eq!(
             result,
@@ -439,12 +369,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let e_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('e'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(e_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('e'), KeyModifiers::NONE));
 
         assert_eq!(
             result,
@@ -457,12 +382,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let zero_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('0'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(zero_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('0'), KeyModifiers::NONE));
 
         assert_eq!(
             result,
@@ -475,12 +395,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let dollar_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('$'),
-            KeyModifiers::SHIFT,
-        )))
-        .unwrap();
-        let result = helix.parse_event(dollar_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('$'), KeyModifiers::SHIFT));
 
         assert_eq!(
             result,
@@ -493,12 +408,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let x_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('x'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(x_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('x'), KeyModifiers::NONE));
 
         assert_eq!(result, ReedlineEvent::Edit(vec![EditCommand::SelectAll]));
     }
@@ -508,12 +418,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let d_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('d'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(d_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('d'), KeyModifiers::NONE));
 
         assert_eq!(result, ReedlineEvent::Edit(vec![EditCommand::CutSelection]));
     }
@@ -523,12 +428,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let semicolon_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char(';'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(semicolon_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char(';'), KeyModifiers::NONE));
 
         assert_eq!(
             result,
@@ -541,12 +441,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let c_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('c'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(c_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('c'), KeyModifiers::NONE));
 
         assert_eq!(
             result,
@@ -563,12 +458,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let y_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('y'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(y_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('y'), KeyModifiers::NONE));
 
         assert_eq!(
             result,
@@ -581,12 +471,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let p_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('p'),
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
-        let result = helix.parse_event(p_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('p'), KeyModifiers::NONE));
 
         assert_eq!(result, ReedlineEvent::Edit(vec![EditCommand::Paste]));
     }
@@ -596,12 +481,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let p_key = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char('P'),
-            KeyModifiers::SHIFT,
-        )))
-        .unwrap();
-        let result = helix.parse_event(p_key);
+        let result = helix.parse_event(make_key_event(KeyCode::Char('P'), KeyModifiers::SHIFT));
 
         assert_eq!(
             result,
@@ -614,12 +494,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let alt_semicolon = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
-            KeyCode::Char(';'),
-            KeyModifiers::ALT,
-        )))
-        .unwrap();
-        let result = helix.parse_event(alt_semicolon);
+        let result = helix.parse_event(make_key_event(KeyCode::Char(';'), KeyModifiers::ALT));
 
         assert_eq!(
             result,
