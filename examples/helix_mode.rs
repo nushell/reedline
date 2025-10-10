@@ -9,51 +9,17 @@ use std::borrow::Cow;
 use std::env;
 use std::io;
 
-// Prompt with explicit mode display
-struct HelixModePrompt;
+struct HelixPrompt {
+    simple: bool,
+}
 
-impl Prompt for HelixModePrompt {
-    fn render_prompt_left(&self) -> Cow<'_, str> {
-        Cow::Borrowed("")
-    }
-
-    fn render_prompt_right(&self) -> Cow<'_, str> {
-        Cow::Borrowed("")
-    }
-
-    fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<'_, str> {
-        match edit_mode {
-            PromptEditMode::Vi(vi_mode) => match vi_mode {
-                reedline::PromptViMode::Normal => Cow::Borrowed("[ NORMAL ] 〉"),
-                reedline::PromptViMode::Insert => Cow::Borrowed("[ INSERT ] : "),
-            },
-            _ => Cow::Borrowed("> "),
-        }
-    }
-
-    fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
-        Cow::Borrowed("::: ")
-    }
-
-    fn render_prompt_history_search_indicator(
-        &self,
-        history_search: PromptHistorySearch,
-    ) -> Cow<'_, str> {
-        let prefix = match history_search.status {
-            reedline::PromptHistorySearchStatus::Passing => "",
-            reedline::PromptHistorySearchStatus::Failing => "failing ",
-        };
-        Cow::Owned(format!(
-            "({}reverse-search: {}) ",
-            prefix, history_search.term
-        ))
+impl HelixPrompt {
+    fn new(simple: bool) -> Self {
+        Self { simple }
     }
 }
 
-// Simple prompt with icon-only mode indicators
-struct SimplePrompt;
-
-impl Prompt for SimplePrompt {
+impl Prompt for HelixPrompt {
     fn render_prompt_left(&self) -> Cow<'_, str> {
         Cow::Borrowed("")
     }
@@ -65,8 +31,20 @@ impl Prompt for SimplePrompt {
     fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<'_, str> {
         match edit_mode {
             PromptEditMode::Vi(vi_mode) => match vi_mode {
-                reedline::PromptViMode::Normal => Cow::Borrowed("〉"),
-                reedline::PromptViMode::Insert => Cow::Borrowed(": "),
+                reedline::PromptViMode::Normal => {
+                    if self.simple {
+                        Cow::Borrowed("〉")
+                    } else {
+                        Cow::Borrowed("[ NORMAL ] 〉")
+                    }
+                }
+                reedline::PromptViMode::Insert => {
+                    if self.simple {
+                        Cow::Borrowed(": ")
+                    } else {
+                        Cow::Borrowed("[ INSERT ] : ")
+                    }
+                }
             },
             _ => Cow::Borrowed("> "),
         }
@@ -122,33 +100,17 @@ fn main() -> io::Result<()> {
     println!();
 
     let mut line_editor = Reedline::create().with_edit_mode(Box::new(Helix::default()));
+    let prompt = HelixPrompt::new(simple_prompt);
 
-    if simple_prompt {
-        let prompt = SimplePrompt;
-        loop {
-            let sig = line_editor.read_line(&prompt)?;
-            match sig {
-                Signal::Success(buffer) => {
-                    println!("You entered: {buffer}");
-                }
-                Signal::CtrlD | Signal::CtrlC => {
-                    println!("\nExiting!");
-                    break Ok(());
-                }
+    loop {
+        let sig = line_editor.read_line(&prompt)?;
+        match sig {
+            Signal::Success(buffer) => {
+                println!("You entered: {buffer}");
             }
-        }
-    } else {
-        let prompt = HelixModePrompt;
-        loop {
-            let sig = line_editor.read_line(&prompt)?;
-            match sig {
-                Signal::Success(buffer) => {
-                    println!("You entered: {buffer}");
-                }
-                Signal::CtrlD | Signal::CtrlC => {
-                    println!("\nExiting!");
-                    break Ok(());
-                }
+            Signal::CtrlD | Signal::CtrlC => {
+                println!("\nExiting!");
+                break Ok(());
             }
         }
     }
