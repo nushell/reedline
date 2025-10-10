@@ -1948,12 +1948,7 @@ mod tests {
         // After the fix, previous_history() positions cursor at end of first line
         // (after move_to_start + move_to_line_end)
         let first_line_end = multiline_command.find('\n').unwrap();
-        assert_eq!(
-            initial_insertion_point, first_line_end,
-            "After previous_history(), cursor should be at end of first line (position {}), but is at position {}",
-            first_line_end,
-            initial_insertion_point
-        );
+        assert_eq!(initial_insertion_point, first_line_end);
 
         // Now simulate pressing the right arrow key, which should move cursor right
         // Without the fix, set_buffer() would be called and reset the insertion point,
@@ -1964,13 +1959,7 @@ mod tests {
         let after_move_insertion_point = reedline.current_insertion_point();
 
         // The cursor should have moved right by 1 from where it was
-        assert_eq!(
-            after_move_insertion_point,
-            initial_insertion_point + 1,
-            "After MoveRight, cursor should be at position {}, but is at position {}",
-            initial_insertion_point + 1,
-            after_move_insertion_point
-        );
+        assert_eq!(after_move_insertion_point, initial_insertion_point + 1);
 
         // The buffer should still be unchanged
         assert_eq!(reedline.current_buffer_contents(), multiline_command);
