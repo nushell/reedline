@@ -4,6 +4,19 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyModifiers};
 
+fn add_motion_binding(
+    keybindings: &mut Keybindings,
+    modifiers: KeyModifiers,
+    key: char,
+    command: EditCommand,
+) {
+    keybindings.add_binding(
+        modifiers,
+        KeyCode::Char(key),
+        ReedlineEvent::Edit(vec![command]),
+    );
+}
+
 /// Returns the default keybindings for Helix normal mode
 ///
 /// Includes:
@@ -23,7 +36,6 @@ use crossterm::event::{KeyCode, KeyModifiers};
 pub fn default_helix_normal_keybindings() -> Keybindings {
     let mut keybindings = Keybindings::default();
 
-    // Basic commands
     keybindings.add_binding(KeyModifiers::NONE, KeyCode::Enter, ReedlineEvent::Enter);
     keybindings.add_binding(
         KeyModifiers::CONTROL,
@@ -36,90 +48,95 @@ pub fn default_helix_normal_keybindings() -> Keybindings {
         ReedlineEvent::CtrlD,
     );
 
-    // Character motions (with selection in Helix style)
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::NONE,
-        KeyCode::Char('h'),
-        ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: true }]),
+        'h',
+        EditCommand::MoveLeft { select: true },
     );
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::NONE,
-        KeyCode::Char('l'),
-        ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: true }]),
+        'l',
+        EditCommand::MoveRight { select: true },
     );
-
-    // Word motions
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::NONE,
-        KeyCode::Char('w'),
-        ReedlineEvent::Edit(vec![EditCommand::MoveWordRightStart { select: true }]),
+        'w',
+        EditCommand::MoveWordRightStart { select: true },
     );
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::NONE,
-        KeyCode::Char('b'),
-        ReedlineEvent::Edit(vec![EditCommand::MoveWordLeft { select: true }]),
+        'b',
+        EditCommand::MoveWordLeft { select: true },
     );
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::NONE,
-        KeyCode::Char('e'),
-        ReedlineEvent::Edit(vec![EditCommand::MoveWordRightEnd { select: true }]),
+        'e',
+        EditCommand::MoveWordRightEnd { select: true },
     );
-
-    // Line motions
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::NONE,
-        KeyCode::Char('0'),
-        ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: true }]),
+        '0',
+        EditCommand::MoveToLineStart { select: true },
     );
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::SHIFT,
-        KeyCode::Char('$'),
-        ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd { select: true }]),
+        '$',
+        EditCommand::MoveToLineEnd { select: true },
     );
 
-    // Selection commands
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::NONE,
-        KeyCode::Char('x'),
-        ReedlineEvent::Edit(vec![EditCommand::SelectAll]),
+        'x',
+        EditCommand::SelectAll,
     );
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::NONE,
-        KeyCode::Char('d'),
-        ReedlineEvent::Edit(vec![EditCommand::CutSelection]),
+        'd',
+        EditCommand::CutSelection,
     );
     keybindings.add_binding(
         KeyModifiers::NONE,
         KeyCode::Char('c'),
-        ReedlineEvent::Multiple(vec![
-            ReedlineEvent::Edit(vec![EditCommand::CutSelection]),
-            // Mode will be switched to Insert by the i key handler in parse_event
-        ]),
+        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutSelection])]),
     );
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::NONE,
-        KeyCode::Char('y'),
-        ReedlineEvent::Edit(vec![EditCommand::CopySelection]),
+        'y',
+        EditCommand::CopySelection,
     );
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::NONE,
-        KeyCode::Char('p'),
-        ReedlineEvent::Edit(vec![EditCommand::Paste]),
+        'p',
+        EditCommand::Paste,
     );
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::SHIFT,
-        KeyCode::Char('P'),
-        ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferBefore]),
+        'P',
+        EditCommand::PasteCutBufferBefore,
     );
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::NONE,
-        KeyCode::Char(';'),
-        ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }]),
+        ';',
+        EditCommand::MoveRight { select: false },
     );
-    keybindings.add_binding(
+    add_motion_binding(
+        &mut keybindings,
         KeyModifiers::ALT,
-        KeyCode::Char(';'),
-        ReedlineEvent::Edit(vec![EditCommand::SwapCursorAndAnchor]),
+        ';',
+        EditCommand::SwapCursorAndAnchor,
     );
 
     keybindings
