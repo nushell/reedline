@@ -25,6 +25,7 @@ fn add_motion_binding(
 /// - Ctrl+D: exit/EOF
 /// - h/l: left/right (with selection)
 /// - w/b/e: word motions (with selection)
+/// - W/B/E: WORD motions (with selection)
 /// - 0/$: line start/end (with selection)
 /// - x: select line
 /// - d: delete selection
@@ -77,6 +78,24 @@ pub fn default_helix_normal_keybindings() -> Keybindings {
         KeyModifiers::NONE,
         'e',
         EditCommand::MoveWordRightEnd { select: true },
+    );
+    add_motion_binding(
+        &mut keybindings,
+        KeyModifiers::SHIFT,
+        'W',
+        EditCommand::MoveBigWordRightStart { select: true },
+    );
+    add_motion_binding(
+        &mut keybindings,
+        KeyModifiers::SHIFT,
+        'B',
+        EditCommand::MoveBigWordLeft { select: true },
+    );
+    add_motion_binding(
+        &mut keybindings,
+        KeyModifiers::SHIFT,
+        'E',
+        EditCommand::MoveBigWordRightEnd { select: true },
     );
     add_motion_binding(
         &mut keybindings,

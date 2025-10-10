@@ -51,6 +51,9 @@ Shows only "〉" (normal) or ":" (insert) icons.
 - `w` - Next word start
 - `b` - Previous word start
 - `e` - Next word end
+- `W` (Shift+w) - Next WORD start (whitespace-delimited)
+- `B` (Shift+b) - Previous WORD start (whitespace-delimited)
+- `E` (Shift+e) - Next WORD end (whitespace-delimited)
 
 **Line motions (extend selection):**
 - `0` - Line start
@@ -107,9 +110,9 @@ nix develop
 cargo test --lib | grep helix
 ```
 
-All 26 helix mode tests should pass:
+All 29 helix mode tests should pass:
 - Mode entry/exit tests (7)
-- Motion tests with selection (7)
+- Motion tests with selection (10)
 - Selection command tests (8)
 - Exit tests (4)
 
@@ -151,7 +154,7 @@ This approach ensures the mode display updates immediately when you switch modes
 
 ## Implemented Features
 
-✅ **Basic motions with selection** - h/l, w/b/e, 0/$  
+✅ **Basic motions with selection** - h/l, w/b/e/W/B/E, 0/$  
 ✅ **Selection commands** - x (select line), d (delete), c (change), ; (collapse), Alt+; (flip)  
 ✅ **Yank/paste** - y (copy), p/P (paste after/before)  
 ✅ **Insert mode entry** - i/a/I/A  

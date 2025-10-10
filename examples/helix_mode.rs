@@ -92,11 +92,12 @@ fn main() -> io::Result<()> {
 
     println!();
     println!("Keybindings:");
-    println!("  Insert: i/a/I/A         Motions: h/l/w/b/e/0/$");
+    println!("  Insert: i/a/I/A         Motions: h/l/w/b/e/W/B/E/0/$");
     println!("  Select: x ; Alt+;       Edit: d/c/y/p/P");
     println!("  Exit: Esc/Ctrl+C/Ctrl+D");
     println!();
     println!("Note: Motions extend selection (Helix-style)");
+    println!("      W/B/E are WORD motions (whitespace-delimited)");
     println!();
 
     let mut line_editor = Reedline::create().with_edit_mode(Box::new(Helix::default()));

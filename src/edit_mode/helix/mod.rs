@@ -378,6 +378,45 @@ mod test {
     }
 
     #[test]
+    fn shift_w_moves_bigword_forward_with_selection_test() {
+        let mut helix = Helix::default();
+        assert_eq!(helix.mode, HelixMode::Normal);
+
+        let result = helix.parse_event(make_key_event(KeyCode::Char('W'), KeyModifiers::SHIFT));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![EditCommand::MoveBigWordRightStart { select: true }])
+        );
+    }
+
+    #[test]
+    fn shift_b_moves_bigword_back_with_selection_test() {
+        let mut helix = Helix::default();
+        assert_eq!(helix.mode, HelixMode::Normal);
+
+        let result = helix.parse_event(make_key_event(KeyCode::Char('B'), KeyModifiers::SHIFT));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![EditCommand::MoveBigWordLeft { select: true }])
+        );
+    }
+
+    #[test]
+    fn shift_e_moves_bigword_end_with_selection_test() {
+        let mut helix = Helix::default();
+        assert_eq!(helix.mode, HelixMode::Normal);
+
+        let result = helix.parse_event(make_key_event(KeyCode::Char('E'), KeyModifiers::SHIFT));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![EditCommand::MoveBigWordRightEnd { select: true }])
+        );
+    }
+
+    #[test]
     fn zero_moves_to_line_start_with_selection_test() {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
