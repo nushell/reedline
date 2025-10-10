@@ -1305,9 +1305,7 @@ impl Reedline {
     }
 
     fn previous_history(&mut self) {
-        if self.history_cursor_on_excluded {
-            self.history_cursor_on_excluded = false;
-        }
+        self.history_cursor_on_excluded = false;
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
             self.history_cursor = HistoryCursor::new(
@@ -1327,12 +1325,9 @@ impl Reedline {
         }
         self.update_buffer_from_history();
         self.editor.move_to_start(false);
-        self.editor
-            .update_undo_state(UndoBehavior::HistoryNavigation);
         self.editor.move_to_line_end(false);
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
-        self.editor.move_to_end(false);
     }
 
     fn next_history(&mut self) {
@@ -1492,8 +1487,13 @@ impl Reedline {
                 HistoryNavigationQuery::Normal(_)
             ) {
                 if let Some(string) = self.history_cursor.string_at_cursor() {
-                    self.editor
-                        .set_buffer(string, UndoBehavior::HistoryNavigation);
+                    // NOTE: `set_buffer` resets the insertion point,
+                    // which we should avoid during history navigation through the same buffer
+                    // https://github.com/nushell/reedline/pull/899
+                    if string != self.editor.get_buffer() {
+                        self.editor
+                            .set_buffer(string, UndoBehavior::HistoryNavigation);
+                    }
                 }
             }
             self.input_mode = InputMode::Regular;
