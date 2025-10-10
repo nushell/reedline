@@ -1914,8 +1914,71 @@ impl Reedline {
     }
 }
 
-#[test]
-fn thread_safe() {
-    fn f<S: Send>(_: S) {}
-    f(Reedline::create());
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cursor_position_after_multiline_history_navigation() {
+        // Test for https://github.com/nushell/reedline/pull/899
+        // Ensure that after navigating to a multiline history entry and then
+        // running edit commands, the cursor doesn't jump unexpectedly.
+        // The fix prevents set_buffer() from being called unnecessarily,
+        // which would reset the insertion point.
+
+        let mut reedline = Reedline::create();
+
+        // Add a multiline entry to history
+        let multiline_command = "echo 'line 1'\necho 'line 2'\necho 'line 3'";
+        let history_item = HistoryItem::from_command_line(multiline_command);
+        reedline
+            .history
+            .save(history_item)
+            .expect("Failed to save history");
+
+        // Navigate to previous history
+        reedline.previous_history();
+
+        // Get the initial insertion point after history navigation
+        let initial_insertion_point = reedline.current_insertion_point();
+
+        // The buffer should contain our multiline command
+        assert_eq!(reedline.current_buffer_contents(), multiline_command);
+
+        // After the fix, previous_history() positions cursor at end of first line
+        // (after move_to_start + move_to_line_end)
+        let first_line_end = multiline_command.find('\n').unwrap();
+        assert_eq!(
+            initial_insertion_point, first_line_end,
+            "After previous_history(), cursor should be at end of first line (position {}), but is at position {}",
+            first_line_end,
+            initial_insertion_point
+        );
+
+        // Now simulate pressing the right arrow key, which should move cursor right
+        // Without the fix, set_buffer() would be called and reset the insertion point,
+        // causing the cursor to jump unexpectedly. With the fix, it stays where it is
+        // and moves correctly.
+        reedline.run_edit_commands(&[EditCommand::MoveRight { select: false }]);
+
+        let after_move_insertion_point = reedline.current_insertion_point();
+
+        // The cursor should have moved right by 1 from where it was
+        assert_eq!(
+            after_move_insertion_point,
+            initial_insertion_point + 1,
+            "After MoveRight, cursor should be at position {}, but is at position {}",
+            initial_insertion_point + 1,
+            after_move_insertion_point
+        );
+
+        // The buffer should still be unchanged
+        assert_eq!(reedline.current_buffer_contents(), multiline_command);
+    }
+
+    #[test]
+    fn thread_safe() {
+        fn f<S: Send>(_: S) {}
+        f(Reedline::create());
+    }
 }
