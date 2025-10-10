@@ -26,6 +26,17 @@ enum PendingCharSearch {
     TillBack,
 }
 
+impl PendingCharSearch {
+    fn to_command(self, c: char) -> EditCommand {
+        match self {
+            PendingCharSearch::Find => EditCommand::MoveRightUntil { c, select: true },
+            PendingCharSearch::Till => EditCommand::MoveRightBefore { c, select: true },
+            PendingCharSearch::FindBack => EditCommand::MoveLeftUntil { c, select: true },
+            PendingCharSearch::TillBack => EditCommand::MoveLeftBefore { c, select: true },
+        }
+    }
+}
+
 impl FromStr for HelixMode {
     type Err = ();
 
@@ -83,6 +94,24 @@ impl Helix {
             ]),
         }
     }
+
+    fn handle_pending_char_search(&mut self, code: KeyCode) -> Option<ReedlineEvent> {
+        if let Some(search_type) = self.pending_char_search.take() {
+            if let KeyCode::Char(c) = code {
+                Some(ReedlineEvent::Edit(vec![search_type.to_command(c)]))
+            } else {
+                // Non-char key pressed, cancel the search
+                Some(ReedlineEvent::None)
+            }
+        } else {
+            None
+        }
+    }
+
+    fn start_char_search(&mut self, search_type: PendingCharSearch) -> ReedlineEvent {
+        self.pending_char_search = Some(search_type);
+        ReedlineEvent::None
+    }
 }
 
 impl EditMode for Helix {
@@ -92,45 +121,22 @@ impl EditMode for Helix {
                 code, modifiers, ..
             }) => {
                 // Handle pending character search (f/t/F/T waiting for char)
-                if let Some(search_type) = self.pending_char_search.take() {
-                    if let KeyCode::Char(c) = code {
-                        let command = match search_type {
-                            PendingCharSearch::Find => {
-                                EditCommand::MoveRightUntil { c, select: true }
-                            }
-                            PendingCharSearch::Till => {
-                                EditCommand::MoveRightBefore { c, select: true }
-                            }
-                            PendingCharSearch::FindBack => {
-                                EditCommand::MoveLeftUntil { c, select: true }
-                            }
-                            PendingCharSearch::TillBack => {
-                                EditCommand::MoveLeftBefore { c, select: true }
-                            }
-                        };
-                        return ReedlineEvent::Edit(vec![command]);
-                    } else {
-                        // Non-char key pressed, cancel the search
-                        return ReedlineEvent::None;
-                    }
+                if let Some(event) = self.handle_pending_char_search(code) {
+                    return event;
                 }
 
                 match (self.mode, modifiers, code) {
                     (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('f')) => {
-                        self.pending_char_search = Some(PendingCharSearch::Find);
-                        ReedlineEvent::None
+                        self.start_char_search(PendingCharSearch::Find)
                     }
                     (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('t')) => {
-                        self.pending_char_search = Some(PendingCharSearch::Till);
-                        ReedlineEvent::None
+                        self.start_char_search(PendingCharSearch::Till)
                     }
                     (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('F')) => {
-                        self.pending_char_search = Some(PendingCharSearch::FindBack);
-                        ReedlineEvent::None
+                        self.start_char_search(PendingCharSearch::FindBack)
                     }
                     (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('T')) => {
-                        self.pending_char_search = Some(PendingCharSearch::TillBack);
-                        ReedlineEvent::None
+                        self.start_char_search(PendingCharSearch::TillBack)
                     }
                     (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('i')) => {
                         self.enter_insert_mode(None)
