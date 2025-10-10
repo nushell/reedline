@@ -132,37 +132,6 @@ impl EditMode for Helix {
                         self.mode = HelixMode::Select;
                         ReedlineEvent::Repaint
                     }
-                    (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('f')) => {
-                        self.start_char_search(PendingCharSearch::Find)
-                    }
-                    (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('t')) => {
-                        self.start_char_search(PendingCharSearch::Till)
-                    }
-                    (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('F')) => {
-                        self.start_char_search(PendingCharSearch::FindBack)
-                    }
-                    (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('T')) => {
-                        self.start_char_search(PendingCharSearch::TillBack)
-                    }
-                    (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('i')) => {
-                        self.enter_insert_mode(None)
-                    }
-                    (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('a')) => {
-                        self.enter_insert_mode(Some(EditCommand::MoveRight { select: false }))
-                    }
-                    (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('i')) => {
-                        self.enter_insert_mode(Some(EditCommand::MoveToLineStart { select: false }))
-                    }
-                    (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('a')) => {
-                        self.enter_insert_mode(Some(EditCommand::MoveToLineEnd { select: false }))
-                    }
-                    (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('c')) => {
-                        self.enter_insert_mode(Some(EditCommand::CutSelection))
-                    }
-                    (HelixMode::Normal, _, _) => self
-                        .normal_keybindings
-                        .find_binding(modifiers, code)
-                        .unwrap_or(ReedlineEvent::None),
                     (HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('v'))
                     | (HelixMode::Select, KeyModifiers::NONE, KeyCode::Esc) => {
                         self.mode = HelixMode::Normal;
@@ -171,27 +140,39 @@ impl EditMode for Helix {
                             ReedlineEvent::Repaint,
                         ])
                     }
-                    (HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('i')) => {
+                    (HelixMode::Normal | HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('f')) => {
+                        self.start_char_search(PendingCharSearch::Find)
+                    }
+                    (HelixMode::Normal | HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('t')) => {
+                        self.start_char_search(PendingCharSearch::Till)
+                    }
+                    (HelixMode::Normal | HelixMode::Select, KeyModifiers::SHIFT, KeyCode::Char('F')) => {
+                        self.start_char_search(PendingCharSearch::FindBack)
+                    }
+                    (HelixMode::Normal | HelixMode::Select, KeyModifiers::SHIFT, KeyCode::Char('T')) => {
+                        self.start_char_search(PendingCharSearch::TillBack)
+                    }
+                    (HelixMode::Normal | HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('i')) => {
                         self.mode = HelixMode::Normal;
                         self.enter_insert_mode(None)
                     }
-                    (HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('a')) => {
+                    (HelixMode::Normal | HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('a')) => {
                         self.mode = HelixMode::Normal;
                         self.enter_insert_mode(Some(EditCommand::MoveRight { select: false }))
                     }
-                    (HelixMode::Select, KeyModifiers::SHIFT, KeyCode::Char('i')) => {
+                    (HelixMode::Normal | HelixMode::Select, KeyModifiers::SHIFT, KeyCode::Char('i')) => {
                         self.mode = HelixMode::Normal;
                         self.enter_insert_mode(Some(EditCommand::MoveToLineStart { select: false }))
                     }
-                    (HelixMode::Select, KeyModifiers::SHIFT, KeyCode::Char('a')) => {
+                    (HelixMode::Normal | HelixMode::Select, KeyModifiers::SHIFT, KeyCode::Char('a')) => {
                         self.mode = HelixMode::Normal;
                         self.enter_insert_mode(Some(EditCommand::MoveToLineEnd { select: false }))
                     }
-                    (HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('c')) => {
+                    (HelixMode::Normal | HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('c')) => {
                         self.mode = HelixMode::Normal;
                         self.enter_insert_mode(Some(EditCommand::CutSelection))
                     }
-                    (HelixMode::Select, _, _) => self
+                    (HelixMode::Normal | HelixMode::Select, _, _) => self
                         .normal_keybindings
                         .find_binding(modifiers, code)
                         .unwrap_or(ReedlineEvent::None),
