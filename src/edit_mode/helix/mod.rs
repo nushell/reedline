@@ -18,6 +18,14 @@ enum HelixMode {
     Insert,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum PendingCharSearch {
+    Find,
+    Till,
+    FindBack,
+    TillBack,
+}
+
 impl FromStr for HelixMode {
     type Err = ();
 
@@ -38,6 +46,7 @@ pub struct Helix {
     insert_keybindings: Keybindings,
     normal_keybindings: Keybindings,
     mode: HelixMode,
+    pending_char_search: Option<PendingCharSearch>,
 }
 
 impl Default for Helix {
@@ -46,6 +55,7 @@ impl Default for Helix {
             insert_keybindings: default_helix_insert_keybindings(),
             normal_keybindings: default_helix_normal_keybindings(),
             mode: HelixMode::Normal,
+            pending_char_search: None,
         }
     }
 }
@@ -57,6 +67,7 @@ impl Helix {
             insert_keybindings,
             normal_keybindings,
             mode: HelixMode::Normal,
+            pending_char_search: None,
         }
     }
 }
@@ -79,36 +90,77 @@ impl EditMode for Helix {
         match event.into() {
             Event::Key(KeyEvent {
                 code, modifiers, ..
-            }) => match (self.mode, modifiers, code) {
-                (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('i')) => {
-                    self.enter_insert_mode(None)
+            }) => {
+                // Handle pending character search (f/t/F/T waiting for char)
+                if let Some(search_type) = self.pending_char_search.take() {
+                    if let KeyCode::Char(c) = code {
+                        let command = match search_type {
+                            PendingCharSearch::Find => {
+                                EditCommand::MoveRightUntil { c, select: true }
+                            }
+                            PendingCharSearch::Till => {
+                                EditCommand::MoveRightBefore { c, select: true }
+                            }
+                            PendingCharSearch::FindBack => {
+                                EditCommand::MoveLeftUntil { c, select: true }
+                            }
+                            PendingCharSearch::TillBack => {
+                                EditCommand::MoveLeftBefore { c, select: true }
+                            }
+                        };
+                        return ReedlineEvent::Edit(vec![command]);
+                    } else {
+                        // Non-char key pressed, cancel the search
+                        return ReedlineEvent::None;
+                    }
                 }
-                (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('a')) => {
-                    self.enter_insert_mode(Some(EditCommand::MoveRight { select: false }))
-                }
-                (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('i')) => {
-                    self.enter_insert_mode(Some(EditCommand::MoveToLineStart { select: false }))
-                }
-                (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('a')) => {
-                    self.enter_insert_mode(Some(EditCommand::MoveToLineEnd { select: false }))
-                }
-                (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('c')) => {
-                    self.enter_insert_mode(Some(EditCommand::CutSelection))
-                }
-                (HelixMode::Normal, _, _) => self
-                    .normal_keybindings
-                    .find_binding(modifiers, code)
-                    .unwrap_or(ReedlineEvent::None),
-                (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Esc) => {
+
+                match (self.mode, modifiers, code) {
+                    (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('f')) => {
+                        self.pending_char_search = Some(PendingCharSearch::Find);
+                        ReedlineEvent::None
+                    }
+                    (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('t')) => {
+                        self.pending_char_search = Some(PendingCharSearch::Till);
+                        ReedlineEvent::None
+                    }
+                    (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('F')) => {
+                        self.pending_char_search = Some(PendingCharSearch::FindBack);
+                        ReedlineEvent::None
+                    }
+                    (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('T')) => {
+                        self.pending_char_search = Some(PendingCharSearch::TillBack);
+                        ReedlineEvent::None
+                    }
+                    (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('i')) => {
+                        self.enter_insert_mode(None)
+                    }
+                    (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('a')) => {
+                        self.enter_insert_mode(Some(EditCommand::MoveRight { select: false }))
+                    }
+                    (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('i')) => {
+                        self.enter_insert_mode(Some(EditCommand::MoveToLineStart { select: false }))
+                    }
+                    (HelixMode::Normal, KeyModifiers::SHIFT, KeyCode::Char('a')) => {
+                        self.enter_insert_mode(Some(EditCommand::MoveToLineEnd { select: false }))
+                    }
+                    (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('c')) => {
+                        self.enter_insert_mode(Some(EditCommand::CutSelection))
+                    }
+                    (HelixMode::Normal, _, _) => self
+                        .normal_keybindings
+                        .find_binding(modifiers, code)
+                        .unwrap_or(ReedlineEvent::None),
+                    (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Esc) => {
                     self.mode = HelixMode::Normal;
                     ReedlineEvent::Multiple(vec![
                         ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
                         ReedlineEvent::Esc,
                         ReedlineEvent::Repaint,
                     ])
-                }
-                (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
-                (HelixMode::Insert, modifier, KeyCode::Char(c)) => {
+                    }
+                    (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
+                    (HelixMode::Insert, modifier, KeyCode::Char(c)) => {
                     let c = match modifier {
                         KeyModifiers::NONE => c,
                         _ => c.to_ascii_lowercase(),
@@ -129,12 +181,13 @@ impl EditMode for Helix {
                                 ReedlineEvent::None
                             }
                         })
+                    }
+                    (HelixMode::Insert, _, _) => self
+                        .insert_keybindings
+                        .find_binding(modifiers, code)
+                        .unwrap_or(ReedlineEvent::None),
                 }
-                (HelixMode::Insert, _, _) => self
-                    .insert_keybindings
-                    .find_binding(modifiers, code)
-                    .unwrap_or(ReedlineEvent::None),
-            },
+            }
 
             Event::Mouse(_) => ReedlineEvent::Mouse,
             Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
@@ -539,5 +592,105 @@ mod test {
             result,
             ReedlineEvent::Edit(vec![EditCommand::SwapCursorAndAnchor])
         );
+    }
+
+    #[test]
+    fn f_char_finds_next_char_test() {
+        let mut helix = Helix::default();
+        assert_eq!(helix.mode, HelixMode::Normal);
+
+        let result1 = helix.parse_event(make_key_event(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert_eq!(result1, ReedlineEvent::None);
+        assert_eq!(helix.pending_char_search, Some(PendingCharSearch::Find));
+
+        let result2 = helix.parse_event(make_key_event(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert_eq!(
+            result2,
+            ReedlineEvent::Edit(vec![EditCommand::MoveRightUntil {
+                c: 'x',
+                select: true
+            }])
+        );
+        assert_eq!(helix.pending_char_search, None);
+    }
+
+    #[test]
+    fn t_char_moves_till_next_char_test() {
+        let mut helix = Helix::default();
+        assert_eq!(helix.mode, HelixMode::Normal);
+
+        let result1 = helix.parse_event(make_key_event(KeyCode::Char('t'), KeyModifiers::NONE));
+        assert_eq!(result1, ReedlineEvent::None);
+        assert_eq!(helix.pending_char_search, Some(PendingCharSearch::Till));
+
+        let result2 = helix.parse_event(make_key_event(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert_eq!(
+            result2,
+            ReedlineEvent::Edit(vec![EditCommand::MoveRightBefore {
+                c: 'y',
+                select: true
+            }])
+        );
+        assert_eq!(helix.pending_char_search, None);
+    }
+
+    #[test]
+    fn shift_f_finds_previous_char_test() {
+        let mut helix = Helix::default();
+        assert_eq!(helix.mode, HelixMode::Normal);
+
+        let result1 = helix.parse_event(make_key_event(KeyCode::Char('F'), KeyModifiers::SHIFT));
+        assert_eq!(result1, ReedlineEvent::None);
+        assert_eq!(
+            helix.pending_char_search,
+            Some(PendingCharSearch::FindBack)
+        );
+
+        let result2 = helix.parse_event(make_key_event(KeyCode::Char('z'), KeyModifiers::NONE));
+        assert_eq!(
+            result2,
+            ReedlineEvent::Edit(vec![EditCommand::MoveLeftUntil {
+                c: 'z',
+                select: true
+            }])
+        );
+        assert_eq!(helix.pending_char_search, None);
+    }
+
+    #[test]
+    fn shift_t_moves_till_previous_char_test() {
+        let mut helix = Helix::default();
+        assert_eq!(helix.mode, HelixMode::Normal);
+
+        let result1 = helix.parse_event(make_key_event(KeyCode::Char('T'), KeyModifiers::SHIFT));
+        assert_eq!(result1, ReedlineEvent::None);
+        assert_eq!(
+            helix.pending_char_search,
+            Some(PendingCharSearch::TillBack)
+        );
+
+        let result2 = helix.parse_event(make_key_event(KeyCode::Char('a'), KeyModifiers::NONE));
+        assert_eq!(
+            result2,
+            ReedlineEvent::Edit(vec![EditCommand::MoveLeftBefore {
+                c: 'a',
+                select: true
+            }])
+        );
+        assert_eq!(helix.pending_char_search, None);
+    }
+
+    #[test]
+    fn pending_char_search_cancels_on_non_char_test() {
+        let mut helix = Helix::default();
+        assert_eq!(helix.mode, HelixMode::Normal);
+
+        let result1 = helix.parse_event(make_key_event(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert_eq!(result1, ReedlineEvent::None);
+        assert_eq!(helix.pending_char_search, Some(PendingCharSearch::Find));
+
+        let result2 = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(result2, ReedlineEvent::None);
+        assert_eq!(helix.pending_char_search, None);
     }
 }

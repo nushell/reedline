@@ -59,6 +59,12 @@ Shows only "〉" (normal) or ":" (insert) icons.
 - `0` - Line start
 - `$` (Shift+4) - Line end
 
+**Find/till motions (extend selection):**
+- `f{char}` - Find next occurrence of char (inclusive)
+- `t{char}` - Till next occurrence of char (exclusive)
+- `F{char}` (Shift+f) - Find previous occurrence of char (inclusive)
+- `T{char}` (Shift+t) - Till previous occurrence of char (exclusive)
+
 **Selection commands:**
 - `x` - Select entire line
 - `d` - Delete selection
@@ -110,9 +116,10 @@ nix develop
 cargo test --lib | grep helix
 ```
 
-All 29 helix mode tests should pass:
+All 34 helix mode tests should pass:
 - Mode entry/exit tests (7)
 - Motion tests with selection (10)
+- Find/till motion tests (5)
 - Selection command tests (8)
 - Exit tests (4)
 
@@ -155,6 +162,7 @@ This approach ensures the mode display updates immediately when you switch modes
 ## Implemented Features
 
 ✅ **Basic motions with selection** - h/l, w/b/e/W/B/E, 0/$  
+✅ **Find/till motions** - f/t/F/T (find/till char forward/backward)
 ✅ **Selection commands** - x (select line), d (delete), c (change), ; (collapse), Alt+; (flip)  
 ✅ **Yank/paste** - y (copy), p/P (paste after/before)  
 ✅ **Insert mode entry** - i/a/I/A  
@@ -164,9 +172,10 @@ This approach ensures the mode display updates immediately when you switch modes
 
 Not yet implemented:
 - Vertical motions (j/k for multi-line editing)
-- Find/till motions (f/t)
+- Repeat find/till (`;` and `,` for repeating last f/t/F/T)
 - Counts and repeat (dot command)
 - Text objects (iw, i", i(, etc.)
 - Multi-cursor
 - Undo/redo (u/U)
+- Search (/ and ?)
 - Additional normal mode commands
