@@ -67,6 +67,9 @@ pub enum PromptViMode {
 
     /// Insertion mode
     Insert,
+
+    /// Select mode (Helix)
+    Select,
 }
 
 impl Display for PromptEditMode {

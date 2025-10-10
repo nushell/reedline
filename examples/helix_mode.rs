@@ -45,6 +45,13 @@ impl Prompt for HelixPrompt {
                         Cow::Borrowed("[ INSERT ] : ")
                     }
                 }
+                reedline::PromptViMode::Select => {
+                    if self.simple {
+                        Cow::Borrowed("» ")
+                    } else {
+                        Cow::Borrowed("[ SELECT ] » ")
+                    }
+                }
             },
             _ => Cow::Borrowed("> "),
         }

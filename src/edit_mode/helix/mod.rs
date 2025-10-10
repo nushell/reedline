@@ -16,6 +16,7 @@ use crate::{
 enum HelixMode {
     Normal,
     Insert,
+    Select,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -44,6 +45,7 @@ impl FromStr for HelixMode {
         match s {
             "normal" => Ok(HelixMode::Normal),
             "insert" => Ok(HelixMode::Insert),
+            "select" => Ok(HelixMode::Select),
             _ => Err(()),
         }
     }
@@ -126,6 +128,10 @@ impl EditMode for Helix {
                 }
 
                 match (self.mode, modifiers, code) {
+                    (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('v')) => {
+                        self.mode = HelixMode::Select;
+                        ReedlineEvent::Repaint
+                    }
                     (HelixMode::Normal, KeyModifiers::NONE, KeyCode::Char('f')) => {
                         self.start_char_search(PendingCharSearch::Find)
                     }
@@ -154,6 +160,38 @@ impl EditMode for Helix {
                         self.enter_insert_mode(Some(EditCommand::CutSelection))
                     }
                     (HelixMode::Normal, _, _) => self
+                        .normal_keybindings
+                        .find_binding(modifiers, code)
+                        .unwrap_or(ReedlineEvent::None),
+                    (HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('v'))
+                    | (HelixMode::Select, KeyModifiers::NONE, KeyCode::Esc) => {
+                        self.mode = HelixMode::Normal;
+                        ReedlineEvent::Multiple(vec![
+                            ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
+                            ReedlineEvent::Repaint,
+                        ])
+                    }
+                    (HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('i')) => {
+                        self.mode = HelixMode::Normal;
+                        self.enter_insert_mode(None)
+                    }
+                    (HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('a')) => {
+                        self.mode = HelixMode::Normal;
+                        self.enter_insert_mode(Some(EditCommand::MoveRight { select: false }))
+                    }
+                    (HelixMode::Select, KeyModifiers::SHIFT, KeyCode::Char('i')) => {
+                        self.mode = HelixMode::Normal;
+                        self.enter_insert_mode(Some(EditCommand::MoveToLineStart { select: false }))
+                    }
+                    (HelixMode::Select, KeyModifiers::SHIFT, KeyCode::Char('a')) => {
+                        self.mode = HelixMode::Normal;
+                        self.enter_insert_mode(Some(EditCommand::MoveToLineEnd { select: false }))
+                    }
+                    (HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('c')) => {
+                        self.mode = HelixMode::Normal;
+                        self.enter_insert_mode(Some(EditCommand::CutSelection))
+                    }
+                    (HelixMode::Select, _, _) => self
                         .normal_keybindings
                         .find_binding(modifiers, code)
                         .unwrap_or(ReedlineEvent::None),
@@ -209,6 +247,7 @@ impl EditMode for Helix {
         match self.mode {
             HelixMode::Normal => PromptEditMode::Vi(PromptViMode::Normal),
             HelixMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
+            HelixMode::Select => PromptEditMode::Vi(PromptViMode::Select),
         }
     }
 
@@ -684,6 +723,51 @@ mod test {
             }])
         );
         assert_eq!(helix.pending_char_search, None);
+    }
+
+    #[test]
+    fn v_enters_select_mode_test() {
+        let mut helix = Helix::default();
+        assert_eq!(helix.mode, HelixMode::Normal);
+
+        let result = helix.parse_event(make_key_event(KeyCode::Char('v'), KeyModifiers::NONE));
+
+        assert_eq!(result, ReedlineEvent::Repaint);
+        assert_eq!(helix.mode, HelixMode::Select);
+    }
+
+    #[test]
+    fn v_exits_select_mode_test() {
+        let mut helix = Helix::default();
+        helix.mode = HelixMode::Select;
+
+        let result = helix.parse_event(make_key_event(KeyCode::Char('v'), KeyModifiers::NONE));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
+                ReedlineEvent::Repaint,
+            ])
+        );
+        assert_eq!(helix.mode, HelixMode::Normal);
+    }
+
+    #[test]
+    fn esc_exits_select_mode_test() {
+        let mut helix = Helix::default();
+        helix.mode = HelixMode::Select;
+
+        let result = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
+                ReedlineEvent::Repaint,
+            ])
+        );
+        assert_eq!(helix.mode, HelixMode::Normal);
     }
 
     #[test]
