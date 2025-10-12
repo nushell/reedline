@@ -23,3 +23,6 @@ tarpaulin-report.html
 *.rsproj
 *.rsproj.user
 *.sln
+
+# Cargo output
+result
