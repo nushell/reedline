@@ -52,9 +52,7 @@ struct TutorialGuide {
 
 impl TutorialGuide {
     fn new() -> Self {
-        Self {
-            completed: false,
-        }
+        Self { completed: false }
     }
 
     fn check_submission(&mut self, buffer: &str) -> bool {
