@@ -3,7 +3,10 @@ mod helix_keybindings;
 use std::str::FromStr;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-pub use helix_keybindings::{default_helix_insert_keybindings, default_helix_normal_keybindings};
+pub use helix_keybindings::{
+    default_helix_insert_keybindings, default_helix_normal_keybindings,
+    default_helix_select_keybindings,
+};
 
 use super::EditMode;
 use crate::{
@@ -58,6 +61,7 @@ impl FromStr for HelixMode {
 pub struct Helix {
     insert_keybindings: Keybindings,
     normal_keybindings: Keybindings,
+    select_keybindings: Keybindings,
     mode: HelixMode,
     pending_char_search: Option<PendingCharSearch>,
 }
@@ -67,6 +71,7 @@ impl Default for Helix {
         Helix {
             insert_keybindings: default_helix_insert_keybindings(),
             normal_keybindings: default_helix_normal_keybindings(),
+            select_keybindings: default_helix_select_keybindings(),
             mode: HelixMode::Normal,
             pending_char_search: None,
         }
@@ -75,10 +80,15 @@ impl Default for Helix {
 
 impl Helix {
     /// Creates a Helix editor with custom keybindings
-    pub fn new(insert_keybindings: Keybindings, normal_keybindings: Keybindings) -> Self {
+    pub fn new(
+        insert_keybindings: Keybindings,
+        normal_keybindings: Keybindings,
+        select_keybindings: Keybindings,
+    ) -> Self {
         Self {
             insert_keybindings,
             normal_keybindings,
+            select_keybindings,
             mode: HelixMode::Normal,
             pending_char_search: None,
         }
@@ -153,12 +163,12 @@ impl EditMode for Helix {
                     (
                         HelixMode::Normal | HelixMode::Select,
                         KeyModifiers::SHIFT,
-                        KeyCode::Char('F'),
+                        KeyCode::Char('f'),
                     ) => self.start_char_search(PendingCharSearch::FindBack),
                     (
                         HelixMode::Normal | HelixMode::Select,
                         KeyModifiers::SHIFT,
-                        KeyCode::Char('T'),
+                        KeyCode::Char('t'),
                     ) => self.start_char_search(PendingCharSearch::TillBack),
                     (
                         HelixMode::Normal | HelixMode::Select,
@@ -200,8 +210,12 @@ impl EditMode for Helix {
                         self.mode = HelixMode::Normal;
                         self.enter_insert_mode(Some(EditCommand::CutSelection))
                     }
-                    (HelixMode::Normal | HelixMode::Select, _, _) => self
+                    (HelixMode::Normal, _, _) => self
                         .normal_keybindings
+                        .find_binding(modifiers, code)
+                        .unwrap_or(ReedlineEvent::None),
+                    (HelixMode::Select, _, _) => self
+                        .select_keybindings
                         .find_binding(modifiers, code)
                         .unwrap_or(ReedlineEvent::None),
                     (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Esc) => {
@@ -429,7 +443,11 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: true }])
+            ReedlineEvent::Edit(vec![
+                EditCommand::MoveLeft { select: false },
+                EditCommand::MoveRight { select: false },
+                EditCommand::MoveLeft { select: true }
+            ])
         );
     }
 
@@ -442,7 +460,11 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: true }])
+            ReedlineEvent::Edit(vec![
+                EditCommand::MoveLeft { select: false },
+                EditCommand::MoveRight { select: false },
+                EditCommand::MoveRight { select: true }
+            ])
         );
     }
 
@@ -455,7 +477,11 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::MoveWordRightStart { select: true }])
+            ReedlineEvent::Edit(vec![
+                EditCommand::MoveLeft { select: false },
+                EditCommand::MoveRight { select: false },
+                EditCommand::MoveWordRightStart { select: true }
+            ])
         );
     }
 
@@ -468,7 +494,11 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::MoveWordLeft { select: true }])
+            ReedlineEvent::Edit(vec![
+                EditCommand::MoveLeft { select: false },
+                EditCommand::MoveRight { select: false },
+                EditCommand::MoveWordLeft { select: true }
+            ])
         );
     }
 
@@ -481,7 +511,11 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::MoveWordRightEnd { select: true }])
+            ReedlineEvent::Edit(vec![
+                EditCommand::MoveLeft { select: false },
+                EditCommand::MoveRight { select: false },
+                EditCommand::MoveWordRightEnd { select: true }
+            ])
         );
     }
 
@@ -490,11 +524,15 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let result = helix.parse_event(make_key_event(KeyCode::Char('W'), KeyModifiers::SHIFT));
+        let result = helix.parse_event(make_key_event(KeyCode::Char('w'), KeyModifiers::SHIFT));
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::MoveBigWordRightStart { select: true }])
+            ReedlineEvent::Edit(vec![
+                EditCommand::MoveLeft { select: false },
+                EditCommand::MoveRight { select: false },
+                EditCommand::MoveBigWordRightStart { select: true }
+            ])
         );
     }
 
@@ -503,11 +541,15 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let result = helix.parse_event(make_key_event(KeyCode::Char('B'), KeyModifiers::SHIFT));
+        let result = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::SHIFT));
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::MoveBigWordLeft { select: true }])
+            ReedlineEvent::Edit(vec![
+                EditCommand::MoveLeft { select: false },
+                EditCommand::MoveRight { select: false },
+                EditCommand::MoveBigWordLeft { select: true }
+            ])
         );
     }
 
@@ -516,11 +558,15 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let result = helix.parse_event(make_key_event(KeyCode::Char('E'), KeyModifiers::SHIFT));
+        let result = helix.parse_event(make_key_event(KeyCode::Char('e'), KeyModifiers::SHIFT));
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::MoveBigWordRightEnd { select: true }])
+            ReedlineEvent::Edit(vec![
+                EditCommand::MoveLeft { select: false },
+                EditCommand::MoveRight { select: false },
+                EditCommand::MoveBigWordRightEnd { select: true }
+            ])
         );
     }
 
@@ -533,7 +579,11 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: true }])
+            ReedlineEvent::Edit(vec![
+                EditCommand::MoveLeft { select: false },
+                EditCommand::MoveRight { select: false },
+                EditCommand::MoveToLineStart { select: true }
+            ])
         );
     }
 
@@ -546,7 +596,11 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd { select: true }])
+            ReedlineEvent::Edit(vec![
+                EditCommand::MoveLeft { select: false },
+                EditCommand::MoveRight { select: false },
+                EditCommand::MoveToLineEnd { select: true }
+            ])
         );
     }
 
@@ -628,7 +682,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let result = helix.parse_event(make_key_event(KeyCode::Char('P'), KeyModifiers::SHIFT));
+        let result = helix.parse_event(make_key_event(KeyCode::Char('p'), KeyModifiers::SHIFT));
 
         assert_eq!(
             result,
@@ -694,7 +748,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let result1 = helix.parse_event(make_key_event(KeyCode::Char('F'), KeyModifiers::SHIFT));
+        let result1 = helix.parse_event(make_key_event(KeyCode::Char('f'), KeyModifiers::SHIFT));
         assert_eq!(result1, ReedlineEvent::None);
         assert_eq!(helix.pending_char_search, Some(PendingCharSearch::FindBack));
 
@@ -714,7 +768,7 @@ mod test {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        let result1 = helix.parse_event(make_key_event(KeyCode::Char('T'), KeyModifiers::SHIFT));
+        let result1 = helix.parse_event(make_key_event(KeyCode::Char('t'), KeyModifiers::SHIFT));
         assert_eq!(result1, ReedlineEvent::None);
         assert_eq!(helix.pending_char_search, Some(PendingCharSearch::TillBack));
 
