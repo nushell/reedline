@@ -193,7 +193,7 @@
 //! - Configurable prompt
 //! - Content-aware syntax highlighting.
 //! - Autocompletion (With graphical selection menu or simple cycling inline).
-//! - History with interactive search options (optionally persists to file, can support multilple sessions accessing the same file)
+//! - History with interactive search options (optionally persists to file, can support multiple sessions accessing the same file)
 //! - Fish-style history autosuggestion hints
 //! - Undo support.
 //! - Clipboard integration
