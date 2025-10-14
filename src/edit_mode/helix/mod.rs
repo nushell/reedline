@@ -145,10 +145,7 @@ impl EditMode for Helix {
                     (HelixMode::Select, KeyModifiers::NONE, KeyCode::Char('v'))
                     | (HelixMode::Select, KeyModifiers::NONE, KeyCode::Esc) => {
                         self.mode = HelixMode::Normal;
-                        ReedlineEvent::Multiple(vec![
-                            ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
-                            ReedlineEvent::Repaint,
-                        ])
+                        ReedlineEvent::Repaint
                     }
                     (
                         HelixMode::Normal | HelixMode::Select,
@@ -803,13 +800,7 @@ mod test {
 
         let result = helix.parse_event(make_key_event(KeyCode::Char('v'), KeyModifiers::NONE));
 
-        assert_eq!(
-            result,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
-                ReedlineEvent::Repaint,
-            ])
-        );
+        assert_eq!(result, ReedlineEvent::Repaint);
         assert_eq!(helix.mode, HelixMode::Normal);
     }
 
@@ -822,13 +813,7 @@ mod test {
 
         let result = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
 
-        assert_eq!(
-            result,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
-                ReedlineEvent::Repaint,
-            ])
-        );
+        assert_eq!(result, ReedlineEvent::Repaint);
         assert_eq!(helix.mode, HelixMode::Normal);
     }
 
