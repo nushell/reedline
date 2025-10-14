@@ -221,7 +221,6 @@ impl EditMode for Helix {
                     (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Esc) => {
                         self.mode = HelixMode::Normal;
                         ReedlineEvent::Multiple(vec![
-                            ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
                             ReedlineEvent::Esc,
                             ReedlineEvent::Repaint,
                         ])
@@ -312,7 +311,6 @@ mod test {
         assert_eq!(
             result,
             ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
                 ReedlineEvent::Esc,
                 ReedlineEvent::Repaint
             ])
