@@ -24,9 +24,9 @@ mod test {
 
     #[test]
     fn remove_last_char_works_with_normal_string() {
-        let string = "this is a string";
+        let string = "this is a test";
 
-        assert_eq!(remove_last_grapheme(string), "this is a strin");
+        assert_eq!(remove_last_grapheme(string), "this is a tes");
     }
 
     #[test]
