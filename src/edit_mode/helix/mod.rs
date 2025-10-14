@@ -12,7 +12,7 @@ use super::EditMode;
 use crate::{
     edit_mode::keybindings::Keybindings,
     enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
-    PromptEditMode, PromptViMode,
+    PromptEditMode, PromptHelixMode,
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -220,10 +220,7 @@ impl EditMode for Helix {
                         .unwrap_or(ReedlineEvent::None),
                     (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Esc) => {
                         self.mode = HelixMode::Normal;
-                        ReedlineEvent::Multiple(vec![
-                            ReedlineEvent::Esc,
-                            ReedlineEvent::Repaint,
-                        ])
+                        ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
                     }
                     (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                     (HelixMode::Insert, modifier, KeyCode::Char(c)) => {
@@ -268,9 +265,9 @@ impl EditMode for Helix {
 
     fn edit_mode(&self) -> PromptEditMode {
         match self.mode {
-            HelixMode::Normal => PromptEditMode::Vi(PromptViMode::Normal),
-            HelixMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
-            HelixMode::Select => PromptEditMode::Vi(PromptViMode::Select),
+            HelixMode::Normal => PromptEditMode::Helix(PromptHelixMode::Normal),
+            HelixMode::Insert => PromptEditMode::Helix(PromptHelixMode::Insert),
+            HelixMode::Select => PromptEditMode::Helix(PromptHelixMode::Select),
         }
     }
 
@@ -310,10 +307,7 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Esc,
-                ReedlineEvent::Repaint
-            ])
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
         );
         assert_eq!(helix.mode, HelixMode::Normal);
     }
@@ -850,5 +844,39 @@ mod test {
         let result2 = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(result2, ReedlineEvent::None);
         assert_eq!(helix.pending_char_search, None);
+    }
+
+    #[test]
+    fn normal_mode_returns_normal_prompt_mode_test() {
+        let helix = Helix::default();
+        assert_eq!(helix.mode, HelixMode::Normal);
+        assert_eq!(
+            helix.edit_mode(),
+            PromptEditMode::Helix(PromptHelixMode::Normal)
+        );
+    }
+
+    #[test]
+    fn insert_mode_returns_insert_prompt_mode_test() {
+        let helix = Helix {
+            mode: HelixMode::Insert,
+            ..Default::default()
+        };
+        assert_eq!(
+            helix.edit_mode(),
+            PromptEditMode::Helix(PromptHelixMode::Insert)
+        );
+    }
+
+    #[test]
+    fn select_mode_returns_select_prompt_mode_test() {
+        let helix = Helix {
+            mode: HelixMode::Select,
+            ..Default::default()
+        };
+        assert_eq!(
+            helix.edit_mode(),
+            PromptEditMode::Helix(PromptHelixMode::Select)
+        );
     }
 }

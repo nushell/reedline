@@ -1,7 +1,9 @@
 // Interactive tutorial for Helix keybinding mode
 // cargo run --example hx_mode_tutorial
 
-use reedline::{Helix, Prompt, PromptEditMode, PromptHistorySearch, Reedline, Signal};
+use reedline::{
+    Helix, Prompt, PromptEditMode, PromptHelixMode, PromptHistorySearch, Reedline, Signal,
+};
 use std::borrow::Cow;
 use std::io;
 
@@ -18,10 +20,10 @@ impl Prompt for HelixPrompt {
 
     fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<'_, str> {
         match edit_mode {
-            PromptEditMode::Vi(vi_mode) => match vi_mode {
-                reedline::PromptViMode::Normal => Cow::Borrowed("[ NORMAL ] 〉"),
-                reedline::PromptViMode::Insert => Cow::Borrowed("[ INSERT ] : "),
-                reedline::PromptViMode::Select => Cow::Borrowed("[ SELECT ] » "),
+            PromptEditMode::Helix(helix_mode) => match helix_mode {
+                PromptHelixMode::Normal => Cow::Borrowed("[ NORMAL ] 〉"),
+                PromptHelixMode::Insert => Cow::Borrowed("[ INSERT ] : "),
+                PromptHelixMode::Select => Cow::Borrowed("[ SELECT ] » "),
             },
             _ => Cow::Borrowed("> "),
         }

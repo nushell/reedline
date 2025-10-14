@@ -66,7 +66,11 @@ impl Prompt for DefaultPrompt {
             PromptEditMode::Vi(vi_mode) => match vi_mode {
                 PromptViMode::Normal => DEFAULT_VI_NORMAL_PROMPT_INDICATOR.into(),
                 PromptViMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
-                PromptViMode::Select => DEFAULT_VI_SELECT_PROMPT_INDICATOR.into(),
+            },
+            PromptEditMode::Helix(helix_mode) => match helix_mode {
+                crate::PromptHelixMode::Normal => DEFAULT_VI_NORMAL_PROMPT_INDICATOR.into(),
+                crate::PromptHelixMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
+                crate::PromptHelixMode::Select => DEFAULT_VI_SELECT_PROMPT_INDICATOR.into(),
             },
             PromptEditMode::Custom(str) => format!("({str})").into(),
         }
