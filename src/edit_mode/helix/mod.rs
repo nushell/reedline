@@ -302,8 +302,10 @@ mod test {
 
     #[test]
     fn esc_returns_to_normal_mode_test() {
-        let mut helix = Helix::default();
-        helix.mode = HelixMode::Insert;
+        let mut helix = Helix {
+            mode: HelixMode::Insert,
+            ..Default::default()
+        };
 
         let result = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
 
@@ -320,8 +322,10 @@ mod test {
 
     #[test]
     fn insert_text_in_insert_mode_test() {
-        let mut helix = Helix::default();
-        helix.mode = HelixMode::Insert;
+        let mut helix = Helix {
+            mode: HelixMode::Insert,
+            ..Default::default()
+        };
 
         let result = helix.parse_event(make_key_event(KeyCode::Char('h'), KeyModifiers::NONE));
 
@@ -406,8 +410,10 @@ mod test {
 
     #[test]
     fn ctrl_c_aborts_in_insert_mode_test() {
-        let mut helix = Helix::default();
-        helix.mode = HelixMode::Insert;
+        let mut helix = Helix {
+            mode: HelixMode::Insert,
+            ..Default::default()
+        };
 
         let result = helix.parse_event(make_key_event(KeyCode::Char('c'), KeyModifiers::CONTROL));
 
@@ -426,8 +432,10 @@ mod test {
 
     #[test]
     fn ctrl_d_exits_in_insert_mode_test() {
-        let mut helix = Helix::default();
-        helix.mode = HelixMode::Insert;
+        let mut helix = Helix {
+            mode: HelixMode::Insert,
+            ..Default::default()
+        };
 
         let result = helix.parse_event(make_key_event(KeyCode::Char('d'), KeyModifiers::CONTROL));
 
@@ -796,8 +804,10 @@ mod test {
 
     #[test]
     fn v_exits_select_mode_test() {
-        let mut helix = Helix::default();
-        helix.mode = HelixMode::Select;
+        let mut helix = Helix {
+            mode: HelixMode::Select,
+            ..Default::default()
+        };
 
         let result = helix.parse_event(make_key_event(KeyCode::Char('v'), KeyModifiers::NONE));
 
@@ -813,8 +823,10 @@ mod test {
 
     #[test]
     fn esc_exits_select_mode_test() {
-        let mut helix = Helix::default();
-        helix.mode = HelixMode::Select;
+        let mut helix = Helix {
+            mode: HelixMode::Select,
+            ..Default::default()
+        };
 
         let result = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
 
