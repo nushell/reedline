@@ -217,7 +217,13 @@ impl EditMode for Helix {
                         .unwrap_or(ReedlineEvent::None),
                     (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Esc) => {
                         self.mode = HelixMode::Normal;
-                        ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+                        // When exiting insert mode, move cursor left if we're not at the start
+                        // This ensures the cursor is on a character, not after it (Helix behavior)
+                        ReedlineEvent::Multiple(vec![
+                            ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
+                            ReedlineEvent::Esc,
+                            ReedlineEvent::Repaint,
+                        ])
                     }
                     (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                     (HelixMode::Insert, modifier, KeyCode::Char(c)) => {
@@ -304,7 +310,11 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
+                ReedlineEvent::Esc,
+                ReedlineEvent::Repaint
+            ])
         );
         assert_eq!(helix.mode, HelixMode::Normal);
     }
@@ -863,5 +873,169 @@ mod test {
             helix.edit_mode(),
             PromptEditMode::Helix(PromptHelixMode::Select)
         );
+    }
+
+    #[test]
+    fn cursor_selection_sync_after_insert_mode_test() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        let mut helix = Helix::default();
+
+        // Start in normal mode, enter insert mode with 'i'
+        let result = helix.parse_event(make_key_event(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert_eq!(helix.mode, HelixMode::Insert);
+
+        // Type some text in insert mode
+        for event in &[
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('h')]),
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('e')]),
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('l')]),
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('l')]),
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('o')]),
+        ] {
+            if let ReedlineEvent::Edit(commands) = event {
+                for cmd in commands {
+                    editor.run_edit_command(cmd);
+                }
+            }
+        }
+
+        // Verify we have "hello" and cursor is at position 5 (end of buffer)
+        assert_eq!(editor.get_buffer(), "hello");
+        assert_eq!(editor.insertion_point(), 5);
+
+        // Exit insert mode with Esc - this should move cursor left and reset selection
+        let result = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(helix.mode, HelixMode::Normal);
+
+        // In Helix, Esc moves cursor left to position it on a character
+        // The result includes MoveLeft, then Esc (which resets selection), then Repaint
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
+                ReedlineEvent::Esc,
+                ReedlineEvent::Repaint,
+            ])
+        );
+
+        // Apply the move left command
+        if let ReedlineEvent::Multiple(events) = result {
+            for event in events {
+                if let ReedlineEvent::Edit(commands) = event {
+                    for cmd in commands {
+                        editor.run_edit_command(&cmd);
+                    }
+                }
+            }
+        }
+
+        // After Esc + MoveLeft, cursor should be at position 4
+        assert_eq!(editor.insertion_point(), 4);
+
+        // After processing ReedlineEvent::Esc, selection should be reset
+        // The cursor should still be at position 5
+
+        // Now press 'h' to move left in normal mode
+        // Starting from pos 4 (on the 'o'), we want to move left to pos 3 (on the second 'l')
+        let result = helix.parse_event(make_key_event(KeyCode::Char('h'), KeyModifiers::NONE));
+
+        // Expected: MoveLeft{false}, MoveRight{false}, MoveLeft{true}
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![
+                EditCommand::MoveLeft { select: false },
+                EditCommand::MoveRight { select: false },
+                EditCommand::MoveLeft { select: true }
+            ])
+        );
+
+        // Execute these commands on the editor
+        if let ReedlineEvent::Edit(commands) = result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        // After MoveLeft{false}, MoveRight{false}, MoveLeft{true}:
+        // Starting from pos 4:
+        // 1. MoveLeft{false} -> pos 3, no selection
+        // 2. MoveRight{false} -> pos 4, no selection
+        // 3. MoveLeft{true} -> pos 3, selection anchor at 4, cursor at 3
+        // get_selection() returns (cursor, grapheme_right_from_anchor)
+        // So cursor should be at 3, anchor at 4, and selection should be (3, 5)
+        // This selects the character at position 3 ('l') and 4 ('o')
+        assert_eq!(editor.insertion_point(), 3);
+        assert_eq!(editor.get_selection(), Some((3, 5)));
+    }
+
+    #[test]
+    fn cursor_selection_sync_after_mode_transitions_test() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer("world".to_string(), crate::UndoBehavior::CreateUndoPoint);
+        // set_buffer moves cursor to end, so move it back to start
+        editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+        let mut helix = Helix::default();
+
+        // Start at position 0 in normal mode
+        // Move right with 'l' - the sequence is: MoveLeft{false}, MoveRight{false}, MoveRight{true}
+        // From position 0: stays at 0, moves to 1, moves to 2 with selection
+        let result = helix.parse_event(make_key_event(KeyCode::Char('l'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        // After the movement sequence, we should be at position 2
+        // with selection from position 1 to 2 (which displays as chars at index 1)
+        // get_selection returns (1, grapheme_right_from(2)) = (1, 3)
+        assert_eq!(editor.insertion_point(), 2);
+        assert_eq!(editor.get_selection(), Some((1, 3)));
+
+        // Enter insert mode with 'i'
+        let result = helix.parse_event(make_key_event(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert_eq!(helix.mode, HelixMode::Insert);
+
+        // In insert mode, selection should be cleared automatically
+        // when transitioning (though we'd need to test this with full engine)
+
+        // Exit insert mode with Esc - this moves cursor left
+        let result = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(helix.mode, HelixMode::Normal);
+
+        // Apply the Esc commands which include MoveLeft
+        if let ReedlineEvent::Multiple(events) = result {
+            for event in events {
+                if let ReedlineEvent::Edit(commands) = event {
+                    for cmd in commands {
+                        editor.run_edit_command(&cmd);
+                    }
+                }
+            }
+        }
+
+        // After exiting insert mode from position 2, cursor moves left to position 1
+        assert_eq!(editor.insertion_point(), 1);
+
+        // Now move left with 'h' from position 1
+        // The sequence MoveLeft{false}, MoveRight{false}, MoveLeft{true} becomes:
+        // 1. MoveLeft{false} -> moves to pos 0
+        // 2. MoveRight{false} -> moves back to pos 1
+        // 3. MoveLeft{true} -> moves to pos 0, with anchor at 1, creating selection
+        let result = helix.parse_event(make_key_event(KeyCode::Char('h'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        // After the move sequence, cursor should be at 0 with selection including char at pos 0
+        // get_selection returns (0, grapheme_right_from(1)) = (0, 2)
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.get_selection(), Some((0, 2)));
     }
 }
