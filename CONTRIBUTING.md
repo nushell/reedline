@@ -37,17 +37,25 @@ Before submitting a PR make sure to run:
 - for formatting
 
   ```shell
-  cargo fmt --all
+  cargo fmt --all -- --check
   ```
 
-- the clippy lints
+- the clippy lints (with warnings treated as errors)
 
   ```shell
-  cargo clippy
+  cargo clippy --all-targets --all -- -D warnings
   ```
 
 - the test suite
 
   ```shell
-  cargo test
+  cargo test --all
   ```
+
+- the lockfile check
+
+  ```shell
+  cargo check --locked --all-targets --all
+  ```
+
+Note: CI runs these checks across multiple feature combinations (`bashisms`, `sqlite`, `external_printer`, etc.), so you may want to test with the features relevant to your changes using the `--features` flag.
