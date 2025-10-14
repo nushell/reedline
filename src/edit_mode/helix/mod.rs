@@ -100,7 +100,11 @@ impl Helix {
 }
 
 impl Helix {
-    fn enter_insert_mode(&mut self, edit_command: Option<EditCommand>, exit_adjustment: Option<EditCommand>) -> ReedlineEvent {
+    fn enter_insert_mode(
+        &mut self,
+        edit_command: Option<EditCommand>,
+        exit_adjustment: Option<EditCommand>,
+    ) -> ReedlineEvent {
         self.mode = HelixMode::Insert;
         self.insert_mode_exit_adjustment = exit_adjustment;
         match edit_command {
@@ -188,7 +192,7 @@ impl EditMode for Helix {
                         self.mode = HelixMode::Normal;
                         self.enter_insert_mode(
                             Some(EditCommand::MoveRight { select: false }),
-                            Some(EditCommand::MoveLeft { select: false })
+                            Some(EditCommand::MoveLeft { select: false }),
                         )
                     }
                     (
@@ -197,7 +201,10 @@ impl EditMode for Helix {
                         KeyCode::Char('i'),
                     ) => {
                         self.mode = HelixMode::Normal;
-                        self.enter_insert_mode(Some(EditCommand::MoveToLineStart { select: false }), None)
+                        self.enter_insert_mode(
+                            Some(EditCommand::MoveToLineStart { select: false }),
+                            None,
+                        )
                     }
                     (
                         HelixMode::Normal | HelixMode::Select,
@@ -207,7 +214,7 @@ impl EditMode for Helix {
                         self.mode = HelixMode::Normal;
                         self.enter_insert_mode(
                             Some(EditCommand::MoveToLineEnd { select: false }),
-                            Some(EditCommand::MoveLeft { select: false })
+                            Some(EditCommand::MoveLeft { select: false }),
                         )
                     }
                     (
@@ -321,10 +328,7 @@ mod test {
         // When restore_cursor is false (default), Esc should NOT move cursor left
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Esc,
-                ReedlineEvent::Repaint
-            ])
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
         );
         assert_eq!(helix.mode, HelixMode::Normal);
     }
@@ -1020,10 +1024,7 @@ mod test {
         // When entering via insert (i), Esc should NOT move cursor left
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Esc,
-                ReedlineEvent::Repaint,
-            ])
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint,])
         );
 
         // Apply the Esc commands (no MoveLeft)
