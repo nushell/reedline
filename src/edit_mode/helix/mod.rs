@@ -64,6 +64,8 @@ pub struct Helix {
     select_keybindings: Keybindings,
     mode: HelixMode,
     pending_char_search: Option<PendingCharSearch>,
+    /// Track if we entered insert mode via append (a/A) - if true, cursor moves left on Esc
+    restore_cursor: bool,
 }
 
 impl Default for Helix {
@@ -74,6 +76,7 @@ impl Default for Helix {
             select_keybindings: default_helix_select_keybindings(),
             mode: HelixMode::Normal,
             pending_char_search: None,
+            restore_cursor: false,
         }
     }
 }
@@ -91,13 +94,15 @@ impl Helix {
             select_keybindings,
             mode: HelixMode::Normal,
             pending_char_search: None,
+            restore_cursor: false,
         }
     }
 }
 
 impl Helix {
-    fn enter_insert_mode(&mut self, edit_command: Option<EditCommand>) -> ReedlineEvent {
+    fn enter_insert_mode(&mut self, edit_command: Option<EditCommand>, restore_cursor: bool) -> ReedlineEvent {
         self.mode = HelixMode::Insert;
+        self.restore_cursor = restore_cursor;
         match edit_command {
             None => ReedlineEvent::Repaint,
             Some(cmd) => ReedlineEvent::Multiple(vec![
@@ -173,7 +178,7 @@ impl EditMode for Helix {
                         KeyCode::Char('i'),
                     ) => {
                         self.mode = HelixMode::Normal;
-                        self.enter_insert_mode(None)
+                        self.enter_insert_mode(None, false)
                     }
                     (
                         HelixMode::Normal | HelixMode::Select,
@@ -181,7 +186,7 @@ impl EditMode for Helix {
                         KeyCode::Char('a'),
                     ) => {
                         self.mode = HelixMode::Normal;
-                        self.enter_insert_mode(Some(EditCommand::MoveRight { select: false }))
+                        self.enter_insert_mode(Some(EditCommand::MoveRight { select: false }), true)
                     }
                     (
                         HelixMode::Normal | HelixMode::Select,
@@ -189,7 +194,7 @@ impl EditMode for Helix {
                         KeyCode::Char('i'),
                     ) => {
                         self.mode = HelixMode::Normal;
-                        self.enter_insert_mode(Some(EditCommand::MoveToLineStart { select: false }))
+                        self.enter_insert_mode(Some(EditCommand::MoveToLineStart { select: false }), false)
                     }
                     (
                         HelixMode::Normal | HelixMode::Select,
@@ -197,7 +202,7 @@ impl EditMode for Helix {
                         KeyCode::Char('a'),
                     ) => {
                         self.mode = HelixMode::Normal;
-                        self.enter_insert_mode(Some(EditCommand::MoveToLineEnd { select: false }))
+                        self.enter_insert_mode(Some(EditCommand::MoveToLineEnd { select: false }), true)
                     }
                     (
                         HelixMode::Normal | HelixMode::Select,
@@ -205,7 +210,7 @@ impl EditMode for Helix {
                         KeyCode::Char('c'),
                     ) => {
                         self.mode = HelixMode::Normal;
-                        self.enter_insert_mode(Some(EditCommand::CutSelection))
+                        self.enter_insert_mode(Some(EditCommand::CutSelection), false)
                     }
                     (HelixMode::Normal, _, _) => self
                         .normal_keybindings
@@ -217,13 +222,21 @@ impl EditMode for Helix {
                         .unwrap_or(ReedlineEvent::None),
                     (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Esc) => {
                         self.mode = HelixMode::Normal;
-                        // When exiting insert mode, move cursor left if we're not at the start
-                        // This ensures the cursor is on a character, not after it (Helix behavior)
-                        ReedlineEvent::Multiple(vec![
-                            ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
-                            ReedlineEvent::Esc,
-                            ReedlineEvent::Repaint,
-                        ])
+                        // Only move cursor left if we entered insert mode via append (a/A)
+                        // This matches Helix's restore_cursor behavior
+                        if self.restore_cursor {
+                            self.restore_cursor = false;
+                            ReedlineEvent::Multiple(vec![
+                                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
+                                ReedlineEvent::Esc,
+                                ReedlineEvent::Repaint,
+                            ])
+                        } else {
+                            ReedlineEvent::Multiple(vec![
+                                ReedlineEvent::Esc,
+                                ReedlineEvent::Repaint,
+                            ])
+                        }
                     }
                     (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                     (HelixMode::Insert, modifier, KeyCode::Char(c)) => {
@@ -308,10 +321,10 @@ mod test {
 
         let result = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
 
+        // When restore_cursor is false (default), Esc should NOT move cursor left
         assert_eq!(
             result,
             ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
                 ReedlineEvent::Esc,
                 ReedlineEvent::Repaint
             ])
@@ -882,8 +895,8 @@ mod test {
         let mut editor = Editor::default();
         let mut helix = Helix::default();
 
-        // Start in normal mode, enter insert mode with 'i'
-        let result = helix.parse_event(make_key_event(KeyCode::Char('i'), KeyModifiers::NONE));
+        // Start in normal mode, enter append mode with 'a' (restore_cursor = true)
+        let _result = helix.parse_event(make_key_event(KeyCode::Char('a'), KeyModifiers::NONE));
         assert_eq!(helix.mode, HelixMode::Insert);
 
         // Type some text in insert mode
@@ -905,11 +918,11 @@ mod test {
         assert_eq!(editor.get_buffer(), "hello");
         assert_eq!(editor.insertion_point(), 5);
 
-        // Exit insert mode with Esc - this should move cursor left and reset selection
+        // Exit insert mode with Esc - since we entered with 'a', restore_cursor=true, so cursor moves left
         let result = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        // In Helix, Esc moves cursor left to position it on a character
+        // In Helix, when entering via append (a), Esc moves cursor left to restore position
         // The result includes MoveLeft, then Esc (which resets selection), then Repaint
         assert_eq!(
             result,
@@ -997,17 +1010,26 @@ mod test {
         assert_eq!(editor.get_selection(), Some((1, 3)));
 
         // Enter insert mode with 'i'
-        let result = helix.parse_event(make_key_event(KeyCode::Char('i'), KeyModifiers::NONE));
+        let _result = helix.parse_event(make_key_event(KeyCode::Char('i'), KeyModifiers::NONE));
         assert_eq!(helix.mode, HelixMode::Insert);
 
         // In insert mode, selection should be cleared automatically
         // when transitioning (though we'd need to test this with full engine)
 
-        // Exit insert mode with Esc - this moves cursor left
+        // Exit insert mode with Esc - since we entered with 'i', restore_cursor=false, so NO cursor movement
         let result = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(helix.mode, HelixMode::Normal);
 
-        // Apply the Esc commands which include MoveLeft
+        // When entering via insert (i), Esc should NOT move cursor left
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Esc,
+                ReedlineEvent::Repaint,
+            ])
+        );
+
+        // Apply the Esc commands (no MoveLeft)
         if let ReedlineEvent::Multiple(events) = result {
             for event in events {
                 if let ReedlineEvent::Edit(commands) = event {
@@ -1018,14 +1040,14 @@ mod test {
             }
         }
 
-        // After exiting insert mode from position 2, cursor moves left to position 1
-        assert_eq!(editor.insertion_point(), 1);
+        // After exiting insert mode from position 2, cursor stays at position 2
+        assert_eq!(editor.insertion_point(), 2);
 
-        // Now move left with 'h' from position 1
+        // Now move left with 'h' from position 2
         // The sequence MoveLeft{false}, MoveRight{false}, MoveLeft{true} becomes:
-        // 1. MoveLeft{false} -> moves to pos 0
-        // 2. MoveRight{false} -> moves back to pos 1
-        // 3. MoveLeft{true} -> moves to pos 0, with anchor at 1, creating selection
+        // 1. MoveLeft{false} -> moves to pos 1
+        // 2. MoveRight{false} -> moves back to pos 2
+        // 3. MoveLeft{true} -> moves to pos 1, with anchor at 2, creating selection
         let result = helix.parse_event(make_key_event(KeyCode::Char('h'), KeyModifiers::NONE));
         if let ReedlineEvent::Edit(commands) = result {
             for cmd in &commands {
@@ -1033,9 +1055,9 @@ mod test {
             }
         }
 
-        // After the move sequence, cursor should be at 0 with selection including char at pos 0
-        // get_selection returns (0, grapheme_right_from(1)) = (0, 2)
-        assert_eq!(editor.insertion_point(), 0);
-        assert_eq!(editor.get_selection(), Some((0, 2)));
+        // After the move sequence, cursor should be at 1 with selection including char at pos 1
+        // get_selection returns (1, grapheme_right_from(2)) = (1, 3)
+        assert_eq!(editor.insertion_point(), 1);
+        assert_eq!(editor.get_selection(), Some((1, 3)));
     }
 }
