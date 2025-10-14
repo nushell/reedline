@@ -64,8 +64,8 @@ pub struct Helix {
     select_keybindings: Keybindings,
     mode: HelixMode,
     pending_char_search: Option<PendingCharSearch>,
-    /// Track if we entered insert mode via append (a/A) - if true, cursor moves left on Esc
-    restore_cursor: bool,
+    /// Command to run when exiting insert mode (e.g., move cursor left for append modes)
+    insert_mode_exit_adjustment: Option<EditCommand>,
 }
 
 impl Default for Helix {
@@ -76,7 +76,7 @@ impl Default for Helix {
             select_keybindings: default_helix_select_keybindings(),
             mode: HelixMode::Normal,
             pending_char_search: None,
-            restore_cursor: false,
+            insert_mode_exit_adjustment: None,
         }
     }
 }
@@ -94,15 +94,15 @@ impl Helix {
             select_keybindings,
             mode: HelixMode::Normal,
             pending_char_search: None,
-            restore_cursor: false,
+            insert_mode_exit_adjustment: None,
         }
     }
 }
 
 impl Helix {
-    fn enter_insert_mode(&mut self, edit_command: Option<EditCommand>, restore_cursor: bool) -> ReedlineEvent {
+    fn enter_insert_mode(&mut self, edit_command: Option<EditCommand>, exit_adjustment: Option<EditCommand>) -> ReedlineEvent {
         self.mode = HelixMode::Insert;
-        self.restore_cursor = restore_cursor;
+        self.insert_mode_exit_adjustment = exit_adjustment;
         match edit_command {
             None => ReedlineEvent::Repaint,
             Some(cmd) => ReedlineEvent::Multiple(vec![
@@ -178,7 +178,7 @@ impl EditMode for Helix {
                         KeyCode::Char('i'),
                     ) => {
                         self.mode = HelixMode::Normal;
-                        self.enter_insert_mode(None, false)
+                        self.enter_insert_mode(None, None)
                     }
                     (
                         HelixMode::Normal | HelixMode::Select,
@@ -186,7 +186,10 @@ impl EditMode for Helix {
                         KeyCode::Char('a'),
                     ) => {
                         self.mode = HelixMode::Normal;
-                        self.enter_insert_mode(Some(EditCommand::MoveRight { select: false }), true)
+                        self.enter_insert_mode(
+                            Some(EditCommand::MoveRight { select: false }),
+                            Some(EditCommand::MoveLeft { select: false })
+                        )
                     }
                     (
                         HelixMode::Normal | HelixMode::Select,
@@ -194,7 +197,7 @@ impl EditMode for Helix {
                         KeyCode::Char('i'),
                     ) => {
                         self.mode = HelixMode::Normal;
-                        self.enter_insert_mode(Some(EditCommand::MoveToLineStart { select: false }), false)
+                        self.enter_insert_mode(Some(EditCommand::MoveToLineStart { select: false }), None)
                     }
                     (
                         HelixMode::Normal | HelixMode::Select,
@@ -202,7 +205,10 @@ impl EditMode for Helix {
                         KeyCode::Char('a'),
                     ) => {
                         self.mode = HelixMode::Normal;
-                        self.enter_insert_mode(Some(EditCommand::MoveToLineEnd { select: false }), true)
+                        self.enter_insert_mode(
+                            Some(EditCommand::MoveToLineEnd { select: false }),
+                            Some(EditCommand::MoveLeft { select: false })
+                        )
                     }
                     (
                         HelixMode::Normal | HelixMode::Select,
@@ -210,7 +216,7 @@ impl EditMode for Helix {
                         KeyCode::Char('c'),
                     ) => {
                         self.mode = HelixMode::Normal;
-                        self.enter_insert_mode(Some(EditCommand::CutSelection), false)
+                        self.enter_insert_mode(Some(EditCommand::CutSelection), None)
                     }
                     (HelixMode::Normal, _, _) => self
                         .normal_keybindings
@@ -222,21 +228,12 @@ impl EditMode for Helix {
                         .unwrap_or(ReedlineEvent::None),
                     (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Esc) => {
                         self.mode = HelixMode::Normal;
-                        // Only move cursor left if we entered insert mode via append (a/A)
-                        // This matches Helix's restore_cursor behavior
-                        if self.restore_cursor {
-                            self.restore_cursor = false;
-                            ReedlineEvent::Multiple(vec![
-                                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
-                                ReedlineEvent::Esc,
-                                ReedlineEvent::Repaint,
-                            ])
-                        } else {
-                            ReedlineEvent::Multiple(vec![
-                                ReedlineEvent::Esc,
-                                ReedlineEvent::Repaint,
-                            ])
+                        let mut events = vec![];
+                        if let Some(cmd) = self.insert_mode_exit_adjustment.take() {
+                            events.push(ReedlineEvent::Edit(vec![cmd]));
                         }
+                        events.extend([ReedlineEvent::Esc, ReedlineEvent::Repaint]);
+                        ReedlineEvent::Multiple(events)
                     }
                     (HelixMode::Insert, KeyModifiers::NONE, KeyCode::Enter) => ReedlineEvent::Enter,
                     (HelixMode::Insert, modifier, KeyCode::Char(c)) => {
