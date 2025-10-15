@@ -598,32 +598,39 @@ impl Editor {
     /// If a selection is active returns the selected range, otherwise None.
     /// The range is guaranteed to be ascending.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
-        self.selection_anchor.map(|selection_anchor| {
-            // Use the mode that was active when the selection was created, not the current mode
-            let inclusive = matches!(
-                self.selection_mode.as_ref().unwrap_or(&self.edit_mode),
-                PromptEditMode::Vi(PromptViMode::Normal)
-            );
-            let buffer_len = self.line_buffer.len();
+        let selection_anchor = self.selection_anchor?;
 
-            if self.insertion_point() > selection_anchor {
-                let end_pos = if inclusive {
-                    self.line_buffer.grapheme_right_index().min(buffer_len)
-                } else {
-                    self.insertion_point().min(buffer_len)
-                };
-                (selection_anchor, end_pos)
+        // Use the mode that was active when the selection was created, not the current mode
+        let inclusive = matches!(
+            self.selection_mode.as_ref().unwrap_or(&self.edit_mode),
+            PromptEditMode::Vi(PromptViMode::Normal)
+        );
+
+        let selection_is_from_left_to_right = selection_anchor < self.insertion_point();
+
+        let start_pos = if selection_is_from_left_to_right {
+            selection_anchor
+        } else {
+            self.insertion_point()
+        };
+
+        let end_pos = if selection_is_from_left_to_right {
+            if inclusive {
+                self.line_buffer.grapheme_right_index()
             } else {
-                let end_pos = if inclusive {
-                    self.line_buffer
-                        .grapheme_right_index_from_pos(selection_anchor)
-                        .min(buffer_len)
-                } else {
-                    selection_anchor.min(buffer_len)
-                };
-                (self.insertion_point(), end_pos)
+                self.insertion_point()
             }
-        })
+        } else {
+            // selection is from right to left
+            if inclusive {
+                self.line_buffer
+                    .grapheme_right_index_from_pos(selection_anchor)
+            } else {
+                selection_anchor
+            }
+        };
+
+        Some((start_pos, end_pos.min(self.line_buffer.len())))
     }
 
     fn delete_selection(&mut self) {
