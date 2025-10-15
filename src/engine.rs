@@ -1305,9 +1305,7 @@ impl Reedline {
     }
 
     fn previous_history(&mut self) {
-        if self.history_cursor_on_excluded {
-            self.history_cursor_on_excluded = false;
-        }
+        self.history_cursor_on_excluded = false;
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
             self.history_cursor = HistoryCursor::new(
@@ -1327,12 +1325,9 @@ impl Reedline {
         }
         self.update_buffer_from_history();
         self.editor.move_to_start(false);
-        self.editor
-            .update_undo_state(UndoBehavior::HistoryNavigation);
         self.editor.move_to_line_end(false);
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
-        self.editor.move_to_end(false);
     }
 
     fn next_history(&mut self) {
@@ -1492,8 +1487,13 @@ impl Reedline {
                 HistoryNavigationQuery::Normal(_)
             ) {
                 if let Some(string) = self.history_cursor.string_at_cursor() {
-                    self.editor
-                        .set_buffer(string, UndoBehavior::HistoryNavigation);
+                    // NOTE: `set_buffer` resets the insertion point,
+                    // which we should avoid during history navigation through the same buffer
+                    // https://github.com/nushell/reedline/pull/899
+                    if string != self.editor.get_buffer() {
+                        self.editor
+                            .set_buffer(string, UndoBehavior::HistoryNavigation);
+                    }
                 }
             }
             self.input_mode = InputMode::Regular;
@@ -1917,8 +1917,60 @@ impl Reedline {
     }
 }
 
-#[test]
-fn thread_safe() {
-    fn f<S: Send>(_: S) {}
-    f(Reedline::create());
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cursor_position_after_multiline_history_navigation() {
+        // Test for https://github.com/nushell/reedline/pull/899
+        // Ensure that after navigating to a multiline history entry and then
+        // running edit commands, the cursor doesn't jump unexpectedly.
+        // The fix prevents set_buffer() from being called unnecessarily,
+        // which would reset the insertion point.
+
+        let mut reedline = Reedline::create();
+
+        // Add a multiline entry to history
+        let multiline_command = "echo 'line 1'\necho 'line 2'\necho 'line 3'";
+        let history_item = HistoryItem::from_command_line(multiline_command);
+        reedline
+            .history
+            .save(history_item)
+            .expect("Failed to save history");
+
+        // Navigate to previous history
+        reedline.previous_history();
+
+        // Get the initial insertion point after history navigation
+        let initial_insertion_point = reedline.current_insertion_point();
+
+        // The buffer should contain our multiline command
+        assert_eq!(reedline.current_buffer_contents(), multiline_command);
+
+        // After the fix, previous_history() positions cursor at end of first line
+        // (after move_to_start + move_to_line_end)
+        let first_line_end = multiline_command.find('\n').unwrap();
+        assert_eq!(initial_insertion_point, first_line_end);
+
+        // Now simulate pressing the right arrow key, which should move cursor right
+        // Without the fix, set_buffer() would be called and reset the insertion point,
+        // causing the cursor to jump unexpectedly. With the fix, it stays where it is
+        // and moves correctly.
+        reedline.run_edit_commands(&[EditCommand::MoveRight { select: false }]);
+
+        let after_move_insertion_point = reedline.current_insertion_point();
+
+        // The cursor should have moved right by 1 from where it was
+        assert_eq!(after_move_insertion_point, initial_insertion_point + 1);
+
+        // The buffer should still be unchanged
+        assert_eq!(reedline.current_buffer_contents(), multiline_command);
+    }
+
+    #[test]
+    fn thread_safe() {
+        fn f<S: Send>(_: S) {}
+        f(Reedline::create());
+    }
 }

@@ -14,6 +14,46 @@ pub enum Signal {
     CtrlD, // End terminal session
 }
 
+/// Scope of text object operation ("i" inner or "a" around)
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum TextObjectScope {
+    /// Just the text object itself
+    Inner,
+    /// Expanded to include surrounding based on object type
+    Around,
+}
+
+/// Type of text object to operate on
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum TextObjectType {
+    /// word (delimited by non-alphanumeric characters)
+    Word,
+    /// WORD (delimited only by whitespace)
+    BigWord,
+    /// (, ), [, ], {, }
+    Brackets,
+    /// ", ', `
+    Quote,
+}
+
+/// Text objects that can be operated on with vim-style commands
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct TextObject {
+    /// Whether to include surrounding context
+    pub scope: TextObjectScope,
+    /// The type of text object
+    pub object_type: TextObjectType,
+}
+
+impl Default for TextObject {
+    fn default() -> Self {
+        Self {
+            scope: TextObjectScope::Inner,
+            object_type: TextObjectType::Word,
+        }
+    }
+}
+
 /// Editing actions which can be mapped to key bindings.
 ///
 /// Executed by `Reedline::run_edit_commands()`
@@ -337,18 +377,42 @@ pub enum EditCommand {
     PasteSystem,
 
     /// Delete text between matching characters atomically
-    CutInside {
+    CutInsidePair {
         /// Left character of the pair
         left: char,
         /// Right character of the pair (usually matching bracket)
         right: char,
     },
     /// Yank text between matching characters atomically
-    YankInside {
+    CopyInsidePair {
         /// Left character of the pair
         left: char,
         /// Right character of the pair (usually matching bracket)
         right: char,
+    },
+    /// Delete text around matching characters atomically (including the pair characters)
+    CutAroundPair {
+        /// Left character of the pair
+        left: char,
+        /// Right character of the pair (usually matching bracket)
+        right: char,
+    },
+    /// Yank text around matching characters atomically (including the pair characters)
+    CopyAroundPair {
+        /// Left character of the pair
+        left: char,
+        /// Right character of the pair (usually matching bracket)
+        right: char,
+    },
+    /// Cut the specified text object
+    CutTextObject {
+        /// The text object to operate on
+        text_object: TextObject,
+    },
+    /// Copy the specified text object
+    CopyTextObject {
+        /// The text object to operate on
+        text_object: TextObject,
     },
 }
 
@@ -462,8 +526,12 @@ impl Display for EditCommand {
             EditCommand::CopySelectionSystem => write!(f, "CopySelectionSystem"),
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => write!(f, "PasteSystem"),
-            EditCommand::CutInside { .. } => write!(f, "CutInside Value: <char> <char>"),
-            EditCommand::YankInside { .. } => write!(f, "YankInside Value: <char> <char>"),
+            EditCommand::CutInsidePair { .. } => write!(f, "CutInsidePair Value: <char> <char>"),
+            EditCommand::CopyInsidePair { .. } => write!(f, "CopyInsidePair Value: <char> <char>"),
+            EditCommand::CutAroundPair { .. } => write!(f, "CutAroundPair Value: <char> <char>"),
+            EditCommand::CopyAroundPair { .. } => write!(f, "CopyAroundPair Value: <char> <char>"),
+            EditCommand::CutTextObject { .. } => write!(f, "CutTextObject Value: <TextObject>"),
+            EditCommand::CopyTextObject { .. } => write!(f, "CopyTextObject Value: <TextObject>"),
         }
     }
 }
@@ -536,7 +604,10 @@ impl EditCommand {
             | EditCommand::CutLeftUntil(_)
             | EditCommand::CutLeftBefore(_)
             | EditCommand::CutSelection
-            | EditCommand::Paste => EditType::EditText,
+            | EditCommand::Paste
+            | EditCommand::CutInsidePair { .. }
+            | EditCommand::CutAroundPair { .. }
+            | EditCommand::CutTextObject { .. } => EditType::EditText,
 
             #[cfg(feature = "system_clipboard")] // Sadly cfg attributes in patterns don't work
             EditCommand::CutSelectionSystem | EditCommand::PasteSystem => EditType::EditText,
@@ -546,8 +617,6 @@ impl EditCommand {
             EditCommand::CopySelection => EditType::NoOp,
             #[cfg(feature = "system_clipboard")]
             EditCommand::CopySelectionSystem => EditType::NoOp,
-            EditCommand::CutInside { .. } => EditType::EditText,
-            EditCommand::YankInside { .. } => EditType::EditText,
             EditCommand::CopyFromStart
             | EditCommand::CopyFromLineStart
             | EditCommand::CopyToEnd
@@ -564,7 +633,10 @@ impl EditCommand {
             | EditCommand::CopyRightUntil(_)
             | EditCommand::CopyRightBefore(_)
             | EditCommand::CopyLeftUntil(_)
-            | EditCommand::CopyLeftBefore(_) => EditType::NoOp,
+            | EditCommand::CopyLeftBefore(_)
+            | EditCommand::CopyInsidePair { .. }
+            | EditCommand::CopyAroundPair { .. }
+            | EditCommand::CopyTextObject { .. } => EditType::NoOp,
         }
     }
 }

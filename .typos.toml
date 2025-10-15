@@ -9,6 +9,7 @@ bui = "bui"
 # For testing string truncation
 descriptio = "descriptio"
 ot = "ot"
+strin = "strin"
 # for sqlite backed history
 wheres = "wheres"
 # for list_menu tests
