@@ -43,9 +43,10 @@ impl PromptHistorySearch {
 }
 
 /// Modes that the prompt can be in
-#[derive(Serialize, Deserialize, Clone, Debug, EnumIter)]
+#[derive(Serialize, Deserialize, Clone, Debug, EnumIter, Default)]
 pub enum PromptEditMode {
     /// The default mode
+    #[default]
     Default,
 
     /// Emacs normal mode
