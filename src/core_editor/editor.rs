@@ -4,6 +4,7 @@ use crate::core_editor::get_system_clipboard;
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
 use crate::prompt::{PromptEditMode, PromptViMode};
 use crate::{core_editor::get_local_clipboard, EditCommand};
+use std::cmp::{max, min};
 use std::ops::{DerefMut, Range};
 
 /// Stateful editor executing changes to the underlying [`LineBuffer`]
@@ -55,6 +56,9 @@ impl Editor {
         match command {
             EditCommand::MoveToStart { select } => self.move_to_start(*select),
             EditCommand::MoveToLineStart { select } => self.move_to_line_start(*select),
+            EditCommand::MoveToLineNonBlankStart { select } => {
+                self.move_to_line_non_blank_start(*select)
+            }
             EditCommand::MoveToEnd { select } => self.move_to_end(*select),
             EditCommand::MoveToLineEnd { select } => self.move_to_line_end(*select),
             EditCommand::MoveToPosition { position, select } => {
@@ -87,6 +91,7 @@ impl Editor {
             EditCommand::CutCurrentLine => self.cut_current_line(),
             EditCommand::CutFromStart => self.cut_from_start(),
             EditCommand::CutFromLineStart => self.cut_from_line_start(),
+            EditCommand::CutFromLineNonBlankStart => self.cut_from_line_non_blank_start(),
             EditCommand::CutToEnd => self.cut_from_end(),
             EditCommand::CutToLineEnd => self.cut_to_line_end(),
             EditCommand::KillLine => self.kill_line(),
@@ -128,6 +133,7 @@ impl Editor {
             EditCommand::Paste => self.paste_cut_buffer(),
             EditCommand::CopyFromStart => self.copy_from_start(),
             EditCommand::CopyFromLineStart => self.copy_from_line_start(),
+            EditCommand::CopyFromLineNonBlankStart => self.copy_from_line_non_blank_start(),
             EditCommand::CopyToEnd => self.copy_from_end(),
             EditCommand::CopyToLineEnd => self.copy_to_line_end(),
             EditCommand::CopyWordLeft => self.copy_word_left(),
@@ -308,6 +314,11 @@ impl Editor {
         self.line_buffer.move_to_line_start();
     }
 
+    pub(crate) fn move_to_line_non_blank_start(&mut self, select: bool) {
+        self.update_selection_anchor(select);
+        self.line_buffer.move_to_line_non_blank_start();
+    }
+
     pub(crate) fn move_to_line_end(&mut self, select: bool) {
         self.update_selection_anchor(select);
         self.line_buffer.move_to_line_end();
@@ -366,6 +377,14 @@ impl Editor {
             self.cut_buffer.set(cut_slice, ClipboardMode::Normal);
             self.line_buffer.clear_range(deletion_range);
         }
+    }
+
+    fn cut_from_line_non_blank_start(&mut self) {
+        let offset_a = self.line_buffer.insertion_point();
+        self.line_buffer.move_to_line_non_blank_start();
+        let offset_b = self.line_buffer.insertion_point();
+        let deletion_range = min(offset_a, offset_b)..max(offset_a, offset_b);
+        self.cut_range(deletion_range);
     }
 
     fn cut_from_end(&mut self) {
@@ -886,6 +905,15 @@ impl Editor {
             start
         };
         let copy_range = start_offset..previous_offset;
+        self.copy_range(copy_range);
+    }
+
+    pub(crate) fn copy_from_line_non_blank_start(&mut self) {
+        let offset_a = self.line_buffer.insertion_point();
+        self.line_buffer.move_to_line_non_blank_start();
+        let offset_b = self.line_buffer.insertion_point();
+        self.line_buffer.set_insertion_point(offset_a);
+        let copy_range = min(offset_a, offset_b)..max(offset_a, offset_b);
         self.copy_range(copy_range);
     }
 
