@@ -703,10 +703,6 @@ impl Editor {
         insert_clipboard_content_before(&mut self.line_buffer, self.cut_buffer.deref_mut());
     }
 
-    pub(crate) fn reset_selection(&mut self) {
-        self.clear_selection();
-    }
-
     fn cut_range(&mut self, range: Range<usize>) {
         if range.start <= range.end {
             self.copy_range(range.clone());
