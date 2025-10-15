@@ -43,7 +43,7 @@ impl PromptHistorySearch {
 }
 
 /// Modes that the prompt can be in
-#[derive(Serialize, Deserialize, Clone, Debug, EnumIter)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, EnumIter)]
 pub enum PromptEditMode {
     /// The default mode
     Default,
@@ -54,12 +54,15 @@ pub enum PromptEditMode {
     /// A vi-specific mode
     Vi(PromptViMode),
 
+    /// A helix-specific mode
+    Helix(PromptHelixMode),
+
     /// A custom mode
     Custom(String),
 }
 
 /// The vi-specific modes that the prompt can be in
-#[derive(Serialize, Deserialize, Clone, Debug, EnumIter, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, EnumIter, Default)]
 pub enum PromptViMode {
     /// The default mode
     #[default]
@@ -69,12 +72,27 @@ pub enum PromptViMode {
     Insert,
 }
 
+/// The helix-specific modes that the prompt can be in
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, EnumIter, Default)]
+pub enum PromptHelixMode {
+    /// The default mode
+    #[default]
+    Normal,
+
+    /// Insertion mode
+    Insert,
+
+    /// Select mode
+    Select,
+}
+
 impl Display for PromptEditMode {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             PromptEditMode::Default => write!(f, "Default"),
             PromptEditMode::Emacs => write!(f, "Emacs"),
             PromptEditMode::Vi(_) => write!(f, "Vi_Normal\nVi_Insert"),
+            PromptEditMode::Helix(_) => write!(f, "Helix_Normal\nHelix_Insert\nHelix_Select"),
             PromptEditMode::Custom(s) => write!(f, "Custom_{s}"),
         }
     }
