@@ -540,24 +540,6 @@ impl IdeMenu {
                 .match_indices
                 .as_ref()
                 .unwrap_or(&default_indices);
-            let match_len = shortest_base.chars().count().min(string.chars().count());
-
-            // Find match position - look for the base string in the suggestion (case-insensitive)
-            let match_position = string
-                .to_lowercase()
-                .find(&shortest_base.to_lowercase())
-                .unwrap_or(0);
-
-            // The match is just the part that matches the shortest_base
-            let match_str = {
-                let match_str = &string[match_position..];
-                let match_len_bytes = match_str
-                    .char_indices()
-                    .nth(match_len)
-                    .map(|(i, _)| i)
-                    .unwrap_or_else(|| match_str.len());
-                &string[match_position..match_position + match_len_bytes]
-            };
 
             let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
 

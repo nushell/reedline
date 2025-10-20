@@ -1,7 +1,6 @@
 //! Collection of common functions that can be used to create menus
 use std::borrow::Cow;
 
-use itertools::Itertools;
 use nu_ansi_term::{ansi::RESET, Style};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -452,6 +451,8 @@ pub fn style_suggestion(suggestion: &str, match_indices: &[usize], match_style: 
     res
 }
 
+/// If `match_indices` is given, then returns that. Otherwise, tries to find `typed_text`
+/// inside `value`, then returns the indices for that substring.
 pub fn get_match_indices<'a>(
     value: &str,
     match_indices: &'a Option<Vec<usize>>,
