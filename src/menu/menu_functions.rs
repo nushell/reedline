@@ -867,25 +867,8 @@ mod tests {
     #[test]
     fn style_fuzzy_suggestion_out_of_bounds() {
         let match_style = Style::new().underline();
-        let style1 = Style::new().on(Color::Blue);
-        let style2 = Style::new().on(Color::Green);
 
-        let expected = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}{}{}",
-            style1.prefix(),
-            "ab",
-            match_style.paint("汉"),
-            style1.prefix(),
-            "d",
-            RESET,
-            style2.prefix(),
-            match_style.paint("y̆👩🏾"),
-            style2.prefix(),
-            "e",
-            RESET,
-            "b@",
-            match_style.paint("r"),
-        );
+        let expected = format!("{}{}{}{}", "fo", match_style.prefix(), "o", RESET);
         assert_eq!(
             expected,
             style_suggestion("foo", &[2, 3, 4, 6], &match_style)

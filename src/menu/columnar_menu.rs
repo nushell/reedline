@@ -1,17 +1,14 @@
-use std::borrow::Cow;
-
 use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
-        can_partially_complete, completer_input, floor_char_boundary, replace_in_buffer,
-        style_suggestion,
+        can_partially_complete, completer_input, floor_char_boundary, get_match_indices,
+        replace_in_buffer, style_suggestion,
     },
     painting::Painter,
     Completer, Suggestion,
 };
 use nu_ansi_term::ansi::RESET;
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 /// The traversal direction of the menu
@@ -394,20 +391,8 @@ impl ColumnarMenu {
                 .strip_prefix(is_quote)
                 .unwrap_or(shortest_base);
 
-            let match_indices = if let Some(match_indices) = &suggestion.match_indices {
-                Cow::Borrowed(match_indices)
-            } else if let Some(match_pos) = suggestion
-                .value
-                .to_lowercase()
-                .find(&shortest_base.to_lowercase())
-            {
-                // Highlight matched substring if one is found
-                let match_len = shortest_base.graphemes(true).count();
-                Cow::Owned((match_pos..match_pos + match_len).collect())
-            } else {
-                // Don't highlight anything if no match
-                Cow::Owned(vec![])
-            };
+            let match_indices =
+                get_match_indices(&suggestion.value, &suggestion.match_indices, shortest_base);
 
             let left_text_size = self.longest_suggestion + self.default_details.col_padding;
             let description_size = self.get_width().saturating_sub(left_text_size);
