@@ -868,10 +868,10 @@ mod tests {
     fn style_fuzzy_suggestion_out_of_bounds() {
         let match_style = Style::new().underline();
 
-        let expected = format!("{}{}{}{}", "fo", match_style.prefix(), "o", RESET);
+        let expected = format!("{}{}{}{}", "go", match_style.prefix(), "o", RESET);
         assert_eq!(
             expected,
-            style_suggestion("foo", &[2, 3, 4, 6], &match_style)
+            style_suggestion("goo", &[2, 3, 4, 6], &match_style)
         );
     }
 }
