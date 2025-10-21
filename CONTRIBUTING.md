@@ -37,7 +37,7 @@ Before submitting a PR make sure to run:
 - for formatting
 
   ```shell
-  cargo fmt --all -- --check
+  cargo fmt --all
   ```
 
 - the clippy lints (with warnings treated as errors)
