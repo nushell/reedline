@@ -410,38 +410,36 @@ impl ColumnarMenu {
             );
 
             if let Some(description) = &suggestion.description {
-                let styled_desc = self.settings.color.description_style.paint(
-                    description
-                        .chars()
-                        .take(description_size)
-                        .collect::<String>()
-                        .replace('\n', " "),
-                );
+                let desc_trunc = description
+                    .chars()
+                    .take(description_size)
+                    .collect::<String>()
+                    .replace('\n', " ");
                 if selected {
                     format!(
                         "{}{}{}{}{}",
                         styled_value,
                         value_style.prefix(),
                         " ".repeat(padding),
-                        self.settings.color.selected_text_style.prefix(),
-                        styled_desc,
+                        desc_trunc,
+                        RESET,
                     )
                 } else {
                     format!(
                         "{}{}{}{}",
                         styled_value,
-                        value_style.prefix(),
                         " ".repeat(padding),
-                        styled_desc
+                        self.settings.color.description_style.paint(desc_trunc),
+                        RESET,
                     )
                 }
             } else {
                 format!(
                     "{}{}{:>empty$}",
                     styled_value,
-                    value_style.prefix(),
+                    RESET,
                     "",
-                    empty = empty_space,
+                    empty = empty_space
                 )
             }
         } else {
