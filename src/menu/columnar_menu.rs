@@ -419,17 +419,30 @@ impl ColumnarMenu {
                 );
                 if selected {
                     format!(
-                        "{}{}{}{}",
+                        "{}{}{}{}{}",
                         styled_value,
+                        value_style.prefix(),
                         " ".repeat(padding),
                         self.settings.color.selected_text_style.prefix(),
                         styled_desc,
                     )
                 } else {
-                    format!("{}{}{}", styled_value, " ".repeat(padding), styled_desc)
+                    format!(
+                        "{}{}{}{}",
+                        styled_value,
+                        value_style.prefix(),
+                        " ".repeat(padding),
+                        styled_desc
+                    )
                 }
             } else {
-                format!("{}{:>empty$}", styled_value, "", empty = empty_space,)
+                format!(
+                    "{}{}{:>empty$}",
+                    styled_value,
+                    value_style.prefix(),
+                    "",
+                    empty = empty_space,
+                )
             }
         } else {
             // If no ansi coloring is found, then the selection word is the line in uppercase
