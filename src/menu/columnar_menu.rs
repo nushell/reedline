@@ -404,7 +404,7 @@ impl ColumnarMenu {
                 &suggestion.style.unwrap_or(self.settings.color.text_style)
             };
             let styled_value = style_suggestion(
-                value_style.paint(&suggestion.value).as_str(),
+                &value_style.paint(&suggestion.value).to_string(),
                 match_indices.as_ref(),
                 &self.settings.color.match_style,
             );

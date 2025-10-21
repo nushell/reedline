@@ -866,12 +866,23 @@ mod tests {
 
     #[test]
     fn style_fuzzy_suggestion_out_of_bounds() {
+        let text_style = Style::new().on(Color::Blue).bold();
         let match_style = Style::new().underline();
 
-        let expected = format!("{}{}{}{}", "go", match_style.prefix(), "o", RESET);
+        let expected = format!(
+            "{}{}{}{}",
+            text_style.prefix(),
+            "go",
+            match_style.paint("o"),
+            RESET
+        );
         assert_eq!(
             expected,
-            style_suggestion("goo", &[2, 3, 4, 6], &match_style)
+            style_suggestion(
+                &text_style.paint("goo").to_string(),
+                &[2, 3, 4, 6],
+                &match_style
+            )
         );
     }
 }
