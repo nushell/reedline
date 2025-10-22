@@ -2,7 +2,7 @@ use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
-use crate::prompt::{PromptEditMode, PromptViMode};
+use crate::prompt::{PromptEditMode, PromptHelixMode, PromptViMode};
 use crate::{core_editor::get_local_clipboard, EditCommand};
 use std::ops::{DerefMut, Range};
 
@@ -604,6 +604,7 @@ impl Editor {
         let inclusive = matches!(
             self.selection_mode.as_ref().unwrap_or(&self.edit_mode),
             PromptEditMode::Vi(PromptViMode::Normal)
+                | PromptEditMode::Helix(PromptHelixMode::Normal | PromptHelixMode::Select)
         );
 
         let selection_is_from_left_to_right = selection_anchor < self.insertion_point();

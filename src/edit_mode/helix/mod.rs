@@ -895,10 +895,12 @@ mod test {
 
         let mut editor = Editor::default();
         let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
 
         // Start in normal mode, enter append mode with 'a' (restore_cursor = true)
         let _result = helix.parse_event(make_key_event(KeyCode::Char('a'), KeyModifiers::NONE));
         assert_eq!(helix.mode, HelixMode::Insert);
+        editor.set_edit_mode(helix.edit_mode());
 
         // Type some text in insert mode
         for event in &[
@@ -922,6 +924,7 @@ mod test {
         // Exit insert mode with Esc - since we entered with 'a', restore_cursor=true, so cursor moves left
         let result = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(helix.mode, HelixMode::Normal);
+        editor.set_edit_mode(helix.edit_mode());
 
         // In Helix, when entering via append (a), Esc moves cursor left to restore position
         // The result includes MoveLeft, then Esc (which resets selection), then Repaint
@@ -954,6 +957,7 @@ mod test {
         // Now press 'h' to move left in normal mode
         // Starting from pos 4 (on the 'o'), we want to move left to pos 3 (on the second 'l')
         let result = helix.parse_event(make_key_event(KeyCode::Char('h'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
 
         // Expected: MoveLeft{false}, MoveRight{false}, MoveLeft{true}
         assert_eq!(
@@ -993,11 +997,13 @@ mod test {
         // set_buffer moves cursor to end, so move it back to start
         editor.run_edit_command(&EditCommand::MoveToStart { select: false });
         let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
 
         // Start at position 0 in normal mode
         // Move right with 'l' - the sequence is: MoveLeft{false}, MoveRight{false}, MoveRight{true}
         // From position 0: stays at 0, moves to 1, moves to 2 with selection
         let result = helix.parse_event(make_key_event(KeyCode::Char('l'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
         if let ReedlineEvent::Edit(commands) = result {
             for cmd in &commands {
                 editor.run_edit_command(cmd);
@@ -1013,6 +1019,7 @@ mod test {
         // Enter insert mode with 'i'
         let _result = helix.parse_event(make_key_event(KeyCode::Char('i'), KeyModifiers::NONE));
         assert_eq!(helix.mode, HelixMode::Insert);
+        editor.set_edit_mode(helix.edit_mode());
 
         // In insert mode, selection should be cleared automatically
         // when transitioning (though we'd need to test this with full engine)
@@ -1020,6 +1027,7 @@ mod test {
         // Exit insert mode with Esc - since we entered with 'i', restore_cursor=false, so NO cursor movement
         let result = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(helix.mode, HelixMode::Normal);
+        editor.set_edit_mode(helix.edit_mode());
 
         // When entering via insert (i), Esc should NOT move cursor left
         assert_eq!(
@@ -1047,6 +1055,7 @@ mod test {
         // 2. MoveRight{false} -> moves back to pos 2
         // 3. MoveLeft{true} -> moves to pos 1, with anchor at 2, creating selection
         let result = helix.parse_event(make_key_event(KeyCode::Char('h'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
         if let ReedlineEvent::Edit(commands) = result {
             for cmd in &commands {
                 editor.run_edit_command(cmd);
