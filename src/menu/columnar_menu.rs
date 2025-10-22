@@ -2,7 +2,8 @@ use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
-        can_partially_complete, completer_input, floor_char_boundary, replace_in_buffer,
+        can_partially_complete, completer_input, floor_char_boundary, get_match_indices,
+        replace_in_buffer, style_suggestion,
     },
     painting::Painter,
     Completer, Suggestion,
@@ -377,135 +378,68 @@ impl ColumnarMenu {
         &self,
         suggestion: &Suggestion,
         index: usize,
-        empty_space: usize,
         use_ansi_coloring: bool,
     ) -> String {
+        let selected = index == self.index();
+        let empty_space = self.get_width().saturating_sub(suggestion.value.width());
+
         if use_ansi_coloring {
-            // strip quotes
+            // TODO(ysthakur): let the user strip quotes, rather than doing it here
             let is_quote = |c: char| "`'\"".contains(c);
             let shortest_base = &self.working_details.shortest_base_string;
             let shortest_base = shortest_base
                 .strip_prefix(is_quote)
                 .unwrap_or(shortest_base);
-            let match_len = shortest_base.chars().count();
 
-            // Find match position - look for the base string in the suggestion (case-insensitive)
-            let match_position = suggestion
-                .value
-                .to_lowercase()
-                .find(&shortest_base.to_lowercase())
-                .unwrap_or(0);
-
-            // The match is just the part that matches the shortest_base
-            let match_str = {
-                let match_str = &suggestion.value[match_position..];
-                let match_len_bytes = match_str
-                    .char_indices()
-                    .nth(match_len)
-                    .map(|(i, _)| i)
-                    .unwrap_or_else(|| match_str.len());
-                &suggestion.value[match_position..match_position + match_len_bytes]
-            };
-
-            // Prefix is everything before the match
-            let prefix = &suggestion.value[..match_position];
-
-            // Remaining is everything after the match
-            let remaining_str = &suggestion.value[match_position + match_str.len()..];
-
-            let suggestion_style_prefix = suggestion
-                .style
-                .unwrap_or(self.settings.color.text_style)
-                .prefix();
+            let match_indices =
+                get_match_indices(&suggestion.value, &suggestion.match_indices, shortest_base);
 
             let left_text_size = self.longest_suggestion + self.default_details.col_padding;
-            let right_text_size = self.get_width().saturating_sub(left_text_size);
+            let description_size = self.get_width().saturating_sub(left_text_size);
+            let padding = left_text_size.saturating_sub(suggestion.value.len());
 
-            let max_remaining = left_text_size.saturating_sub(match_str.width() + prefix.width());
-            let max_match = max_remaining.saturating_sub(remaining_str.width());
+            let value_style = if selected {
+                &self.settings.color.selected_text_style
+            } else {
+                &suggestion.style.unwrap_or(self.settings.color.text_style)
+            };
+            let styled_value = style_suggestion(
+                &value_style.paint(&suggestion.value).to_string(),
+                match_indices.as_ref(),
+                &self.settings.color.match_style,
+            );
 
-            if index == self.index() {
-                if let Some(description) = &suggestion.description {
+            if let Some(description) = &suggestion.description {
+                let desc_trunc = description
+                    .chars()
+                    .take(description_size)
+                    .collect::<String>()
+                    .replace('\n', " ");
+                if selected {
                     format!(
-                        "{}{}{}{}{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}{}",
-                        suggestion_style_prefix,
-                        self.settings.color.selected_text_style.prefix(),
-                        prefix,
-                        RESET,
-                        suggestion_style_prefix,
-                        self.settings.color.selected_match_style.prefix(),
-                        match_str,
-                        RESET,
-                        suggestion_style_prefix,
-                        self.settings.color.selected_text_style.prefix(),
-                        remaining_str,
-                        RESET,
-                        self.settings.color.description_style.prefix(),
-                        self.settings.color.selected_text_style.prefix(),
-                        description
-                            .chars()
-                            .take(right_text_size)
-                            .collect::<String>()
-                            .replace('\n', " "),
+                        "{}{}{}{}{}",
+                        styled_value,
+                        value_style.prefix(),
+                        " ".repeat(padding),
+                        desc_trunc,
                         RESET,
                     )
                 } else {
                     format!(
-                        "{}{}{}{}{}{}{}{}{}{}{}{}{:>empty$}",
-                        suggestion_style_prefix,
-                        self.settings.color.selected_text_style.prefix(),
-                        prefix,
+                        "{}{}{}{}",
+                        styled_value,
+                        " ".repeat(padding),
+                        self.settings.color.description_style.paint(desc_trunc),
                         RESET,
-                        suggestion_style_prefix,
-                        self.settings.color.selected_match_style.prefix(),
-                        match_str,
-                        RESET,
-                        suggestion_style_prefix,
-                        self.settings.color.selected_text_style.prefix(),
-                        remaining_str,
-                        RESET,
-                        "",
-                        empty = empty_space,
                     )
                 }
-            } else if let Some(description) = &suggestion.description {
-                format!(
-                    "{}{}{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}",
-                    suggestion_style_prefix,
-                    prefix,
-                    RESET,
-                    suggestion_style_prefix,
-                    self.settings.color.match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    remaining_str,
-                    RESET,
-                    self.settings.color.description_style.prefix(),
-                    description
-                        .chars()
-                        .take(right_text_size)
-                        .collect::<String>()
-                        .replace('\n', " "),
-                    RESET,
-                )
             } else {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{:>empty$}{}",
-                    suggestion_style_prefix,
-                    prefix,
+                    "{}{}{:>empty$}",
+                    styled_value,
                     RESET,
-                    suggestion_style_prefix,
-                    self.settings.color.match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    remaining_str,
-                    RESET,
-                    self.settings.color.description_style.prefix(),
                     "",
-                    RESET,
-                    empty = empty_space,
+                    empty = empty_space
                 )
             }
         } else {
@@ -538,7 +472,7 @@ impl ColumnarMenu {
                 )
             };
 
-            if index == self.index() {
+            if selected {
                 line.to_uppercase()
             } else {
                 line
@@ -789,14 +723,7 @@ impl Menu for ColumnarMenu {
                             .step_by(num_rows)
                             .take(self.get_cols().into())
                             .map(|(index, suggestion)| {
-                                let empty_space =
-                                    self.get_width().saturating_sub(suggestion.value.width());
-                                self.create_string(
-                                    suggestion,
-                                    index,
-                                    empty_space,
-                                    use_ansi_coloring,
-                                )
+                                self.create_string(suggestion, index, use_ansi_coloring)
                             })
                             .collect();
                         menu_string.push_str(&row_string);
@@ -817,8 +744,6 @@ impl Menu for ColumnarMenu {
                             // Correcting the enumerate index based on the number of skipped values
                             let index = index + skip_values;
                             let column = index % self.get_cols() as usize;
-                            let empty_space =
-                                self.get_width().saturating_sub(suggestion.value.width());
 
                             let end_of_line =
                                 if column == self.get_cols().saturating_sub(1) as usize {
@@ -828,12 +753,7 @@ impl Menu for ColumnarMenu {
                                 };
                             format!(
                                 "{}{}",
-                                self.create_string(
-                                    suggestion,
-                                    index,
-                                    empty_space,
-                                    use_ansi_coloring
-                                ),
+                                self.create_string(suggestion, index, use_ansi_coloring),
                                 end_of_line
                             )
                         })
@@ -931,6 +851,7 @@ mod tests {
             extra: None,
             span: Span { start: 0, end: pos },
             append_whitespace: false,
+            ..Default::default()
         }
     }
 

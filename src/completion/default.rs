@@ -55,17 +55,17 @@ impl Completer for DefaultCompleter {
     /// assert_eq!(
     ///     completions.complete("bat",3),
     ///     vec![
-    ///         Suggestion {value: "batcave".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
-    ///         Suggestion {value: "batman".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
-    ///         Suggestion {value: "batmobile".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false},
+    ///         Suggestion {value: "batcave".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false, ..Default::default()},
+    ///         Suggestion {value: "batman".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false, ..Default::default()},
+    ///         Suggestion {value: "batmobile".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false, ..Default::default()},
     ///     ]);
     ///
     /// assert_eq!(
     ///     completions.complete("to the\r\nbat",11),
     ///     vec![
-    ///         Suggestion {value: "batcave".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false},
-    ///         Suggestion {value: "batman".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false},
-    ///         Suggestion {value: "batmobile".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false},
+    ///         Suggestion {value: "batcave".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false, ..Default::default()},
+    ///         Suggestion {value: "batman".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false, ..Default::default()},
+    ///         Suggestion {value: "batmobile".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false, ..Default::default()},
     ///     ]);
     /// ```
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
@@ -110,6 +110,7 @@ impl Completer for DefaultCompleter {
                                         extra: None,
                                         span,
                                         append_whitespace: false,
+                                        ..Default::default()
                                     }
                                 })
                                 .filter(|t| t.value.len() > (t.span.end - t.span.start))
@@ -182,15 +183,15 @@ impl DefaultCompleter {
     /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
     ///     completions.complete("te",2),
-    ///     vec![Suggestion {value: "test".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false}]);
+    ///     vec![Suggestion {value: "test".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false, ..Default::default()}]);
     ///
     /// let mut completions = DefaultCompleter::with_inclusions(&['-', '_']);
     /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
     ///     completions.complete("te",2),
     ///     vec![
-    ///         Suggestion {value: "test-hyphen".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false},
-    ///         Suggestion {value: "test_underscore".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false},
+    ///         Suggestion {value: "test-hyphen".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false, ..Default::default()},
+    ///         Suggestion {value: "test_underscore".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false, ..Default::default()},
     ///     ]);
     /// ```
     pub fn with_inclusions(incl: &[char]) -> Self {
@@ -384,6 +385,7 @@ mod tests {
                     extra: None,
                     span: Span { start: 0, end: 3 },
                     append_whitespace: false,
+                    ..Default::default()
                 },
                 Suggestion {
                     value: "ｎｕｍｂｅｒ".into(),
@@ -392,6 +394,7 @@ mod tests {
                     extra: None,
                     span: Span { start: 0, end: 3 },
                     append_whitespace: false,
+                    ..Default::default()
                 },
                 Suggestion {
                     value: "ｎｕｓｈｅｌｌ".into(),
@@ -400,6 +403,7 @@ mod tests {
                     extra: None,
                     span: Span { start: 0, end: 3 },
                     append_whitespace: false,
+                    ..Default::default()
                 },
             ]
         );
@@ -428,6 +432,7 @@ mod tests {
                     extra: None,
                     span: Span { start: 8, end: 9 },
                     append_whitespace: false,
+                    ..Default::default()
                 },
                 Suggestion {
                     value: "this is the reedline crate".into(),
@@ -436,6 +441,7 @@ mod tests {
                     extra: None,
                     span: Span { start: 8, end: 9 },
                     append_whitespace: false,
+                    ..Default::default()
                 },
                 Suggestion {
                     value: "this is the reedline crate".into(),
@@ -444,6 +450,7 @@ mod tests {
                     extra: None,
                     span: Span { start: 0, end: 9 },
                     append_whitespace: false,
+                    ..Default::default()
                 },
             ]
         );

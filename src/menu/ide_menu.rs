@@ -2,7 +2,8 @@ use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
-        can_partially_complete, completer_input, floor_char_boundary, replace_in_buffer,
+        can_partially_complete, completer_input, floor_char_boundary, get_match_indices,
+        replace_in_buffer, style_suggestion,
     },
     painting::Painter,
     Completer, Suggestion,
@@ -518,76 +519,49 @@ impl IdeMenu {
         };
 
         if use_ansi_coloring {
-            // strip quotes
+            // TODO(ysthakur): let the user strip quotes, rather than doing it here
             let is_quote = |c: char| "`'\"".contains(c);
             let shortest_base = &self.working_details.shortest_base_string;
             let shortest_base = shortest_base
                 .strip_prefix(is_quote)
                 .unwrap_or(shortest_base);
-            let match_len = shortest_base.chars().count().min(string.chars().count());
 
-            // Find match position - look for the base string in the suggestion (case-insensitive)
-            let match_position = string
-                .to_lowercase()
-                .find(&shortest_base.to_lowercase())
-                .unwrap_or(0);
+            let match_indices =
+                get_match_indices(&suggestion.value, &suggestion.match_indices, shortest_base);
 
-            // The match is just the part that matches the shortest_base
-            let match_str = {
-                let match_str = &string[match_position..];
-                let match_len_bytes = match_str
-                    .char_indices()
-                    .nth(match_len)
-                    .map(|(i, _)| i)
-                    .unwrap_or_else(|| match_str.len());
-                &string[match_position..match_position + match_len_bytes]
-            };
-
-            // Prefix is everything before the match
-            let prefix = &string[..match_position];
-
-            // Remaining is everything after the match
-            let remaining_str = &string[match_position + match_str.len()..];
-
-            let suggestion_style_prefix = suggestion
-                .style
-                .unwrap_or(self.settings.color.text_style)
-                .prefix();
+            let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
 
             if index == self.index() {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}",
                     vertical_border,
-                    suggestion_style_prefix,
-                    self.settings.color.selected_text_style.prefix(),
-                    prefix,
-                    RESET,
-                    suggestion_style_prefix,
+                    suggestion_style.prefix(),
                     " ".repeat(padding),
-                    self.settings.color.selected_match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    self.settings.color.selected_text_style.prefix(),
-                    remaining_str,
+                    style_suggestion(
+                        &self
+                            .settings
+                            .color
+                            .selected_text_style
+                            .paint(&string)
+                            .to_string(),
+                        &match_indices,
+                        &self.settings.color.selected_match_style,
+                    ),
                     " ".repeat(padding_right),
                     RESET,
                     vertical_border,
                 )
             } else {
                 format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}",
                     vertical_border,
-                    suggestion_style_prefix,
-                    prefix,
-                    RESET,
-                    suggestion_style_prefix,
+                    suggestion_style.prefix(),
                     " ".repeat(padding),
-                    self.settings.color.match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    remaining_str,
+                    style_suggestion(
+                        &suggestion_style.paint(&string).to_string(),
+                        &match_indices,
+                        &self.settings.color.match_style,
+                    ),
                     " ".repeat(padding_right),
                     RESET,
                     vertical_border,
@@ -1434,6 +1408,7 @@ mod tests {
             extra: None,
             span: Span { start: 0, end: pos },
             append_whitespace: false,
+            ..Default::default()
         }
     }
 
