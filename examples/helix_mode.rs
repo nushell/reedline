@@ -1,9 +1,9 @@
 // Helix mode end-to-end test suite
 //
 // This file contains comprehensive tests for Helix keybinding mode.
-// For interactive demos, see:
-//   - examples/hx_mode_tutorial.rs (with instructions)
-//   - examples/hx_mode_sandbox.rs (minimal)
+// For interactive demos, see examples/hx_mode_tutorial.rs:
+//   - Guided: cargo run --example hx_mode_tutorial
+//   - Sandbox: cargo run --example hx_mode_tutorial -- --sandbox
 //
 // Run tests:
 // cargo test --example helix_mode
@@ -12,7 +12,7 @@ fn main() {
     eprintln!("This example is test-only.");
     eprintln!("Run the interactive demos instead:");
     eprintln!("  cargo run --example hx_mode_tutorial");
-    eprintln!("  cargo run --example hx_mode_sandbox");
+    eprintln!("  cargo run --example hx_mode_tutorial -- --sandbox");
     eprintln!();
     eprintln!("Or run the tests:");
     eprintln!("  cargo test --example helix_mode");

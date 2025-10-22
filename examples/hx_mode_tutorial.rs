@@ -1,13 +1,33 @@
-// Interactive tutorial for Helix keybinding mode
-// cargo run --example hx_mode_tutorial
+// Helix mode interactive tutorial & sandbox
+// Guided: cargo run --example hx_mode_tutorial
+// Sandbox: cargo run --example hx_mode_tutorial -- --sandbox
 
 use reedline::{
     Helix, Prompt, PromptEditMode, PromptHelixMode, PromptHistorySearch, Reedline, Signal,
 };
 use std::borrow::Cow;
+use std::env;
 use std::io;
 
-struct HelixPrompt;
+#[derive(Clone, Copy)]
+enum PromptStyle {
+    Tutorial,
+    Minimal,
+}
+
+struct HelixPrompt {
+    style: PromptStyle,
+}
+
+impl HelixPrompt {
+    fn new(style: PromptStyle) -> Self {
+        Self { style }
+    }
+
+    fn set_style(&mut self, style: PromptStyle) {
+        self.style = style;
+    }
+}
 
 impl Prompt for HelixPrompt {
     fn render_prompt_left(&self) -> Cow<'_, str> {
@@ -19,11 +39,22 @@ impl Prompt for HelixPrompt {
     }
 
     fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<'_, str> {
-        match edit_mode {
-            PromptEditMode::Helix(helix_mode) => match helix_mode {
+        match (self.style, edit_mode) {
+            (
+                PromptStyle::Tutorial,
+                PromptEditMode::Helix(helix_mode),
+            ) => match helix_mode {
                 PromptHelixMode::Normal => Cow::Borrowed("[ NORMAL ] 〉"),
                 PromptHelixMode::Insert => Cow::Borrowed("[ INSERT ] : "),
                 PromptHelixMode::Select => Cow::Borrowed("[ SELECT ] » "),
+            },
+            (
+                PromptStyle::Minimal,
+                PromptEditMode::Helix(helix_mode),
+            ) => match helix_mode {
+                PromptHelixMode::Normal => Cow::Borrowed("〉"),
+                PromptHelixMode::Insert => Cow::Borrowed(": "),
+                PromptHelixMode::Select => Cow::Borrowed("» "),
             },
             _ => Cow::Borrowed("> "),
         }
@@ -76,7 +107,8 @@ impl TutorialGuide {
             println!("  • Submitted with Enter\n");
             println!("Perfect! Final result: {}\n", buffer);
             println!("You now understand the fundamentals of Helix mode!");
-            println!("Try the sandbox to experiment: cargo run --example hx_mode_sandbox\n");
+            println!("Stay in this session to experiment freely.");
+            println!("Prompt will switch to sandbox mode (〉/:/» indicators).\n");
             self.completed = true;
             return true;
         }
@@ -102,39 +134,80 @@ impl TutorialGuide {
 }
 
 fn main() -> io::Result<()> {
-    println!("Helix Mode Interactive Tutorial");
-    println!("================================\n");
-    println!("Welcome! Complete the full workflow in a single editing session.");
-    println!("You'll transform 'hello world' into 'hello universe'.\n");
+    let sandbox_requested = env::args().skip(1).any(|arg| arg == "--sandbox");
 
-    println!("Quick reference:");
-    println!("  Modes: NORMAL (commands) ⟷ INSERT (typing)");
-    println!("  Exit: Ctrl+C or Ctrl+D at any time\n");
+    if sandbox_requested {
+        println!("Helix Mode Sandbox");
+        println!("==================");
+        println!("Prompt: 〉(normal)  :(insert)  »(select)");
+        println!("Exit: Ctrl+C or Ctrl+D\n");
+    } else {
+        println!("Helix Mode Interactive Tutorial");
+        println!("================================\n");
+        println!("Welcome! Complete the full workflow in a single editing session.");
+        println!("You'll transform 'hello world' into 'hello universe'.\n");
+
+        println!("Quick reference:");
+        println!("  Modes: NORMAL (commands) ⟷ INSERT (typing)");
+        println!("  Exit: Ctrl+C or Ctrl+D at any time\n");
+    }
 
     let helix = Helix::default();
     let mut line_editor = Reedline::create().with_edit_mode(Box::new(helix));
-    let prompt = HelixPrompt;
-    let mut guide = TutorialGuide::new();
+    let mut prompt = HelixPrompt::new(if sandbox_requested {
+        PromptStyle::Minimal
+    } else {
+        PromptStyle::Tutorial
+    });
+    let mut guide = if sandbox_requested {
+        None
+    } else {
+        Some(TutorialGuide::new())
+    };
+    let mut sandbox_active = sandbox_requested;
+    let mut tutorial_completed = false;
 
     // Show instructions
-    guide.print_instructions();
+    if let Some(guide_ref) = guide.as_ref() {
+        guide_ref.print_instructions();
+    }
 
     loop {
         let sig = line_editor.read_line(&prompt)?;
 
         match sig {
             Signal::Success(buffer) => {
-                let success = guide.check_submission(&buffer);
+                let mut needs_retry_message = false;
+                let mut completed_now = false;
 
-                if guide.completed {
-                    break Ok(());
-                } else if !success {
+                if let Some(guide_ref) = guide.as_mut() {
+                    let success = guide_ref.check_submission(&buffer);
+
+                    if guide_ref.completed {
+                        tutorial_completed = true;
+                        completed_now = true;
+                    } else if !success {
+                        needs_retry_message = true;
+                    }
+                }
+
+                if completed_now {
+                    println!("Continue experimenting below or exit with Ctrl+C/D when finished.\n");
+                    prompt.set_style(PromptStyle::Minimal);
+                    guide = None;
+                    sandbox_active = true;
+                    continue;
+                }
+
+                if needs_retry_message {
                     println!("Not quite right. Expected 'hello universe' (without 'world').");
                     println!("Try again on the next prompt!\n");
+                } else if sandbox_active {
+                    println!("{buffer}");
                 }
             }
             Signal::CtrlD | Signal::CtrlC => {
-                if guide.completed {
+                if tutorial_completed || sandbox_active {
                     println!("\nGoodbye! 👋");
                 } else {
                     println!("\nTutorial interrupted. Run again to try once more!");
