@@ -32,30 +32,39 @@ We follow the standard rust formatting style and conventions suggested by [clipp
 
 ### To make the CI gods happy
 
-Before submitting a PR make sure to run:
+> The commands below reflect what CI runs. Not all flags are always necessary for local development (e.g. feel free to omit `--all-features` or `--all-targets` during iteration), but running these exact commands before opening a PR ensures you match CI behavior.
 
-- for formatting
+Before opening a PR, run these locally:
+
+- Format:
 
   ```shell
   cargo fmt --all
   ```
 
-- the clippy lints (with warnings treated as errors)
+  > `--all` formats all packages in the workspace.
+
+- Lint (Clippy):
 
   ```shell
-  cargo clippy --all-targets --all -- -D warnings
+  cargo clippy --locked --all-targets --all-features
   ```
 
-- the test suite
+  > `--all-targets` checks lib, bins, tests, examples, and benches. 
+  > 
+  > `--all-features` enables all optional features. 
+  >
+  > `--locked` ensures `Cargo.lock` is in sync with `Cargo.toml`.
+  
+  > Note: CI treats Clippy warnings as errors.
+
+
+
+- Tests:
+
+> CI uses [cargo-nextest](https://nexte.st/) for its test runner. See the [installation instructions](https://nexte.st/docs/installation/pre-built-binaries/).
 
   ```shell
-  cargo test --all
+  cargo nextest run --all --all-features
   ```
 
-- the lockfile check
-
-  ```shell
-  cargo check --locked --all-targets --all
-  ```
-
-Note: CI runs these checks across multiple feature combinations (`bashisms`, `sqlite`, `external_printer`, etc.), so you may want to test with the features relevant to your changes using the `--features` flag.
