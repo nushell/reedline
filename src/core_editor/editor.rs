@@ -64,8 +64,14 @@ impl Editor {
             EditCommand::MoveRight { select } => self.move_right(*select),
             EditCommand::MoveWordLeft { select } => self.move_word_left(*select),
             EditCommand::MoveBigWordLeft { select } => self.move_big_word_left(*select),
+            EditCommand::MoveWordLeftWithWhitespace { select } => {
+                self.move_word_left_with_whitespace(*select)
+            }
+            EditCommand::HelixWordLeft => self.helix_word_left(),
             EditCommand::MoveWordRight { select } => self.move_word_right(*select),
             EditCommand::MoveWordRightStart { select } => self.move_word_right_start(*select),
+            EditCommand::MoveWordRightGap { select } => self.move_word_right_gap(*select),
+            EditCommand::HelixWordRightGap => self.helix_word_right_gap(),
             EditCommand::MoveBigWordRightStart { select } => {
                 self.move_big_word_right_start(*select)
             }
@@ -122,6 +128,7 @@ impl Editor {
             EditCommand::MoveLeftBefore { c, select } => {
                 self.move_left_until_char(*c, true, true, *select)
             }
+            EditCommand::ClearSelection => self.clear_selection(),
             EditCommand::SelectAll => self.select_all(),
             EditCommand::CutSelection => self.cut_selection_to_cut_buffer(),
             EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
@@ -665,12 +672,59 @@ impl Editor {
         self.move_to_position(self.line_buffer.big_word_left_index(), select);
     }
 
+    fn move_word_left_with_whitespace(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.word_left_index_with_whitespace(), select);
+    }
+
+    fn helix_word_left(&mut self) {
+        let anchor = self.selection_anchor;
+        let insertion = self.insertion_point();
+
+        if let Some(anchor_pos) = anchor {
+            if anchor_pos <= insertion {
+                self.selection_anchor = Some(insertion);
+                let new_pos = self.line_buffer.word_left_index();
+                self.line_buffer.set_insertion_point(new_pos);
+                return;
+            }
+        }
+
+        self.move_word_left(false);
+        self.move_word_right_gap(true);
+        self.swap_cursor_and_anchor();
+    }
+
+    fn helix_word_right_gap(&mut self) {
+        if let Some(anchor_pos) = self.selection_anchor {
+            let insertion = self.insertion_point();
+            if anchor_pos > insertion {
+                self.selection_anchor = Some(insertion);
+                self.line_buffer.set_insertion_point(anchor_pos);
+            } else if anchor_pos < insertion {
+                // Selection extends to the right; move anchor past the gap so repeated `w`
+                // drops the previously selected word before extending again.
+                let next_start = self
+                    .line_buffer
+                    .word_right_start_index()
+                    .max(insertion);
+                self.selection_anchor = Some(next_start);
+                self.line_buffer.set_insertion_point(next_start);
+            }
+        }
+
+        self.move_word_right_gap(true);
+    }
+
     fn move_word_right(&mut self, select: bool) {
         self.move_to_position(self.line_buffer.word_right_index(), select);
     }
 
     fn move_word_right_start(&mut self, select: bool) {
         self.move_to_position(self.line_buffer.word_right_start_index(), select);
+    }
+
+    fn move_word_right_gap(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.word_right_gap_index(), select);
     }
 
     fn move_big_word_right_start(&mut self, select: bool) {
