@@ -12,15 +12,23 @@ use crossterm::{event, execute};
 /// * [dte text editor](https://gitlab.com/craigbarnes/dte/-/issues/138)
 ///
 /// Refer to <https://sw.kovidgoyal.net/kitty/keyboard-protocol/> if you're curious.
-#[derive(Default)]
 pub(crate) struct KittyProtocolGuard {
     enabled: bool,
     active: bool,
+    support_kitty_protocol: bool,
 }
 
 impl KittyProtocolGuard {
+    pub fn new() -> Self {
+        Self {
+            support_kitty_protocol: super::kitty_protocol_available(),
+            enabled: false,
+            active: false,
+        }
+    }
+
     pub fn set(&mut self, enable: bool) {
-        self.enabled = enable && super::kitty_protocol_available();
+        self.enabled = enable && self.support_kitty_protocol;
     }
     pub fn enter(&mut self) {
         if self.enabled && !self.active {
