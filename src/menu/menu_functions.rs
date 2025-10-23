@@ -75,7 +75,6 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
     let mut input = buffer.chars().peekable();
 
     let mut index = 0;
-    let mut action = ParseAction::ForwardSearch;
     while let Some(char) = input.next() {
         if char == marker {
             match input.peek() {
@@ -102,12 +101,15 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
                 Some(&x) if x.is_ascii_digit() || x == '-' => {
                     let mut count: usize = 0;
                     let mut size: usize = marker.len_utf8();
+                    let action = if x == '-' {
+                        size += 1;
+                        let _ = input.next();
+                        ParseAction::BackwardSearch
+                    } else {
+                        ParseAction::ForwardSearch
+                    };
                     while let Some(&c) = input.peek() {
-                        if c == '-' {
-                            let _ = input.next();
-                            size += 1;
-                            action = ParseAction::BackwardSearch;
-                        } else if c.is_ascii_digit() {
+                        if c.is_ascii_digit() {
                             let c = c.to_digit(10).expect("already checked if is a digit");
                             let _ = input.next();
                             count *= 10;
@@ -146,7 +148,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
                         remainder: &buffer[0..index],
                         index: Some(0),
                         marker: Some(&buffer[index..buffer.len()]),
-                        action,
+                        action: ParseAction::ForwardSearch,
                         prefix: Some(&buffer[index..buffer.len()]),
                     }
                 }
@@ -160,7 +162,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
         remainder: buffer,
         index: None,
         marker: None,
-        action,
+        action: ParseAction::ForwardSearch,
         prefix: None,
     }
 }
