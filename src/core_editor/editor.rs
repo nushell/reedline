@@ -64,9 +64,6 @@ impl Editor {
             EditCommand::MoveRight { select } => self.move_right(*select),
             EditCommand::MoveWordLeft { select } => self.move_word_left(*select),
             EditCommand::MoveBigWordLeft { select } => self.move_big_word_left(*select),
-            EditCommand::MoveWordLeftWithWhitespace { select } => {
-                self.move_word_left_with_whitespace(*select)
-            }
             EditCommand::HelixWordLeft => self.helix_word_left(),
             EditCommand::MoveWordRight { select } => self.move_word_right(*select),
             EditCommand::MoveWordRightStart { select } => self.move_word_right_start(*select),
@@ -672,21 +669,9 @@ impl Editor {
         self.move_to_position(self.line_buffer.big_word_left_index(), select);
     }
 
-    fn move_word_left_with_whitespace(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.word_left_index_with_whitespace(), select);
-    }
-
     fn helix_word_left(&mut self) {
-        let anchor = self.selection_anchor;
-        let insertion = self.insertion_point();
-
-        if let Some(anchor_pos) = anchor {
-            if anchor_pos <= insertion {
-                self.selection_anchor = Some(insertion);
-                let new_pos = self.line_buffer.word_left_index();
-                self.line_buffer.set_insertion_point(new_pos);
-                return;
-            }
+        if self.helix_prepare_backward_selection() {
+            return;
         }
 
         self.move_word_left(false);
@@ -695,24 +680,45 @@ impl Editor {
     }
 
     fn helix_word_right_gap(&mut self) {
+        self.helix_prepare_forward_selection();
+
+        self.move_word_right_gap(true);
+    }
+
+    /// When selections extend to the right, Helix expects a backward motion to keep the
+    /// highlight anchored on the word that was just traversed. This helper snaps the anchor to
+    /// the cursor and moves the insertion point back to the previous word start. Returns `true`
+    /// when the helper has fully handled the motion so no additional selection reshaping is
+    /// required by the caller.
+    fn helix_prepare_backward_selection(&mut self) -> bool {
+        if let Some(anchor_pos) = self.selection_anchor {
+            let insertion = self.insertion_point();
+
+            if anchor_pos <= insertion {
+                self.selection_anchor = Some(insertion);
+                let new_pos = self.line_buffer.word_left_index();
+                self.line_buffer.set_insertion_point(new_pos);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Normalizes the selection before a forward motion so that the anchor always sits on the
+    /// word boundary we are leaving. This matches Helix's expectation that repeated `w` presses
+    /// drop the previously selected word before extending to the next one.
+    fn helix_prepare_forward_selection(&mut self) {
         if let Some(anchor_pos) = self.selection_anchor {
             let insertion = self.insertion_point();
             if anchor_pos > insertion {
                 self.selection_anchor = Some(insertion);
                 self.line_buffer.set_insertion_point(anchor_pos);
             } else if anchor_pos < insertion {
-                // Selection extends to the right; move anchor past the gap so repeated `w`
-                // drops the previously selected word before extending again.
-                let next_start = self
-                    .line_buffer
-                    .word_right_start_index()
-                    .max(insertion);
+                let next_start = self.line_buffer.word_right_start_index().max(insertion);
                 self.selection_anchor = Some(next_start);
                 self.line_buffer.set_insertion_point(next_start);
             }
         }
-
-        self.move_word_right_gap(true);
     }
 
     fn move_word_right(&mut self, select: bool) {

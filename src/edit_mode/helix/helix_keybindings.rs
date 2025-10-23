@@ -82,23 +82,23 @@ pub fn default_helix_normal_keybindings() -> Keybindings {
         'l',
         EditCommand::MoveRight { select: true },
     );
-    add_normal_motion_binding(
-        &mut keybindings,
+    keybindings.add_binding(
         KeyModifiers::NONE,
-        'w',
-        EditCommand::MoveWordRightStart { select: true },
+        KeyCode::Char('w'),
+        ReedlineEvent::Edit(vec![EditCommand::HelixWordRightGap]),
     );
-    add_normal_motion_binding(
-        &mut keybindings,
+    keybindings.add_binding(
         KeyModifiers::NONE,
-        'b',
-        EditCommand::MoveWordLeft { select: true },
+        KeyCode::Char('b'),
+        ReedlineEvent::Edit(vec![EditCommand::HelixWordLeft]),
     );
-    add_normal_motion_binding(
-        &mut keybindings,
+    keybindings.add_binding(
         KeyModifiers::NONE,
-        'e',
-        EditCommand::MoveWordRightEnd { select: true },
+        KeyCode::Char('e'),
+        ReedlineEvent::Edit(vec![
+            EditCommand::ClearSelection,
+            EditCommand::MoveWordRightEnd { select: true },
+        ]),
     );
     add_normal_motion_binding(
         &mut keybindings,
@@ -106,17 +106,22 @@ pub fn default_helix_normal_keybindings() -> Keybindings {
         'w',
         EditCommand::MoveBigWordRightStart { select: true },
     );
-    add_normal_motion_binding(
-        &mut keybindings,
+    keybindings.add_binding(
         KeyModifiers::SHIFT,
-        'b',
-        EditCommand::MoveBigWordLeft { select: true },
+        KeyCode::Char('b'),
+        ReedlineEvent::Edit(vec![
+            EditCommand::MoveBigWordLeft { select: false },
+            EditCommand::MoveBigWordRightEnd { select: true },
+            EditCommand::SwapCursorAndAnchor,
+        ]),
     );
-    add_normal_motion_binding(
-        &mut keybindings,
+    keybindings.add_binding(
         KeyModifiers::SHIFT,
-        'e',
-        EditCommand::MoveBigWordRightEnd { select: true },
+        KeyCode::Char('e'),
+        ReedlineEvent::Edit(vec![
+            EditCommand::ClearSelection,
+            EditCommand::MoveBigWordRightEnd { select: true },
+        ]),
     );
     add_normal_motion_binding(
         &mut keybindings,

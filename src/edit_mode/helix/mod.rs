@@ -300,6 +300,7 @@ impl EditMode for Helix {
 mod test {
     use super::*;
     use pretty_assertions::assert_eq;
+    use proptest::prelude::*;
 
     fn make_key_event(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
         ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(code, modifiers))).unwrap()
@@ -498,11 +499,7 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-                EditCommand::MoveRight { select: false },
-                EditCommand::MoveWordRightStart { select: true }
-            ])
+            ReedlineEvent::Edit(vec![EditCommand::HelixWordRightGap])
         );
     }
 
@@ -515,11 +512,7 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-                EditCommand::MoveRight { select: false },
-                EditCommand::MoveWordLeft { select: true }
-            ])
+            ReedlineEvent::Edit(vec![EditCommand::HelixWordLeft])
         );
     }
 
@@ -533,8 +526,7 @@ mod test {
         assert_eq!(
             result,
             ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-                EditCommand::MoveRight { select: false },
+                EditCommand::ClearSelection,
                 EditCommand::MoveWordRightEnd { select: true }
             ])
         );
@@ -567,9 +559,9 @@ mod test {
         assert_eq!(
             result,
             ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-                EditCommand::MoveRight { select: false },
-                EditCommand::MoveBigWordLeft { select: true }
+                EditCommand::MoveBigWordLeft { select: false },
+                EditCommand::MoveBigWordRightEnd { select: true },
+                EditCommand::SwapCursorAndAnchor
             ])
         );
     }
@@ -584,8 +576,7 @@ mod test {
         assert_eq!(
             result,
             ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-                EditCommand::MoveRight { select: false },
+                EditCommand::ClearSelection,
                 EditCommand::MoveBigWordRightEnd { select: true }
             ])
         );
@@ -1066,5 +1057,812 @@ mod test {
         // get_selection returns (1, grapheme_right_from(2)) = (1, 3)
         assert_eq!(editor.insertion_point(), 1);
         assert_eq!(editor.get_selection(), Some((1, 3)));
+    }
+
+    #[test]
+    fn e_motion_highlights_full_word_from_start_test() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer(
+            "hello world".to_string(),
+            crate::UndoBehavior::CreateUndoPoint,
+        );
+        editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        let result = helix.parse_event(make_key_event(KeyCode::Char('e'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![
+                EditCommand::ClearSelection,
+                EditCommand::MoveWordRightEnd { select: true }
+            ])
+        );
+
+        if let ReedlineEvent::Edit(commands) = result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.get_selection(), Some((0, 5)));
+    }
+
+    #[test]
+    fn w_motion_lands_in_gap_between_words_test() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer(
+            "hello world".to_string(),
+            crate::UndoBehavior::CreateUndoPoint,
+        );
+        editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        let result = helix.parse_event(make_key_event(KeyCode::Char('w'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![EditCommand::HelixWordRightGap])
+        );
+
+        if let ReedlineEvent::Edit(commands) = result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        assert_eq!(editor.insertion_point(), 5);
+        assert_eq!(editor.get_selection(), Some((0, 6)));
+    }
+
+    #[test]
+    fn test_b_selection_from_end_detailed() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer(
+            "hello world".to_string(),
+            crate::UndoBehavior::CreateUndoPoint,
+        );
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        println!("\n=== Initial state ===");
+        println!("Buffer: '{}'", editor.get_buffer());
+        println!("Cursor: {}", editor.insertion_point());
+
+        // First 'b' from end
+        println!("\n=== First 'b' press (from position 11) ===");
+        let first_b = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
+        if let ReedlineEvent::Edit(commands) = first_b {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        println!("Cursor: {}", editor.insertion_point());
+        println!("Selection: {:?}", editor.get_selection());
+        if let Some((start, end)) = editor.get_selection() {
+            println!("Selected text: '{}'", &editor.get_buffer()[start..end]);
+        }
+
+        // Second 'b' from start of "world"
+        println!("\n=== Second 'b' press (from position 6, start of 'world') ===");
+        let second_b = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
+        if let ReedlineEvent::Edit(commands) = second_b {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        println!("Cursor: {}", editor.insertion_point());
+        println!("Selection: {:?}", editor.get_selection());
+        if let Some((start, end)) = editor.get_selection() {
+            println!("Selected text: '{}'", &editor.get_buffer()[start..end]);
+            println!("Expected: 'hello ' (hello + space)");
+
+            assert_eq!(editor.get_selection(), Some((0, 6)));
+        }
+    }
+
+    #[test]
+    fn repeated_b_motion_clears_previous_word_selection() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer(
+            "alpha beta gamma".to_string(),
+            crate::UndoBehavior::CreateUndoPoint,
+        );
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        // First `b`: expect to select the trailing word "gamma"
+        let first_b = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
+        if let ReedlineEvent::Edit(commands) = first_b {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        } else {
+            panic!("Expected ReedlineEvent::Edit for initial `b` motion");
+        }
+        assert_eq!(editor.get_selection(), Some((11, 16)));
+
+        // Second `b`: should clear the previous selection and select "beta " (including space)
+        let second_b = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
+        if let ReedlineEvent::Edit(commands) = second_b {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        } else {
+            panic!("Expected ReedlineEvent::Edit for second `b` motion");
+        }
+        assert_eq!(editor.get_selection(), Some((6, 11)));
+        assert_eq!(editor.insertion_point(), 6);
+    }
+
+    #[test]
+    fn select_mode_keeps_anchor_on_backward_motion() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer(
+            "alpha beta gamma".to_string(),
+            crate::UndoBehavior::CreateUndoPoint,
+        );
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        // Enter select mode with 'v'
+        let _ = helix.parse_event(make_key_event(KeyCode::Char('v'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
+        assert_eq!(helix.mode, HelixMode::Select);
+
+        // Perform first backward word motion in select mode
+        let first_b = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
+        if let ReedlineEvent::Edit(commands) = first_b {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        } else {
+            panic!("Expected ReedlineEvent::Edit for first `b` in select mode");
+        }
+        assert_eq!(editor.get_selection(), Some((11, 16)));
+
+        // Second `b` should extend the selection while keeping anchor at the buffer end
+        let second_b = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
+        if let ReedlineEvent::Edit(commands) = second_b {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        } else {
+            panic!("Expected ReedlineEvent::Edit for second `b` in select mode");
+        }
+        assert_eq!(editor.get_selection(), Some((6, 16)));
+    }
+
+    // Property-based tests using proptest to verify character search works correctly
+    // for arbitrary characters. Split into separate tests for each keybind.
+
+    proptest! {
+        /// Property: 'f' (find forward) should find the character and move cursor to it
+        /// Tests both command generation AND actual editor behavior
+        #[test]
+        fn property_f_find_forward_any_char(
+            search_char_str in "[a-zA-Z0-9 ]",  // ASCII alphanum and space only for reliable testing
+            prefix in "[a-z]{1,5}",  // Random prefix before the search char (at least 1 char)
+            suffix in "[a-z]{0,5}"   // Random suffix after the search char
+        ) {
+            use crate::core_editor::Editor;
+
+            // Convert string to char (regex generates a single-char string)
+            let search_char = search_char_str.chars().next().unwrap();
+
+            let mut helix = Helix::default();
+            prop_assert_eq!(helix.mode, HelixMode::Normal);
+
+            // Press 'f' to enter find mode
+            let f_result = helix.parse_event(make_key_event(KeyCode::Char('f'), KeyModifiers::NONE));
+            prop_assert_eq!(f_result, ReedlineEvent::None);
+            prop_assert_eq!(helix.pending_char_search, Some(PendingCharSearch::Find));
+
+            // Press the search character
+            let char_result = helix.parse_event(make_key_event(KeyCode::Char(search_char), KeyModifiers::NONE));
+            prop_assert_eq!(
+                char_result,
+                ReedlineEvent::Edit(vec![EditCommand::MoveRightUntil { c: search_char, select: true }])
+            );
+            prop_assert_eq!(helix.pending_char_search, None);
+
+            // PROPERTY-BASED ASSERTION: Test actual editor behavior
+            // Create a buffer with the search character in it
+            let buffer_content = format!("{}{}{}", prefix, search_char, suffix);
+
+            // MoveRightUntil searches for the character AFTER the current cursor position
+            // We need to work with character indices (not byte indices) for Unicode safety
+            let chars: Vec<char> = buffer_content.chars().collect();
+
+            // Skip test if buffer is empty or too short
+            prop_assume!(chars.len() >= 2);
+
+            // For this test, we need the search char to appear AFTER position 0
+            // So we skip if the search character is at position 0
+            let start_char_idx = 0;
+
+            // Find the first occurrence of search_char AFTER the starting character index
+            let expected_char_idx = chars.iter()
+                .skip(start_char_idx + 1)
+                .position(|&c| c == search_char)
+                .map(|pos| start_char_idx + 1 + pos);
+
+            // Only test if the character exists after the starting cursor position
+            if let Some(expected_idx) = expected_char_idx {
+                let mut editor = Editor::default();
+                editor.set_buffer(buffer_content.clone(), crate::UndoBehavior::CreateUndoPoint);
+                editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+                editor.set_edit_mode(helix.edit_mode());
+
+                // Execute the find command
+                let find_command = EditCommand::MoveRightUntil { c: search_char, select: true };
+                editor.run_edit_command(&find_command);
+
+                // Convert character index to byte position for comparison with editor
+                let expected_byte_pos = chars.iter().take(expected_idx).map(|c| c.len_utf8()).sum::<usize>();
+
+                // PROPERTY: The cursor should move to the first occurrence of the search character
+                // AFTER the current cursor position (not including the position we're at)
+                prop_assert_eq!(
+                    editor.insertion_point(),
+                    expected_byte_pos,
+                    "Cursor should move to byte position {} (character {} '{}' in buffer '{}')",
+                    expected_byte_pos,
+                    expected_idx,
+                    search_char,
+                    buffer_content
+                );
+
+                // Additional property: The selection should exist and include the found character
+                let selection = editor.get_selection();
+                prop_assert!(
+                    selection.is_some(),
+                    "Selection should exist after find command"
+                );
+
+                // Property: The selection should start at the initial cursor position
+                if let Some((sel_start, _sel_end)) = selection {
+                    prop_assert_eq!(sel_start, 0, "Selection should start at the initial cursor position (byte 0)");
+                }
+            }
+        }
+
+        /// Property: 't' (till forward) should produce MoveRightBefore for any valid character
+        #[test]
+        fn property_t_till_forward_any_char(
+            search_char in any::<char>().prop_filter("Valid printable chars", |c| c.is_alphanumeric() || c.is_whitespace())
+        ) {
+            let mut helix = Helix::default();
+            prop_assert_eq!(helix.mode, HelixMode::Normal);
+
+            // Press 't' to enter till mode
+            let t_result = helix.parse_event(make_key_event(KeyCode::Char('t'), KeyModifiers::NONE));
+            prop_assert_eq!(t_result, ReedlineEvent::None);
+            prop_assert_eq!(helix.pending_char_search, Some(PendingCharSearch::Till));
+
+            // Press the search character
+            let char_result = helix.parse_event(make_key_event(KeyCode::Char(search_char), KeyModifiers::NONE));
+            prop_assert_eq!(
+                char_result,
+                ReedlineEvent::Edit(vec![EditCommand::MoveRightBefore { c: search_char, select: true }])
+            );
+            prop_assert_eq!(helix.pending_char_search, None);
+        }
+
+        /// Property: 'F' (find backward) should produce MoveLeftUntil for any valid character
+        #[test]
+        fn property_shift_f_find_backward_any_char(
+            search_char in any::<char>().prop_filter("Valid printable chars", |c| c.is_alphanumeric() || c.is_whitespace())
+        ) {
+            let mut helix = Helix::default();
+            prop_assert_eq!(helix.mode, HelixMode::Normal);
+
+            // Press 'F' (shift+f) to enter find backward mode
+            let f_back_result = helix.parse_event(make_key_event(KeyCode::Char('f'), KeyModifiers::SHIFT));
+            prop_assert_eq!(f_back_result, ReedlineEvent::None);
+            prop_assert_eq!(helix.pending_char_search, Some(PendingCharSearch::FindBack));
+
+            // Press the search character
+            let char_result = helix.parse_event(make_key_event(KeyCode::Char(search_char), KeyModifiers::NONE));
+            prop_assert_eq!(
+                char_result,
+                ReedlineEvent::Edit(vec![EditCommand::MoveLeftUntil { c: search_char, select: true }])
+            );
+            prop_assert_eq!(helix.pending_char_search, None);
+        }
+
+        /// Property: 'T' (till backward) should produce MoveLeftBefore for any valid character
+        #[test]
+        fn property_shift_t_till_backward_any_char(
+            search_char in any::<char>().prop_filter("Valid printable chars", |c| c.is_alphanumeric() || c.is_whitespace())
+        ) {
+            let mut helix = Helix::default();
+            prop_assert_eq!(helix.mode, HelixMode::Normal);
+
+            // Press 'T' (shift+t) to enter till backward mode
+            let t_back_result = helix.parse_event(make_key_event(KeyCode::Char('t'), KeyModifiers::SHIFT));
+            prop_assert_eq!(t_back_result, ReedlineEvent::None);
+            prop_assert_eq!(helix.pending_char_search, Some(PendingCharSearch::TillBack));
+
+            // Press the search character
+            let char_result = helix.parse_event(make_key_event(KeyCode::Char(search_char), KeyModifiers::NONE));
+            prop_assert_eq!(
+                char_result,
+                ReedlineEvent::Edit(vec![EditCommand::MoveLeftBefore { c: search_char, select: true }])
+            );
+            prop_assert_eq!(helix.pending_char_search, None);
+        }
+
+        /// Property: 'w' (word forward) should move cursor forward by words
+        /// Tests that word movement respects word boundaries (alphanumeric vs whitespace/punctuation)
+        #[test]
+        fn property_w_word_forward_movement(
+            word1 in "[a-z]{1,5}",        // First word (lowercase letters)
+            word2 in "[a-z]{1,5}",        // Second word
+            separator in "[ \t]{1,3}",    // Whitespace between words
+        ) {
+            use crate::core_editor::Editor;
+
+            let mut helix = Helix::default();
+            prop_assert_eq!(helix.mode, HelixMode::Normal);
+
+            // Create a buffer with two words separated by whitespace
+            let buffer_content = format!("{}{}{}", word1, separator, word2);
+
+            let mut editor = Editor::default();
+            editor.set_buffer(buffer_content.clone(), crate::UndoBehavior::CreateUndoPoint);
+            editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+            editor.set_edit_mode(helix.edit_mode());
+
+            // Press 'w' to move forward one word
+            let w_result = helix.parse_event(make_key_event(KeyCode::Char('w'), KeyModifiers::NONE));
+            prop_assert_eq!(
+                w_result,
+                ReedlineEvent::Edit(vec![EditCommand::HelixWordRightGap])
+            );
+
+            // Execute the command (recreate it to avoid move)
+            editor.run_edit_command(&EditCommand::HelixWordRightGap);
+
+            // PROPERTY 1: Cursor should have moved forward from the start
+            let actual_cursor_pos = editor.insertion_point();
+            prop_assert!(
+                actual_cursor_pos > 0,
+                "After 'w' from start, cursor should move forward from position 0 in buffer '{}'",
+                buffer_content
+            );
+
+            // PROPERTY 2: Cursor should have moved past word1
+            // The cursor should be at least past word1
+            let min_pos = word1.len();
+            prop_assert!(
+                actual_cursor_pos >= min_pos,
+                "After 'w', cursor at {} should be at least {} (past word1 '{}') for buffer '{}'",
+                actual_cursor_pos,
+                min_pos,
+                word1,
+                buffer_content
+            );
+
+            // PROPERTY 2b: Cursor should not exceed the buffer length
+            prop_assert!(
+                actual_cursor_pos <= buffer_content.len(),
+                "After 'w', cursor at {} should not exceed buffer length {} for buffer '{}'",
+                actual_cursor_pos,
+                buffer_content.len(),
+                buffer_content
+            );
+
+            // PROPERTY 3: A selection should exist after the movement
+            let selection = editor.get_selection();
+            prop_assert!(
+                selection.is_some(),
+                "Selection should exist after word movement"
+            );
+
+            // PROPERTY 4: Selection should start from the original cursor position (0)
+            if let Some((sel_start, sel_end)) = selection {
+                prop_assert_eq!(
+                    sel_start, 0,
+                    "Selection should start at position 0 (anchor preserved)"
+                );
+                prop_assert!(
+                    sel_end >= actual_cursor_pos,
+                    "Selection end ({}) should be at or after cursor at position {}",
+                    sel_end,
+                    actual_cursor_pos
+                );
+            }
+        }
+
+        /// Property: Multiple 'w' presses should traverse all words in a buffer
+        /// Tests that repeated word forward movements eventually reach the end
+        #[test]
+        fn property_w_multiple_movements_reach_end(
+            words in prop::collection::vec("[a-z]{1,5}", 2..=5),  // 2-5 words
+        ) {
+            use crate::core_editor::Editor;
+
+            let mut helix = Helix::default();
+
+            // Create buffer with words separated by single spaces
+            let buffer_content = words.join(" ");
+            let buffer_len = buffer_content.len();
+
+            // Skip if buffer is too short
+            prop_assume!(buffer_len > 0);
+
+            let mut editor = Editor::default();
+            editor.set_buffer(buffer_content.clone(), crate::UndoBehavior::CreateUndoPoint);
+            editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+            editor.set_edit_mode(helix.edit_mode());
+
+            let initial_pos = editor.insertion_point();
+
+            // Press 'w' enough times to definitely move through all words
+            // (words.len() + 1 should be more than enough)
+            for _ in 0..words.len() + 1 {
+                let w_result = helix.parse_event(make_key_event(KeyCode::Char('w'), KeyModifiers::NONE));
+                if let ReedlineEvent::Edit(commands) = w_result {
+                    for cmd in &commands {
+                        editor.run_edit_command(cmd);
+                    }
+                }
+            }
+
+            // PROPERTY: After enough 'w' presses, cursor should have moved from start
+            let final_pos = editor.insertion_point();
+            prop_assert!(
+                final_pos > initial_pos,
+                "After {} 'w' movements, cursor should move from position {} in buffer '{}' (words: {:?})",
+                words.len() + 1,
+                initial_pos,
+                buffer_content,
+                words
+            );
+
+            // PROPERTY: Cursor should not go past the end of the buffer
+            prop_assert!(
+                final_pos <= buffer_len,
+                "Cursor at position {} should not exceed buffer length {} for buffer '{}'",
+                final_pos,
+                buffer_len,
+                buffer_content
+            );
+        }
+
+        /// Property: 'b' (word backward) should move cursor backward by words
+        /// Tests backward word movement with various word and separator combinations
+        #[test]
+        fn property_b_word_backward_movement(
+            word1 in "[a-z]{1,5}",        // First word (lowercase letters)
+            word2 in "[a-z]{1,5}",        // Second word
+            separator in "[ \t]{1,3}",    // Whitespace between words
+        ) {
+            use crate::core_editor::Editor;
+
+            let mut helix = Helix::default();
+            prop_assert_eq!(helix.mode, HelixMode::Normal);
+
+            // Create a buffer with two words separated by whitespace
+            let buffer_content = format!("{}{}{}", word1, separator, word2);
+            let buffer_len = buffer_content.len();
+
+            let mut editor = Editor::default();
+            editor.set_buffer(buffer_content.clone(), crate::UndoBehavior::CreateUndoPoint);
+            // set_buffer positions cursor at end - this is our starting position for 'b'
+            let start_pos = editor.insertion_point();
+            editor.set_edit_mode(helix.edit_mode());
+
+            // Press 'b' to move backward one word
+            // Expected command sequence for 'b' in normal mode
+            let b_result = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
+        prop_assert_eq!(
+            b_result,
+            ReedlineEvent::Edit(vec![EditCommand::HelixWordLeft])
+        );
+
+        editor.run_edit_command(&EditCommand::HelixWordLeft);
+
+            // PROPERTY 1: Cursor should have moved backward from the end
+            let actual_cursor_pos = editor.insertion_point();
+            let word2_start = word1.len() + separator.len();
+            prop_assert!(
+                actual_cursor_pos < start_pos,
+                "After 'b' from end (pos {}), cursor should move backward to position {} in buffer '{}'",
+                start_pos,
+                actual_cursor_pos,
+                buffer_content
+            );
+
+            prop_assert_eq!(
+                actual_cursor_pos,
+                word2_start,
+                "Cursor should land at start of trailing word (index {}) for buffer '{}'",
+                word2_start,
+                buffer_content
+            );
+
+            // PROPERTY 2: Cursor should not be negative or exceed buffer length
+            prop_assert!(
+                actual_cursor_pos <= buffer_len,
+                "After 'b', cursor at {} should not exceed buffer length {} for buffer '{}'",
+                actual_cursor_pos,
+                buffer_len,
+                buffer_content
+            );
+
+            // PROPERTY 3: Selection exists and matches the trailing word exactly (no gap)
+            if let Some((sel_start, sel_end)) = editor.get_selection() {
+                prop_assert_eq!(
+                    sel_start,
+                    actual_cursor_pos,
+                    "Selection should begin at cursor position ({}) for buffer '{}'",
+                    actual_cursor_pos,
+                    buffer_content
+                );
+                prop_assert_eq!(
+                    sel_end,
+                    start_pos,
+                    "Selection should extend back to the original cursor position ({}) for buffer '{}'",
+                    start_pos,
+                    buffer_content
+                );
+
+                let selected_slice = &editor.get_buffer()[sel_start..sel_end];
+                prop_assert_eq!(
+                    selected_slice,
+                    word2.as_str(),
+                    "Selection after 'b' should match trailing word '{}', got '{}'",
+                    word2,
+                    selected_slice
+                );
+            } else {
+                prop_assert!(false, "Selection should exist after backward word movement");
+            }
+        }
+
+        /// Property: pressing 'e' then 'b' from the start highlights the first word
+        /// without pulling in the trailing separator. This mirrors tutorial Step 5/6.
+    #[test]
+    fn property_e_then_b_keeps_first_word_selection(
+        word1 in "[a-z]{1,5}",
+        word2 in "[a-z]{1,5}",
+        separator in "[ \t]{1,3}",
+    ) {
+            use crate::core_editor::Editor;
+
+            let mut helix = Helix::default();
+            prop_assert_eq!(helix.mode, HelixMode::Normal);
+
+            let buffer_content = format!("{}{}{}", word1, separator, word2);
+            let mut editor = Editor::default();
+            editor.set_buffer(buffer_content.clone(), crate::UndoBehavior::CreateUndoPoint);
+            editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+            editor.set_edit_mode(helix.edit_mode());
+
+            // Step 5: press 'e'
+            let e_event = helix.parse_event(make_key_event(KeyCode::Char('e'), KeyModifiers::NONE));
+            let e_commands = vec![
+                EditCommand::ClearSelection,
+                EditCommand::MoveWordRightEnd { select: true },
+            ];
+            prop_assert_eq!(
+                e_event,
+                ReedlineEvent::Edit(e_commands.clone())
+            );
+            for cmd in &e_commands {
+                editor.run_edit_command(cmd);
+            }
+
+            let (first_sel_start, first_sel_end) = editor
+                .get_selection()
+                .expect("Selection should exist after pressing 'e'");
+            prop_assert_eq!(first_sel_start, 0);
+            let first_slice = &editor.get_buffer()[first_sel_start..first_sel_end];
+            prop_assume!(first_slice == word1.as_str());
+
+            // Step 6: press 'b'
+            let b_event = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
+            prop_assert_eq!(
+                b_event,
+                ReedlineEvent::Edit(vec![EditCommand::HelixWordLeft])
+            );
+            editor.run_edit_command(&EditCommand::HelixWordLeft);
+
+            let (sel_start, sel_end) = editor
+                .get_selection()
+                .expect("Selection should persist after pressing 'b'");
+            prop_assert_eq!(sel_start, 0);
+            let selected_slice = &editor.get_buffer()[sel_start..sel_end];
+            prop_assert_eq!(selected_slice, word1.as_str());
+            prop_assert_eq!(editor.insertion_point(), 0);
+        }
+
+        /// Property: Multiple 'b' presses from end should traverse all words backward
+        /// Tests that repeated backward movements eventually reach the start
+        #[test]
+        fn property_b_multiple_movements_reach_start(
+            words in prop::collection::vec("[a-z]{1,5}", 2..=5),  // 2-5 words
+        ) {
+            use crate::core_editor::Editor;
+
+            let mut helix = Helix::default();
+
+            // Create buffer with words separated by single spaces
+            let buffer_content = words.join(" ");
+            let buffer_len = buffer_content.len();
+
+            // Skip if buffer is too short
+            prop_assume!(buffer_len > 0);
+
+            let mut editor = Editor::default();
+            editor.set_buffer(buffer_content.clone(), crate::UndoBehavior::CreateUndoPoint);
+            // Cursor starts at end after set_buffer
+            editor.set_edit_mode(helix.edit_mode());
+
+            let initial_pos = editor.insertion_point();
+
+            // Press 'b' enough times to traverse all words backward
+            // (words.len() + 1 should be more than enough)
+            for _ in 0..words.len() + 1 {
+                let b_result = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
+                if let ReedlineEvent::Edit(commands) = b_result {
+                    for cmd in &commands {
+                        editor.run_edit_command(cmd);
+                    }
+                }
+            }
+
+            // PROPERTY: After enough 'b' presses, cursor should have moved backward
+            let final_pos = editor.insertion_point();
+            prop_assert!(
+                final_pos < initial_pos,
+                "After {} 'b' movements, cursor should move backward from position {} to {} in buffer '{}' (words: {:?})",
+                words.len() + 1,
+                initial_pos,
+                final_pos,
+                buffer_content,
+                words
+            );
+
+            // PROPERTY: Cursor should not be negative
+            prop_assert!(
+                final_pos <= buffer_len,
+                "Cursor at position {} should not exceed buffer length {} for buffer '{}'",
+                final_pos,
+                buffer_len,
+                buffer_content
+            );
+
+            // PROPERTY: Cursor should be near the start after enough backward movements
+            // After enough 'b' presses, we should be at or near position 0
+            let first_word_len = words.first().map(|w| w.len()).unwrap_or(0);
+            prop_assert!(
+                final_pos <= first_word_len,
+                "After {} 'b' movements, cursor at {} should be in or before first word for buffer '{}' (words: {:?})",
+                words.len() + 1,
+                final_pos,
+                buffer_content,
+                words
+            );
+        }
+    }
+
+    #[test]
+    fn tutorial_step_6_and_7_workflow_test() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer(
+            "hello world".to_string(),
+            crate::UndoBehavior::CreateUndoPoint,
+        );
+        editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        // Simulate: After pressing 'e' from start (step 5), we should have "hello" selected
+        let e_result = helix.parse_event(make_key_event(KeyCode::Char('e'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
+        if let ReedlineEvent::Edit(commands) = e_result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+        if let Some((start, end)) = editor.get_selection() {
+            assert_eq!(
+                &editor.get_buffer()[start..end],
+                "hello",
+                "Step 5: pressing 'e' should select 'hello'"
+            );
+        } else {
+            panic!("Step 5 should result in an active selection");
+        }
+
+        // Step 6 (part 1): Press 'b' to return to the start of 'hello'
+        let b_event = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
+        if let ReedlineEvent::Edit(commands) = b_event {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+        if let Some((start, end)) = editor.get_selection() {
+            assert_eq!(
+                &editor.get_buffer()[start..end],
+                "hello",
+                "Step 6: 'b' should keep the selection focused on 'hello'"
+            );
+            assert_eq!(
+                editor.insertion_point(),
+                0,
+                "Step 6: cursor should return to start of 'hello'"
+            );
+        } else {
+            panic!("Step 6 'b' should maintain an active selection");
+        }
+
+        // Step 6 (part 2): Press first 'w' - this demonstrates the selection behavior
+        let first_w = helix.parse_event(make_key_event(KeyCode::Char('w'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
+        if let ReedlineEvent::Edit(commands) = first_w {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+        if let Some((start, end)) = editor.get_selection() {
+            assert_eq!(
+                &editor.get_buffer()[start..end],
+                "hello ",
+                "Step 6: first 'w' should extend the selection to include the trailing space"
+            );
+        } else {
+            panic!("Step 6 should maintain an active selection");
+        }
+
+        // Step 7: Press second 'w' - this should select 'world'
+        let second_w = helix.parse_event(make_key_event(KeyCode::Char('w'), KeyModifiers::NONE));
+        editor.set_edit_mode(helix.edit_mode());
+        if let ReedlineEvent::Edit(commands) = second_w {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        if let Some((start, end)) = editor.get_selection() {
+            // Verify that only 'world' remains selected
+            let selected_text = &editor.get_buffer()[start..end];
+            assert_eq!(
+                selected_text, "world",
+                "Step 7: second 'w' should deselect 'hello' and select only 'world'"
+            );
+        } else {
+            panic!("Step 7 should result in an active selection");
+        }
     }
 }
