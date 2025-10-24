@@ -2,7 +2,7 @@ use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
-use crate::prompt::{PromptEditMode, PromptViMode};
+use crate::prompt::{PromptEditMode, PromptHelixMode, PromptViMode};
 use crate::{core_editor::get_local_clipboard, EditCommand};
 use std::ops::{DerefMut, Range};
 
@@ -64,8 +64,11 @@ impl Editor {
             EditCommand::MoveRight { select } => self.move_right(*select),
             EditCommand::MoveWordLeft { select } => self.move_word_left(*select),
             EditCommand::MoveBigWordLeft { select } => self.move_big_word_left(*select),
+            EditCommand::HelixWordLeft => self.helix_word_left(),
             EditCommand::MoveWordRight { select } => self.move_word_right(*select),
             EditCommand::MoveWordRightStart { select } => self.move_word_right_start(*select),
+            EditCommand::MoveWordRightGap { select } => self.move_word_right_gap(*select),
+            EditCommand::HelixWordRightGap => self.helix_word_right_gap(),
             EditCommand::MoveBigWordRightStart { select } => {
                 self.move_big_word_right_start(*select)
             }
@@ -122,6 +125,7 @@ impl Editor {
             EditCommand::MoveLeftBefore { c, select } => {
                 self.move_left_until_char(*c, true, true, *select)
             }
+            EditCommand::ClearSelection => self.clear_selection(),
             EditCommand::SelectAll => self.select_all(),
             EditCommand::CutSelection => self.cut_selection_to_cut_buffer(),
             EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
@@ -604,6 +608,7 @@ impl Editor {
         let inclusive = matches!(
             self.selection_mode.as_ref().unwrap_or(&self.edit_mode),
             PromptEditMode::Vi(PromptViMode::Normal)
+                | PromptEditMode::Helix(PromptHelixMode::Normal | PromptHelixMode::Select)
         );
 
         let selection_is_from_left_to_right = selection_anchor < self.insertion_point();
@@ -664,12 +669,68 @@ impl Editor {
         self.move_to_position(self.line_buffer.big_word_left_index(), select);
     }
 
+    fn helix_word_left(&mut self) {
+        if self.helix_prepare_backward_selection() {
+            return;
+        }
+
+        self.move_word_left(false);
+        self.move_word_right_gap(true);
+        self.swap_cursor_and_anchor();
+    }
+
+    fn helix_word_right_gap(&mut self) {
+        self.helix_prepare_forward_selection();
+
+        self.move_word_right_gap(true);
+    }
+
+    /// When selections extend to the right, Helix expects a backward motion to keep the
+    /// highlight anchored on the word that was just traversed. This helper snaps the anchor to
+    /// the cursor and moves the insertion point back to the previous word start. Returns `true`
+    /// when the helper has fully handled the motion so no additional selection reshaping is
+    /// required by the caller.
+    fn helix_prepare_backward_selection(&mut self) -> bool {
+        if let Some(anchor_pos) = self.selection_anchor {
+            let insertion = self.insertion_point();
+
+            if anchor_pos <= insertion {
+                self.selection_anchor = Some(insertion);
+                let new_pos = self.line_buffer.word_left_index();
+                self.line_buffer.set_insertion_point(new_pos);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Normalizes the selection before a forward motion so that the anchor always sits on the
+    /// word boundary we are leaving. This matches Helix's expectation that repeated `w` presses
+    /// drop the previously selected word before extending to the next one.
+    fn helix_prepare_forward_selection(&mut self) {
+        if let Some(anchor_pos) = self.selection_anchor {
+            let insertion = self.insertion_point();
+            if anchor_pos > insertion {
+                self.selection_anchor = Some(insertion);
+                self.line_buffer.set_insertion_point(anchor_pos);
+            } else if anchor_pos < insertion {
+                let next_start = self.line_buffer.word_right_start_index().max(insertion);
+                self.selection_anchor = Some(next_start);
+                self.line_buffer.set_insertion_point(next_start);
+            }
+        }
+    }
+
     fn move_word_right(&mut self, select: bool) {
         self.move_to_position(self.line_buffer.word_right_index(), select);
     }
 
     fn move_word_right_start(&mut self, select: bool) {
         self.move_to_position(self.line_buffer.word_right_start_index(), select);
+    }
+
+    fn move_word_right_gap(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.word_right_gap_index(), select);
     }
 
     fn move_big_word_right_start(&mut self, select: bool) {

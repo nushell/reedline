@@ -120,6 +120,12 @@ pub enum EditCommand {
         select: bool,
     },
 
+    /// Move one word to the right, stopping in the whitespace gap before the next word
+    MoveWordRightGap {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
     /// Move one WORD to the right, stop at start of WORD
     MoveBigWordRightStart {
         /// Select the text between the current cursor position and destination
@@ -137,6 +143,16 @@ pub enum EditCommand {
         /// Select the text between the current cursor position and destination
         select: bool,
     },
+
+    /// Helix-specific backward word motion that preserves the existing word selection
+    /// when moving from the end of a word back to its start. Used to keep tutorial
+    /// selections anchored on the full word without capturing the trailing gap.
+    HelixWordLeft,
+
+    /// Helix-specific forward word motion that normalizes selection orientation before
+    /// stepping into the inter-word gap. Ensures motions like Step 6 highlight behave
+    /// consistently regardless of cursor/anchor ordering.
+    HelixWordRightGap,
 
     /// Move to position
     MoveToPosition {
@@ -299,6 +315,9 @@ pub enum EditCommand {
         select: bool,
     },
 
+    /// Clear any active selection while keeping the cursor in place
+    ClearSelection,
+
     /// Select whole input buffer
     SelectAll,
 
@@ -445,9 +464,14 @@ impl Display for EditCommand {
             EditCommand::MoveWordRightStart { .. } => {
                 write!(f, "MoveWordRightStart Optional[select: <bool>]")
             }
+            EditCommand::MoveWordRightGap { .. } => {
+                write!(f, "MoveWordRightGap Optional[select: <bool>]")
+            }
             EditCommand::MoveBigWordRightStart { .. } => {
                 write!(f, "MoveBigWordRightStart Optional[select: <bool>]")
             }
+            EditCommand::HelixWordLeft => write!(f, "HelixWordLeft"),
+            EditCommand::HelixWordRightGap => write!(f, "HelixWordRightGap"),
             EditCommand::MoveToPosition { .. } => {
                 write!(f, "MoveToPosition  Value: <int>, Optional[select: <bool>]")
             }
@@ -498,6 +522,7 @@ impl Display for EditCommand {
             EditCommand::MoveRightBefore { .. } => write!(f, "MoveRightBefore Value: <char>"),
             EditCommand::CutLeftUntil(_) => write!(f, "CutLeftUntil Value: <char>"),
             EditCommand::CutLeftBefore(_) => write!(f, "CutLeftBefore Value: <char>"),
+            EditCommand::ClearSelection => write!(f, "ClearSelection"),
             EditCommand::SelectAll => write!(f, "SelectAll"),
             EditCommand::CutSelection => write!(f, "CutSelection"),
             EditCommand::CopySelection => write!(f, "CopySelection"),
@@ -553,6 +578,7 @@ impl EditCommand {
             | EditCommand::MoveBigWordLeft { select, .. }
             | EditCommand::MoveWordRight { select, .. }
             | EditCommand::MoveWordRightStart { select, .. }
+            | EditCommand::MoveWordRightGap { select, .. }
             | EditCommand::MoveBigWordRightStart { select, .. }
             | EditCommand::MoveWordRightEnd { select, .. }
             | EditCommand::MoveBigWordRightEnd { select, .. }
@@ -562,6 +588,10 @@ impl EditCommand {
             | EditCommand::MoveLeftBefore { select, .. } => {
                 EditType::MoveCursor { select: *select }
             }
+            EditCommand::HelixWordLeft | EditCommand::HelixWordRightGap => {
+                EditType::MoveCursor { select: true }
+            }
+            EditCommand::ClearSelection => EditType::MoveCursor { select: false },
             EditCommand::SwapCursorAndAnchor => EditType::MoveCursor { select: true },
 
             EditCommand::SelectAll => EditType::MoveCursor { select: true },

@@ -1,4 +1,4 @@
-use crate::{CursorConfig, PromptEditMode, PromptViMode};
+use crate::{CursorConfig, PromptEditMode, PromptHelixMode, PromptViMode};
 
 use {
     super::utils::{coerce_crlf, line_width},
@@ -276,16 +276,32 @@ impl Painter {
 
         self.stdout.queue(RestorePosition)?;
 
-        if let Some(shapes) = cursor_config {
-            let shape = match &prompt_mode {
+        let mut shape = cursor_config
+            .as_ref()
+            .and_then(|shapes| match &prompt_mode {
                 PromptEditMode::Emacs => shapes.emacs,
                 PromptEditMode::Vi(PromptViMode::Insert) => shapes.vi_insert,
                 PromptEditMode::Vi(PromptViMode::Normal) => shapes.vi_normal,
+                PromptEditMode::Helix(PromptHelixMode::Insert) => shapes.helix_insert,
+                PromptEditMode::Helix(PromptHelixMode::Normal) => shapes.helix_normal,
+                PromptEditMode::Helix(PromptHelixMode::Select) => shapes.helix_select,
+                _ => None,
+            });
+
+        if shape.is_none() {
+            // Fall back to Helix's native cursor style when no explicit configuration is
+            // provided so the selection block stays visible for Normal/Select modes.
+            shape = match &prompt_mode {
+                PromptEditMode::Helix(PromptHelixMode::Normal)
+                | PromptEditMode::Helix(PromptHelixMode::Select) => {
+                    Some(cursor::SetCursorStyle::BlinkingBlock)
+                }
                 _ => None,
             };
-            if let Some(shape) = shape {
-                self.stdout.queue(shape)?;
-            }
+        }
+
+        if let Some(shape) = shape {
+            self.stdout.queue(shape)?;
         }
         self.stdout.queue(cursor::Show)?;
 

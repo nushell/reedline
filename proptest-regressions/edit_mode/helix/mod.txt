@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7bee4bd43ec0e73c8191caa9f40032eae4a69f794474eb58db2886e001799b55 # shrinks to search_char = 'b', prefix = "ab", suffix = ""
+cc 3b36b8909d0533a79ac9625a1c050babeaf1c81e688dbfe201bbdb5312dcb825 # shrinks to search_char = 'q', prefix = "q", suffix = ""
+cc 649014c43cce78973ab884c67bc9e0ef20bda3fb5d8b122cd97a767a699cb9f4 # shrinks to search_char = 'À', prefix = "", suffix = ""
+cc 5a3e8306b4eff29c4504023495e65e76cad84fdb5662110cffbfb99dd5da3108 # shrinks to word1 = "a", word2 = "aa", separator = " "
+cc f858c5a5b9236d63dd91fc811059b13c01551938b2c58d9415be418dcda6faf2 # shrinks to search_char = '\u{1abf}', prefix = "a", suffix = ""
