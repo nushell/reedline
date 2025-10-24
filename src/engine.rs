@@ -1183,7 +1183,7 @@ impl Reedline {
                     }
                 }
                 self.run_edit_commands(&[EditCommand::InsertChar(' ')]);
-                return Ok(EventStatus::Handled);
+                Ok(EventStatus::Handled)
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
                 self.suspended_state = Some(self.painter.state_before_suspension());
