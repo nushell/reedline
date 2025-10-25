@@ -829,7 +829,7 @@ mod tests {
 
         test_cases:
             partial_completes_prefix_with_backtick: ("F", "`Foo ba"),
-            partial_completes_case_insensitive: ("fo", "`Foo ba"),
+            partial_completes_case_insensitive: ("foo", "`Foo ba"),
     }
 
     struct FakeCompleter {
