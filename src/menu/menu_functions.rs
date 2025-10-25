@@ -173,30 +173,16 @@ pub fn find_common_string(values: &[Suggestion]) -> (Option<&Suggestion>, Option
 
     let index = first.and_then(|first| {
         values.iter().skip(1).fold(None, |index, suggestion| {
-            if suggestion.value.starts_with(&first.value) {
-                Some(first.value.len())
-            } else {
-                first
-                    .value
-                    .char_indices()
-                    .zip(suggestion.value.char_indices())
-                    .find(|((_, mut lhs), (_, mut rhs))| {
-                        lhs.make_ascii_lowercase();
-                        rhs.make_ascii_lowercase();
-
-                        lhs != rhs
-                    })
-                    .map(|((new_index, _), _)| match index {
-                        Some(index) => {
-                            if index <= new_index {
-                                index
-                            } else {
-                                new_index
-                            }
-                        }
-                        None => new_index,
-                    })
-            }
+            let new_index = first
+                .value
+                .char_indices()
+                .zip(suggestion.value.char_indices())
+                .find(|((_, lhs), (_, rhs))| !lhs.eq_ignore_ascii_case(rhs))
+                .map(|((idx, _), _)| idx)
+                .unwrap_or(first.value.len());
+            index
+                .map(|idx: usize| idx.min(new_index))
+                .or(Some(new_index))
         })
     });
 
