@@ -173,28 +173,28 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
 
 /// Finds index for the common string in a list of suggestions
 pub fn find_common_string(values: &[Suggestion]) -> Option<(&Suggestion, usize)> {
-    let first = values.iter().next()?;
-    let max_len = first.value.len();
+    let first_suggestion = values.first()?;
+    let max_len = first_suggestion.value.len();
 
     let index = values
         .iter()
         .skip(1)
-        .fold_while(max_len, |index, suggestion| {
-            let new_index = first
+        .fold_while(max_len, |cumulated_min, current_suggestion| {
+            let new_common_prefix_len = first_suggestion
                 .value
                 .char_indices()
-                .zip(suggestion.value.chars())
+                .zip(current_suggestion.value.chars())
                 .find(|((_, lhs), rhs)| rhs != lhs)
                 .map(|((idx, _), _)| idx)
                 .unwrap_or(max_len);
-            if new_index == 0 {
+            if new_common_prefix_len == 0 {
                 Done(0)
             } else {
-                Continue(index.min(new_index))
+                Continue(cumulated_min.min(new_common_prefix_len))
             }
         });
 
-    Some((first, index.into_inner()))
+    Some((first_suggestion, index.into_inner()))
 }
 
 /// Finds different string between two strings
