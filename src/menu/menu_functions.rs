@@ -746,6 +746,28 @@ mod tests {
         assert!(matches!(res, (Some(elem), Some(6)) if elem == &input[0]));
     }
 
+    #[test]
+    fn find_common_string_with_unsorted() {
+        use crate::Span;
+
+        // https://github.com/nushell/nushell/pull/16765#issuecomment-3384411809
+        let input: Vec<_> = ["a", "b", "ab"]
+            .into_iter()
+            .map(|s| Suggestion {
+                value: s.into(),
+                description: None,
+                style: None,
+                extra: None,
+                span: Span::new(0, s.len()),
+                append_whitespace: false,
+                ..Default::default()
+            })
+            .collect();
+        let (_, index) = find_common_string(&input);
+
+        assert!(index == Some(0));
+    }
+
     #[rstest]
     #[case("foobar", 6, None, false, "foobar", 6)]
     #[case("foo\r\nbar", 5, None, false, "foo\r\n", 5)]
