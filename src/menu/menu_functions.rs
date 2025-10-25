@@ -1,6 +1,10 @@
 //! Collection of common functions that can be used to create menus
 use std::borrow::Cow;
 
+use itertools::{
+    FoldWhile::{Continue, Done},
+    Itertools,
+};
 use nu_ansi_term::{ansi::RESET, Style};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -172,19 +176,25 @@ pub fn find_common_string(values: &[Suggestion]) -> Option<(&Suggestion, usize)>
     let first = values.iter().next()?;
     let max_len = first.value.len();
 
-    let index = values.iter().skip(1).fold(max_len, |index, suggestion| {
-        index.min(
-            first
+    let index = values
+        .iter()
+        .skip(1)
+        .fold_while(max_len, |index, suggestion| {
+            let new_index = first
                 .value
                 .char_indices()
                 .zip(suggestion.value.chars())
                 .find(|((_, lhs), rhs)| rhs != lhs)
                 .map(|((idx, _), _)| idx)
-                .unwrap_or(max_len),
-        )
-    });
+                .unwrap_or(max_len);
+            if new_index == 0 {
+                Done(0)
+            } else {
+                Continue(index.min(new_index))
+            }
+        });
 
-    Some((first, index))
+    Some((first, index.into_inner()))
 }
 
 /// Finds different string between two strings
