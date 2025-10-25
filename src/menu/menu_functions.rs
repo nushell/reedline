@@ -704,68 +704,22 @@ mod tests {
         assert_eq!(res, (1, "e"));
     }
 
-    #[test]
-    fn find_common_string_with_ansi() {
-        use crate::Span;
-
-        let input: Vec<_> = ["nushell", "null"]
+    #[rstest]
+    #[case::ascii(vec!["nushell", "null"], 2)]
+    #[case::non_ascii(vec!["ｎｕｓｈｅｌｌ", "ｎｕｌｌ"], 6)]
+    // https://github.com/nushell/nushell/pull/16765#issuecomment-3384411809
+    #[case::unsorted(vec!["a", "b", "ab"], 0)]
+    fn test_find_common_string(#[case] input: Vec<&str>, #[case] expected: usize) {
+        let input: Vec<_> = input
             .into_iter()
             .map(|s| Suggestion {
                 value: s.into(),
-                description: None,
-                style: None,
-                extra: None,
-                span: Span::new(0, s.len()),
-                append_whitespace: false,
                 ..Default::default()
             })
             .collect();
-        let res = find_common_string(&input);
+        let (_, len) = find_common_string(&input);
 
-        assert!(matches!(res, (Some(elem), Some(2)) if elem == &input[0]));
-    }
-
-    #[test]
-    fn find_common_string_with_non_ansi() {
-        use crate::Span;
-
-        let input: Vec<_> = ["ｎｕｓｈｅｌｌ", "ｎｕｌｌ"]
-            .into_iter()
-            .map(|s| Suggestion {
-                value: s.into(),
-                description: None,
-                style: None,
-                extra: None,
-                span: Span::new(0, s.len()),
-                append_whitespace: false,
-                ..Default::default()
-            })
-            .collect();
-        let res = find_common_string(&input);
-
-        assert!(matches!(res, (Some(elem), Some(6)) if elem == &input[0]));
-    }
-
-    #[test]
-    fn find_common_string_with_unsorted() {
-        use crate::Span;
-
-        // https://github.com/nushell/nushell/pull/16765#issuecomment-3384411809
-        let input: Vec<_> = ["a", "b", "ab"]
-            .into_iter()
-            .map(|s| Suggestion {
-                value: s.into(),
-                description: None,
-                style: None,
-                extra: None,
-                span: Span::new(0, s.len()),
-                append_whitespace: false,
-                ..Default::default()
-            })
-            .collect();
-        let (_, index) = find_common_string(&input);
-
-        assert!(index == Some(0));
+        assert!(len == Some(expected));
     }
 
     #[rstest]
@@ -811,11 +765,7 @@ mod tests {
         replace_in_buffer(
             Some(Suggestion {
                 value,
-                description: None,
-                style: None,
-                extra: None,
                 span: Span::new(start, end),
-                append_whitespace: false,
                 ..Default::default()
             }),
             &mut editor,
