@@ -601,16 +601,9 @@ impl Menu for IdeMenu {
 
     fn can_partially_complete(
         &mut self,
-        values_updated: bool,
         editor: &mut Editor,
         completer: &mut dyn Completer,
     ) -> bool {
-        // If the values were already updated (e.g. quick completions are true)
-        // there is no need to update the values from the menu
-        if !values_updated {
-            self.update_values(editor, completer);
-        }
-
         if can_partially_complete(self.get_values(), editor) {
             // The values need to be updated because the spans need to be
             // recalculated for accurate replacement in the string
@@ -1342,7 +1335,8 @@ mod tests {
                         editor.set_buffer(input.to_string(), UndoBehavior::CreateUndoPoint);
                         let mut completer = FakeCompleter::new(&$completions);
 
-                        menu.can_partially_complete(false, &mut editor, &mut completer);
+                        menu.update_values(&mut editor, &mut completer);
+                        menu.can_partially_complete(&mut editor, &mut completer);
 
                         assert_eq!(editor.get_buffer(), expected);
                     }
