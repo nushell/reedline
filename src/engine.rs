@@ -1050,6 +1050,7 @@ impl Reedline {
             | ReedlineEvent::MenuRight
             | ReedlineEvent::MenuPageNext
             | ReedlineEvent::MenuPagePrevious
+            | ReedlineEvent::PartialComplete
             | ReedlineEvent::ViChangeMode(_) => Ok(EventStatus::Inapplicable),
         }
     }
@@ -1060,6 +1061,22 @@ impl Reedline {
         event: ReedlineEvent,
     ) -> io::Result<EventStatus> {
         match event {
+            ReedlineEvent::PartialComplete => {
+                let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) else {
+                    return Ok(EventStatus::Inapplicable);
+                };
+                if self.partial_completions
+                    && menu.can_partially_complete(
+                        &mut self.editor,
+                        self.completer.as_mut(),
+                        self.history.as_ref(),
+                    )
+                {
+                    Ok(EventStatus::Handled)
+                } else {
+                    Ok(EventStatus::Inapplicable)
+                }
+            }
             ReedlineEvent::Menu(name) => {
                 if self.active_menu().is_none() {
                     if let Some(menu) = self.menus.iter_mut().find(|menu| menu.name() == name) {
@@ -1079,7 +1096,6 @@ impl Reedline {
 
                         if self.partial_completions
                             && menu.can_partially_complete(
-                                self.quick_completions,
                                 &mut self.editor,
                                 self.completer.as_mut(),
                                 self.history.as_ref(),
@@ -1093,26 +1109,17 @@ impl Reedline {
                 }
                 Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::MenuNext => {
-                if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
+            ReedlineEvent::MenuNext => match self.active_menu() {
+                None => Ok(EventStatus::Inapplicable),
+                Some(menu) => {
                     if menu.get_values().len() == 1 && menu.can_quick_complete() {
                         self.handle_editor_event(prompt, ReedlineEvent::Enter)
                     } else {
-                        if self.partial_completions {
-                            menu.can_partially_complete(
-                                self.quick_completions,
-                                &mut self.editor,
-                                self.completer.as_mut(),
-                                self.history.as_ref(),
-                            );
-                        }
                         menu.menu_event(MenuEvent::NextElement);
                         Ok(EventStatus::Handled)
                     }
-                } else {
-                    Ok(EventStatus::Inapplicable)
                 }
-            }
+            },
             ReedlineEvent::MenuPrevious => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
@@ -1304,7 +1311,6 @@ impl Reedline {
                                             .handle_editor_event(prompt, ReedlineEvent::Enter);
                                     } else if self.partial_completions
                                         && menu.can_partially_complete(
-                                            self.quick_completions,
                                             &mut self.editor,
                                             self.completer.as_mut(),
                                             self.history.as_ref(),
