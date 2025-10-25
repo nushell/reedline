@@ -168,25 +168,23 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
 }
 
 /// Finds index for the common string in a list of suggestions
-pub fn find_common_string(values: &[Suggestion]) -> (Option<&Suggestion>, Option<usize>) {
-    let first = values.iter().next();
+pub fn find_common_string(values: &[Suggestion]) -> Option<(&Suggestion, usize)> {
+    let first = values.iter().next()?;
+    let max_len = first.value.len();
 
-    let index = first.and_then(|first| {
-        values.iter().skip(1).fold(None, |index, suggestion| {
-            let new_index = first
+    let index = values.iter().skip(1).fold(max_len, |index, suggestion| {
+        index.min(
+            first
                 .value
                 .char_indices()
                 .zip(suggestion.value.chars())
                 .find(|((_, lhs), rhs)| !lhs.eq_ignore_ascii_case(rhs))
                 .map(|((idx, _), _)| idx)
-                .unwrap_or(first.value.len());
-            index
-                .map(|idx: usize| idx.min(new_index))
-                .or(Some(new_index))
-        })
+                .unwrap_or(max_len),
+        )
     });
 
-    (first, index)
+    Some((first, index))
 }
 
 /// Finds different string between two strings
@@ -331,8 +329,7 @@ pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
 
 /// Helper for `Menu::can_partially_complete`
 pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> bool {
-    if let (Some(Suggestion { value, span, .. }), Some(index)) = find_common_string(values) {
-        let index = index.min(value.len());
+    if let Some((Suggestion { value, span, .. }, index)) = find_common_string(values) {
         let matching = &value[0..index];
         let end = floor_char_boundary(editor.get_buffer(), span.end);
         let start = floor_char_boundary(editor.get_buffer(), span.start).min(end);
@@ -717,9 +714,9 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        let (_, len) = find_common_string(&input);
+        let (_, len) = find_common_string(&input).unwrap();
 
-        assert!(len == Some(expected));
+        assert!(len == expected);
     }
 
     #[rstest]
