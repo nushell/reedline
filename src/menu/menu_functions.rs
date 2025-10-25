@@ -176,8 +176,8 @@ pub fn find_common_string(values: &[Suggestion]) -> (Option<&Suggestion>, Option
             let new_index = first
                 .value
                 .char_indices()
-                .zip(suggestion.value.char_indices())
-                .find(|((_, lhs), (_, rhs))| !lhs.eq_ignore_ascii_case(rhs))
+                .zip(suggestion.value.chars())
+                .find(|((_, lhs), rhs)| !lhs.eq_ignore_ascii_case(rhs))
                 .map(|((idx, _), _)| idx)
                 .unwrap_or(first.value.len());
             index
