@@ -178,7 +178,7 @@ pub fn find_common_string(values: &[Suggestion]) -> Option<(&Suggestion, usize)>
                 .value
                 .char_indices()
                 .zip(suggestion.value.chars())
-                .find(|((_, lhs), rhs)| !lhs.eq_ignore_ascii_case(rhs))
+                .find(|((_, lhs), rhs)| rhs != lhs)
                 .map(|((idx, _), _)| idx)
                 .unwrap_or(max_len),
         )
@@ -335,8 +335,11 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
         let start = floor_char_boundary(editor.get_buffer(), span.start).min(end);
 
         // make sure that the partial completion does not overwrite user entered input
-        let extends_input = matching.starts_with(&editor.get_buffer()[start..end])
-            && matching != &editor.get_buffer()[start..end];
+        let entered_input = &editor.get_buffer()[start..end];
+        let extends_input = matching
+            .to_ascii_lowercase()
+            .contains(&entered_input.to_ascii_lowercase())
+            && matching != entered_input;
 
         if !matching.is_empty() && extends_input {
             let mut line_buffer = editor.line_buffer().clone();
@@ -706,6 +709,7 @@ mod tests {
     #[case::non_ascii(vec!["ｎｕｓｈｅｌｌ", "ｎｕｌｌ"], 6)]
     // https://github.com/nushell/nushell/pull/16765#issuecomment-3384411809
     #[case::unsorted(vec!["a", "b", "ab"], 0)]
+    #[case::should_be_case_sensitive(vec!["a", "A"], 0)]
     fn test_find_common_string(#[case] input: Vec<&str>, #[case] expected: usize) {
         let input: Vec<_> = input
             .into_iter()
