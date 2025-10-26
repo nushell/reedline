@@ -507,6 +507,7 @@ impl Menu for ColumnarMenu {
         if can_partially_complete(self.get_values(), editor) {
             // The values need to be updated because the spans need to be
             // recalculated for accurate replacement in the string
+            // TODO: recalculate the spans instead of calling the completer 1 more time
             self.update_values(editor, completer);
 
             true
