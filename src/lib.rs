@@ -194,7 +194,7 @@
 //! - Configurable prompt
 //! - Content-aware syntax highlighting.
 //! - Autocompletion (With graphical selection menu or simple cycling inline).
-//! - History with interactive search options (optionally persists to file, can support multilple sessions accessing the same file)
+//! - History with interactive search options (optionally persists to file, can support multiple sessions accessing the same file)
 //! - Fish-style history autosuggestion hints
 //! - Undo support.
 //! - Clipboard integration
@@ -231,7 +231,10 @@ pub use core_editor::Editor;
 pub use core_editor::LineBuffer;
 
 mod enums;
-pub use enums::{EditCommand, ReedlineEvent, ReedlineRawEvent, Signal, UndoBehavior};
+pub use enums::{
+    EditCommand, ReedlineEvent, ReedlineRawEvent, Signal, TextObject, TextObjectScope,
+    TextObjectType, UndoBehavior,
+};
 
 mod painting;
 pub use painting::{Painter, StyledText};
@@ -279,7 +282,7 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 mod menu;
 pub use menu::{
     menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, IdeMenu, ListMenu, Menu,
-    MenuBuilder, MenuEvent, MenuTextStyle, ReedlineMenu,
+    MenuBuilder, MenuEvent, MenuTextStyle, ReedlineMenu, TraversalDirection,
 };
 
 mod terminal_extensions;

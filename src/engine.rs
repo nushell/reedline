@@ -165,6 +165,9 @@ pub struct Reedline {
     // Manage optional kitty protocol
     kitty_protocol: KittyProtocolGuard,
 
+    // Whether lines should be accepted immediately
+    immediately_accept: bool,
+
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
 }
@@ -237,7 +240,8 @@ impl Reedline {
             buffer_editor: None,
             cursor_shapes: None,
             bracketed_paste: BracketedPasteGuard::default(),
-            kitty_protocol: KittyProtocolGuard::default(),
+            kitty_protocol: KittyProtocolGuard::new(),
+            immediately_accept: false,
             #[cfg(feature = "external_printer")]
             external_printer: None,
         }
@@ -545,6 +549,12 @@ impl Reedline {
         self
     }
 
+    /// A builder that configures whether reedline should immediately accept the input.
+    pub fn with_immediately_accept(mut self, immediately_accept: bool) -> Self {
+        self.immediately_accept = immediately_accept;
+        self
+    }
+
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
         self.edit_mode.edit_mode()
@@ -734,29 +744,31 @@ impl Reedline {
 
             let mut events: Vec<Event> = vec![];
 
-            // If the `external_printer` feature is enabled, we need to
-            // periodically yield so that external printers get a chance to
-            // print. Otherwise, we can just block until we receive an event.
-            #[cfg(feature = "external_printer")]
-            if event::poll(EXTERNAL_PRINTER_WAIT)? {
-                events.push(crossterm::event::read()?);
-            }
-            #[cfg(not(feature = "external_printer"))]
-            events.push(crossterm::event::read()?);
-
-            // Receive all events in the queue without blocking. Will stop when
-            // a line of input is completed.
-            while !completed(&events) && event::poll(Duration::from_millis(0))? {
-                events.push(crossterm::event::read()?);
-            }
-
-            // If we believe there's text pasting or resizing going on, batch
-            // more events at the cost of a slight delay.
-            if events.len() > EVENTS_THRESHOLD
-                || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
-            {
-                while !completed(&events) && event::poll(POLL_WAIT)? {
+            if !self.immediately_accept {
+                // If the `external_printer` feature is enabled, we need to
+                // periodically yield so that external printers get a chance to
+                // print. Otherwise, we can just block until we receive an event.
+                #[cfg(feature = "external_printer")]
+                if event::poll(EXTERNAL_PRINTER_WAIT)? {
                     events.push(crossterm::event::read()?);
+                }
+                #[cfg(not(feature = "external_printer"))]
+                events.push(crossterm::event::read()?);
+
+                // Receive all events in the queue without blocking. Will stop when
+                // a line of input is completed.
+                while !completed(&events) && event::poll(Duration::from_millis(0))? {
+                    events.push(crossterm::event::read()?);
+                }
+
+                // If we believe there's text pasting or resizing going on, batch
+                // more events at the cost of a slight delay.
+                if events.len() > EVENTS_THRESHOLD
+                    || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
+                {
+                    while !completed(&events) && event::poll(POLL_WAIT)? {
+                        events.push(crossterm::event::read()?);
+                    }
                 }
             }
 
@@ -786,6 +798,9 @@ impl Reedline {
             }
             if let Some((x, y)) = resize {
                 reedline_events.push(ReedlineEvent::Resize(x, y));
+            }
+            if self.immediately_accept {
+                reedline_events.push(ReedlineEvent::Submit);
             }
 
             // Handle reedline events.
@@ -928,7 +943,8 @@ impl Reedline {
             | ReedlineEvent::MenuLeft
             | ReedlineEvent::MenuRight
             | ReedlineEvent::MenuPageNext
-            | ReedlineEvent::MenuPagePrevious => Ok(EventStatus::Inapplicable),
+            | ReedlineEvent::MenuPagePrevious
+            | ReedlineEvent::ViChangeMode(_) => Ok(EventStatus::Inapplicable),
         }
     }
 
@@ -1070,7 +1086,7 @@ impl Reedline {
             }
             ReedlineEvent::Esc => {
                 self.deactivate_menus();
-                self.editor.reset_selection();
+                self.editor.clear_selection();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::CtrlD => {
@@ -1273,6 +1289,7 @@ impl Reedline {
                 // Exhausting the event handlers is still considered handled
                 Ok(EventStatus::Inapplicable)
             }
+            ReedlineEvent::ViChangeMode(_) => Ok(self.edit_mode.handle_mode_specific_event(event)),
             ReedlineEvent::None | ReedlineEvent::Mouse => Ok(EventStatus::Inapplicable),
         }
     }
@@ -1288,9 +1305,7 @@ impl Reedline {
     }
 
     fn previous_history(&mut self) {
-        if self.history_cursor_on_excluded {
-            self.history_cursor_on_excluded = false;
-        }
+        self.history_cursor_on_excluded = false;
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
             self.history_cursor = HistoryCursor::new(
@@ -1310,8 +1325,6 @@ impl Reedline {
         }
         self.update_buffer_from_history();
         self.editor.move_to_start(false);
-        self.editor
-            .update_undo_state(UndoBehavior::HistoryNavigation);
         self.editor.move_to_line_end(false);
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
@@ -1474,12 +1487,20 @@ impl Reedline {
                 HistoryNavigationQuery::Normal(_)
             ) {
                 if let Some(string) = self.history_cursor.string_at_cursor() {
-                    self.editor
-                        .set_buffer(string, UndoBehavior::HistoryNavigation);
+                    // NOTE: `set_buffer` resets the insertion point,
+                    // which we should avoid during history navigation through the same buffer
+                    // https://github.com/nushell/reedline/pull/899
+                    if string != self.editor.get_buffer() {
+                        self.editor
+                            .set_buffer(string, UndoBehavior::HistoryNavigation);
+                    }
                 }
             }
             self.input_mode = InputMode::Regular;
         }
+
+        // Update editor with current edit mode for mode-aware selection behavior
+        self.editor.set_edit_mode(self.edit_mode.edit_mode());
 
         // Run the commands over the edit buffer
         for command in commands {
@@ -1896,8 +1917,60 @@ impl Reedline {
     }
 }
 
-#[test]
-fn thread_safe() {
-    fn f<S: Send>(_: S) {}
-    f(Reedline::create());
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cursor_position_after_multiline_history_navigation() {
+        // Test for https://github.com/nushell/reedline/pull/899
+        // Ensure that after navigating to a multiline history entry and then
+        // running edit commands, the cursor doesn't jump unexpectedly.
+        // The fix prevents set_buffer() from being called unnecessarily,
+        // which would reset the insertion point.
+
+        let mut reedline = Reedline::create();
+
+        // Add a multiline entry to history
+        let multiline_command = "echo 'line 1'\necho 'line 2'\necho 'line 3'";
+        let history_item = HistoryItem::from_command_line(multiline_command);
+        reedline
+            .history
+            .save(history_item)
+            .expect("Failed to save history");
+
+        // Navigate to previous history
+        reedline.previous_history();
+
+        // Get the initial insertion point after history navigation
+        let initial_insertion_point = reedline.current_insertion_point();
+
+        // The buffer should contain our multiline command
+        assert_eq!(reedline.current_buffer_contents(), multiline_command);
+
+        // After the fix, previous_history() positions cursor at end of first line
+        // (after move_to_start + move_to_line_end)
+        let first_line_end = multiline_command.find('\n').unwrap();
+        assert_eq!(initial_insertion_point, first_line_end);
+
+        // Now simulate pressing the right arrow key, which should move cursor right
+        // Without the fix, set_buffer() would be called and reset the insertion point,
+        // causing the cursor to jump unexpectedly. With the fix, it stays where it is
+        // and moves correctly.
+        reedline.run_edit_commands(&[EditCommand::MoveRight { select: false }]);
+
+        let after_move_insertion_point = reedline.current_insertion_point();
+
+        // The cursor should have moved right by 1 from where it was
+        assert_eq!(after_move_insertion_point, initial_insertion_point + 1);
+
+        // The buffer should still be unchanged
+        assert_eq!(reedline.current_buffer_contents(), multiline_command);
+    }
+
+    #[test]
+    fn thread_safe() {
+        fn f<S: Send>(_: S) {}
+        f(Reedline::create());
+    }
 }

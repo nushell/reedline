@@ -1,4 +1,9 @@
 //! Collection of common functions that can be used to create menus
+use std::borrow::Cow;
+
+use nu_ansi_term::{ansi::RESET, Style};
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::{Editor, Suggestion, UndoBehavior};
 
 /// Index result obtained from parsing a string with an index marker
@@ -56,7 +61,7 @@ pub enum ParseAction {
 /// )
 ///
 /// ```
-pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
+pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
     if buffer.is_empty() {
         return ParseResult {
             remainder: buffer,
@@ -70,7 +75,6 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
     let mut input = buffer.chars().peekable();
 
     let mut index = 0;
-    let mut action = ParseAction::ForwardSearch;
     while let Some(char) = input.next() {
         if char == marker {
             match input.peek() {
@@ -97,12 +101,15 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                 Some(&x) if x.is_ascii_digit() || x == '-' => {
                     let mut count: usize = 0;
                     let mut size: usize = marker.len_utf8();
+                    let action = if x == '-' {
+                        size += 1;
+                        let _ = input.next();
+                        ParseAction::BackwardSearch
+                    } else {
+                        ParseAction::ForwardSearch
+                    };
                     while let Some(&c) = input.peek() {
-                        if c == '-' {
-                            let _ = input.next();
-                            size += 1;
-                            action = ParseAction::BackwardSearch;
-                        } else if c.is_ascii_digit() {
+                        if c.is_ascii_digit() {
                             let c = c.to_digit(10).expect("already checked if is a digit");
                             let _ = input.next();
                             count *= 10;
@@ -141,7 +148,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
                         remainder: &buffer[0..index],
                         index: Some(0),
                         marker: Some(&buffer[index..buffer.len()]),
-                        action,
+                        action: ParseAction::ForwardSearch,
                         prefix: Some(&buffer[index..buffer.len()]),
                     }
                 }
@@ -155,7 +162,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult {
         remainder: buffer,
         index: None,
         marker: None,
-        action,
+        action: ParseAction::ForwardSearch,
         prefix: None,
     }
 }
@@ -295,6 +302,22 @@ pub fn completer_input(
     }
 }
 
+/// Find the closest index less than or equal to the current index that's a
+/// character boundary
+///
+/// This is already a method on `str`, but it's nightly-only. Once that becomes
+/// stable, this function will be removed.
+pub fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        s.len()
+    } else {
+        (1..=index)
+            .rev()
+            .find(|i| s.is_char_boundary(*i))
+            .unwrap_or(0)
+    }
+}
+
 /// Helper to accept a completion suggestion and edit the buffer
 pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
     if let Some(Suggestion {
@@ -304,8 +327,8 @@ pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
         ..
     }) = value
     {
-        let start = span.start.min(editor.line_buffer().len());
-        let end = span.end.min(editor.line_buffer().len());
+        let end = floor_char_boundary(editor.get_buffer(), span.end);
+        let start = floor_char_boundary(editor.get_buffer(), span.start).min(end);
         if append_whitespace {
             value.push(' ');
         }
@@ -325,21 +348,23 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
     if let (Some(Suggestion { value, span, .. }), Some(index)) = find_common_string(values) {
         let index = index.min(value.len());
         let matching = &value[0..index];
+        let end = floor_char_boundary(editor.get_buffer(), span.end);
+        let start = floor_char_boundary(editor.get_buffer(), span.start).min(end);
 
         // make sure that the partial completion does not overwrite user entered input
-        let extends_input = matching.starts_with(&editor.get_buffer()[span.start..span.end])
-            && matching != &editor.get_buffer()[span.start..span.end];
+        let extends_input = matching.starts_with(&editor.get_buffer()[start..end])
+            && matching != &editor.get_buffer()[start..end];
 
         if !matching.is_empty() && extends_input {
             let mut line_buffer = editor.line_buffer().clone();
-            line_buffer.replace_range(span.start..span.end, matching);
+            line_buffer.replace_range(start..end, matching);
 
-            let offset = if matching.len() < (span.end - span.start) {
+            let offset = if matching.len() < (end - start) {
                 line_buffer
                     .insertion_point()
-                    .saturating_sub((span.end - span.start) - matching.len())
+                    .saturating_sub((end - start) - matching.len())
             } else {
-                line_buffer.insertion_point() + matching.len() - (span.end - span.start)
+                line_buffer.insertion_point() + matching.len() - (end - start)
             };
 
             line_buffer.set_insertion_point(offset);
@@ -354,10 +379,104 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
     }
 }
 
+/// Parse ANSI sequences for setting display attributes in the given string.
+/// Each returned item is a tuple (escape start, escape end, text end), for
+/// finding each sequence and the text affected by it.
+///
+/// Essentially just looks for 'ESC [' followed by /[0-9;]*m/, ignoring other ANSI sequences.
+fn parse_ansi(s: &str) -> Vec<(usize, usize, usize)> {
+    let mut segments = Vec::new();
+
+    let mut last_escape_start = 0;
+    let mut last_escape_end = 0;
+    let mut offset = 0;
+    while offset < s.len() {
+        let Some(start) = &s[offset..].find("\x1b[") else {
+            break;
+        };
+        let escape_start = offset + start;
+
+        let after_params = &s[escape_start + 2..]
+            .trim_start_matches(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ';']);
+        if !after_params.starts_with('m') {
+            // Not a valid Select Graphic Rendition sequence
+            offset = s.len() - after_params.len();
+            continue;
+        }
+
+        if escape_start != 0 {
+            segments.push((last_escape_start, last_escape_end, escape_start));
+        }
+        last_escape_start = escape_start;
+        last_escape_end = s.len() - after_params.len() + 1;
+        offset = last_escape_end;
+    }
+
+    segments.push((last_escape_start, last_escape_end, s.len()));
+    segments
+}
+
+/// Style a suggestion to be shown in a completer menu
+///
+/// * `match_indices` - Indices of graphemes (NOT bytes or chars) that matched the typed text
+/// * `match_style` - Style to use for matched characters
+pub fn style_suggestion(suggestion: &str, match_indices: &[usize], match_style: &Style) -> String {
+    let mut res = String::new();
+    let mut offset = 0;
+    for (escape_start, text_start, text_end) in parse_ansi(suggestion) {
+        let escape = &suggestion[escape_start..text_start];
+        let text = &suggestion[text_start..text_end];
+        let graphemes = text.graphemes(true).collect::<Vec<_>>();
+        let mut prev_matched = false;
+
+        res.push_str(escape);
+        for (i, grapheme) in graphemes.iter().enumerate() {
+            let is_match = match_indices.contains(&(i + offset));
+
+            if is_match && !prev_matched {
+                res.push_str(&match_style.prefix().to_string());
+            } else if !is_match && prev_matched && i != 0 {
+                res.push_str(RESET);
+                res.push_str(escape);
+            }
+            res.push_str(grapheme);
+            prev_matched = is_match;
+        }
+
+        if prev_matched {
+            res.push_str(RESET);
+        }
+
+        offset += graphemes.len();
+    }
+
+    res
+}
+
+/// If `match_indices` is given, then returns that. Otherwise, tries to find `typed_text`
+/// inside `value`, then returns the indices for that substring.
+pub fn get_match_indices<'a>(
+    value: &str,
+    match_indices: &'a Option<Vec<usize>>,
+    typed_text: &str,
+) -> Cow<'a, Vec<usize>> {
+    if let Some(inds) = match_indices {
+        Cow::Borrowed(inds)
+    } else {
+        let Some(match_pos) = value.to_lowercase().find(&typed_text.to_lowercase()) else {
+            // Don't highlight anything if no match
+            return Cow::Owned(vec![]);
+        };
+        let match_len = typed_text.graphemes(true).count();
+        Cow::Owned((match_pos..match_pos + match_len).collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{EditCommand, LineBuffer, Span};
+    use nu_ansi_term::Color;
     use rstest::rstest;
 
     #[test]
@@ -612,6 +731,7 @@ mod tests {
                 extra: None,
                 span: Span::new(0, s.len()),
                 append_whitespace: false,
+                ..Default::default()
             })
             .collect();
         let res = find_common_string(&input);
@@ -632,6 +752,7 @@ mod tests {
                 extra: None,
                 span: Span::new(0, s.len()),
                 append_whitespace: false,
+                ..Default::default()
             })
             .collect();
         let res = find_common_string(&input);
@@ -687,6 +808,7 @@ mod tests {
                 extra: None,
                 span: Span::new(start, end),
                 append_whitespace: false,
+                ..Default::default()
             }),
             &mut editor,
         );
@@ -696,5 +818,73 @@ mod tests {
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(orig_buffer, editor.get_buffer());
         assert_eq!(orig_insertion_point, editor.insertion_point());
+    }
+
+    #[rstest]
+    #[case("plain", vec![(0, 0, 5)])]
+    #[case("\x1b[mempty", vec![(0, 3, 8)])]
+    #[case("\x1b[\x1b[minvalid", vec![(0, 0, 2), (2, 5, 12)])]
+    #[case("a\x1b[1;mb\x1b[;mc", vec![(0, 0, 1), (1, 6, 7), (7, 11, 12)])]
+    fn test_parse_ansi(#[case] s: &str, #[case] expected: Vec<(usize, usize, usize)>) {
+        assert_eq!(parse_ansi(s), expected);
+    }
+
+    #[test]
+    fn style_fuzzy_suggestion() {
+        let match_style = Style::new().underline();
+        let style1 = Style::new().on(Color::Blue);
+        let style2 = Style::new().on(Color::Green);
+
+        let expected = format!(
+            "{}{}{}{}{}{}{}{}{}{}{}{}{}",
+            style1.prefix(),
+            "ab",
+            match_style.paint("汉"),
+            style1.prefix(),
+            "d",
+            RESET,
+            style2.prefix(),
+            match_style.paint("y̆👩🏾"),
+            style2.prefix(),
+            "e",
+            RESET,
+            "b@",
+            match_style.paint("r"),
+        );
+        let match_indices = &[
+            2, // 汉
+            4, 5, // y̆👩🏾
+            9, // r
+        ];
+        assert_eq!(
+            expected,
+            style_suggestion(
+                &format!("{}{}{}", style1.paint("ab汉d"), style2.paint("y̆👩🏾e"), "b@r"),
+                match_indices,
+                &match_style
+            )
+        );
+    }
+
+    #[test]
+    fn style_fuzzy_suggestion_out_of_bounds() {
+        let text_style = Style::new().on(Color::Blue).bold();
+        let match_style = Style::new().underline();
+
+        let expected = format!(
+            "{}{}{}{}",
+            text_style.prefix(),
+            "go",
+            match_style.paint("o"),
+            RESET
+        );
+        assert_eq!(
+            expected,
+            style_suggestion(
+                &text_style.paint("goo").to_string(),
+                &[2, 3, 4, 6],
+                &match_style
+            )
+        );
     }
 }
