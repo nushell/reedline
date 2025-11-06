@@ -832,6 +832,14 @@ mod tests {
             partial_completes_case_insensitive: ("foo", "`Foo ba"),
     }
 
+    partial_completion_tests! {
+        name: partial_completion_unicode_case_folding,
+        completions: ["ßar", "ßaz"],
+
+        test_cases:
+            partial_completes_case_insensitive: ("ss", "ßa"),
+    }
+
     struct FakeCompleter {
         completions: Vec<String>,
     }

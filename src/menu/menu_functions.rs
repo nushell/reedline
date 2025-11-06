@@ -1,5 +1,6 @@
 //! Collection of common functions that can be used to create menus
 use std::borrow::Cow;
+use unicase::UniCase;
 
 use itertools::{
     FoldWhile::{Continue, Done},
@@ -346,9 +347,9 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
 
         // make sure that the partial completion does not overwrite user entered input
         let entered_input = &editor.get_buffer()[start..end];
-        let extends_input = matching
-            .to_ascii_lowercase()
-            .contains(&entered_input.to_ascii_lowercase())
+        let extends_input = UniCase::new(matching)
+            .to_folded_case()
+            .contains(&UniCase::new(entered_input).to_folded_case())
             && matching != entered_input;
 
         if !matching.is_empty() && extends_input {
