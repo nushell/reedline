@@ -185,8 +185,7 @@ pub fn find_common_string(values: &[Suggestion]) -> Option<(&Suggestion, usize)>
                 .value
                 .char_indices()
                 .zip(current_suggestion.value.chars())
-                .find(|((_, lhs), rhs)| rhs != lhs)
-                .map(|((idx, _), _)| idx)
+                .find_map(|((idx, lhs), rhs)| (rhs != lhs).then_some(idx))
                 .unwrap_or(max_len);
             if new_common_prefix_len == 0 {
                 Done(0)
