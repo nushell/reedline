@@ -822,6 +822,24 @@ mod tests {
             completes_no_shared_prefix: ("all", "all"),
     }
 
+    // https://github.com/nushell/nushell/issues/15535
+    partial_completion_tests! {
+        name: partial_completion_with_quotes,
+        completions: ["`Foo bar`", "`Foo baz`"],
+
+        test_cases:
+            partial_completes_prefix_with_backtick: ("F", "`Foo ba"),
+            partial_completes_case_insensitive: ("foo", "`Foo ba"),
+    }
+
+    partial_completion_tests! {
+        name: partial_completion_unicode_case_folding,
+        completions: ["ßar", "ßaz"],
+
+        test_cases:
+            partial_completes_case_insensitive: ("ss", "ßa"),
+    }
+
     struct FakeCompleter {
         completions: Vec<String>,
     }

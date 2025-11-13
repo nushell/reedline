@@ -785,6 +785,7 @@ dependencies = [
  "strum_macros",
  "tempfile",
  "thiserror 2.0.12",
+ "unicase",
  "unicode-segmentation",
  "unicode-width",
 ]
@@ -1108,6 +1109,12 @@ dependencies = [
  "once_cell",
  "petgraph",
 ]
+
+[[package]]
+name = "unicase"
+version = "2.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75b844d17643ee918803943289730bec8aac480150456169e647ed0b576ba539"
 
 [[package]]
 name = "unicode-ident"

@@ -32,6 +32,7 @@ strip-ansi-escapes = "0.2.0"
 strum = "0.26"
 strum_macros = "0.26"
 thiserror = "2.0.12"
+unicase = "2.8.0"
 unicode-segmentation = "1.9.0"
 unicode-width = "0.2"
 
