@@ -506,17 +506,7 @@ impl IdeMenu {
         let max_string_width =
             (self.working_details.completion_width as usize).saturating_sub(border_width + padding);
 
-        let string = if suggestion.value.chars().count() > max_string_width {
-            let mut chars = suggestion
-                .value
-                .chars()
-                .take(max_string_width.saturating_sub(3))
-                .collect::<String>();
-            chars.push_str("...");
-            chars
-        } else {
-            suggestion.value.clone()
-        };
+        let string = truncate_no_ansi(&suggestion.value, max_string_width);
 
         if use_ansi_coloring {
             // TODO(ysthakur): let the user strip quotes, rather than doing it here
