@@ -473,7 +473,7 @@ pub fn get_match_indices<'a>(
 ///
 /// If `s` is longer than `max_width`, the resulting string will end in "..."
 /// and have width at most `max_width`.
-pub(crate) fn truncate_no_ansi(s: &str, max_width: usize) -> Cow<str> {
+pub(crate) fn truncate_no_ansi(s: &str, max_width: usize) -> Cow<'_, str> {
     if s.width() <= max_width {
         Cow::Borrowed(s)
     } else {
