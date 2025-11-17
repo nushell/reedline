@@ -3,7 +3,7 @@ use crate::{
     core_editor::Editor,
     menu_functions::{
         can_partially_complete, completer_input, floor_char_boundary, get_match_indices,
-        replace_in_buffer, style_suggestion,
+        replace_in_buffer, style_suggestion, truncate_no_ansi,
     },
     painting::Painter,
     Completer, Suggestion,
