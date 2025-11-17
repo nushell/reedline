@@ -201,7 +201,9 @@ impl EditMode for Vi {
                 (_, KeyModifiers::NONE, KeyCode::Esc, _, _) => exit_insert_mode(self, ViMode::Normal),
                 (_, KeyModifiers::NONE, KeyCode::Enter, _, _) => {
                     self.mode = ViMode::Insert;
-                    ReedlineEvent::Enter
+                    self.insert_keybindings
+                        .find_binding(modifiers, code)
+                        .unwrap_or(ReedlineEvent::Enter)
                 }
                 (ViMode::Normal | ViMode::Visual, _, _, _, _) => self
                     .normal_keybindings
