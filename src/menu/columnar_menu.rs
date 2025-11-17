@@ -874,8 +874,7 @@ mod tests {
         painter.handle_resize(terminal_size.0, terminal_size.1);
 
         menu.menu_event(MenuEvent::Activate(false));
-        menu.update_working_details(editor, completer, &mut painter);
-        // menu.update_values(editor, completer);
+        menu.update_working_details(editor, completer, &painter);
     }
 
     #[test]
