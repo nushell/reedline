@@ -755,6 +755,8 @@ impl Menu for ColumnarMenu {
 
 #[cfg(test)]
 mod tests {
+    use std::io::BufWriter;
+
     use crate::{Span, UndoBehavior};
 
     use super::*;
@@ -862,6 +864,20 @@ mod tests {
         }
     }
 
+    fn setup_menu(
+        menu: &mut ColumnarMenu,
+        editor: &mut Editor,
+        completer: &mut dyn Completer,
+        terminal_size: (u16, u16),
+    ) {
+        let mut painter = Painter::new(BufWriter::new(std::io::stderr()));
+        painter.handle_resize(terminal_size.0, terminal_size.1);
+
+        menu.menu_event(MenuEvent::Activate(false));
+        menu.update_working_details(editor, completer, &mut painter);
+        // menu.update_values(editor, completer);
+    }
+
     #[test]
     fn test_menu_replace_backtick() {
         // https://github.com/nushell/nushell/issues/7885
@@ -889,9 +905,9 @@ mod tests {
         let mut completer = FakeCompleter::new(&["おはよう", "`おはよう(`"]);
         let mut menu = ColumnarMenu::default().with_name("testmenu");
         let mut editor = Editor::default();
-
         editor.set_buffer("おは".to_string(), UndoBehavior::CreateUndoPoint);
-        menu.update_values(&mut editor, &mut completer);
+        setup_menu(&mut menu, &mut editor, &mut completer, (10, 10));
+
         assert!(menu.menu_string(2, true).contains("おは"));
     }
 
@@ -901,10 +917,10 @@ mod tests {
         let mut completer = FakeCompleter::new(&["验abc/"]);
         let mut menu = ColumnarMenu::default().with_name("testmenu");
         let mut editor = Editor::default();
-
         editor.set_buffer("ac".to_string(), UndoBehavior::CreateUndoPoint);
-        menu.update_values(&mut editor, &mut completer);
-        assert!(menu.menu_string(10, true).contains("验"));
+        setup_menu(&mut menu, &mut editor, &mut completer, (10, 10));
+
+        assert!(menu.menu_string(2, true).contains("验"));
     }
 
     #[test]
@@ -913,9 +929,9 @@ mod tests {
         let mut completer = FakeCompleter::new(&[&("验".repeat(205) + "abc/")]);
         let mut menu = ColumnarMenu::default().with_name("testmenu");
         let mut editor = Editor::default();
-
         editor.set_buffer("a".to_string(), UndoBehavior::CreateUndoPoint);
-        menu.update_values(&mut editor, &mut completer);
+        setup_menu(&mut menu, &mut editor, &mut completer, (10, 10));
+
         assert!(menu.menu_string(10, true).contains("验"));
     }
 

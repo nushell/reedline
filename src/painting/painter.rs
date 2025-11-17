@@ -517,9 +517,12 @@ impl Painter {
         //
         // I assume this is a bug with the position() call but haven't figured that
         // out yet.
-        if let Ok(position) = cursor::position() {
-            self.prompt_start_row = position.1;
-            self.just_resized = true;
+        #[cfg(not(test))]
+        {
+            if let Ok(position) = cursor::position() {
+                self.prompt_start_row = position.1;
+                self.just_resized = true;
+            }
         }
     }
 
