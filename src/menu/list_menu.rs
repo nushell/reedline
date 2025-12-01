@@ -323,7 +323,6 @@ impl Menu for ListMenu {
     /// all registered values
     fn can_partially_complete(
         &mut self,
-        _values_updated: bool,
         _editor: &mut Editor,
         _completer: &mut dyn Completer,
     ) -> bool {
