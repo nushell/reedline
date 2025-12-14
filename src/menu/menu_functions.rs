@@ -8,6 +8,7 @@ use itertools::{
 };
 use nu_ansi_term::{ansi::RESET, Style};
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::{Editor, Suggestion, UndoBehavior};
 
@@ -468,6 +469,31 @@ pub fn get_match_indices<'a>(
     }
 }
 
+/// Truncate a string with no ANSI escapes to the given max width, which must be >=3.
+///
+/// If `s` is longer than `max_width`, the resulting string will end in "..."
+/// and have width at most `max_width`.
+pub(crate) fn truncate_no_ansi(s: &str, max_width: usize) -> Cow<'_, str> {
+    if s.width() <= max_width {
+        Cow::Borrowed(s)
+    } else {
+        let trunc_suffix = "...";
+        let suffix_width = trunc_suffix.width();
+
+        let mut res = String::new();
+        let mut curr_width = 0;
+        for grapheme in s.graphemes(true) {
+            curr_width += grapheme.width();
+            if curr_width + suffix_width > max_width {
+                break;
+            }
+            res.push_str(grapheme);
+        }
+        res.push_str(trunc_suffix);
+        Cow::Owned(res)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -855,5 +881,15 @@ mod tests {
                 &match_style
             )
         );
+    }
+
+    #[rstest]
+    #[case::shorter("asdf", 5, "asdf")]
+    // Ｈ has width 2
+    #[case::exact_width("asdＨ", 5, "asdＨ")]
+    #[case::one_longer("asdfＨ", 5, "as...")]
+    #[case::result_thinner_than_max("aＨＨＨ", 5, "a...")]
+    fn test_truncate(#[case] value: &str, #[case] max_width: usize, #[case] expected: &str) {
+        assert_eq!(expected, truncate_no_ansi(value, max_width));
     }
 }

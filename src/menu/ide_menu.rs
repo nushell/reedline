@@ -3,7 +3,7 @@ use crate::{
     core_editor::Editor,
     menu_functions::{
         can_partially_complete, completer_input, floor_char_boundary, get_match_indices,
-        replace_in_buffer, style_suggestion,
+        replace_in_buffer, style_suggestion, truncate_no_ansi,
     },
     painting::Painter,
     Completer, Suggestion,
@@ -506,17 +506,7 @@ impl IdeMenu {
         let max_string_width =
             (self.working_details.completion_width as usize).saturating_sub(border_width + padding);
 
-        let string = if suggestion.value.chars().count() > max_string_width {
-            let mut chars = suggestion
-                .value
-                .chars()
-                .take(max_string_width.saturating_sub(3))
-                .collect::<String>();
-            chars.push_str("...");
-            chars
-        } else {
-            suggestion.value.clone()
-        };
+        let string = truncate_no_ansi(&suggestion.value, max_string_width);
 
         if use_ansi_coloring {
             // TODO(ysthakur): let the user strip quotes, rather than doing it here
@@ -531,42 +521,35 @@ impl IdeMenu {
 
             let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
 
-            if index == self.index() {
-                format!(
-                    "{}{}{}{}{}{}{}",
-                    vertical_border,
-                    suggestion_style.prefix(),
-                    " ".repeat(padding),
-                    style_suggestion(
-                        &self
-                            .settings
-                            .color
-                            .selected_text_style
-                            .paint(&string)
-                            .to_string(),
-                        &match_indices,
-                        &self.settings.color.selected_match_style,
-                    ),
-                    " ".repeat(padding_right),
-                    RESET,
-                    vertical_border,
+            let styled_string = if index == self.index() {
+                style_suggestion(
+                    &self
+                        .settings
+                        .color
+                        .selected_text_style
+                        .paint(string)
+                        .to_string(),
+                    &match_indices,
+                    &self.settings.color.selected_match_style,
                 )
             } else {
-                format!(
-                    "{}{}{}{}{}{}{}",
-                    vertical_border,
-                    suggestion_style.prefix(),
-                    " ".repeat(padding),
-                    style_suggestion(
-                        &suggestion_style.paint(&string).to_string(),
-                        &match_indices,
-                        &self.settings.color.match_style,
-                    ),
-                    " ".repeat(padding_right),
-                    RESET,
-                    vertical_border,
+                style_suggestion(
+                    &suggestion_style.paint(string).to_string(),
+                    &match_indices,
+                    &self.settings.color.match_style,
                 )
-            }
+            };
+
+            format!(
+                "{}{}{}{}{}{}{}",
+                vertical_border,
+                suggestion_style.prefix(),
+                " ".repeat(padding),
+                styled_string,
+                " ".repeat(padding_right),
+                RESET,
+                vertical_border,
+            )
         } else {
             let marker = if index == self.index() { ">" } else { "" };
 
