@@ -75,9 +75,11 @@ impl Vi {
 impl EditMode for Vi {
     fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
         match event.into() {
-            Event::Key(KeyEvent {
-                code, modifiers, ..
-            }) => match (self.mode, modifiers, code) {
+            Event::Key(
+                key_event @ KeyEvent {
+                    code, modifiers, ..
+                },
+            ) => match (self.mode, modifiers, code) {
                 (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v')) => {
                     self.cache.clear();
                     self.mode = ViMode::Visual;
@@ -90,6 +92,8 @@ impl EditMode for Vi {
                         .normal_keybindings
                         .find_binding(modifiers, KeyCode::Char(c))
                     {
+                        event
+                    } else if let Some(event) = self.handle_alt_as_esc(key_event) {
                         event
                     } else if modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT {
                         self.cache.push(if modifier == KeyModifiers::SHIFT {
@@ -134,23 +138,28 @@ impl EditMode for Vi {
                     self.insert_keybindings
                         .find_binding(modifier, KeyCode::Char(c))
                         .unwrap_or_else(|| {
-                            if modifier == KeyModifiers::NONE
-                                || modifier == KeyModifiers::SHIFT
-                                || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
-                                || modifier
-                                    == KeyModifiers::CONTROL
-                                        | KeyModifiers::ALT
-                                        | KeyModifiers::SHIFT
-                            {
-                                ReedlineEvent::Edit(vec![EditCommand::InsertChar(
-                                    if modifier == KeyModifiers::SHIFT {
-                                        c.to_ascii_uppercase()
-                                    } else {
-                                        c
-                                    },
-                                )])
+                            if let Some(event) = self.handle_alt_as_esc(key_event) {
+                                event
                             } else {
-                                ReedlineEvent::None
+                                // including alt here is a bit redundant now
+                                if modifier == KeyModifiers::NONE
+                                    || modifier == KeyModifiers::SHIFT
+                                    || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
+                                    || modifier
+                                        == KeyModifiers::CONTROL
+                                            | KeyModifiers::ALT
+                                            | KeyModifiers::SHIFT
+                                {
+                                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(
+                                        if modifier == KeyModifiers::SHIFT {
+                                            c.to_ascii_uppercase()
+                                        } else {
+                                            c
+                                        },
+                                    )])
+                                } else {
+                                    ReedlineEvent::None
+                                }
                             }
                         })
                 }
@@ -200,6 +209,21 @@ impl EditMode for Vi {
                 Err(_) => EventStatus::Inapplicable,
             },
             _ => EventStatus::Inapplicable,
+        }
+    }
+}
+
+impl Vi {
+    fn handle_alt_as_esc(&mut self, mut event: KeyEvent) -> Option<ReedlineEvent> {
+        if event.modifiers.contains(KeyModifiers::ALT) {
+            self.mode = ViMode::Normal;
+            event.modifiers &= !KeyModifiers::ALT;
+
+            ReedlineRawEvent::try_from(Event::Key(event))
+                .ok()
+                .map(|event| self.parse_event(event))
+        } else {
+            None
         }
     }
 }
