@@ -1,8 +1,14 @@
 //! Collection of common functions that can be used to create menus
 use std::borrow::Cow;
+use unicase::UniCase;
 
+use itertools::{
+    FoldWhile::{Continue, Done},
+    Itertools,
+};
 use nu_ansi_term::{ansi::RESET, Style};
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::{Editor, Suggestion, UndoBehavior};
 
@@ -168,39 +174,28 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
 }
 
 /// Finds index for the common string in a list of suggestions
-pub fn find_common_string(values: &[Suggestion]) -> (Option<&Suggestion>, Option<usize>) {
-    let first = values.iter().next();
+pub fn find_common_string(values: &[Suggestion]) -> Option<(&Suggestion, usize)> {
+    let first_suggestion = values.first()?;
+    let max_len = first_suggestion.value.len();
 
-    let index = first.and_then(|first| {
-        values.iter().skip(1).fold(None, |index, suggestion| {
-            if suggestion.value.starts_with(&first.value) {
-                Some(first.value.len())
+    let index = values
+        .iter()
+        .skip(1)
+        .fold_while(max_len, |cumulated_min, current_suggestion| {
+            let new_common_prefix_len = first_suggestion
+                .value
+                .char_indices()
+                .zip(current_suggestion.value.chars())
+                .find_map(|((idx, lhs), rhs)| (rhs != lhs).then_some(idx))
+                .unwrap_or(max_len);
+            if new_common_prefix_len == 0 {
+                Done(0)
             } else {
-                first
-                    .value
-                    .char_indices()
-                    .zip(suggestion.value.char_indices())
-                    .find(|((_, mut lhs), (_, mut rhs))| {
-                        lhs.make_ascii_lowercase();
-                        rhs.make_ascii_lowercase();
-
-                        lhs != rhs
-                    })
-                    .map(|((new_index, _), _)| match index {
-                        Some(index) => {
-                            if index <= new_index {
-                                index
-                            } else {
-                                new_index
-                            }
-                        }
-                        None => new_index,
-                    })
+                Continue(cumulated_min.min(new_common_prefix_len))
             }
-        })
-    });
+        });
 
-    (first, index)
+    Some((first_suggestion, index.into_inner()))
 }
 
 /// Finds different string between two strings
@@ -345,15 +340,17 @@ pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
 
 /// Helper for `Menu::can_partially_complete`
 pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> bool {
-    if let (Some(Suggestion { value, span, .. }), Some(index)) = find_common_string(values) {
-        let index = index.min(value.len());
+    if let Some((Suggestion { value, span, .. }, index)) = find_common_string(values) {
         let matching = &value[0..index];
         let end = floor_char_boundary(editor.get_buffer(), span.end);
         let start = floor_char_boundary(editor.get_buffer(), span.start).min(end);
 
         // make sure that the partial completion does not overwrite user entered input
-        let extends_input = matching.starts_with(&editor.get_buffer()[start..end])
-            && matching != &editor.get_buffer()[start..end];
+        let entered_input = &editor.get_buffer()[start..end];
+        let extends_input = UniCase::new(matching)
+            .to_folded_case()
+            .contains(&UniCase::new(entered_input).to_folded_case())
+            && matching != entered_input;
 
         if !matching.is_empty() && extends_input {
             let mut line_buffer = editor.line_buffer().clone();
@@ -469,6 +466,31 @@ pub fn get_match_indices<'a>(
         };
         let match_len = typed_text.graphemes(true).count();
         Cow::Owned((match_pos..match_pos + match_len).collect())
+    }
+}
+
+/// Truncate a string with no ANSI escapes to the given max width, which must be >=3.
+///
+/// If `s` is longer than `max_width`, the resulting string will end in "..."
+/// and have width at most `max_width`.
+pub(crate) fn truncate_no_ansi(s: &str, max_width: usize) -> Cow<'_, str> {
+    if s.width() <= max_width {
+        Cow::Borrowed(s)
+    } else {
+        let trunc_suffix = "...";
+        let suffix_width = trunc_suffix.width();
+
+        let mut res = String::new();
+        let mut curr_width = 0;
+        for grapheme in s.graphemes(true) {
+            curr_width += grapheme.width();
+            if curr_width + suffix_width > max_width {
+                break;
+            }
+            res.push_str(grapheme);
+        }
+        res.push_str(trunc_suffix);
+        Cow::Owned(res)
     }
 }
 
@@ -718,46 +740,23 @@ mod tests {
         assert_eq!(res, (1, "e"));
     }
 
-    #[test]
-    fn find_common_string_with_ansi() {
-        use crate::Span;
-
-        let input: Vec<_> = ["nushell", "null"]
+    #[rstest]
+    #[case::ascii(vec!["nushell", "null"], 2)]
+    #[case::non_ascii(vec!["ｎｕｓｈｅｌｌ", "ｎｕｌｌ"], 6)]
+    // https://github.com/nushell/nushell/pull/16765#issuecomment-3384411809
+    #[case::unsorted(vec!["a", "b", "ab"], 0)]
+    #[case::should_be_case_sensitive(vec!["a", "A"], 0)]
+    fn test_find_common_string(#[case] input: Vec<&str>, #[case] expected: usize) {
+        let input: Vec<_> = input
             .into_iter()
             .map(|s| Suggestion {
                 value: s.into(),
-                description: None,
-                style: None,
-                extra: None,
-                span: Span::new(0, s.len()),
-                append_whitespace: false,
                 ..Default::default()
             })
             .collect();
-        let res = find_common_string(&input);
+        let (_, len) = find_common_string(&input).unwrap();
 
-        assert!(matches!(res, (Some(elem), Some(2)) if elem == &input[0]));
-    }
-
-    #[test]
-    fn find_common_string_with_non_ansi() {
-        use crate::Span;
-
-        let input: Vec<_> = ["ｎｕｓｈｅｌｌ", "ｎｕｌｌ"]
-            .into_iter()
-            .map(|s| Suggestion {
-                value: s.into(),
-                description: None,
-                style: None,
-                extra: None,
-                span: Span::new(0, s.len()),
-                append_whitespace: false,
-                ..Default::default()
-            })
-            .collect();
-        let res = find_common_string(&input);
-
-        assert!(matches!(res, (Some(elem), Some(6)) if elem == &input[0]));
+        assert!(len == expected);
     }
 
     #[rstest]
@@ -803,11 +802,7 @@ mod tests {
         replace_in_buffer(
             Some(Suggestion {
                 value,
-                description: None,
-                style: None,
-                extra: None,
                 span: Span::new(start, end),
-                append_whitespace: false,
                 ..Default::default()
             }),
             &mut editor,
@@ -886,5 +881,15 @@ mod tests {
                 &match_style
             )
         );
+    }
+
+    #[rstest]
+    #[case::shorter("asdf", 5, "asdf")]
+    // Ｈ has width 2
+    #[case::exact_width("asdＨ", 5, "asdＨ")]
+    #[case::one_longer("asdfＨ", 5, "as...")]
+    #[case::result_thinner_than_max("aＨＨＨ", 5, "a...")]
+    fn test_truncate(#[case] value: &str, #[case] max_width: usize, #[case] expected: &str) {
+        assert_eq!(expected, truncate_no_ansi(value, max_width));
     }
 }

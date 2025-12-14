@@ -139,9 +139,9 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-channel"
-version = "0.5.12"
+version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab3db02a9c5b5121e1e42fbdb1aeb65f5e02624cc58c43f2884c6ccac0b82f95"
+checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -748,7 +748,7 @@ dependencies = [
 
 [[package]]
 name = "reedline"
-version = "0.43.0"
+version = "0.44.0"
 dependencies = [
  "arboard",
  "chrono",
@@ -768,6 +768,7 @@ dependencies = [
  "strum_macros",
  "tempfile",
  "thiserror",
+ "unicase",
  "unicode-segmentation",
  "unicode-width",
 ]
@@ -1063,6 +1064,12 @@ dependencies = [
  "once_cell",
  "petgraph",
 ]
+
+[[package]]
+name = "unicase"
+version = "2.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75b844d17643ee918803943289730bec8aac480150456169e647ed0b576ba539"
 
 [[package]]
 name = "unicode-ident"
