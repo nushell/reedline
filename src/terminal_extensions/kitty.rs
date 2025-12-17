@@ -12,23 +12,24 @@ use crossterm::{event, execute};
 /// * [dte text editor](https://gitlab.com/craigbarnes/dte/-/issues/138)
 ///
 /// Refer to <https://sw.kovidgoyal.net/kitty/keyboard-protocol/> if you're curious.
+#[derive(Default)]
 pub(crate) struct KittyProtocolGuard {
     enabled: bool,
     active: bool,
-    support_kitty_protocol: bool,
+    /// Caches whether the terminal supports the kitty protocol; `None` means we haven't checked yet
+    /// and `Some(bool)` stores a cached answer.
+    support_kitty_protocol: Option<bool>,
 }
 
 impl KittyProtocolGuard {
-    pub fn new() -> Self {
-        Self {
-            support_kitty_protocol: super::kitty_protocol_available(),
-            enabled: false,
-            active: false,
-        }
-    }
-
     pub fn set(&mut self, enable: bool) {
-        self.enabled = enable && self.support_kitty_protocol;
+        // If we are enabling and haven't yet checked for support, do so now. We cache
+        // the result to avoid repeated checks.
+        if enable && self.support_kitty_protocol.is_none() {
+            self.support_kitty_protocol = Some(super::kitty_protocol_available());
+        }
+
+        self.enabled = enable && self.support_kitty_protocol.unwrap_or(false);
     }
     pub fn enter(&mut self) {
         if self.enabled && !self.active {
