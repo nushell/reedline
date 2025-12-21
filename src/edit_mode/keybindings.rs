@@ -22,6 +22,7 @@ pub struct Keybindings {
 }
 
 /// Target that a key combination may be bound to.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeyBindingTarget {
     /// Indicates a binding to an event.
     Event(ReedlineEvent),
@@ -461,4 +462,48 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
         KC::Char('a'),
         edit_bind(EC::SelectAll),
     );
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chord_lookup() {
+        const BOUND_EVENT: ReedlineEvent = ReedlineEvent::MenuDown;
+
+        let mut kb = Keybindings::new();
+
+        let sequence = vec![
+            KeyCombination {
+                modifier: KeyModifiers::CONTROL,
+                key_code: KeyCode::Char('x'),
+            },
+            KeyCombination {
+                modifier: KeyModifiers::CONTROL,
+                key_code: KeyCode::Char('c'),
+            },
+        ];
+
+        kb.add_sequence_binding(&sequence, BOUND_EVENT);
+
+        // Make sure we can find the prefix.
+        let found_prefix = kb.find_sequence_binding(&sequence[0..1]);
+        assert_eq!(found_prefix, Some(KeyBindingTarget::ChordPrefix));
+
+        // Make sure we can find the binding.
+        let found_binding = kb.find_sequence_binding(&sequence);
+        assert_eq!(
+            found_binding,
+            Some(KeyBindingTarget::Event(BOUND_EVENT))
+        );
+
+        // Make sure we can't find some non-existent binding.
+        let not_found = kb.find_sequence_binding(&[sequence[0].clone(), KeyCombination {
+            modifier: KeyModifiers::CONTROL,
+            key_code: KeyCode::Char('z'),
+        }]);
+        assert_eq!(not_found, None);
+    }
 }
