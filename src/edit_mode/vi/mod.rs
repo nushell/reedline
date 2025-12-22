@@ -85,7 +85,7 @@ fn exit_insert_mode(editor: &mut Vi, new_mode: ViMode) -> ReedlineEvent {
     editor.most_recent_keycode = KeyCode::Null;
     editor.cache.clear();
     editor.mode = new_mode;
-    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint, ReedlineEvent::Left])
 }
 
 impl EditMode for Vi {
