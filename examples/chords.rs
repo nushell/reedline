@@ -6,8 +6,8 @@
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use reedline::{
-    default_emacs_keybindings, DefaultPrompt, Emacs, KeyCombination, Reedline,
-    ReedlineEvent, Signal,
+    default_emacs_keybindings, DefaultPrompt, Emacs, KeyCombination, Reedline, ReedlineEvent,
+    Signal,
 };
 use std::io;
 
@@ -38,15 +38,12 @@ fn main() -> io::Result<()> {
 
     // Add chord bindings
     // Ctrl+X Ctrl+C: Quit
-    keybindings.add_sequence_binding(
-        &[ctrl('x'), ctrl('c')],
-        ReedlineEvent::CtrlD,
-    );
+    keybindings.add_sequence_binding(&[ctrl('x'), ctrl('c')], ReedlineEvent::CtrlD);
 
     // Ctrl+X Ctrl+Y Ctrl+Z Ctrl+Z Ctrl+Y: Quit
     keybindings.add_sequence_binding(
         &[ctrl('x'), ctrl('y'), ctrl('z'), ctrl('z'), ctrl('y')],
-        ReedlineEvent::ExecuteHostCommand(String::from("Nothing happens"))
+        ReedlineEvent::ExecuteHostCommand(String::from("Nothing happens")),
     );
 
     // Create the Emacs edit mode with our custom keybindings

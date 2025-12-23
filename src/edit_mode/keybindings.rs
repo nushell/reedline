@@ -464,7 +464,6 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
     );
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,16 +493,16 @@ mod tests {
 
         // Make sure we can find the binding.
         let found_binding = kb.find_sequence_binding(&sequence);
-        assert_eq!(
-            found_binding,
-            Some(KeyBindingTarget::Event(BOUND_EVENT))
-        );
+        assert_eq!(found_binding, Some(KeyBindingTarget::Event(BOUND_EVENT)));
 
         // Make sure we can't find some non-existent binding.
-        let not_found = kb.find_sequence_binding(&[sequence[0].clone(), KeyCombination {
-            modifier: KeyModifiers::CONTROL,
-            key_code: KeyCode::Char('z'),
-        }]);
+        let not_found = kb.find_sequence_binding(&[
+            sequence[0].clone(),
+            KeyCombination {
+                modifier: KeyModifiers::CONTROL,
+                key_code: KeyCode::Char('z'),
+            },
+        ]);
         assert_eq!(not_found, None);
     }
 }
