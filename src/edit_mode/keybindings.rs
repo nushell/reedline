@@ -95,17 +95,15 @@ impl Keybindings {
     /// Binds a sequence of key combinations to an event. This allows binding a single
     /// key combination, as well as binding a chord of multiple key combinations.
     pub fn add_sequence_binding(&mut self, sequence: &[KeyCombination], event: ReedlineEvent) {
-        if sequence.len() == 0 {
+        if sequence.is_empty() {
             return;
         }
 
         let mut current_target = &mut self.root;
 
-        for i in 0..(sequence.len() - 1) {
+        for combo in sequence.iter().take(sequence.len() - 1) {
             match current_target {
                 KeyBindingNode::Prefix(ref mut map) => {
-                    let combo = &sequence[i];
-
                     current_target = map
                         .entry(combo.clone())
                         .or_insert_with(KeyBindingNode::new_prefix);
@@ -158,10 +156,10 @@ impl Keybindings {
     pub fn find_sequence_binding(&self, sequence: &[KeyCombination]) -> Option<KeyBindingTarget> {
         let mut current_target = &self.root;
 
-        for i in 0..sequence.len() {
+        for combo in sequence {
             match current_target {
                 KeyBindingNode::Prefix(map) => {
-                    if let Some(next_target) = map.get(&sequence[i]) {
+                    if let Some(next_target) = map.get(combo) {
                         current_target = next_target;
                     } else {
                         return None;
@@ -200,14 +198,14 @@ impl Keybindings {
     ) -> Option<ReedlineEvent> {
         let mut current_target = &mut self.root;
 
-        if sequence.len() == 0 {
+        if sequence.is_empty() {
             return None;
         }
 
-        for i in 0..(sequence.len() - 1) {
+        for combo in sequence.iter().take(sequence.len() - 1) {
             match current_target {
                 KeyBindingNode::Prefix(map) => {
-                    if let Some(next_target) = map.get_mut(&sequence[i]) {
+                    if let Some(next_target) = map.get_mut(combo) {
                         current_target = next_target;
                     } else {
                         return None;
@@ -221,10 +219,8 @@ impl Keybindings {
 
         match current_target {
             KeyBindingNode::Prefix(map) => {
-                if map
-                    .get(final_combo)
-                    .is_none_or(|target| matches!(target, KeyBindingNode::Prefix(_)))
-                {
+                // Make sure it's a terminal node before we try to remove it.
+                if !matches!(map.get(final_combo), Some(KeyBindingNode::Event(_))) {
                     None
                 } else if let Some(KeyBindingNode::Event(old_event)) = map.remove(final_combo) {
                     Some(old_event)
