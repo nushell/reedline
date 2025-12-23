@@ -133,7 +133,7 @@ fn get_keybinding_strings(
 ) -> Vec<(String, String, String, String)> {
     let mut data: Vec<(String, String, String, String)> = keybindings
         .get_keybindings()
-        .iter()
+        .into_iter()
         .map(|(combination, event)| {
             (
                 mode.to_string(),
