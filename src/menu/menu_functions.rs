@@ -417,7 +417,18 @@ fn parse_ansi(s: &str) -> Vec<(usize, usize, usize)> {
 ///
 /// * `match_indices` - Indices of graphemes (NOT bytes or chars) that matched the typed text
 /// * `match_style` - Style to use for matched characters
-pub fn style_suggestion(suggestion: &str, match_indices: &[usize], match_style: &Style) -> String {
+pub fn style_suggestion(
+    suggestion: &str,
+    match_indices: &[usize],
+    text_style: &Style,
+    match_style: &Style,
+    selected_style: Option<&Style>,
+) -> String {
+    let text_style_prefix = text_style.prefix().to_string();
+    let match_style_prefix = match_style.prefix().to_string();
+    let selected_prefix = selected_style
+        .map(|s| s.prefix().to_string())
+        .unwrap_or_default();
     let mut res = String::new();
     let mut offset = 0;
     for (escape_start, text_start, text_end) in parse_ansi(suggestion) {
@@ -426,14 +437,18 @@ pub fn style_suggestion(suggestion: &str, match_indices: &[usize], match_style: 
         let graphemes = text.graphemes(true).collect::<Vec<_>>();
         let mut prev_matched = false;
 
+        res.push_str(&text_style_prefix);
+        res.push_str(&selected_prefix);
         res.push_str(escape);
         for (i, grapheme) in graphemes.iter().enumerate() {
             let is_match = match_indices.contains(&(i + offset));
 
             if is_match && !prev_matched {
-                res.push_str(&match_style.prefix().to_string());
+                res.push_str(&match_style_prefix);
             } else if !is_match && prev_matched && i != 0 {
                 res.push_str(RESET);
+                res.push_str(&text_style_prefix);
+                res.push_str(&selected_prefix);
                 res.push_str(escape);
             }
             res.push_str(grapheme);
@@ -826,22 +841,38 @@ mod tests {
 
     #[test]
     fn style_fuzzy_suggestion() {
+        let text_style = Style::new().fg(Color::Red);
         let match_style = Style::new().underline();
+        let selected_style = Style::new().underline();
         let style1 = Style::new().on(Color::Blue);
         let style2 = Style::new().on(Color::Green);
 
         let expected = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}{}{}",
+            "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+            text_style.prefix(),
+            selected_style.prefix(),
             style1.prefix(),
             "ab",
             match_style.paint("汉"),
+            text_style.prefix(),
+            selected_style.prefix(),
             style1.prefix(),
             "d",
+            // TODO these next two are unnecessary, make sure consecutive ANSI escapes
+            // are treated as a single segment by parse_ansi()
+            text_style.prefix(),
+            selected_style.prefix(),
             RESET,
+            text_style.prefix(),
+            selected_style.prefix(),
             style2.prefix(),
             match_style.paint("y̆👩🏾"),
+            text_style.prefix(),
+            selected_style.prefix(),
             style2.prefix(),
             "e",
+            text_style.prefix(),
+            selected_style.prefix(),
             RESET,
             "b@",
             match_style.paint("r"),
@@ -856,7 +887,9 @@ mod tests {
             style_suggestion(
                 &format!("{}{}{}", style1.paint("ab汉d"), style2.paint("y̆👩🏾e"), "b@r"),
                 match_indices,
-                &match_style
+                &text_style,
+                &match_style,
+                Some(&selected_style),
             )
         );
     }
@@ -866,20 +899,10 @@ mod tests {
         let text_style = Style::new().on(Color::Blue).bold();
         let match_style = Style::new().underline();
 
-        let expected = format!(
-            "{}{}{}{}",
-            text_style.prefix(),
-            "go",
-            match_style.paint("o"),
-            RESET
-        );
+        let expected = format!("{}{}{}", text_style.prefix(), "go", match_style.paint("o"),);
         assert_eq!(
             expected,
-            style_suggestion(
-                &text_style.paint("goo").to_string(),
-                &[2, 3, 4, 6],
-                &match_style
-            )
+            style_suggestion("goo", &[2, 3, 4, 6], &text_style, &match_style, None)
         );
     }
 
