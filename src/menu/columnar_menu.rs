@@ -403,16 +403,19 @@ impl ColumnarMenu {
             let description_size = self.get_width().saturating_sub(left_text_size);
             let padding = left_text_size.saturating_sub(self.display_widths[index]);
 
-            let value_style = if selected {
-                &self.settings.color.selected_text_style
+            let text_style = &suggestion.style.unwrap_or(self.settings.color.text_style);
+            let match_style = if selected {
+                &self.settings.color.selected_match_style
             } else {
-                &suggestion.style.unwrap_or(self.settings.color.text_style)
+                &self.settings.color.match_style
             };
             let value_trunc = truncate_no_ansi(&suggestion.value, left_text_size);
             let styled_value = style_suggestion(
-                &value_style.paint(value_trunc).to_string(),
-                match_indices.as_ref(),
-                &self.settings.color.match_style,
+                &value_trunc,
+                &match_indices,
+                text_style,
+                match_style,
+                selected.then(|| &self.settings.color.selected_text_style),
             );
 
             match &suggestion.description {
@@ -421,17 +424,20 @@ impl ColumnarMenu {
                     let desc_trunc = truncate_no_ansi(desc.as_str(), description_size);
                     if selected {
                         format!(
-                            "{}{}{}{}{}",
+                            "{}{}{}{}{}{}{}",
                             styled_value,
-                            value_style.prefix(),
+                            RESET,
+                            text_style.prefix(),
+                            self.settings.color.selected_text_style.prefix(),
                             " ".repeat(padding),
-                            desc_trunc,
+                            self.settings.color.description_style.paint(desc_trunc),
                             RESET,
                         )
                     } else {
                         format!(
-                            "{}{}{}{}",
+                            "{}{}{}{}{}",
                             styled_value,
+                            RESET,
                             " ".repeat(padding),
                             self.settings.color.description_style.paint(desc_trunc),
                             RESET,

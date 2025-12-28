@@ -523,20 +523,19 @@ impl IdeMenu {
 
             let styled_string = if index == self.index() {
                 style_suggestion(
-                    &self
-                        .settings
-                        .color
-                        .selected_text_style
-                        .paint(string)
-                        .to_string(),
+                    &string,
                     &match_indices,
+                    &self.settings.color.selected_text_style,
                     &self.settings.color.selected_match_style,
+                    None,
                 )
             } else {
                 style_suggestion(
-                    &suggestion_style.paint(string).to_string(),
+                    &string,
                     &match_indices,
+                    &suggestion_style,
                     &self.settings.color.match_style,
+                    None,
                 )
             };
 
