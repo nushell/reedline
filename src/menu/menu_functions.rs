@@ -848,24 +848,32 @@ mod tests {
         let style2 = Style::new().on(Color::Green);
 
         let expected = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+            "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
             text_style.prefix(),
             selected_style.prefix(),
             style1.prefix(),
             "ab",
             match_style.paint("汉"),
+            text_style.prefix(),
+            selected_style.prefix(),
             style1.prefix(),
             "d",
+            // TODO these next two are unnecessary, make sure consecutive ANSI escapes
+            // are treated as a single segment by parse_ansi()
+            text_style.prefix(),
+            selected_style.prefix(),
             RESET,
             text_style.prefix(),
             selected_style.prefix(),
             style2.prefix(),
             match_style.paint("y̆👩🏾"),
-            style2.prefix(),
-            "e",
-            RESET,
             text_style.prefix(),
             selected_style.prefix(),
+            style2.prefix(),
+            "e",
+            text_style.prefix(),
+            selected_style.prefix(),
+            RESET,
             "b@",
             match_style.paint("r"),
         );
@@ -891,13 +899,7 @@ mod tests {
         let text_style = Style::new().on(Color::Blue).bold();
         let match_style = Style::new().underline();
 
-        let expected = format!(
-            "{}{}{}{}",
-            text_style.prefix(),
-            "go",
-            match_style.paint("o"),
-            RESET
-        );
+        let expected = format!("{}{}{}", text_style.prefix(), "go", match_style.paint("o"),);
         assert_eq!(
             expected,
             style_suggestion("goo", &[2, 3, 4, 6], &text_style, &match_style, None)

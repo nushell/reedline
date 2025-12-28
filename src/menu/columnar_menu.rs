@@ -415,7 +415,7 @@ impl ColumnarMenu {
                 &match_indices,
                 text_style,
                 match_style,
-                selected.then(|| &self.settings.color.selected_text_style),
+                selected.then_some(&self.settings.color.selected_text_style),
             );
 
             match &suggestion.description {
