@@ -376,12 +376,18 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
     }
 }
 
+#[derive(Debug, PartialEq)]
+struct AnsiSegment<'a> {
+    escape: &'a str,
+    text: &'a str,
+}
+
 /// Parse ANSI sequences for setting display attributes in the given string.
 /// Each returned item is a tuple (escape start, escape end, text end), for
 /// finding each sequence and the text affected by it.
 ///
 /// Essentially just looks for 'ESC [' followed by /[0-9;]*m/, ignoring other ANSI sequences.
-fn parse_ansi(s: &str) -> Vec<(usize, usize, usize)> {
+fn parse_ansi(s: &str) -> Vec<AnsiSegment> {
     let mut segments = Vec::new();
 
     let mut last_escape_start = 0;
@@ -402,14 +408,20 @@ fn parse_ansi(s: &str) -> Vec<(usize, usize, usize)> {
         }
 
         if escape_start != 0 {
-            segments.push((last_escape_start, last_escape_end, escape_start));
+            segments.push(AnsiSegment {
+                escape: &s[last_escape_start..last_escape_end],
+                text: &s[last_escape_end..escape_start],
+            });
         }
         last_escape_start = escape_start;
         last_escape_end = s.len() - after_params.len() + 1;
         offset = last_escape_end;
     }
 
-    segments.push((last_escape_start, last_escape_end, s.len()));
+    segments.push(AnsiSegment {
+        escape: &s[last_escape_start..last_escape_end],
+        text: &s[last_escape_end..s.len()],
+    });
     segments
 }
 
@@ -431,9 +443,7 @@ pub fn style_suggestion(
         .unwrap_or_default();
     let mut res = String::new();
     let mut offset = 0;
-    for (escape_start, text_start, text_end) in parse_ansi(suggestion) {
-        let escape = &suggestion[escape_start..text_start];
-        let text = &suggestion[text_start..text_end];
+    for AnsiSegment { escape, text } in parse_ansi(suggestion) {
         let graphemes = text.graphemes(true).collect::<Vec<_>>();
         let mut prev_matched = false;
 
@@ -487,28 +497,62 @@ pub fn get_match_indices<'a>(
     }
 }
 
-/// Truncate a string with no ANSI escapes to the given max width, which must be >=3.
+/// Truncate a string with ANSI escapes to the given max width, which must be >=3.
 ///
 /// If `s` is longer than `max_width`, the resulting string will end in "..."
 /// and have width at most `max_width`.
-pub(crate) fn truncate_no_ansi(s: &str, max_width: usize) -> Cow<'_, str> {
-    if s.width() <= max_width {
-        Cow::Borrowed(s)
-    } else {
-        let trunc_suffix = "...";
-        let suffix_width = trunc_suffix.width();
+pub(crate) fn truncate_with_ansi(s: &str, max_width: usize) -> Cow<'_, str> {
+    let trunc_suffix = "...";
+    let suffix_width = trunc_suffix.width();
 
-        let mut res = String::new();
-        let mut curr_width = 0;
-        for grapheme in s.graphemes(true) {
-            curr_width += grapheme.width();
-            if curr_width + suffix_width > max_width {
+    let segments = parse_ansi(s);
+    let mut curr_width = 0;
+    let mut should_trunc = false;
+    let mut max_ind_trunc = 0;
+    let mut trunc_grapheme_ind = 0;
+    for (i, segment) in segments.iter().enumerate() {
+        let segment_width = segment.text.width();
+
+        should_trunc = curr_width + segment_width > max_width;
+
+        let too_long_with_dots = curr_width + segment_width + suffix_width > max_width;
+        if !too_long_with_dots {
+            max_ind_trunc = i + 1;
+        }
+
+        if should_trunc || too_long_with_dots {
+            let mut allowed_width = max_width
+                .saturating_sub(curr_width)
+                .saturating_sub(suffix_width);
+            for (ind, grapheme) in segment.text.grapheme_indices(true) {
+                let grapheme_width = grapheme.width();
+                if grapheme_width > allowed_width {
+                    break;
+                }
+                trunc_grapheme_ind = ind + grapheme.len();
+                allowed_width = allowed_width.saturating_sub(grapheme_width);
+            }
+            if should_trunc {
                 break;
             }
-            res.push_str(grapheme);
         }
+
+        curr_width += segment_width;
+    }
+
+    if should_trunc {
+        let mut res = String::new();
+        for segment in &segments[0..max_ind_trunc] {
+            res.push_str(segment.escape);
+            res.push_str(segment.text);
+        }
+        let last = &segments[max_ind_trunc];
+        res.push_str(last.escape);
+        res.push_str(&last.text[0..trunc_grapheme_ind]);
         res.push_str(trunc_suffix);
         Cow::Owned(res)
+    } else {
+        Cow::Borrowed(s)
     }
 }
 
@@ -835,11 +879,24 @@ mod tests {
     }
 
     #[rstest]
-    #[case("plain", vec![(0, 0, 5)])]
-    #[case("\x1b[mempty", vec![(0, 3, 8)])]
-    #[case("\x1b[\x1b[minvalid", vec![(0, 0, 2), (2, 5, 12)])]
-    #[case("a\x1b[1;mb\x1b[;mc", vec![(0, 0, 1), (1, 6, 7), (7, 11, 12)])]
-    fn test_parse_ansi(#[case] s: &str, #[case] expected: Vec<(usize, usize, usize)>) {
+    #[case("plain", vec![AnsiSegment { escape: "", text: "plain" }])]
+    #[case("\x1b[mempty", vec![AnsiSegment { escape: "\x1b[m", text: "empty" }])]
+    #[case(
+        "\x1b[\x1b[minvalid",
+        vec![
+            AnsiSegment { escape: "", text: "\x1b[" },
+            AnsiSegment { escape: "\x1b[m", text: "invalid" }
+        ]
+    )]
+    #[case(
+        "a\x1b[1;mb\x1b[;mc",
+        vec![
+            AnsiSegment { escape: "", text: "a" },
+            AnsiSegment { escape: "\x1b[1;m", text: "b" },
+            AnsiSegment { escape: "\x1b[;m", text: "c" },
+        ]
+    )]
+    fn test_parse_ansi(#[case] s: &str, #[case] expected: Vec<AnsiSegment>) {
         assert_eq!(parse_ansi(s), expected);
     }
 
@@ -929,12 +986,24 @@ mod tests {
     }
 
     #[rstest]
-    #[case::shorter("asdf", 5, "asdf")]
+    #[case::no_ansi_shorter("asdf", 5, "asdf")]
+    #[case::with_ansi_shorter(
+        "\x1b[1;2;3;ma\x1b[1;15;ms\x1b[1;md\x1b[1;mf",
+        5,
+        "\x1b[1;2;3;ma\x1b[1;15;ms\x1b[1;md\x1b[1;mf"
+    )]
     // Ｈ has width 2
-    #[case::exact_width("asdＨ", 5, "asdＨ")]
-    #[case::one_longer("asdfＨ", 5, "as...")]
-    #[case::result_thinner_than_max("aＨＨＨ", 5, "a...")]
-    fn test_truncate(#[case] value: &str, #[case] max_width: usize, #[case] expected: &str) {
-        assert_eq!(expected, truncate_no_ansi(value, max_width));
+    #[case::no_ansi_one_longer("asdfＨ", 5, "as...")]
+    #[case::no_ansi_result_thinner_than_max("aＨＨＨ", 5, "a...")]
+    #[case::with_ansi_exact_width("\x1b[1;masd\x1b[2;3;mＨ", 5, "\x1b[1;masd\x1b[2;3;mＨ")]
+    #[case::no_ansi_nothing_left("foobar", 3, "...")]
+    #[case::trunc_with_short_segments("foobar\x1b[1;ma\x1b[2;mb\x1b[3;mc", 8, "fooba...")]
+    #[case::trunc_with_long_segment("foo\x1b[1;mBarbaz\x1b[2;mExtra", 8, "foo\x1b[1;mBa...")]
+    fn test_truncate_with_ansi(
+        #[case] value: &str,
+        #[case] max_width: usize,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(expected, truncate_with_ansi(value, max_width));
     }
 }

@@ -3,7 +3,7 @@ use crate::{
     core_editor::Editor,
     menu_functions::{
         can_partially_complete, completer_input, floor_char_boundary, get_match_indices,
-        replace_in_buffer, style_suggestion, truncate_no_ansi,
+        replace_in_buffer, style_suggestion, truncate_with_ansi,
     },
     painting::Painter,
     Completer, Suggestion,
@@ -384,6 +384,7 @@ impl ColumnarMenu {
         use_ansi_coloring: bool,
     ) -> String {
         let selected = index == self.index();
+        let display_value = suggestion.display_value();
         let empty_space = self.get_width().saturating_sub(self.display_widths[index]);
 
         if use_ansi_coloring {
@@ -395,7 +396,7 @@ impl ColumnarMenu {
                 .unwrap_or(shortest_base);
 
             let match_indices =
-                get_match_indices(&suggestion.value, &suggestion.match_indices, shortest_base);
+                get_match_indices(display_value, &suggestion.match_indices, shortest_base);
 
             let left_text_size = self
                 .get_width()
@@ -409,7 +410,7 @@ impl ColumnarMenu {
             } else {
                 &self.settings.color.match_style
             };
-            let value_trunc = truncate_no_ansi(&suggestion.value, left_text_size);
+            let value_trunc = truncate_with_ansi(&display_value, left_text_size);
             let styled_value = style_suggestion(
                 &value_trunc,
                 &match_indices,
@@ -421,7 +422,7 @@ impl ColumnarMenu {
             match &suggestion.description {
                 Some(desc) if description_size > 3 => {
                     let desc = desc.replace('\n', "");
-                    let desc_trunc = truncate_no_ansi(desc.as_str(), description_size);
+                    let desc_trunc = truncate_with_ansi(desc.as_str(), description_size);
                     if selected {
                         format!(
                             "{}{}{}{}{}{}{}",
@@ -462,7 +463,7 @@ impl ColumnarMenu {
                 format!(
                     "{}{:max$}{}",
                     marker,
-                    &suggestion.value,
+                    display_value,
                     description
                         .chars()
                         .take(empty_space)
@@ -478,7 +479,7 @@ impl ColumnarMenu {
                 format!(
                     "{}{}{:>empty$}",
                     marker,
-                    &suggestion.value,
+                    display_value,
                     "",
                     empty = empty_space.saturating_sub(marker.width()),
                 )
@@ -564,7 +565,7 @@ impl Menu for ColumnarMenu {
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 
         self.values = values;
-        self.display_widths = self.values.iter().map(|sugg| sugg.value.width()).collect();
+        self.display_widths = self.values.iter().map(|sugg| sugg.display_value().width()).collect();
         self.working_details.shortest_base_string = base_ranges
             .iter()
             .map(|range| {
