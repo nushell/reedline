@@ -208,6 +208,11 @@ impl Painter {
         use_ansi_coloring: bool,
         cursor_config: &Option<CursorConfig>,
     ) -> Result<()> {
+        // Reset any ANSI styling that may have been left by external commands
+        // This ensures the prompt is not affected by previous output styling
+        // Note: Attribute::Reset (SGR 0) resets all attributes including colors
+        self.stdout.queue(SetAttribute(Attribute::Reset))?;
+
         self.stdout.queue(cursor::Hide)?;
 
         let screen_width = self.screen_width();
