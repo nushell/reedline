@@ -444,7 +444,10 @@ pub fn style_suggestion(
             let is_match = match_indices.contains(&(i + offset));
 
             if is_match && !prev_matched {
+                res.push_str(RESET);
+                res.push_str(&text_style_prefix);
                 res.push_str(&match_style_prefix);
+                res.push_str(escape);
             } else if !is_match && prev_matched && i != 0 {
                 res.push_str(RESET);
                 res.push_str(&text_style_prefix);
@@ -848,12 +851,15 @@ mod tests {
         let style2 = Style::new().on(Color::Green);
 
         let expected = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+            "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
             text_style.prefix(),
             selected_style.prefix(),
             style1.prefix(),
             "ab",
-            match_style.paint("汉"),
+            RESET,
+            text_style.prefix(),
+            match_style.prefix(),
+            style1.paint("汉"),
             text_style.prefix(),
             selected_style.prefix(),
             style1.prefix(),
@@ -866,7 +872,10 @@ mod tests {
             text_style.prefix(),
             selected_style.prefix(),
             style2.prefix(),
-            match_style.paint("y̆👩🏾"),
+            RESET,
+            text_style.prefix(),
+            match_style.prefix(),
+            style2.paint("y̆👩🏾"),
             text_style.prefix(),
             selected_style.prefix(),
             style2.prefix(),
@@ -875,7 +884,12 @@ mod tests {
             selected_style.prefix(),
             RESET,
             "b@",
-            match_style.paint("r"),
+            RESET,
+            text_style.prefix(),
+            match_style.prefix(),
+            RESET,
+            "r",
+            RESET,
         );
         let match_indices = &[
             2, // 汉
@@ -899,7 +913,14 @@ mod tests {
         let text_style = Style::new().on(Color::Blue).bold();
         let match_style = Style::new().underline();
 
-        let expected = format!("{}{}{}", text_style.prefix(), "go", match_style.paint("o"),);
+        let expected = format!(
+            "{}{}{}{}{}",
+            text_style.prefix(),
+            "go",
+            RESET,
+            text_style.prefix(),
+            match_style.paint("o"),
+        );
         assert_eq!(
             expected,
             style_suggestion("goo", &[2, 3, 4, 6], &text_style, &match_style, None)
