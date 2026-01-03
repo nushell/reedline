@@ -106,7 +106,6 @@ pub trait Menu: Send {
     /// in the given line buffer
     fn can_partially_complete(
         &mut self,
-        values_updated: bool,
         editor: &mut Editor,
         completer: &mut dyn Completer,
     ) -> bool;
@@ -306,23 +305,20 @@ impl ReedlineMenu {
 
     pub(crate) fn can_partially_complete(
         &mut self,
-        values_updated: bool,
         editor: &mut Editor,
         completer: &mut dyn Completer,
         history: &dyn History,
     ) -> bool {
         match self {
-            Self::EngineCompleter(menu) => {
-                menu.can_partially_complete(values_updated, editor, completer)
-            }
+            Self::EngineCompleter(menu) => menu.can_partially_complete(editor, completer),
             Self::HistoryMenu(menu) => {
                 let mut history_completer = HistoryCompleter::new(history);
-                menu.can_partially_complete(values_updated, editor, &mut history_completer)
+                menu.can_partially_complete(editor, &mut history_completer)
             }
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
-            } => menu.can_partially_complete(values_updated, editor, own_completer.as_mut()),
+            } => menu.can_partially_complete(editor, own_completer.as_mut()),
         }
     }
 
@@ -399,18 +395,17 @@ impl Menu for ReedlineMenu {
 
     fn can_partially_complete(
         &mut self,
-        values_updated: bool,
         editor: &mut Editor,
         completer: &mut dyn Completer,
     ) -> bool {
         match self {
             Self::EngineCompleter(menu) | Self::HistoryMenu(menu) => {
-                menu.can_partially_complete(values_updated, editor, completer)
+                menu.can_partially_complete(editor, completer)
             }
             Self::WithCompleter {
                 menu,
                 completer: own_completer,
-            } => menu.can_partially_complete(values_updated, editor, own_completer.as_mut()),
+            } => menu.can_partially_complete(editor, own_completer.as_mut()),
         }
     }
 
