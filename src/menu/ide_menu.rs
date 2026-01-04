@@ -721,11 +721,13 @@ impl Menu for IdeMenu {
             self.working_details.completion_width = completion_width;
 
             // Columns at which completion box begins
-            let mut completion_pos = self
+            let mut completion_pos = (self
                 .working_details
                 .cursor_col
-                .saturating_add_signed(self.default_details.cursor_offset)
-                .saturating_sub(total_border_width / 2);
+                .saturating_sub(total_border_width / 2)
+                as i16
+                + self.default_details.cursor_offset)
+                .max(0) as u16;
 
             if self.default_details.correct_cursor_pos {
                 let base_string = &self.working_details.shortest_base_string;
