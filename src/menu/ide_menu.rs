@@ -720,10 +720,12 @@ impl Menu for IdeMenu {
                 .max(3 + total_border_width); // Big enough to show "..."
             self.working_details.completion_width = completion_width;
 
-            // Position at which completions begin
-            let mut completion_pos = (self.working_details.cursor_col as i16
-                + self.default_details.cursor_offset)
-                .max(0) as u16;
+            // Columns at which completion box begins
+            let mut completion_pos = self
+                .working_details
+                .cursor_col
+                .saturating_add_signed(self.default_details.cursor_offset)
+                .saturating_sub(total_border_width / 2);
 
             if self.default_details.correct_cursor_pos {
                 let base_string = &self.working_details.shortest_base_string;
@@ -731,9 +733,7 @@ impl Menu for IdeMenu {
             }
 
             // The end of the completion box
-            let mut completion_end = completion_pos
-                .saturating_add(completion_width)
-                .saturating_sub(total_border_width / 2);
+            let mut completion_end = completion_pos.saturating_add(completion_width);
             if completion_end > terminal_width {
                 // Not enough space on the right, must push completion box left
                 let diff = completion_end - terminal_width;
@@ -742,7 +742,7 @@ impl Menu for IdeMenu {
             };
 
             // Horizontal space on the left and right (not including description)
-            let all_space_left = completion_pos.saturating_sub(total_border_width / 2);
+            let all_space_left = completion_pos;
             let all_space_right = terminal_width.saturating_sub(completion_end);
             self.working_details.space_left = all_space_left;
             self.working_details.space_right = all_space_right;
