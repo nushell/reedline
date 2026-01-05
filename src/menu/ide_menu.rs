@@ -3,7 +3,7 @@ use crate::{
     core_editor::Editor,
     menu_functions::{
         can_partially_complete, completer_input, floor_char_boundary, get_match_indices,
-        replace_in_buffer, style_suggestion,
+        replace_in_buffer, style_suggestion, truncate_no_ansi,
     },
     painting::Painter,
     Completer, Suggestion,
@@ -100,7 +100,7 @@ impl Default for DefaultIdeMenuDetails {
             border: None,
             cursor_offset: 0,
             description_mode: DescriptionMode::PreferRight,
-            min_description_width: 0,
+            min_description_width: 15,
             max_description_width: 50,
             max_description_height: 10,
             description_offset: 1,
@@ -349,11 +349,6 @@ impl IdeMenu {
         values.max(description_height)
     }
 
-    /// Returns working details width
-    fn get_width(&self) -> u16 {
-        self.working_details.menu_width
-    }
-
     fn reset_position(&mut self) {
         self.selected = 0;
     }
@@ -506,17 +501,7 @@ impl IdeMenu {
         let max_string_width =
             (self.working_details.completion_width as usize).saturating_sub(border_width + padding);
 
-        let string = if suggestion.value.chars().count() > max_string_width {
-            let mut chars = suggestion
-                .value
-                .chars()
-                .take(max_string_width.saturating_sub(3))
-                .collect::<String>();
-            chars.push_str("...");
-            chars
-        } else {
-            suggestion.value.clone()
-        };
+        let string = truncate_no_ansi(&suggestion.value, max_string_width);
 
         if use_ansi_coloring {
             // TODO(ysthakur): let the user strip quotes, rather than doing it here
@@ -531,42 +516,34 @@ impl IdeMenu {
 
             let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
 
-            if index == self.index() {
-                format!(
-                    "{}{}{}{}{}{}{}",
-                    vertical_border,
-                    suggestion_style.prefix(),
-                    " ".repeat(padding),
-                    style_suggestion(
-                        &self
-                            .settings
-                            .color
-                            .selected_text_style
-                            .paint(&string)
-                            .to_string(),
-                        &match_indices,
-                        &self.settings.color.selected_match_style,
-                    ),
-                    " ".repeat(padding_right),
-                    RESET,
-                    vertical_border,
+            let styled_string = if index == self.index() {
+                style_suggestion(
+                    &string,
+                    &match_indices,
+                    &self.settings.color.selected_text_style,
+                    &self.settings.color.selected_match_style,
+                    None,
                 )
             } else {
-                format!(
-                    "{}{}{}{}{}{}{}",
-                    vertical_border,
-                    suggestion_style.prefix(),
-                    " ".repeat(padding),
-                    style_suggestion(
-                        &suggestion_style.paint(&string).to_string(),
-                        &match_indices,
-                        &self.settings.color.match_style,
-                    ),
-                    " ".repeat(padding_right),
-                    RESET,
-                    vertical_border,
+                style_suggestion(
+                    &string,
+                    &match_indices,
+                    &suggestion_style,
+                    &self.settings.color.match_style,
+                    None,
                 )
-            }
+            };
+
+            format!(
+                "{}{}{}{}{}{}{}",
+                vertical_border,
+                suggestion_style.prefix(),
+                " ".repeat(padding),
+                styled_string,
+                " ".repeat(padding_right),
+                RESET,
+                vertical_border,
+            )
         } else {
             let marker = if index == self.index() { ">" } else { "" };
 
@@ -709,113 +686,21 @@ impl Menu for IdeMenu {
             });
 
             let terminal_width = painter.screen_width();
-            let mut cursor_pos = self.working_details.cursor_col;
 
-            if self.default_details.correct_cursor_pos {
-                let base_string = &self.working_details.shortest_base_string;
-
-                cursor_pos = cursor_pos.saturating_sub(base_string.width() as u16);
-            }
-
-            let border_width = if self.default_details.border.is_some() {
+            let total_border_width = if self.default_details.border.is_some() {
                 2
             } else {
                 0
             };
 
-            let description = self
-                .get_value()
-                .map(|v| {
-                    if let Some(v) = v.description {
-                        if v.is_empty() {
-                            return None;
-                        } else {
-                            return Some(v);
-                        }
-                    }
+            let description = self.get_value().and_then(|v| {
+                let v = v.description?;
+                if v.is_empty() {
                     None
-                })
-                .unwrap_or_default();
-
-            let mut min_description_width = if description.is_some() {
-                self.default_details.min_description_width
-            } else {
-                0
-            };
-
-            let completion_width = ((self.longest_suggestion.min(u16::MAX as usize) as u16)
-                + 2 * self.default_details.padding
-                + border_width)
-                .min(self.default_details.max_completion_width)
-                .max(self.default_details.min_completion_width)
-                .min(terminal_width.saturating_sub(min_description_width))
-                .max(3 + border_width); // Big enough to show "..."
-
-            let available_description_width = terminal_width
-                .saturating_sub(completion_width)
-                .min(self.default_details.max_description_width)
-                .max(self.default_details.min_description_width)
-                .min(terminal_width.saturating_sub(completion_width));
-
-            min_description_width = min_description_width.min(available_description_width);
-
-            let description_width = if let Some(description) = description {
-                self.description_dims(
-                    description,
-                    available_description_width,
-                    u16::MAX,
-                    min_description_width,
-                )
-                .0
-            } else {
-                0
-            };
-
-            let max_offset = terminal_width.saturating_sub(completion_width + description_width);
-
-            let description_offset = self.default_details.description_offset.min(max_offset);
-
-            self.working_details.completion_width = completion_width;
-            self.working_details.description_width = description_width;
-            self.working_details.description_offset = description_offset;
-            self.working_details.menu_width =
-                completion_width + description_offset + description_width;
-
-            let cursor_offset = self.default_details.cursor_offset;
-
-            self.working_details.description_is_right = match self.default_details.description_mode
-            {
-                DescriptionMode::Left => false,
-                DescriptionMode::Right => true,
-                DescriptionMode::PreferRight => {
-                    // if there is enough space to the right of the cursor, the description is shown on the right
-                    // otherwise it is shown on the left
-                    let potential_right_distance = (terminal_width as i16)
-                        .saturating_sub(
-                            cursor_pos as i16
-                                + cursor_offset
-                                + description_offset as i16
-                                + completion_width as i16,
-                        )
-                        .max(0) as u16;
-
-                    potential_right_distance >= description_width
+                } else {
+                    Some(v)
                 }
-            };
-
-            let space_left = (if self.working_details.description_is_right {
-                cursor_pos as i16 + cursor_offset
-            } else {
-                (cursor_pos as i16 + cursor_offset)
-                    .saturating_sub(description_width as i16 + description_offset as i16)
-            }
-            .max(0) as u16)
-                .min(terminal_width.saturating_sub(self.get_width()));
-
-            let space_right = terminal_width.saturating_sub(space_left + self.get_width());
-
-            self.working_details.space_left = space_left;
-            self.working_details.space_right = space_right;
+            });
 
             let mut available_lines = painter
                 .remaining_lines_real()
@@ -827,7 +712,95 @@ impl Menu for IdeMenu {
                 available_lines = painter.remaining_lines().min(self.min_rows());
             }
 
-            let visible_items = available_lines.saturating_sub(border_width);
+            let completion_width = ((self.longest_suggestion.min(u16::MAX as usize) as u16)
+                + 2 * self.default_details.padding
+                + total_border_width)
+                .min(self.default_details.max_completion_width)
+                .max(self.default_details.min_completion_width)
+                .max(3 + total_border_width); // Big enough to show "..."
+            self.working_details.completion_width = completion_width;
+
+            // Columns at which completion box begins
+            let mut completion_pos = (self
+                .working_details
+                .cursor_col
+                .saturating_sub(total_border_width / 2)
+                as i16
+                + self.default_details.cursor_offset)
+                .max(0) as u16;
+
+            if self.default_details.correct_cursor_pos {
+                let base_string = &self.working_details.shortest_base_string;
+                completion_pos = completion_pos.saturating_sub(base_string.width() as u16);
+            }
+
+            // The end of the completion box
+            let mut completion_end = completion_pos.saturating_add(completion_width);
+            if completion_end > terminal_width {
+                // Not enough space on the right, must push completion box left
+                let diff = completion_end - terminal_width;
+                completion_pos = completion_pos.saturating_sub(diff);
+                completion_end = terminal_width;
+            };
+
+            // Horizontal space on the left and right (not including description)
+            let all_space_left = completion_pos;
+            let all_space_right = terminal_width.saturating_sub(completion_end);
+            self.working_details.space_left = all_space_left;
+            self.working_details.space_right = all_space_right;
+
+            if let Some(description) = description {
+                let desc_space_left =
+                    all_space_left.saturating_sub(self.default_details.description_offset);
+                let desc_space_right =
+                    all_space_right.saturating_sub(self.default_details.description_offset);
+
+                self.working_details.description_is_right =
+                    match self.default_details.description_mode {
+                        DescriptionMode::Left => false,
+                        DescriptionMode::Right => true,
+                        DescriptionMode::PreferRight => {
+                            desc_space_right >= self.default_details.min_description_width
+                        }
+                    };
+                let desc_space = if self.working_details.description_is_right {
+                    desc_space_right
+                } else {
+                    desc_space_left
+                };
+                self.working_details.description_width = self
+                    .description_dims(
+                        description,
+                        desc_space.min(self.default_details.max_description_width),
+                        available_lines,
+                        self.default_details.min_description_width,
+                    )
+                    .0;
+
+                let max_offset = terminal_width
+                    .saturating_sub(completion_width + self.working_details.description_width);
+                self.working_details.description_offset =
+                    self.default_details.description_offset.min(max_offset);
+
+                if self.working_details.description_is_right {
+                    self.working_details.space_right = all_space_right
+                        .saturating_sub(self.working_details.description_width)
+                        .saturating_sub(self.working_details.description_offset);
+                } else {
+                    self.working_details.space_left = all_space_left
+                        .saturating_sub(self.working_details.description_width)
+                        .saturating_sub(self.working_details.description_offset);
+                }
+            } else {
+                self.working_details.description_width = 0;
+                self.working_details.description_offset = 0;
+            }
+
+            self.working_details.menu_width = completion_width
+                + self.working_details.description_offset
+                + self.working_details.description_width;
+
+            let visible_items = available_lines.saturating_sub(total_border_width);
 
             self.skip_values = if self.selected <= self.skip_values {
                 // Selection is above the visible area

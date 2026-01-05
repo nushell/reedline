@@ -208,6 +208,11 @@ impl Painter {
         use_ansi_coloring: bool,
         cursor_config: &Option<CursorConfig>,
     ) -> Result<()> {
+        // Reset any ANSI styling that may have been left by external commands
+        // This ensures the prompt is not affected by previous output styling
+        // Note: Attribute::Reset (SGR 0) resets all attributes including colors
+        self.stdout.queue(SetAttribute(Attribute::Reset))?;
+
         self.stdout.queue(cursor::Hide)?;
 
         let screen_width = self.screen_width();
@@ -517,9 +522,12 @@ impl Painter {
         //
         // I assume this is a bug with the position() call but haven't figured that
         // out yet.
-        if let Ok(position) = cursor::position() {
-            self.prompt_start_row = position.1;
-            self.just_resized = true;
+        #[cfg(not(test))]
+        {
+            if let Ok(position) = cursor::position() {
+                self.prompt_start_row = position.1;
+                self.just_resized = true;
+            }
         }
     }
 

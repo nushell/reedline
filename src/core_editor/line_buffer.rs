@@ -272,8 +272,7 @@ impl LineBuffer {
     pub fn word_left_index(&self) -> usize {
         self.lines[..self.insertion_point]
             .split_word_bound_indices()
-            .filter(|(_, word)| !is_whitespace_str(word))
-            .next_back()
+            .rfind(|(_, word)| !is_whitespace_str(word))
             .map(|(i, _)| i)
             .unwrap_or(0)
     }
@@ -512,8 +511,7 @@ impl LineBuffer {
         let right_index = self.word_right_index();
         let left_index = self.lines[..right_index]
             .split_word_bound_indices()
-            .filter(|(_, word)| !is_whitespace_str(word))
-            .next_back()
+            .rfind(|(_, word)| !is_whitespace_str(word))
             .map(|(i, _)| i)
             .unwrap_or(0);
 

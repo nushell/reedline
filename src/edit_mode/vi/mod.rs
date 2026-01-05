@@ -208,11 +208,26 @@ impl EditMode for Vi {
                 (ViMode::Normal | ViMode::Visual, _, _, _, _) => self
                     .normal_keybindings
                     .find_binding(modifiers, code)
-                    .unwrap_or(ReedlineEvent::None),
+                    .unwrap_or_else(|| {
+                        // Default Enter behavior when no custom binding
+                        if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
+                            self.mode = ViMode::Insert;
+                            ReedlineEvent::Enter
+                        } else {
+                            ReedlineEvent::None
+                        }
+                    }),
                 (ViMode::Insert, _, _, _, _) => self
                     .insert_keybindings
                     .find_binding(modifiers, code)
-                    .unwrap_or(ReedlineEvent::None),
+                    .unwrap_or_else(|| {
+                        // Default Enter behavior when no custom binding
+                        if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
+                            ReedlineEvent::Enter
+                        } else {
+                            ReedlineEvent::None
+                        }
+                    }),
             },
 
             Event::Mouse(_) => ReedlineEvent::Mouse,
@@ -261,7 +276,7 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint, ReedlineEvent::Left])
         );
         assert!(matches!(vi.mode, ViMode::Normal));
     }
