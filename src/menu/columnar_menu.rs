@@ -550,6 +550,10 @@ impl Menu for ColumnarMenu {
 
     /// Updates menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
+        if self.settings.only_buffer_difference && self.input.is_none() {
+            self.input = Some(editor.get_buffer().to_string());
+        }
+
         let (input, pos) = completer_input(
             editor.get_buffer(),
             editor.insertion_point(),
@@ -585,20 +589,13 @@ impl Menu for ColumnarMenu {
         if let Some(event) = self.event.take() {
             match event {
                 MenuEvent::Activate(updated) => {
-                    self.active = true;
                     self.reset_position();
-
-                    self.input = if self.settings.only_buffer_difference {
-                        Some(editor.get_buffer().to_string())
-                    } else {
-                        None
-                    };
 
                     if !updated {
                         self.update_values(editor, completer);
                     }
                 }
-                MenuEvent::Deactivate => self.active = false,
+                MenuEvent::Deactivate => {}
                 MenuEvent::Edit(updated) => {
                     self.reset_position();
 

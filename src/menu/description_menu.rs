@@ -442,6 +442,10 @@ impl Menu for DescriptionMenu {
 
     /// Updates menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
+        if self.settings.only_buffer_difference && self.input.is_none() {
+            self.input = Some(editor.get_buffer().to_string());
+        }
+
         let (input, pos) = completer_input(
             editor.get_buffer(),
             editor.insertion_point(),
@@ -465,7 +469,6 @@ impl Menu for DescriptionMenu {
             match event {
                 MenuEvent::Activate(_) => {
                     self.reset_position();
-                    self.input = Some(editor.get_buffer().to_string());
                     self.update_values(editor, completer);
                 }
                 MenuEvent::Deactivate => self.active = false,
