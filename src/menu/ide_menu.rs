@@ -496,7 +496,7 @@ impl IdeMenu {
             .unwrap_or_default();
 
         let padding_right = (self.working_details.completion_width as usize)
-            .saturating_sub(suggestion.value.chars().count() + border_width + padding);
+            .saturating_sub(suggestion.value.width() + border_width + padding);
 
         let max_string_width =
             (self.working_details.completion_width as usize).saturating_sub(border_width + padding);
@@ -635,7 +635,7 @@ impl Menu for IdeMenu {
                 let start = floor_char_boundary(editor.get_buffer(), range.start).min(end);
                 editor.get_buffer()[start..end].to_string()
             })
-            .min_by_key(|s| s.len())
+            .min_by_key(|s| s.width())
             .unwrap_or_default();
 
         self.reset_position();
@@ -674,13 +674,12 @@ impl Menu for IdeMenu {
                 | MenuEvent::NextPage => {}
             }
 
-            self.longest_suggestion = self.get_values().iter().fold(0, |prev, suggestion| {
-                if prev >= suggestion.value.len() {
-                    prev
-                } else {
-                    suggestion.value.len()
-                }
-            });
+            self.longest_suggestion = self
+                .get_values()
+                .iter()
+                .map(|s| s.value.width())
+                .max()
+                .unwrap_or_default();
 
             let terminal_width = painter.screen_width();
 
