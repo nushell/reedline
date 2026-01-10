@@ -187,7 +187,7 @@ pub fn find_common_string(values: &[Suggestion]) -> Option<(&Suggestion, usize)>
                 .char_indices()
                 .zip(current_suggestion.value.chars())
                 .find_map(|((idx, lhs), rhs)| (rhs != lhs).then_some(idx))
-                .unwrap_or(max_len);
+                .unwrap_or(current_suggestion.value.len());
             if new_common_prefix_len == 0 {
                 Done(0)
             } else {
@@ -764,6 +764,7 @@ mod tests {
     // https://github.com/nushell/nushell/pull/16765#issuecomment-3384411809
     #[case::unsorted(vec!["a", "b", "ab"], 0)]
     #[case::should_be_case_sensitive(vec!["a", "A"], 0)]
+    #[case::first_suggestion_longest(vec!["foobar", "foo"], 3)]
     fn test_find_common_string(#[case] input: Vec<&str>, #[case] expected: usize) {
         let input: Vec<_> = input
             .into_iter()
