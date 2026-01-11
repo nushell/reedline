@@ -565,7 +565,11 @@ impl Menu for ColumnarMenu {
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 
         self.values = values;
-        self.display_widths = self.values.iter().map(|sugg| sugg.display_value().width()).collect();
+        self.display_widths = self
+            .values
+            .iter()
+            .map(|sugg| sugg.display_value().width())
+            .collect();
         self.working_details.shortest_base_string = base_ranges
             .iter()
             .map(|range| {
