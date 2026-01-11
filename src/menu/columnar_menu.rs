@@ -410,7 +410,7 @@ impl ColumnarMenu {
             } else {
                 &self.settings.color.match_style
             };
-            let value_trunc = truncate_with_ansi(&display_value, left_text_size);
+            let value_trunc = truncate_with_ansi(display_value, left_text_size);
             let styled_value = style_suggestion(
                 &value_trunc,
                 &match_indices,

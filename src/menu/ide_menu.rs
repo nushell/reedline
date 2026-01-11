@@ -514,7 +514,7 @@ impl IdeMenu {
                 .unwrap_or(shortest_base);
 
             let match_indices =
-                get_match_indices(&display_value, &suggestion.match_indices, shortest_base);
+                get_match_indices(display_value, &suggestion.match_indices, shortest_base);
 
             let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
 
