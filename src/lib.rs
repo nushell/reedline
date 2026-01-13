@@ -278,6 +278,14 @@ pub use hinter::{DefaultHinter, Hinter};
 mod validator;
 pub use validator::{DefaultValidator, ValidationResult, Validator};
 
+#[cfg(feature = "lsp_diagnostics")]
+mod lsp;
+#[cfg(feature = "lsp_diagnostics")]
+pub use lsp::{
+    CodeAction, Diagnostic, DiagnosticSeverity, Fix, LspConfig, LspDiagnosticsProvider, Replacement,
+    Span as DiagnosticSpan,
+};
+
 mod menu;
 pub use menu::{
     menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, IdeMenu, ListMenu, Menu,
