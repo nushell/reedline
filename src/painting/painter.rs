@@ -270,6 +270,11 @@ impl Painter {
             self.print_small_buffer(prompt, lines, menu, use_ansi_coloring)?;
         }
 
+        // Print diagnostic messages below the buffer (only when no menu is active)
+        if menu.is_none() && !lines.diagnostic_lines.is_empty() {
+            self.print_diagnostics(lines, use_ansi_coloring)?;
+        }
+
         // The last_required_lines is used to calculate safe range of the current prompt.
         self.last_required_lines = required_lines;
 
@@ -345,6 +350,47 @@ impl Painter {
             .queue(cursor::MoveTo(0, starting_row))?
             .queue(Clear(ClearType::FromCursorDown))?
             .queue(Print(menu_string.trim_end_matches('\n')))?;
+
+        Ok(())
+    }
+
+    fn print_diagnostics(
+        &mut self,
+        lines: &PromptLines,
+        _use_ansi_coloring: bool,
+    ) -> Result<()> {
+        let screen_width = self.screen_width();
+        let screen_height = self.screen_height();
+
+        // Calculate where to print diagnostics - directly after the input line
+        // Compute the number of lines used by prompt + buffer + hint (without diagnostics)
+        let input_content = format!(
+            "{}{}{}{}{}",
+            lines.prompt_str_left,
+            lines.prompt_indicator,
+            lines.before_cursor,
+            lines.after_cursor,
+            lines.hint
+        );
+        let input_lines =
+            crate::painting::utils::estimate_required_lines(&input_content, screen_width) as u16;
+        let starting_row = self.prompt_start_row + input_lines;
+
+        // Don't print if we'd go off screen
+        if starting_row >= screen_height {
+            return Ok(());
+        }
+
+        // Print each diagnostic on its own line
+        for (i, diag_line) in lines.diagnostic_lines.lines().enumerate() {
+            let row = starting_row + i as u16;
+            if row >= screen_height {
+                break;
+            }
+            self.stdout
+                .queue(cursor::MoveTo(0, row))?
+                .queue(Print(&coerce_crlf(diag_line)))?;
+        }
 
         Ok(())
     }

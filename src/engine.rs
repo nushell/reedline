@@ -15,6 +15,8 @@ use {
     crossbeam::channel::TryRecvError,
     std::io::{Error, ErrorKind},
 };
+#[cfg(feature = "lsp_diagnostics")]
+use crate::lsp::LspDiagnosticsProvider;
 use {
     crate::{
         completion::{Completer, DefaultCompleter},
@@ -56,6 +58,29 @@ const POLL_WAIT: Duration = Duration::from_millis(100);
 // time, we specify how many events should be in the `crossterm_events` vector
 // before it is considered a paste. 10 events is conservative enough.
 const EVENTS_THRESHOLD: usize = 10;
+
+/// Convert a byte offset in a string to a visual column position.
+///
+/// This accounts for unicode character widths (e.g., CJK characters are 2 columns wide).
+/// If the byte offset falls in the middle of a multibyte character, we count up to
+/// (but not including) that character.
+#[cfg(feature = "lsp_diagnostics")]
+fn byte_offset_to_column(s: &str, byte_offset: usize) -> usize {
+    use unicode_width::UnicodeWidthChar;
+
+    let clamped = byte_offset.min(s.len());
+    let mut col = 0;
+    let mut current_byte = 0;
+
+    for c in s.chars() {
+        if current_byte >= clamped {
+            break;
+        }
+        col += c.width().unwrap_or(0);
+        current_byte += c.len_utf8();
+    }
+    col
+}
 
 /// Maximum time Reedline will block on input before yielding control to
 /// external printers.
@@ -170,6 +195,9 @@ pub struct Reedline {
 
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
+
+    #[cfg(feature = "lsp_diagnostics")]
+    lsp_diagnostics: Option<LspDiagnosticsProvider>,
 }
 
 struct BufferEditor {
@@ -244,6 +272,8 @@ impl Reedline {
             immediately_accept: false,
             #[cfg(feature = "external_printer")]
             external_printer: None,
+            #[cfg(feature = "lsp_diagnostics")]
+            lsp_diagnostics: None,
         }
     }
 
@@ -1752,6 +1782,7 @@ impl Reedline {
                 &res_string,
                 "",
                 "",
+                "",
             );
 
             self.painter.repaint_buffer(
@@ -1774,9 +1805,25 @@ impl Reedline {
         let cursor_position_in_buffer = self.editor.insertion_point();
         let buffer_to_paint = self.editor.get_buffer();
 
+        // Update LSP diagnostics with current buffer content
+        #[cfg(feature = "lsp_diagnostics")]
+        if let Some(ref mut provider) = self.lsp_diagnostics {
+            provider.update_content(buffer_to_paint);
+        }
+
         let mut styled_text = self
             .highlighter
             .highlight(buffer_to_paint, cursor_position_in_buffer);
+
+        // Apply diagnostic styles (underlines) to the text
+        #[cfg(feature = "lsp_diagnostics")]
+        if let Some(ref provider) = self.lsp_diagnostics {
+            for diag in provider.diagnostics() {
+                let style = diag.severity.default_style();
+                styled_text.style_range(diag.span.start, diag.span.end, style);
+            }
+        }
+
         if let Some((from, to)) = self.editor.get_selection() {
             styled_text.style_range(from, to, self.visual_selection_style);
         }
@@ -1809,6 +1856,12 @@ impl Reedline {
         // Needs to add return carriage to newlines because when not in raw mode
         // some OS don't fully return the carriage
 
+        // Format diagnostic messages for display below the prompt
+        #[cfg(feature = "lsp_diagnostics")]
+        let diagnostic_display = self.format_diagnostic_messages(prompt);
+        #[cfg(not(feature = "lsp_diagnostics"))]
+        let diagnostic_display = String::new();
+
         let mut lines = PromptLines::new(
             prompt,
             self.prompt_edit_mode(),
@@ -1816,6 +1869,7 @@ impl Reedline {
             &before_cursor,
             &after_cursor,
             &hint,
+            &diagnostic_display,
         );
 
         // Updating the working details of the active menu
@@ -1855,6 +1909,115 @@ impl Reedline {
     pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
         self.external_printer = Some(printer);
         self
+    }
+
+    /// Adds an LSP diagnostics provider for real-time inline diagnostics.
+    ///
+    /// ## Required feature:
+    /// `lsp_diagnostics`
+    #[cfg(feature = "lsp_diagnostics")]
+    pub fn with_lsp_diagnostics(mut self, provider: LspDiagnosticsProvider) -> Self {
+        self.lsp_diagnostics = Some(provider);
+        self
+    }
+
+    /// Format diagnostic messages for display below the prompt.
+    ///
+    /// Renders diagnostics with vertical connecting lines and handlebars spanning the diagnostic:
+    /// ```text
+    /// ╎ ╰────╯ Unnecessary '^' prefix on external command 'head'
+    /// ╰ Use 'first N' to get the first N items
+    /// ```
+    #[cfg(feature = "lsp_diagnostics")]
+    fn format_diagnostic_messages(&self, prompt: &dyn Prompt) -> String {
+        let Some(ref provider) = self.lsp_diagnostics else {
+            return String::new();
+        };
+
+        let diagnostics = provider.diagnostics();
+        if diagnostics.is_empty() {
+            return String::new();
+        }
+
+        let buffer = self.editor.get_buffer();
+
+        // Calculate prompt width (last line of prompt + indicator)
+        let prompt_left = prompt.render_prompt_left();
+        let prompt_indicator = prompt.render_prompt_indicator(self.prompt_edit_mode());
+        let last_prompt_line = prompt_left.lines().last().unwrap_or("");
+        let prompt_width = unicode_width::UnicodeWidthStr::width(last_prompt_line)
+            + unicode_width::UnicodeWidthStr::width(prompt_indicator.as_ref());
+
+        // Collect diagnostics with their visual columns (start and end), sorted by start column
+        let mut diag_cols: Vec<_> = diagnostics
+            .iter()
+            .map(|d| {
+                let start_col = prompt_width + byte_offset_to_column(buffer, d.span.start);
+                let end_col = prompt_width + byte_offset_to_column(buffer, d.span.end);
+                (start_col, end_col, d)
+            })
+            .collect();
+        diag_cols.sort_by_key(|(start, _, _)| *start);
+
+        let mut output = String::new();
+        for (i, (start_col, end_col, diag)) in diag_cols.iter().enumerate() {
+            // Columns that need vertical lines (diagnostics after this one)
+            let future_cols: Vec<usize> =
+                diag_cols[i + 1..].iter().map(|(c, _, _)| *c).collect();
+
+            let styled_message = if self.use_ansi_coloring {
+                diag.severity.message_style().paint(&diag.message).to_string()
+            } else {
+                diag.message.clone()
+            };
+
+            if !output.is_empty() {
+                output.push('\n');
+            }
+
+            // Build the line character by character
+            let mut line = String::new();
+            let mut col = 0;
+
+            // Add vertical lines for future diagnostics that come before this one's column
+            for &future_col in &future_cols {
+                if future_col < *start_col {
+                    // Add spaces up to this column, then a vertical bar
+                    while col < future_col {
+                        line.push(' ');
+                        col += 1;
+                    }
+                    line.push('╎');
+                    col += 1;
+                }
+            }
+
+            // Pad to the current diagnostic's column
+            while col < *start_col {
+                line.push(' ');
+                col += 1;
+            }
+
+            // Calculate span width for the horizontal line
+            let span_width = end_col.saturating_sub(*start_col);
+
+            // Add the corner, optional horizontal extension, and message
+            if span_width <= 1 {
+                // Single character span: just corner
+                line.push_str("╰ ");
+            } else {
+                // Multi-character span: corner + horizontal line + end terminator
+                line.push('╰');
+                for _ in 0..span_width.saturating_sub(2) {
+                    line.push('─');
+                }
+                line.push_str("╯ ");
+            }
+            line.push_str(&styled_message);
+
+            output.push_str(&line);
+        }
+        output
     }
 
     #[cfg(feature = "external_printer")]
@@ -1972,5 +2135,46 @@ mod tests {
     fn thread_safe() {
         fn f<S: Send>(_: S) {}
         f(Reedline::create());
+    }
+
+    #[cfg(feature = "lsp_diagnostics")]
+    mod lsp_tests {
+        use super::byte_offset_to_column;
+
+        #[test]
+        fn test_byte_offset_to_column_ascii() {
+            assert_eq!(byte_offset_to_column("hello", 0), 0);
+            assert_eq!(byte_offset_to_column("hello", 1), 1);
+            assert_eq!(byte_offset_to_column("hello", 5), 5);
+            assert_eq!(byte_offset_to_column("hello", 10), 5); // clamped
+        }
+
+        #[test]
+        fn test_byte_offset_to_column_unicode() {
+            // "é" is 2 bytes (UTF-8: C3 A9), so "café" = c(1) + a(1) + f(1) + é(2) = 5 bytes
+            let s = "café";
+            assert_eq!(byte_offset_to_column(s, 0), 0); // before 'c'
+            assert_eq!(byte_offset_to_column(s, 1), 1); // after 'c'
+            assert_eq!(byte_offset_to_column(s, 3), 3); // after 'f'
+            // byte 4 is inside 'é' (2nd byte) - we include chars whose start byte < offset
+            // 'é' starts at byte 3, and 3 < 4, so we include it
+            assert_eq!(byte_offset_to_column(s, 4), 4); // after 'é'
+            assert_eq!(byte_offset_to_column(s, 5), 4); // at end
+        }
+
+        #[test]
+        fn test_byte_offset_to_column_wide_chars() {
+            // CJK characters are typically 2 columns wide
+            // "日" is 3 bytes in UTF-8, so "a日b" = a(1) + 日(3) + b(1) = 5 bytes
+            let s = "a日b";
+            assert_eq!(byte_offset_to_column(s, 0), 0); // before 'a'
+            assert_eq!(byte_offset_to_column(s, 1), 1); // after 'a', before '日'
+            // bytes 2-3 are inside '日' - we include chars whose start byte < offset
+            // '日' starts at byte 1, and 1 < 2, so we include it
+            assert_eq!(byte_offset_to_column(s, 2), 3); // '日' is 2 cols wide
+            assert_eq!(byte_offset_to_column(s, 3), 3); // still inside '日'
+            assert_eq!(byte_offset_to_column(s, 4), 3); // after '日', before 'b'
+            assert_eq!(byte_offset_to_column(s, 5), 4); // after 'b'
+        }
     }
 }

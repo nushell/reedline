@@ -1,6 +1,7 @@
 //! Example demonstrating LSP diagnostics integration with reedline.
 //!
-//! This example spawns an LSP server (nu-lint) and displays diagnostics inline.
+//! This example spawns an LSP server (nu-lint) and displays diagnostics inline
+//! in real-time as you type.
 //!
 //! Run with: cargo run --example lsp_diagnostics --features lsp_diagnostics
 //!
@@ -16,51 +17,31 @@ use std::io;
 
 fn main() -> io::Result<()> {
     // Configure the LSP server
-    let config = LspConfig::new("nu-lint")
+    // Use nu-lint from PATH or specify the full path
+    let nu_lint_cmd = std::env::var("NU_LINT_PATH")
+        .unwrap_or_else(|_| "nu-lint".to_string());
+    let config = LspConfig::new(nu_lint_cmd)
         .with_args(vec!["--lsp".into()])
         .with_timeout_ms(100);
 
     // Create the diagnostics provider
-    let mut diagnostics = LspDiagnosticsProvider::new(config);
+    let diagnostics = LspDiagnosticsProvider::new(config);
 
-    let mut line_editor = Reedline::create();
+    // Create reedline with LSP diagnostics integration
+    // Diagnostics will be displayed inline as underlines while typing
+    let mut line_editor = Reedline::create().with_lsp_diagnostics(diagnostics);
     let prompt = DefaultPrompt::default();
 
     println!("LSP Diagnostics Demo");
     println!("====================");
     println!();
-    println!("Type nushell code to see diagnostics.");
+    println!("Type nushell code to see diagnostics as underlines while typing.");
     println!("Press Ctrl+C to exit.");
     println!();
 
     loop {
         match line_editor.read_line(&prompt)? {
             Signal::Success(buffer) => {
-                // Update diagnostics for the entered text
-                diagnostics.update_content(&buffer);
-
-                // Display any diagnostics
-                let diags = diagnostics.diagnostics();
-                if !diags.is_empty() {
-                    println!("\nDiagnostics:");
-                    for diag in diags {
-                        let severity = match diag.severity {
-                            reedline::DiagnosticSeverity::Error => "error",
-                            reedline::DiagnosticSeverity::Warning => "warning",
-                            reedline::DiagnosticSeverity::Info => "info",
-                            reedline::DiagnosticSeverity::Hint => "hint",
-                        };
-                        println!(
-                            "  [{severity}] {}:{}-{}: {}",
-                            diag.rule_id.as_deref().unwrap_or(""),
-                            diag.span.start,
-                            diag.span.end,
-                            diag.message
-                        );
-                    }
-                    println!();
-                }
-
                 if buffer.trim() == "exit" {
                     break;
                 }

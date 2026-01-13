@@ -16,6 +16,8 @@ pub(crate) struct PromptLines<'prompt> {
     pub(crate) after_cursor: Cow<'prompt, str>,
     pub(crate) hint: Cow<'prompt, str>,
     pub(crate) right_prompt_on_last_line: bool,
+    /// Diagnostic messages to display below the input line
+    pub(crate) diagnostic_lines: Cow<'prompt, str>,
 }
 
 impl<'prompt> PromptLines<'prompt> {
@@ -29,6 +31,7 @@ impl<'prompt> PromptLines<'prompt> {
         before_cursor: &'prompt str,
         after_cursor: &'prompt str,
         hint: &'prompt str,
+        diagnostic_lines: &'prompt str,
     ) -> Self {
         let prompt_str_left = prompt.render_prompt_left();
         let prompt_str_right = prompt.render_prompt_right();
@@ -41,6 +44,7 @@ impl<'prompt> PromptLines<'prompt> {
         let before_cursor = coerce_crlf(before_cursor);
         let after_cursor = coerce_crlf(after_cursor);
         let hint = coerce_crlf(hint);
+        let diagnostic_lines = coerce_crlf(diagnostic_lines);
         let right_prompt_on_last_line = prompt.right_prompt_on_last_line();
 
         Self {
@@ -51,6 +55,7 @@ impl<'prompt> PromptLines<'prompt> {
             after_cursor,
             hint,
             right_prompt_on_last_line,
+            diagnostic_lines,
         }
     }
 
@@ -75,10 +80,18 @@ impl<'prompt> PromptLines<'prompt> {
 
         let lines = estimate_required_lines(&input, terminal_columns);
 
-        if let Some(menu) = menu {
-            lines as u16 + menu.menu_required_lines(terminal_columns)
+        // Add lines for diagnostics (displayed below the input)
+        // Use estimate_required_lines to account for line wrapping in narrow terminals
+        let diagnostic_line_count = if !self.diagnostic_lines.is_empty() {
+            estimate_required_lines(&self.diagnostic_lines, terminal_columns) as u16
         } else {
-            lines as u16
+            0
+        };
+
+        if let Some(menu) = menu {
+            lines as u16 + menu.menu_required_lines(terminal_columns) + diagnostic_line_count
+        } else {
+            lines as u16 + diagnostic_line_count
         }
     }
 
@@ -248,6 +261,7 @@ mod tests {
             after_cursor: Cow::Borrowed(""),
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
+            diagnostic_lines: Cow::Borrowed(""),
         };
 
         let pos = prompt_lines.cursor_pos(terminal_columns);

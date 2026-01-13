@@ -20,23 +20,24 @@ pub enum DiagnosticSeverity {
 }
 
 impl DiagnosticSeverity {
-    /// Get a default style for this severity level.
+    /// Get a style for underlining diagnostic spans in the source code.
+    ///
+    /// Uses underline only (no text color change) to keep the source
+    /// code readable while still indicating the diagnostic location.
     pub fn default_style(self) -> Style {
-        match self {
-            Self::Error => Style::new().fg(nu_ansi_term::Color::Red).underline(),
-            Self::Warning => Style::new().fg(nu_ansi_term::Color::Yellow).underline(),
-            Self::Info => Style::new().fg(nu_ansi_term::Color::Blue).underline(),
-            Self::Hint => Style::new().fg(nu_ansi_term::Color::Cyan).underline(),
-        }
+        Style::new().underline()
     }
 
-    /// Get a color-only style (no underline) for message display.
+    /// Get a dimmed style for diagnostic messages displayed below the prompt.
+    ///
+    /// Uses muted colors to be less visually intrusive while still indicating severity.
     pub fn message_style(self) -> Style {
+        use nu_ansi_term::Color;
         match self {
-            Self::Error => Style::new().fg(nu_ansi_term::Color::Red),
-            Self::Warning => Style::new().fg(nu_ansi_term::Color::Yellow),
-            Self::Info => Style::new().fg(nu_ansi_term::Color::Blue),
-            Self::Hint => Style::new().fg(nu_ansi_term::Color::Cyan),
+            Self::Error => Style::new().fg(Color::Fixed(167)), // muted red
+            Self::Warning => Style::new().fg(Color::Fixed(179)), // muted yellow/orange
+            Self::Info => Style::new().fg(Color::Fixed(110)), // muted blue
+            Self::Hint => Style::new().fg(Color::Fixed(246)), // gray
         }
     }
 }
