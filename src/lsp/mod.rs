@@ -16,6 +16,7 @@
 //! }
 //! ```
 
+mod actions;
 mod client;
 mod diagnostic;
 

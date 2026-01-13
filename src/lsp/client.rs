@@ -1,5 +1,6 @@
 //! Minimal synchronous LSP client for diagnostics.
 
+use super::actions::request_code_actions;
 use super::diagnostic::{CodeAction, Diagnostic, DiagnosticSeverity, Span};
 use lsp_types::{
     DidChangeTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, InitializedParams,
@@ -18,39 +19,13 @@ use std::{
 #[derive(Debug, Clone)]
 pub struct LspConfig {
     /// Server command
-    pub server_cmd: String,
+    pub server_bin: String,
     /// Server arguments
     pub server_args: Vec<String>,
     /// Response timeout (ms)
     pub timeout_ms: u64,
     /// URI scheme (default: "repl")
     pub uri_scheme: String,
-}
-
-impl LspConfig {
-    /// Create configuration for server command.
-    pub fn new(cmd: impl Into<String>) -> Self {
-        Self {
-            server_cmd: cmd.into(),
-            server_args: Vec::new(),
-            timeout_ms: 200,
-            uri_scheme: "repl".into(),
-        }
-    }
-
-    /// Set server arguments.
-    #[must_use]
-    pub fn with_args(mut self, args: Vec<String>) -> Self {
-        self.server_args = args;
-        self
-    }
-
-    /// Set timeout.
-    #[must_use]
-    pub fn with_timeout_ms(mut self, ms: u64) -> Self {
-        self.timeout_ms = ms;
-        self
-    }
 }
 
 /// LSP diagnostics provider.
@@ -72,6 +47,7 @@ struct Connection {
 
 impl LspDiagnosticsProvider {
     /// Create new provider.
+    #[must_use]
     pub fn new(config: LspConfig) -> Self {
         let uri = format!("{}:/session/repl", config.uri_scheme);
         Self {
@@ -117,9 +93,26 @@ impl LspDiagnosticsProvider {
         &self.diagnostics
     }
 
-    /// Get code actions (stub).
-    pub fn code_actions(&mut self, _content: &str, _span: Span) -> Vec<CodeAction> {
-        Vec::new()
+    /// Get code actions for a given span.
+    ///
+    /// This sends a `textDocument/codeAction` request to the LSP server
+    /// and converts the response to reedline's `CodeAction` type.
+    pub fn code_actions(&mut self, content: &str, span: Span) -> Vec<CodeAction> {
+        let conn = match &mut self.conn {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+
+        let timeout_ms = self.config.timeout_ms;
+        let uri = self.uri.clone();
+
+        request_code_actions(
+            &uri,
+            content,
+            span,
+            timeout_ms,
+            |method, params, timeout| request(conn, method, params, timeout),
+        )
     }
 
     fn ensure_init(&mut self) -> bool {
@@ -127,7 +120,7 @@ impl LspDiagnosticsProvider {
             return true;
         }
 
-        let mut child = match Command::new(&self.config.server_cmd)
+        let mut child = match Command::new(&self.config.server_bin)
             .args(&self.config.server_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -157,8 +150,6 @@ impl LspDiagnosticsProvider {
         // Initialize
         let params = InitializeParams {
             process_id: Some(std::process::id()),
-            root_uri: None,
-            root_path: None,
             initialization_options: None,
             capabilities: Default::default(),
             trace: None,
@@ -169,6 +160,7 @@ impl LspDiagnosticsProvider {
             }),
             locale: None,
             work_done_progress_params: Default::default(),
+            ..Default::default()
         };
 
         if request(&mut conn, "initialize", &params, self.config.timeout_ms * 5).is_none() {
@@ -207,7 +199,8 @@ impl LspDiagnosticsProvider {
                 if msg.method.as_deref() == Some("textDocument/publishDiagnostics") {
                     if let Some(params) = msg.params {
                         if let Ok(p) = serde_json::from_value::<PublishDiagnosticsParams>(params) {
-                            self.diagnostics = p.diagnostics.iter().map(|d| convert(d, content)).collect();
+                            self.diagnostics =
+                                p.diagnostics.iter().map(|d| convert(d, content)).collect();
                             return;
                         }
                     }
@@ -245,7 +238,12 @@ struct Msg {
     error: Option<Value>,
 }
 
-fn request<T: Serialize>(conn: &mut Connection, method: &str, params: &T, timeout_ms: u64) -> Option<Value> {
+fn request<T: Serialize>(
+    conn: &mut Connection,
+    method: &str,
+    params: &T,
+    timeout_ms: u64,
+) -> Option<Value> {
     let id = conn.next_id;
     conn.next_id += 1;
 
@@ -334,7 +332,10 @@ fn convert(d: &lsp_types::Diagnostic, content: &str) -> Diagnostic {
 }
 
 fn range_to_span(content: &str, range: &Range) -> Span {
-    Span::new(pos_to_offset(content, &range.start), pos_to_offset(content, &range.end))
+    Span::new(
+        pos_to_offset(content, &range.start),
+        pos_to_offset(content, &range.end),
+    )
 }
 
 fn pos_to_offset(content: &str, pos: &Position) -> usize {

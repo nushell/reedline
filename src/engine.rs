@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
 
+#[cfg(feature = "lsp_diagnostics")]
+use crate::lsp::LspDiagnosticsProvider;
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
 use crate::{
@@ -15,8 +17,6 @@ use {
     crossbeam::channel::TryRecvError,
     std::io::{Error, ErrorKind},
 };
-#[cfg(feature = "lsp_diagnostics")]
-use crate::lsp::LspDiagnosticsProvider;
 use {
     crate::{
         completion::{Completer, DefaultCompleter},
@@ -975,6 +975,8 @@ impl Reedline {
             | ReedlineEvent::MenuPageNext
             | ReedlineEvent::MenuPagePrevious
             | ReedlineEvent::ViChangeMode(_) => Ok(EventStatus::Inapplicable),
+            #[cfg(feature = "lsp_diagnostics")]
+            ReedlineEvent::OpenDiagnosticFixMenu => Ok(EventStatus::Inapplicable),
         }
     }
 
@@ -1320,6 +1322,11 @@ impl Reedline {
                 Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::ViChangeMode(_) => Ok(self.edit_mode.handle_mode_specific_event(event)),
+            #[cfg(feature = "lsp_diagnostics")]
+            ReedlineEvent::OpenDiagnosticFixMenu => {
+                self.open_diagnostic_fix_menu();
+                Ok(EventStatus::Handled)
+            }
             ReedlineEvent::None | ReedlineEvent::Mouse => Ok(EventStatus::Inapplicable),
         }
     }
@@ -1962,11 +1969,13 @@ impl Reedline {
         let mut output = String::new();
         for (i, (start_col, end_col, diag)) in diag_cols.iter().enumerate() {
             // Columns that need vertical lines (diagnostics after this one)
-            let future_cols: Vec<usize> =
-                diag_cols[i + 1..].iter().map(|(c, _, _)| *c).collect();
+            let future_cols: Vec<usize> = diag_cols[i + 1..].iter().map(|(c, _, _)| *c).collect();
 
             let styled_message = if self.use_ansi_coloring {
-                diag.severity.message_style().paint(&diag.message).to_string()
+                diag.severity
+                    .message_style()
+                    .paint(&diag.message)
+                    .to_string()
             } else {
                 diag.message.clone()
             };
@@ -2018,6 +2027,62 @@ impl Reedline {
             output.push_str(&line);
         }
         output
+    }
+
+    /// Open the diagnostic fix menu with available fixes at the cursor position.
+    ///
+    /// This requests code actions from the LSP server for diagnostics at the
+    /// cursor position and displays them in a menu.
+    #[cfg(feature = "lsp_diagnostics")]
+    fn open_diagnostic_fix_menu(&mut self) {
+        use crate::lsp::Span;
+        use crate::menu::{DiagnosticFixMenu, FixOption};
+
+        let Some(ref mut provider) = self.lsp_diagnostics else {
+            return;
+        };
+
+        let cursor_pos = self.editor.insertion_point();
+        let content = self.editor.get_buffer();
+
+        // Find diagnostics at cursor position to determine the span for code actions
+        let diagnostic_span = provider
+            .diagnostics()
+            .iter()
+            .find(|d| d.span.start <= cursor_pos && cursor_pos <= d.span.end)
+            .map(|d| d.span);
+
+        let span = match diagnostic_span {
+            Some(s) => s,
+            None => {
+                // No diagnostic at cursor, use cursor position as a point
+                Span::new(cursor_pos, cursor_pos)
+            }
+        };
+
+        // Request code actions from the LSP server
+        let code_actions = provider.code_actions(content, span);
+
+        if code_actions.is_empty() {
+            return;
+        }
+
+        // Convert code actions to fix options
+        let fixes: Vec<FixOption> = code_actions
+            .iter()
+            .map(FixOption::from_code_action)
+            .collect();
+
+        // Remove any existing diagnostic fix menu
+        let menu_name = "diagnostic_fix_menu";
+        self.menus.retain(|m| m.name() != menu_name);
+
+        // Create a new menu with fixes
+        let mut fix_menu = DiagnosticFixMenu::default();
+        fix_menu.set_fixes(fixes);
+        let mut menu = ReedlineMenu::EngineCompleter(Box::new(fix_menu));
+        menu.menu_event(MenuEvent::Activate(false));
+        self.menus.push(menu);
     }
 
     #[cfg(feature = "external_printer")]
@@ -2156,8 +2221,8 @@ mod tests {
             assert_eq!(byte_offset_to_column(s, 0), 0); // before 'c'
             assert_eq!(byte_offset_to_column(s, 1), 1); // after 'c'
             assert_eq!(byte_offset_to_column(s, 3), 3); // after 'f'
-            // byte 4 is inside 'é' (2nd byte) - we include chars whose start byte < offset
-            // 'é' starts at byte 3, and 3 < 4, so we include it
+                                                        // byte 4 is inside 'é' (2nd byte) - we include chars whose start byte < offset
+                                                        // 'é' starts at byte 3, and 3 < 4, so we include it
             assert_eq!(byte_offset_to_column(s, 4), 4); // after 'é'
             assert_eq!(byte_offset_to_column(s, 5), 4); // at end
         }
@@ -2169,8 +2234,8 @@ mod tests {
             let s = "a日b";
             assert_eq!(byte_offset_to_column(s, 0), 0); // before 'a'
             assert_eq!(byte_offset_to_column(s, 1), 1); // after 'a', before '日'
-            // bytes 2-3 are inside '日' - we include chars whose start byte < offset
-            // '日' starts at byte 1, and 1 < 2, so we include it
+                                                        // bytes 2-3 are inside '日' - we include chars whose start byte < offset
+                                                        // '日' starts at byte 1, and 1 < 2, so we include it
             assert_eq!(byte_offset_to_column(s, 2), 3); // '日' is 2 cols wide
             assert_eq!(byte_offset_to_column(s, 3), 3); // still inside '日'
             assert_eq!(byte_offset_to_column(s, 4), 3); // after '日', before 'b'

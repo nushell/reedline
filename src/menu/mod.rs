@@ -1,5 +1,7 @@
 mod columnar_menu;
 mod description_menu;
+#[cfg(feature = "lsp_diagnostics")]
+mod diagnostic_fix_menu;
 mod ide_menu;
 mod list_menu;
 pub mod menu_functions;
@@ -10,6 +12,8 @@ use crate::{completion::history::HistoryCompleter, painting::Painter, Completer,
 pub use columnar_menu::ColumnarMenu;
 pub use columnar_menu::TraversalDirection;
 pub use description_menu::DescriptionMenu;
+#[cfg(feature = "lsp_diagnostics")]
+pub use diagnostic_fix_menu::{DiagnosticFixMenu, FixOption};
 pub use ide_menu::DescriptionMode;
 pub use ide_menu::IdeMenu;
 pub use list_menu::ListMenu;

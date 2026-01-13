@@ -833,6 +833,11 @@ pub enum ReedlineEvent {
 
     /// Change mode (vi mode only)
     ViChangeMode(String),
+
+    /// Open the diagnostic fix menu (requires lsp_diagnostics feature)
+    /// Shows available quick fixes at cursor position
+    #[cfg(feature = "lsp_diagnostics")]
+    OpenDiagnosticFixMenu,
 }
 
 impl Display for ReedlineEvent {
@@ -877,6 +882,8 @@ impl Display for ReedlineEvent {
             ReedlineEvent::ExecuteHostCommand(_) => write!(f, "ExecuteHostCommand"),
             ReedlineEvent::OpenEditor => write!(f, "OpenEditor"),
             ReedlineEvent::ViChangeMode(_) => write!(f, "ViChangeMode mode: <string>"),
+            #[cfg(feature = "lsp_diagnostics")]
+            ReedlineEvent::OpenDiagnosticFixMenu => write!(f, "OpenDiagnosticFixMenu"),
         }
     }
 }

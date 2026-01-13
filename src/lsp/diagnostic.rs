@@ -36,8 +36,8 @@ impl DiagnosticSeverity {
         match self {
             Self::Error => Style::new().fg(Color::Fixed(167)), // muted red
             Self::Warning => Style::new().fg(Color::Fixed(179)), // muted yellow/orange
-            Self::Info => Style::new().fg(Color::Fixed(110)), // muted blue
-            Self::Hint => Style::new().fg(Color::Fixed(246)), // gray
+            Self::Info => Style::new().fg(Color::Fixed(110)),  // muted blue
+            Self::Hint => Style::new().fg(Color::Fixed(246)),  // gray
         }
     }
 }
@@ -139,7 +139,11 @@ impl Fix {
     }
 
     /// Create a simple fix that replaces a single span.
-    pub fn replace(description: impl Into<String>, span: Span, new_text: impl Into<String>) -> Self {
+    pub fn replace(
+        description: impl Into<String>,
+        span: Span,
+        new_text: impl Into<String>,
+    ) -> Self {
         Self::new(description, vec![Replacement::new(span, new_text)])
     }
 }

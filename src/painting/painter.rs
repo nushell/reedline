@@ -354,11 +354,7 @@ impl Painter {
         Ok(())
     }
 
-    fn print_diagnostics(
-        &mut self,
-        lines: &PromptLines,
-        _use_ansi_coloring: bool,
-    ) -> Result<()> {
+    fn print_diagnostics(&mut self, lines: &PromptLines, _use_ansi_coloring: bool) -> Result<()> {
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();
 
