@@ -201,7 +201,10 @@ pub enum EditCommand {
     CutFromStart,
 
     /// Cut from the start of the buffer to the line of insertion point
-    CutFromStartLinewise,
+    CutFromStartLinewise {
+        /// When true, an empty line will remain after the operation
+        leave_blank_line: bool,
+    },
 
     /// Cut from the start of the current line to the insertion point
     CutFromLineStart,
@@ -213,7 +216,10 @@ pub enum EditCommand {
     CutToEnd,
 
     /// Cut from the line of insertion point to the end of the buffer
-    CutToEndLinewise,
+    CutToEndLinewise {
+        /// When true, an empty line will remain after the operation
+        leave_blank_line: bool,
+    },
 
     /// Cut from the insertion point to the end of the current line
     CutToLineEnd,
@@ -499,11 +505,15 @@ impl Display for EditCommand {
             EditCommand::Complete => write!(f, "Complete"),
             EditCommand::CutCurrentLine => write!(f, "CutCurrentLine"),
             EditCommand::CutFromStart => write!(f, "CutFromStart"),
-            EditCommand::CutFromStartLinewise => write!(f, "CutFromStartLinewise"),
+            EditCommand::CutFromStartLinewise { .. } => {
+                write!(f, "CutFromStartLinewise leave_blank_line: <bool>")
+            }
             EditCommand::CutFromLineStart => write!(f, "CutFromLineStart"),
             EditCommand::CutFromLineNonBlankStart => write!(f, "CutFromLineNonBlankStart"),
             EditCommand::CutToEnd => write!(f, "CutToEnd"),
-            EditCommand::CutToEndLinewise => write!(f, "CutToEndLinewise"),
+            EditCommand::CutToEndLinewise { .. } => {
+                write!(f, "CutToEndLinewise leave_blank_line: <bool>")
+            }
             EditCommand::CutToLineEnd => write!(f, "CutToLineEnd"),
             EditCommand::KillLine => write!(f, "KillLine"),
             EditCommand::CutWordLeft => write!(f, "CutWordLeft"),
@@ -615,13 +625,13 @@ impl EditCommand {
             | EditCommand::Complete
             | EditCommand::CutCurrentLine
             | EditCommand::CutFromStart
-            | EditCommand::CutFromStartLinewise
+            | EditCommand::CutFromStartLinewise { .. }
             | EditCommand::CutFromLineStart
             | EditCommand::CutFromLineNonBlankStart
             | EditCommand::CutToLineEnd
             | EditCommand::KillLine
             | EditCommand::CutToEnd
-            | EditCommand::CutToEndLinewise
+            | EditCommand::CutToEndLinewise { .. }
             | EditCommand::CutWordLeft
             | EditCommand::CutBigWordLeft
             | EditCommand::CutWordRight

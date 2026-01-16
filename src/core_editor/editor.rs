@@ -90,11 +90,15 @@ impl Editor {
             EditCommand::ClearToLineEnd => self.line_buffer.clear_to_line_end(),
             EditCommand::CutCurrentLine => self.cut_current_line(),
             EditCommand::CutFromStart => self.cut_from_start(),
-            EditCommand::CutFromStartLinewise => self.cut_from_start_linewise(),
+            EditCommand::CutFromStartLinewise { leave_blank_line } => {
+                self.cut_from_start_linewise(*leave_blank_line)
+            }
             EditCommand::CutFromLineStart => self.cut_from_line_start(),
             EditCommand::CutFromLineNonBlankStart => self.cut_from_line_non_blank_start(),
             EditCommand::CutToEnd => self.cut_from_end(),
-            EditCommand::CutToEndLinewise => self.cut_from_end_linewise(),
+            EditCommand::CutToEndLinewise { leave_blank_line } => {
+                self.cut_from_end_linewise(*leave_blank_line)
+            }
             EditCommand::CutToLineEnd => self.cut_to_line_end(),
             EditCommand::KillLine => self.kill_line(),
             EditCommand::CutWordLeft => self.cut_word_left(),
@@ -372,12 +376,15 @@ impl Editor {
         }
     }
 
-    fn cut_from_start_linewise(&mut self) {
-        // TODO: make delete motion not leave a empty line
+    fn cut_from_start_linewise(&mut self, leave_blank_line: bool) {
         let insertion_offset = self.line_buffer.insertion_point();
         let end_offset = self.line_buffer.get_buffer()[insertion_offset..]
             .find('\n')
-            .map_or(self.line_buffer.len(), |offset| insertion_offset + offset);
+            .map_or(self.line_buffer.len(), |offset| {
+                // When leave_blank_line is true, we do **not** add 1 to the offset
+                // So there will remain an empty line after the operation
+                insertion_offset + offset + !leave_blank_line as usize
+            });
         if end_offset > 0 {
             self.cut_buffer.set(
                 &self.line_buffer.get_buffer()[..end_offset],
@@ -415,11 +422,17 @@ impl Editor {
         }
     }
 
-    fn cut_from_end_linewise(&mut self) {
-        self.line_buffer.move_to_line_start();
-        let cut_slice = &self.line_buffer.get_buffer()[self.line_buffer.insertion_point()..];
+    fn cut_from_end_linewise(&mut self, leave_blank_line: bool) {
+        let start_offset = self.line_buffer.get_buffer()[..self.line_buffer.insertion_point()]
+            .rfind('\n')
+            // When leave_blank_line is true, we add 1 to the offset
+            // So the \n character is not truncated
+            .map_or(0, |offset| offset + leave_blank_line as usize);
+
+        let cut_slice = &self.line_buffer.get_buffer()[start_offset..];
         if !cut_slice.is_empty() {
             self.cut_buffer.set(cut_slice, ClipboardMode::Lines);
+            self.line_buffer.set_insertion_point(start_offset);
             self.line_buffer.clear_to_end();
         }
     }
