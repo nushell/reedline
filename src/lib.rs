@@ -257,9 +257,9 @@ mod history;
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 pub use history::SqliteBackedHistory;
 pub use history::{
-    CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemId,
-    HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchFilter, SearchQuery,
-    HISTORY_SIZE,
+    CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemExtraInfo,
+    HistoryItemId, HistoryNavigationQuery, HistorySessionId, IgnoreAllExtraInfo, SearchDirection,
+    SearchFilter, SearchQuery, HISTORY_SIZE,
 };
 
 mod prompt;
