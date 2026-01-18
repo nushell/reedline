@@ -61,9 +61,9 @@
         cargoArtifacts = cargoArtifacts;
       };
 
-      # Export source for nushell to include
+      # Export source and build tools for nushell to include
       lib.${system} = {
-        inherit src cargoArtifacts commonArgs;
+        inherit src cargoArtifacts commonArgs craneLib;
       };
     };
 }
