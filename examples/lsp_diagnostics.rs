@@ -1,12 +1,13 @@
 //! Example demonstrating LSP diagnostics integration with reedline.
 //!
-//! This example spawns an LSP server (nu-lint) and displays diagnostics inline
-//! in real-time as you type. It also demonstrates the diagnostic fix menu.
+//! This example spawns an LSP server and displays diagnostics inline in real-time
+//! as you type. It uses the same `REEDLINE_LS` environment variable that nu-cli uses.
 //!
-//! Run with: cargo run --example lsp_diagnostics --features lsp_diagnostics
+//! Run with:
+//!   REEDLINE_LS=nu-lint cargo run --example lsp_diagnostics --features lsp_diagnostics
 //!
 //! Prerequisites:
-//! - nu-lint must be installed and available in PATH with LSP support
+//! - An LSP server that supports diagnostics (e.g., nu-lint for nushell)
 //!
 //! Try typing nushell code with issues like:
 //! - `let x = 1` (unused variable warning)
@@ -22,11 +23,17 @@ use reedline::{
 use std::{env::var, io};
 
 fn main() -> io::Result<()> {
-    // Configure the LSP server
-    // Use nu-lint from PATH or specify the full path
-    let nu_lint_bin = var("NU_LINT_PATH").unwrap_or("nu-lint".to_string());
+    // Use the same env var as nu-cli for consistency
+    let Some(server_bin) = var("REEDLINE_LS").ok() else {
+        eprintln!("Error: REEDLINE_LS environment variable not set.");
+        eprintln!("Set it to the path of an LSP server binary (e.g., nu-lint).");
+        eprintln!();
+        eprintln!("Example: REEDLINE_LS=nu-lint cargo run --example lsp_diagnostics --features lsp_diagnostics");
+        std::process::exit(1);
+    };
+
     let config = LspConfig {
-        server_bin: nu_lint_bin,
+        server_bin,
         server_args: vec!["--lsp".into()],
         timeout_ms: 100,
         uri_scheme: "repl".to_string(),
