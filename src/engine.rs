@@ -85,28 +85,11 @@ fn byte_offset_to_column(s: &str, byte_offset: usize) -> usize {
 /// Strip ANSI escape sequences from a string.
 ///
 /// This is needed because prompts contain color codes like `\x1b[32m` which
-/// would incorrectly inflate width calculations.
+/// would incorrectly inflate width calculations. Uses the strip_ansi_escapes
+/// crate to handle all escape sequence types (SGR, OSC, etc).
 #[cfg(feature = "lsp_diagnostics")]
 fn strip_ansi(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            // Skip escape sequence: \x1b[...m
-            if chars.peek() == Some(&'[') {
-                chars.next(); // consume '['
-                // Consume until 'm' or end of string
-                for nc in chars.by_ref() {
-                    if nc == 'm' {
-                        break;
-                    }
-                }
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
+    String::from_utf8(strip_ansi_escapes::strip(s)).unwrap_or_else(|_| s.to_string())
 }
 
 /// Maximum time Reedline will block on input before yielding control to
