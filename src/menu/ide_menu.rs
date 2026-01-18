@@ -28,7 +28,7 @@ pub enum DescriptionMode {
 }
 
 /// Symbols used for the border of the menu
-struct BorderSymbols {
+pub(crate) struct BorderSymbols {
     pub top_left: char,
     pub top_right: char,
     pub bottom_left: char,
@@ -988,7 +988,7 @@ impl Menu for IdeMenu {
 
 /// Split the input into strings that are at most `max_length` (in columns, not in chars) long
 /// The split is done at whitespace if possible
-fn split_string(input_str: &str, max_length: usize) -> Vec<String> {
+pub(crate) fn split_string(input_str: &str, max_length: usize) -> Vec<String> {
     let whitespace_split = input_str.split_whitespace();
     let mut words = Vec::new();
 
@@ -1043,7 +1043,7 @@ fn split_string(input_str: &str, max_length: usize) -> Vec<String> {
 }
 
 /// Truncate a list of strings using the provided truncation characters
-fn truncate_string_list(list: &mut [String], truncation_chars: &str) {
+pub(crate) fn truncate_string_list(list: &mut [String], truncation_chars: &str) {
     let truncation_chars: Vec<char> = truncation_chars.chars().rev().collect();
     let truncation_len = truncation_chars.len();
     let mut to_replace = truncation_len;
