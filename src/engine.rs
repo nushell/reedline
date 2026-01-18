@@ -82,6 +82,33 @@ fn byte_offset_to_column(s: &str, byte_offset: usize) -> usize {
     col
 }
 
+/// Strip ANSI escape sequences from a string.
+///
+/// This is needed because prompts contain color codes like `\x1b[32m` which
+/// would incorrectly inflate width calculations.
+#[cfg(feature = "lsp_diagnostics")]
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip escape sequence: \x1b[...m
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                // Consume until 'm' or end of string
+                for nc in chars.by_ref() {
+                    if nc == 'm' {
+                        break;
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 /// Maximum time Reedline will block on input before yielding control to
 /// external printers.
 #[cfg(feature = "external_printer")]
@@ -1949,11 +1976,13 @@ impl Reedline {
         let buffer = self.editor.get_buffer();
 
         // Calculate prompt width (last line of prompt + indicator)
+        // Strip ANSI escape sequences before measuring - they have no visual width
         let prompt_left = prompt.render_prompt_left();
         let prompt_indicator = prompt.render_prompt_indicator(self.prompt_edit_mode());
         let last_prompt_line = prompt_left.lines().last().unwrap_or("");
-        let prompt_width = unicode_width::UnicodeWidthStr::width(last_prompt_line)
-            + unicode_width::UnicodeWidthStr::width(prompt_indicator.as_ref());
+        let prompt_width =
+            unicode_width::UnicodeWidthStr::width(strip_ansi(last_prompt_line).as_str())
+                + unicode_width::UnicodeWidthStr::width(strip_ansi(&prompt_indicator).as_str());
 
         // Collect diagnostics with their visual columns (start and end), sorted by start column
         let mut diag_cols: Vec<_> = diagnostics
