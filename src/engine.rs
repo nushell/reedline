@@ -2016,9 +2016,7 @@ impl Reedline {
                         col += 1;
                     }
                     if self.use_ansi_coloring {
-                        line.push_str(
-                            &future_diag.severity.message_style().paint("╎").to_string(),
-                        );
+                        line.push_str(&future_diag.severity.message_style().paint("╎").to_string());
                     } else {
                         line.push('╎');
                     }
@@ -2116,13 +2114,28 @@ impl Reedline {
             .map(FixOption::from_code_action)
             .collect();
 
+        // Calculate the anchor column based on the first replacement of the first fix
+        // This ensures the menu aligns below the text that will be replaced
+        use unicode_width::UnicodeWidthStr;
+        let first_replacement_start = fixes
+            .first()
+            .and_then(|f| f.replacements.first())
+            .map(|r| r.span.start)
+            .unwrap_or(span.start);
+
+        let anchor_col = if first_replacement_start <= content.len() {
+            content[..first_replacement_start].width() as u16
+        } else {
+            0
+        };
+
         // Remove any existing diagnostic fix menu
         let menu_name = "diagnostic_fix_menu";
         self.menus.retain(|m| m.name() != menu_name);
 
-        // Create a new menu with fixes
+        // Create a new menu with fixes, positioned at the start of the diagnostic span
         let mut fix_menu = DiagnosticFixMenu::default();
-        fix_menu.set_fixes(fixes);
+        fix_menu.set_fixes(fixes, anchor_col);
         let mut menu = ReedlineMenu::EngineCompleter(Box::new(fix_menu));
         menu.menu_event(MenuEvent::Activate(false));
         self.menus.push(menu);

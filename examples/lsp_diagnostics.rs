@@ -60,7 +60,7 @@ fn main() -> io::Result<()> {
     println!("====================");
     println!();
     println!("Type nushell code to see diagnostics as underlines while typing.");
-    println!("Press Alt+f to open the fix menu when on a diagnostic.");
+    println!("Press Ctrl+. or Alt+f to open the fix menu when on a diagnostic.");
     println!("Press Ctrl+C to exit.");
     println!();
 
@@ -82,11 +82,16 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-/// Add keybinding for the diagnostic fix menu (Alt+f)
+/// Add keybinding for the diagnostic fix menu (Alt+f and Ctrl+.)
 fn add_diagnostic_fix_keybinding(keybindings: &mut Keybindings) {
     keybindings.add_binding(
         KeyModifiers::ALT,
         KeyCode::Char('f'),
+        ReedlineEvent::OpenDiagnosticFixMenu,
+    );
+    keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('.'),
         ReedlineEvent::OpenDiagnosticFixMenu,
     );
 }
