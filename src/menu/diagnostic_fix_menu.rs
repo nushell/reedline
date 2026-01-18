@@ -1,19 +1,21 @@
 //! Menu for displaying and applying diagnostic fixes.
 //!
 //! This menu shows available code fixes for diagnostics at the cursor position,
-//! similar to the "quick fix" menu in IDEs.
+//! using IdeMenu for rendering with borders and description panels.
 
-use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
+use super::{IdeMenu, Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
-    core_editor::Editor, lsp::Replacement, painting::Painter, Completer, Suggestion, UndoBehavior,
+    core_editor::Editor, lsp::Replacement, painting::Painter, Completer, Span, Suggestion,
+    UndoBehavior,
 };
-use nu_ansi_term::ansi::RESET;
 
 /// A fix option that can be applied to the buffer.
 #[derive(Debug, Clone)]
 pub struct FixOption {
-    /// Title/description of the fix
+    /// Title of the fix (shown in the menu)
     pub title: String,
+    /// Description of the fix (shown in description panel)
+    pub description: Option<String>,
     /// The replacements to apply
     pub replacements: Vec<Replacement>,
 }
@@ -23,6 +25,20 @@ impl FixOption {
     pub fn new(title: impl Into<String>, replacements: Vec<Replacement>) -> Self {
         Self {
             title: title.into(),
+            description: None,
+            replacements,
+        }
+    }
+
+    /// Create a new fix option with a description.
+    pub fn with_description(
+        title: impl Into<String>,
+        description: impl Into<String>,
+        replacements: Vec<Replacement>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            description: Some(description.into()),
             replacements,
         }
     }
@@ -31,45 +47,57 @@ impl FixOption {
     pub fn from_code_action(action: &crate::lsp::CodeAction) -> Self {
         Self {
             title: action.title.clone(),
+            description: Some(action.fix.description.clone()),
             replacements: action.fix.replacements.clone(),
+        }
+    }
+
+    /// Convert to a Suggestion for IdeMenu display.
+    fn to_suggestion(&self) -> Suggestion {
+        Suggestion {
+            value: self.title.clone(),
+            description: self.description.clone(),
+            style: None,
+            extra: None,
+            span: Span::new(0, 0), // Not used for replacement
+            append_whitespace: false,
+            match_indices: None,
         }
     }
 }
 
 /// Menu for displaying and applying diagnostic fixes.
+///
+/// Uses IdeMenu internally for consistent visual styling with borders and descriptions.
 pub struct DiagnosticFixMenu {
-    /// Menu settings
-    settings: MenuSettings,
-    /// Whether menu is active
-    active: bool,
-    /// Available fix options
+    /// Inner IdeMenu for rendering
+    inner: IdeMenu,
+    /// Available fix options (parallel to inner menu's suggestions)
     fixes: Vec<FixOption>,
-    /// Selected index
+    /// Selected index (tracked separately to find the right fix)
     selected: usize,
-    /// Current menu event
-    event: Option<MenuEvent>,
 }
 
 impl Default for DiagnosticFixMenu {
     fn default() -> Self {
         Self {
-            settings: MenuSettings::default().with_name("diagnostic_fix_menu"),
-            active: false,
+            inner: IdeMenu::default()
+                .with_name("diagnostic_fix_menu")
+                .with_default_border(),
             fixes: Vec::new(),
             selected: 0,
-            event: None,
         }
     }
 }
 
 impl MenuBuilder for DiagnosticFixMenu {
     fn settings_mut(&mut self) -> &mut MenuSettings {
-        &mut self.settings
+        self.inner.settings_mut()
     }
 }
 
 impl DiagnosticFixMenu {
-    /// Update the available fixes.
+    /// Update the available fixes and sync with inner IdeMenu.
     pub fn set_fixes(&mut self, fixes: Vec<FixOption>) {
         self.fixes = fixes;
         self.selected = 0;
@@ -80,22 +108,7 @@ impl DiagnosticFixMenu {
         !self.fixes.is_empty()
     }
 
-    fn move_next(&mut self) {
-        if self.selected < self.fixes.len().saturating_sub(1) {
-            self.selected += 1;
-        } else {
-            self.selected = 0;
-        }
-    }
-
-    fn move_previous(&mut self) {
-        if self.selected > 0 {
-            self.selected -= 1;
-        } else {
-            self.selected = self.fixes.len().saturating_sub(1);
-        }
-    }
-
+    /// Get the currently selected fix.
     fn get_selected_fix(&self) -> Option<&FixOption> {
         self.fixes.get(self.selected)
     }
@@ -103,11 +116,11 @@ impl DiagnosticFixMenu {
 
 impl Menu for DiagnosticFixMenu {
     fn settings(&self) -> &MenuSettings {
-        &self.settings
+        self.inner.settings()
     }
 
     fn is_active(&self) -> bool {
-        self.active
+        self.inner.is_active()
     }
 
     fn can_quick_complete(&self) -> bool {
@@ -124,34 +137,54 @@ impl Menu for DiagnosticFixMenu {
     }
 
     fn menu_event(&mut self, event: MenuEvent) {
-        match &event {
-            MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => self.active = false,
+        // Track selection changes
+        match event {
+            MenuEvent::NextElement => {
+                if !self.fixes.is_empty() {
+                    self.selected = (self.selected + 1) % self.fixes.len();
+                }
+            }
+            MenuEvent::PreviousElement => {
+                if !self.fixes.is_empty() {
+                    self.selected = self.selected.checked_sub(1).unwrap_or(self.fixes.len() - 1);
+                }
+            }
+            MenuEvent::Activate(_) => {
+                self.selected = 0;
+            }
             _ => {}
         }
-        self.event = Some(event);
+        self.inner.menu_event(event);
     }
 
-    fn update_values(&mut self, _editor: &mut Editor, _completer: &mut dyn Completer) {
-        // Fixes are set externally via set_fixes()
+    fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
+        // Convert fixes to suggestions and update inner menu
+        let suggestions: Vec<Suggestion> = self.fixes.iter().map(|f| f.to_suggestion()).collect();
+
+        // Create a temporary completer that returns our suggestions
+        struct FixCompleter {
+            suggestions: Vec<Suggestion>,
+        }
+        impl Completer for FixCompleter {
+            fn complete(&mut self, _line: &str, _pos: usize) -> Vec<Suggestion> {
+                self.suggestions.clone()
+            }
+        }
+
+        let mut fix_completer = FixCompleter { suggestions };
+        self.inner.update_values(editor, &mut fix_completer);
+
+        // Also call original completer update in case it's needed
+        let _ = completer;
     }
 
     fn update_working_details(
         &mut self,
-        _editor: &mut Editor,
-        _completer: &mut dyn Completer,
-        _painter: &Painter,
+        editor: &mut Editor,
+        completer: &mut dyn Completer,
+        painter: &Painter,
     ) {
-        if let Some(event) = self.event.take() {
-            match event {
-                MenuEvent::Activate(_) => {
-                    self.selected = 0;
-                }
-                MenuEvent::NextElement | MenuEvent::MoveDown => self.move_next(),
-                MenuEvent::PreviousElement | MenuEvent::MoveUp => self.move_previous(),
-                _ => {}
-            }
-        }
+        self.inner.update_working_details(editor, completer, painter);
     }
 
     fn replace_in_buffer(&self, editor: &mut Editor) {
@@ -184,45 +217,25 @@ impl Menu for DiagnosticFixMenu {
     }
 
     fn min_rows(&self) -> u16 {
-        self.fixes.len().max(1) as u16
+        self.inner.min_rows()
     }
 
     fn get_values(&self) -> &[Suggestion] {
-        &[]
+        self.inner.get_values()
     }
 
-    fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
-        self.fixes.len().max(1) as u16
+    fn menu_required_lines(&self, terminal_columns: u16) -> u16 {
+        self.inner.menu_required_lines(terminal_columns)
     }
 
-    fn menu_string(&self, _available_lines: u16, use_ansi_coloring: bool) -> String {
+    fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String {
         if self.fixes.is_empty() {
             return String::from("No fixes available");
         }
-
-        self.fixes
-            .iter()
-            .enumerate()
-            .map(|(index, fix)| {
-                let marker = if index == self.selected { "> " } else { "  " };
-                let title = &fix.title;
-
-                if use_ansi_coloring {
-                    let style = if index == self.selected {
-                        &self.settings.color.selected_text_style
-                    } else {
-                        &self.settings.color.text_style
-                    };
-                    format!("{}{}{}{}", marker, style.prefix(), title, RESET)
-                } else {
-                    format!("{}{}", marker, title)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\r\n")
+        self.inner.menu_string(available_lines, use_ansi_coloring)
     }
 
-    fn set_cursor_pos(&mut self, _pos: (u16, u16)) {
-        // Not used for simple list menu
+    fn set_cursor_pos(&mut self, pos: (u16, u16)) {
+        self.inner.set_cursor_pos(pos);
     }
 }
