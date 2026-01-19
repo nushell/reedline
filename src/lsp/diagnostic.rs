@@ -1,8 +1,12 @@
-//! Diagnostic types for reedline's LSP integration.
+//! Diagnostic types and utilities for reedline's LSP integration.
+//!
+//! Re-exports LSP types and provides helper functions for styling and
+//! converting between LSP positions and byte offsets.
 
 use nu_ansi_term::{Color, Style};
 
-pub use lsp_types::DiagnosticSeverity;
+// Re-export LSP types for public use
+pub use lsp_types::{CodeAction, Diagnostic, DiagnosticSeverity, Range, TextEdit};
 
 /// Get a style for underlining diagnostic spans in the source code.
 ///
@@ -26,6 +30,9 @@ pub fn message_style(severity: DiagnosticSeverity) -> Style {
 }
 
 /// A byte span within the input buffer.
+///
+/// Used internally for buffer manipulation. LSP uses line/character positions,
+/// but buffer operations need byte offsets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span {
     /// Start byte offset (inclusive)
@@ -62,130 +69,181 @@ fn byte_offset_to_column(s: &str, byte_offset: usize) -> usize {
         .sum()
 }
 
-/// A single diagnostic message.
-#[derive(Debug, Clone)]
-pub struct Diagnostic {
-    /// The severity level
-    pub severity: DiagnosticSeverity,
-    /// Byte span in the source text
-    pub span: Span,
-    /// Short message
-    pub message: String,
-    /// Optional longer description
-    pub detail: Option<String>,
-    /// Rule ID for grouping/filtering
-    pub rule_id: Option<String>,
-    /// Optional fix
-    pub fix: Option<Fix>,
+/// Convert an LSP Range to a byte Span.
+pub fn range_to_span(content: &str, range: &Range) -> Span {
+    Span::new(
+        position_to_offset(content, &range.start),
+        position_to_offset(content, &range.end),
+    )
 }
 
-impl Diagnostic {
-    /// Create a new diagnostic.
-    pub fn new(severity: DiagnosticSeverity, span: Span, message: impl Into<String>) -> Self {
-        Self {
-            severity,
-            span,
-            message: message.into(),
-            detail: None,
-            rule_id: None,
-            fix: None,
-        }
+/// Convert an LSP Position to a byte offset.
+fn position_to_offset(content: &str, pos: &lsp_types::Position) -> usize {
+    let target_line = pos.line as usize;
+    content
+        .lines()
+        .enumerate()
+        .scan(0usize, |offset, (i, line)| {
+            let current_offset = *offset;
+            *offset += line.len() + 1;
+            Some((i, line, current_offset))
+        })
+        .find(|(i, _, _)| *i == target_line)
+        .map(|(_, line, offset)| offset + (pos.character as usize).min(line.len()))
+        .unwrap_or(content.len())
+}
+
+/// Format diagnostic messages for display below the prompt.
+///
+/// Renders diagnostics with vertical connecting lines and handlebars spanning the diagnostic:
+/// ```text
+/// ╎ ╰────╯ Unnecessary '^' prefix on external command 'head'
+/// ╰ Use 'first N' to get the first N items
+/// ```
+///
+/// # Arguments
+/// * `diagnostics` - The diagnostics to format
+/// * `buffer` - The text buffer content (for converting ranges to columns)
+/// * `prompt_width` - The visual width of the prompt (for alignment)
+/// * `use_ansi_coloring` - Whether to apply ANSI color codes
+pub fn format_diagnostic_messages(
+    diagnostics: &[Diagnostic],
+    buffer: &str,
+    prompt_width: usize,
+    use_ansi_coloring: bool,
+) -> String {
+    use itertools::Itertools;
+
+    // Convert and sort diagnostics by start column
+    let diag_infos: Vec<DiagRenderInfo> = diagnostics
+        .iter()
+        .map(|d| {
+            let span = range_to_span(buffer, &d.range);
+            DiagRenderInfo {
+                start_col: prompt_width + span.start_column(buffer),
+                end_col: prompt_width + span.end_column(buffer),
+                severity: d.severity.unwrap_or(DiagnosticSeverity::WARNING),
+                message: d.message.clone(),
+            }
+        })
+        .sorted_by_key(|d| d.start_col)
+        .collect();
+
+    diag_infos
+        .iter()
+        .enumerate()
+        .map(|(i, diag)| {
+            format_diagnostic_line(
+                diag.start_col,
+                diag.end_col,
+                diag.severity,
+                &diag.message,
+                &diag_infos[i + 1..],
+                use_ansi_coloring,
+            )
+        })
+        .join("\n")
+}
+
+/// Pre-computed diagnostic info for rendering.
+struct DiagRenderInfo {
+    start_col: usize,
+    end_col: usize,
+    severity: DiagnosticSeverity,
+    message: String,
+}
+
+/// Format a single diagnostic line with vertical connectors for future diagnostics.
+fn format_diagnostic_line(
+    start_col: usize,
+    end_col: usize,
+    severity: DiagnosticSeverity,
+    message: &str,
+    future_diags: &[DiagRenderInfo],
+    use_ansi_coloring: bool,
+) -> String {
+    let vertical_connectors = build_vertical_connectors(start_col, future_diags, use_ansi_coloring);
+    let connector_width = vertical_connectors
+        .iter()
+        .map(|(col, _)| col + 1)
+        .max()
+        .unwrap_or(0);
+
+    let padding = " ".repeat(start_col.saturating_sub(connector_width));
+    let handlebar = build_handlebar(
+        end_col.saturating_sub(start_col),
+        severity,
+        use_ansi_coloring,
+    );
+    let styled_message = style_text(message, severity, use_ansi_coloring);
+
+    // Merge vertical connectors into the line
+    let prefix = merge_connectors_with_padding(&vertical_connectors, connector_width);
+
+    format!("{prefix}{padding}{handlebar} {styled_message}")
+}
+
+/// Build vertical connector positions for future diagnostics that come before the current column.
+fn build_vertical_connectors(
+    current_col: usize,
+    future_diags: &[DiagRenderInfo],
+    use_ansi_coloring: bool,
+) -> Vec<(usize, String)> {
+    future_diags
+        .iter()
+        .filter(|d| d.start_col < current_col)
+        .map(|d| {
+            let connector = style_text("╎", d.severity, use_ansi_coloring);
+            (d.start_col, connector)
+        })
+        .collect()
+}
+
+/// Merge vertical connectors into a string with proper spacing.
+fn merge_connectors_with_padding(connectors: &[(usize, String)], total_width: usize) -> String {
+    if connectors.is_empty() {
+        return String::new();
     }
 
-    /// Create an error diagnostic.
-    pub fn error(span: Span, message: impl Into<String>) -> Self {
-        Self::new(DiagnosticSeverity::ERROR, span, message)
-    }
+    connectors
+        .iter()
+        .fold(
+            (String::new(), 0usize),
+            |(mut acc, col), (connector_col, connector)| {
+                acc.push_str(&" ".repeat(connector_col.saturating_sub(col)));
+                acc.push_str(connector);
+                (acc, connector_col + 1)
+            },
+        )
+        .0
+        + &" "
+            .repeat(total_width.saturating_sub(connectors.last().map(|(c, _)| c + 1).unwrap_or(0)))
+}
 
-    /// Create a warning diagnostic.
-    pub fn warning(span: Span, message: impl Into<String>) -> Self {
-        Self::new(DiagnosticSeverity::WARNING, span, message)
-    }
-
-    /// Add a detail message.
-    #[must_use]
-    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
-        self.detail = Some(detail.into());
-        self
-    }
-
-    /// Add a rule ID.
-    #[must_use]
-    pub fn with_rule_id(mut self, rule_id: impl Into<String>) -> Self {
-        self.rule_id = Some(rule_id.into());
-        self
-    }
-
-    /// Add a fix.
-    #[must_use]
-    pub fn with_fix(mut self, fix: Fix) -> Self {
-        self.fix = Some(fix);
-        self
+/// Build the handlebar (╰───╯ or ╰) for a diagnostic span.
+fn build_handlebar(
+    span_width: usize,
+    severity: DiagnosticSeverity,
+    use_ansi_coloring: bool,
+) -> String {
+    if span_width <= 1 {
+        style_text("╰", severity, use_ansi_coloring)
+    } else {
+        let middle = "─".repeat(span_width.saturating_sub(2));
+        format!(
+            "{}{}{}",
+            style_text("╰", severity, use_ansi_coloring),
+            style_text(&middle, severity, use_ansi_coloring),
+            style_text("╯", severity, use_ansi_coloring)
+        )
     }
 }
 
-/// An automated fix for a diagnostic.
-#[derive(Debug, Clone)]
-pub struct Fix {
-    /// Description of what the fix does
-    pub description: String,
-    /// The replacements to apply
-    pub replacements: Vec<Replacement>,
-}
-
-impl Fix {
-    /// Create a new fix.
-    pub fn new(description: impl Into<String>, replacements: Vec<Replacement>) -> Self {
-        Self {
-            description: description.into(),
-            replacements,
-        }
-    }
-
-    /// Create a simple fix that replaces a single span.
-    pub fn replace(
-        description: impl Into<String>,
-        span: Span,
-        new_text: impl Into<String>,
-    ) -> Self {
-        Self::new(description, vec![Replacement::new(span, new_text)])
-    }
-}
-
-/// A single text replacement.
-#[derive(Debug, Clone)]
-pub struct Replacement {
-    /// The span to replace
-    pub span: Span,
-    /// The new text to insert
-    pub new_text: String,
-}
-
-impl Replacement {
-    /// Create a new replacement.
-    pub fn new(span: Span, new_text: impl Into<String>) -> Self {
-        Self {
-            span,
-            new_text: new_text.into(),
-        }
-    }
-}
-
-/// A code action that can be applied to fix or improve code.
-#[derive(Debug, Clone)]
-pub struct CodeAction {
-    /// Title shown to the user
-    pub title: String,
-    /// The fix to apply
-    pub fix: Fix,
-}
-
-impl CodeAction {
-    /// Create a new code action.
-    pub fn new(title: impl Into<String>, fix: Fix) -> Self {
-        Self {
-            title: title.into(),
-            fix,
-        }
+/// Apply styling to text based on severity and coloring preference.
+fn style_text(text: &str, severity: DiagnosticSeverity, use_ansi_coloring: bool) -> String {
+    if use_ansi_coloring {
+        message_style(severity).paint(text).to_string()
+    } else {
+        text.to_string()
     }
 }

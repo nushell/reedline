@@ -12,17 +12,14 @@ use std::{
 
 use crossbeam::channel::{bounded, Receiver, Sender};
 use lsp_types::{
-    DidChangeTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, InitializedParams,
-    NumberOrString, Position, PublishDiagnosticsParams, Range, TextDocumentContentChangeEvent,
+    CodeAction, Diagnostic, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+    InitializeParams, InitializedParams, PublishDiagnosticsParams, TextDocumentContentChangeEvent,
     TextDocumentItem, VersionedTextDocumentIdentifier,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{
-    actions::request_code_actions,
-    diagnostic::{CodeAction, Diagnostic, Span},
-};
+use super::{actions::request_code_actions, diagnostic::Span};
 
 /// LSP server configuration.
 #[derive(Debug, Clone)]
@@ -251,7 +248,7 @@ impl LspWorker {
         };
         let _ = notify(conn, "textDocument/didChange", &params);
 
-        self.poll_for_diagnostics(content);
+        self.poll_for_diagnostics();
     }
 
     fn send_diagnostics(&self, diagnostics: Vec<Diagnostic>) {
@@ -279,7 +276,7 @@ impl LspWorker {
         let _ = self.response_tx.try_send(LspResponse::CodeActions(actions));
     }
 
-    fn poll_for_diagnostics(&mut self, content: &str) {
+    fn poll_for_diagnostics(&mut self) {
         let Some(conn) = &mut self.conn else { return };
 
         let timeout = Duration::from_millis(self.config.timeout_ms);
@@ -294,7 +291,7 @@ impl LspWorker {
                     serde_json::from_value::<PublishDiagnosticsParams>(params).ok()
                 })
                 .next()
-                .map(|p| p.diagnostics.iter().map(|d| convert(d, content)).collect());
+                .map(|p| p.diagnostics);
 
         if let Some(diagnostics) = diagnostics {
             self.send_diagnostics(diagnostics);
@@ -456,42 +453,4 @@ fn read_msg<R: BufRead>(r: &mut R, timeout: Duration) -> Option<Msg> {
         }
     }
     None
-}
-
-// Conversion
-
-fn convert(d: &lsp_types::Diagnostic, content: &str) -> Diagnostic {
-    let severity = d.severity.unwrap_or(lsp_types::DiagnosticSeverity::WARNING);
-    let diag = Diagnostic::new(severity, range_to_span(content, &d.range), &d.message);
-
-    d.code
-        .as_ref()
-        .map(|code| match code {
-            NumberOrString::Number(n) => n.to_string(),
-            NumberOrString::String(s) => s.clone(),
-        })
-        .map(|rule_id| diag.clone().with_rule_id(rule_id))
-        .unwrap_or(diag)
-}
-
-fn range_to_span(content: &str, range: &Range) -> Span {
-    Span::new(
-        pos_to_offset(content, &range.start),
-        pos_to_offset(content, &range.end),
-    )
-}
-
-fn pos_to_offset(content: &str, pos: &Position) -> usize {
-    let target_line = pos.line as usize;
-    content
-        .lines()
-        .enumerate()
-        .scan(0usize, |offset, (i, line)| {
-            let current_offset = *offset;
-            *offset += line.len() + 1;
-            Some((i, line, current_offset))
-        })
-        .find(|(i, _, _)| *i == target_line)
-        .map(|(_, line, offset)| offset + (pos.character as usize).min(line.len()))
-        .unwrap_or(content.len())
 }

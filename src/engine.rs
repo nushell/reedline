@@ -4,7 +4,10 @@ use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
 
 #[cfg(feature = "lsp_diagnostics")]
-use crate::lsp::{message_style, underline_style, Diagnostic, LspDiagnosticsProvider};
+use crate::lsp::{
+    format_diagnostic_messages, range_to_span, underline_style, DiagnosticSeverity,
+    LspDiagnosticsProvider,
+};
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
 use crate::{
@@ -1813,8 +1816,9 @@ impl Reedline {
         #[cfg(feature = "lsp_diagnostics")]
         if let Some(ref mut provider) = self.lsp_diagnostics {
             for diag in provider.diagnostics() {
-                let style = underline_style(diag.severity);
-                styled_text.style_range(diag.span.start, diag.span.end, style);
+                let severity = diag.severity.unwrap_or(DiagnosticSeverity::WARNING);
+                let span = range_to_span(buffer_to_paint, &diag.range);
+                styled_text.style_range(span.start, span.end, underline_style(severity));
             }
         }
 
@@ -1852,7 +1856,7 @@ impl Reedline {
 
         // Format diagnostic messages for display below the prompt
         #[cfg(feature = "lsp_diagnostics")]
-        let diagnostic_display = self.format_diagnostic_messages(prompt);
+        let diagnostic_display = self.get_diagnostic_display(prompt);
         #[cfg(not(feature = "lsp_diagnostics"))]
         let diagnostic_display = String::new();
 
@@ -1915,18 +1919,11 @@ impl Reedline {
         self
     }
 
-    /// Format diagnostic messages for display below the prompt.
-    ///
-    /// Renders diagnostics with vertical connecting lines and handlebars spanning the diagnostic:
-    /// ```text
-    /// ╎ ╰────╯ Unnecessary '^' prefix on external command 'head'
-    /// ╰ Use 'first N' to get the first N items
-    /// ```
+    /// Get formatted diagnostic messages for display below the prompt.
     #[cfg(feature = "lsp_diagnostics")]
-    fn format_diagnostic_messages(&mut self, prompt: &dyn Prompt) -> String {
-        // Get these before borrowing lsp_diagnostics
+    fn get_diagnostic_display(&mut self, prompt: &dyn Prompt) -> String {
         let edit_mode = self.prompt_edit_mode();
-        let buffer = self.editor.get_buffer().to_string();
+        let buffer = self.editor.get_buffer();
 
         let Some(ref mut provider) = self.lsp_diagnostics else {
             return String::new();
@@ -1944,101 +1941,7 @@ impl Reedline {
         let prompt_width = crate::painting::line_width(last_prompt_line)
             + crate::painting::line_width(&prompt_indicator);
 
-        // Collect diagnostics with their visual columns (start and end), sorted by start column
-        let mut diag_cols: Vec<_> = diagnostics
-            .iter()
-            .map(|d| {
-                let start_col = prompt_width + d.span.start_column(&buffer);
-                let end_col = prompt_width + d.span.end_column(&buffer);
-                (start_col, end_col, d)
-            })
-            .collect();
-        diag_cols.sort_by_key(|(start, _, _)| *start);
-
-        let mut output = String::new();
-        for (i, (start_col, end_col, diag)) in diag_cols.iter().enumerate() {
-            // Columns that need vertical lines (diagnostics after this one)
-            // Include the diagnostic reference to style vertical bars with matching severity
-            let future_diags: Vec<(usize, &Diagnostic)> = diag_cols[i + 1..]
-                .iter()
-                .map(|(c, _, d)| (*c, *d))
-                .collect();
-
-            let styled_message = if self.use_ansi_coloring {
-                message_style(diag.severity)
-                    .paint(&diag.message)
-                    .to_string()
-            } else {
-                diag.message.clone()
-            };
-
-            if !output.is_empty() {
-                output.push('\n');
-            }
-
-            // Build the line character by character
-            let mut line = String::new();
-            let mut col = 0;
-
-            // Add vertical lines for future diagnostics that come before this one's column
-            for (future_col, future_diag) in &future_diags {
-                if *future_col < *start_col {
-                    // Add spaces up to this column, then a vertical bar
-                    while col < *future_col {
-                        line.push(' ');
-                        col += 1;
-                    }
-                    if self.use_ansi_coloring {
-                        line.push_str(&message_style(future_diag.severity).paint("╎").to_string());
-                    } else {
-                        line.push('╎');
-                    }
-                    col += 1;
-                }
-            }
-
-            // Pad to the current diagnostic's column
-            while col < *start_col {
-                line.push(' ');
-                col += 1;
-            }
-
-            // Calculate span width for the horizontal line
-            let span_width = end_col.saturating_sub(*start_col);
-
-            // Add the corner, optional horizontal extension, and message
-            // Style connectors with the diagnostic's severity color
-            if span_width <= 1 {
-                // Single character span: just corner
-                if self.use_ansi_coloring {
-                    line.push_str(&message_style(diag.severity).paint("╰").to_string());
-                    line.push(' ');
-                } else {
-                    line.push_str("╰ ");
-                }
-            } else {
-                // Multi-character span: corner + horizontal line + end terminator
-                if self.use_ansi_coloring {
-                    let style = message_style(diag.severity);
-                    line.push_str(&style.paint("╰").to_string());
-                    for _ in 0..span_width.saturating_sub(2) {
-                        line.push_str(&style.paint("─").to_string());
-                    }
-                    line.push_str(&style.paint("╯").to_string());
-                    line.push(' ');
-                } else {
-                    line.push('╰');
-                    for _ in 0..span_width.saturating_sub(2) {
-                        line.push('─');
-                    }
-                    line.push_str("╯ ");
-                }
-            }
-            line.push_str(&styled_message);
-
-            output.push_str(&line);
-        }
-        output
+        format_diagnostic_messages(diagnostics, buffer, prompt_width, self.use_ansi_coloring)
     }
 
     /// Open the diagnostic fix menu with available fixes at the cursor position.
@@ -2050,7 +1953,7 @@ impl Reedline {
     #[cfg(feature = "lsp_diagnostics")]
     fn open_diagnostic_fix_menu(&mut self) -> bool {
         use crate::lsp::Span;
-        use crate::menu::{DiagnosticFixMenu, FixOption};
+        use crate::menu::DiagnosticFixMenu;
         use unicode_width::UnicodeWidthStr;
 
         let Some(ref mut provider) = self.lsp_diagnostics else {
@@ -2060,33 +1963,38 @@ impl Reedline {
         let cursor_pos = self.editor.insertion_point();
         let content = self.editor.get_buffer();
 
-        // Find diagnostic span at cursor, or use cursor position as a point
+        // Find diagnostic at cursor and convert its range to a span
         let span = provider
             .diagnostics()
             .iter()
-            .find(|d| d.span.start <= cursor_pos && cursor_pos <= d.span.end)
-            .map_or_else(|| Span::new(cursor_pos, cursor_pos), |d| d.span);
+            .find_map(|d| {
+                let s = range_to_span(content, &d.range);
+                (s.start <= cursor_pos && cursor_pos <= s.end).then_some(s)
+            })
+            .unwrap_or_else(|| Span::new(cursor_pos, cursor_pos));
 
         let code_actions = provider.code_actions(content, span);
         if code_actions.is_empty() {
             return false;
         }
 
-        let fixes: Vec<FixOption> = code_actions.iter().map(FixOption::from_code_action).collect();
-
-        // Calculate anchor column from first replacement, ensuring menu aligns below replaced text
-        let replacement_start = fixes
+        // Calculate anchor column from first edit in first action
+        let anchor_col = code_actions
             .first()
-            .and_then(|f| f.replacements.first())
-            .map_or(span.start, |r| r.span.start)
+            .and_then(|a| a.edit.as_ref())
+            .and_then(|e| e.changes.as_ref())
+            .and_then(|c| c.values().next())
+            .and_then(|edits| edits.first())
+            .map(|edit| range_to_span(content, &edit.range).start)
+            .unwrap_or(span.start)
             .min(content.len());
-        let anchor_col = content[..replacement_start].width() as u16;
+        let anchor_col = content[..anchor_col].width() as u16;
 
         // Remove any existing diagnostic fix menu and create new one
         self.menus.retain(|m| m.name() != "diagnostic_fix_menu");
 
         let mut fix_menu = DiagnosticFixMenu::default();
-        fix_menu.set_fixes(fixes, anchor_col);
+        fix_menu.set_fixes(code_actions, content, anchor_col);
         let mut menu = ReedlineMenu::EngineCompleter(Box::new(fix_menu));
         menu.menu_event(MenuEvent::Activate(false));
         self.menus.push(menu);

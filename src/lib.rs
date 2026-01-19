@@ -282,17 +282,17 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 mod lsp;
 #[cfg(feature = "lsp_diagnostics")]
 pub use lsp::{
-    CodeAction, Diagnostic, DiagnosticSeverity, Fix, LspConfig, LspDiagnosticsProvider,
-    Replacement, Span as DiagnosticSpan,
+    CodeAction, Diagnostic, DiagnosticSeverity, LspConfig, LspDiagnosticsProvider,
+    Span as DiagnosticSpan, TextEdit,
 };
 
 mod menu;
+#[cfg(feature = "lsp_diagnostics")]
+pub use menu::DiagnosticFixMenu;
 pub use menu::{
     menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, IdeMenu, ListMenu, Menu,
     MenuBuilder, MenuEvent, MenuSettings, MenuTextStyle, ReedlineMenu, TraversalDirection,
 };
-#[cfg(feature = "lsp_diagnostics")]
-pub use menu::{DiagnosticFixMenu, FixOption};
 
 mod terminal_extensions;
 pub use terminal_extensions::kitty_protocol_available;

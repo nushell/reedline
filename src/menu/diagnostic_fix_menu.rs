@@ -5,57 +5,34 @@
 //! The menu is positioned below the text being replaced, aligned with the anchor column.
 
 use itertools::Itertools;
+use lsp_types::{CodeAction, TextEdit};
 use nu_ansi_term::{ansi::RESET, Style};
 use unicode_width::UnicodeWidthStr;
 
 use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
-    core_editor::Editor, lsp::Replacement, painting::Painter, Completer, Suggestion, UndoBehavior,
+    core_editor::Editor,
+    lsp::{range_to_span, Span},
+    painting::Painter,
+    Completer, Suggestion, UndoBehavior,
 };
+
 // Necessary because of indicator text of two characters `> ` to the left of selected menu item
 const LEFT_PADDING: u16 = 2;
 
-/// A fix option that can be applied to the buffer.
+/// Pre-computed fix with byte offsets for buffer manipulation.
 #[derive(Debug, Clone)]
-pub struct FixOption {
+struct FixInfo {
     /// Title of the fix (shown in the menu)
-    pub title: String,
-    /// Description of the fix (shown in description panel)
-    pub description: Option<String>,
-    /// The replacements to apply
-    pub replacements: Vec<Replacement>,
+    title: String,
+    /// The text edits to apply, converted to byte spans
+    edits: Vec<(Span, String)>,
 }
 
-impl FixOption {
-    /// Create a new fix option.
-    pub fn new(title: impl Into<String>, replacements: Vec<Replacement>) -> Self {
-        Self {
-            title: title.into(),
-            description: None,
-            replacements,
-        }
-    }
-
-    /// Create a new fix option with a description.
-    pub fn with_description(
-        title: impl Into<String>,
-        description: impl Into<String>,
-        replacements: Vec<Replacement>,
-    ) -> Self {
-        Self {
-            title: title.into(),
-            description: Some(description.into()),
-            replacements,
-        }
-    }
-
-    /// Create a fix option from a code action.
-    pub fn from_code_action(action: &crate::lsp::CodeAction) -> Self {
-        Self {
-            title: action.title.clone(),
-            description: Some(action.fix.description.clone()),
-            replacements: action.fix.replacements.clone(),
-        }
+impl FixInfo {
+    /// Get the first replacement text for display
+    fn first_replacement_text(&self) -> &str {
+        self.edits.first().map_or("", |(_, text)| text.as_str())
     }
 }
 
@@ -76,8 +53,8 @@ pub struct DiagnosticFixMenu {
     settings: MenuSettings,
     /// Whether the menu is active
     active: bool,
-    /// Available fix options
-    fixes: Vec<FixOption>,
+    /// Available fixes with pre-computed byte offsets
+    fixes: Vec<FixInfo>,
     /// Selected index
     selected: usize,
     /// Number of values to skip for scrolling
@@ -112,10 +89,26 @@ impl MenuBuilder for DiagnosticFixMenu {
 }
 
 impl DiagnosticFixMenu {
-    /// Update the available fixes with anchor position.
-    /// The anchor_col is the column position where the text being replaced starts.
-    pub fn set_fixes(&mut self, fixes: Vec<FixOption>, anchor_col: u16) {
-        self.fixes = fixes;
+    /// Update the available fixes from LSP code actions.
+    ///
+    /// Converts LSP ranges to byte offsets using the provided content.
+    pub fn set_fixes(&mut self, actions: Vec<CodeAction>, content: &str, anchor_col: u16) {
+        self.fixes = actions
+            .into_iter()
+            .filter_map(|action| {
+                let edits = extract_text_edits(&action)?;
+                let edits: Vec<(Span, String)> = edits
+                    .into_iter()
+                    .map(|edit| (range_to_span(content, &edit.range), edit.new_text))
+                    .collect();
+
+                (!edits.is_empty()).then_some(FixInfo {
+                    title: action.title,
+                    edits,
+                })
+            })
+            .collect();
+
         self.selected = 0;
         self.skip_values = 0;
         self.anchor_col = anchor_col;
@@ -127,16 +120,13 @@ impl DiagnosticFixMenu {
     }
 
     /// Get the currently selected fix.
-    fn get_selected_fix(&self) -> Option<&FixOption> {
+    fn get_selected_fix(&self) -> Option<&FixInfo> {
         self.fixes.get(self.selected)
     }
 
     /// Format a single fix line: `>replacement_text (title)`
-    fn format_fix_line(&self, fix: &FixOption, index: usize, use_ansi_coloring: bool) -> String {
-        let replacement_text = fix
-            .replacements
-            .first()
-            .map_or("", |r| r.new_text.as_str());
+    fn format_fix_line(&self, fix: &FixInfo, index: usize, use_ansi_coloring: bool) -> String {
+        let replacement_text = fix.first_replacement_text();
 
         let content = format!(
             "{replacement_text} {}({}){}",
@@ -167,10 +157,7 @@ impl DiagnosticFixMenu {
         if self.fixes.is_empty() {
             return;
         }
-        self.selected = self
-            .selected
-            .checked_sub(1)
-            .unwrap_or(self.fixes.len() - 1);
+        self.selected = self.selected.checked_sub(1).unwrap_or(self.fixes.len() - 1);
         self.adjust_scroll_backward();
     }
 
@@ -190,6 +177,18 @@ impl DiagnosticFixMenu {
             self.skip_values = self.selected;
         }
     }
+}
+
+/// Extract text edits from a code action's workspace edit.
+fn extract_text_edits(action: &CodeAction) -> Option<Vec<TextEdit>> {
+    action
+        .edit
+        .as_ref()?
+        .changes
+        .as_ref()?
+        .values()
+        .next()
+        .cloned()
 }
 
 impl Menu for DiagnosticFixMenu {
@@ -242,8 +241,9 @@ impl Menu for DiagnosticFixMenu {
         // cursor_col = prompt_width + text_before_cursor_width (mod terminal width)
         // So: prompt_width = cursor_col - text_before_cursor_width
         let line_buffer = editor.line_buffer();
-        let cursor_visual_width = line_buffer.get_buffer()
-            [..line_buffer.insertion_point().min(line_buffer.get_buffer().len())]
+        let cursor_visual_width = line_buffer.get_buffer()[..line_buffer
+            .insertion_point()
+            .min(line_buffer.get_buffer().len())]
             .width() as u16;
 
         self.working_details.space_left = self
@@ -259,27 +259,28 @@ impl Menu for DiagnosticFixMenu {
             return;
         };
 
-        // Sort replacements by start position descending to apply from end to start
-        let mut replacements = fix.replacements.clone();
-        replacements.sort_by_key(|r| std::cmp::Reverse(r.span.start));
+        // Sort edits by start position descending to apply from end to start
+        let mut edits = fix.edits.clone();
+        edits.sort_by_key(|(span, _)| std::cmp::Reverse(span.start));
 
         let mut line_buffer = editor.line_buffer().clone();
 
-        // Apply all replacements using fold
-        let new_buffer = replacements
-            .iter()
-            .fold(line_buffer.get_buffer().to_string(), |mut buf, r| {
-                let start = r.span.start.min(buf.len());
-                let end = r.span.end.min(buf.len());
-                buf.replace_range(start..end, &r.new_text);
+        // Apply all edits using fold
+        let new_buffer = edits.iter().fold(
+            line_buffer.get_buffer().to_string(),
+            |mut buf, (span, new_text)| {
+                let start = span.start.min(buf.len());
+                let end = span.end.min(buf.len());
+                buf.replace_range(start..end, new_text);
                 buf
-            });
+            },
+        );
 
-        // Place cursor at end of first replacement
+        // Place cursor at end of first edit
         let cursor_pos = fix
-            .replacements
+            .edits
             .first()
-            .map(|first| first.span.start + first.new_text.len())
+            .map(|(span, new_text)| span.start + new_text.len())
             .unwrap_or_else(|| line_buffer.insertion_point());
 
         line_buffer.set_buffer(new_buffer);

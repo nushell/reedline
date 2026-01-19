@@ -12,7 +12,7 @@
 //!
 //! provider.update_content("let x = 1");
 //! for diag in provider.diagnostics() {
-//!     println!("{}: {}", diag.severity, diag.message);
+//!     println!("{:?}: {}", diag.severity, diag.message);
 //! }
 //! ```
 
@@ -22,6 +22,6 @@ mod diagnostic;
 
 pub use client::{LspConfig, LspDiagnosticsProvider};
 pub use diagnostic::{
-    message_style, underline_style, CodeAction, Diagnostic, DiagnosticSeverity, Fix, Replacement,
-    Span,
+    format_diagnostic_messages, range_to_span, underline_style, CodeAction, Diagnostic,
+    DiagnosticSeverity, Span, TextEdit,
 };
