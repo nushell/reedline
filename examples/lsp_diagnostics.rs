@@ -4,7 +4,7 @@
 //! as you type. It uses the same `REEDLINE_LS` environment variable that nu-cli uses.
 //!
 //! Run with:
-//!   REEDLINE_LS=nu-lint cargo run --example lsp_diagnostics --features lsp_diagnostics
+//!   REEDLINE_LS="nu-lint --lsp" cargo run --example lsp_diagnostics --features lsp_diagnostics
 //!
 //! Prerequisites:
 //! - An LSP server that supports diagnostics (e.g., nu-lint for nushell)
@@ -24,17 +24,17 @@ use std::{env::var, io};
 
 fn main() -> io::Result<()> {
     // Use the same env var as nu-cli for consistency
-    let Some(server_bin) = var("REEDLINE_LS").ok() else {
+    // REEDLINE_LS should contain the full command, e.g., "nu-lint --lsp"
+    let Some(command) = var("REEDLINE_LS").ok() else {
         eprintln!("Error: REEDLINE_LS environment variable not set.");
-        eprintln!("Set it to the path of an LSP server binary (e.g., nu-lint).");
+        eprintln!("Set it to the full LSP server command (e.g., \"nu-lint --lsp\").");
         eprintln!();
-        eprintln!("Example: REEDLINE_LS=nu-lint cargo run --example lsp_diagnostics --features lsp_diagnostics");
+        eprintln!("Example: REEDLINE_LS=\"nu-lint --lsp\" cargo run --example lsp_diagnostics --features lsp_diagnostics");
         std::process::exit(1);
     };
 
     let config = LspConfig {
-        server_bin,
-        server_args: vec!["--lsp".into()],
+        command,
         timeout_ms: 100,
         uri_scheme: "repl".to_string(),
     };

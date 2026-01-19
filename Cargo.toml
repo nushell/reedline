@@ -47,7 +47,7 @@ tempfile = "3.3.0"
 [features]
 bashisms = []
 external_printer = ["crossbeam"]
-lsp_diagnostics = ["lsp-types", "serde_json", "log"]
+lsp_diagnostics = ["lsp-types", "serde_json", "log", "crossbeam"]
 sqlite = ["rusqlite/bundled", "serde_json"]
 sqlite-dynlib = ["rusqlite", "serde_json"]
 system_clipboard = ["arboard"]

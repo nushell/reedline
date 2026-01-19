@@ -4,6 +4,7 @@
 //! with a simple inline format: replacement text followed by title in parentheses.
 //! The menu is positioned below the text being replaced, aligned with the anchor column.
 
+use itertools::Itertools;
 use nu_ansi_term::{ansi::RESET, Style};
 use unicode_width::UnicodeWidthStr;
 
@@ -132,15 +133,10 @@ impl DiagnosticFixMenu {
 
     /// Format a single fix line: `>replacement_text (title)`
     fn format_fix_line(&self, fix: &FixOption, index: usize, use_ansi_coloring: bool) -> String {
-        let is_selected = index == self.selected;
-        // let indicator = if is_selected { "" } else { " " };
-
-        // Show the replacement text first, then title in parentheses
         let replacement_text = fix
             .replacements
             .first()
-            .map(|r| r.new_text.as_str())
-            .unwrap_or("");
+            .map_or("", |r| r.new_text.as_str());
 
         let content = format!(
             "{replacement_text} {}({}){}",
@@ -149,12 +145,49 @@ impl DiagnosticFixMenu {
             RESET
         );
 
-        if is_selected && use_ansi_coloring {
-            let style = Style::new().bold().reverse();
-            format!("> {}{}{}", style.prefix(), content, RESET)
-        } else {
-            let style = Style::new().reverse();
-            format!("  {}{}{}", style.prefix(), content, RESET)
+        let (indicator, style) = match (index == self.selected, use_ansi_coloring) {
+            (true, true) => ("> ", Style::new().bold().reverse()),
+            _ => ("  ", Style::new().reverse()),
+        };
+
+        format!("{indicator}{}{content}{RESET}", style.prefix())
+    }
+
+    /// Move selection forward, wrapping around
+    fn select_next(&mut self) {
+        if self.fixes.is_empty() {
+            return;
+        }
+        self.selected = (self.selected + 1) % self.fixes.len();
+        self.adjust_scroll_forward();
+    }
+
+    /// Move selection backward, wrapping around
+    fn select_previous(&mut self) {
+        if self.fixes.is_empty() {
+            return;
+        }
+        self.selected = self
+            .selected
+            .checked_sub(1)
+            .unwrap_or(self.fixes.len() - 1);
+        self.adjust_scroll_backward();
+    }
+
+    /// Adjust scroll position when moving forward
+    fn adjust_scroll_forward(&mut self) {
+        let visible_items = self.max_height as usize;
+        if self.selected >= self.skip_values + visible_items {
+            self.skip_values = self.selected.saturating_sub(visible_items - 1);
+        } else if self.selected < self.skip_values {
+            self.skip_values = self.selected;
+        }
+    }
+
+    /// Adjust scroll position when moving backward
+    fn adjust_scroll_backward(&mut self) {
+        if self.selected < self.skip_values {
+            self.skip_values = self.selected;
         }
     }
 }
@@ -188,28 +221,9 @@ impl Menu for DiagnosticFixMenu {
                 self.selected = 0;
                 self.skip_values = 0;
             }
-            MenuEvent::Deactivate => {
-                self.active = false;
-            }
-            MenuEvent::NextElement => {
-                if !self.fixes.is_empty() {
-                    self.selected = (self.selected + 1) % self.fixes.len();
-                    let visible_items = self.max_height as usize;
-                    if self.selected >= self.skip_values + visible_items {
-                        self.skip_values = self.selected.saturating_sub(visible_items - 1);
-                    } else if self.selected < self.skip_values {
-                        self.skip_values = self.selected;
-                    }
-                }
-            }
-            MenuEvent::PreviousElement => {
-                if !self.fixes.is_empty() {
-                    self.selected = self.selected.checked_sub(1).unwrap_or(self.fixes.len() - 1);
-                    if self.selected < self.skip_values {
-                        self.skip_values = self.selected;
-                    }
-                }
-            }
+            MenuEvent::Deactivate => self.active = false,
+            MenuEvent::NextElement => self.select_next(),
+            MenuEvent::PreviousElement => self.select_previous(),
             _ => {}
         }
     }
@@ -224,50 +238,53 @@ impl Menu for DiagnosticFixMenu {
         _completer: &mut dyn Completer,
         _painter: &Painter,
     ) {
-        // Calculate menu position including prompt width
-        // cursor_col = prompt_visual_width + text_before_cursor_visual_width (mod terminal width)
-        // We want: prompt_visual_width + anchor_col
-        // So: menu_pos = cursor_col - text_before_cursor_visual_width + anchor_col
-        let buffer = editor.line_buffer().get_buffer();
-        let cursor_pos = editor.line_buffer().insertion_point();
-        let text_before_cursor = &buffer[..cursor_pos.min(buffer.len())];
-        let cursor_visual_width = text_before_cursor.width() as u16;
+        // Calculate menu position: prompt_width + anchor_col
+        // cursor_col = prompt_width + text_before_cursor_width (mod terminal width)
+        // So: prompt_width = cursor_col - text_before_cursor_width
+        let line_buffer = editor.line_buffer();
+        let cursor_visual_width = line_buffer.get_buffer()
+            [..line_buffer.insertion_point().min(line_buffer.get_buffer().len())]
+            .width() as u16;
 
         self.working_details.space_left = self
             .working_details
             .cursor_col
             .saturating_sub(cursor_visual_width)
-            + self.anchor_col
-            - LEFT_PADDING;
+            .saturating_add(self.anchor_col)
+            .saturating_sub(LEFT_PADDING);
     }
 
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        if let Some(fix) = self.get_selected_fix() {
-            // Apply all replacements in reverse order to avoid offset issues
-            let mut replacements = fix.replacements.clone();
-            replacements.sort_by(|a, b| b.span.start.cmp(&a.span.start));
+        let Some(fix) = self.get_selected_fix() else {
+            return;
+        };
 
-            let mut line_buffer = editor.line_buffer().clone();
-            let buffer = line_buffer.get_buffer();
+        // Sort replacements by start position descending to apply from end to start
+        let mut replacements = fix.replacements.clone();
+        replacements.sort_by_key(|r| std::cmp::Reverse(r.span.start));
 
-            let mut new_buffer = buffer.to_string();
-            for replacement in &replacements {
-                let start = replacement.span.start.min(new_buffer.len());
-                let end = replacement.span.end.min(new_buffer.len());
-                new_buffer.replace_range(start..end, &replacement.new_text);
-            }
+        let mut line_buffer = editor.line_buffer().clone();
 
-            // Place cursor at end of first replacement
-            let cursor_pos = if let Some(first) = fix.replacements.first() {
-                first.span.start + first.new_text.len()
-            } else {
-                line_buffer.insertion_point()
-            };
+        // Apply all replacements using fold
+        let new_buffer = replacements
+            .iter()
+            .fold(line_buffer.get_buffer().to_string(), |mut buf, r| {
+                let start = r.span.start.min(buf.len());
+                let end = r.span.end.min(buf.len());
+                buf.replace_range(start..end, &r.new_text);
+                buf
+            });
 
-            line_buffer.set_buffer(new_buffer);
-            line_buffer.set_insertion_point(cursor_pos.min(line_buffer.get_buffer().len()));
-            editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
-        }
+        // Place cursor at end of first replacement
+        let cursor_pos = fix
+            .replacements
+            .first()
+            .map(|first| first.span.start + first.new_text.len())
+            .unwrap_or_else(|| line_buffer.insertion_point());
+
+        line_buffer.set_buffer(new_buffer);
+        line_buffer.set_insertion_point(cursor_pos.min(line_buffer.get_buffer().len()));
+        editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
     }
 
     fn min_rows(&self) -> u16 {
@@ -288,23 +305,20 @@ impl Menu for DiagnosticFixMenu {
             return String::from("No fixes available");
         }
 
-        let available_lines = available_lines.min(self.max_height) as usize;
+        let visible_count = (available_lines.min(self.max_height)) as usize;
         let left_padding = " ".repeat(self.working_details.space_left as usize);
 
         self.fixes
             .iter()
-            .skip(self.skip_values)
-            .take(available_lines)
             .enumerate()
+            .skip(self.skip_values)
+            .take(visible_count)
             .map(|(idx, fix)| {
-                let actual_idx = idx + self.skip_values;
                 format!(
-                    "{}{}",
-                    left_padding,
-                    self.format_fix_line(fix, actual_idx, use_ansi_coloring)
+                    "{left_padding}{}",
+                    self.format_fix_line(fix, idx, use_ansi_coloring)
                 )
             })
-            .collect::<Vec<_>>()
             .join("\r\n")
     }
 

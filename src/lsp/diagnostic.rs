@@ -1,44 +1,27 @@
-//! Core diagnostic types for reedline.
-//!
-//! These types are reedline's internal representation of diagnostics,
-//! independent of LSP. The LSP module converts between these and LSP types.
+//! Diagnostic types for reedline's LSP integration.
 
-use nu_ansi_term::Style;
+use nu_ansi_term::{Color, Style};
 
-/// Severity level for diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub enum DiagnosticSeverity {
-    /// Errors that prevent execution
-    Error = 1,
-    /// Warnings about potential issues
-    #[default]
-    Warning = 2,
-    /// Informational messages
-    Info = 3,
-    /// Style hints and suggestions
-    Hint = 4,
+pub use lsp_types::DiagnosticSeverity;
+
+/// Get a style for underlining diagnostic spans in the source code.
+///
+/// Uses underline only (no text color change) to keep the source
+/// code readable while still indicating the diagnostic location.
+pub fn underline_style(_severity: DiagnosticSeverity) -> Style {
+    Style::new().underline()
 }
 
-impl DiagnosticSeverity {
-    /// Get a style for underlining diagnostic spans in the source code.
-    ///
-    /// Uses underline only (no text color change) to keep the source
-    /// code readable while still indicating the diagnostic location.
-    pub fn default_style(self) -> Style {
-        Style::new().underline()
-    }
-
-    /// Get a dimmed style for diagnostic messages displayed below the prompt.
-    ///
-    /// Uses muted colors to be less visually intrusive while still indicating severity.
-    pub fn message_style(self) -> Style {
-        use nu_ansi_term::Color;
-        match self {
-            Self::Error => Style::new().fg(Color::Fixed(167)), // muted red
-            Self::Warning => Style::new().fg(Color::Fixed(179)), // muted yellow/orange
-            Self::Info => Style::new().fg(Color::Fixed(110)),  // muted blue
-            Self::Hint => Style::new().fg(Color::Fixed(246)),  // gray
-        }
+/// Get a dimmed style for diagnostic messages displayed below the prompt.
+///
+/// Uses muted colors to be less visually intrusive while still indicating severity.
+pub fn message_style(severity: DiagnosticSeverity) -> Style {
+    match severity {
+        DiagnosticSeverity::ERROR => Style::new().fg(Color::Fixed(167)), // muted red
+        DiagnosticSeverity::WARNING => Style::new().fg(Color::Fixed(179)), // muted yellow/orange
+        DiagnosticSeverity::INFORMATION => Style::new().fg(Color::Fixed(110)), // muted blue
+        DiagnosticSeverity::HINT => Style::new().fg(Color::Fixed(246)),  // gray
+        _ => Style::new().fg(Color::Fixed(246)),                         // default to gray
     }
 }
 
@@ -56,6 +39,27 @@ impl Span {
     pub const fn new(start: usize, end: usize) -> Self {
         Self { start, end }
     }
+
+    /// Get the visual column of the start position.
+    pub fn start_column(&self, content: &str) -> usize {
+        byte_offset_to_column(content, self.start)
+    }
+
+    /// Get the visual column of the end position.
+    pub fn end_column(&self, content: &str) -> usize {
+        byte_offset_to_column(content, self.end)
+    }
+}
+
+/// Convert a byte offset to a visual column position.
+///
+/// Accounts for unicode character widths (e.g., CJK characters are 2 columns wide).
+fn byte_offset_to_column(s: &str, byte_offset: usize) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    s.char_indices()
+        .take_while(|(pos, _)| *pos < byte_offset.min(s.len()))
+        .map(|(_, ch)| ch.width().unwrap_or(0))
+        .sum()
 }
 
 /// A single diagnostic message.
@@ -90,12 +94,12 @@ impl Diagnostic {
 
     /// Create an error diagnostic.
     pub fn error(span: Span, message: impl Into<String>) -> Self {
-        Self::new(DiagnosticSeverity::Error, span, message)
+        Self::new(DiagnosticSeverity::ERROR, span, message)
     }
 
     /// Create a warning diagnostic.
     pub fn warning(span: Span, message: impl Into<String>) -> Self {
-        Self::new(DiagnosticSeverity::Warning, span, message)
+        Self::new(DiagnosticSeverity::WARNING, span, message)
     }
 
     /// Add a detail message.

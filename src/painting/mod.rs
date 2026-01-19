@@ -7,3 +7,5 @@ pub use painter::{Painter, PainterSuspendedState};
 pub(crate) use prompt_lines::PromptLines;
 pub use styled_text::StyledText;
 pub(crate) use utils::estimate_single_line_wraps;
+#[cfg(feature = "lsp_diagnostics")]
+pub(crate) use utils::line_width;

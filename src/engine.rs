@@ -4,7 +4,7 @@ use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
 
 #[cfg(feature = "lsp_diagnostics")]
-use crate::lsp::{Diagnostic, LspDiagnosticsProvider};
+use crate::lsp::{message_style, underline_style, Diagnostic, LspDiagnosticsProvider};
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
 use crate::{
@@ -59,43 +59,10 @@ const POLL_WAIT: Duration = Duration::from_millis(100);
 // before it is considered a paste. 10 events is conservative enough.
 const EVENTS_THRESHOLD: usize = 10;
 
-/// Convert a byte offset in a string to a visual column position.
-///
-/// This accounts for unicode character widths (e.g., CJK characters are 2 columns wide).
-/// If the byte offset falls in the middle of a multibyte character, we count up to
-/// (but not including) that character.
-#[cfg(feature = "lsp_diagnostics")]
-fn byte_offset_to_column(s: &str, byte_offset: usize) -> usize {
-    use unicode_width::UnicodeWidthChar;
-
-    let clamped = byte_offset.min(s.len());
-    let mut col = 0;
-    let mut current_byte = 0;
-
-    for c in s.chars() {
-        if current_byte >= clamped {
-            break;
-        }
-        col += c.width().unwrap_or(0);
-        current_byte += c.len_utf8();
-    }
-    col
-}
-
-/// Strip ANSI escape sequences from a string.
-///
-/// This is needed because prompts contain color codes like `\x1b[32m` which
-/// would incorrectly inflate width calculations. Uses the strip_ansi_escapes
-/// crate to handle all escape sequence types (SGR, OSC, etc).
-#[cfg(feature = "lsp_diagnostics")]
-fn strip_ansi(s: &str) -> String {
-    String::from_utf8(strip_ansi_escapes::strip(s)).unwrap_or_else(|_| s.to_string())
-}
-
 /// Maximum time Reedline will block on input before yielding control to
-/// external printers.
-#[cfg(feature = "external_printer")]
-const EXTERNAL_PRINTER_WAIT: Duration = Duration::from_millis(100);
+/// async event sources (external_printer, LSP diagnostics).
+#[cfg(any(feature = "external_printer", feature = "lsp_diagnostics"))]
+const ASYNC_EVENT_WAIT: Duration = Duration::from_millis(100);
 
 /// Determines if inputs should be used to extend the regular line buffer,
 /// traverse the history in the standard prompt or edit the search string in the
@@ -765,6 +732,14 @@ impl Reedline {
                 }
             }
 
+            // Check if LSP worker has new diagnostics ready
+            #[cfg(feature = "lsp_diagnostics")]
+            if let Some(ref mut provider) = self.lsp_diagnostics {
+                if provider.check_wake() {
+                    self.repaint(prompt)?;
+                }
+            }
+
             // Helper function that returns true if the input is complete and
             // can be sent to the hosting application.
             fn completed(events: &[Event]) -> bool {
@@ -785,14 +760,13 @@ impl Reedline {
             let mut events: Vec<Event> = vec![];
 
             if !self.immediately_accept {
-                // If the `external_printer` feature is enabled, we need to
-                // periodically yield so that external printers get a chance to
-                // print. Otherwise, we can just block until we receive an event.
-                #[cfg(feature = "external_printer")]
-                if event::poll(EXTERNAL_PRINTER_WAIT)? {
+                // If async event sources are enabled (external_printer, LSP), we need to
+                // periodically yield to check them. Otherwise, we can just block.
+                #[cfg(any(feature = "external_printer", feature = "lsp_diagnostics"))]
+                if event::poll(ASYNC_EVENT_WAIT)? {
                     events.push(crossterm::event::read()?);
                 }
-                #[cfg(not(feature = "external_printer"))]
+                #[cfg(not(any(feature = "external_printer", feature = "lsp_diagnostics")))]
                 events.push(crossterm::event::read()?);
 
                 // Receive all events in the queue without blocking. Will stop when
@@ -1837,9 +1811,9 @@ impl Reedline {
 
         // Apply diagnostic styles (underlines) to the text
         #[cfg(feature = "lsp_diagnostics")]
-        if let Some(ref provider) = self.lsp_diagnostics {
+        if let Some(ref mut provider) = self.lsp_diagnostics {
             for diag in provider.diagnostics() {
-                let style = diag.severity.default_style();
+                let style = underline_style(diag.severity);
                 styled_text.style_range(diag.span.start, diag.span.end, style);
             }
         }
@@ -1949,8 +1923,12 @@ impl Reedline {
     /// ╰ Use 'first N' to get the first N items
     /// ```
     #[cfg(feature = "lsp_diagnostics")]
-    fn format_diagnostic_messages(&self, prompt: &dyn Prompt) -> String {
-        let Some(ref provider) = self.lsp_diagnostics else {
+    fn format_diagnostic_messages(&mut self, prompt: &dyn Prompt) -> String {
+        // Get these before borrowing lsp_diagnostics
+        let edit_mode = self.prompt_edit_mode();
+        let buffer = self.editor.get_buffer().to_string();
+
+        let Some(ref mut provider) = self.lsp_diagnostics else {
             return String::new();
         };
 
@@ -1959,23 +1937,19 @@ impl Reedline {
             return String::new();
         }
 
-        let buffer = self.editor.get_buffer();
-
         // Calculate prompt width (last line of prompt + indicator)
-        // Strip ANSI escape sequences before measuring - they have no visual width
         let prompt_left = prompt.render_prompt_left();
-        let prompt_indicator = prompt.render_prompt_indicator(self.prompt_edit_mode());
+        let prompt_indicator = prompt.render_prompt_indicator(edit_mode);
         let last_prompt_line = prompt_left.lines().last().unwrap_or("");
-        let prompt_width =
-            unicode_width::UnicodeWidthStr::width(strip_ansi(last_prompt_line).as_str())
-                + unicode_width::UnicodeWidthStr::width(strip_ansi(&prompt_indicator).as_str());
+        let prompt_width = crate::painting::line_width(last_prompt_line)
+            + crate::painting::line_width(&prompt_indicator);
 
         // Collect diagnostics with their visual columns (start and end), sorted by start column
         let mut diag_cols: Vec<_> = diagnostics
             .iter()
             .map(|d| {
-                let start_col = prompt_width + byte_offset_to_column(buffer, d.span.start);
-                let end_col = prompt_width + byte_offset_to_column(buffer, d.span.end);
+                let start_col = prompt_width + d.span.start_column(&buffer);
+                let end_col = prompt_width + d.span.end_column(&buffer);
                 (start_col, end_col, d)
             })
             .collect();
@@ -1991,8 +1965,7 @@ impl Reedline {
                 .collect();
 
             let styled_message = if self.use_ansi_coloring {
-                diag.severity
-                    .message_style()
+                message_style(diag.severity)
                     .paint(&diag.message)
                     .to_string()
             } else {
@@ -2016,7 +1989,7 @@ impl Reedline {
                         col += 1;
                     }
                     if self.use_ansi_coloring {
-                        line.push_str(&future_diag.severity.message_style().paint("╎").to_string());
+                        line.push_str(&message_style(future_diag.severity).paint("╎").to_string());
                     } else {
                         line.push('╎');
                     }
@@ -2038,7 +2011,7 @@ impl Reedline {
             if span_width <= 1 {
                 // Single character span: just corner
                 if self.use_ansi_coloring {
-                    line.push_str(&diag.severity.message_style().paint("╰").to_string());
+                    line.push_str(&message_style(diag.severity).paint("╰").to_string());
                     line.push(' ');
                 } else {
                     line.push_str("╰ ");
@@ -2046,7 +2019,7 @@ impl Reedline {
             } else {
                 // Multi-character span: corner + horizontal line + end terminator
                 if self.use_ansi_coloring {
-                    let style = diag.severity.message_style();
+                    let style = message_style(diag.severity);
                     line.push_str(&style.paint("╰").to_string());
                     for _ in 0..span_width.saturating_sub(2) {
                         line.push_str(&style.paint("─").to_string());
@@ -2078,6 +2051,7 @@ impl Reedline {
     fn open_diagnostic_fix_menu(&mut self) -> bool {
         use crate::lsp::Span;
         use crate::menu::{DiagnosticFixMenu, FixOption};
+        use unicode_width::UnicodeWidthStr;
 
         let Some(ref mut provider) = self.lsp_diagnostics else {
             return false;
@@ -2086,54 +2060,31 @@ impl Reedline {
         let cursor_pos = self.editor.insertion_point();
         let content = self.editor.get_buffer();
 
-        // Find diagnostics at cursor position to determine the span for code actions
-        let diagnostic_span = provider
+        // Find diagnostic span at cursor, or use cursor position as a point
+        let span = provider
             .diagnostics()
             .iter()
             .find(|d| d.span.start <= cursor_pos && cursor_pos <= d.span.end)
-            .map(|d| d.span);
+            .map_or_else(|| Span::new(cursor_pos, cursor_pos), |d| d.span);
 
-        let span = match diagnostic_span {
-            Some(s) => s,
-            None => {
-                // No diagnostic at cursor, use cursor position as a point
-                Span::new(cursor_pos, cursor_pos)
-            }
-        };
-
-        // Request code actions from the LSP server
         let code_actions = provider.code_actions(content, span);
-
         if code_actions.is_empty() {
             return false;
         }
 
-        // Convert code actions to fix options
-        let fixes: Vec<FixOption> = code_actions
-            .iter()
-            .map(FixOption::from_code_action)
-            .collect();
+        let fixes: Vec<FixOption> = code_actions.iter().map(FixOption::from_code_action).collect();
 
-        // Calculate the anchor column based on the first replacement of the first fix
-        // This ensures the menu aligns below the text that will be replaced
-        use unicode_width::UnicodeWidthStr;
-        let first_replacement_start = fixes
+        // Calculate anchor column from first replacement, ensuring menu aligns below replaced text
+        let replacement_start = fixes
             .first()
             .and_then(|f| f.replacements.first())
-            .map(|r| r.span.start)
-            .unwrap_or(span.start);
+            .map_or(span.start, |r| r.span.start)
+            .min(content.len());
+        let anchor_col = content[..replacement_start].width() as u16;
 
-        let anchor_col = if first_replacement_start <= content.len() {
-            content[..first_replacement_start].width() as u16
-        } else {
-            0
-        };
+        // Remove any existing diagnostic fix menu and create new one
+        self.menus.retain(|m| m.name() != "diagnostic_fix_menu");
 
-        // Remove any existing diagnostic fix menu
-        let menu_name = "diagnostic_fix_menu";
-        self.menus.retain(|m| m.name() != menu_name);
-
-        // Create a new menu with fixes, positioned at the start of the diagnostic span
         let mut fix_menu = DiagnosticFixMenu::default();
         fix_menu.set_fixes(fixes, anchor_col);
         let mut menu = ReedlineMenu::EngineCompleter(Box::new(fix_menu));
@@ -2257,46 +2208,5 @@ mod tests {
     fn thread_safe() {
         fn f<S: Send>(_: S) {}
         f(Reedline::create());
-    }
-
-    #[cfg(feature = "lsp_diagnostics")]
-    mod lsp_tests {
-        use super::byte_offset_to_column;
-
-        #[test]
-        fn test_byte_offset_to_column_ascii() {
-            assert_eq!(byte_offset_to_column("hello", 0), 0);
-            assert_eq!(byte_offset_to_column("hello", 1), 1);
-            assert_eq!(byte_offset_to_column("hello", 5), 5);
-            assert_eq!(byte_offset_to_column("hello", 10), 5); // clamped
-        }
-
-        #[test]
-        fn test_byte_offset_to_column_unicode() {
-            // "é" is 2 bytes (UTF-8: C3 A9), so "café" = c(1) + a(1) + f(1) + é(2) = 5 bytes
-            let s = "café";
-            assert_eq!(byte_offset_to_column(s, 0), 0); // before 'c'
-            assert_eq!(byte_offset_to_column(s, 1), 1); // after 'c'
-            assert_eq!(byte_offset_to_column(s, 3), 3); // after 'f'
-                                                        // byte 4 is inside 'é' (2nd byte) - we include chars whose start byte < offset
-                                                        // 'é' starts at byte 3, and 3 < 4, so we include it
-            assert_eq!(byte_offset_to_column(s, 4), 4); // after 'é'
-            assert_eq!(byte_offset_to_column(s, 5), 4); // at end
-        }
-
-        #[test]
-        fn test_byte_offset_to_column_wide_chars() {
-            // CJK characters are typically 2 columns wide
-            // "日" is 3 bytes in UTF-8, so "a日b" = a(1) + 日(3) + b(1) = 5 bytes
-            let s = "a日b";
-            assert_eq!(byte_offset_to_column(s, 0), 0); // before 'a'
-            assert_eq!(byte_offset_to_column(s, 1), 1); // after 'a', before '日'
-                                                        // bytes 2-3 are inside '日' - we include chars whose start byte < offset
-                                                        // '日' starts at byte 1, and 1 < 2, so we include it
-            assert_eq!(byte_offset_to_column(s, 2), 3); // '日' is 2 cols wide
-            assert_eq!(byte_offset_to_column(s, 3), 3); // still inside '日'
-            assert_eq!(byte_offset_to_column(s, 4), 3); // after '日', before 'b'
-            assert_eq!(byte_offset_to_column(s, 5), 4); // after 'b'
-        }
     }
 }

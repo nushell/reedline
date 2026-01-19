@@ -1,7 +1,16 @@
-//! Minimal synchronous LSP client for diagnostics.
+//! Non-blocking LSP client for diagnostics.
+//!
+//! Uses a background worker thread to communicate with the LSP server,
+//! so the main editor thread is never blocked by slow LSP responses.
 
-use super::actions::request_code_actions;
-use super::diagnostic::{CodeAction, Diagnostic, DiagnosticSeverity, Span};
+use std::{
+    io::{BufRead, BufReader, BufWriter, Write},
+    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
+
+use crossbeam::channel::{bounded, Receiver, Sender};
 use lsp_types::{
     DidChangeTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, InitializedParams,
     NumberOrString, Position, PublishDiagnosticsParams, Range, TextDocumentContentChangeEvent,
@@ -9,32 +18,60 @@ use lsp_types::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{
-    io::{BufRead, BufReader, BufWriter, Write},
-    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
-    time::{Duration, Instant},
+
+use super::{
+    actions::request_code_actions,
+    diagnostic::{CodeAction, Diagnostic, Span},
 };
 
 /// LSP server configuration.
 #[derive(Debug, Clone)]
 pub struct LspConfig {
-    /// Server command
-    pub server_bin: String,
-    /// Server arguments
-    pub server_args: Vec<String>,
-    /// Response timeout (ms)
+    /// Full command to start the LSP server (e.g., "nu-lint --lsp")
+    pub command: String,
+    /// Response timeout in milliseconds
     pub timeout_ms: u64,
     /// URI scheme (default: "repl")
     pub uri_scheme: String,
 }
 
-/// LSP diagnostics provider.
+// Channel capacity for commands and responses
+const CHANNEL_CAPACITY: usize = 32;
+
+/// Commands sent from main thread to worker.
+enum LspCommand {
+    UpdateContent(String),
+    RequestCodeActions { content: String, span: Span },
+    Shutdown,
+}
+
+/// Responses sent from worker to main thread.
+enum LspResponse {
+    Diagnostics(Vec<Diagnostic>),
+    CodeActions(Vec<CodeAction>),
+}
+
+/// LSP diagnostics provider (main thread interface).
+///
+/// Provides a non-blocking interface to LSP diagnostics.
+/// All communication with the LSP server happens in a background thread.
 pub struct LspDiagnosticsProvider {
+    command_tx: Sender<LspCommand>,
+    response_rx: Receiver<LspResponse>,
+    wake_rx: Receiver<()>,
+    diagnostics: Vec<Diagnostic>,
+    last_content_hash: u64,
+}
+
+/// Background worker that owns the LSP connection.
+struct LspWorker {
     config: LspConfig,
     conn: Option<Connection>,
     uri: String,
     version: i32,
-    diagnostics: Vec<Diagnostic>,
+    command_rx: Receiver<LspCommand>,
+    response_tx: Sender<LspResponse>,
+    wake_tx: Sender<()>,
 }
 
 struct Connection {
@@ -46,35 +83,164 @@ struct Connection {
 }
 
 impl LspDiagnosticsProvider {
-    /// Create new provider.
+    /// Create new provider and spawn worker thread.
     #[must_use]
     pub fn new(config: LspConfig) -> Self {
-        let uri = format!("{}:/session/repl", config.uri_scheme);
-        Self {
+        let (command_tx, command_rx) = bounded(CHANNEL_CAPACITY);
+        let (response_tx, response_rx) = bounded(CHANNEL_CAPACITY);
+        let (wake_tx, wake_rx) = bounded(1);
+
+        let worker = LspWorker {
+            uri: format!("{}:/session/repl", config.uri_scheme),
             config,
             conn: None,
-            uri,
             version: 0,
+            command_rx,
+            response_tx,
+            wake_tx,
+        };
+
+        thread::spawn(move || worker.run());
+
+        Self {
+            command_tx,
+            response_rx,
+            wake_rx,
             diagnostics: Vec::new(),
+            last_content_hash: 0,
         }
     }
 
-    /// Update content and poll for diagnostics.
+    /// Update content (non-blocking). Sends to worker if content changed.
     pub fn update_content(&mut self, content: &str) {
         if content.is_empty() {
             self.diagnostics.clear();
             return;
         }
+
+        // Only send if content changed to avoid flooding the worker
+        let hash = hash_str(content);
+        if hash != self.last_content_hash {
+            self.last_content_hash = hash;
+            let _ = self
+                .command_tx
+                .try_send(LspCommand::UpdateContent(content.to_string()));
+        }
+    }
+
+    /// Get current diagnostics, polling for any new responses first.
+    pub fn diagnostics(&mut self) -> &[Diagnostic] {
+        self.poll_responses();
+        &self.diagnostics
+    }
+
+    /// Get code actions for a given span.
+    pub fn code_actions(&mut self, content: &str, span: Span) -> Vec<CodeAction> {
+        let _ = self.command_tx.try_send(LspCommand::RequestCodeActions {
+            content: content.to_string(),
+            span,
+        });
+
+        // Brief wait for response
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_millis(100) {
+            match self.response_rx.recv_timeout(Duration::from_millis(10)) {
+                Ok(LspResponse::CodeActions(actions)) => return actions,
+                Ok(LspResponse::Diagnostics(diags)) => self.diagnostics = diags,
+                Err(_) => {}
+            }
+        }
+        Vec::new()
+    }
+
+    /// Poll for responses from worker (non-blocking).
+    fn poll_responses(&mut self) {
+        while let Ok(response) = self.response_rx.try_recv() {
+            match response {
+                LspResponse::Diagnostics(diags) => self.diagnostics = diags,
+                LspResponse::CodeActions(_) => {} // Ignore stale code actions
+            }
+        }
+    }
+
+    /// Check if worker has signaled new diagnostics are available.
+    /// If so, polls responses and returns true.
+    pub fn check_wake(&mut self) -> bool {
+        if self.wake_rx.try_recv().is_ok() {
+            self.poll_responses();
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Drop for LspDiagnosticsProvider {
+    fn drop(&mut self) {
+        let _ = self.command_tx.try_send(LspCommand::Shutdown);
+        // Worker will exit when channel disconnects
+    }
+}
+
+fn hash_str(s: &str) -> u64 {
+    use std::{
+        collections::hash_map::DefaultHasher,
+        hash::{Hash, Hasher},
+    };
+    let mut h = DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
+}
+
+// Worker implementation
+
+impl LspWorker {
+    fn run(mut self) {
+        loop {
+            // Block waiting for commands (with timeout to allow graceful shutdown)
+            match self.command_rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(LspCommand::Shutdown) => {
+                    self.shutdown();
+                    return;
+                }
+                Ok(LspCommand::UpdateContent(content)) => {
+                    self.handle_update_content(&content);
+                }
+                Ok(LspCommand::RequestCodeActions { content, span }) => {
+                    self.handle_code_actions_request(&content, span);
+                }
+                Err(crossbeam::channel::RecvTimeoutError::Disconnected) => {
+                    self.shutdown();
+                    return;
+                }
+                Err(crossbeam::channel::RecvTimeoutError::Timeout) => {
+                    // No commands, continue loop
+                }
+            }
+        }
+    }
+
+    fn handle_update_content(&mut self, content: &str) {
+        if content.is_empty() {
+            self.send_diagnostics(Vec::new());
+            return;
+        }
+
         if !self.ensure_init() {
             return;
         }
 
         self.version += 1;
-        let conn = self.conn.as_mut().unwrap();
+        let Some(conn) = self.conn.as_mut() else {
+            return;
+        };
+        let Some(uri) = self.uri.parse().ok() else {
+            return;
+        };
 
         let params = DidChangeTextDocumentParams {
             text_document: VersionedTextDocumentIdentifier {
-                uri: self.uri.parse().unwrap(),
+                uri,
                 version: self.version,
             },
             content_changes: vec![TextDocumentContentChangeEvent {
@@ -85,137 +251,121 @@ impl LspDiagnosticsProvider {
         };
         let _ = notify(conn, "textDocument/didChange", &params);
 
-        self.poll(content);
+        self.poll_for_diagnostics(content);
     }
 
-    /// Get current diagnostics.
-    pub fn diagnostics(&self) -> &[Diagnostic] {
-        &self.diagnostics
+    fn send_diagnostics(&self, diagnostics: Vec<Diagnostic>) {
+        let _ = self
+            .response_tx
+            .try_send(LspResponse::Diagnostics(diagnostics));
+        let _ = self.wake_tx.try_send(());
     }
 
-    /// Get code actions for a given span.
-    ///
-    /// This sends a `textDocument/codeAction` request to the LSP server
-    /// and converts the response to reedline's `CodeAction` type.
-    pub fn code_actions(&mut self, content: &str, span: Span) -> Vec<CodeAction> {
-        let conn = match &mut self.conn {
-            Some(c) => c,
-            None => return Vec::new(),
-        };
+    fn handle_code_actions_request(&mut self, content: &str, span: Span) {
+        let actions = self
+            .conn
+            .as_mut()
+            .map(|conn| {
+                request_code_actions(
+                    &self.uri,
+                    content,
+                    span,
+                    self.config.timeout_ms,
+                    |method, params, timeout| request(conn, method, params, timeout),
+                )
+            })
+            .unwrap_or_default();
 
-        let timeout_ms = self.config.timeout_ms;
-        let uri = self.uri.clone();
+        let _ = self.response_tx.try_send(LspResponse::CodeActions(actions));
+    }
 
-        request_code_actions(
-            &uri,
-            content,
-            span,
-            timeout_ms,
-            |method, params, timeout| request(conn, method, params, timeout),
-        )
+    fn poll_for_diagnostics(&mut self, content: &str) {
+        let Some(conn) = &mut self.conn else { return };
+
+        let timeout = Duration::from_millis(self.config.timeout_ms);
+        let start = Instant::now();
+
+        let diagnostics =
+            std::iter::from_fn(|| read_msg(&mut conn.reader, Duration::from_millis(5)))
+                .take_while(|_| start.elapsed() < timeout)
+                .filter(|msg| msg.method.as_deref() == Some("textDocument/publishDiagnostics"))
+                .filter_map(|msg| msg.params)
+                .filter_map(|params| {
+                    serde_json::from_value::<PublishDiagnosticsParams>(params).ok()
+                })
+                .next()
+                .map(|p| p.diagnostics.iter().map(|d| convert(d, content)).collect());
+
+        if let Some(diagnostics) = diagnostics {
+            self.send_diagnostics(diagnostics);
+        }
     }
 
     fn ensure_init(&mut self) -> bool {
         if self.conn.is_some() {
             return true;
         }
+        self.conn = self.try_init();
+        self.conn.is_some()
+    }
 
-        let mut child = match Command::new(&self.config.server_bin)
-            .args(&self.config.server_args)
+    fn try_init(&self) -> Option<Connection> {
+        let mut parts = self.config.command.split_whitespace();
+        let bin = parts.next()?;
+        let args: Vec<&str> = parts.collect();
+
+        let mut child = Command::new(bin)
+            .args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-        {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
-
-        let stdin = match child.stdin.take() {
-            Some(s) => s,
-            None => return false,
-        };
-        let stdout = match child.stdout.take() {
-            Some(s) => s,
-            None => return false,
-        };
+            .ok()?;
 
         let mut conn = Connection {
+            writer: BufWriter::new(child.stdin.take()?),
+            reader: BufReader::new(child.stdout.take()?),
             child,
-            writer: BufWriter::new(stdin),
-            reader: BufReader::new(stdout),
             next_id: 1,
         };
 
-        // Initialize
-        let params = InitializeParams {
+        let init_params = InitializeParams {
             process_id: Some(std::process::id()),
-            initialization_options: None,
-            capabilities: Default::default(),
-            trace: None,
-            workspace_folders: None,
             client_info: Some(lsp_types::ClientInfo {
                 name: "reedline".into(),
                 version: Some(env!("CARGO_PKG_VERSION").into()),
             }),
-            locale: None,
-            work_done_progress_params: Default::default(),
             ..Default::default()
         };
 
-        if request(&mut conn, "initialize", &params, self.config.timeout_ms * 5).is_none() {
-            return false;
-        }
-        let _ = notify(&mut conn, "initialized", &InitializedParams {});
-
-        // Open document
-        let _ = notify(
+        request(
+            &mut conn,
+            "initialize",
+            &init_params,
+            self.config.timeout_ms * 5,
+        )?;
+        notify(&mut conn, "initialized", &InitializedParams {})?;
+        notify(
             &mut conn,
             "textDocument/didOpen",
             &DidOpenTextDocumentParams {
                 text_document: TextDocumentItem {
-                    uri: self.uri.parse().unwrap(),
+                    uri: self.uri.parse().ok()?,
                     language_id: "nushell".into(),
                     version: 0,
                     text: String::new(),
                 },
             },
-        );
+        )?;
 
-        self.conn = Some(conn);
-        true
+        Some(conn)
     }
 
-    fn poll(&mut self, content: &str) {
-        let conn = match &mut self.conn {
-            Some(c) => c,
-            None => return,
-        };
-        let timeout = Duration::from_millis(self.config.timeout_ms);
-        let start = Instant::now();
-
-        while start.elapsed() < timeout {
-            if let Some(msg) = read_msg(&mut conn.reader, Duration::from_millis(5)) {
-                if msg.method.as_deref() == Some("textDocument/publishDiagnostics") {
-                    if let Some(params) = msg.params {
-                        if let Ok(p) = serde_json::from_value::<PublishDiagnosticsParams>(params) {
-                            self.diagnostics =
-                                p.diagnostics.iter().map(|d| convert(d, content)).collect();
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl Drop for LspDiagnosticsProvider {
-    fn drop(&mut self) {
+    fn shutdown(&mut self) {
         if let Some(mut conn) = self.conn.take() {
             let _ = request(&mut conn, "shutdown", &(), 100);
             let _ = notify(&mut conn, "exit", &());
-            std::thread::sleep(Duration::from_millis(20));
+            thread::sleep(Duration::from_millis(20));
             let _ = conn.child.kill();
         }
     }
@@ -311,24 +461,17 @@ fn read_msg<R: BufRead>(r: &mut R, timeout: Duration) -> Option<Msg> {
 // Conversion
 
 fn convert(d: &lsp_types::Diagnostic, content: &str) -> Diagnostic {
-    let severity = match d.severity {
-        Some(lsp_types::DiagnosticSeverity::ERROR) => DiagnosticSeverity::Error,
-        Some(lsp_types::DiagnosticSeverity::WARNING) => DiagnosticSeverity::Warning,
-        Some(lsp_types::DiagnosticSeverity::INFORMATION) => DiagnosticSeverity::Info,
-        Some(lsp_types::DiagnosticSeverity::HINT) => DiagnosticSeverity::Hint,
-        _ => DiagnosticSeverity::Warning,
-    };
+    let severity = d.severity.unwrap_or(lsp_types::DiagnosticSeverity::WARNING);
+    let diag = Diagnostic::new(severity, range_to_span(content, &d.range), &d.message);
 
-    let span = range_to_span(content, &d.range);
-    let mut diag = Diagnostic::new(severity, span, &d.message);
-
-    if let Some(code) = &d.code {
-        diag = diag.with_rule_id(match code {
+    d.code
+        .as_ref()
+        .map(|code| match code {
             NumberOrString::Number(n) => n.to_string(),
             NumberOrString::String(s) => s.clone(),
-        });
-    }
-    diag
+        })
+        .map(|rule_id| diag.clone().with_rule_id(rule_id))
+        .unwrap_or(diag)
 }
 
 fn range_to_span(content: &str, range: &Range) -> Span {
@@ -339,12 +482,16 @@ fn range_to_span(content: &str, range: &Range) -> Span {
 }
 
 fn pos_to_offset(content: &str, pos: &Position) -> usize {
-    let mut off = 0;
-    for (i, line) in content.lines().enumerate() {
-        if i == pos.line as usize {
-            return off + (pos.character as usize).min(line.len());
-        }
-        off += line.len() + 1;
-    }
-    content.len()
+    let target_line = pos.line as usize;
+    content
+        .lines()
+        .enumerate()
+        .scan(0usize, |offset, (i, line)| {
+            let current_offset = *offset;
+            *offset += line.len() + 1;
+            Some((i, line, current_offset))
+        })
+        .find(|(i, _, _)| *i == target_line)
+        .map(|(_, line, offset)| offset + (pos.character as usize).min(line.len()))
+        .unwrap_or(content.len())
 }

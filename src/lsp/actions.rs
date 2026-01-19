@@ -23,13 +23,13 @@ pub(super) fn request_code_actions<F>(
 where
     F: FnOnce(&str, &CodeActionParams, u64) -> Option<Value>,
 {
-    let range = span_to_range(content, span);
+    let Some(uri) = uri.parse().ok() else {
+        return Vec::new();
+    };
 
     let params = CodeActionParams {
-        text_document: TextDocumentIdentifier {
-            uri: uri.parse().unwrap(),
-        },
-        range,
+        text_document: TextDocumentIdentifier { uri },
+        range: span_to_range(content, span),
         context: CodeActionContext {
             diagnostics: Vec::new(),
             only: None,
@@ -39,56 +39,33 @@ where
         partial_result_params: Default::default(),
     };
 
-    let result = match request_fn("textDocument/codeAction", &params, timeout_ms) {
-        Some(v) => v,
-        None => return Vec::new(),
-    };
-
-    let response: CodeActionResponse = match serde_json::from_value(result) {
-        Ok(r) => r,
-        Err(_) => return Vec::new(),
-    };
-
-    convert_code_actions(response, content)
+    request_fn("textDocument/codeAction", &params, timeout_ms)
+        .and_then(|v| serde_json::from_value::<CodeActionResponse>(v).ok())
+        .map(|response| convert_code_actions(response, content))
+        .unwrap_or_default()
 }
 
 /// Convert LSP code actions to reedline's CodeAction type.
 fn convert_code_actions(response: CodeActionResponse, content: &str) -> Vec<CodeAction> {
     response
         .into_iter()
-        .filter_map(|action_or_cmd| {
-            // We only handle CodeAction, not Command
-            let action = match action_or_cmd {
-                lsp_types::CodeActionOrCommand::CodeAction(a) => a,
-                lsp_types::CodeActionOrCommand::Command(_) => return None,
-            };
+        .filter_map(|action_or_cmd| match action_or_cmd {
+            lsp_types::CodeActionOrCommand::CodeAction(action) => Some(action),
+            lsp_types::CodeActionOrCommand::Command(_) => None,
+        })
+        .filter_map(|action| {
+            let replacements: Vec<_> = action
+                .edit?
+                .changes?
+                .into_iter()
+                .flat_map(|(_, edits)| edits)
+                .map(|edit| Replacement::new(range_to_span(content, &edit.range), edit.new_text))
+                .collect();
 
-            // Extract text edits from the workspace edit
-            let edit = action.edit?;
-            let changes = edit.changes?;
-
-            let mut replacements = Vec::new();
-            for (_uri, edits) in changes {
-                for text_edit in edits {
-                    let edit_span = range_to_span(content, &text_edit.range);
-                    replacements.push(Replacement::new(edit_span, text_edit.new_text));
-                }
-            }
-
-            if replacements.is_empty() {
-                return None;
-            }
-
-            Some(CodeAction::new(
-                action.title,
-                Fix::new(
-                    action
-                        .kind
-                        .map(|k| k.as_str().to_string())
-                        .unwrap_or_default(),
-                    replacements,
-                ),
-            ))
+            (!replacements.is_empty()).then(|| {
+                let description = action.kind.map_or_else(String::new, |k| k.as_str().to_string());
+                CodeAction::new(action.title, Fix::new(description, replacements))
+            })
         })
         .collect()
 }
@@ -103,23 +80,18 @@ fn span_to_range(content: &str, span: Span) -> Range {
 
 /// Convert a byte offset to an LSP Position.
 fn offset_to_position(content: &str, offset: usize) -> lsp_types::Position {
-    let mut line = 0;
-    let mut col = 0;
-    for (i, c) in content.char_indices() {
-        if i >= offset {
-            break;
-        }
-        if c == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
-    }
-    lsp_types::Position {
-        line,
-        character: col,
-    }
+    let (line, character) = content
+        .char_indices()
+        .take_while(|(i, _)| *i < offset)
+        .fold((0u32, 0u32), |(line, col), (_, c)| {
+            if c == '\n' {
+                (line + 1, 0)
+            } else {
+                (line, col + 1)
+            }
+        });
+
+    lsp_types::Position { line, character }
 }
 
 /// Convert an LSP Range to a byte span.
@@ -132,12 +104,16 @@ fn range_to_span(content: &str, range: &Range) -> Span {
 
 /// Convert an LSP Position to a byte offset.
 fn position_to_offset(content: &str, pos: &lsp_types::Position) -> usize {
-    let mut off = 0;
-    for (i, line) in content.lines().enumerate() {
-        if i == pos.line as usize {
-            return off + (pos.character as usize).min(line.len());
-        }
-        off += line.len() + 1;
-    }
-    content.len()
+    let target_line = pos.line as usize;
+    content
+        .lines()
+        .enumerate()
+        .scan(0usize, |offset, (i, line)| {
+            let current_offset = *offset;
+            *offset += line.len() + 1;
+            Some((i, line, current_offset))
+        })
+        .find(|(i, _, _)| *i == target_line)
+        .map(|(_, line, offset)| offset + (pos.character as usize).min(line.len()))
+        .unwrap_or(content.len())
 }

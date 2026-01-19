@@ -21,4 +21,7 @@ mod client;
 mod diagnostic;
 
 pub use client::{LspConfig, LspDiagnosticsProvider};
-pub use diagnostic::{CodeAction, Diagnostic, DiagnosticSeverity, Fix, Replacement, Span};
+pub use diagnostic::{
+    message_style, underline_style, CodeAction, Diagnostic, DiagnosticSeverity, Fix, Replacement,
+    Span,
+};
