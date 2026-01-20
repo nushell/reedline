@@ -45,6 +45,7 @@ tempfile = "3.3.0"
 [features]
 bashisms = []
 external_printer = ["crossbeam"]
+idle_callback = []
 sqlite = ["rusqlite/bundled", "serde_json"]
 sqlite-dynlib = ["rusqlite", "serde_json"]
 system_clipboard = ["arboard"]
@@ -60,4 +61,4 @@ required-features = ["external_printer"]
 [package.metadata.docs.rs]
 # Whether to pass `--all-features` to Cargo (default: false)
 all-features = false
-features = ["bashisms", "external_printer", "sqlite"]
+features = ["bashisms", "external_printer", "idle_callback", "sqlite"]

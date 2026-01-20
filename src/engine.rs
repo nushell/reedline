@@ -170,6 +170,11 @@ pub struct Reedline {
 
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
+
+    // Callback function that is called periodically while waiting for input.
+    // Useful for processing external events (e.g., GUI updates) during idle time.
+    #[cfg(feature = "idle_callback")]
+    idle_callback: Option<(Box<dyn FnMut() + Send>, Duration)>,
 }
 
 struct BufferEditor {
@@ -244,6 +249,8 @@ impl Reedline {
             immediately_accept: false,
             #[cfg(feature = "external_printer")]
             external_printer: None,
+            #[cfg(feature = "idle_callback")]
+            idle_callback: None,
         }
     }
 
@@ -710,6 +717,12 @@ impl Reedline {
         self.repaint(prompt)?;
 
         loop {
+            // Call idle callback if set (for processing external events like GUI updates)
+            #[cfg(feature = "idle_callback")]
+            if let Some((ref mut callback, _)) = self.idle_callback {
+                callback();
+            }
+
             #[cfg(feature = "external_printer")]
             if let Some(ref external_printer) = self.external_printer {
                 // get messages from printer as crlf separated "lines"
@@ -745,15 +758,33 @@ impl Reedline {
             let mut events: Vec<Event> = vec![];
 
             if !self.immediately_accept {
-                // If the `external_printer` feature is enabled, we need to
-                // periodically yield so that external printers get a chance to
-                // print. Otherwise, we can just block until we receive an event.
-                #[cfg(feature = "external_printer")]
-                if event::poll(EXTERNAL_PRINTER_WAIT)? {
+                // Determine if we need to poll (non-blocking) or can block on input.
+                // We need polling if external_printer or idle_callback is configured.
+                #[cfg(all(feature = "external_printer", feature = "idle_callback"))]
+                let poll_config = match (&self.external_printer, &self.idle_callback) {
+                    (Some(_), _) => Some(EXTERNAL_PRINTER_WAIT),
+                    (None, Some((_, interval))) => Some(*interval),
+                    (None, None) => None,
+                };
+                #[cfg(all(feature = "external_printer", not(feature = "idle_callback")))]
+                let poll_config = self
+                    .external_printer
+                    .as_ref()
+                    .map(|_| EXTERNAL_PRINTER_WAIT);
+                #[cfg(all(not(feature = "external_printer"), feature = "idle_callback"))]
+                let poll_config = self.idle_callback.as_ref().map(|(_, interval)| *interval);
+                #[cfg(all(not(feature = "external_printer"), not(feature = "idle_callback")))]
+                let poll_config: Option<Duration> = None;
+
+                if let Some(wait_duration) = poll_config {
+                    // Use polling with timeout to allow idle callback / external printer processing
+                    if event::poll(wait_duration)? {
+                        events.push(crossterm::event::read()?);
+                    }
+                } else {
+                    // Block until we receive an event
                     events.push(crossterm::event::read()?);
                 }
-                #[cfg(not(feature = "external_printer"))]
-                events.push(crossterm::event::read()?);
 
                 // Receive all events in the queue without blocking. Will stop when
                 // a line of input is completed.
@@ -1857,6 +1888,38 @@ impl Reedline {
         self
     }
 
+    /// Sets an idle callback that is called periodically while waiting for user input.
+    ///
+    /// This is useful for applications that need to process external events
+    /// (such as GUI updates, network events, or timer-based operations) while
+    /// the user is typing or the editor is waiting for input.
+    ///
+    /// The `interval` parameter controls how frequently the callback is invoked.
+    /// Common values are 33ms (~30fps) for UI updates or 100ms for less frequent tasks.
+    ///
+    /// ## Required feature:
+    /// `idle_callback`
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use reedline::Reedline;
+    ///
+    /// let mut editor = Reedline::create()
+    ///     .with_idle_callback(Box::new(|| {
+    ///         // Process external events here
+    ///     }), Duration::from_millis(33));
+    /// ```
+    #[cfg(feature = "idle_callback")]
+    pub fn with_idle_callback(
+        mut self,
+        callback: Box<dyn FnMut() + Send>,
+        interval: Duration,
+    ) -> Self {
+        self.idle_callback = Some((callback, interval));
+        self
+    }
+
     #[cfg(feature = "external_printer")]
     fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<Vec<String>> {
         let mut messages = Vec::new();
@@ -1972,5 +2035,37 @@ mod tests {
     fn thread_safe() {
         fn f<S: Send>(_: S) {}
         f(Reedline::create());
+    }
+
+    #[test]
+    #[cfg(feature = "idle_callback")]
+    fn thread_safe_with_idle_callback() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        fn f<S: Send>(_: S) {}
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        let reedline = Reedline::create().with_idle_callback(
+            Box::new(move || {
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+            }),
+            Duration::from_millis(100),
+        );
+
+        // Verify that Reedline with idle_callback is still Send
+        f(reedline);
+    }
+
+    #[test]
+    #[cfg(feature = "idle_callback")]
+    fn idle_callback_builder_pattern() {
+        // Test that with_idle_callback can be chained with other builder methods
+        let _reedline = Reedline::create()
+            .with_quick_completions(true)
+            .with_idle_callback(Box::new(|| {}), Duration::from_millis(100))
+            .with_partial_completions(true);
     }
 }
