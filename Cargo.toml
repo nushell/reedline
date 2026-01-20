@@ -48,6 +48,7 @@ external_printer = ["crossbeam"]
 sqlite = ["rusqlite/bundled", "serde_json"]
 sqlite-dynlib = ["rusqlite", "serde_json"]
 system_clipboard = ["arboard"]
+libc = ["crossterm/libc"]
 
 [[example]]
 name = "cwd_aware_hinter"
