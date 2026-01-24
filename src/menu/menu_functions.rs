@@ -376,40 +376,151 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
     }
 }
 
+#[derive(Debug, PartialEq)]
+struct AnsiSegment<'a> {
+    /// One or more Select Graphic Rendition control sequences.
+    /// Note: does NOT include the Control Sequence Introducer ('ESC [') at the beginning.
+    escape: Option<&'a str>,
+    text: &'a str,
+}
+
+struct AnsiEscape {
+    /// Index where Control Sequence Introducer ('ESC [') starts
+    csi_start: usize,
+    /// Index where SGR arguments start. `None` if it ends in the reset attribute
+    escape_start: Option<usize>,
+    escape_end: usize,
+    /// Whether the original sequence contained the reset attribute
+    had_reset: bool,
+}
+
+const ANSI_SGR_START: &str = "\x1b[";
+
 /// Parse ANSI sequences for setting display attributes in the given string.
-/// Each returned item is a tuple (escape start, escape end, text end), for
-/// finding each sequence and the text affected by it.
 ///
-/// Essentially just looks for 'ESC [' followed by /[0-9;]*m/, ignoring other ANSI sequences.
-fn parse_ansi(s: &str) -> Vec<(usize, usize, usize)> {
+/// Notes:
+/// * The resulting `AnsiSegment`s don't include resets. A reset is implied before every segment.
+/// * A single `AnsiSegment` can contain multiple consecutive control sequences.
+///
+/// Only parses Select Graphic Rendition control sequences, ignoring other ANSI sequencse.
+/// Essentially just looks for 'ESC [' followed by /[0-9;]*m/.
+fn parse_ansi<'a>(s: &'a str) -> Vec<AnsiSegment<'a>> {
     let mut segments = Vec::new();
 
-    let mut last_escape_start = 0;
-    let mut last_escape_end = 0;
-    let mut offset = 0;
-    while offset < s.len() {
-        let Some(start) = &s[offset..].find("\x1b[") else {
+    let find_escape_end = |sgr_args_start: usize| {
+        let mut escape_start = sgr_args_start;
+        let mut contains_reset = false;
+        // Whether all digits of the current argument have been 0 so far (this
+        // is true for empty arguments too). A 0 (or empty argument) represents
+        // the reset attribute.
+        let mut all_zeroes = true;
+        for (i, c) in s[sgr_args_start..].char_indices() {
+            match c {
+                'm' => {
+                    let csi_start = sgr_args_start - ANSI_SGR_START.len();
+                    let escape_end = sgr_args_start + i + 1;
+                    if all_zeroes {
+                        return Some(AnsiEscape {
+                            csi_start,
+                            escape_start: None,
+                            escape_end,
+                            had_reset: true,
+                        });
+                    } else {
+                        return Some(AnsiEscape {
+                            csi_start,
+                            escape_start: Some(escape_start),
+                            escape_end,
+                            had_reset: contains_reset,
+                        });
+                    }
+                }
+                '0' => {}
+                '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => all_zeroes = false,
+                ';' => {
+                    if all_zeroes {
+                        contains_reset = true;
+                        escape_start = sgr_args_start + i + 1;
+                    }
+                    all_zeroes = true;
+                }
+                _ => return None,
+            }
+        }
+        // No ending "m" to terminate SGR sequence
+        None
+    };
+
+    let find_escape = |mut search_start: usize| {
+        while let Some(i) = s[search_start..].find(ANSI_SGR_START) {
+            if let Some(res) = find_escape_end(search_start + i + ANSI_SGR_START.len()) {
+                return Some(res);
+            } else {
+                search_start = search_start + i + ANSI_SGR_START.len();
+            }
+        }
+        None
+    };
+
+    let Some(AnsiEscape {
+        csi_start,
+        mut escape_start,
+        mut escape_end,
+        had_reset: _,
+    }) = find_escape(0)
+    else {
+        return vec![AnsiSegment {
+            escape: None,
+            text: s,
+        }];
+    };
+    // The unformatted text at the start, without any ANSI escapes before it
+    segments.push(AnsiSegment {
+        escape: None,
+        text: &s[..csi_start],
+    });
+
+    loop {
+        while s[escape_end..].starts_with(ANSI_SGR_START) {
+            if let Some(AnsiEscape {
+                csi_start: _,
+                escape_start: next_start,
+                escape_end: next_end,
+                had_reset,
+            }) = find_escape_end(escape_end + ANSI_SGR_START.len())
+            {
+                if had_reset || escape_start.is_none() {
+                    escape_start = next_start;
+                }
+                escape_end = next_end;
+            } else {
+                break;
+            }
+        }
+
+        let escape = escape_start.map(|start| &s[start..escape_end]);
+        if let Some(AnsiEscape {
+            csi_start,
+            escape_start: new_start,
+            escape_end: new_end,
+            had_reset: _,
+        }) = find_escape(escape_end)
+        {
+            segments.push(AnsiSegment {
+                escape,
+                text: &s[escape_end..csi_start],
+            });
+            escape_start = new_start;
+            escape_end = new_end;
+        } else {
+            segments.push(AnsiSegment {
+                escape,
+                text: &s[escape_end..s.len()],
+            });
             break;
-        };
-        let escape_start = offset + start;
-
-        let after_params = &s[escape_start + 2..]
-            .trim_start_matches(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ';']);
-        if !after_params.starts_with('m') {
-            // Not a valid Select Graphic Rendition sequence
-            offset = s.len() - after_params.len();
-            continue;
         }
-
-        if escape_start != 0 {
-            segments.push((last_escape_start, last_escape_end, escape_start));
-        }
-        last_escape_start = escape_start;
-        last_escape_end = s.len() - after_params.len() + 1;
-        offset = last_escape_end;
     }
 
-    segments.push((last_escape_start, last_escape_end, s.len()));
     segments
 }
 
@@ -431,15 +542,22 @@ pub fn style_suggestion(
         .unwrap_or_default();
     let mut res = String::new();
     let mut offset = 0;
-    for (escape_start, text_start, text_end) in parse_ansi(suggestion) {
-        let escape = &suggestion[escape_start..text_start];
-        let text = &suggestion[text_start..text_end];
+    let ansi_segments = parse_ansi(suggestion);
+    for AnsiSegment { escape, text } in ansi_segments {
+        if text.is_empty() {
+            continue;
+        }
+
         let graphemes = text.graphemes(true).collect::<Vec<_>>();
         let mut prev_matched = false;
 
+        res.push_str(RESET);
         res.push_str(&text_style_prefix);
         res.push_str(&selected_prefix);
-        res.push_str(escape);
+        if let Some(escape) = escape {
+            res.push_str(ANSI_SGR_START);
+            res.push_str(escape);
+        }
         for (i, grapheme) in graphemes.iter().enumerate() {
             let is_match = match_indices.contains(&(i + offset));
 
@@ -447,12 +565,18 @@ pub fn style_suggestion(
                 res.push_str(RESET);
                 res.push_str(&text_style_prefix);
                 res.push_str(&match_style_prefix);
-                res.push_str(escape);
+                if let Some(escape) = escape {
+                    res.push_str(ANSI_SGR_START);
+                    res.push_str(escape);
+                }
             } else if !is_match && prev_matched && i != 0 {
                 res.push_str(RESET);
                 res.push_str(&text_style_prefix);
                 res.push_str(&selected_prefix);
-                res.push_str(escape);
+                if let Some(escape) = escape {
+                    res.push_str(ANSI_SGR_START);
+                    res.push_str(escape);
+                }
             }
             res.push_str(grapheme);
             prev_matched = is_match;
@@ -487,28 +611,73 @@ pub fn get_match_indices<'a>(
     }
 }
 
-/// Truncate a string with no ANSI escapes to the given max width, which must be >=3.
+/// Truncate a string with ANSI escapes to the given max width, which must be >=3.
 ///
 /// If `s` is longer than `max_width`, the resulting string will end in "..."
 /// and have width at most `max_width`.
-pub(crate) fn truncate_no_ansi(s: &str, max_width: usize) -> Cow<'_, str> {
-    if s.width() <= max_width {
-        Cow::Borrowed(s)
-    } else {
-        let trunc_suffix = "...";
-        let suffix_width = trunc_suffix.width();
+pub(crate) fn truncate_with_ansi(s: &str, max_width: usize) -> Cow<'_, str> {
+    let trunc_suffix = "...";
+    let suffix_width = trunc_suffix.width();
 
-        let mut res = String::new();
-        let mut curr_width = 0;
-        for grapheme in s.graphemes(true) {
-            curr_width += grapheme.width();
-            if curr_width + suffix_width > max_width {
+    let ansi_segments = parse_ansi(s);
+    let mut curr_width = 0;
+    let mut should_trunc = false;
+    let mut max_ind_trunc = 0;
+    let mut trunc_grapheme_ind = 0;
+    for (i, segment) in ansi_segments.iter().enumerate() {
+        let segment_width = segment.text.width();
+
+        should_trunc = curr_width + segment_width > max_width;
+
+        let too_long_with_dots = curr_width + segment_width + suffix_width > max_width;
+        if !too_long_with_dots {
+            max_ind_trunc = i + 1;
+        }
+
+        if should_trunc || too_long_with_dots {
+            let mut allowed_width = max_width
+                .saturating_sub(curr_width)
+                .saturating_sub(suffix_width);
+            for (ind, grapheme) in segment.text.grapheme_indices(true) {
+                let grapheme_width = grapheme.width();
+                if grapheme_width > allowed_width {
+                    break;
+                }
+                trunc_grapheme_ind = ind + grapheme.len();
+                allowed_width = allowed_width.saturating_sub(grapheme_width);
+            }
+            if should_trunc {
                 break;
             }
-            res.push_str(grapheme);
         }
+
+        curr_width += segment_width;
+    }
+
+    if should_trunc {
+        let mut res = String::new();
+        for (i, segment) in ansi_segments[0..max_ind_trunc].iter().enumerate() {
+            if let Some(escape) = segment.escape {
+                res.push_str(ANSI_SGR_START);
+                res.push_str(escape);
+            } else if i > 0 {
+                // No need to put a RESET at the beginning of the string
+                res.push_str(RESET);
+            }
+            res.push_str(segment.text);
+        }
+        let last = &ansi_segments[max_ind_trunc];
+        if let Some(escape) = last.escape {
+            res.push_str(ANSI_SGR_START);
+            res.push_str(escape);
+        } else if max_ind_trunc > 0 {
+            res.push_str(RESET);
+        }
+        res.push_str(&last.text[0..trunc_grapheme_ind]);
         res.push_str(trunc_suffix);
         Cow::Owned(res)
+    } else {
+        Cow::Borrowed(s)
     }
 }
 
@@ -835,11 +1004,52 @@ mod tests {
     }
 
     #[rstest]
-    #[case("plain", vec![(0, 0, 5)])]
-    #[case("\x1b[mempty", vec![(0, 3, 8)])]
-    #[case("\x1b[\x1b[minvalid", vec![(0, 0, 2), (2, 5, 12)])]
-    #[case("a\x1b[1;mb\x1b[;mc", vec![(0, 0, 1), (1, 6, 7), (7, 11, 12)])]
-    fn test_parse_ansi(#[case] s: &str, #[case] expected: Vec<(usize, usize, usize)>) {
+    #[case::plain("Foo", vec![AnsiSegment { escape: None, text: "Foo" }])]
+    #[case::unterminated("\x1b[", vec![AnsiSegment { escape: None, text: "\x1b[" }])]
+    #[case::invalid(
+        "\x1b[\x1b[mFoo",
+        vec![
+            AnsiSegment { escape: None, text: "\x1b[" },
+            AnsiSegment { escape: None, text: "Foo" },
+        ]
+    )]
+    #[case::no_args_reset(
+        "\x1b[3m\x1b[m\x1b[2mFoo",
+        vec![
+            AnsiSegment { escape: None, text: "" },
+            AnsiSegment { escape: Some("2m"), text: "Foo" },
+        ]
+    )]
+    #[case::empty_reset_with_args_afterwards(
+        "\x1b[3m\x1b[1;;20mFoo",
+        vec![
+            AnsiSegment { escape: None, text: "" },
+            AnsiSegment { escape: Some("20m"), text: "Foo" },
+        ]
+    )]
+    #[case::empty_reset_without_args_afterwards(
+        "\x1b[3m\x1b[1;mFoo",
+        vec![
+            AnsiSegment { escape: None, text: "" },
+            AnsiSegment { escape: None, text: "Foo" },
+        ]
+    )]
+    #[case::zero_reset_without_args_afterwards(
+        "\x1b[3m\x1b[10;0mFoo",
+        vec![
+            AnsiSegment { escape: None, text: "" },
+            AnsiSegment { escape: None, text: "Foo" },
+        ]
+    )]
+    #[case::multiple(
+        "Foo\x1b[1;0;2m\x1b[2;3m\x1b[Bar\x1b[1;2m\x1b[2;3mBaz",
+        vec![
+            AnsiSegment { escape: None, text: "Foo" },
+            AnsiSegment { escape: Some("2m\x1b[2;3m"), text: "\x1b[Bar" },
+            AnsiSegment { escape: Some("1;2m\x1b[2;3m"), text: "Baz" },
+        ]
+    )]
+    fn test_parse_ansi(#[case] s: &str, #[case] expected: Vec<AnsiSegment>) {
         assert_eq!(parse_ansi(s), expected);
     }
 
@@ -852,7 +1062,8 @@ mod tests {
         let style2 = Style::new().on(Color::Green);
 
         let expected = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+            "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+            RESET,
             text_style.prefix(),
             selected_style.prefix(),
             style1.prefix(),
@@ -860,15 +1071,13 @@ mod tests {
             RESET,
             text_style.prefix(),
             match_style.prefix(),
-            style1.paint("汉"),
+            style1.prefix(),
+            "汉",
+            RESET,
             text_style.prefix(),
             selected_style.prefix(),
             style1.prefix(),
             "d",
-            // TODO these next two are unnecessary, make sure consecutive ANSI escapes
-            // are treated as a single segment by parse_ansi()
-            text_style.prefix(),
-            selected_style.prefix(),
             RESET,
             text_style.prefix(),
             selected_style.prefix(),
@@ -876,19 +1085,20 @@ mod tests {
             RESET,
             text_style.prefix(),
             match_style.prefix(),
-            style2.paint("y̆👩🏾"),
+            style2.prefix(),
+            "y̆👩🏾",
+            RESET,
             text_style.prefix(),
             selected_style.prefix(),
             style2.prefix(),
             "e",
+            RESET,
             text_style.prefix(),
             selected_style.prefix(),
-            RESET,
             "b@",
             RESET,
             text_style.prefix(),
             match_style.prefix(),
-            RESET,
             "r",
             RESET,
         );
@@ -915,12 +1125,15 @@ mod tests {
         let match_style = Style::new().underline();
 
         let expected = format!(
-            "{}{}{}{}{}",
+            "{}{}{}{}{}{}{}{}",
+            RESET,
             text_style.prefix(),
             "go",
             RESET,
             text_style.prefix(),
-            match_style.paint("o"),
+            match_style.prefix(),
+            "o",
+            RESET,
         );
         assert_eq!(
             expected,
@@ -929,12 +1142,24 @@ mod tests {
     }
 
     #[rstest]
-    #[case::shorter("asdf", 5, "asdf")]
+    #[case::no_ansi_shorter("asdf", 5, "asdf")]
+    #[case::with_ansi_shorter(
+        "\x1b[1;2;3;ma\x1b[1;15;ms\x1b[1;md\x1b[1;mf",
+        5,
+        "\x1b[1;2;3;ma\x1b[1;15;ms\x1b[1;md\x1b[1;mf"
+    )]
     // Ｈ has width 2
-    #[case::exact_width("asdＨ", 5, "asdＨ")]
-    #[case::one_longer("asdfＨ", 5, "as...")]
-    #[case::result_thinner_than_max("aＨＨＨ", 5, "a...")]
-    fn test_truncate(#[case] value: &str, #[case] max_width: usize, #[case] expected: &str) {
-        assert_eq!(expected, truncate_no_ansi(value, max_width));
+    #[case::no_ansi_one_longer("asdfＨ", 5, "as...")]
+    #[case::no_ansi_result_thinner_than_max("aＨＨＨ", 5, "a...")]
+    #[case::with_ansi_exact_width("\x1b[2masd\x1b[2;3;mＨ", 5, "\x1b[2masd\x1b[2;3;mＨ")]
+    #[case::no_ansi_nothing_left("foobar", 3, "...")]
+    #[case::trunc_with_short_segments("foobar\x1b[1;ma\x1b[2;mb\x1b[3;mc", 8, "fooba...")]
+    #[case::trunc_with_long_segment("foo\x1b[1;mBarbaz\x1b[2;mExtra", 8, "foo\x1b[0mBa...")]
+    fn test_truncate_with_ansi(
+        #[case] value: &str,
+        #[case] max_width: usize,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(expected, truncate_with_ansi(value, max_width));
     }
 }
