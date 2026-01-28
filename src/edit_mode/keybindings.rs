@@ -14,9 +14,38 @@ pub struct KeyCombination {
     pub key_code: KeyCode,
 }
 
+impl From<(KeyModifiers, KeyCode)> for KeyCombination {
+    fn from((modifier, code): (KeyModifiers, KeyCode)) -> Self {
+        let key_code = match code {
+            KeyCode::Char(c) => {
+                let c = match modifier {
+                    KeyModifiers::NONE => c,
+                    _ => c.to_ascii_lowercase(),
+                };
+                KeyCode::Char(c)
+            }
+            other => other,
+        };
+
+        Self { modifier, key_code }
+    }
+}
+
 /// Sequence of key combinations.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct KeySequence(pub Vec<KeyCombination>);
+
+impl From<Vec<KeyCombination>> for KeySequence {
+    fn from(sequence: Vec<KeyCombination>) -> Self {
+        Self(sequence)
+    }
+}
+
+impl AsRef<[KeyCombination]> for KeySequence {
+    fn as_ref(&self) -> &[KeyCombination] {
+        &self.0
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeySequenceMatch {
@@ -128,7 +157,7 @@ impl Keybindings {
         }
 
         self.sequence_bindings
-            .insert(KeySequence(sequence), command);
+            .insert(KeySequence::from(sequence), command);
     }
 
     /// Find a keybinding based on the modifier and keycode
@@ -145,11 +174,12 @@ impl Keybindings {
 
         let exact = self
             .sequence_bindings
-            .get(&KeySequence(sequence.to_vec()))
+            .get(&KeySequence::from(sequence.to_vec()))
             .cloned();
 
         let is_prefix = self.sequence_bindings.keys().any(|key_sequence| {
-            key_sequence.0.len() > sequence.len() && key_sequence.0[..sequence.len()] == *sequence
+            let keys = key_sequence.as_ref();
+            keys.len() > sequence.len() && keys[..sequence.len()] == *sequence
         });
 
         match (exact, is_prefix) {
@@ -179,7 +209,7 @@ impl Keybindings {
         &mut self,
         sequence: Vec<KeyCombination>,
     ) -> Option<ReedlineEvent> {
-        self.sequence_bindings.remove(&KeySequence(sequence))
+        self.sequence_bindings.remove(&KeySequence::from(sequence))
     }
 
     /// Get assigned keybindings
@@ -226,7 +256,7 @@ impl KeySequenceState {
         self.buffer.push(combo);
         let mut resolution = SequenceResolution::default();
 
-        while let StepOutcome::Continue = self.process_step(keybindings, &mut resolution) { }
+        while let StepOutcome::Continue = self.process_step(keybindings, &mut resolution) {}
 
         if self.buffer.is_empty() {
             self.pending_exact = None;
