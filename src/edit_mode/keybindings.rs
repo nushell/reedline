@@ -226,12 +226,7 @@ impl KeySequenceState {
         self.buffer.push(combo);
         let mut resolution = SequenceResolution::default();
 
-        loop {
-            match self.process_step(keybindings, &mut resolution) {
-                StepOutcome::Continue => continue,
-                StepOutcome::EmitDone | StepOutcome::Pending | StepOutcome::Done => break,
-            }
-        }
+        while let StepOutcome::Continue = self.process_step(keybindings, &mut resolution) { }
 
         if self.buffer.is_empty() {
             self.pending_exact = None;
