@@ -30,6 +30,9 @@ pub enum KeySequenceMatch {
 #[derive(Debug, Default, Clone)]
 pub struct KeySequenceState {
     buffer: Vec<KeyCombination>,
+    /// Stores an exact match that is also a prefix of a longer sequence.
+    /// If the longer sequence does not materialize, we emit this saved event
+    /// and continue processing any remaining buffered keys.
     pending_exact: Option<(usize, ReedlineEvent)>,
 }
 
@@ -40,8 +43,24 @@ pub struct SequenceResolution {
     pub events: Vec<ReedlineEvent>,
     /// Key combinations to flush through fallback handling.
     pub combos: Vec<KeyCombination>,
-    /// Whether a sequence is pending further input.
-    pub pending: bool,
+}
+
+impl SequenceResolution {
+    pub fn into_event<F>(self, mut fallback: F) -> Option<ReedlineEvent>
+    where
+        F: FnMut(KeyCombination) -> ReedlineEvent,
+    {
+        let mut events = Vec::new();
+        for event in self.events {
+            append_event(&mut events, event);
+        }
+
+        for combo in self.combos {
+            append_event(&mut events, fallback(combo));
+        }
+
+        combine_events(events)
+    }
 }
 
 /// Main definition of editor keybindings
@@ -50,7 +69,6 @@ pub struct Keybindings {
     /// Defines a keybinding for a reedline event
     pub bindings: HashMap<KeyCombination, ReedlineEvent>,
     /// Defines a key sequence binding for a reedline event
-    #[serde(default)]
     pub sequence_bindings: HashMap<KeySequence, ReedlineEvent>,
 }
 
@@ -67,11 +85,6 @@ impl Keybindings {
             bindings: HashMap::new(),
             sequence_bindings: HashMap::new(),
         }
-    }
-
-    /// Defines an empty keybinding object
-    pub fn empty() -> Self {
-        Self::new()
     }
 
     /// Adds a keybinding
@@ -197,86 +210,7 @@ impl KeySequenceState {
         self.pending_exact = None;
     }
 
-    pub fn process_combo<F>(
-        &mut self,
-        keybindings: &Keybindings,
-        combo: KeyCombination,
-        mut fallback: F,
-    ) -> Option<ReedlineEvent>
-    where
-        F: FnMut(KeyCombination) -> ReedlineEvent,
-    {
-        if keybindings.sequence_bindings.is_empty() {
-            self.clear();
-            return Some(fallback(combo));
-        }
-
-        self.buffer.push(combo);
-
-        let mut events = Vec::new();
-
-        loop {
-            match keybindings.sequence_match(&self.buffer) {
-                KeySequenceMatch::Exact(event) => {
-                    self.buffer.clear();
-                    self.pending_exact = None;
-                    events.push(event);
-                    break;
-                }
-                KeySequenceMatch::ExactAndPrefix(event) => {
-                    self.pending_exact = Some((self.buffer.len(), event));
-                    break;
-                }
-                KeySequenceMatch::Prefix => {
-                    self.pending_exact = None;
-                    break;
-                }
-                KeySequenceMatch::NoMatch => {
-                    if let Some((pending_len, pending_event)) = self.pending_exact.take() {
-                        let remaining = if pending_len < self.buffer.len() {
-                            self.buffer.split_off(pending_len)
-                        } else {
-                            Vec::new()
-                        };
-                        self.buffer.clear();
-                        self.buffer = remaining;
-                        events.push(pending_event);
-                        if self.buffer.is_empty() {
-                            break;
-                        }
-                        continue;
-                    }
-
-                    let flushed = self.buffer.remove(0);
-                    let event = fallback(flushed);
-                    if !matches!(event, ReedlineEvent::None) {
-                        events.push(event);
-                    }
-
-                    if self.buffer.is_empty() {
-                        break;
-                    }
-                }
-            }
-        }
-
-        let mut events: Vec<ReedlineEvent> = events
-            .into_iter()
-            .filter(|event| !matches!(event, ReedlineEvent::None))
-            .collect();
-
-        if events.is_empty() {
-            return None;
-        }
-
-        if events.len() == 1 {
-            return Some(events.remove(0));
-        }
-
-        Some(ReedlineEvent::Multiple(events))
-    }
-
-    pub fn process_combo_with_flush(
+    pub fn process_combo(
         &mut self,
         keybindings: &Keybindings,
         combo: KeyCombination,
@@ -293,53 +227,15 @@ impl KeySequenceState {
         let mut resolution = SequenceResolution::default();
 
         loop {
-            match keybindings.sequence_match(&self.buffer) {
-                KeySequenceMatch::Exact(event) => {
-                    self.buffer.clear();
-                    self.pending_exact = None;
-                    resolution.events.push(event);
-                    break;
-                }
-                KeySequenceMatch::ExactAndPrefix(event) => {
-                    self.pending_exact = Some((self.buffer.len(), event));
-                    resolution.pending = true;
-                    break;
-                }
-                KeySequenceMatch::Prefix => {
-                    self.pending_exact = None;
-                    resolution.pending = true;
-                    break;
-                }
-                KeySequenceMatch::NoMatch => {
-                    if let Some((pending_len, pending_event)) = self.pending_exact.take() {
-                        let remaining = if pending_len < self.buffer.len() {
-                            self.buffer.split_off(pending_len)
-                        } else {
-                            Vec::new()
-                        };
-                        self.buffer.clear();
-                        self.buffer = remaining;
-                        resolution.events.push(pending_event);
-                        if self.buffer.is_empty() {
-                            break;
-                        }
-                        continue;
-                    }
-
-                    let flushed = self.buffer.remove(0);
-                    resolution.combos.push(flushed);
-                    if self.buffer.is_empty() {
-                        break;
-                    }
-                }
+            match self.process_step(keybindings, &mut resolution) {
+                StepOutcome::Continue => continue,
+                StepOutcome::EmitDone | StepOutcome::Pending | StepOutcome::Done => break,
             }
         }
 
         if self.buffer.is_empty() {
             self.pending_exact = None;
         }
-
-        resolution.pending = !self.buffer.is_empty();
         resolution
     }
 
@@ -350,16 +246,7 @@ impl KeySequenceState {
 
         let mut resolution = SequenceResolution::default();
 
-        if let Some((pending_len, pending_event)) = self.pending_exact.take() {
-            let remaining = if pending_len < self.buffer.len() {
-                self.buffer.split_off(pending_len)
-            } else {
-                Vec::new()
-            };
-            self.buffer.clear();
-            resolution.events.push(pending_event);
-            resolution.combos = remaining;
-        } else {
+        if !self.flush_pending_exact(&mut resolution) {
             resolution.combos = std::mem::take(&mut self.buffer);
         }
 
@@ -367,52 +254,71 @@ impl KeySequenceState {
         resolution
     }
 
-    pub fn flush<F>(&mut self, mut fallback: F) -> Option<ReedlineEvent>
-    where
-        F: FnMut(KeyCombination) -> ReedlineEvent,
-    {
-        if self.buffer.is_empty() {
-            self.pending_exact = None;
-            return None;
-        }
+    fn flush_pending_exact(&mut self, resolution: &mut SequenceResolution) -> bool {
+        let Some((pending_len, pending_event)) = self.pending_exact.take() else {
+            return false;
+        };
 
-        if let Some((pending_len, pending_event)) = self.pending_exact.take() {
-            let remaining = if pending_len < self.buffer.len() {
-                self.buffer.split_off(pending_len)
-            } else {
-                Vec::new()
-            };
-            self.buffer.clear();
+        let pending_len = pending_len.min(self.buffer.len());
+        self.buffer.drain(..pending_len);
+        resolution.events.push(pending_event);
+        true
+    }
 
-            let mut events = vec![pending_event];
-            for combo in remaining {
-                let event = fallback(combo);
-                if !matches!(event, ReedlineEvent::None) {
-                    events.push(event);
+    fn process_step(
+        &mut self,
+        keybindings: &Keybindings,
+        resolution: &mut SequenceResolution,
+    ) -> StepOutcome {
+        match keybindings.sequence_match(&self.buffer) {
+            KeySequenceMatch::Exact(event) => {
+                self.buffer.clear();
+                self.pending_exact = None;
+                resolution.events.push(event);
+                StepOutcome::EmitDone
+            }
+            KeySequenceMatch::ExactAndPrefix(event) => {
+                self.pending_exact = Some((self.buffer.len(), event));
+                StepOutcome::Pending
+            }
+            KeySequenceMatch::Prefix => {
+                self.pending_exact = None;
+                StepOutcome::Pending
+            }
+            // User input does not match any sequence; flush buffered keys.
+            KeySequenceMatch::NoMatch => {
+                // If we previously saw an exact match that was also a prefix, emit it now
+                // and keep any trailing keys for further processing.
+                if self.flush_pending_exact(resolution) {
+                    if self.buffer.is_empty() {
+                        return StepOutcome::Done;
+                    }
+                    return StepOutcome::Continue;
+                }
+
+                // Otherwise, drop the oldest key and replay it through fallback handling.
+                // NOTE: This is O(n), but sequence buffers are expected to be short.
+                let flushed = self.buffer.remove(0);
+                resolution.combos.push(flushed);
+                if self.buffer.is_empty() {
+                    StepOutcome::Done
+                } else {
+                    StepOutcome::Continue
                 }
             }
-
-            return match events.len() {
-                0 => None,
-                1 => Some(events.remove(0)),
-                _ => Some(ReedlineEvent::Multiple(events)),
-            };
-        }
-
-        let mut events = Vec::new();
-        for combo in self.buffer.drain(..) {
-            let event = fallback(combo);
-            if !matches!(event, ReedlineEvent::None) {
-                events.push(event);
-            }
-        }
-
-        match events.len() {
-            0 => None,
-            1 => Some(events.remove(0)),
-            _ => Some(ReedlineEvent::Multiple(events)),
         }
     }
+}
+
+enum StepOutcome {
+    /// Shifted buffered input; continue resolving remaining keys.
+    Continue,
+    /// Current buffer is a valid prefix; wait for more input.
+    Pending,
+    /// Emitted an exact match; stop processing this step.
+    EmitDone,
+    /// Buffer emptied with no further input to process.
+    Done,
 }
 
 pub fn edit_bind(command: EditCommand) -> ReedlineEvent {
@@ -621,6 +527,26 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
     );
 }
 
+fn append_event(events: &mut Vec<ReedlineEvent>, event: ReedlineEvent) {
+    match event {
+        ReedlineEvent::None => {}
+        ReedlineEvent::Multiple(mut inner) => events.append(&mut inner),
+        other => events.push(other),
+    }
+}
+
+fn combine_events(mut events: Vec<ReedlineEvent>) -> Option<ReedlineEvent> {
+    if events.is_empty() {
+        return None;
+    }
+
+    if events.len() == 1 {
+        return Some(events.remove(0));
+    }
+
+    Some(ReedlineEvent::Multiple(events))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -661,11 +587,11 @@ mod tests {
         keybindings.add_sequence_binding(vec![combo('j'), combo('j')], ReedlineEvent::Esc);
 
         let mut state = KeySequenceState::default();
-        let first = state.process_combo(&keybindings, combo('j'), fallback);
-        assert_eq!(first, None);
+        let first = state.process_combo(&keybindings, combo('j'));
+        assert_eq!(first.into_event(fallback), None);
 
-        let second = state.process_combo(&keybindings, combo('j'), fallback);
-        assert_eq!(second, Some(ReedlineEvent::Esc));
+        let second = state.process_combo(&keybindings, combo('j'));
+        assert_eq!(second.into_event(fallback), Some(ReedlineEvent::Esc));
     }
 
     #[test]
@@ -674,11 +600,11 @@ mod tests {
         keybindings.add_sequence_binding(vec![combo('j'), combo('j')], ReedlineEvent::Esc);
 
         let mut state = KeySequenceState::default();
-        let _ = state.process_combo(&keybindings, combo('j'), fallback);
-        let second = state.process_combo(&keybindings, combo('k'), fallback);
+        let _ = state.process_combo(&keybindings, combo('j'));
+        let second = state.process_combo(&keybindings, combo('k'));
 
         assert_eq!(
-            second,
+            second.into_event(fallback),
             Some(ReedlineEvent::Multiple(vec![
                 ReedlineEvent::Edit(vec![EditCommand::InsertChar('j')]),
                 ReedlineEvent::Edit(vec![EditCommand::InsertChar('k')]),
@@ -692,11 +618,11 @@ mod tests {
         keybindings.add_sequence_binding(vec![combo('j'), combo('j')], ReedlineEvent::Esc);
 
         let mut state = KeySequenceState::default();
-        let _ = state.process_combo(&keybindings, combo('j'), fallback);
-        let flushed = state.flush(fallback);
+        let _ = state.process_combo(&keybindings, combo('j'));
+        let flushed = state.flush_with_combos();
 
         assert_eq!(
-            flushed,
+            flushed.into_event(fallback),
             Some(ReedlineEvent::Edit(vec![EditCommand::InsertChar('j')]))
         );
     }

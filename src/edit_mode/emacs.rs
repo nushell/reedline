@@ -126,10 +126,11 @@ impl EditMode for Emacs {
             }) => {
                 let combo = Self::normalize_key_combo(modifiers, code);
                 let keybindings = &self.keybindings;
-                self.sequence_state
-                    .process_combo(keybindings, combo, |combo| {
-                        Self::single_key_event(keybindings, combo)
-                    })
+                let resolution = self
+                    .sequence_state
+                    .process_combo(keybindings, combo);
+                resolution
+                    .into_event(|combo| Self::single_key_event(keybindings, combo))
                     .unwrap_or(ReedlineEvent::None)
             }
 
@@ -157,8 +158,8 @@ impl EditMode for Emacs {
 
     fn flush_pending_sequence(&mut self) -> Option<ReedlineEvent> {
         let keybindings = &self.keybindings;
-        self.sequence_state
-            .flush(|combo| Self::single_key_event(keybindings, combo))
+        let resolution = self.sequence_state.flush_with_combos();
+        resolution.into_event(|combo| Self::single_key_event(keybindings, combo))
     }
 }
 

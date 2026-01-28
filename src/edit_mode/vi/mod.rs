@@ -12,11 +12,7 @@ use self::motion::ViCharSearch;
 
 use super::EditMode;
 use crate::{
-    edit_mode::{
-        keybindings::{Keybindings, SequenceResolution},
-        vi::parser::parse,
-        KeyCombination, KeySequenceState,
-    },
+    edit_mode::{keybindings::Keybindings, vi::parser::parse, KeyCombination, KeySequenceState},
     enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
     PromptEditMode, PromptViMode,
 };
@@ -144,7 +140,7 @@ impl EditMode for Vi {
 
     fn flush_pending_sequence(&mut self) -> Option<ReedlineEvent> {
         let resolution = self.sequence_state.flush_with_combos();
-        self.resolve_sequence_resolution(resolution)
+        resolution.into_event(|combo| self.single_key_event_without_sequences(combo))
     }
 }
 
@@ -188,9 +184,10 @@ impl Vi {
         };
         let resolution = self
             .sequence_state
-            .process_combo_with_flush(keybindings, combo);
+            .process_combo(keybindings, combo);
 
-        self.resolve_sequence_resolution(resolution)
+        resolution
+            .into_event(|combo| self.single_key_event_without_sequences(combo))
             .unwrap_or(ReedlineEvent::None)
     }
 
@@ -200,27 +197,6 @@ impl Vi {
             ViMode::Visual => &self.visual_keybindings,
             ViMode::Insert => &self.insert_keybindings,
         }
-    }
-
-    fn resolve_sequence_resolution(
-        &mut self,
-        resolution: SequenceResolution,
-    ) -> Option<ReedlineEvent> {
-        if resolution.pending && resolution.events.is_empty() && resolution.combos.is_empty() {
-            return None;
-        }
-
-        let mut events = Vec::new();
-        for event in resolution.events {
-            Self::append_event(&mut events, event);
-        }
-
-        for combo in resolution.combos {
-            let event = self.single_key_event_without_sequences(combo);
-            Self::append_event(&mut events, event);
-        }
-
-        Self::combine_events(events)
     }
 
     fn single_key_event_without_sequences(&mut self, combo: KeyCombination) -> ReedlineEvent {
@@ -318,26 +294,6 @@ impl Vi {
                     }
                 }),
         }
-    }
-
-    fn append_event(events: &mut Vec<ReedlineEvent>, event: ReedlineEvent) {
-        match event {
-            ReedlineEvent::None => {}
-            ReedlineEvent::Multiple(mut inner) => events.append(&mut inner),
-            other => events.push(other),
-        }
-    }
-
-    fn combine_events(mut events: Vec<ReedlineEvent>) -> Option<ReedlineEvent> {
-        if events.is_empty() {
-            return None;
-        }
-
-        if events.len() == 1 {
-            return Some(events.remove(0));
-        }
-
-        Some(ReedlineEvent::Multiple(events))
     }
 
     fn with_flushed_sequence(&mut self, event: ReedlineEvent) -> ReedlineEvent {
