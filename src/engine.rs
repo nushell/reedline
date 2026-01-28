@@ -28,7 +28,7 @@ use {
             HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
         painting::{Painter, PainterSuspendedState, PromptLines},
-        prompt::{PromptEditMode, PromptHistorySearchStatus},
+        prompt::{PromptEditMode, PromptHistorySearchStatus, PromptViMode},
         result::{ReedlineError, ReedlineErrorVariants},
         terminal_extensions::{bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard},
         utils::text_manipulation,
@@ -989,6 +989,13 @@ impl Reedline {
                 self.input_mode = InputMode::Regular;
                 Ok(EventStatus::Handled)
             }
+            ReedlineEvent::ViExitToNormalMode => {
+                self.input_mode = InputMode::Regular;
+                let _ = self
+                    .edit_mode
+                    .handle_mode_specific_event(ReedlineEvent::ViExitToNormalMode);
+                Ok(EventStatus::Handled)
+            }
             // TODO: Check if events should be handled
             ReedlineEvent::Right
             | ReedlineEvent::Left
@@ -1148,6 +1155,21 @@ impl Reedline {
             ReedlineEvent::Esc => {
                 self.deactivate_menus();
                 self.editor.clear_selection();
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::ViExitToNormalMode => {
+                self.deactivate_menus();
+                self.editor.clear_selection();
+                let was_insert = matches!(
+                    self.edit_mode.edit_mode(),
+                    PromptEditMode::Vi(PromptViMode::Insert)
+                );
+                let _ = self
+                    .edit_mode
+                    .handle_mode_specific_event(ReedlineEvent::ViExitToNormalMode);
+                if was_insert && self.editor.insertion_point() > 0 {
+                    self.run_edit_commands(&[EditCommand::MoveLeft { select: false }]);
+                }
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::CtrlD => {

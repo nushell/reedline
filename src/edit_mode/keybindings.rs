@@ -5,12 +5,16 @@ use {
     std::collections::HashMap,
 };
 
+/// Key combination consisting of modifier(s) and a key code.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct KeyCombination {
+    /// Key modifiers (e.g., Ctrl, Alt, Shift)
     pub modifier: KeyModifiers,
+    /// Key code (e.g., Char('a'), Enter)
     pub key_code: KeyCode,
 }
 
+/// Sequence of key combinations.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct KeySequence(pub Vec<KeyCombination>);
 
@@ -22,10 +26,22 @@ pub enum KeySequenceMatch {
     NoMatch,
 }
 
+/// State used to track partial key sequence matches.
 #[derive(Debug, Default, Clone)]
 pub struct KeySequenceState {
     buffer: Vec<KeyCombination>,
     pending_exact: Option<(usize, ReedlineEvent)>,
+}
+
+/// Resolution result for processing a key sequence.
+#[derive(Debug, Default, Clone)]
+pub struct SequenceResolution {
+    /// Events emitted from matched sequences.
+    pub events: Vec<ReedlineEvent>,
+    /// Key combinations to flush through fallback handling.
+    pub combos: Vec<KeyCombination>,
+    /// Whether a sequence is pending further input.
+    pub pending: bool,
 }
 
 /// Main definition of editor keybindings
@@ -258,6 +274,97 @@ impl KeySequenceState {
         }
 
         Some(ReedlineEvent::Multiple(events))
+    }
+
+    pub fn process_combo_with_flush(
+        &mut self,
+        keybindings: &Keybindings,
+        combo: KeyCombination,
+    ) -> SequenceResolution {
+        if keybindings.sequence_bindings.is_empty() {
+            self.clear();
+            return SequenceResolution {
+                combos: vec![combo],
+                ..SequenceResolution::default()
+            };
+        }
+
+        self.buffer.push(combo);
+        let mut resolution = SequenceResolution::default();
+
+        loop {
+            match keybindings.sequence_match(&self.buffer) {
+                KeySequenceMatch::Exact(event) => {
+                    self.buffer.clear();
+                    self.pending_exact = None;
+                    resolution.events.push(event);
+                    break;
+                }
+                KeySequenceMatch::ExactAndPrefix(event) => {
+                    self.pending_exact = Some((self.buffer.len(), event));
+                    resolution.pending = true;
+                    break;
+                }
+                KeySequenceMatch::Prefix => {
+                    self.pending_exact = None;
+                    resolution.pending = true;
+                    break;
+                }
+                KeySequenceMatch::NoMatch => {
+                    if let Some((pending_len, pending_event)) = self.pending_exact.take() {
+                        let remaining = if pending_len < self.buffer.len() {
+                            self.buffer.split_off(pending_len)
+                        } else {
+                            Vec::new()
+                        };
+                        self.buffer.clear();
+                        self.buffer = remaining;
+                        resolution.events.push(pending_event);
+                        if self.buffer.is_empty() {
+                            break;
+                        }
+                        continue;
+                    }
+
+                    let flushed = self.buffer.remove(0);
+                    resolution.combos.push(flushed);
+                    if self.buffer.is_empty() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if self.buffer.is_empty() {
+            self.pending_exact = None;
+        }
+
+        resolution.pending = !self.buffer.is_empty();
+        resolution
+    }
+
+    pub fn flush_with_combos(&mut self) -> SequenceResolution {
+        if self.buffer.is_empty() {
+            return SequenceResolution::default();
+        }
+
+        let mut resolution = SequenceResolution::default();
+
+        if let Some((pending_len, pending_event)) = self.pending_exact.take() {
+            let remaining = if pending_len < self.buffer.len() {
+                self.buffer.split_off(pending_len)
+            } else {
+                Vec::new()
+            };
+            self.buffer.clear();
+            resolution.events.push(pending_event);
+            resolution.combos = remaining;
+        } else {
+            resolution.combos = std::mem::take(&mut self.buffer);
+        }
+
+        self.pending_exact = None;
+        resolution
     }
 
     pub fn flush<F>(&mut self, mut fallback: F) -> Option<ReedlineEvent>
