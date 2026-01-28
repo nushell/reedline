@@ -18,4 +18,14 @@ pub trait EditMode: Send {
     fn handle_mode_specific_event(&mut self, _event: ReedlineEvent) -> EventStatus {
         EventStatus::Inapplicable
     }
+
+    /// Whether a key sequence is currently pending
+    fn has_pending_sequence(&self) -> bool {
+        false
+    }
+
+    /// Flush any pending key sequence and return the resulting event
+    fn flush_pending_sequence(&mut self) -> Option<ReedlineEvent> {
+        None
+    }
 }

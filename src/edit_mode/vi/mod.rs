@@ -12,7 +12,7 @@ use self::motion::ViCharSearch;
 
 use super::EditMode;
 use crate::{
-    edit_mode::{keybindings::Keybindings, vi::parser::parse},
+    edit_mode::{keybindings::Keybindings, vi::parser::parse, KeyCombination, KeySequenceState},
     enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
     PromptEditMode, PromptViMode,
 };
@@ -42,6 +42,7 @@ pub struct Vi {
     cache: Vec<char>,
     insert_keybindings: Keybindings,
     normal_keybindings: Keybindings,
+    insert_sequence_state: KeySequenceState,
     mode: ViMode,
     previous: Option<ReedlineEvent>,
     // last f, F, t, T motion for ; and ,
@@ -54,6 +55,7 @@ impl Default for Vi {
             insert_keybindings: default_vi_insert_keybindings(),
             normal_keybindings: default_vi_normal_keybindings(),
             cache: Vec::new(),
+            insert_sequence_state: KeySequenceState::default(),
             mode: ViMode::Insert,
             previous: None,
             last_char_search: None,
@@ -118,45 +120,12 @@ impl EditMode for Vi {
                     }
                 }
                 (ViMode::Insert, modifier, KeyCode::Char(c)) => {
-                    // Note. The modifier can also be a combination of modifiers, for
-                    // example:
-                    //     KeyModifiers::CONTROL | KeyModifiers::ALT
-                    //     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
-                    //
-                    // Mixed modifiers are used by non american keyboards that have extra
-                    // keys like 'alt gr'. Keep this in mind if in the future there are
-                    // cases where an event is not being captured
-                    let c = match modifier {
-                        KeyModifiers::NONE => c,
-                        _ => c.to_ascii_lowercase(),
-                    };
-
-                    self.insert_keybindings
-                        .find_binding(modifier, KeyCode::Char(c))
-                        .unwrap_or_else(|| {
-                            if modifier == KeyModifiers::NONE
-                                || modifier == KeyModifiers::SHIFT
-                                || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
-                                || modifier
-                                    == KeyModifiers::CONTROL
-                                        | KeyModifiers::ALT
-                                        | KeyModifiers::SHIFT
-                            {
-                                ReedlineEvent::Edit(vec![EditCommand::InsertChar(
-                                    if modifier == KeyModifiers::SHIFT {
-                                        c.to_ascii_uppercase()
-                                    } else {
-                                        c
-                                    },
-                                )])
-                            } else {
-                                ReedlineEvent::None
-                            }
-                        })
+                    self.handle_insert_key(modifier, KeyCode::Char(c))
                 }
                 (_, KeyModifiers::NONE, KeyCode::Esc) => {
                     self.cache.clear();
                     self.mode = ViMode::Normal;
+                    self.insert_sequence_state.clear();
                     ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
                 }
                 (ViMode::Normal | ViMode::Visual, _, _) => self
@@ -171,26 +140,18 @@ impl EditMode for Vi {
                             ReedlineEvent::None
                         }
                     }),
-                (ViMode::Insert, _, _) => self
-                    .insert_keybindings
-                    .find_binding(modifiers, code)
-                    .unwrap_or_else(|| {
-                        // Default Enter behavior when no custom binding
-                        if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
-                            ReedlineEvent::Enter
-                        } else {
-                            ReedlineEvent::None
-                        }
-                    }),
+                (ViMode::Insert, _, _) => self.handle_insert_key(modifiers, code),
             },
 
-            Event::Mouse(_) => ReedlineEvent::Mouse,
-            Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
-            Event::FocusGained => ReedlineEvent::None,
-            Event::FocusLost => ReedlineEvent::None,
-            Event::Paste(body) => ReedlineEvent::Edit(vec![EditCommand::InsertString(
-                body.replace("\r\n", "\n").replace('\r', "\n"),
-            )]),
+            Event::Mouse(_) => self.with_flushed_insert_sequence(ReedlineEvent::Mouse),
+            Event::Resize(width, height) => {
+                self.with_flushed_insert_sequence(ReedlineEvent::Resize(width, height))
+            }
+            Event::FocusGained => self.with_flushed_insert_sequence(ReedlineEvent::None),
+            Event::FocusLost => self.with_flushed_insert_sequence(ReedlineEvent::None),
+            Event::Paste(body) => self.with_flushed_insert_sequence(ReedlineEvent::Edit(vec![
+                EditCommand::InsertString(body.replace("\r\n", "\n").replace('\r', "\n")),
+            ])),
         }
     }
 
@@ -206,6 +167,7 @@ impl EditMode for Vi {
             ReedlineEvent::ViChangeMode(mode_str) => match ViMode::from_str(&mode_str) {
                 Ok(mode) => {
                     self.mode = mode;
+                    self.insert_sequence_state.clear();
                     EventStatus::Handled
                 }
                 Err(_) => EventStatus::Inapplicable,
@@ -213,11 +175,105 @@ impl EditMode for Vi {
             _ => EventStatus::Inapplicable,
         }
     }
+
+    fn has_pending_sequence(&self) -> bool {
+        matches!(self.mode, ViMode::Insert) && self.insert_sequence_state.is_pending()
+    }
+
+    fn flush_pending_sequence(&mut self) -> Option<ReedlineEvent> {
+        if !matches!(self.mode, ViMode::Insert) {
+            return None;
+        }
+
+        let keybindings = &self.insert_keybindings;
+        self.insert_sequence_state
+            .flush(|combo| Self::insert_single_key_event(keybindings, combo))
+    }
+}
+
+impl Vi {
+    fn normalize_key_combo(modifier: KeyModifiers, code: KeyCode) -> KeyCombination {
+        let key_code = match code {
+            KeyCode::Char(c) => {
+                let c = match modifier {
+                    KeyModifiers::NONE => c,
+                    _ => c.to_ascii_lowercase(),
+                };
+                KeyCode::Char(c)
+            }
+            other => other,
+        };
+
+        KeyCombination { modifier, key_code }
+    }
+
+    fn insert_single_key_event(keybindings: &Keybindings, combo: KeyCombination) -> ReedlineEvent {
+        match combo.key_code {
+            KeyCode::Char(c) => keybindings
+                .find_binding(combo.modifier, KeyCode::Char(c))
+                .unwrap_or_else(|| {
+                    if combo.modifier == KeyModifiers::NONE
+                        || combo.modifier == KeyModifiers::SHIFT
+                        || combo.modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
+                        || combo.modifier
+                            == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
+                    {
+                        ReedlineEvent::Edit(vec![EditCommand::InsertChar(
+                            if combo.modifier == KeyModifiers::SHIFT {
+                                c.to_ascii_uppercase()
+                            } else {
+                                c
+                            },
+                        )])
+                    } else {
+                        ReedlineEvent::None
+                    }
+                }),
+            code => keybindings
+                .find_binding(combo.modifier, code)
+                .unwrap_or_else(|| {
+                    if combo.modifier == KeyModifiers::NONE && code == KeyCode::Enter {
+                        ReedlineEvent::Enter
+                    } else {
+                        ReedlineEvent::None
+                    }
+                }),
+        }
+    }
+
+    fn handle_insert_key(&mut self, modifier: KeyModifiers, code: KeyCode) -> ReedlineEvent {
+        let combo = Self::normalize_key_combo(modifier, code);
+        let keybindings = &self.insert_keybindings;
+        self.insert_sequence_state
+            .process_combo(keybindings, combo, |combo| {
+                Self::insert_single_key_event(keybindings, combo)
+            })
+            .unwrap_or(ReedlineEvent::None)
+    }
+
+    fn with_flushed_insert_sequence(&mut self, event: ReedlineEvent) -> ReedlineEvent {
+        let Some(flush_event) = self.flush_pending_sequence() else {
+            return event;
+        };
+
+        if matches!(event, ReedlineEvent::None) {
+            return flush_event;
+        }
+
+        match flush_event {
+            ReedlineEvent::Multiple(mut events) => {
+                events.push(event);
+                ReedlineEvent::Multiple(events)
+            }
+            other => ReedlineEvent::Multiple(vec![other, event]),
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::KeyCombination;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -331,5 +387,49 @@ mod test {
         let result = vi.parse_event(esc);
 
         assert_eq!(result, ReedlineEvent::None);
+    }
+
+    #[test]
+    fn insert_sequence_binding_emits_event() {
+        let mut insert_keybindings = default_vi_insert_keybindings();
+        let exit_event = ReedlineEvent::Multiple(vec![
+            ReedlineEvent::Esc,
+            ReedlineEvent::ViChangeMode("normal".to_string()),
+            ReedlineEvent::Repaint,
+        ]);
+        insert_keybindings.add_sequence_binding(
+            vec![
+                KeyCombination {
+                    modifier: KeyModifiers::NONE,
+                    key_code: KeyCode::Char('j'),
+                },
+                KeyCombination {
+                    modifier: KeyModifiers::NONE,
+                    key_code: KeyCode::Char('j'),
+                },
+            ],
+            exit_event.clone(),
+        );
+
+        let mut vi = Vi {
+            insert_keybindings,
+            normal_keybindings: default_vi_normal_keybindings(),
+            mode: ViMode::Insert,
+            ..Default::default()
+        };
+
+        let first = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        let second = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+
+        assert_eq!(vi.parse_event(first), ReedlineEvent::None);
+        assert_eq!(vi.parse_event(second), exit_event);
     }
 }

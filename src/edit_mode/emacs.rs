@@ -2,7 +2,8 @@ use crate::{
     edit_mode::{
         keybindings::{
             add_common_control_bindings, add_common_edit_bindings, add_common_navigation_bindings,
-            add_common_selection_bindings, edit_bind, Keybindings,
+            add_common_selection_bindings, edit_bind, KeyCombination, KeySequenceState,
+            Keybindings,
         },
         EditMode,
     },
@@ -105,12 +106,14 @@ pub fn default_emacs_keybindings() -> Keybindings {
 /// This parses the incoming Events like a emacs style-editor
 pub struct Emacs {
     keybindings: Keybindings,
+    sequence_state: KeySequenceState,
 }
 
 impl Default for Emacs {
     fn default() -> Self {
         Emacs {
             keybindings: default_emacs_keybindings(),
+            sequence_state: KeySequenceState::default(),
         }
     }
 }
@@ -120,69 +123,113 @@ impl EditMode for Emacs {
         match event.into() {
             Event::Key(KeyEvent {
                 code, modifiers, ..
-            }) => match (modifiers, code) {
-                (modifier, KeyCode::Char(c)) => {
-                    // Note. The modifier can also be a combination of modifiers, for
-                    // example:
-                    //     KeyModifiers::CONTROL | KeyModifiers::ALT
-                    //     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
-                    //
-                    // Mixed modifiers are used by non american keyboards that have extra
-                    // keys like 'alt gr'. Keep this in mind if in the future there are
-                    // cases where an event is not being captured
-                    let c = match modifier {
-                        KeyModifiers::NONE => c,
-                        _ => c.to_ascii_lowercase(),
-                    };
+            }) => {
+                let combo = Self::normalize_key_combo(modifiers, code);
+                let keybindings = &self.keybindings;
+                self.sequence_state
+                    .process_combo(keybindings, combo, |combo| {
+                        Self::single_key_event(keybindings, combo)
+                    })
+                    .unwrap_or(ReedlineEvent::None)
+            }
 
-                    self.keybindings
-                        .find_binding(modifier, KeyCode::Char(c))
-                        .unwrap_or_else(|| {
-                            if modifier == KeyModifiers::NONE
-                                || modifier == KeyModifiers::SHIFT
-                                || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
-                                || modifier
-                                    == KeyModifiers::CONTROL
-                                        | KeyModifiers::ALT
-                                        | KeyModifiers::SHIFT
-                            {
-                                ReedlineEvent::Edit(vec![EditCommand::InsertChar(
-                                    if modifier == KeyModifiers::SHIFT {
-                                        c.to_ascii_uppercase()
-                                    } else {
-                                        c
-                                    },
-                                )])
-                            } else {
-                                ReedlineEvent::None
-                            }
-                        })
-                }
-                _ => self
-                    .keybindings
-                    .find_binding(modifiers, code)
-                    .unwrap_or(ReedlineEvent::None),
-            },
-
-            Event::Mouse(_) => ReedlineEvent::Mouse,
-            Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
-            Event::FocusGained => ReedlineEvent::None,
-            Event::FocusLost => ReedlineEvent::None,
-            Event::Paste(body) => ReedlineEvent::Edit(vec![EditCommand::InsertString(
-                body.replace("\r\n", "\n").replace('\r', "\n"),
-            )]),
+            Event::Mouse(_) => self.with_flushed_sequence(ReedlineEvent::Mouse),
+            Event::Resize(width, height) => {
+                self.with_flushed_sequence(ReedlineEvent::Resize(width, height))
+            }
+            Event::FocusGained => self.with_flushed_sequence(ReedlineEvent::None),
+            Event::FocusLost => self.with_flushed_sequence(ReedlineEvent::None),
+            Event::Paste(body) => {
+                self.with_flushed_sequence(ReedlineEvent::Edit(vec![EditCommand::InsertString(
+                    body.replace("\r\n", "\n").replace('\r', "\n"),
+                )]))
+            }
         }
     }
 
     fn edit_mode(&self) -> PromptEditMode {
         PromptEditMode::Emacs
     }
+
+    fn has_pending_sequence(&self) -> bool {
+        self.sequence_state.is_pending()
+    }
+
+    fn flush_pending_sequence(&mut self) -> Option<ReedlineEvent> {
+        let keybindings = &self.keybindings;
+        self.sequence_state
+            .flush(|combo| Self::single_key_event(keybindings, combo))
+    }
 }
 
 impl Emacs {
     /// Emacs style input parsing constructor if you want to use custom keybindings
     pub const fn new(keybindings: Keybindings) -> Self {
-        Emacs { keybindings }
+        Emacs {
+            keybindings,
+            sequence_state: KeySequenceState::new(),
+        }
+    }
+
+    fn normalize_key_combo(modifier: KeyModifiers, code: KeyCode) -> KeyCombination {
+        let key_code = match code {
+            KeyCode::Char(c) => {
+                let c = match modifier {
+                    KeyModifiers::NONE => c,
+                    _ => c.to_ascii_lowercase(),
+                };
+                KeyCode::Char(c)
+            }
+            other => other,
+        };
+
+        KeyCombination { modifier, key_code }
+    }
+
+    fn single_key_event(keybindings: &Keybindings, combo: KeyCombination) -> ReedlineEvent {
+        match combo.key_code {
+            KeyCode::Char(c) => keybindings
+                .find_binding(combo.modifier, KeyCode::Char(c))
+                .unwrap_or_else(|| {
+                    if combo.modifier == KeyModifiers::NONE
+                        || combo.modifier == KeyModifiers::SHIFT
+                        || combo.modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
+                        || combo.modifier
+                            == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
+                    {
+                        ReedlineEvent::Edit(vec![EditCommand::InsertChar(
+                            if combo.modifier == KeyModifiers::SHIFT {
+                                c.to_ascii_uppercase()
+                            } else {
+                                c
+                            },
+                        )])
+                    } else {
+                        ReedlineEvent::None
+                    }
+                }),
+            code => keybindings
+                .find_binding(combo.modifier, code)
+                .unwrap_or(ReedlineEvent::None),
+        }
+    }
+
+    fn with_flushed_sequence(&mut self, event: ReedlineEvent) -> ReedlineEvent {
+        let Some(flush_event) = self.flush_pending_sequence() else {
+            return event;
+        };
+
+        if matches!(event, ReedlineEvent::None) {
+            return flush_event;
+        }
+
+        match flush_event {
+            ReedlineEvent::Multiple(mut events) => {
+                events.push(event);
+                ReedlineEvent::Multiple(events)
+            }
+            other => ReedlineEvent::Multiple(vec![other, event]),
+        }
     }
 }
 

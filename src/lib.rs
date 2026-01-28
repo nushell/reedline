@@ -59,6 +59,45 @@
 //! let mut line_editor = Reedline::create().with_edit_mode(edit_mode);
 //! ```
 //!
+//! ## Integrate with key sequences
+//!
+//! ```rust
+//! // Configure reedline with key sequence bindings (like "jj" in vi insert mode)
+//!
+//! use {
+//!   crossterm::event::{KeyCode, KeyModifiers},
+//!   reedline::{
+//!     default_vi_insert_keybindings, default_vi_normal_keybindings, KeyCombination, Reedline,
+//!     ReedlineEvent, Vi,
+//!   },
+//! };
+//!
+//! let mut insert_keybindings = default_vi_insert_keybindings();
+//! insert_keybindings.add_sequence_binding(
+//!   vec![
+//!     KeyCombination {
+//!       modifier: KeyModifiers::NONE,
+//!       key_code: KeyCode::Char('j'),
+//!     },
+//!     KeyCombination {
+//!       modifier: KeyModifiers::NONE,
+//!       key_code: KeyCode::Char('j'),
+//!     },
+//!   ],
+//!   ReedlineEvent::Multiple(vec![
+//!     ReedlineEvent::Esc,
+//!     ReedlineEvent::ViChangeMode("normal".into()),
+//!     ReedlineEvent::Repaint,
+//!   ]),
+//! );
+//!
+//! let edit_mode = Box::new(Vi::new(
+//!   insert_keybindings,
+//!   default_vi_normal_keybindings(),
+//! ));
+//! let mut line_editor = Reedline::create().with_edit_mode(edit_mode);
+//! ```
+//!
 //! ## Integrate with [`History`]
 //!
 //! ```rust,no_run
@@ -262,7 +301,7 @@ pub use prompt::{
 mod edit_mode;
 pub use edit_mode::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-    CursorConfig, EditMode, Emacs, Keybindings, Vi,
+    CursorConfig, EditMode, Emacs, KeyCombination, KeySequence, Keybindings, Vi,
 };
 
 mod highlighter;
