@@ -12,7 +12,6 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyModifiers};
 
-
 /// Returns the current default emacs keybindings
 pub fn default_emacs_keybindings() -> Keybindings {
     use EditCommand as EC;

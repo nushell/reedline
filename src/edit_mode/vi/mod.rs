@@ -12,7 +12,9 @@ use self::motion::ViCharSearch;
 
 use super::EditMode;
 use crate::{
-    edit_mode::{keybindings::Keybindings, vi::parser::parse, KeyCombination, KeySequenceState}, enums::{EventStatus, ReedlineEvent}, PromptEditMode, PromptViMode
+    edit_mode::{keybindings::Keybindings, vi::parser::parse, KeyCombination, KeySequenceState},
+    enums::{EventStatus, ReedlineEvent},
+    PromptEditMode, PromptViMode,
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
