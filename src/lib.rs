@@ -84,7 +84,7 @@
 //!       key_code: KeyCode::Char('j'),
 //!     },
 //!   ],
-//!   ReedlineEvent::ViExitToNormalMode,
+//!   ReedlineEvent::ViChangeMode("normal".into()),
 //! );
 //!
 //! let edit_mode = Box::new(Vi::new(

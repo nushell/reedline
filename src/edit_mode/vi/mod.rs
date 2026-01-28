@@ -12,9 +12,7 @@ use self::motion::ViCharSearch;
 
 use super::EditMode;
 use crate::{
-    edit_mode::{keybindings::Keybindings, vi::parser::parse, KeyCombination, KeySequenceState},
-    enums::{EventStatus, ReedlineEvent},
-    PromptEditMode, PromptViMode,
+    edit_mode::{keybindings::Keybindings, vi::parser::parse, KeyCombination, KeySequenceState}, enums::{EventStatus, ReedlineEvent}, PromptEditMode, PromptViMode
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -66,7 +64,7 @@ impl Vi {
         visual_keybindings.add_binding(
             KeyModifiers::NONE,
             KeyCode::Esc,
-            ReedlineEvent::ViExitToNormalMode,
+            ReedlineEvent::ViChangeMode("normal".into()),
         );
         let _ = visual_keybindings.remove_binding(KeyModifiers::NONE, KeyCode::Char('v'));
 
@@ -129,7 +127,6 @@ impl EditMode for Vi {
             ReedlineEvent::ViChangeMode(mode_str) => ViMode::from_str(&mode_str)
                 .map(|mode| self.set_mode(mode))
                 .unwrap_or(EventStatus::Inapplicable),
-            ReedlineEvent::ViExitToNormalMode => self.set_mode(ViMode::Normal),
             _ => EventStatus::Inapplicable,
         }
     }
@@ -239,7 +236,7 @@ mod test {
                 .unwrap();
         let result = vi.parse_event(esc);
 
-        assert_eq!(result, ReedlineEvent::ViExitToNormalMode);
+        assert_eq!(result, ReedlineEvent::ViChangeMode("normal".into()));
     }
 
     #[test]
@@ -357,7 +354,7 @@ mod test {
     #[test]
     fn insert_sequence_binding_emits_event() {
         let mut insert_keybindings = default_vi_insert_keybindings();
-        let exit_event = ReedlineEvent::ViExitToNormalMode;
+        let exit_event = ReedlineEvent::ViChangeMode("normal".into());
         insert_keybindings.add_sequence_binding(
             vec![
                 KeyCombination {

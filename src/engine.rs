@@ -989,13 +989,6 @@ impl Reedline {
                 self.input_mode = InputMode::Regular;
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::ViExitToNormalMode => {
-                self.input_mode = InputMode::Regular;
-                let _ = self
-                    .edit_mode
-                    .handle_mode_specific_event(ReedlineEvent::ViExitToNormalMode);
-                Ok(EventStatus::Handled)
-            }
             // TODO: Check if events should be handled
             ReedlineEvent::Right
             | ReedlineEvent::Left
@@ -1155,21 +1148,6 @@ impl Reedline {
             ReedlineEvent::Esc => {
                 self.deactivate_menus();
                 self.editor.clear_selection();
-                Ok(EventStatus::Handled)
-            }
-            ReedlineEvent::ViExitToNormalMode => {
-                self.deactivate_menus();
-                self.editor.clear_selection();
-                let was_insert = matches!(
-                    self.edit_mode.edit_mode(),
-                    PromptEditMode::Vi(PromptViMode::Insert)
-                );
-                let _ = self
-                    .edit_mode
-                    .handle_mode_specific_event(ReedlineEvent::ViExitToNormalMode);
-                if was_insert && self.editor.insertion_point() > 0 {
-                    self.run_edit_commands(&[EditCommand::MoveLeft { select: false }]);
-                }
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::CtrlD => {
@@ -1372,7 +1350,21 @@ impl Reedline {
                 // Exhausting the event handlers is still considered handled
                 Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::ViChangeMode(_) => Ok(self.edit_mode.handle_mode_specific_event(event)),
+            ReedlineEvent::ViChangeMode(_) => {
+                let was_insert = matches!(
+                    self.edit_mode.edit_mode(),
+                    PromptEditMode::Vi(PromptViMode::Insert)
+                );
+                let status = self.edit_mode.handle_mode_specific_event(event);
+                if matches!(status, EventStatus::Handled) {
+                    self.editor.clear_selection();
+                    if was_insert && self.editor.insertion_point() > 0 {
+                        self.run_edit_commands(&[EditCommand::MoveLeft { select: false }]);
+                    }
+                }
+
+                Ok(status)
+            }
             ReedlineEvent::None | ReedlineEvent::Mouse => Ok(EventStatus::Inapplicable),
         }
     }

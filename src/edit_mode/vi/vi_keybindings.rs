@@ -52,7 +52,7 @@ pub fn default_vi_insert_keybindings() -> Keybindings {
     add_common_navigation_bindings(&mut kb);
     add_common_edit_bindings(&mut kb);
     add_common_selection_bindings(&mut kb);
-    kb.add_binding(KM::NONE, KC::Esc, ReedlineEvent::ViExitToNormalMode);
+    kb.add_binding(KM::NONE, KC::Esc, ReedlineEvent::ViChangeMode("normal".into()));
 
     kb
 }
