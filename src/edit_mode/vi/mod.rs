@@ -172,6 +172,14 @@ impl Vi {
     }
 
     fn handle_key_event(&mut self, modifier: KeyModifiers, code: KeyCode) -> ReedlineEvent {
+        if matches!(self.mode, ViMode::Normal | ViMode::Visual)
+            && !self.cache.is_empty()
+            && matches!(code, KeyCode::Char(_))
+        {
+            let combo = Self::normalize_key_combo(modifier, code);
+            return self.normal_visual_single_key_event(combo);
+        }
+
         let combo = Self::normalize_key_combo(modifier, code);
         let keybindings = match self.mode {
             ViMode::Normal => &self.normal_keybindings,
@@ -259,12 +267,16 @@ impl Vi {
     fn normal_visual_single_key_event(&mut self, combo: KeyCombination) -> ReedlineEvent {
         let mode = self.mode;
         let keybindings = self.keybindings_for_mode(mode);
+        let cache_pending = !self.cache.is_empty();
         match combo.key_code {
             KeyCode::Char(c) => {
                 let c = c.to_ascii_lowercase();
 
-                if let Some(event) = keybindings.find_binding(combo.modifier, KeyCode::Char(c)) {
-                    return event;
+                if !cache_pending {
+                    if let Some(event) = keybindings.find_binding(combo.modifier, KeyCode::Char(c))
+                    {
+                        return event;
+                    }
                 }
 
                 if combo.modifier == KeyModifiers::NONE || combo.modifier == KeyModifiers::SHIFT {
@@ -350,7 +362,7 @@ impl Vi {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::KeyCombination;
+    use crate::{EditCommand, KeyCombination};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -514,5 +526,133 @@ mod test {
 
         assert_eq!(vi.parse_event(first), ReedlineEvent::None);
         assert_eq!(vi.parse_event(second), exit_event);
+    }
+
+    #[test]
+    fn normal_mode_f_space_moves_to_space() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let f = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('f'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        let space = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+
+        assert_eq!(vi.parse_event(f), ReedlineEvent::None);
+        assert_eq!(
+            vi.parse_event(space),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![
+                EditCommand::MoveRightUntil {
+                    c: ' ',
+                    select: false,
+                },
+            ])])
+        );
+    }
+
+    #[test]
+    fn normal_mode_t_space_moves_before_space() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let t = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('t'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        let space = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+
+        assert_eq!(vi.parse_event(t), ReedlineEvent::None);
+        assert_eq!(
+            vi.parse_event(space),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![
+                EditCommand::MoveRightBefore {
+                    c: ' ',
+                    select: false,
+                },
+            ])])
+        );
+    }
+
+    #[test]
+    fn normal_mode_dt_space_cuts_before_space() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let d = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('d'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        let t = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('t'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        let space = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+
+        assert_eq!(vi.parse_event(d), ReedlineEvent::None);
+        assert_eq!(vi.parse_event(t), ReedlineEvent::None);
+        assert_eq!(
+            vi.parse_event(space),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![
+                EditCommand::CutRightBefore(' ')
+            ])])
+        );
+    }
+
+    #[test]
+    fn pending_motion_ignores_space_binding() {
+        let mut normal_keybindings = default_vi_normal_keybindings();
+        normal_keybindings.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::Char(' '),
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar(' ')]),
+        );
+
+        let mut vi = Vi::new(default_vi_insert_keybindings(), normal_keybindings);
+        vi.mode = ViMode::Normal;
+
+        let f = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('f'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        let space = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+
+        assert_eq!(vi.parse_event(f), ReedlineEvent::None);
+        assert_eq!(
+            vi.parse_event(space),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![
+                EditCommand::MoveRightUntil {
+                    c: ' ',
+                    select: false,
+                },
+            ])])
+        );
     }
 }
