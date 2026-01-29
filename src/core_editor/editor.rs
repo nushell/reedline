@@ -383,7 +383,11 @@ impl Editor {
             .map_or(self.line_buffer.len(), |offset| {
                 // When leave_blank_line is true, we do **not** add 1 to the offset
                 // So there will remain an empty line after the operation
-                insertion_offset + offset + !leave_blank_line as usize
+                if leave_blank_line {
+                    insertion_offset + offset
+                } else {
+                    insertion_offset + offset + 1
+                }
             });
         if end_offset > 0 {
             self.cut_buffer.set(
@@ -425,9 +429,15 @@ impl Editor {
     fn cut_from_end_linewise(&mut self, leave_blank_line: bool) {
         let start_offset = self.line_buffer.get_buffer()[..self.line_buffer.insertion_point()]
             .rfind('\n')
-            // When leave_blank_line is true, we add 1 to the offset
-            // So the \n character is not truncated
-            .map_or(0, |offset| offset + leave_blank_line as usize);
+            .map_or(0, |offset| {
+                // When leave_blank_line is true, we add 1 to the offset
+                // So the \n character is not truncated
+                if leave_blank_line {
+                    offset + 1
+                } else {
+                    offset
+                }
+            });
 
         let cut_slice = &self.line_buffer.get_buffer()[start_offset..];
         if !cut_slice.is_empty() {
