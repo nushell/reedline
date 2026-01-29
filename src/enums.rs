@@ -506,13 +506,13 @@ impl Display for EditCommand {
             EditCommand::CutCurrentLine => write!(f, "CutCurrentLine"),
             EditCommand::CutFromStart => write!(f, "CutFromStart"),
             EditCommand::CutFromStartLinewise { .. } => {
-                write!(f, "CutFromStartLinewise leave_blank_line: <bool>")
+                write!(f, "CutFromStartLinewise Value: <bool>")
             }
             EditCommand::CutFromLineStart => write!(f, "CutFromLineStart"),
             EditCommand::CutFromLineNonBlankStart => write!(f, "CutFromLineNonBlankStart"),
             EditCommand::CutToEnd => write!(f, "CutToEnd"),
             EditCommand::CutToEndLinewise { .. } => {
-                write!(f, "CutToEndLinewise leave_blank_line: <bool>")
+                write!(f, "CutToEndLinewise Value: <bool>")
             }
             EditCommand::CutToLineEnd => write!(f, "CutToLineEnd"),
             EditCommand::KillLine => write!(f, "KillLine"),
