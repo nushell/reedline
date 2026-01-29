@@ -189,6 +189,46 @@ impl Painter {
             .flush()
     }
 
+    pub(crate) fn clear_after_external_picker(
+        &mut self,
+        suspended_state: &PainterSuspendedState,
+        clear_height: Option<u16>,
+    ) -> Result<bool> {
+        let Some(clear_height) = clear_height else {
+            return Ok(true);
+        };
+
+        if clear_height == 0 {
+            return Ok(true);
+        }
+
+        let (_, screen_height) = terminal::size()?;
+        let clear_height = clear_height.min(screen_height);
+        if clear_height == 0 {
+            return Ok(true);
+        }
+
+        let skim_top = screen_height.saturating_sub(clear_height);
+        let prompt_start = suspended_state.prompt_start_row();
+        let prompt_end = suspended_state.prompt_end_row();
+        let reuse_prompt = prompt_end < skim_top;
+
+        let cursor_position = suspended_state.cursor_position();
+        let cursor_row = cursor_position.map(|(_, row)| row).unwrap_or(prompt_end);
+        let cursor_col = cursor_position.map(|(col, _)| col).unwrap_or(0);
+        let cursor_row_for_skim = cursor_row.saturating_add(u16::from(cursor_col > 0));
+        let scroll_amount = cursor_row_for_skim
+            .saturating_add(clear_height)
+            .saturating_sub(screen_height);
+        let mut clear_start = prompt_start.saturating_sub(scroll_amount);
+        if !reuse_prompt && suspended_state.prompt_height() > 1 {
+            clear_start = clear_start.saturating_sub(1);
+        }
+
+        self.clear_from_row(clear_start)?;
+        Ok(reuse_prompt)
+    }
+
     /// Sets the prompt origin position and screen size for a new line editor
     /// invocation
     ///

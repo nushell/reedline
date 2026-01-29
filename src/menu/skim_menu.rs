@@ -29,13 +29,9 @@ impl SkimSuggestionItem {
             .as_deref()
             .map(strip_ansi_to_string)
             .filter(|desc| !desc.is_empty());
-        let display = match description.as_deref() {
-            Some(desc) => format!("{value}{padding}{desc}"),
-            None => value.clone(),
-        };
-        let text = match description.as_deref() {
-            Some(desc) => format!("{value} {desc}"),
-            None => value.clone(),
+        let (display, text) = match description.as_deref() {
+            Some(desc) => (format!("{value}{padding}{desc}"), format!("{value} {desc}")),
+            None => (value.clone(), value.clone()),
         };
 
         Self {

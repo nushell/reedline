@@ -327,6 +327,28 @@ impl ReedlineMenu {
         }
     }
 
+    fn with_completer<T>(
+        &mut self,
+        completer: &mut dyn Completer,
+        history: Option<&dyn History>,
+        f: impl FnOnce(&mut dyn Menu, &mut dyn Completer) -> T,
+    ) -> T {
+        match self {
+            Self::EngineCompleter(menu) => f(menu.as_mut(), completer),
+            Self::HistoryMenu(menu) => match history {
+                Some(history) => {
+                    let mut history_completer = HistoryCompleter::new(history);
+                    f(menu.as_mut(), &mut history_completer)
+                }
+                None => f(menu.as_mut(), completer),
+            },
+            Self::WithCompleter {
+                menu,
+                completer: own_completer,
+            } => f(menu.as_mut(), own_completer.as_mut()),
+        }
+    }
+
     pub(crate) fn can_partially_complete(
         &mut self,
         values_updated: bool,
@@ -334,19 +356,9 @@ impl ReedlineMenu {
         completer: &mut dyn Completer,
         history: &dyn History,
     ) -> bool {
-        match self {
-            Self::EngineCompleter(menu) => {
-                menu.can_partially_complete(values_updated, editor, completer)
-            }
-            Self::HistoryMenu(menu) => {
-                let mut history_completer = HistoryCompleter::new(history);
-                menu.can_partially_complete(values_updated, editor, &mut history_completer)
-            }
-            Self::WithCompleter {
-                menu,
-                completer: own_completer,
-            } => menu.can_partially_complete(values_updated, editor, own_completer.as_mut()),
-        }
+        self.with_completer(completer, Some(history), |menu, completer| {
+            menu.can_partially_complete(values_updated, editor, completer)
+        })
     }
 
     pub(crate) fn uses_external_picker(&self) -> bool {
@@ -359,17 +371,9 @@ impl ReedlineMenu {
         completer: &mut dyn Completer,
         history: &dyn History,
     ) -> Option<Suggestion> {
-        match self {
-            Self::EngineCompleter(menu) => menu.external_pick(editor, completer),
-            Self::HistoryMenu(menu) => {
-                let mut history_completer = HistoryCompleter::new(history);
-                menu.external_pick(editor, &mut history_completer)
-            }
-            Self::WithCompleter {
-                menu,
-                completer: own_completer,
-            } => menu.external_pick(editor, own_completer.as_mut()),
-        }
+        self.with_completer(completer, Some(history), |menu, completer| {
+            menu.external_pick(editor, completer)
+        })
     }
 
     pub(crate) fn take_external_clear_height(&mut self) -> Option<u16> {
@@ -382,19 +386,9 @@ impl ReedlineMenu {
         completer: &mut dyn Completer,
         history: &dyn History,
     ) {
-        match self {
-            Self::EngineCompleter(menu) => menu.update_values(editor, completer),
-            Self::HistoryMenu(menu) => {
-                let mut history_completer = HistoryCompleter::new(history);
-                menu.update_values(editor, &mut history_completer);
-            }
-            Self::WithCompleter {
-                menu,
-                completer: own_completer,
-            } => {
-                menu.update_values(editor, own_completer.as_mut());
-            }
-        }
+        self.with_completer(completer, Some(history), |menu, completer| {
+            menu.update_values(editor, completer);
+        });
     }
 
     pub(crate) fn update_working_details(
@@ -404,21 +398,9 @@ impl ReedlineMenu {
         history: &dyn History,
         painter: &Painter,
     ) {
-        match self {
-            Self::EngineCompleter(menu) => {
-                menu.update_working_details(editor, completer, painter);
-            }
-            Self::HistoryMenu(menu) => {
-                let mut history_completer = HistoryCompleter::new(history);
-                menu.update_working_details(editor, &mut history_completer, painter);
-            }
-            Self::WithCompleter {
-                menu,
-                completer: own_completer,
-            } => {
-                menu.update_working_details(editor, own_completer.as_mut(), painter);
-            }
-        }
+        self.with_completer(completer, Some(history), |menu, completer| {
+            menu.update_working_details(editor, completer, painter);
+        });
     }
 }
 
@@ -452,15 +434,9 @@ impl Menu for ReedlineMenu {
         editor: &mut Editor,
         completer: &mut dyn Completer,
     ) -> Option<Suggestion> {
-        match self {
-            Self::EngineCompleter(menu) | Self::HistoryMenu(menu) => {
-                menu.external_pick(editor, completer)
-            }
-            Self::WithCompleter {
-                menu,
-                completer: own_completer,
-            } => menu.external_pick(editor, own_completer.as_mut()),
-        }
+        self.with_completer(completer, None, |menu, completer| {
+            menu.external_pick(editor, completer)
+        })
     }
 
     fn take_external_clear_height(&mut self) -> Option<u16> {
@@ -477,29 +453,15 @@ impl Menu for ReedlineMenu {
         editor: &mut Editor,
         completer: &mut dyn Completer,
     ) -> bool {
-        match self {
-            Self::EngineCompleter(menu) | Self::HistoryMenu(menu) => {
-                menu.can_partially_complete(values_updated, editor, completer)
-            }
-            Self::WithCompleter {
-                menu,
-                completer: own_completer,
-            } => menu.can_partially_complete(values_updated, editor, own_completer.as_mut()),
-        }
+        self.with_completer(completer, None, |menu, completer| {
+            menu.can_partially_complete(values_updated, editor, completer)
+        })
     }
 
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        match self {
-            Self::EngineCompleter(menu) | Self::HistoryMenu(menu) => {
-                menu.update_values(editor, completer);
-            }
-            Self::WithCompleter {
-                menu,
-                completer: own_completer,
-            } => {
-                menu.update_values(editor, own_completer.as_mut());
-            }
-        }
+        self.with_completer(completer, None, |menu, completer| {
+            menu.update_values(editor, completer);
+        });
     }
 
     fn update_working_details(
@@ -508,17 +470,9 @@ impl Menu for ReedlineMenu {
         completer: &mut dyn Completer,
         painter: &Painter,
     ) {
-        match self {
-            Self::EngineCompleter(menu) | Self::HistoryMenu(menu) => {
-                menu.update_working_details(editor, completer, painter);
-            }
-            Self::WithCompleter {
-                menu,
-                completer: own_completer,
-            } => {
-                menu.update_working_details(editor, own_completer.as_mut(), painter);
-            }
-        }
+        self.with_completer(completer, None, |menu, completer| {
+            menu.update_working_details(editor, completer, painter);
+        });
     }
 
     fn replace_in_buffer(&self, editor: &mut Editor) {

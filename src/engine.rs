@@ -677,35 +677,9 @@ impl Reedline {
 
         let (result, clear_height) = f(self);
 
-        let mut reuse_prompt = true;
-        if let Some(clear_height) = clear_height {
-            if clear_height > 0 {
-                let (_, screen_height) = terminal::size()?;
-                let clear_height = clear_height.min(screen_height);
-                if clear_height > 0 {
-                    let skim_top = screen_height.saturating_sub(clear_height);
-                    let prompt_start = painter_state.prompt_start_row();
-                    let prompt_end = painter_state.prompt_end_row();
-                    if prompt_end >= skim_top {
-                        reuse_prompt = false;
-                    }
-
-                    let cursor_position = painter_state.cursor_position();
-                    let cursor_row = cursor_position.map(|(_, row)| row).unwrap_or(prompt_end);
-                    let cursor_col = cursor_position.map(|(col, _)| col).unwrap_or(0);
-                    let cursor_row_for_skim = cursor_row.saturating_add(u16::from(cursor_col > 0));
-                    let scroll_amount = cursor_row_for_skim
-                        .saturating_add(clear_height)
-                        .saturating_sub(screen_height);
-                    let mut clear_start = prompt_start.saturating_sub(scroll_amount);
-                    if !reuse_prompt && painter_state.prompt_height() > 1 {
-                        clear_start = clear_start.saturating_sub(1);
-                    }
-
-                    self.painter.clear_from_row(clear_start)?;
-                }
-            }
-        }
+        let reuse_prompt = self
+            .painter
+            .clear_after_external_picker(&painter_state, clear_height)?;
 
         let raw_mode_result = terminal::enable_raw_mode();
         self.bracketed_paste.enter();
