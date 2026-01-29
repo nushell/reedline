@@ -53,6 +53,26 @@ pub type W = std::io::BufWriter<std::io::Stderr>;
 #[derive(Debug, PartialEq, Eq)]
 pub struct PainterSuspendedState {
     previous_prompt_rows_range: RangeInclusive<u16>,
+    cursor_position: Option<(u16, u16)>,
+    prompt_height: u16,
+}
+
+impl PainterSuspendedState {
+    pub(crate) fn prompt_start_row(&self) -> u16 {
+        *self.previous_prompt_rows_range.start()
+    }
+
+    pub(crate) fn prompt_end_row(&self) -> u16 {
+        *self.previous_prompt_rows_range.end()
+    }
+
+    pub(crate) fn cursor_position(&self) -> Option<(u16, u16)> {
+        self.cursor_position
+    }
+
+    pub(crate) fn prompt_height(&self) -> u16 {
+        self.prompt_height
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -148,7 +168,25 @@ impl Painter {
         let final_row = start_row + self.last_required_lines;
         PainterSuspendedState {
             previous_prompt_rows_range: start_row..=final_row,
+            cursor_position: cursor::position().ok(),
+            prompt_height: self.prompt_height,
         }
+    }
+
+    /// Restores the cursor to the previous prompt start row after a suspend.
+    pub(crate) fn restore_prompt_position(
+        &mut self,
+        suspended_state: &PainterSuspendedState,
+    ) -> Result<()> {
+        let start_row = *suspended_state.previous_prompt_rows_range.start();
+        self.stdout.queue(MoveTo(0, start_row))?.flush()
+    }
+
+    pub(crate) fn clear_from_row(&mut self, row: u16) -> Result<()> {
+        self.stdout
+            .queue(MoveTo(0, row))?
+            .queue(Clear(ClearType::FromCursorDown))?
+            .flush()
     }
 
     /// Sets the prompt origin position and screen size for a new line editor
@@ -728,6 +766,8 @@ mod tests {
     fn test_select_existing_prompt() {
         let state = PainterSuspendedState {
             previous_prompt_rows_range: 11..=13,
+            cursor_position: None,
+            prompt_height: 1,
         };
         assert_eq!(
             select_prompt_row(Some(&state), (0, 12)),

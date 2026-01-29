@@ -35,6 +35,7 @@ thiserror = "2.0.12"
 unicase = "2.8.0"
 unicode-segmentation = "1.9.0"
 unicode-width = "0.2"
+skim = { version = "0.10.4", optional = true }
 
 [dev-dependencies]
 gethostname = "0.4.0"
@@ -48,6 +49,7 @@ external_printer = ["crossbeam"]
 sqlite = ["rusqlite/bundled", "serde_json"]
 sqlite-dynlib = ["rusqlite", "serde_json"]
 system_clipboard = ["arboard"]
+skim = ["dep:skim"]
 
 [[example]]
 name = "cwd_aware_hinter"

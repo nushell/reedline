@@ -3,6 +3,8 @@ mod description_menu;
 mod ide_menu;
 mod list_menu;
 pub mod menu_functions;
+#[cfg(feature = "skim")]
+mod skim_menu;
 
 use crate::core_editor::Editor;
 use crate::History;
@@ -14,6 +16,8 @@ pub use ide_menu::DescriptionMode;
 pub use ide_menu::IdeMenu;
 pub use list_menu::ListMenu;
 use nu_ansi_term::{Color, Style};
+#[cfg(feature = "skim")]
+pub use skim_menu::SkimMenu;
 
 /// Struct to store the menu style
 pub struct MenuTextStyle {
@@ -97,6 +101,25 @@ pub trait Menu: Send {
 
     /// Selects what type of event happened with the menu
     fn menu_event(&mut self, event: MenuEvent);
+
+    /// Whether this menu uses an external picker UI
+    fn uses_external_picker(&self) -> bool {
+        false
+    }
+
+    /// Optional external picker selection, if supported
+    fn external_pick(
+        &mut self,
+        _editor: &mut Editor,
+        _completer: &mut dyn Completer,
+    ) -> Option<Suggestion> {
+        None
+    }
+
+    /// Optional external picker clear height, if supported
+    fn take_external_clear_height(&mut self) -> Option<u16> {
+        None
+    }
 
     /// A menu may not be allowed to quick complete because it needs to stay
     /// active even with one element
@@ -326,6 +349,33 @@ impl ReedlineMenu {
         }
     }
 
+    pub(crate) fn uses_external_picker(&self) -> bool {
+        self.as_ref().uses_external_picker()
+    }
+
+    pub(crate) fn external_pick(
+        &mut self,
+        editor: &mut Editor,
+        completer: &mut dyn Completer,
+        history: &dyn History,
+    ) -> Option<Suggestion> {
+        match self {
+            Self::EngineCompleter(menu) => menu.external_pick(editor, completer),
+            Self::HistoryMenu(menu) => {
+                let mut history_completer = HistoryCompleter::new(history);
+                menu.external_pick(editor, &mut history_completer)
+            }
+            Self::WithCompleter {
+                menu,
+                completer: own_completer,
+            } => menu.external_pick(editor, own_completer.as_mut()),
+        }
+    }
+
+    pub(crate) fn take_external_clear_height(&mut self) -> Option<u16> {
+        self.as_mut().take_external_clear_height()
+    }
+
     pub(crate) fn update_values(
         &mut self,
         editor: &mut Editor,
@@ -391,6 +441,30 @@ impl Menu for ReedlineMenu {
 
     fn menu_event(&mut self, event: MenuEvent) {
         self.as_mut().menu_event(event);
+    }
+
+    fn uses_external_picker(&self) -> bool {
+        self.as_ref().uses_external_picker()
+    }
+
+    fn external_pick(
+        &mut self,
+        editor: &mut Editor,
+        completer: &mut dyn Completer,
+    ) -> Option<Suggestion> {
+        match self {
+            Self::EngineCompleter(menu) | Self::HistoryMenu(menu) => {
+                menu.external_pick(editor, completer)
+            }
+            Self::WithCompleter {
+                menu,
+                completer: own_completer,
+            } => menu.external_pick(editor, own_completer.as_mut()),
+        }
+    }
+
+    fn take_external_clear_height(&mut self) -> Option<u16> {
+        self.as_mut().take_external_clear_height()
     }
 
     fn can_quick_complete(&self) -> bool {
