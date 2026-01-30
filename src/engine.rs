@@ -817,6 +817,25 @@ impl Reedline {
                         }
                         return Ok(signal);
                     }
+                    EventStatus::MenuUpdated => {
+                        if self.input_mode == InputMode::HistorySearch {
+                            self.history_search_paint(prompt)?
+                        } else {
+                            // Updating the working details of the active menu
+                            for menu in self.menus.iter_mut() {
+                                if menu.is_active() {
+                                    menu.update_working_details(
+                                        &mut self.editor,
+                                        self.completer.as_mut(),
+                                        self.history.as_ref(),
+                                        &self.painter,
+                                    );
+                                    self.painter.print_menu(menu, self.use_ansi_coloring)?;
+                                    break;
+                                }
+                            }
+                        }
+                    }
                     EventStatus::Handled => {
                         need_repaint = true;
                     }
@@ -1001,7 +1020,7 @@ impl Reedline {
                             );
                         }
                         menu.menu_event(MenuEvent::NextElement);
-                        Ok(EventStatus::Handled)
+                        Ok(EventStatus::MenuUpdated)
                     }
                 } else {
                     Ok(EventStatus::Inapplicable)
@@ -1011,49 +1030,49 @@ impl Reedline {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.menu_event(MenuEvent::PreviousElement);
-                        Ok(EventStatus::Handled)
+                        Ok(EventStatus::MenuUpdated)
                     })
             }
             ReedlineEvent::MenuUp => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.menu_event(MenuEvent::MoveUp);
-                        Ok(EventStatus::Handled)
+                        Ok(EventStatus::MenuUpdated)
                     })
             }
             ReedlineEvent::MenuDown => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.menu_event(MenuEvent::MoveDown);
-                        Ok(EventStatus::Handled)
+                        Ok(EventStatus::MenuUpdated)
                     })
             }
             ReedlineEvent::MenuLeft => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.menu_event(MenuEvent::MoveLeft);
-                        Ok(EventStatus::Handled)
+                        Ok(EventStatus::MenuUpdated)
                     })
             }
             ReedlineEvent::MenuRight => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.menu_event(MenuEvent::MoveRight);
-                        Ok(EventStatus::Handled)
+                        Ok(EventStatus::MenuUpdated)
                     })
             }
             ReedlineEvent::MenuPageNext => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.menu_event(MenuEvent::NextPage);
-                        Ok(EventStatus::Handled)
+                        Ok(EventStatus::MenuUpdated)
                     })
             }
             ReedlineEvent::MenuPagePrevious => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
                         menu.menu_event(MenuEvent::PreviousPage);
-                        Ok(EventStatus::Handled)
+                        Ok(EventStatus::MenuUpdated)
                     })
             }
             ReedlineEvent::HistoryHintComplete => {
@@ -1260,6 +1279,9 @@ impl Reedline {
                     match self.handle_editor_event(prompt, event)? {
                         EventStatus::Handled => {
                             latest_signal = EventStatus::Handled;
+                        }
+                        EventStatus::MenuUpdated => {
+                            latest_signal = EventStatus::MenuUpdated;
                         }
                         EventStatus::Inapplicable => {
                             // NO OP
