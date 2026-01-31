@@ -1,4 +1,4 @@
-use chrono::Utc;
+use crate::DateTime;
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 use rusqlite::ToSql;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -83,7 +83,7 @@ pub struct HistoryItem<ExtraInfo: HistoryItemExtraInfo = IgnoreAllExtraInfo> {
     /// primary key, unique across one history
     pub id: Option<HistoryItemId>,
     /// date-time when this command was started
-    pub start_timestamp: Option<chrono::DateTime<Utc>>,
+    pub start_timestamp: Option<DateTime>,
     /// the full command line as text
     pub command_line: String,
     /// a unique id for one shell session.

@@ -15,18 +15,20 @@ jobs:
         rust:
           - stable
         # Define the feature sets that will be built here (for caching you define a separate name)
-        style: [bashisms, default, sqlite, basqlite, external_printer]
+        style: [bashisms, default, sqlite, basqlite, external_printer, jiff-datetime]
         include:
           - style: bashisms
             flags: "--features bashisms"
           - style: external_printer
             flags: "--features external_printer"
           - style: default
-            flags: ""
+            flags: ""  # Uses chrono by default
           - style: sqlite
             flags: "--features sqlite"
           - style: basqlite
             flags: "--features bashisms,sqlite"
+          - style: jiff-datetime
+            flags: "--no-default-features --features jiff-datetime"
 
     runs-on: ${{ matrix.platform }}
 

@@ -311,7 +311,7 @@ impl LineBuffer {
     fn at_end_of_line_with_preceding_whitespace(&self) -> bool {
         !self.is_empty() // No point checking if empty
         && self.insertion_point == self.lines.len()
-        && self.lines.chars().last().map_or(false, |c| c.is_whitespace())
+        && self.lines.chars().last().is_some_and(|c| c.is_whitespace())
     }
 
     /// Cursor position at the end of the current whitespace block.
