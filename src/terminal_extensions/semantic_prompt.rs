@@ -9,6 +9,11 @@
 //! ## Protocol Overview
 //!
 //! - `A` - Marks the start of a prompt (with optional `k=` kind parameter)
+//!         Thanks to mitchellh for this tidbit, "The `A` is kind of weird: it
+//!         does a `\r\n` _if the cursor isn't at x=0_ and THEN does a `P`. If
+//!         you want, you can use `P` all the time instead of `A` for example
+//!         if you're not sure if the cursor will be at x=0." So, with that in
+//!         mind, we'll use `P` for right prompts and left prompts.
 //! - `B` - Marks the end of prompt and start of user input
 //! - `C` - Marks the start of command execution (emitted by shell, not reedline)
 //! - `D` - Marks the end of command execution with exit code (emitted by shell)
@@ -77,8 +82,8 @@ impl Osc133Markers {
 impl SemanticPromptMarkers for Osc133Markers {
     fn prompt_start(&self, kind: PromptKind) -> Cow<'_, str> {
         match kind {
-            PromptKind::Primary => Cow::Borrowed("\x1b]133;A;k=i\x1b\\"),
-            PromptKind::Secondary => Cow::Borrowed("\x1b]133;A;k=s\x1b\\"),
+            PromptKind::Primary => Cow::Borrowed("\x1b]133;P;k=i\x1b\\"), // Normally this would be 'A', but using 'P' to avoid newline issues
+            PromptKind::Secondary => Cow::Borrowed("\x1b]133;P;k=s\x1b\\"), // Normally this would be 'A', but using 'P' to avoid newline issues
             PromptKind::Right => Cow::Borrowed("\x1b]133;P;k=r\x1b\\"),
         }
     }
@@ -106,8 +111,8 @@ impl Osc633Markers {
 impl SemanticPromptMarkers for Osc633Markers {
     fn prompt_start(&self, kind: PromptKind) -> Cow<'_, str> {
         match kind {
-            PromptKind::Primary => Cow::Borrowed("\x1b]633;A;k=i\x1b\\"),
-            PromptKind::Secondary => Cow::Borrowed("\x1b]633;A;k=s\x1b\\"),
+            PromptKind::Primary => Cow::Borrowed("\x1b]633;A;k=i\x1b\\"), // Since VS Code supports OSC 633, we can use 'A' here
+            PromptKind::Secondary => Cow::Borrowed("\x1b]633;A;k=s\x1b\\"), // Since VS Code supports OSC 633, we can use 'A' here
             PromptKind::Right => Cow::Borrowed("\x1b]633;P;k=r\x1b\\"),
         }
     }
@@ -126,7 +131,7 @@ mod tests {
         let markers = Osc133Markers;
         assert_eq!(
             markers.prompt_start(PromptKind::Primary).as_ref(),
-            "\x1b]133;A;k=i\x1b\\"
+            "\x1b]133;P;k=i\x1b\\" // Override 'A' with 'P' to avoid newline issues
         );
     }
 
@@ -135,7 +140,7 @@ mod tests {
         let markers = Osc133Markers;
         assert_eq!(
             markers.prompt_start(PromptKind::Secondary).as_ref(),
-            "\x1b]133;A;k=s\x1b\\"
+            "\x1b]133;P;k=s\x1b\\" // Override 'A' with 'P' to avoid newline issues
         );
     }
 
