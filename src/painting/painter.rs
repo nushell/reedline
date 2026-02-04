@@ -377,7 +377,7 @@ impl Painter {
         menu: Option<&ReedlineMenu>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
-        // Emit prompt start marker (OSC 133;A;k=i for primary prompt)
+        // Emit prompt start marker (OSC 133;P;k=i for primary prompt)
         if let Some(markers) = &self.semantic_markers {
             self.stdout
                 .queue(Print(markers.prompt_start(PromptKind::Primary)))?;
@@ -456,7 +456,7 @@ impl Painter {
         // Extra rows represent how many rows are "above" the visible area in the terminal
         let extra_rows = (total_lines_before).saturating_sub(screen_height as usize);
 
-        // Emit prompt start marker (OSC 133;A;k=i for primary prompt) only if prompt is visible
+        // Emit prompt start marker (OSC 133;P;k=i for primary prompt) only if prompt is visible
         if extra_rows == 0 {
             if let Some(markers) = &self.semantic_markers {
                 self.stdout
