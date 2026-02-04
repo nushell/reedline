@@ -9,11 +9,12 @@
 //! ## Protocol Overview
 //!
 //! - `A` - Marks the start of a prompt (with optional `k=` kind parameter)
-//!         Thanks to mitchellh for this tidbit, "The `A` is kind of weird: it
-//!         does a `\r\n` _if the cursor isn't at x=0_ and THEN does a `P`. If
-//!         you want, you can use `P` all the time instead of `A` for example
-//!         if you're not sure if the cursor will be at x=0." So, with that in
-//!         mind, we'll use `P` for right prompts and left prompts.
+//!
+//!  Thanks to mitchellh for this tidbit, "The `A` is kind of weird: it does
+//!  a `\r\n` _if the cursor isn't at x=0_ and THEN does a `P`. If you want,
+//!  you can use `P` all the time instead of `A` for example if you're not
+//!  sure if the cursor will be at x=0." So, with that in mind, we'll use `P`
+//!  for right prompts and left prompts.
 //! - `B` - Marks the end of prompt and start of user input
 //! - `C` - Marks the start of command execution (emitted by shell, not reedline)
 //! - `D` - Marks the end of command execution with exit code (emitted by shell)
