@@ -94,6 +94,34 @@ impl SemanticPromptMarkers for Osc133Markers {
     }
 }
 
+/// OSC 133 semantic prompt markers with click events enabled.
+///
+/// Use this when you want terminals to send mouse click events for
+/// click-to-cursor support.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Osc133ClickEventsMarkers;
+
+impl Osc133ClickEventsMarkers {
+    /// Create a boxed instance for use with `Reedline::with_mouse_click()`.
+    pub fn boxed() -> Box<dyn SemanticPromptMarkers> {
+        Box::new(Self)
+    }
+}
+
+impl SemanticPromptMarkers for Osc133ClickEventsMarkers {
+    fn prompt_start(&self, kind: PromptKind) -> Cow<'_, str> {
+        match kind {
+            PromptKind::Primary => Cow::Borrowed("\x1b]133;A;k=i;click_events=1\x1b\\"),
+            PromptKind::Secondary => Cow::Borrowed("\x1b]133;A;k=s;click_events=1\x1b\\"),
+            PromptKind::Right => Cow::Borrowed("\x1b]133;P;k=r\x1b\\"),
+        }
+    }
+
+    fn command_input_start(&self) -> Cow<'_, str> {
+        Cow::Borrowed("\x1b]133;B\x1b\\")
+    }
+}
+
 /// OSC 633 semantic prompt markers (VS Code terminal protocol).
 ///
 /// Use this for VS Code's integrated terminal. OSC 633 is VS Code's
@@ -157,6 +185,39 @@ mod tests {
     #[test]
     fn test_osc133_command_input_start() {
         let markers = Osc133Markers;
+        assert_eq!(markers.command_input_start().as_ref(), "\x1b]133;B\x1b\\");
+    }
+
+    #[test]
+    fn test_osc133_click_events_primary_prompt_start() {
+        let markers = Osc133ClickEventsMarkers;
+        assert_eq!(
+            markers.prompt_start(PromptKind::Primary).as_ref(),
+            "\x1b]133;A;k=i;click_events=1\x1b\\"
+        );
+    }
+
+    #[test]
+    fn test_osc133_click_events_secondary_prompt_start() {
+        let markers = Osc133ClickEventsMarkers;
+        assert_eq!(
+            markers.prompt_start(PromptKind::Secondary).as_ref(),
+            "\x1b]133;A;k=s;click_events=1\x1b\\"
+        );
+    }
+
+    #[test]
+    fn test_osc133_click_events_right_prompt_start() {
+        let markers = Osc133ClickEventsMarkers;
+        assert_eq!(
+            markers.prompt_start(PromptKind::Right).as_ref(),
+            "\x1b]133;P;k=r\x1b\\"
+        );
+    }
+
+    #[test]
+    fn test_osc133_click_events_command_input_start() {
+        let markers = Osc133ClickEventsMarkers;
         assert_eq!(markers.command_input_start().as_ref(), "\x1b]133;B\x1b\\");
     }
 

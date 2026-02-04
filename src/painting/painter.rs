@@ -2,7 +2,7 @@ use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMark
 use crate::{CursorConfig, PromptEditMode, PromptViMode};
 
 use {
-    super::utils::{coerce_crlf, line_width},
+    super::utils::{coerce_crlf, estimate_required_lines, line_width},
     crate::{
         menu::{Menu, ReedlineMenu},
         painting::PromptLines,
@@ -16,6 +16,8 @@ use {
     },
     std::io::{Result, Write},
     std::ops::RangeInclusive,
+    unicode_segmentation::UnicodeSegmentation,
+    unicode_width::UnicodeWidthStr,
 };
 #[cfg(feature = "external_printer")]
 use {crate::LineBuffer, crossterm::cursor::MoveUp};
@@ -48,12 +50,64 @@ fn skip_buffer_lines(string: &str, skip: usize, offset: Option<usize>) -> &str {
     string[index..limit].trim_end_matches('\n')
 }
 
+fn skip_buffer_lines_range(string: &str, skip: usize, offset: Option<usize>) -> (usize, usize) {
+    let mut matches = string.match_indices('\n');
+    let index = if skip == 0 {
+        0
+    } else {
+        matches
+            .clone()
+            .nth(skip - 1)
+            .map(|(index, _)| index + 1)
+            .unwrap_or(string.len())
+    };
+
+    let limit = match offset {
+        Some(offset) => {
+            let offset = skip + offset;
+            matches
+                .nth(offset)
+                .map(|(index, _)| index)
+                .unwrap_or(string.len())
+        }
+        None => string.len(),
+    };
+
+    (index, limit)
+}
+
 /// the type used by crossterm operations
 pub type W = std::io::BufWriter<std::io::Stderr>;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct PainterSuspendedState {
     previous_prompt_rows_range: RangeInclusive<u16>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct RenderSnapshot {
+    pub screen_width: u16,
+    pub screen_height: u16,
+    pub prompt_start_row: u16,
+    pub prompt_height: u16,
+    pub large_buffer: bool,
+    pub prompt_str_left: String,
+    pub prompt_indicator: String,
+    pub before_cursor: String,
+    pub after_cursor: String,
+    pub hint: String,
+    pub right_prompt_on_last_line: bool,
+    pub first_buffer_col: u16,
+    pub menu_active: bool,
+    pub menu_start_row: Option<u16>,
+    pub menu_min_rows: Option<u16>,
+    pub large_buffer_extra_rows_after_prompt: Option<usize>,
+    pub large_buffer_offset: Option<usize>,
+    pub right_prompt_rendered: bool,
+    pub right_prompt_row: Option<u16>,
+    pub right_prompt_start_col: Option<u16>,
+    pub right_prompt_end_col: Option<u16>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -310,6 +364,250 @@ impl Painter {
         self.stdout.flush()
     }
 
+    pub(crate) fn render_snapshot(
+        &self,
+        lines: &PromptLines,
+        menu: Option<&ReedlineMenu>,
+        raw_before: &str,
+        raw_after: &str,
+        hint: &str,
+    ) -> RenderSnapshot {
+        let screen_width = self.screen_width();
+        let screen_height = self.screen_height();
+        let prompt_line = format!("{}{}", lines.prompt_str_left, lines.prompt_indicator);
+        let last_prompt_line = prompt_line.lines().last().unwrap_or_default();
+
+        let mut large_buffer_extra_rows_after_prompt = None;
+        let mut large_buffer_offset = None;
+
+        if self.large_buffer {
+            let prompt_lines = lines.prompt_lines_with_wrap(screen_width) as usize;
+            let prompt_indicator_lines = lines.prompt_indicator.lines().count();
+            let before_cursor_lines = raw_before.lines().count();
+            let total_lines_before =
+                prompt_lines + prompt_indicator_lines + before_cursor_lines - 1;
+            let extra_rows = total_lines_before.saturating_sub(screen_height as usize);
+            let extra_rows_after_prompt = extra_rows.saturating_sub(prompt_lines);
+            large_buffer_extra_rows_after_prompt = Some(extra_rows_after_prompt);
+
+            let cursor_distance = lines.distance_from_prompt(screen_width);
+            if let Some(menu) = menu {
+                if cursor_distance >= screen_height.saturating_sub(1) {
+                    let rows = before_cursor_lines
+                        .saturating_sub(extra_rows_after_prompt)
+                        .saturating_sub(menu.min_rows() as usize);
+                    large_buffer_offset = Some(rows);
+                }
+            }
+        }
+
+        let first_buffer_col =
+            if self.large_buffer && large_buffer_extra_rows_after_prompt.unwrap_or(0) > 0 {
+                0
+            } else {
+                let width = line_width(last_prompt_line);
+                if width > u16::MAX as usize {
+                    u16::MAX
+                } else {
+                    width as u16
+                }
+            };
+
+        let mut right_prompt_rendered = false;
+        let mut right_prompt_row = None;
+        let mut right_prompt_start_col = None;
+        let mut right_prompt_end_col = None;
+
+        if !lines.prompt_str_right.is_empty() {
+            let prompt_length_right = line_width(&lines.prompt_str_right);
+            let start_position = screen_width.saturating_sub(prompt_length_right as u16);
+            let input_width = lines.estimate_right_prompt_line_width(screen_width);
+
+            if input_width <= start_position {
+                let mut row = self.prompt_start_row;
+                if lines.right_prompt_on_last_line {
+                    row += lines.prompt_lines_with_wrap(screen_width);
+                }
+
+                right_prompt_rendered = true;
+                right_prompt_row = Some(row);
+                right_prompt_start_col = Some(start_position);
+                right_prompt_end_col =
+                    Some(start_position.saturating_add(prompt_length_right as u16));
+            }
+        }
+
+        let (menu_active, menu_start_row, menu_min_rows) = if let Some(menu) = menu {
+            let cursor_distance = lines.distance_from_prompt(screen_width);
+            let menu_start_row = if cursor_distance >= screen_height.saturating_sub(1) {
+                screen_height.saturating_sub(menu.min_rows())
+            } else {
+                self.prompt_start_row + cursor_distance + 1
+            };
+            (true, Some(menu_start_row), Some(menu.min_rows()))
+        } else {
+            (false, None, None)
+        };
+
+        RenderSnapshot {
+            screen_width,
+            screen_height,
+            prompt_start_row: self.prompt_start_row,
+            prompt_height: self.prompt_height,
+            large_buffer: self.large_buffer,
+            prompt_str_left: lines.prompt_str_left.to_string(),
+            prompt_indicator: lines.prompt_indicator.to_string(),
+            before_cursor: raw_before.to_string(),
+            after_cursor: raw_after.to_string(),
+            hint: hint.to_string(),
+            right_prompt_on_last_line: lines.right_prompt_on_last_line,
+            first_buffer_col,
+            menu_active,
+            menu_start_row,
+            menu_min_rows,
+            large_buffer_extra_rows_after_prompt,
+            large_buffer_offset,
+            right_prompt_rendered,
+            right_prompt_row,
+            right_prompt_start_col,
+            right_prompt_end_col,
+        }
+    }
+
+    pub(crate) fn screen_to_buffer_offset(
+        &self,
+        snapshot: &RenderSnapshot,
+        column: u16,
+        row: u16,
+    ) -> Option<usize> {
+        if row < snapshot.prompt_start_row {
+            return None;
+        }
+
+        if snapshot.menu_active {
+            if let Some(menu_start_row) = snapshot.menu_start_row {
+                if row >= menu_start_row {
+                    return None;
+                }
+            }
+        }
+
+        if snapshot.right_prompt_rendered {
+            if let (Some(rrow), Some(start), Some(end)) = (
+                snapshot.right_prompt_row,
+                snapshot.right_prompt_start_col,
+                snapshot.right_prompt_end_col,
+            ) {
+                if row == rrow && column >= start && column < end {
+                    return None;
+                }
+            }
+        }
+
+        let screen_width = snapshot.screen_width;
+        let target_row = row.saturating_sub(snapshot.prompt_start_row);
+
+        let buffer_start_row = if snapshot.large_buffer
+            && snapshot.large_buffer_extra_rows_after_prompt.unwrap_or(0) > 0
+        {
+            0
+        } else {
+            snapshot.prompt_height.saturating_sub(1)
+        };
+
+        if target_row < buffer_start_row {
+            return None;
+        }
+
+        let (before_start, before_end) = if snapshot.large_buffer {
+            skip_buffer_lines_range(
+                &snapshot.before_cursor,
+                snapshot.large_buffer_extra_rows_after_prompt.unwrap_or(0),
+                snapshot.large_buffer_offset,
+            )
+        } else {
+            (0, snapshot.before_cursor.len())
+        };
+        let before_visible = &snapshot.before_cursor[before_start..before_end];
+        let full_before_visible = before_start == 0 && before_end == snapshot.before_cursor.len();
+
+        let (after_start, after_end) = if snapshot.large_buffer {
+            if snapshot.menu_active {
+                let end = snapshot
+                    .after_cursor
+                    .find('\n')
+                    .unwrap_or(snapshot.after_cursor.len());
+                (0, end)
+            } else {
+                let cursor_distance = estimate_required_lines(
+                    &format!(
+                        "{}{}{}",
+                        snapshot.prompt_str_left, snapshot.prompt_indicator, snapshot.before_cursor
+                    ),
+                    screen_width,
+                )
+                .saturating_sub(1) as u16;
+                let remaining_lines = snapshot.screen_height.saturating_sub(cursor_distance);
+                let offset = remaining_lines.saturating_sub(1) as usize;
+                skip_buffer_lines_range(&snapshot.after_cursor, 0, Some(offset))
+            }
+        } else {
+            (0, snapshot.after_cursor.len())
+        };
+        let after_visible = &snapshot.after_cursor[after_start..after_end];
+        let full_after_visible = after_start == 0 && after_end == snapshot.after_cursor.len();
+        let full_buffer_visible = full_before_visible && full_after_visible;
+
+        let mut current_row = buffer_start_row;
+        let mut current_col = if current_row == buffer_start_row {
+            snapshot.first_buffer_col
+        } else {
+            0
+        };
+
+        let mut check_segment = |segment: &str, base_offset: usize| -> Option<usize> {
+            for (index, grapheme) in segment.grapheme_indices(true) {
+                if grapheme == "\n" {
+                    current_row = current_row.saturating_add(1);
+                    current_col = 0;
+                    continue;
+                }
+
+                let width = grapheme.width().max(1) as u16;
+                if current_col.saturating_add(width) > screen_width {
+                    current_row = current_row.saturating_add(1);
+                    current_col = 0;
+                }
+
+                if current_row == target_row
+                    && column >= current_col
+                    && column < current_col.saturating_add(width)
+                {
+                    return Some(base_offset + index);
+                }
+
+                current_col = current_col.saturating_add(width);
+            }
+
+            None
+        };
+
+        if let Some(offset) = check_segment(before_visible, before_start) {
+            return Some(offset);
+        }
+
+        let after_base = snapshot.before_cursor.len().saturating_add(after_start);
+        if let Some(offset) = check_segment(after_visible, after_base) {
+            return Some(offset);
+        }
+
+        if full_buffer_visible && target_row == current_row && column >= current_col {
+            return Some(snapshot.before_cursor.len() + snapshot.after_cursor.len());
+        }
+
+        None
+    }
+
     fn print_right_prompt(&mut self, lines: &PromptLines) -> Result<()> {
         let prompt_length_right = line_width(&lines.prompt_str_right);
         let start_position = self
@@ -400,17 +698,17 @@ impl Painter {
         self.stdout
             .queue(Print(&coerce_crlf(&lines.prompt_indicator)))?;
 
-        // Emit command input start marker (OSC 133;B) after prompt indicator
-        if let Some(markers) = &self.semantic_markers {
-            self.stdout.queue(Print(markers.command_input_start()))?;
-        }
-
         if use_ansi_coloring {
             self.stdout
                 .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
         }
 
         self.print_right_prompt(lines)?;
+
+        // Emit command input start marker (OSC 133;B) after prompt (including right prompt)
+        if let Some(markers) = &self.semantic_markers {
+            self.stdout.queue(Print(markers.command_input_start()))?;
+        }
 
         if use_ansi_coloring {
             self.stdout
@@ -700,7 +998,66 @@ impl Painter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PromptHistorySearch;
     use pretty_assertions::assert_eq;
+    use std::borrow::Cow;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum MarkerCall {
+        PromptPrimary,
+        PromptRight,
+        CommandInput,
+    }
+
+    struct RecordingMarkers {
+        calls: Arc<Mutex<Vec<MarkerCall>>>,
+    }
+
+    impl SemanticPromptMarkers for RecordingMarkers {
+        fn prompt_start(&self, kind: PromptKind) -> Cow<'_, str> {
+            let mut calls = self.calls.lock().expect("marker lock poisoned");
+            match kind {
+                PromptKind::Primary => calls.push(MarkerCall::PromptPrimary),
+                PromptKind::Right => calls.push(MarkerCall::PromptRight),
+                PromptKind::Secondary => {}
+            }
+            Cow::Borrowed("")
+        }
+
+        fn command_input_start(&self) -> Cow<'_, str> {
+            let mut calls = self.calls.lock().expect("marker lock poisoned");
+            calls.push(MarkerCall::CommandInput);
+            Cow::Borrowed("")
+        }
+    }
+
+    struct TestPrompt;
+
+    impl Prompt for TestPrompt {
+        fn render_prompt_left(&self) -> Cow<'_, str> {
+            "> ".into()
+        }
+
+        fn render_prompt_right(&self) -> Cow<'_, str> {
+            "RP".into()
+        }
+
+        fn render_prompt_indicator(&self, _prompt_mode: PromptEditMode) -> Cow<'_, str> {
+            "".into()
+        }
+
+        fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
+            "".into()
+        }
+
+        fn render_prompt_history_search_indicator(
+            &self,
+            _history_search: PromptHistorySearch,
+        ) -> Cow<'_, str> {
+            "".into()
+        }
+    }
 
     #[test]
     fn test_skip_lines() {
@@ -781,6 +1138,137 @@ mod tests {
         assert_eq!(
             select_prompt_row(Some(&state), (3, 12)),
             PromptRowSelector::UseExistingPrompt { start_row: 11 }
+        );
+    }
+
+    fn base_snapshot() -> RenderSnapshot {
+        RenderSnapshot {
+            screen_width: 20,
+            screen_height: 10,
+            prompt_start_row: 0,
+            prompt_height: 1,
+            large_buffer: false,
+            prompt_str_left: "> ".to_string(),
+            prompt_indicator: "".to_string(),
+            before_cursor: "".to_string(),
+            after_cursor: "".to_string(),
+            hint: "".to_string(),
+            right_prompt_on_last_line: false,
+            first_buffer_col: 2,
+            menu_active: false,
+            menu_start_row: None,
+            menu_min_rows: None,
+            large_buffer_extra_rows_after_prompt: None,
+            large_buffer_offset: None,
+            right_prompt_rendered: false,
+            right_prompt_row: None,
+            right_prompt_start_col: None,
+            right_prompt_end_col: None,
+        }
+    }
+
+    #[test]
+    fn test_screen_to_buffer_simple() {
+        let mut snapshot = base_snapshot();
+        snapshot.before_cursor = "hello world".to_string();
+
+        let painter = Painter::new(W::new(std::io::stderr()));
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 2, 0), Some(0));
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 3, 0), Some(1));
+    }
+
+    #[test]
+    fn test_clicks_past_eol_clamps() {
+        let mut snapshot = base_snapshot();
+        snapshot.before_cursor = "hi".to_string();
+
+        let painter = Painter::new(W::new(std::io::stderr()));
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 10, 0), Some(2));
+    }
+
+    #[test]
+    fn test_wrapped_line_mapping() {
+        let mut snapshot = base_snapshot();
+        snapshot.screen_width = 5;
+        snapshot.before_cursor = "abcdef".to_string();
+
+        let painter = Painter::new(W::new(std::io::stderr()));
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 1, 1), Some(4));
+    }
+
+    #[test]
+    fn test_multiline_mapping() {
+        let mut snapshot = base_snapshot();
+        snapshot.before_cursor = "ab\ncd".to_string();
+
+        let painter = Painter::new(W::new(std::io::stderr()));
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 1, 1), Some(4));
+    }
+
+    #[test]
+    fn test_large_buffer_skips_lines() {
+        let mut snapshot = base_snapshot();
+        snapshot.large_buffer = true;
+        snapshot.first_buffer_col = 0;
+        snapshot.before_cursor = "line1\nline2\nline3".to_string();
+        snapshot.large_buffer_extra_rows_after_prompt = Some(1);
+
+        let painter = Painter::new(W::new(std::io::stderr()));
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 0), Some(6));
+    }
+
+    #[test]
+    fn test_click_in_right_prompt_ignored() {
+        let mut snapshot = base_snapshot();
+        snapshot.before_cursor = "hello".to_string();
+        snapshot.right_prompt_rendered = true;
+        snapshot.right_prompt_row = Some(0);
+        snapshot.right_prompt_start_col = Some(10);
+        snapshot.right_prompt_end_col = Some(12);
+
+        let painter = Painter::new(W::new(std::io::stderr()));
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 10, 0), None);
+    }
+
+    #[test]
+    fn test_click_in_menu_ignored() {
+        let mut snapshot = base_snapshot();
+        snapshot.menu_active = true;
+        snapshot.menu_start_row = Some(2);
+        snapshot.menu_min_rows = Some(1);
+
+        let painter = Painter::new(W::new(std::io::stderr()));
+        assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 2), None);
+    }
+
+    #[test]
+    fn test_prompt_marker_order_in_small_buffer() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let markers = RecordingMarkers {
+            calls: Arc::clone(&calls),
+        };
+
+        let mut painter = Painter::new(W::new(std::io::stderr()));
+        painter.terminal_size = (20, 10);
+        painter.prompt_start_row = 0;
+        painter.prompt_height = 1;
+        painter.set_semantic_markers(Some(Box::new(markers)));
+
+        let prompt = TestPrompt;
+        let lines = PromptLines::new(&prompt, PromptEditMode::Default, None, "", "", "");
+
+        painter
+            .print_small_buffer(&prompt, &lines, None, false)
+            .expect("print_small_buffer failed");
+
+        let recorded = calls.lock().expect("marker lock poisoned").clone();
+        assert_eq!(
+            recorded,
+            vec![
+                MarkerCall::PromptPrimary,
+                MarkerCall::PromptRight,
+                MarkerCall::CommandInput
+            ]
         );
     }
 }

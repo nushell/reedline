@@ -1,4 +1,4 @@
-use crossterm::event::{Event, KeyEvent, KeyEventKind};
+use crossterm::event::{Event, KeyEvent, KeyEventKind, MouseButton};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use strum_macros::EnumIter;
@@ -758,8 +758,16 @@ pub enum ReedlineEvent {
     /// Esc event
     Esc,
 
-    /// Mouse
-    Mouse, // Fill in details later
+    /// Mouse click event with screen coordinates
+    #[strum(disabled)]
+    Mouse {
+        /// Column (x) position, 0-indexed from left
+        column: u16,
+        /// Row (y) position, 0-indexed from top
+        row: u16,
+        /// Which mouse button was clicked
+        button: MouseButton,
+    },
 
     /// trigger terminal resize
     Resize(u16, u16),
@@ -849,7 +857,11 @@ impl Display for ReedlineEvent {
             ReedlineEvent::Submit => write!(f, "Submit"),
             ReedlineEvent::SubmitOrNewline => write!(f, "SubmitOrNewline"),
             ReedlineEvent::Esc => write!(f, "Esc"),
-            ReedlineEvent::Mouse => write!(f, "Mouse"),
+            ReedlineEvent::Mouse {
+                column,
+                row,
+                button,
+            } => write!(f, "Mouse({}, {}, {:?})", column, row, button),
             ReedlineEvent::Resize(_, _) => write!(f, "Resize <int> <int>"),
             ReedlineEvent::Edit(_) => write!(
                 f,
