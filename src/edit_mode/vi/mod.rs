@@ -5,9 +5,7 @@ mod vi_keybindings;
 
 use std::str::FromStr;
 
-use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
 use self::motion::ViCharSearch;
@@ -187,14 +185,14 @@ impl EditMode for Vi {
             },
 
             Event::Mouse(MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
+                kind: MouseEventKind::Down(button),
                 column,
                 row,
                 modifiers: KeyModifiers::NONE,
             }) => ReedlineEvent::Mouse {
                 column,
                 row,
-                button: MouseButton::Left,
+                button: button.into(),
             },
             Event::Mouse(_) => ReedlineEvent::None,
             Event::Resize(width, height) => ReedlineEvent::Resize(width, height),

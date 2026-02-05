@@ -240,8 +240,8 @@ pub use core_editor::LineBuffer;
 
 mod enums;
 pub use enums::{
-    EditCommand, ReedlineEvent, ReedlineRawEvent, Signal, TextObject, TextObjectScope,
-    TextObjectType, UndoBehavior,
+    EditCommand, MouseButton, ReedlineEvent, ReedlineRawEvent, Signal, TextObject,
+    TextObjectScope, TextObjectType, UndoBehavior,
 };
 
 mod painting;

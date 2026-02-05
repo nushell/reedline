@@ -36,13 +36,14 @@ use {
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
         },
         utils::text_manipulation,
-        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
-        PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
+        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton,
+        Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult,
+        Validator,
     },
     crossterm::{
         cursor::{SetCursorStyle, Show},
         event,
-        event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton},
+        event::{Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, QueueableCommand,
     },
     std::{
@@ -2036,7 +2037,6 @@ mod tests {
     use super::*;
     use crate::terminal_extensions::semantic_prompt::PromptKind;
     use crate::DefaultPrompt;
-    use crossterm::event::MouseButton;
 
     #[test]
     fn test_cursor_position_after_multiline_history_navigation() {

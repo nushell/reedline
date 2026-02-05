@@ -1,7 +1,29 @@
-use crossterm::event::{Event, KeyEvent, KeyEventKind, MouseButton};
+use crossterm::event::{Event, KeyEvent, KeyEventKind};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use strum_macros::EnumIter;
+
+/// Which mouse button was pressed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MouseButton {
+    /// Left mouse button
+    #[default]
+    Left,
+    /// Right mouse button
+    Right,
+    /// Middle mouse button
+    Middle,
+}
+
+impl From<crossterm::event::MouseButton> for MouseButton {
+    fn from(button: crossterm::event::MouseButton) -> Self {
+        match button {
+            crossterm::event::MouseButton::Left => Self::Left,
+            crossterm::event::MouseButton::Right => Self::Right,
+            crossterm::event::MouseButton::Middle => Self::Middle,
+        }
+    }
+}
 
 /// Valid ways how `Reedline::read_line()` can return
 #[derive(Debug)]
@@ -759,7 +781,6 @@ pub enum ReedlineEvent {
     Esc,
 
     /// Mouse click event with screen coordinates
-    #[strum(disabled)]
     Mouse {
         /// Column (x) position, 0-indexed from left
         column: u16,
