@@ -2,7 +2,8 @@ use crate::{
     edit_mode::{
         keybindings::{
             add_common_control_bindings, add_common_edit_bindings, add_common_navigation_bindings,
-            add_common_selection_bindings, edit_bind, Keybindings,
+            add_common_selection_bindings, edit_bind, KeyBindingTarget, KeyCombination,
+            Keybindings,
         },
         EditMode,
     },
@@ -104,12 +105,16 @@ pub fn default_emacs_keybindings() -> Keybindings {
 
 /// This parses the incoming Events like a emacs style-editor
 pub struct Emacs {
+    /// Cache for multi-key sequences (chords); will be empty when not in a known chord
+    cache: Vec<KeyCombination>,
+    /// Keybindings for this mode
     keybindings: Keybindings,
 }
 
 impl Default for Emacs {
     fn default() -> Self {
         Emacs {
+            cache: Vec::new(),
             keybindings: default_emacs_keybindings(),
         }
     }
@@ -120,50 +125,10 @@ impl EditMode for Emacs {
         match event.into() {
             Event::Key(KeyEvent {
                 code, modifiers, ..
-            }) => match (modifiers, code) {
-                (modifier, KeyCode::Char(c)) => {
-                    // Note. The modifier can also be a combination of modifiers, for
-                    // example:
-                    //     KeyModifiers::CONTROL | KeyModifiers::ALT
-                    //     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
-                    //
-                    // Mixed modifiers are used by non american keyboards that have extra
-                    // keys like 'alt gr'. Keep this in mind if in the future there are
-                    // cases where an event is not being captured
-                    let c = match modifier {
-                        KeyModifiers::NONE => c,
-                        _ => c.to_ascii_lowercase(),
-                    };
-
-                    self.keybindings
-                        .find_binding(modifier, KeyCode::Char(c))
-                        .unwrap_or_else(|| {
-                            if modifier == KeyModifiers::NONE
-                                || modifier == KeyModifiers::SHIFT
-                                || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
-                                || modifier
-                                    == KeyModifiers::CONTROL
-                                        | KeyModifiers::ALT
-                                        | KeyModifiers::SHIFT
-                            {
-                                ReedlineEvent::Edit(vec![EditCommand::InsertChar(
-                                    if modifier == KeyModifiers::SHIFT {
-                                        c.to_ascii_uppercase()
-                                    } else {
-                                        c
-                                    },
-                                )])
-                            } else {
-                                ReedlineEvent::None
-                            }
-                        })
-                }
-                _ => self
-                    .keybindings
-                    .find_binding(modifiers, code)
-                    .unwrap_or(ReedlineEvent::None),
-            },
-
+            }) => self.parse_key_event(KeyCombination {
+                key_code: code,
+                modifier: modifiers,
+            }),
             Event::Mouse(_) => ReedlineEvent::Mouse,
             Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
             Event::FocusGained => ReedlineEvent::None,
@@ -182,7 +147,72 @@ impl EditMode for Emacs {
 impl Emacs {
     /// Emacs style input parsing constructor if you want to use custom keybindings
     pub const fn new(keybindings: Keybindings) -> Self {
-        Emacs { keybindings }
+        Emacs {
+            keybindings,
+            cache: Vec::new(),
+        }
+    }
+
+    fn parse_key_event(&mut self, combo: KeyCombination) -> ReedlineEvent {
+        self.cache.push(normalize_key_combo(&combo));
+
+        match self.keybindings.find_sequence_binding(&self.cache) {
+            Some(KeyBindingTarget::Event(event)) => {
+                // Found a complete binding, clear the cache and return the event
+                self.cache.clear();
+                event
+            }
+            Some(KeyBindingTarget::ChordPrefix) => {
+                // Partial match, wait for the next key
+                ReedlineEvent::None
+            }
+            None => {
+                // No match, clear the cache.
+                self.cache.clear();
+
+                // Check fallback condition of just inserting a normal character.
+                match combo.key_code {
+                    KeyCode::Char(c) => {
+                        if combo.modifier == KeyModifiers::NONE
+                            || combo.modifier == KeyModifiers::SHIFT
+                            || combo.modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
+                            || combo.modifier
+                                == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
+                        {
+                            ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])
+                        } else {
+                            ReedlineEvent::None
+                        }
+                    }
+                    _ => ReedlineEvent::None,
+                }
+            }
+        }
+    }
+}
+
+fn normalize_key_combo(combo: &KeyCombination) -> KeyCombination {
+    match combo.key_code {
+        KeyCode::Char(c) => {
+            // Note. The modifier can also be a combination of modifiers, for
+            // example:
+            //     KeyModifiers::CONTROL | KeyModifiers::ALT
+            //     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
+            //
+            // Mixed modifiers are used by non american keyboards that have extra
+            // keys like 'alt gr'. Keep this in mind if in the future there are
+            // cases where an event is not being captured
+            let code = match combo.modifier {
+                KeyModifiers::NONE => combo.key_code,
+                _ => KeyCode::Char(c.to_ascii_lowercase()),
+            };
+
+            KeyCombination {
+                modifier: combo.modifier,
+                key_code: code,
+            }
+        }
+        _ => combo.clone(),
     }
 }
 

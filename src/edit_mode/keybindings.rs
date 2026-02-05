@@ -5,17 +5,49 @@ use {
     std::collections::HashMap,
 };
 
+/// Representation of a key combination: modifier + key code
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct KeyCombination {
+    /// Modifier keys
     pub modifier: KeyModifiers,
+    /// The key code
     pub key_code: KeyCode,
 }
 
 /// Main definition of editor keybindings
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Keybindings {
-    /// Defines a keybinding for a reedline event
-    pub bindings: HashMap<KeyCombination, ReedlineEvent>,
+    /// Trie mapping key combination sequences to their corresponding events.
+    root: KeyBindingNode,
+}
+
+/// Target that a key combination may be bound to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyBindingTarget {
+    /// Indicates a binding to an event.
+    Event(ReedlineEvent),
+    /// Indicates that this is a prefix to other bindings.
+    ChordPrefix,
+}
+
+// TODO: Implement Serialize for Keybindings
+// TODO: Implement Deserialize for Keybindings
+
+/// Trie node that represents a key combination's binding. The key
+/// combination may *only* be bound to an event, or may be a
+/// strict prefix of a chord of key combinations.
+#[derive(Clone, Debug)]
+enum KeyBindingNode {
+    /// Indicates a binding to an event.
+    Event(ReedlineEvent),
+    /// Indicates that this is a prefix to other bindings.
+    Prefix(HashMap<KeyCombination, KeyBindingNode>),
+}
+
+impl KeyBindingNode {
+    fn new_prefix() -> Self {
+        KeyBindingNode::Prefix(HashMap::new())
+    }
 }
 
 impl Default for Keybindings {
@@ -25,14 +57,14 @@ impl Default for Keybindings {
 }
 
 impl Keybindings {
-    /// New keybining
+    /// Returns a new, empty keybinding set
     pub fn new() -> Self {
         Self {
-            bindings: HashMap::new(),
+            root: KeyBindingNode::new_prefix(),
         }
     }
 
-    /// Defines an empty keybinding object
+    /// Returns a new, empty keybinding set
     pub fn empty() -> Self {
         Self::new()
     }
@@ -56,16 +88,95 @@ impl Keybindings {
         }
 
         let key_combo = KeyCombination { modifier, key_code };
-        self.bindings.insert(key_combo, command);
+
+        self.add_sequence_binding(&[key_combo], command);
     }
 
-    /// Find a keybinding based on the modifier and keycode
+    /// Binds a sequence of key combinations to an event. This allows binding a single
+    /// key combination, as well as binding a chord of multiple key combinations.
+    pub fn add_sequence_binding(&mut self, sequence: &[KeyCombination], event: ReedlineEvent) {
+        if sequence.is_empty() {
+            return;
+        }
+
+        let mut current_target = &mut self.root;
+
+        for combo in sequence.iter().take(sequence.len() - 1) {
+            match current_target {
+                KeyBindingNode::Prefix(ref mut map) => {
+                    current_target = map
+                        .entry(combo.clone())
+                        .or_insert_with(KeyBindingNode::new_prefix);
+                }
+                KeyBindingNode::Event(_) => {
+                    // Overwrite existing event binding with a prefix
+                    *current_target = KeyBindingNode::new_prefix();
+                }
+            }
+        }
+
+        let final_combo = &sequence[sequence.len() - 1];
+
+        match current_target {
+            KeyBindingNode::Prefix(ref mut map) => {
+                map.insert(final_combo.clone(), KeyBindingNode::Event(event));
+            }
+            KeyBindingNode::Event(_) => {
+                // Overwrite existing event binding with a prefix initialized with the event.
+                let prefix = KeyBindingNode::Prefix(HashMap::from([(
+                    final_combo.clone(),
+                    KeyBindingNode::Event(event),
+                )]));
+                *current_target = prefix;
+            }
+        }
+    }
+
+    /// Find a keybinding based on the modifier and keycode.
     pub fn find_binding(&self, modifier: KeyModifiers, key_code: KeyCode) -> Option<ReedlineEvent> {
         let key_combo = KeyCombination { modifier, key_code };
-        self.bindings.get(&key_combo).cloned()
+        self.find_sequence_binding(&[key_combo]).and_then(|target| {
+            if let KeyBindingTarget::Event(event) = target {
+                Some(event)
+            } else {
+                None
+            }
+        })
     }
 
-    /// Remove a keybinding
+    /// Find a keybinding based on a sequence of key combinations.
+    ///
+    /// Returns `Some(KeyBindingTarget::Event(ReedlineEvent))` if the sequence is bound to a
+    /// particular [`ReedlineEvent`].
+    ///
+    /// Returns `Some(KeyBindingTarget::ChordPrefix)` if the sequence is a strict prefix
+    /// of other bindings.
+    ///
+    /// Returns `None` if the sequence is not bound.
+    pub fn find_sequence_binding(&self, sequence: &[KeyCombination]) -> Option<KeyBindingTarget> {
+        let mut current_target = &self.root;
+
+        for combo in sequence {
+            match current_target {
+                KeyBindingNode::Prefix(map) => {
+                    if let Some(next_target) = map.get(combo) {
+                        current_target = next_target;
+                    } else {
+                        return None;
+                    }
+                }
+                KeyBindingNode::Event(_) => return None,
+            }
+        }
+
+        match current_target {
+            KeyBindingNode::Prefix(_) => Some(KeyBindingTarget::ChordPrefix),
+            KeyBindingNode::Event(event) => Some(KeyBindingTarget::Event(event.clone())),
+        }
+    }
+
+    /// Remove a single-key keybinding. If the indicated key combination is a strict prefix
+    /// of chord bindings, those latter bindings are preserved.
     ///
     /// Returns `Some(ReedlineEvent)` if the key combination was previously bound to a particular [`ReedlineEvent`]
     pub fn remove_binding(
@@ -74,12 +185,72 @@ impl Keybindings {
         key_code: KeyCode,
     ) -> Option<ReedlineEvent> {
         let key_combo = KeyCombination { modifier, key_code };
-        self.bindings.remove(&key_combo)
+        self.remove_sequence_binding(&[key_combo])
     }
 
-    /// Get assigned keybindings
-    pub fn get_keybindings(&self) -> &HashMap<KeyCombination, ReedlineEvent> {
-        &self.bindings
+    /// Unbind a sequence of key combinations. If the given sequence is a strict prefix
+    /// of other bindings, those bindings are preserved.
+    ///
+    /// Returns `Some(ReedlineEvent)` if the sequence was previously bound to a particular [`ReedlineEvent`]
+    pub fn remove_sequence_binding(
+        &mut self,
+        sequence: &[KeyCombination],
+    ) -> Option<ReedlineEvent> {
+        let mut current_target = &mut self.root;
+
+        if sequence.is_empty() {
+            return None;
+        }
+
+        for combo in sequence.iter().take(sequence.len() - 1) {
+            match current_target {
+                KeyBindingNode::Prefix(map) => {
+                    if let Some(next_target) = map.get_mut(combo) {
+                        current_target = next_target;
+                    } else {
+                        return None;
+                    }
+                }
+                KeyBindingNode::Event(_) => return None,
+            }
+        }
+
+        let final_combo = &sequence[sequence.len() - 1];
+
+        match current_target {
+            KeyBindingNode::Prefix(map) => {
+                // Make sure it's a terminal node before we try to remove it.
+                if !matches!(map.get(final_combo), Some(KeyBindingNode::Event(_))) {
+                    None
+                } else if let Some(KeyBindingNode::Event(old_event)) = map.remove(final_combo) {
+                    Some(old_event)
+                } else {
+                    None
+                }
+            }
+            KeyBindingNode::Event(_) => None,
+        }
+    }
+
+    /// Get assigned single-key keybindings.
+    pub fn get_keybindings(&self) -> impl IntoIterator<Item = (&KeyCombination, &ReedlineEvent)> {
+        self.get_sequence_bindings()
+            .into_iter()
+            .filter_map(|(seq, event)| {
+                if let [first, ..] = seq {
+                    Some((first, event))
+                } else {
+                    None
+                }
+            })
+    }
+
+    /// Get all bindings for key sequences, including single-key bindings and chords.
+    pub fn get_sequence_bindings(
+        &self,
+    ) -> impl IntoIterator<Item = (&[KeyCombination], &ReedlineEvent)> {
+        // TODO
+        []
     }
 }
 
@@ -287,4 +458,47 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
         KC::Char('a'),
         edit_bind(EC::SelectAll),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chord_lookup() {
+        const BOUND_EVENT: ReedlineEvent = ReedlineEvent::MenuDown;
+
+        let mut kb = Keybindings::new();
+
+        let sequence = vec![
+            KeyCombination {
+                modifier: KeyModifiers::CONTROL,
+                key_code: KeyCode::Char('x'),
+            },
+            KeyCombination {
+                modifier: KeyModifiers::CONTROL,
+                key_code: KeyCode::Char('c'),
+            },
+        ];
+
+        kb.add_sequence_binding(&sequence, BOUND_EVENT);
+
+        // Make sure we can find the prefix.
+        let found_prefix = kb.find_sequence_binding(&sequence[0..1]);
+        assert_eq!(found_prefix, Some(KeyBindingTarget::ChordPrefix));
+
+        // Make sure we can find the binding.
+        let found_binding = kb.find_sequence_binding(&sequence);
+        assert_eq!(found_binding, Some(KeyBindingTarget::Event(BOUND_EVENT)));
+
+        // Make sure we can't find some non-existent binding.
+        let not_found = kb.find_sequence_binding(&[
+            sequence[0].clone(),
+            KeyCombination {
+                modifier: KeyModifiers::CONTROL,
+                key_code: KeyCode::Char('z'),
+            },
+        ]);
+        assert_eq!(not_found, None);
+    }
 }
