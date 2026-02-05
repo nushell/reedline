@@ -175,6 +175,15 @@
 //! )));
 //! ```
 //!
+//! ## Enable mouse click-to-cursor
+//!
+//! ```rust,no_run
+//! use reedline::{MouseClickMode, Reedline};
+//!
+//! let mut line_editor =
+//!     Reedline::create().with_mouse_click(MouseClickMode::EnabledWithOsc133);
+//! ```
+//!
 //! ## Crate features
 //!
 //! - `clipboard`: Enable support to use the `SystemClipboard`. Enabling this feature will return a `SystemClipboard` instead of a local clipboard when calling `get_default_clipboard()`.
@@ -231,7 +240,7 @@ pub use core_editor::LineBuffer;
 
 mod enums;
 pub use enums::{
-    EditCommand, ReedlineEvent, ReedlineRawEvent, Signal, TextObject, TextObjectScope,
+    EditCommand, MouseButton, ReedlineEvent, ReedlineRawEvent, Signal, TextObject, TextObjectScope,
     TextObjectType, UndoBehavior,
 };
 
@@ -239,7 +248,7 @@ mod painting;
 pub use painting::{Painter, StyledText};
 
 mod engine;
-pub use engine::Reedline;
+pub use engine::{MouseClickMode, Reedline};
 
 mod result;
 pub use result::{ReedlineError, ReedlineErrorVariants, Result};
@@ -287,7 +296,7 @@ pub use menu::{
 mod terminal_extensions;
 pub use terminal_extensions::kitty_protocol_available;
 pub use terminal_extensions::semantic_prompt::{
-    Osc133Markers, Osc633Markers, PromptKind, SemanticPromptMarkers,
+    Osc133ClickEventsMarkers, Osc133Markers, Osc633Markers, PromptKind, SemanticPromptMarkers,
 };
 
 mod utils;

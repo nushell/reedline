@@ -9,7 +9,7 @@ use crate::{
     enums::{EditCommand, ReedlineEvent, ReedlineRawEvent},
     PromptEditMode,
 };
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
 /// Returns the current default emacs keybindings
 pub fn default_emacs_keybindings() -> Keybindings {
@@ -164,7 +164,17 @@ impl EditMode for Emacs {
                     .unwrap_or(ReedlineEvent::None),
             },
 
-            Event::Mouse(_) => ReedlineEvent::Mouse,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(button),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }) => ReedlineEvent::Mouse {
+                column,
+                row,
+                button: button.into(),
+            },
+            Event::Mouse(_) => ReedlineEvent::None,
             Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
             Event::FocusGained => ReedlineEvent::None,
             Event::FocusLost => ReedlineEvent::None,
