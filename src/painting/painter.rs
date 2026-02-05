@@ -85,7 +85,6 @@ pub struct PainterSuspendedState {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct RenderSnapshot {
     pub screen_width: u16,
     pub screen_height: u16,
@@ -96,12 +95,9 @@ pub struct RenderSnapshot {
     pub prompt_indicator: String,
     pub before_cursor: String,
     pub after_cursor: String,
-    pub hint: String,
-    pub right_prompt_on_last_line: bool,
     pub first_buffer_col: u16,
     pub menu_active: bool,
     pub menu_start_row: Option<u16>,
-    pub menu_min_rows: Option<u16>,
     pub large_buffer_extra_rows_after_prompt: Option<usize>,
     pub large_buffer_offset: Option<usize>,
     pub right_prompt_rendered: bool,
@@ -374,7 +370,6 @@ impl Painter {
         menu: Option<&ReedlineMenu>,
         raw_before: &str,
         raw_after: &str,
-        hint: &str,
     ) -> RenderSnapshot {
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();
@@ -452,16 +447,16 @@ impl Painter {
 
         // Determine the row where the menu starts so clicks in the menu area
         // are excluded from buffer offset calculations.
-        let (menu_active, menu_start_row, menu_min_rows) = if let Some(menu) = menu {
+        let (menu_active, menu_start_row) = if let Some(menu) = menu {
             let cursor_distance = lines.distance_from_prompt(screen_width);
             let menu_start_row = if cursor_distance >= screen_height.saturating_sub(1) {
                 screen_height.saturating_sub(menu.min_rows())
             } else {
                 self.prompt_start_row + cursor_distance + 1
             };
-            (true, Some(menu_start_row), Some(menu.min_rows()))
+            (true, Some(menu_start_row))
         } else {
-            (false, None, None)
+            (false, None)
         };
 
         RenderSnapshot {
@@ -474,12 +469,9 @@ impl Painter {
             prompt_indicator: lines.prompt_indicator.to_string(),
             before_cursor: raw_before.to_string(),
             after_cursor: raw_after.to_string(),
-            hint: hint.to_string(),
-            right_prompt_on_last_line: lines.right_prompt_on_last_line,
             first_buffer_col,
             menu_active,
             menu_start_row,
-            menu_min_rows,
             large_buffer_extra_rows_after_prompt,
             large_buffer_offset,
             right_prompt_rendered,
@@ -1194,12 +1186,9 @@ mod tests {
             prompt_indicator: "".to_string(),
             before_cursor: "".to_string(),
             after_cursor: "".to_string(),
-            hint: "".to_string(),
-            right_prompt_on_last_line: false,
             first_buffer_col: 2,
             menu_active: false,
             menu_start_row: None,
-            menu_min_rows: None,
             large_buffer_extra_rows_after_prompt: None,
             large_buffer_offset: None,
             right_prompt_rendered: false,
@@ -1277,7 +1266,6 @@ mod tests {
         let mut snapshot = base_snapshot();
         snapshot.menu_active = true;
         snapshot.menu_start_row = Some(2);
-        snapshot.menu_min_rows = Some(1);
 
         let painter = Painter::new(W::new(std::io::stderr()));
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 2), None);

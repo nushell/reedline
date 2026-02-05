@@ -1953,7 +1953,7 @@ impl Reedline {
             let (raw_before, raw_after) = buffer.split_at(cursor_position_in_buffer);
             self.last_render_snapshot = Some(
                 self.painter
-                    .render_snapshot(&lines, menu, raw_before, raw_after, &hint),
+                    .render_snapshot(&lines, menu, raw_before, raw_after),
             );
         } else {
             self.last_render_snapshot = None;
@@ -2113,12 +2113,9 @@ mod tests {
             prompt_indicator: "".to_string(),
             before_cursor: "hello".to_string(),
             after_cursor: "".to_string(),
-            hint: "".to_string(),
-            right_prompt_on_last_line: false,
             first_buffer_col: 0,
             menu_active: false,
             menu_start_row: None,
-            menu_min_rows: None,
             large_buffer_extra_rows_after_prompt: None,
             large_buffer_offset: None,
             right_prompt_rendered: false,
