@@ -1951,12 +1951,14 @@ impl Reedline {
         )?;
 
         if self.mouse_click_mode.is_enabled() {
-            let buffer = self.editor.get_buffer();
-            let (raw_before, raw_after) = buffer.split_at(cursor_position_in_buffer);
-            self.last_render_snapshot = Some(
-                self.painter
-                    .render_snapshot(&lines, menu, raw_before, raw_after),
-            );
+            if let Some(layout) = &self.painter.last_layout {
+                let buffer = self.editor.get_buffer();
+                let (raw_before, raw_after) = buffer.split_at(cursor_position_in_buffer);
+                self.last_render_snapshot = Some(
+                    self.painter
+                        .render_snapshot(&lines, menu, raw_before, raw_after, layout),
+                );
+            }
         } else {
             self.last_render_snapshot = None;
         }
@@ -2120,10 +2122,7 @@ mod tests {
             menu_start_row: None,
             large_buffer_extra_rows_after_prompt: None,
             large_buffer_offset: None,
-            right_prompt_rendered: false,
-            right_prompt_row: None,
-            right_prompt_start_col: None,
-            right_prompt_end_col: None,
+            right_prompt: None,
         });
 
         let result = reedline.handle_event(

@@ -84,6 +84,14 @@ pub struct PainterSuspendedState {
     previous_prompt_rows_range: RangeInclusive<u16>,
 }
 
+/// Screen bounds of the right prompt when it is visible.
+#[derive(Debug, Clone, Copy)]
+pub struct RightPromptBounds {
+    pub row: u16,
+    pub start_col: u16,
+    pub end_col: u16,
+}
+
 #[derive(Debug, Clone)]
 pub struct RenderSnapshot {
     pub screen_width: u16,
@@ -100,10 +108,7 @@ pub struct RenderSnapshot {
     pub menu_start_row: Option<u16>,
     pub large_buffer_extra_rows_after_prompt: Option<usize>,
     pub large_buffer_offset: Option<usize>,
-    pub right_prompt_rendered: bool,
-    pub right_prompt_row: Option<u16>,
-    pub right_prompt_start_col: Option<u16>,
-    pub right_prompt_end_col: Option<u16>,
+    pub right_prompt: Option<RightPromptBounds>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -137,6 +142,25 @@ fn select_prompt_row(
     PromptRowSelector::MakeNewPrompt { new_row }
 }
 
+/// Layout values computed once per paint cycle, shared between rendering and snapshot creation.
+pub(crate) struct PromptLayout {
+    /// Total rows scrolled off the top (before prompt adjustment).
+    extra_rows: usize,
+    /// Rows scrolled off after subtracting prompt lines.
+    extra_rows_after_prompt: usize,
+    /// Lines to skip from before_cursor for menu space (large buffer only).
+    large_buffer_offset: Option<usize>,
+
+    /// Right prompt bounds (`Some` when rendered).
+    right_prompt: Option<RightPromptBounds>,
+
+    /// Row where the menu starts.
+    menu_start_row: Option<u16>,
+
+    /// Buffer start column on first visible line.
+    first_buffer_col: u16,
+}
+
 /// Implementation of the output to the terminal
 pub struct Painter {
     // Stdout
@@ -151,6 +175,8 @@ pub struct Painter {
     after_cursor_lines: Option<String>,
     /// Optional semantic prompt markers for terminal integration (OSC 133/633)
     semantic_markers: Option<Box<dyn SemanticPromptMarkers>>,
+    /// Layout computed during the last paint cycle.
+    pub(crate) last_layout: Option<PromptLayout>,
 }
 
 impl Painter {
@@ -165,6 +191,7 @@ impl Painter {
             just_resized: false,
             after_cursor_lines: None,
             semantic_markers: None,
+            last_layout: None,
         }
     }
 
@@ -201,6 +228,102 @@ impl Painter {
     /// use [`Painter::remaining_lines_real`] instead.
     pub fn remaining_lines(&self) -> u16 {
         self.screen_height().saturating_sub(self.prompt_start_row)
+    }
+
+    /// Computes layout values shared between rendering and snapshot creation.
+    fn compute_layout(&self, lines: &PromptLines, menu: Option<&ReedlineMenu>) -> PromptLayout {
+        let screen_width = self.screen_width();
+        let screen_height = self.screen_height();
+
+        // Large buffer extra rows computation
+        let (extra_rows, extra_rows_after_prompt) = if self.large_buffer {
+            let prompt_lines = lines.prompt_lines_with_wrap(screen_width) as usize;
+            let prompt_indicator_lines = lines.prompt_indicator.lines().count();
+            let before_cursor_lines = lines.before_cursor.lines().count();
+            let total_lines_before =
+                prompt_lines + prompt_indicator_lines + before_cursor_lines - 1;
+            let extra = total_lines_before.saturating_sub(screen_height as usize);
+            (extra, extra.saturating_sub(prompt_lines))
+        } else {
+            (0, 0)
+        };
+
+        // Large buffer offset for menu space
+        let large_buffer_offset = if self.large_buffer {
+            let cursor_distance = lines.distance_from_prompt(screen_width);
+            menu.and_then(|menu| {
+                if cursor_distance >= screen_height.saturating_sub(1) {
+                    let rows = lines
+                        .before_cursor
+                        .lines()
+                        .count()
+                        .saturating_sub(extra_rows_after_prompt)
+                        .saturating_sub(menu.min_rows() as usize);
+                    Some(rows)
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+
+        // Right prompt layout — only visible when the prompt itself hasn't scrolled off
+        let right_prompt =
+            if lines.prompt_str_right.is_empty() || self.large_buffer && extra_rows > 0 {
+                None
+            } else {
+                let prompt_length_right = line_width(&lines.prompt_str_right);
+                let start_position = screen_width.saturating_sub(prompt_length_right as u16);
+                let input_width = lines.estimate_right_prompt_line_width(screen_width);
+
+                if input_width <= start_position {
+                    let mut row = self.prompt_start_row;
+                    if lines.right_prompt_on_last_line {
+                        row += lines.prompt_lines_with_wrap(screen_width);
+                    }
+                    Some(RightPromptBounds {
+                        row,
+                        start_col: start_position,
+                        end_col: start_position.saturating_add(prompt_length_right as u16),
+                    })
+                } else {
+                    None
+                }
+            };
+
+        // Menu start row
+        let menu_start_row = menu.map(|menu| {
+            let cursor_distance = lines.distance_from_prompt(screen_width);
+            if cursor_distance >= screen_height.saturating_sub(1) {
+                screen_height.saturating_sub(menu.min_rows())
+            } else {
+                self.prompt_start_row + cursor_distance + 1
+            }
+        });
+
+        // First buffer column
+        let first_buffer_col = if self.large_buffer && extra_rows_after_prompt > 0 {
+            0
+        } else {
+            let prompt_line = format!("{}{}", lines.prompt_str_left, lines.prompt_indicator);
+            let last_prompt_line = prompt_line.lines().last().unwrap_or_default();
+            let width = line_width(last_prompt_line);
+            if width > u16::MAX as usize {
+                u16::MAX
+            } else {
+                width as u16
+            }
+        };
+
+        PromptLayout {
+            extra_rows,
+            extra_rows_after_prompt,
+            large_buffer_offset,
+            right_prompt,
+            menu_start_row,
+            first_buffer_col,
+        }
     }
 
     /// Returns the state necessary before suspending the painter (to run a host command event).
@@ -327,11 +450,15 @@ impl Painter {
             .queue(cursor::MoveTo(0, self.prompt_start_row))?
             .queue(Clear(ClearType::FromCursorDown))?;
 
+        let layout = self.compute_layout(lines, menu);
+
         if self.large_buffer {
-            self.print_large_buffer(prompt, lines, menu, use_ansi_coloring)?;
+            self.print_large_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?;
         } else {
-            self.print_small_buffer(prompt, lines, menu, use_ansi_coloring)?;
+            self.print_small_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?;
         }
+
+        self.last_layout = Some(layout);
 
         // The last_required_lines is used to calculate safe range of the current prompt.
         self.last_required_lines = required_lines;
@@ -370,98 +497,18 @@ impl Painter {
         menu: Option<&ReedlineMenu>,
         raw_before: &str,
         raw_after: &str,
+        layout: &PromptLayout,
     ) -> RenderSnapshot {
-        let screen_width = self.screen_width();
-        let screen_height = self.screen_height();
-        let prompt_line = format!("{}{}", lines.prompt_str_left, lines.prompt_indicator);
-        let last_prompt_line = prompt_line.lines().last().unwrap_or_default();
-
-        // For large buffers that exceed screen height, compute how many lines
-        // of buffer content are scrolled off the top of the screen and, when a
-        // menu is visible, how many lines of the before-cursor text to skip so
-        // the menu has room to render.
-        let mut large_buffer_extra_rows_after_prompt = None;
-        let mut large_buffer_offset = None;
-
-        if self.large_buffer {
-            let prompt_lines = lines.prompt_lines_with_wrap(screen_width) as usize;
-            let prompt_indicator_lines = lines.prompt_indicator.lines().count();
-            let before_cursor_lines = raw_before.lines().count();
-            let total_lines_before =
-                prompt_lines + prompt_indicator_lines + before_cursor_lines - 1;
-            let extra_rows = total_lines_before.saturating_sub(screen_height as usize);
-            let extra_rows_after_prompt = extra_rows.saturating_sub(prompt_lines);
-            large_buffer_extra_rows_after_prompt = Some(extra_rows_after_prompt);
-
-            let cursor_distance = lines.distance_from_prompt(screen_width);
-            if let Some(menu) = menu {
-                if cursor_distance >= screen_height.saturating_sub(1) {
-                    let rows = before_cursor_lines
-                        .saturating_sub(extra_rows_after_prompt)
-                        .saturating_sub(menu.min_rows() as usize);
-                    large_buffer_offset = Some(rows);
-                }
-            }
-        }
-
-        // The column where buffer text starts on its first row. Normally this
-        // is right after the prompt, but when lines have scrolled off-screen
-        // the buffer starts at column 0.
-        let first_buffer_col =
-            if self.large_buffer && large_buffer_extra_rows_after_prompt.unwrap_or(0) > 0 {
-                0
-            } else {
-                let width = line_width(last_prompt_line);
-                if width > u16::MAX as usize {
-                    u16::MAX
-                } else {
-                    width as u16
-                }
-            };
-
-        // Record the right prompt's screen bounds so that clicks inside the
-        // right prompt area can be rejected by screen_to_buffer_offset.
-        let mut right_prompt_rendered = false;
-        let mut right_prompt_row = None;
-        let mut right_prompt_start_col = None;
-        let mut right_prompt_end_col = None;
-
-        if !lines.prompt_str_right.is_empty() {
-            let prompt_length_right = line_width(&lines.prompt_str_right);
-            let start_position = screen_width.saturating_sub(prompt_length_right as u16);
-            let input_width = lines.estimate_right_prompt_line_width(screen_width);
-
-            if input_width <= start_position {
-                let mut row = self.prompt_start_row;
-                if lines.right_prompt_on_last_line {
-                    row += lines.prompt_lines_with_wrap(screen_width);
-                }
-
-                right_prompt_rendered = true;
-                right_prompt_row = Some(row);
-                right_prompt_start_col = Some(start_position);
-                right_prompt_end_col =
-                    Some(start_position.saturating_add(prompt_length_right as u16));
-            }
-        }
-
-        // Determine the row where the menu starts so clicks in the menu area
-        // are excluded from buffer offset calculations.
-        let (menu_active, menu_start_row) = if let Some(menu) = menu {
-            let cursor_distance = lines.distance_from_prompt(screen_width);
-            let menu_start_row = if cursor_distance >= screen_height.saturating_sub(1) {
-                screen_height.saturating_sub(menu.min_rows())
-            } else {
-                self.prompt_start_row + cursor_distance + 1
-            };
-            (true, Some(menu_start_row))
+        let large_buffer_extra_rows_after_prompt = if self.large_buffer {
+            Some(layout.extra_rows_after_prompt)
         } else {
-            (false, None)
+            None
         };
+        let large_buffer_offset = layout.large_buffer_offset;
 
         RenderSnapshot {
-            screen_width,
-            screen_height,
+            screen_width: self.screen_width(),
+            screen_height: self.screen_height(),
             prompt_start_row: self.prompt_start_row,
             prompt_height: self.prompt_height,
             large_buffer: self.large_buffer,
@@ -469,15 +516,12 @@ impl Painter {
             prompt_indicator: lines.prompt_indicator.to_string(),
             before_cursor: raw_before.to_string(),
             after_cursor: raw_after.to_string(),
-            first_buffer_col,
-            menu_active,
-            menu_start_row,
+            first_buffer_col: layout.first_buffer_col,
+            menu_active: menu.is_some(),
+            menu_start_row: layout.menu_start_row,
             large_buffer_extra_rows_after_prompt,
             large_buffer_offset,
-            right_prompt_rendered,
-            right_prompt_row,
-            right_prompt_start_col,
-            right_prompt_end_col,
+            right_prompt: layout.right_prompt,
         }
     }
 
@@ -513,15 +557,9 @@ impl Painter {
         }
 
         // Clicks inside the right prompt area are not in the buffer.
-        if snapshot.right_prompt_rendered {
-            if let (Some(rrow), Some(start), Some(end)) = (
-                snapshot.right_prompt_row,
-                snapshot.right_prompt_start_col,
-                snapshot.right_prompt_end_col,
-            ) {
-                if row == rrow && column >= start && column < end {
-                    return None;
-                }
+        if let Some(rp) = &snapshot.right_prompt {
+            if row == rp.row && column >= rp.start_col && column < rp.end_col {
+                return None;
             }
         }
 
@@ -642,34 +680,24 @@ impl Painter {
         None
     }
 
-    fn print_right_prompt(&mut self, lines: &PromptLines) -> Result<()> {
-        let prompt_length_right = line_width(&lines.prompt_str_right);
-        let start_position = self
-            .screen_width()
-            .saturating_sub(prompt_length_right as u16);
-        let screen_width = self.screen_width();
-        let input_width = lines.estimate_right_prompt_line_width(screen_width);
+    fn print_right_prompt(&mut self, lines: &PromptLines, layout: &PromptLayout) -> Result<()> {
+        let Some(rp) = &layout.right_prompt else {
+            return Ok(());
+        };
 
-        let mut row = self.prompt_start_row;
-        if lines.right_prompt_on_last_line {
-            row += lines.prompt_lines_with_wrap(screen_width);
+        self.stdout
+            .queue(SavePosition)?
+            .queue(cursor::MoveTo(rp.start_col, rp.row))?;
+
+        // Emit right prompt marker (OSC 133;P;k=r)
+        if let Some(markers) = &self.semantic_markers {
+            self.stdout
+                .queue(Print(markers.prompt_start(PromptKind::Right)))?;
         }
 
-        if input_width <= start_position {
-            self.stdout
-                .queue(SavePosition)?
-                .queue(cursor::MoveTo(start_position, row))?;
-
-            // Emit right prompt marker (OSC 133;P;k=r)
-            if let Some(markers) = &self.semantic_markers {
-                self.stdout
-                    .queue(Print(markers.prompt_start(PromptKind::Right)))?;
-            }
-
-            self.stdout
-                .queue(Print(&coerce_crlf(&lines.prompt_str_right)))?
-                .queue(RestorePosition)?;
-        }
+        self.stdout
+            .queue(Print(&coerce_crlf(&lines.prompt_str_right)))?
+            .queue(RestorePosition)?;
 
         Ok(())
     }
@@ -677,22 +705,11 @@ impl Painter {
     fn print_menu(
         &mut self,
         menu: &dyn Menu,
-        lines: &PromptLines,
         use_ansi_coloring: bool,
+        layout: &PromptLayout,
     ) -> Result<()> {
-        let screen_width = self.screen_width();
-        let screen_height = self.screen_height();
-        let cursor_distance = lines.distance_from_prompt(screen_width);
-
-        // If there is not enough space to print the menu, then the starting
-        // drawing point for the menu will overwrite the last rows in the buffer
-        let starting_row = if cursor_distance >= screen_height.saturating_sub(1) {
-            screen_height.saturating_sub(menu.min_rows())
-        } else {
-            self.prompt_start_row + cursor_distance + 1
-        };
-
-        let remaining_lines = screen_height.saturating_sub(starting_row);
+        let starting_row = layout.menu_start_row.unwrap_or(0);
+        let remaining_lines = self.screen_height().saturating_sub(starting_row);
         let menu_string = menu.menu_string(remaining_lines, use_ansi_coloring);
         self.stdout
             .queue(cursor::MoveTo(0, starting_row))?
@@ -708,6 +725,7 @@ impl Painter {
         lines: &PromptLines,
         menu: Option<&ReedlineMenu>,
         use_ansi_coloring: bool,
+        layout: &PromptLayout,
     ) -> Result<()> {
         // Emit prompt start marker (OSC 133;P;k=i for primary prompt)
         if let Some(markers) = &self.semantic_markers {
@@ -737,7 +755,7 @@ impl Painter {
                 .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
         }
 
-        self.print_right_prompt(lines)?;
+        self.print_right_prompt(lines, layout)?;
 
         // Emit command input start marker (OSC 133;B) after prompt (including right prompt)
         if let Some(markers) = &self.semantic_markers {
@@ -756,7 +774,7 @@ impl Painter {
             .queue(Print(&lines.after_cursor))?;
 
         if let Some(menu) = menu {
-            self.print_menu(menu, lines, use_ansi_coloring)?;
+            self.print_menu(menu, use_ansi_coloring, layout)?;
         } else {
             self.stdout.queue(Print(&lines.hint))?;
         }
@@ -770,23 +788,15 @@ impl Painter {
         lines: &PromptLines,
         menu: Option<&ReedlineMenu>,
         use_ansi_coloring: bool,
+        layout: &PromptLayout,
     ) -> Result<()> {
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();
         let cursor_distance = lines.distance_from_prompt(screen_width);
         let remaining_lines = screen_height.saturating_sub(cursor_distance);
 
-        // Calculating the total lines before the cursor
-        // The -1 in the total_lines_before is there because the at least one line of the prompt
-        // indicator is printed in the same line as the first line of the buffer
-        let prompt_lines = lines.prompt_lines_with_wrap(screen_width) as usize;
-
-        let prompt_indicator_lines = &lines.prompt_indicator.lines().count();
-        let before_cursor_lines = lines.before_cursor.lines().count();
-        let total_lines_before = prompt_lines + prompt_indicator_lines + before_cursor_lines - 1;
-
-        // Extra rows represent how many rows are "above" the visible area in the terminal
-        let extra_rows = (total_lines_before).saturating_sub(screen_height as usize);
+        let extra_rows = layout.extra_rows;
+        let extra_rows_after_prompt = layout.extra_rows_after_prompt;
 
         // Emit prompt start marker (OSC 133;P;k=i for primary prompt) only if prompt is visible
         if extra_rows == 0 {
@@ -813,17 +823,15 @@ impl Painter {
                     .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
             }
 
-            self.print_right_prompt(lines)?;
+            self.print_right_prompt(lines, layout)?;
         }
-
-        // Adjusting extra_rows base on the calculated prompt line size
-        let extra_rows = extra_rows.saturating_sub(prompt_lines);
 
         if use_ansi_coloring {
             self.stdout
                 .queue(SetForegroundColor(prompt.get_indicator_color()))?;
         }
-        let indicator_skipped = skip_buffer_lines(&lines.prompt_indicator, extra_rows, None);
+        let indicator_skipped =
+            skip_buffer_lines(&lines.prompt_indicator, extra_rows_after_prompt, None);
         self.stdout.queue(Print(&coerce_crlf(indicator_skipped)))?;
 
         // Emit command input start marker (OSC 133;B) after prompt indicator
@@ -835,25 +843,12 @@ impl Painter {
             self.stdout.queue(ResetColor)?;
         }
 
-        // The minimum number of lines from the menu are removed from the buffer if there is no more
-        // space to print the menu. This will only happen if the cursor is at the last line and
-        // it is a large buffer
-        let offset = menu.and_then(|menu| {
-            if cursor_distance >= screen_height.saturating_sub(1) {
-                let rows = lines
-                    .before_cursor
-                    .lines()
-                    .count()
-                    .saturating_sub(extra_rows)
-                    .saturating_sub(menu.min_rows() as usize);
-                Some(rows)
-            } else {
-                None
-            }
-        });
-
         // Selecting the lines before the cursor that will be printed
-        let before_cursor_skipped = skip_buffer_lines(&lines.before_cursor, extra_rows, offset);
+        let before_cursor_skipped = skip_buffer_lines(
+            &lines.before_cursor,
+            extra_rows_after_prompt,
+            layout.large_buffer_offset,
+        );
         self.stdout.queue(Print(before_cursor_skipped))?;
         self.stdout.queue(SavePosition)?;
 
@@ -866,7 +861,7 @@ impl Painter {
             } else {
                 self.stdout.queue(Print(&lines.after_cursor))?;
             }
-            self.print_menu(menu, lines, use_ansi_coloring)?;
+            self.print_menu(menu, use_ansi_coloring, layout)?;
         } else {
             // Selecting lines for the hint
             // The -1 subtraction is done because the remaining lines consider the line where the
@@ -1191,10 +1186,7 @@ mod tests {
             menu_start_row: None,
             large_buffer_extra_rows_after_prompt: None,
             large_buffer_offset: None,
-            right_prompt_rendered: false,
-            right_prompt_row: None,
-            right_prompt_start_col: None,
-            right_prompt_end_col: None,
+            right_prompt: None,
         }
     }
 
@@ -1252,10 +1244,11 @@ mod tests {
     fn test_click_in_right_prompt_ignored() {
         let mut snapshot = base_snapshot();
         snapshot.before_cursor = "hello".to_string();
-        snapshot.right_prompt_rendered = true;
-        snapshot.right_prompt_row = Some(0);
-        snapshot.right_prompt_start_col = Some(10);
-        snapshot.right_prompt_end_col = Some(12);
+        snapshot.right_prompt = Some(RightPromptBounds {
+            row: 0,
+            start_col: 10,
+            end_col: 12,
+        });
 
         let painter = Painter::new(W::new(std::io::stderr()));
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 10, 0), None);
@@ -1269,6 +1262,123 @@ mod tests {
 
         let painter = Painter::new(W::new(std::io::stderr()));
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 2), None);
+    }
+
+    fn make_painter(width: u16, height: u16, large_buffer: bool) -> Painter {
+        let mut p = Painter::new(W::new(std::io::stderr()));
+        p.terminal_size = (width, height);
+        p.prompt_start_row = 0;
+        p.prompt_height = 1;
+        p.large_buffer = large_buffer;
+        p
+    }
+
+    fn make_lines<'a>(
+        left: &'a str,
+        indicator: &'a str,
+        right: &'a str,
+        before: &'a str,
+        after: &'a str,
+    ) -> PromptLines<'a> {
+        PromptLines {
+            prompt_str_left: Cow::Borrowed(left),
+            prompt_str_right: Cow::Borrowed(right),
+            prompt_indicator: Cow::Borrowed(indicator),
+            before_cursor: Cow::Borrowed(before),
+            after_cursor: Cow::Borrowed(after),
+            hint: Cow::Borrowed(""),
+            right_prompt_on_last_line: false,
+        }
+    }
+
+    #[test]
+    fn test_layout_small_buffer_defaults() {
+        let painter = make_painter(20, 10, false);
+        let lines = make_lines("> ", "", "", "hello", "");
+        let layout = painter.compute_layout(&lines, None);
+
+        assert_eq!(layout.extra_rows, 0);
+        assert_eq!(layout.extra_rows_after_prompt, 0);
+        assert_eq!(layout.large_buffer_offset, None);
+        assert_eq!(layout.first_buffer_col, 2); // "> " is 2 chars wide
+        assert_eq!(layout.menu_start_row, None);
+    }
+
+    #[test]
+    fn test_layout_right_prompt_rendered() {
+        let painter = make_painter(40, 10, false);
+        let lines = make_lines("> ", "", "RP", "hi", "");
+        let layout = painter.compute_layout(&lines, None);
+
+        let rp = layout
+            .right_prompt
+            .expect("right prompt should be rendered");
+        assert_eq!(rp.row, 0);
+        assert_eq!(rp.start_col, 38); // 40 - 2
+        assert_eq!(rp.end_col, 40);
+    }
+
+    #[test]
+    fn test_layout_right_prompt_hidden_when_input_too_wide() {
+        let painter = make_painter(10, 10, false);
+        // Prompt "> " (2) + before "12345678" (8) = 10 which equals start_position (10-2=8)
+        // input_width(10) > start_position(8) so right prompt should not render
+        let lines = make_lines("> ", "", "RP", "12345678", "");
+        let layout = painter.compute_layout(&lines, None);
+
+        assert!(layout.right_prompt.is_none());
+    }
+
+    #[test]
+    fn test_layout_large_buffer_extra_rows() {
+        // Screen is 5 lines tall, buffer content exceeds it.
+        // prompt_lines_with_wrap(""> ") = 0
+        // prompt_indicator_lines("") = 0
+        // before_cursor has 7 lines
+        // total_lines_before = 0 + 0 + 7 - 1 = 6
+        // extra_rows = 6 - 5 = 1
+        // extra_rows_after_prompt = 1 - 0 = 1
+        let painter = make_painter(20, 5, true);
+        let lines = make_lines("> ", "", "", "l1\nl2\nl3\nl4\nl5\nl6\nl7", "");
+        let layout = painter.compute_layout(&lines, None);
+
+        assert_eq!(layout.extra_rows, 1);
+        assert_eq!(layout.extra_rows_after_prompt, 1);
+        assert_eq!(layout.first_buffer_col, 0); // scrolled, so col 0
+    }
+
+    #[test]
+    fn test_layout_right_prompt_suppressed_in_large_buffer() {
+        // When extra_rows > 0 the prompt has scrolled off, so right prompt
+        // should not be rendered — this was a bug in the old render_snapshot.
+        let painter = make_painter(20, 5, true);
+        let lines = make_lines("> ", "", "RP", "l1\nl2\nl3\nl4\nl5\nl6\nl7", "");
+        let layout = painter.compute_layout(&lines, None);
+
+        assert!(layout.extra_rows > 0);
+        assert!(layout.right_prompt.is_none());
+    }
+
+    #[test]
+    fn test_layout_large_buffer_no_scroll_keeps_right_prompt() {
+        // Large buffer flag set but content fits — extra_rows == 0
+        // Right prompt should still render
+        let painter = make_painter(20, 10, true);
+        let lines = make_lines("> ", "", "RP", "short", "");
+        let layout = painter.compute_layout(&lines, None);
+
+        assert_eq!(layout.extra_rows, 0);
+        assert!(layout.right_prompt.is_some());
+    }
+
+    #[test]
+    fn test_layout_first_buffer_col_with_multiline_prompt() {
+        let painter = make_painter(20, 10, false);
+        // Multi-line prompt: last line is "$ " (2 chars)
+        let lines = make_lines("line1\n$ ", "", "", "hello", "");
+        let layout = painter.compute_layout(&lines, None);
+
+        assert_eq!(layout.first_buffer_col, 2);
     }
 
     #[test]
@@ -1286,9 +1396,10 @@ mod tests {
 
         let prompt = TestPrompt;
         let lines = PromptLines::new(&prompt, PromptEditMode::Default, None, "", "", "");
+        let layout = painter.compute_layout(&lines, None);
 
         painter
-            .print_small_buffer(&prompt, &lines, None, false)
+            .print_small_buffer(&prompt, &lines, None, false, &layout)
             .expect("print_small_buffer failed");
 
         let recorded = calls.lock().expect("marker lock poisoned").clone();
