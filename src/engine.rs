@@ -2122,10 +2122,7 @@ mod tests {
             menu_start_row: None,
             large_buffer_extra_rows_after_prompt: None,
             large_buffer_offset: None,
-            right_prompt_rendered: false,
-            right_prompt_row: None,
-            right_prompt_start_col: None,
-            right_prompt_end_col: None,
+            right_prompt: None,
         });
 
         let result = reedline.handle_event(

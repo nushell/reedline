@@ -84,6 +84,14 @@ pub struct PainterSuspendedState {
     previous_prompt_rows_range: RangeInclusive<u16>,
 }
 
+/// Screen bounds of the right prompt when it is visible.
+#[derive(Debug, Clone, Copy)]
+pub struct RightPromptBounds {
+    pub row: u16,
+    pub start_col: u16,
+    pub end_col: u16,
+}
+
 #[derive(Debug, Clone)]
 pub struct RenderSnapshot {
     pub screen_width: u16,
@@ -100,10 +108,7 @@ pub struct RenderSnapshot {
     pub menu_start_row: Option<u16>,
     pub large_buffer_extra_rows_after_prompt: Option<usize>,
     pub large_buffer_offset: Option<usize>,
-    pub right_prompt_rendered: bool,
-    pub right_prompt_row: Option<u16>,
-    pub right_prompt_start_col: Option<u16>,
-    pub right_prompt_end_col: Option<u16>,
+    pub right_prompt: Option<RightPromptBounds>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -146,14 +151,8 @@ pub(crate) struct PromptLayout {
     /// Lines to skip from before_cursor for menu space (large buffer only).
     large_buffer_offset: Option<usize>,
 
-    /// Whether the right prompt was rendered.
-    right_prompt_rendered: bool,
-    /// Row of the right prompt.
-    right_prompt_row: Option<u16>,
-    /// Start column of the right prompt.
-    right_prompt_start_col: Option<u16>,
-    /// End column of the right prompt.
-    right_prompt_end_col: Option<u16>,
+    /// Right prompt bounds (`Some` when rendered).
+    right_prompt: Option<RightPromptBounds>,
 
     /// Row where the menu starts.
     menu_start_row: Option<u16>,
@@ -269,31 +268,29 @@ impl Painter {
             None
         };
 
-        // Right prompt layout
-        let mut right_prompt_rendered = false;
-        let mut right_prompt_row = None;
-        let mut right_prompt_start_col = None;
-        let mut right_prompt_end_col = None;
+        // Right prompt layout — only visible when the prompt itself hasn't scrolled off
+        let right_prompt =
+            if lines.prompt_str_right.is_empty() || self.large_buffer && extra_rows > 0 {
+                None
+            } else {
+                let prompt_length_right = line_width(&lines.prompt_str_right);
+                let start_position = screen_width.saturating_sub(prompt_length_right as u16);
+                let input_width = lines.estimate_right_prompt_line_width(screen_width);
 
-        // Right prompt is only visible when the prompt itself hasn't scrolled off
-        if !(lines.prompt_str_right.is_empty() || self.large_buffer && extra_rows > 0) {
-            let prompt_length_right = line_width(&lines.prompt_str_right);
-            let start_position = screen_width.saturating_sub(prompt_length_right as u16);
-            let input_width = lines.estimate_right_prompt_line_width(screen_width);
-
-            if input_width <= start_position {
-                let mut row = self.prompt_start_row;
-                if lines.right_prompt_on_last_line {
-                    row += lines.prompt_lines_with_wrap(screen_width);
+                if input_width <= start_position {
+                    let mut row = self.prompt_start_row;
+                    if lines.right_prompt_on_last_line {
+                        row += lines.prompt_lines_with_wrap(screen_width);
+                    }
+                    Some(RightPromptBounds {
+                        row,
+                        start_col: start_position,
+                        end_col: start_position.saturating_add(prompt_length_right as u16),
+                    })
+                } else {
+                    None
                 }
-
-                right_prompt_rendered = true;
-                right_prompt_row = Some(row);
-                right_prompt_start_col = Some(start_position);
-                right_prompt_end_col =
-                    Some(start_position.saturating_add(prompt_length_right as u16));
-            }
-        }
+            };
 
         // Menu start row
         let menu_start_row = menu.map(|menu| {
@@ -323,10 +320,7 @@ impl Painter {
             extra_rows,
             extra_rows_after_prompt,
             large_buffer_offset,
-            right_prompt_rendered,
-            right_prompt_row,
-            right_prompt_start_col,
-            right_prompt_end_col,
+            right_prompt,
             menu_start_row,
             first_buffer_col,
         }
@@ -527,10 +521,7 @@ impl Painter {
             menu_start_row: layout.menu_start_row,
             large_buffer_extra_rows_after_prompt,
             large_buffer_offset,
-            right_prompt_rendered: layout.right_prompt_rendered,
-            right_prompt_row: layout.right_prompt_row,
-            right_prompt_start_col: layout.right_prompt_start_col,
-            right_prompt_end_col: layout.right_prompt_end_col,
+            right_prompt: layout.right_prompt,
         }
     }
 
@@ -566,15 +557,9 @@ impl Painter {
         }
 
         // Clicks inside the right prompt area are not in the buffer.
-        if snapshot.right_prompt_rendered {
-            if let (Some(rrow), Some(start), Some(end)) = (
-                snapshot.right_prompt_row,
-                snapshot.right_prompt_start_col,
-                snapshot.right_prompt_end_col,
-            ) {
-                if row == rrow && column >= start && column < end {
-                    return None;
-                }
+        if let Some(rp) = &snapshot.right_prompt {
+            if row == rp.row && column >= rp.start_col && column < rp.end_col {
+                return None;
             }
         }
 
@@ -696,16 +681,13 @@ impl Painter {
     }
 
     fn print_right_prompt(&mut self, lines: &PromptLines, layout: &PromptLayout) -> Result<()> {
-        if !layout.right_prompt_rendered {
+        let Some(rp) = &layout.right_prompt else {
             return Ok(());
-        }
-
-        let start_position = layout.right_prompt_start_col.unwrap_or(0);
-        let row = layout.right_prompt_row.unwrap_or(self.prompt_start_row);
+        };
 
         self.stdout
             .queue(SavePosition)?
-            .queue(cursor::MoveTo(start_position, row))?;
+            .queue(cursor::MoveTo(rp.start_col, rp.row))?;
 
         // Emit right prompt marker (OSC 133;P;k=r)
         if let Some(markers) = &self.semantic_markers {
@@ -1204,10 +1186,7 @@ mod tests {
             menu_start_row: None,
             large_buffer_extra_rows_after_prompt: None,
             large_buffer_offset: None,
-            right_prompt_rendered: false,
-            right_prompt_row: None,
-            right_prompt_start_col: None,
-            right_prompt_end_col: None,
+            right_prompt: None,
         }
     }
 
@@ -1265,10 +1244,11 @@ mod tests {
     fn test_click_in_right_prompt_ignored() {
         let mut snapshot = base_snapshot();
         snapshot.before_cursor = "hello".to_string();
-        snapshot.right_prompt_rendered = true;
-        snapshot.right_prompt_row = Some(0);
-        snapshot.right_prompt_start_col = Some(10);
-        snapshot.right_prompt_end_col = Some(12);
+        snapshot.right_prompt = Some(RightPromptBounds {
+            row: 0,
+            start_col: 10,
+            end_col: 12,
+        });
 
         let painter = Painter::new(W::new(std::io::stderr()));
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 10, 0), None);
@@ -1330,10 +1310,12 @@ mod tests {
         let lines = make_lines("> ", "", "RP", "hi", "");
         let layout = painter.compute_layout(&lines, None);
 
-        assert!(layout.right_prompt_rendered);
-        assert_eq!(layout.right_prompt_row, Some(0));
-        assert_eq!(layout.right_prompt_start_col, Some(38)); // 40 - 2
-        assert_eq!(layout.right_prompt_end_col, Some(40));
+        let rp = layout
+            .right_prompt
+            .expect("right prompt should be rendered");
+        assert_eq!(rp.row, 0);
+        assert_eq!(rp.start_col, 38); // 40 - 2
+        assert_eq!(rp.end_col, 40);
     }
 
     #[test]
@@ -1344,7 +1326,7 @@ mod tests {
         let lines = make_lines("> ", "", "RP", "12345678", "");
         let layout = painter.compute_layout(&lines, None);
 
-        assert!(!layout.right_prompt_rendered);
+        assert!(layout.right_prompt.is_none());
     }
 
     #[test]
@@ -1374,7 +1356,7 @@ mod tests {
         let layout = painter.compute_layout(&lines, None);
 
         assert!(layout.extra_rows > 0);
-        assert!(!layout.right_prompt_rendered);
+        assert!(layout.right_prompt.is_none());
     }
 
     #[test]
@@ -1386,7 +1368,7 @@ mod tests {
         let layout = painter.compute_layout(&lines, None);
 
         assert_eq!(layout.extra_rows, 0);
-        assert!(layout.right_prompt_rendered);
+        assert!(layout.right_prompt.is_some());
     }
 
     #[test]
