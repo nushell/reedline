@@ -1951,12 +1951,14 @@ impl Reedline {
         )?;
 
         if self.mouse_click_mode.is_enabled() {
-            let buffer = self.editor.get_buffer();
-            let (raw_before, raw_after) = buffer.split_at(cursor_position_in_buffer);
-            self.last_render_snapshot = Some(
-                self.painter
-                    .render_snapshot(&lines, menu, raw_before, raw_after),
-            );
+            if let Some(layout) = &self.painter.last_layout {
+                let buffer = self.editor.get_buffer();
+                let (raw_before, raw_after) = buffer.split_at(cursor_position_in_buffer);
+                self.last_render_snapshot = Some(
+                    self.painter
+                        .render_snapshot(&lines, menu, raw_before, raw_after, layout),
+                );
+            }
         } else {
             self.last_render_snapshot = None;
         }
