@@ -1872,14 +1872,11 @@ impl Reedline {
     /// Includes the highlighting and hinting calls.
     fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
         let cursor_position_in_buffer = self.editor.insertion_point();
-        let buffer_to_paint = self.editor.get_buffer().to_string();
-        let (raw_before, raw_after) = buffer_to_paint.split_at(cursor_position_in_buffer);
-        let raw_before = raw_before.to_string();
-        let raw_after = raw_after.to_string();
+        let buffer_to_paint = self.editor.get_buffer();
 
         let mut styled_text = self
             .highlighter
-            .highlight(&buffer_to_paint, cursor_position_in_buffer);
+            .highlight(buffer_to_paint, cursor_position_in_buffer);
         if let Some((from, to)) = self.editor.get_selection() {
             styled_text.style_range(from, to, self.visual_selection_style);
         }
@@ -1894,7 +1891,7 @@ impl Reedline {
         let hint: String = if self.hints_active() {
             self.hinter.as_mut().map_or_else(String::new, |hinter| {
                 hinter.handle(
-                    &buffer_to_paint,
+                    buffer_to_paint,
                     cursor_position_in_buffer,
                     self.history.as_ref(),
                     self.use_ansi_coloring,
@@ -1951,11 +1948,12 @@ impl Reedline {
         )?;
 
         if self.mouse_click_mode.is_enabled() {
-            self.last_render_snapshot =
-                Some(
-                    self.painter
-                        .render_snapshot(&lines, menu, &raw_before, &raw_after, &hint),
-                );
+            let buffer = self.editor.get_buffer();
+            let (raw_before, raw_after) = buffer.split_at(cursor_position_in_buffer);
+            self.last_render_snapshot = Some(
+                self.painter
+                    .render_snapshot(&lines, menu, raw_before, raw_after, &hint),
+            );
         } else {
             self.last_render_snapshot = None;
         }
