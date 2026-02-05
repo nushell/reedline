@@ -969,6 +969,7 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Resize(width, height) => {
+                self.last_render_snapshot = None;
                 self.painter.handle_resize(width, height);
                 Ok(EventStatus::Handled)
             }
@@ -1290,6 +1291,7 @@ impl Reedline {
             }
             ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),
             ReedlineEvent::Resize(width, height) => {
+                self.last_render_snapshot = None;
                 self.painter.handle_resize(width, height);
                 Ok(EventStatus::Handled)
             }
