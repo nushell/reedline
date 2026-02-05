@@ -30,7 +30,10 @@ use {
         painting::{Painter, PainterSuspendedState, PromptLines},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
-        terminal_extensions::{bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard},
+        terminal_extensions::{
+            bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard,
+            semantic_prompt::SemanticPromptMarkers,
+        },
         utils::text_manipulation,
         EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
@@ -510,6 +513,20 @@ impl Reedline {
     #[must_use]
     pub fn with_transient_prompt(mut self, transient_prompt: Box<dyn Prompt>) -> Self {
         self.transient_prompt = Some(transient_prompt);
+        self
+    }
+
+    /// A builder that configures semantic prompt markers for terminal integration.
+    ///
+    /// This enables semantic prompt support for terminals that support it, such as Ghostty.
+    /// Use `Osc133Markers::boxed()` for standard terminal support or `Osc633Markers::boxed()`
+    /// for VS Code integrated terminal support.
+    #[must_use]
+    pub fn with_semantic_markers(
+        mut self,
+        markers: Option<Box<dyn SemanticPromptMarkers>>,
+    ) -> Self {
+        self.painter.set_semantic_markers(markers);
         self
     }
 
@@ -1785,6 +1802,7 @@ impl Reedline {
             cursor_position_in_buffer,
             prompt,
             self.use_ansi_coloring,
+            self.painter.semantic_markers(),
         );
 
         let hint: String = if self.hints_active() {

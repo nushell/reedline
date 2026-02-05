@@ -286,6 +286,9 @@ pub use menu::{
 
 mod terminal_extensions;
 pub use terminal_extensions::kitty_protocol_available;
+pub use terminal_extensions::semantic_prompt::{
+    Osc133Markers, Osc633Markers, PromptKind, SemanticPromptMarkers,
+};
 
 mod utils;
 

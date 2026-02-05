@@ -1,3 +1,4 @@
+use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMarkers};
 use crate::{CursorConfig, PromptEditMode, PromptViMode};
 
 use {
@@ -98,6 +99,8 @@ pub struct Painter {
     large_buffer: bool,
     just_resized: bool,
     after_cursor_lines: Option<String>,
+    /// Optional semantic prompt markers for terminal integration (OSC 133/633)
+    semantic_markers: Option<Box<dyn SemanticPromptMarkers>>,
 }
 
 impl Painter {
@@ -111,6 +114,7 @@ impl Painter {
             large_buffer: false,
             just_resized: false,
             after_cursor_lines: None,
+            semantic_markers: None,
         }
     }
 
@@ -124,6 +128,15 @@ impl Painter {
         self.terminal_size.0
     }
 
+    /// Sets the semantic prompt markers for terminal integration (OSC 133/633)
+    pub fn set_semantic_markers(&mut self, markers: Option<Box<dyn SemanticPromptMarkers>>) {
+        self.semantic_markers = markers;
+    }
+
+    /// Returns a reference to the semantic prompt markers, if any
+    pub fn semantic_markers(&self) -> Option<&dyn SemanticPromptMarkers> {
+        self.semantic_markers.as_deref()
+    }
     /// Returns the empty lines from the prompt down.
     pub fn remaining_lines_real(&self) -> u16 {
         self.screen_height()
@@ -313,7 +326,15 @@ impl Painter {
         if input_width <= start_position {
             self.stdout
                 .queue(SavePosition)?
-                .queue(cursor::MoveTo(start_position, row))?
+                .queue(cursor::MoveTo(start_position, row))?;
+
+            // Emit right prompt marker (OSC 133;P;k=r)
+            if let Some(markers) = &self.semantic_markers {
+                self.stdout
+                    .queue(Print(markers.prompt_start(PromptKind::Right)))?;
+            }
+
+            self.stdout
                 .queue(Print(&coerce_crlf(&lines.prompt_str_right)))?
                 .queue(RestorePosition)?;
         }
@@ -356,6 +377,12 @@ impl Painter {
         menu: Option<&ReedlineMenu>,
         use_ansi_coloring: bool,
     ) -> Result<()> {
+        // Emit prompt start marker (OSC 133;P;k=i for primary prompt)
+        if let Some(markers) = &self.semantic_markers {
+            self.stdout
+                .queue(Print(markers.prompt_start(PromptKind::Primary)))?;
+        }
+
         // print our prompt with color
         if use_ansi_coloring {
             self.stdout
@@ -372,6 +399,11 @@ impl Painter {
 
         self.stdout
             .queue(Print(&coerce_crlf(&lines.prompt_indicator)))?;
+
+        // Emit command input start marker (OSC 133;B) after prompt indicator
+        if let Some(markers) = &self.semantic_markers {
+            self.stdout.queue(Print(markers.command_input_start()))?;
+        }
 
         if use_ansi_coloring {
             self.stdout
@@ -424,6 +456,14 @@ impl Painter {
         // Extra rows represent how many rows are "above" the visible area in the terminal
         let extra_rows = (total_lines_before).saturating_sub(screen_height as usize);
 
+        // Emit prompt start marker (OSC 133;P;k=i for primary prompt) only if prompt is visible
+        if extra_rows == 0 {
+            if let Some(markers) = &self.semantic_markers {
+                self.stdout
+                    .queue(Print(markers.prompt_start(PromptKind::Primary)))?;
+            }
+        }
+
         // print our prompt with color
         if use_ansi_coloring {
             self.stdout
@@ -453,6 +493,11 @@ impl Painter {
         }
         let indicator_skipped = skip_buffer_lines(&lines.prompt_indicator, extra_rows, None);
         self.stdout.queue(Print(&coerce_crlf(indicator_skipped)))?;
+
+        // Emit command input start marker (OSC 133;B) after prompt indicator
+        if let Some(markers) = &self.semantic_markers {
+            self.stdout.queue(Print(markers.command_input_start()))?;
+        }
 
         if use_ansi_coloring {
             self.stdout.queue(ResetColor)?;
