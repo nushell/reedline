@@ -364,6 +364,10 @@ impl Painter {
         self.stdout.flush()
     }
 
+    /// Captures the current screen layout into a [`RenderSnapshot`] that records
+    /// prompt geometry, buffer positions, right-prompt bounds, and menu state.
+    /// This snapshot is later used by [`Self::screen_to_buffer_offset`] to map a
+    /// terminal (column, row) click coordinate to a byte offset in the editing buffer.
     pub(crate) fn render_snapshot(
         &self,
         lines: &PromptLines,
@@ -377,6 +381,10 @@ impl Painter {
         let prompt_line = format!("{}{}", lines.prompt_str_left, lines.prompt_indicator);
         let last_prompt_line = prompt_line.lines().last().unwrap_or_default();
 
+        // For large buffers that exceed screen height, compute how many lines
+        // of buffer content are scrolled off the top of the screen and, when a
+        // menu is visible, how many lines of the before-cursor text to skip so
+        // the menu has room to render.
         let mut large_buffer_extra_rows_after_prompt = None;
         let mut large_buffer_offset = None;
 
@@ -401,6 +409,9 @@ impl Painter {
             }
         }
 
+        // The column where buffer text starts on its first row. Normally this
+        // is right after the prompt, but when lines have scrolled off-screen
+        // the buffer starts at column 0.
         let first_buffer_col =
             if self.large_buffer && large_buffer_extra_rows_after_prompt.unwrap_or(0) > 0 {
                 0
@@ -413,6 +424,8 @@ impl Painter {
                 }
             };
 
+        // Record the right prompt's screen bounds so that clicks inside the
+        // right prompt area can be rejected by screen_to_buffer_offset.
         let mut right_prompt_rendered = false;
         let mut right_prompt_row = None;
         let mut right_prompt_start_col = None;
@@ -437,6 +450,8 @@ impl Painter {
             }
         }
 
+        // Determine the row where the menu starts so clicks in the menu area
+        // are excluded from buffer offset calculations.
         let (menu_active, menu_start_row, menu_min_rows) = if let Some(menu) = menu {
             let cursor_distance = lines.distance_from_prompt(screen_width);
             let menu_start_row = if cursor_distance >= screen_height.saturating_sub(1) {
@@ -474,16 +489,29 @@ impl Painter {
         }
     }
 
+    /// Maps a terminal screen coordinate (column, row) to a byte offset in the
+    /// combined editing buffer (`before_cursor + after_cursor`).
+    ///
+    /// Returns `None` when the click lands outside the editable area: above the
+    /// prompt, inside the right prompt, inside the menu, or past the end of
+    /// visible buffer content.
+    ///
+    /// The algorithm walks grapheme-by-grapheme through the visible portion of
+    /// the buffer, tracking the current (row, col) on screen. Wide characters
+    /// and line wrapping are accounted for. When the tracked position matches
+    /// the target coordinate, the corresponding byte offset is returned.
     pub(crate) fn screen_to_buffer_offset(
         &self,
         snapshot: &RenderSnapshot,
         column: u16,
         row: u16,
     ) -> Option<usize> {
+        // Clicks above the prompt are not in the buffer.
         if row < snapshot.prompt_start_row {
             return None;
         }
 
+        // Clicks inside the menu area are not in the buffer.
         if snapshot.menu_active {
             if let Some(menu_start_row) = snapshot.menu_start_row {
                 if row >= menu_start_row {
@@ -492,6 +520,7 @@ impl Painter {
             }
         }
 
+        // Clicks inside the right prompt area are not in the buffer.
         if snapshot.right_prompt_rendered {
             if let (Some(rrow), Some(start), Some(end)) = (
                 snapshot.right_prompt_row,
@@ -504,9 +533,13 @@ impl Painter {
             }
         }
 
+        // Convert the absolute screen row to a row relative to the prompt start.
         let screen_width = snapshot.screen_width;
         let target_row = row.saturating_sub(snapshot.prompt_start_row);
 
+        // Determine which relative row the buffer content begins on. When the
+        // buffer hasn't scrolled, it starts on the last line of the prompt;
+        // otherwise it starts at row 0 (the prompt itself has scrolled off).
         let buffer_start_row = if snapshot.large_buffer
             && snapshot.large_buffer_extra_rows_after_prompt.unwrap_or(0) > 0
         {
@@ -515,10 +548,14 @@ impl Painter {
             snapshot.prompt_height.saturating_sub(1)
         };
 
+        // Click landed in the prompt area before any buffer text.
         if target_row < buffer_start_row {
             return None;
         }
 
+        // Compute the visible byte ranges of the before-cursor and after-cursor
+        // buffer segments, accounting for lines scrolled off-screen in large
+        // buffers and space reserved for menus.
         let (before_start, before_end) = if snapshot.large_buffer {
             skip_buffer_lines_range(
                 &snapshot.before_cursor,
@@ -558,6 +595,9 @@ impl Painter {
         let full_after_visible = after_start == 0 && after_end == snapshot.after_cursor.len();
         let full_buffer_visible = full_before_visible && full_after_visible;
 
+        // Walk through visible buffer content grapheme-by-grapheme, tracking
+        // the screen position. When we hit the target (column, row) we return
+        // the corresponding byte offset in the full buffer.
         let mut current_row = buffer_start_row;
         let mut current_col = if current_row == buffer_start_row {
             snapshot.first_buffer_col
@@ -601,6 +641,8 @@ impl Painter {
             return Some(offset);
         }
 
+        // Click is past all buffer content but still on the last buffer row;
+        // treat it as a click at the very end of the buffer.
         if full_buffer_visible && target_row == current_row && column >= current_col {
             return Some(snapshot.before_cursor.len() + snapshot.after_cursor.len());
         }

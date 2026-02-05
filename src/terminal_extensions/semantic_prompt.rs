@@ -111,8 +111,8 @@ impl Osc133ClickEventsMarkers {
 impl SemanticPromptMarkers for Osc133ClickEventsMarkers {
     fn prompt_start(&self, kind: PromptKind) -> Cow<'_, str> {
         match kind {
-            PromptKind::Primary => Cow::Borrowed("\x1b]133;A;k=i;click_events=1\x1b\\"),
-            PromptKind::Secondary => Cow::Borrowed("\x1b]133;A;k=s;click_events=1\x1b\\"),
+            PromptKind::Primary => Cow::Borrowed("\x1b]133;P;k=i;click_events=1\x1b\\"),
+            PromptKind::Secondary => Cow::Borrowed("\x1b]133;P;k=s;click_events=1\x1b\\"),
             PromptKind::Right => Cow::Borrowed("\x1b]133;P;k=r\x1b\\"),
         }
     }
@@ -193,7 +193,7 @@ mod tests {
         let markers = Osc133ClickEventsMarkers;
         assert_eq!(
             markers.prompt_start(PromptKind::Primary).as_ref(),
-            "\x1b]133;A;k=i;click_events=1\x1b\\"
+            "\x1b]133;P;k=i;click_events=1\x1b\\"
         );
     }
 
@@ -202,7 +202,7 @@ mod tests {
         let markers = Osc133ClickEventsMarkers;
         assert_eq!(
             markers.prompt_start(PromptKind::Secondary).as_ref(),
-            "\x1b]133;A;k=s;click_events=1\x1b\\"
+            "\x1b]133;P;k=s;click_events=1\x1b\\"
         );
     }
 
