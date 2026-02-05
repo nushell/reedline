@@ -2,14 +2,15 @@ use crate::{
     edit_mode::{
         keybindings::{
             add_common_control_bindings, add_common_edit_bindings, add_common_navigation_bindings,
-            add_common_selection_bindings, edit_bind, Keybindings,
+            add_common_selection_bindings, edit_bind, KeyCombination, KeySequenceState,
+            Keybindings,
         },
         EditMode,
     },
-    enums::{EditCommand, ReedlineEvent, ReedlineRawEvent},
+    enums::{EditCommand, ReedlineEvent},
     PromptEditMode,
 };
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers};
 
 /// Returns the current default emacs keybindings
 pub fn default_emacs_keybindings() -> Keybindings {
@@ -105,90 +106,58 @@ pub fn default_emacs_keybindings() -> Keybindings {
 /// This parses the incoming Events like a emacs style-editor
 pub struct Emacs {
     keybindings: Keybindings,
+    sequence_state: KeySequenceState,
 }
 
 impl Default for Emacs {
     fn default() -> Self {
         Emacs {
             keybindings: default_emacs_keybindings(),
+            sequence_state: KeySequenceState::default(),
         }
     }
 }
 
 impl EditMode for Emacs {
-    fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
-        match event.into() {
-            Event::Key(KeyEvent {
-                code, modifiers, ..
-            }) => match (modifiers, code) {
-                (modifier, KeyCode::Char(c)) => {
-                    // Note. The modifier can also be a combination of modifiers, for
-                    // example:
-                    //     KeyModifiers::CONTROL | KeyModifiers::ALT
-                    //     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
-                    //
-                    // Mixed modifiers are used by non american keyboards that have extra
-                    // keys like 'alt gr'. Keep this in mind if in the future there are
-                    // cases where an event is not being captured
-                    let c = match modifier {
-                        KeyModifiers::NONE => c,
-                        _ => c.to_ascii_lowercase(),
-                    };
-
-                    self.keybindings
-                        .find_binding(modifier, KeyCode::Char(c))
-                        .unwrap_or_else(|| {
-                            if modifier == KeyModifiers::NONE
-                                || modifier == KeyModifiers::SHIFT
-                                || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
-                                || modifier
-                                    == KeyModifiers::CONTROL
-                                        | KeyModifiers::ALT
-                                        | KeyModifiers::SHIFT
-                            {
-                                ReedlineEvent::Edit(vec![EditCommand::InsertChar(
-                                    if modifier == KeyModifiers::SHIFT {
-                                        c.to_ascii_uppercase()
-                                    } else {
-                                        c
-                                    },
-                                )])
-                            } else {
-                                ReedlineEvent::None
-                            }
-                        })
-                }
-                _ => self
-                    .keybindings
-                    .find_binding(modifiers, code)
-                    .unwrap_or(ReedlineEvent::None),
-            },
-
-            Event::Mouse(_) => ReedlineEvent::Mouse,
-            Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
-            Event::FocusGained => ReedlineEvent::None,
-            Event::FocusLost => ReedlineEvent::None,
-            Event::Paste(body) => ReedlineEvent::Edit(vec![EditCommand::InsertString(
-                body.replace("\r\n", "\n").replace('\r', "\n"),
-            )]),
-        }
+    fn parse_key_event(&mut self, modifiers: KeyModifiers, code: KeyCode) -> ReedlineEvent {
+        let combo = KeyCombination::from((modifiers, code));
+        let keybindings = &self.keybindings;
+        let resolution = self.sequence_state.process_combo(keybindings, combo);
+        resolution
+            .into_event(|combo| self.default_key_event(keybindings, combo))
+            .unwrap_or(ReedlineEvent::None)
     }
 
     fn edit_mode(&self) -> PromptEditMode {
         PromptEditMode::Emacs
+    }
+
+    fn has_pending_sequence(&self) -> bool {
+        self.sequence_state.is_pending()
+    }
+
+    fn flush_pending_sequence(&mut self) -> Option<ReedlineEvent> {
+        let keybindings = &self.keybindings;
+        let resolution = self.sequence_state.flush_with_combos();
+        resolution.into_event(|combo| self.default_key_event(keybindings, combo))
     }
 }
 
 impl Emacs {
     /// Emacs style input parsing constructor if you want to use custom keybindings
     pub const fn new(keybindings: Keybindings) -> Self {
-        Emacs { keybindings }
+        Emacs {
+            keybindings,
+            sequence_state: KeySequenceState::new(),
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::enums::ReedlineRawEvent;
+    use crossterm::event::{Event, KeyEvent};
     use pretty_assertions::assert_eq;
 
     #[test]

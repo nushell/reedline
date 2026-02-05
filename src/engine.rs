@@ -28,7 +28,7 @@ use {
             HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
         painting::{Painter, PainterSuspendedState, PromptLines},
-        prompt::{PromptEditMode, PromptHistorySearchStatus},
+        prompt::{PromptEditMode, PromptHistorySearchStatus, PromptViMode},
         result::{ReedlineError, ReedlineErrorVariants},
         terminal_extensions::{
             bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard,
@@ -45,7 +45,8 @@ use {
         terminal, QueueableCommand,
     },
     std::{
-        fs::File, io, io::Result, io::Write, process::Command, time::Duration, time::SystemTime,
+        fs::File, io, io::Result, io::Write, process::Command, time::Duration, time::Instant,
+        time::SystemTime,
     },
 };
 
@@ -171,6 +172,10 @@ pub struct Reedline {
     // Whether lines should be accepted immediately
     immediately_accept: bool,
 
+    // Pending key sequence state
+    key_sequence_timeout: Duration,
+    pending_sequence_started: Option<Instant>,
+
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
 }
@@ -245,6 +250,8 @@ impl Reedline {
             bracketed_paste: BracketedPasteGuard::default(),
             kitty_protocol: KittyProtocolGuard::default(),
             immediately_accept: false,
+            key_sequence_timeout: Duration::from_millis(300),
+            pending_sequence_started: None,
             #[cfg(feature = "external_printer")]
             external_printer: None,
         }
@@ -572,6 +579,12 @@ impl Reedline {
         self
     }
 
+    /// A builder that configures the timeout for key sequence matching
+    pub fn with_key_sequence_timeout(mut self, timeout: Duration) -> Self {
+        self.key_sequence_timeout = timeout;
+        self
+    }
+
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
         self.edit_mode.edit_mode()
@@ -760,28 +773,59 @@ impl Reedline {
             }
 
             let mut events: Vec<Event> = vec![];
+            let mut sequence_timed_out = false;
 
             if !self.immediately_accept {
-                // If the `external_printer` feature is enabled, we need to
-                // periodically yield so that external printers get a chance to
-                // print. Otherwise, we can just block until we receive an event.
-                #[cfg(feature = "external_printer")]
-                if event::poll(EXTERNAL_PRINTER_WAIT)? {
+                if self.edit_mode.has_pending_sequence() {
+                    if self.pending_sequence_started.is_none() {
+                        self.pending_sequence_started = Some(Instant::now());
+                    }
+
+                    let start = self
+                        .pending_sequence_started
+                        .expect("pending sequence start should be set");
+                    let elapsed = start.elapsed();
+
+                    if elapsed >= self.key_sequence_timeout {
+                        sequence_timed_out = true;
+                    } else {
+                        let remaining = self.key_sequence_timeout - elapsed;
+                        #[cfg(feature = "external_printer")]
+                        let poll_duration = remaining.min(EXTERNAL_PRINTER_WAIT).min(POLL_WAIT);
+                        #[cfg(not(feature = "external_printer"))]
+                        let poll_duration = remaining.min(POLL_WAIT);
+
+                        if event::poll(poll_duration)? {
+                            events.push(crossterm::event::read()?);
+                        } else if start.elapsed() >= self.key_sequence_timeout {
+                            sequence_timed_out = true;
+                        }
+                    }
+                } else {
+                    // If the `external_printer` feature is enabled, we need to
+                    // periodically yield so that external printers get a chance to
+                    // print. Otherwise, we can just block until we receive an event.
+                    #[cfg(feature = "external_printer")]
+                    if event::poll(EXTERNAL_PRINTER_WAIT)? {
+                        events.push(crossterm::event::read()?);
+                    }
+                    #[cfg(not(feature = "external_printer"))]
                     events.push(crossterm::event::read()?);
                 }
-                #[cfg(not(feature = "external_printer"))]
-                events.push(crossterm::event::read()?);
 
                 // Receive all events in the queue without blocking. Will stop when
                 // a line of input is completed.
-                while !completed(&events) && event::poll(Duration::from_millis(0))? {
-                    events.push(crossterm::event::read()?);
+                if !sequence_timed_out {
+                    while !completed(&events) && event::poll(Duration::from_millis(0))? {
+                        events.push(crossterm::event::read()?);
+                    }
                 }
 
                 // If we believe there's text pasting or resizing going on, batch
                 // more events at the cost of a slight delay.
-                if events.len() > EVENTS_THRESHOLD
-                    || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
+                if !sequence_timed_out
+                    && (events.len() > EVENTS_THRESHOLD
+                        || events.iter().any(|e| matches!(e, Event::Resize(_, _))))
                 {
                     while !completed(&events) && event::poll(POLL_WAIT)? {
                         events.push(crossterm::event::read()?);
@@ -795,7 +839,9 @@ impl Reedline {
             let mut reedline_events: Vec<ReedlineEvent> = vec![];
             let mut edits = vec![];
             let mut resize = None;
+            let mut sequence_activity = false;
             for event in events {
+                let is_key_event = matches!(event, Event::Key(_));
                 if let Ok(event) = ReedlineRawEvent::try_from(event) {
                     match self.edit_mode.parse_event(event) {
                         ReedlineEvent::Edit(edit) => edits.extend(edit),
@@ -808,6 +854,9 @@ impl Reedline {
                             reedline_events.push(event);
                         }
                     }
+                    if is_key_event && self.edit_mode.has_pending_sequence() {
+                        sequence_activity = true;
+                    }
                 }
             }
             if !edits.is_empty() {
@@ -815,6 +864,18 @@ impl Reedline {
             }
             if let Some((x, y)) = resize {
                 reedline_events.push(ReedlineEvent::Resize(x, y));
+            }
+            if sequence_timed_out {
+                if let Some(event) = self.edit_mode.flush_pending_sequence() {
+                    reedline_events.push(event);
+                }
+                self.pending_sequence_started = None;
+            } else if self.edit_mode.has_pending_sequence() {
+                if sequence_activity {
+                    self.pending_sequence_started = Some(Instant::now());
+                }
+            } else {
+                self.pending_sequence_started = None;
             }
             if self.immediately_accept {
                 reedline_events.push(ReedlineEvent::Submit);
@@ -1306,7 +1367,21 @@ impl Reedline {
                 // Exhausting the event handlers is still considered handled
                 Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::ViChangeMode(_) => Ok(self.edit_mode.handle_mode_specific_event(event)),
+            ReedlineEvent::ViChangeMode(_) => {
+                let was_insert = matches!(
+                    self.edit_mode.edit_mode(),
+                    PromptEditMode::Vi(PromptViMode::Insert)
+                );
+                let status = self.edit_mode.handle_mode_specific_event(event);
+                if matches!(status, EventStatus::Handled) {
+                    self.editor.clear_selection();
+                    if was_insert && self.editor.insertion_point() > 0 {
+                        self.run_edit_commands(&[EditCommand::MoveLeft { select: false }]);
+                    }
+                }
+
+                Ok(status)
+            }
             ReedlineEvent::None | ReedlineEvent::Mouse => Ok(EventStatus::Inapplicable),
         }
     }

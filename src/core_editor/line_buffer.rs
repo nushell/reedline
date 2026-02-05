@@ -1445,6 +1445,7 @@ mod test {
     }
 
     #[rstest]
+    #[case("abc def", 0, ' ', true, 3)]
     #[case("abc def ghi", 0, 'c', true, 2)]
     #[case("abc def ghi", 0, 'a', true, 0)]
     #[case("abc def ghi", 0, 'z', true, 0)]
@@ -1471,6 +1472,7 @@ mod test {
     }
 
     #[rstest]
+    #[case("abc def", 0, ' ', true, 2)]
     #[case("abc def ghi", 0, 'd', true, 3)]
     #[case("abc def ghi", 3, 'd', true, 3)]
     #[case("a😇c", 0, 'c', true, 1)]
@@ -1513,6 +1515,7 @@ mod test {
     }
 
     #[rstest]
+    #[case("abc def", 0, ' ', true, " def")]
     #[case("abc def ghi", 0, 'b', true, "bc def ghi")]
     #[case("abc def ghi", 0, 'i', true, "i")]
     #[case("abc def ghi", 0, 'z', true, "abc def ghi")]
