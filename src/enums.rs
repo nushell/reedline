@@ -3,6 +3,28 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use strum_macros::EnumIter;
 
+/// Which mouse button was pressed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MouseButton {
+    /// Left mouse button
+    #[default]
+    Left,
+    /// Right mouse button
+    Right,
+    /// Middle mouse button
+    Middle,
+}
+
+impl From<crossterm::event::MouseButton> for MouseButton {
+    fn from(button: crossterm::event::MouseButton) -> Self {
+        match button {
+            crossterm::event::MouseButton::Left => Self::Left,
+            crossterm::event::MouseButton::Right => Self::Right,
+            crossterm::event::MouseButton::Middle => Self::Middle,
+        }
+    }
+}
+
 /// Valid ways how `Reedline::read_line()` can return
 #[derive(Debug)]
 pub enum Signal {
@@ -808,8 +830,15 @@ pub enum ReedlineEvent {
     /// Esc event
     Esc,
 
-    /// Mouse
-    Mouse, // Fill in details later
+    /// Mouse click event with screen coordinates
+    Mouse {
+        /// Column (x) position, 0-indexed from left
+        column: u16,
+        /// Row (y) position, 0-indexed from top
+        row: u16,
+        /// Which mouse button was clicked
+        button: MouseButton,
+    },
 
     /// trigger terminal resize
     Resize(u16, u16),
@@ -899,7 +928,11 @@ impl Display for ReedlineEvent {
             ReedlineEvent::Submit => write!(f, "Submit"),
             ReedlineEvent::SubmitOrNewline => write!(f, "SubmitOrNewline"),
             ReedlineEvent::Esc => write!(f, "Esc"),
-            ReedlineEvent::Mouse => write!(f, "Mouse"),
+            ReedlineEvent::Mouse {
+                column,
+                row,
+                button,
+            } => write!(f, "Mouse({}, {}, {:?})", column, row, button),
             ReedlineEvent::Resize(_, _) => write!(f, "Resize <int> <int>"),
             ReedlineEvent::Edit(_) => write!(
                 f,
