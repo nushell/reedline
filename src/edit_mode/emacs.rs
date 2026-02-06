@@ -86,6 +86,16 @@ pub fn default_emacs_keybindings() -> Keybindings {
             edit_bind(EC::MoveWordRight { select: false }),
         ]),
     );
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('<'),
+        edit_bind(EC::MoveToStart { select: false }),
+    );
+    kb.add_binding(
+        KM::ALT,
+        KC::Char('>'),
+        edit_bind(EC::MoveToEnd { select: false }),
+    );
     // Edits
     kb.add_binding(KM::ALT, KC::Delete, edit_bind(EC::DeleteWord));
     kb.add_binding(KM::ALT, KC::Backspace, edit_bind(EC::BackspaceWord));
