@@ -2,11 +2,11 @@ use super::{
     base::{CommandLineSearch, SearchDirection, SearchQuery},
     History, HistoryItem, HistoryItemId, HistorySessionId,
 };
+use crate::DateTime;
 use crate::{
     result::{ReedlineError, ReedlineErrorVariants},
     Result,
 };
-use chrono::{TimeZone, Utc};
 use rusqlite::{named_params, params, Connection, ToSql};
 use std::{path::PathBuf, time::Duration};
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
@@ -20,19 +20,16 @@ const SQLITE_APPLICATION_ID: i32 = 1151497937;
 pub struct SqliteBackedHistory {
     db: rusqlite::Connection,
     session: Option<HistorySessionId>,
-    session_timestamp: Option<chrono::DateTime<Utc>>,
+    session_timestamp: Option<DateTime>,
 }
 
 fn deserialize_history_item(row: &rusqlite::Row) -> rusqlite::Result<HistoryItem> {
     let x: Option<String> = row.get("more_info")?;
     Ok(HistoryItem {
         id: Some(HistoryItemId::new(row.get("id")?)),
-        start_timestamp: row.get::<&str, Option<i64>>("start_timestamp")?.map(|e| {
-            match Utc.timestamp_millis_opt(e) {
-                chrono::LocalResult::Single(e) => e,
-                _ => chrono::Utc::now(),
-            }
-        }),
+        start_timestamp: row
+            .get::<&str, Option<i64>>("start_timestamp")?
+            .and_then(DateTime::from_millis),
         command_line: row.get("command_line")?,
         session_id: row
             .get::<&str, Option<i64>>("session_id")?
@@ -81,7 +78,7 @@ impl History for SqliteBackedHistory {
             .query_row(
                 named_params! {
                     ":id": entry.id.map(|id| id.0),
-                    ":start_timestamp": entry.start_timestamp.map(|e| e.timestamp_millis()),
+                    ":start_timestamp": entry.start_timestamp.map(|e| e.as_millis()),
                     ":command_line": entry.command_line,
                     ":session_id": entry.session_id.map(|e| e.0),
                     ":hostname": entry.hostname,
@@ -198,7 +195,7 @@ impl SqliteBackedHistory {
     pub fn with_file(
         file: PathBuf,
         session: Option<HistorySessionId>,
-        session_timestamp: Option<chrono::DateTime<Utc>>,
+        session_timestamp: Option<DateTime>,
     ) -> Result<Self> {
         if let Some(base_dir) = file.parent() {
             std::fs::create_dir_all(base_dir).map_err(|e| {
@@ -220,7 +217,7 @@ impl SqliteBackedHistory {
     fn from_connection(
         db: Connection,
         session: Option<HistorySessionId>,
-        session_timestamp: Option<chrono::DateTime<Utc>>,
+        session_timestamp: Option<DateTime>,
     ) -> Result<Self> {
         // https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
         db.pragma_update(None, "journal_mode", "wal")
@@ -292,7 +289,7 @@ impl SqliteBackedHistory {
             } else {
                 "timestamp_start < :start_time"
             });
-            params.push((":start_time", Box::new(start.timestamp_millis())));
+            params.push((":start_time", Box::new(start.as_millis())));
         }
         if let Some(end) = query.end_time {
             wheres.push(if is_asc {
@@ -300,7 +297,7 @@ impl SqliteBackedHistory {
             } else {
                 ":end_time <= timestamp_start"
             });
-            params.push((":end_time", Box::new(end.timestamp_millis())));
+            params.push((":end_time", Box::new(end.as_millis())));
         }
         if let Some(start) = query.start_id {
             wheres.push(if is_asc {
@@ -376,7 +373,7 @@ impl SqliteBackedHistory {
             params.push((":session_id", Box::new(session_id)));
             params.push((
                 ":session_timestamp",
-                Box::new(session_timestamp.timestamp_millis()),
+                Box::new(session_timestamp.as_millis()),
             ));
         }
         let mut wheres = wheres.join(" and ");

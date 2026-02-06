@@ -253,6 +253,9 @@ pub use engine::{MouseClickMode, Reedline};
 mod result;
 pub use result::{ReedlineError, ReedlineErrorVariants, Result};
 
+mod datetime;
+pub use datetime::DateTime;
+
 mod history;
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 pub use history::SqliteBackedHistory;

@@ -1,9 +1,7 @@
 use crate::{Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode};
 
-use {
-    chrono::Local,
-    std::{borrow::Cow, env},
-};
+use crate::DateTime;
+use std::{borrow::Cow, env};
 
 /// The default prompt indicator
 pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
@@ -134,6 +132,6 @@ fn get_working_dir() -> Result<String, std::io::Error> {
 }
 
 fn get_now() -> String {
-    let now = Local::now();
+    let now = DateTime::now();
     format!("{:>}", now.format("%m/%d/%Y %I:%M:%S %p"))
 }
