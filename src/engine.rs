@@ -62,10 +62,10 @@ const POLL_WAIT: Duration = Duration::from_millis(100);
 // before it is considered a paste. 10 events is conservative enough.
 const EVENTS_THRESHOLD: usize = 10;
 
-/// Maximum time Reedline will block on input before yielding control to
-/// external printers.
-#[cfg(feature = "external_printer")]
-const EXTERNAL_PRINTER_WAIT: Duration = Duration::from_millis(100);
+/// Default maximum time Reedline will block on input before yielding control
+/// for features that require periodic processing (e.g., external printer,
+/// idle callback).
+const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Determines if inputs should be used to extend the regular line buffer,
 /// traverse the history in the standard prompt or edit the search string in the
@@ -195,8 +195,18 @@ pub struct Reedline {
     // Whether lines should be accepted immediately
     immediately_accept: bool,
 
+    // Maximum time to block on input before yielding control for features that
+    // require periodic processing (external printer, idle callback).
+    // Only used when external_printer or idle_callback is configured.
+    poll_interval: Duration,
+
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
+
+    // Callback function that is called periodically while waiting for input.
+    // Useful for processing external events (e.g., GUI updates) during idle time.
+    #[cfg(feature = "idle_callback")]
+    idle_callback: Option<Box<dyn FnMut() + Send>>,
 }
 
 struct BufferEditor {
@@ -271,8 +281,11 @@ impl Reedline {
             bracketed_paste: BracketedPasteGuard::default(),
             kitty_protocol: KittyProtocolGuard::default(),
             immediately_accept: false,
+            poll_interval: DEFAULT_POLL_INTERVAL,
             #[cfg(feature = "external_printer")]
             external_printer: None,
+            #[cfg(feature = "idle_callback")]
+            idle_callback: None,
         }
     }
 
@@ -770,6 +783,12 @@ impl Reedline {
         self.repaint(prompt)?;
 
         loop {
+            // Call idle callback if set (for processing external events like GUI updates)
+            #[cfg(feature = "idle_callback")]
+            if let Some(ref mut callback) = self.idle_callback {
+                callback();
+            }
+
             #[cfg(feature = "external_printer")]
             if let Some(ref external_printer) = self.external_printer {
                 // get messages from printer as crlf separated "lines"
@@ -805,15 +824,31 @@ impl Reedline {
             let mut events: Vec<Event> = vec![];
 
             if !self.immediately_accept {
-                // If the `external_printer` feature is enabled, we need to
-                // periodically yield so that external printers get a chance to
-                // print. Otherwise, we can just block until we receive an event.
-                #[cfg(feature = "external_printer")]
-                if event::poll(EXTERNAL_PRINTER_WAIT)? {
+                // Determine if we need to poll (non-blocking) or can block on input.
+                // We need polling if external_printer or idle_callback is configured,
+                // using the shared poll_interval for the timeout.
+                let needs_polling = {
+                    #[allow(unused_mut)]
+                    let mut result = false;
+                    #[cfg(feature = "external_printer")]
+                    if self.external_printer.is_some() {
+                        result = true;
+                    }
+                    #[cfg(feature = "idle_callback")]
+                    if self.idle_callback.is_some() {
+                        result = true;
+                    }
+                    result
+                };
+
+                if needs_polling {
+                    if event::poll(self.poll_interval)? {
+                        events.push(crossterm::event::read()?);
+                    }
+                } else {
+                    // Block until we receive an event
                     events.push(crossterm::event::read()?);
                 }
-                #[cfg(not(feature = "external_printer"))]
-                events.push(crossterm::event::read()?);
 
                 // Receive all events in the queue without blocking. Will stop when
                 // a line of input is completed.
@@ -1976,6 +2011,59 @@ impl Reedline {
         self
     }
 
+    /// Sets the poll interval used when features that require periodic processing
+    /// are active (e.g., external printer, idle callback).
+    ///
+    /// This controls how frequently Reedline yields control back to these features
+    /// while waiting for user input. The default is 100ms.
+    ///
+    /// Common values are 33ms (~30fps) for UI updates or 100ms for less frequent tasks.
+    ///
+    /// Note: This setting only takes effect when an external printer or idle callback
+    /// is configured. Without these features, Reedline blocks until input is received.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use reedline::Reedline;
+    ///
+    /// let editor = Reedline::create()
+    ///     .with_poll_interval(Duration::from_millis(50));
+    /// ```
+    pub fn with_poll_interval(mut self, interval: Duration) -> Self {
+        self.poll_interval = interval;
+        self
+    }
+
+    /// Sets an idle callback that is called periodically while waiting for user input.
+    ///
+    /// This is useful for applications that need to process external events
+    /// (such as GUI updates, network events, or timer-based operations) while
+    /// the user is typing or the editor is waiting for input.
+    ///
+    /// Use [`with_poll_interval`](Self::with_poll_interval) to control how frequently
+    /// the callback is invoked (default: 100ms).
+    ///
+    /// ## Required feature:
+    /// `idle_callback`
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use reedline::Reedline;
+    ///
+    /// let editor = Reedline::create()
+    ///     .with_poll_interval(Duration::from_millis(33))
+    ///     .with_idle_callback(Box::new(|| {
+    ///         // Process external events here
+    ///     }));
+    /// ```
+    #[cfg(feature = "idle_callback")]
+    pub fn with_idle_callback(mut self, callback: Box<dyn FnMut() + Send>) -> Self {
+        self.idle_callback = Some(callback);
+        self
+    }
+
     #[cfg(feature = "external_printer")]
     fn external_messages(external_printer: &ExternalPrinter<String>) -> Result<Vec<String>> {
         let mut messages = Vec::new();
@@ -2093,6 +2181,38 @@ mod tests {
     fn thread_safe() {
         fn f<S: Send>(_: S) {}
         f(Reedline::create());
+    }
+
+    #[test]
+    #[cfg(feature = "idle_callback")]
+    fn thread_safe_with_idle_callback() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        fn f<S: Send>(_: S) {}
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        let reedline = Reedline::create()
+            .with_poll_interval(Duration::from_millis(100))
+            .with_idle_callback(Box::new(move || {
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+            }));
+
+        // Verify that Reedline with idle_callback is still Send
+        f(reedline);
+    }
+
+    #[test]
+    #[cfg(feature = "idle_callback")]
+    fn idle_callback_builder_pattern() {
+        // Test that with_idle_callback can be chained with other builder methods
+        let _reedline = Reedline::create()
+            .with_quick_completions(true)
+            .with_poll_interval(Duration::from_millis(33))
+            .with_idle_callback(Box::new(|| {}))
+            .with_partial_completions(true);
     }
 
     #[test]
