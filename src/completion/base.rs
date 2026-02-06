@@ -78,6 +78,8 @@ pub trait Completer: Send {
 pub struct Suggestion {
     /// String replacement that will be introduced to the the buffer
     pub value: String,
+    /// If given, overrides `value` as text displayed to user
+    pub display_override: Option<String>,
     /// Optional description for the replacement
     pub description: Option<String>,
     /// Optional style for the replacement
@@ -93,4 +95,11 @@ pub struct Suggestion {
     /// Indices of the graphemes in the suggestion that matched the typed text.
     /// Useful if using fuzzy matching.
     pub match_indices: Option<Vec<usize>>,
+}
+
+impl Suggestion {
+    /// Get value to display to user for this suggestion
+    pub fn display_value(&self) -> &str {
+        self.display_override.as_ref().unwrap_or(&self.value)
+    }
 }
