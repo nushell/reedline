@@ -27,13 +27,18 @@ use {
             FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
             HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
-        painting::{Painter, PainterSuspendedState, PromptLines},
+        painting::{Painter, PainterSuspendedState, PromptLines, RenderSnapshot},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
-        terminal_extensions::{bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard},
+        terminal_extensions::{
+            bracketed_paste::BracketedPasteGuard,
+            kitty::KittyProtocolGuard,
+            semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
+        },
         utils::text_manipulation,
-        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
-        PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
+        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton,
+        Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult,
+        Validator,
     },
     crossterm::{
         cursor::{SetCursorStyle, Show},
@@ -80,6 +85,24 @@ enum InputMode {
     HistoryTraversal,
 }
 
+/// Configuration for mouse click-to-cursor support.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum MouseClickMode {
+    /// Disable mouse click handling.
+    #[default]
+    Disabled,
+    /// Enable mouse click handling without emitting OSC 133 markers.
+    Enabled,
+    /// Enable mouse click handling and emit OSC 133 markers with `click_events=1`.
+    EnabledWithOsc133,
+}
+
+impl MouseClickMode {
+    fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled | Self::EnabledWithOsc133)
+    }
+}
+
 /// Line editor engine
 ///
 /// ## Example usage
@@ -116,6 +139,7 @@ pub struct Reedline {
     // State of the painter after a `ReedlineEvent::ExecuteHostCommand` was requested, used after
     // execution to decide if we can re-use the previous prompt or paint a new one.
     suspended_state: Option<PainterSuspendedState>,
+    last_render_snapshot: Option<RenderSnapshot>,
 
     // Validator
     validator: Option<Box<dyn Validator>>,
@@ -145,6 +169,9 @@ pub struct Reedline {
 
     // Use ansi coloring or not
     use_ansi_coloring: bool,
+
+    // Whether to enable mouse click-to-cursor functionality
+    mouse_click_mode: MouseClickMode,
 
     // Current working directory as defined by the application. If set, it will
     // override the actual working directory of the process.
@@ -233,6 +260,7 @@ impl Reedline {
             history_cursor_on_excluded: false,
             input_mode: InputMode::Regular,
             suspended_state: None,
+            last_render_snapshot: None,
             painter,
             transient_prompt: None,
             edit_mode,
@@ -245,6 +273,7 @@ impl Reedline {
             hide_hints: false,
             validator,
             use_ansi_coloring: true,
+            mouse_click_mode: MouseClickMode::default(),
             cwd: None,
             menus: Vec::new(),
             buffer_editor: None,
@@ -386,6 +415,23 @@ impl Reedline {
         self
     }
 
+    /// Configure mouse click-to-cursor support.
+    ///
+    /// Use [`MouseClickMode::Enabled`] to handle click events when your host shell
+    /// emits OSC 133 markers. Use [`MouseClickMode::EnabledWithOsc133`] to have
+    /// Reedline emit OSC 133 markers with `click_events=1` so supporting terminals
+    /// can send click events.
+    /// See: https://sw.kovidgoyal.net/kitty/shell-integration/#notes-for-shell-developers
+    #[must_use]
+    pub fn with_mouse_click(mut self, mode: MouseClickMode) -> Self {
+        self.mouse_click_mode = mode;
+        if matches!(mode, MouseClickMode::EnabledWithOsc133) {
+            self.painter
+                .set_semantic_markers(Some(Osc133ClickEventsMarkers::boxed()));
+        }
+        self
+    }
+
     /// Update current working directory.
     #[must_use]
     pub fn with_cwd(mut self, cwd: Option<String>) -> Self {
@@ -523,6 +569,20 @@ impl Reedline {
     #[must_use]
     pub fn with_transient_prompt(mut self, transient_prompt: Box<dyn Prompt>) -> Self {
         self.transient_prompt = Some(transient_prompt);
+        self
+    }
+
+    /// A builder that configures semantic prompt markers for terminal integration.
+    ///
+    /// This enables semantic prompt support for terminals that support it, such as Ghostty.
+    /// Use `Osc133Markers::boxed()` for standard terminal support or `Osc633Markers::boxed()`
+    /// for VS Code integrated terminal support.
+    #[must_use]
+    pub fn with_semantic_markers(
+        mut self,
+        markers: Option<Box<dyn SemanticPromptMarkers>>,
+    ) -> Self {
+        self.painter.set_semantic_markers(markers);
         self
     }
 
@@ -925,6 +985,7 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
+                self.last_render_snapshot = None;
                 self.suspended_state = Some(self.painter.state_before_suspension());
                 Ok(EventStatus::Exits(Signal::Success(host_command)))
             }
@@ -932,8 +993,18 @@ impl Reedline {
                 self.run_history_commands(&commands);
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::Mouse => Ok(EventStatus::Handled),
+            ReedlineEvent::Mouse {
+                column,
+                row,
+                button,
+            } => {
+                if button == MouseButton::Left {
+                    self.handle_mouse_click(column, row)?;
+                }
+                Ok(EventStatus::Handled)
+            }
             ReedlineEvent::Resize(width, height) => {
+                self.last_render_snapshot = None;
                 self.painter.handle_resize(width, height);
                 Ok(EventStatus::Handled)
             }
@@ -1206,6 +1277,7 @@ impl Reedline {
                 }
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
+                self.last_render_snapshot = None;
                 self.suspended_state = Some(self.painter.state_before_suspension());
                 Ok(EventStatus::Exits(Signal::Success(host_command)))
             }
@@ -1254,6 +1326,7 @@ impl Reedline {
             }
             ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),
             ReedlineEvent::Resize(width, height) => {
+                self.last_render_snapshot = None;
                 self.painter.handle_resize(width, height);
                 Ok(EventStatus::Handled)
             }
@@ -1325,8 +1398,38 @@ impl Reedline {
                 Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::ViChangeMode(_) => Ok(self.edit_mode.handle_mode_specific_event(event)),
-            ReedlineEvent::None | ReedlineEvent::Mouse => Ok(EventStatus::Inapplicable),
+            ReedlineEvent::Mouse {
+                column,
+                row,
+                button,
+            } => {
+                if button == MouseButton::Left {
+                    self.handle_mouse_click(column, row)?;
+                }
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::None => Ok(EventStatus::Inapplicable),
         }
+    }
+
+    fn handle_mouse_click(&mut self, column: u16, row: u16) -> Result<()> {
+        let snapshot = match &self.last_render_snapshot {
+            Some(snapshot) => snapshot,
+            None => return Ok(()),
+        };
+        if self.input_mode != InputMode::Regular || self.menus.iter().any(|m| m.is_active()) {
+            return Ok(());
+        }
+        let buffer = self.editor.get_buffer();
+        if let Some(offset) = self.painter.screen_to_buffer_offset(snapshot, column, row) {
+            if buffer.is_char_boundary(offset) {
+                self.editor.edit_buffer(
+                    |buf| buf.set_insertion_point(offset),
+                    UndoBehavior::MoveCursor,
+                );
+            }
+        }
+        Ok(())
     }
 
     fn active_menu(&mut self) -> Option<&mut ReedlineMenu> {
@@ -1820,6 +1923,7 @@ impl Reedline {
             cursor_position_in_buffer,
             prompt,
             self.use_ansi_coloring,
+            self.painter.semantic_markers(),
         );
 
         let hint: String = if self.hints_active() {
@@ -1879,7 +1983,22 @@ impl Reedline {
             menu,
             self.use_ansi_coloring,
             &self.cursor_shapes,
-        )
+        )?;
+
+        if self.mouse_click_mode.is_enabled() {
+            if let Some(layout) = &self.painter.last_layout {
+                let buffer = self.editor.get_buffer();
+                let (raw_before, raw_after) = buffer.split_at(cursor_position_in_buffer);
+                self.last_render_snapshot = Some(
+                    self.painter
+                        .render_snapshot(&lines, menu, raw_before, raw_after, layout),
+                );
+            }
+        } else {
+            self.last_render_snapshot = None;
+        }
+
+        Ok(())
     }
 
     /// Adds an external printer
@@ -2008,6 +2127,8 @@ impl Reedline {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal_extensions::semantic_prompt::PromptKind;
+    use crate::DefaultPrompt;
 
     #[test]
     fn test_cursor_position_after_multiline_history_navigation() {
@@ -2092,5 +2213,62 @@ mod tests {
             .with_poll_interval(Duration::from_millis(33))
             .with_idle_callback(Box::new(|| {}))
             .with_partial_completions(true);
+    }
+
+    #[test]
+    fn mouse_click_moves_cursor_in_regular_mode() {
+        let mut reedline = Reedline::create().with_mouse_click(MouseClickMode::Enabled);
+        let prompt = DefaultPrompt::default();
+
+        reedline
+            .editor
+            .set_buffer("hello".to_string(), UndoBehavior::CreateUndoPoint);
+        reedline
+            .editor
+            .edit_buffer(|buf| buf.set_insertion_point(5), UndoBehavior::MoveCursor);
+
+        reedline.last_render_snapshot = Some(RenderSnapshot {
+            screen_width: 20,
+            screen_height: 10,
+            prompt_start_row: 0,
+            prompt_height: 1,
+            large_buffer: false,
+            prompt_str_left: "".to_string(),
+            prompt_indicator: "".to_string(),
+            before_cursor: "hello".to_string(),
+            after_cursor: "".to_string(),
+            first_buffer_col: 0,
+            menu_active: false,
+            menu_start_row: None,
+            large_buffer_extra_rows_after_prompt: None,
+            large_buffer_offset: None,
+            right_prompt: None,
+        });
+
+        let result = reedline.handle_event(
+            &prompt,
+            ReedlineEvent::Mouse {
+                column: 0,
+                row: 0,
+                button: MouseButton::Left,
+            },
+        );
+
+        assert!(matches!(result, Ok(EventStatus::Handled)));
+        assert_eq!(reedline.current_insertion_point(), 0);
+    }
+
+    #[test]
+    fn mouse_click_osc133_sets_semantic_markers() {
+        let reedline = Reedline::create().with_mouse_click(MouseClickMode::EnabledWithOsc133);
+        let markers = reedline
+            .painter
+            .semantic_markers()
+            .expect("expected semantic markers");
+
+        assert_eq!(
+            markers.prompt_start(PromptKind::Primary).as_ref(),
+            "\x1b]133;P;k=i;click_events=1\x1b\\"
+        );
     }
 }

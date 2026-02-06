@@ -3,7 +3,7 @@ use crate::{
     core_editor::Editor,
     menu_functions::{
         can_partially_complete, completer_input, floor_char_boundary, get_match_indices,
-        replace_in_buffer, style_suggestion, truncate_no_ansi,
+        replace_in_buffer, style_suggestion, truncate_with_ansi,
     },
     painting::Painter,
     Completer, Suggestion,
@@ -495,13 +495,15 @@ impl IdeMenu {
             .map(|border| border.vertical)
             .unwrap_or_default();
 
+        let display_value = suggestion.display_value();
+
         let padding_right = (self.working_details.completion_width as usize)
-            .saturating_sub(suggestion.value.width() + border_width + padding);
+            .saturating_sub(display_value.width() + border_width + padding);
 
         let max_string_width =
             (self.working_details.completion_width as usize).saturating_sub(border_width + padding);
 
-        let string = truncate_no_ansi(&suggestion.value, max_string_width);
+        let string = truncate_with_ansi(display_value, max_string_width);
 
         if use_ansi_coloring {
             // TODO(ysthakur): let the user strip quotes, rather than doing it here
@@ -512,7 +514,7 @@ impl IdeMenu {
                 .unwrap_or(shortest_base);
 
             let match_indices =
-                get_match_indices(&suggestion.value, &suggestion.match_indices, shortest_base);
+                get_match_indices(display_value, &suggestion.match_indices, shortest_base);
 
             let suggestion_style = suggestion.style.unwrap_or(self.settings.color.text_style);
 
@@ -677,7 +679,7 @@ impl Menu for IdeMenu {
             self.longest_suggestion = self
                 .get_values()
                 .iter()
-                .map(|s| s.value.width())
+                .map(|s| s.display_value().width())
                 .max()
                 .unwrap_or_default();
 
