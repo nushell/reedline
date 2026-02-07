@@ -344,10 +344,23 @@ impl Command {
                     Some(vec![ReedlineOption::Edit(EditCommand::CutLeftBefore(*c))])
                 }
                 Motion::Start => Some(vec![ReedlineOption::Edit(EditCommand::CutFromLineStart)]),
+                Motion::NonBlankStart => Some(vec![ReedlineOption::Edit(
+                    EditCommand::CutFromLineNonBlankStart,
+                )]),
                 Motion::Left => Some(vec![ReedlineOption::Edit(EditCommand::Backspace)]),
                 Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
                 Motion::Up => None,
                 Motion::Down => None,
+                Motion::FirstLine => Some(vec![ReedlineOption::Edit(
+                    EditCommand::CutFromStartLinewise {
+                        leave_blank_line: false,
+                    },
+                )]),
+                Motion::LastLine => {
+                    Some(vec![ReedlineOption::Edit(EditCommand::CutToEndLinewise {
+                        leave_blank_line: false,
+                    })])
+                }
                 Motion::ReplayCharSearch => vi_state
                     .last_char_search
                     .as_ref()
@@ -399,10 +412,23 @@ impl Command {
                     Motion::Start => {
                         Some(vec![ReedlineOption::Edit(EditCommand::CutFromLineStart)])
                     }
+                    Motion::NonBlankStart => Some(vec![ReedlineOption::Edit(
+                        EditCommand::CutFromLineNonBlankStart,
+                    )]),
                     Motion::Left => Some(vec![ReedlineOption::Edit(EditCommand::Backspace)]),
                     Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
                     Motion::Up => None,
                     Motion::Down => None,
+                    Motion::FirstLine => Some(vec![ReedlineOption::Edit(
+                        EditCommand::CutFromStartLinewise {
+                            leave_blank_line: true,
+                        },
+                    )]),
+                    Motion::LastLine => {
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutToEndLinewise {
+                            leave_blank_line: true,
+                        })])
+                    }
                     Motion::ReplayCharSearch => vi_state
                         .last_char_search
                         .as_ref()
@@ -453,10 +479,19 @@ impl Command {
                     Some(vec![ReedlineOption::Edit(EditCommand::CopyLeftBefore(*c))])
                 }
                 Motion::Start => Some(vec![ReedlineOption::Edit(EditCommand::CopyFromLineStart)]),
+                Motion::NonBlankStart => Some(vec![ReedlineOption::Edit(
+                    EditCommand::CopyFromLineNonBlankStart,
+                )]),
                 Motion::Left => Some(vec![ReedlineOption::Edit(EditCommand::CopyLeft)]),
                 Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::CopyRight)]),
                 Motion::Up => None,
                 Motion::Down => None,
+                Motion::FirstLine => Some(vec![ReedlineOption::Edit(
+                    EditCommand::CopyFromStartLinewise,
+                )]),
+                Motion::LastLine => {
+                    Some(vec![ReedlineOption::Edit(EditCommand::CopyToEndLinewise)])
+                }
                 Motion::ReplayCharSearch => vi_state
                     .last_char_search
                     .as_ref()
