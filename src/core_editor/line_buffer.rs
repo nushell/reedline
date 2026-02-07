@@ -410,14 +410,13 @@ impl LineBuffer {
         self.insertion_point = self.insertion_point() + string.len();
     }
 
-    /// Inserts the system specific new line character
+    /// Inserts a newline character (`'\n'`) into the buffer at the current
+    /// insertion point.
     ///
-    /// - On Unix systems LF (`"\n"`)
-    /// - On Windows CRLF (`"\r\n"`)
+    /// Only LF is inserted regardless of platform. The painting layer
+    /// ([`coerce_crlf`]) is responsible for converting LF to CRLF when
+    /// writing to the terminal in raw mode.
     pub fn insert_newline(&mut self) {
-        #[cfg(target_os = "windows")]
-        self.insert_str("\r\n");
-        #[cfg(not(target_os = "windows"))]
         self.insert_char('\n');
     }
 
