@@ -1117,6 +1117,32 @@ mod test {
     }
 
     #[rstest]
+    #[case("hello", 5, "hello\n", 6)]
+    #[case("hello", 0, "\nhello", 1)]
+    #[case("hello", 3, "hel\nlo", 4)]
+    #[case("line1\nline2", 11, "line1\nline2\n", 12)]
+    #[case("", 0, "\n", 1)]
+    fn insert_newline_inserts_lf_only(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] output: &str,
+        #[case] out_location: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        line_buffer.insert_newline();
+
+        assert_eq!(line_buffer.get_buffer(), output);
+        assert!(
+            !line_buffer.get_buffer().contains('\r'),
+            "Buffer should never contain CR"
+        );
+        assert_eq!(line_buffer.insertion_point(), out_location);
+        line_buffer.assert_valid();
+    }
+
+    #[rstest]
     #[case("new string", 10)]
     #[case("new line1\nnew line 2", 20)]
     fn set_buffer_updates_insertion_point_to_new_buffer_length(
