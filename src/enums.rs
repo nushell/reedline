@@ -912,6 +912,9 @@ pub enum ReedlineEvent {
 
     /// Change mode (vi mode only)
     ViChangeMode(String),
+
+    /// Complete the command given the common prefix of items in current open menu
+    PartialComplete,
 }
 
 impl Display for ReedlineEvent {
@@ -960,6 +963,7 @@ impl Display for ReedlineEvent {
             ReedlineEvent::ExecuteHostCommand(_) => write!(f, "ExecuteHostCommand"),
             ReedlineEvent::OpenEditor => write!(f, "OpenEditor"),
             ReedlineEvent::ViChangeMode(_) => write!(f, "ViChangeMode mode: <string>"),
+            ReedlineEvent::PartialComplete => write!(f, "PartialComplete"),
         }
     }
 }

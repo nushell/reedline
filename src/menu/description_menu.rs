@@ -419,7 +419,6 @@ impl Menu for DescriptionMenu {
     /// The menu does not need to partially complete
     fn can_partially_complete(
         &mut self,
-        _values_updated: bool,
         _editor: &mut Editor,
         _completer: &mut dyn Completer,
     ) -> bool {
