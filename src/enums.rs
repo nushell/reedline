@@ -883,6 +883,9 @@ pub enum ReedlineEvent {
     /// Next element in the menu
     MenuNext,
 
+    /// Next element in menu with partial completions
+    MenuNextComplete,
+
     /// Previous element in the menu
     MenuPrevious,
 
@@ -950,6 +953,7 @@ impl Display for ReedlineEvent {
             ReedlineEvent::UntilFound(_) => write!(f, "UntilFound [ {{ ReedLineEvents, }} ]"),
             ReedlineEvent::Menu(_) => write!(f, "Menu Name: <string>"),
             ReedlineEvent::MenuNext => write!(f, "MenuNext"),
+            ReedlineEvent::MenuNextComplete => write!(f, "MenuNextComplete"),
             ReedlineEvent::MenuPrevious => write!(f, "MenuPrevious"),
             ReedlineEvent::MenuUp => write!(f, "MenuUp"),
             ReedlineEvent::MenuDown => write!(f, "MenuDown"),
