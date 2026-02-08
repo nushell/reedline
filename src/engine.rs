@@ -167,6 +167,9 @@ pub struct Reedline {
     hinter: Option<Box<dyn Hinter>>,
     hide_hints: bool,
 
+    // Auto-show completion menu as you type (IDE/fish style)
+    auto_complete_menu: bool,
+
     // Use ansi coloring or not
     use_ansi_coloring: bool,
 
@@ -271,6 +274,7 @@ impl Reedline {
             visual_selection_style,
             hinter,
             hide_hints: false,
+            auto_complete_menu: false,
             validator,
             use_ansi_coloring: true,
             mouse_click_mode: MouseClickMode::default(),
@@ -365,6 +369,16 @@ impl Reedline {
     #[must_use]
     pub fn disable_hints(mut self) -> Self {
         self.hinter = None;
+        self
+    }
+
+    /// Enable auto-showing completion menu as you type (IDE/fish style)
+    ///
+    /// When enabled, the completion menu named "completion_menu" will automatically
+    /// appear as you type, without needing to press Tab.
+    #[must_use]
+    pub fn with_auto_complete_menu(mut self, enable: bool) -> Self {
+        self.auto_complete_menu = enable;
         self
     }
 
@@ -1316,10 +1330,64 @@ impl Reedline {
                             }
                         }
                     }
-                    if self.editor.line_buffer().get_buffer().is_empty() {
+                    // Check if we should keep the menu active
+                    let buffer = self.editor.line_buffer().get_buffer();
+                    let should_stay_active = if self.auto_complete_menu {
+                        // Use same logic as auto-activate: need 1+ char after last space
+                        if let Some(last_word_start) = buffer.rfind(' ') {
+                            !buffer[last_word_start + 1..].is_empty()
+                        } else {
+                            // First word - keep menu if user activated it manually
+                            !buffer.is_empty()
+                        }
+                    } else {
+                        // No auto-complete mode, keep active unless empty
+                        !buffer.is_empty()
+                    };
+
+                    if !should_stay_active {
                         menu.menu_event(MenuEvent::Deactivate);
                     } else {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
+                    }
+                } else if self.auto_complete_menu {
+                    // Auto-activate completion menu (IDE style)
+                    // - Flags: show immediately on "-" or "--"
+                    // - Files/args: show after 1+ chars typed (not just space)
+                    // - Commands (first word): don't auto-complete
+                    let buffer = self.editor.line_buffer().get_buffer();
+                    let should_show = if let Some(last_word_start) = buffer.rfind(' ') {
+                        let last_word = &buffer[last_word_start + 1..];
+                        // Show if: flags (starts with -) OR has 1+ char typed
+                        !last_word.is_empty()
+                    } else {
+                        // First word - don't auto-complete commands
+                        false
+                    };
+
+                    if let Some(menu) = self.menus.iter_mut().find(|m| m.name() == "completion_menu") {
+                        if should_show {
+                            if !menu.is_active() {
+                                // Only activate if not already active
+                                menu.menu_event(MenuEvent::Activate(self.quick_completions));
+                                menu.update_values(
+                                    &mut self.editor,
+                                    self.completer.as_mut(),
+                                    self.history.as_ref(),
+                                );
+                            } else {
+                                // Menu already active, just send edit event to update
+                                menu.menu_event(MenuEvent::Edit(self.quick_completions));
+                                menu.update_values(
+                                    &mut self.editor,
+                                    self.completer.as_mut(),
+                                    self.history.as_ref(),
+                                );
+                            }
+                        } else if menu.is_active() {
+                            // Deactivate when no longer typing a flag
+                            menu.menu_event(MenuEvent::Deactivate);
+                        }
                     }
                 }
                 Ok(EventStatus::Handled)
