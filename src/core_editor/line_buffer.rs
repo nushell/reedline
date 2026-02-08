@@ -422,14 +422,13 @@ impl LineBuffer {
         self.insertion_point = self.insertion_point() + string.len();
     }
 
-    /// Inserts the system specific new line character
+    /// Inserts a newline character (`'\n'`) into the buffer at the current
+    /// insertion point.
     ///
-    /// - On Unix systems LF (`"\n"`)
-    /// - On Windows CRLF (`"\r\n"`)
+    /// Only LF is inserted regardless of platform. The painting layer
+    /// ([`coerce_crlf`]) is responsible for converting LF to CRLF when
+    /// writing to the terminal in raw mode.
     pub fn insert_newline(&mut self) {
-        #[cfg(target_os = "windows")]
-        self.insert_str("\r\n");
-        #[cfg(not(target_os = "windows"))]
         self.insert_char('\n');
     }
 
@@ -1126,6 +1125,32 @@ mod test {
             expected_updated_insertion_point,
             line_buffer.insertion_point()
         );
+        line_buffer.assert_valid();
+    }
+
+    #[rstest]
+    #[case("hello", 5, "hello\n", 6)]
+    #[case("hello", 0, "\nhello", 1)]
+    #[case("hello", 3, "hel\nlo", 4)]
+    #[case("line1\nline2", 11, "line1\nline2\n", 12)]
+    #[case("", 0, "\n", 1)]
+    fn insert_newline_inserts_lf_only(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] output: &str,
+        #[case] out_location: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(in_location);
+
+        line_buffer.insert_newline();
+
+        assert_eq!(line_buffer.get_buffer(), output);
+        assert!(
+            !line_buffer.get_buffer().contains('\r'),
+            "Buffer should never contain CR"
+        );
+        assert_eq!(line_buffer.insertion_point(), out_location);
         line_buffer.assert_valid();
     }
 
