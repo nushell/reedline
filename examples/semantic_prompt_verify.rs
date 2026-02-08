@@ -26,11 +26,11 @@ fn main() {
     println!();
 
     // Show expected sequence
-    println!("Expected Prompt Sequence: (133;A is oveerridden with P to avoid newline issues)");
+    println!("Expected Prompt Sequence: ");
     println!("------------------------");
     println!("For a prompt like: '~/src > ls -la'");
     println!();
-    println!("1. prompt_start(Primary)  -> OSC 133;P;k=i ST  (before '~/src ')");
+    println!("1. prompt_start(Primary)  -> OSC 133;A;k=i ST  (before '~/src ')");
     println!("2. [left prompt text]     -> '~/src '");
     println!("3. [indicator text]       -> '> '");
     println!("4. command_input_start()  -> OSC 133;B ST     (after indicator)");
@@ -43,7 +43,7 @@ fn main() {
     println!("----------------------");
     println!("For a multiline prompt continuation:");
     println!();
-    println!("1. prompt_start(Secondary) -> OSC 133;P;k=s ST (before '::: ')");
+    println!("1. prompt_start(Secondary) -> OSC 133;A;k=s ST (before '::: ')");
     println!("2. [continuation indicator] -> '::: '");
     println!("3. command_input_start()   -> OSC 133;B ST    (after indicator)");
     println!();
@@ -52,11 +52,11 @@ fn main() {
     println!("Raw Byte Sequences:");
     println!("------------------");
     print_raw(
-        "OSC 133;P;k=i ST",
+        "OSC 133;A;k=i ST",
         &osc133.prompt_start(PromptKind::Primary),
     );
     print_raw(
-        "OSC 133;P;k=s ST",
+        "OSC 133;A;k=s ST",
         &osc133.prompt_start(PromptKind::Secondary),
     );
     print_raw("OSC 133;P;k=r ST", &osc133.prompt_start(PromptKind::Right));
@@ -67,17 +67,12 @@ fn main() {
 }
 
 fn show_markers(markers: &dyn SemanticPromptMarkers, prefix: &str) {
-    let pre = match prefix {
-        "133" => "133;P",
-        "633" => "633;A",
-        _ => prefix,
-    };
     println!(
-        "  Primary prompt start:   OSC {pre};k=i ST = {}",
+        "  Primary prompt start:   OSC {prefix};A;k=i ST = {}",
         escape_for_display(&markers.prompt_start(PromptKind::Primary))
     );
     println!(
-        "  Secondary prompt start: OSC {pre};k=s ST = {}",
+        "  Secondary prompt start: OSC {prefix};A;k=s ST = {}",
         escape_for_display(&markers.prompt_start(PromptKind::Secondary))
     );
     println!(

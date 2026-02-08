@@ -727,7 +727,7 @@ impl Painter {
         use_ansi_coloring: bool,
         layout: &PromptLayout,
     ) -> Result<()> {
-        // Emit prompt start marker (OSC 133;P;k=i for primary prompt)
+        // Emit prompt start marker (OSC 133;A;k=i for primary prompt)
         if let Some(markers) = &self.semantic_markers {
             self.stdout
                 .queue(Print(markers.prompt_start(PromptKind::Primary)))?;
@@ -798,7 +798,7 @@ impl Painter {
         let extra_rows = layout.extra_rows;
         let extra_rows_after_prompt = layout.extra_rows_after_prompt;
 
-        // Emit prompt start marker (OSC 133;P;k=i for primary prompt) only if prompt is visible
+        // Emit prompt start marker (OSC 133;A;k=i for primary prompt) only if prompt is visible
         if extra_rows == 0 {
             if let Some(markers) = &self.semantic_markers {
                 self.stdout

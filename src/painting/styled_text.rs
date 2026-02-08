@@ -311,7 +311,7 @@ mod test {
         // Without semantic markers, just get newline + multiline prompt
         let result = super::render_as_string(&renderable, &prompt_style, multiline_prompt, None);
         assert!(result.contains("\n::: "));
-        assert!(!result.contains("\x1b]133;P;k=s"));
+        assert!(!result.contains("\x1b]133;A;k=s"));
     }
 
     #[test]
@@ -327,7 +327,7 @@ mod test {
         let result =
             super::render_as_string(&renderable, &prompt_style, multiline_prompt, Some(&markers));
         // The result should contain the secondary prompt marker before ::: and B after
-        assert!(result.contains("\x1b]133;P;k=s\x1b\\"));
+        assert!(result.contains("\x1b]133;A;k=s\x1b\\"));
         assert!(result.contains("\x1b]133;B\x1b\\"));
     }
 
@@ -343,7 +343,7 @@ mod test {
         // Single line should not emit any markers
         let result =
             super::render_as_string(&renderable, &prompt_style, multiline_prompt, Some(&markers));
-        assert!(!result.contains("\x1b]133;P;k=s"));
+        assert!(!result.contains("\x1b]133;A;k=s"));
         assert!(!result.contains("\x1b]133;B"));
     }
 }
