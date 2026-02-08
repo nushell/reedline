@@ -827,6 +827,9 @@ pub enum ReedlineEvent {
     /// Submit at the end of the *complete* text, otherwise newline
     SubmitOrNewline,
 
+    /// Submit at the end of the *complete* text, otherwise space
+    SubmitOrSpace,
+
     /// Esc event
     Esc,
 
@@ -927,6 +930,7 @@ impl Display for ReedlineEvent {
             ReedlineEvent::Enter => write!(f, "Enter"),
             ReedlineEvent::Submit => write!(f, "Submit"),
             ReedlineEvent::SubmitOrNewline => write!(f, "SubmitOrNewline"),
+            ReedlineEvent::SubmitOrSpace => write!(f, "SubmitOrSpace"),
             ReedlineEvent::Esc => write!(f, "Esc"),
             ReedlineEvent::Mouse {
                 column,

@@ -975,7 +975,8 @@ impl Reedline {
             ReedlineEvent::Enter
             | ReedlineEvent::HistoryHintComplete
             | ReedlineEvent::Submit
-            | ReedlineEvent::SubmitOrNewline => {
+            | ReedlineEvent::SubmitOrNewline
+            | ReedlineEvent::SubmitOrSpace => {
                 if let Some(string) = self.history_cursor.string_at_cursor() {
                     self.editor
                         .set_buffer(string, UndoBehavior::CreateUndoPoint);
@@ -1275,6 +1276,20 @@ impl Reedline {
                         Ok(EventStatus::Handled)
                     }
                 }
+            }
+            ReedlineEvent::SubmitOrSpace => {
+                #[cfg(feature = "bashisms")]
+                if let Some(event) = self.parse_bang_command() {
+                    return self.handle_editor_event(prompt, event);
+                }
+                for menu in self.menus.iter_mut() {
+                    if menu.is_active() {
+                        menu.replace_in_buffer(&mut self.editor);
+                        menu.menu_event(MenuEvent::Deactivate);
+                    }
+                }
+                self.run_edit_commands(&[EditCommand::InsertChar(' ')]);
+                Ok(EventStatus::Handled)
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
                 self.last_render_snapshot = None;
