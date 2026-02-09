@@ -221,8 +221,16 @@ impl Motion {
             Motion::End => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd {
                 select: select_mode,
             })],
-            Motion::FirstLine => vec![ReedlineOption::Event(ReedlineEvent::ToStart)],
-            Motion::LastLine => vec![ReedlineOption::Event(ReedlineEvent::ToEnd)],
+            Motion::FirstLine => vec![if select_mode {
+                ReedlineOption::Edit(EditCommand::MoveToStart { select: true })
+            } else {
+                ReedlineOption::Event(ReedlineEvent::ToStart)
+            }],
+            Motion::LastLine => vec![if select_mode {
+                ReedlineOption::Edit(EditCommand::MoveToEnd { select: true })
+            } else {
+                ReedlineOption::Event(ReedlineEvent::ToEnd)
+            }],
             Motion::RightUntil(ch) => {
                 vi_state.last_char_search = Some(ViCharSearch::ToRight(*ch));
                 vec![ReedlineOption::Edit(EditCommand::MoveRightUntil {
