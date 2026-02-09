@@ -858,14 +858,14 @@ pub enum ReedlineEvent {
     /// Move down to the next line, if multiline, or down through the historic buffers
     Down,
 
-    ToStart,
-    ToEnd,
-
     /// Move right to the next column, completion entry, or complete hint
     Right,
 
     /// Move left to the next column, or completion entry
     Left,
+
+    ToStart,
+    ToEnd,
 
     /// Navigate to the next historic buffer
     NextHistory,

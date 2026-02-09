@@ -1352,20 +1352,20 @@ impl Reedline {
                 self.down_command();
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::ToStart => {
-                self.editor.move_to_start(false);
-                Ok(EventStatus::Handled)
-            }
-            ReedlineEvent::ToEnd => {
-                self.editor.move_to_end(false);
-                Ok(EventStatus::Handled)
-            }
             ReedlineEvent::Left => {
                 self.run_edit_commands(&[EditCommand::MoveLeft { select: false }]);
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Right => {
                 self.run_edit_commands(&[EditCommand::MoveRight { select: false }]);
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::ToStart => {
+                self.editor.move_to_start(false);
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::ToEnd => {
+                self.editor.move_to_end(false);
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::SearchHistory => {
