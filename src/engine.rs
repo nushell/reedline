@@ -1037,6 +1037,8 @@ impl Reedline {
             // TODO: Check if events should be handled
             ReedlineEvent::Right
             | ReedlineEvent::Left
+            | ReedlineEvent::ToStart
+            | ReedlineEvent::ToEnd
             | ReedlineEvent::Multiple(_)
             | ReedlineEvent::None
             | ReedlineEvent::HistoryHintWordComplete
@@ -1348,6 +1350,14 @@ impl Reedline {
             }
             ReedlineEvent::Down => {
                 self.down_command();
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::ToStart => {
+                self.editor.move_to_start(false);
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::ToEnd => {
+                self.editor.move_to_end(false);
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Left => {

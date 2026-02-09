@@ -858,6 +858,9 @@ pub enum ReedlineEvent {
     /// Move down to the next line, if multiline, or down through the historic buffers
     Down,
 
+    ToStart,
+    ToEnd,
+
     /// Move right to the next column, completion entry, or complete hint
     Right,
 
@@ -942,6 +945,8 @@ impl Display for ReedlineEvent {
             ReedlineEvent::PreviousHistory => write!(f, "PreviousHistory"),
             ReedlineEvent::Up => write!(f, "Up"),
             ReedlineEvent::Down => write!(f, "Down"),
+            ReedlineEvent::ToStart => write!(f, "ToStart"),
+            ReedlineEvent::ToEnd => write!(f, "ToEnd"),
             ReedlineEvent::Right => write!(f, "Right"),
             ReedlineEvent::Left => write!(f, "Left"),
             ReedlineEvent::NextHistory => write!(f, "NextHistory"),
