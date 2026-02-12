@@ -476,8 +476,7 @@ mod test {
         assert_eq!(
             result,
             ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-                EditCommand::MoveRight { select: false },
+                EditCommand::ClearSelection,
                 EditCommand::MoveLeft { select: true }
             ])
         );
@@ -493,8 +492,7 @@ mod test {
         assert_eq!(
             result,
             ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-                EditCommand::MoveRight { select: false },
+                EditCommand::ClearSelection,
                 EditCommand::MoveRight { select: true }
             ])
         );
@@ -509,7 +507,7 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::HelixWordRightGap])
+            ReedlineEvent::Edit(vec![EditCommand::SelectNextWordToGap])
         );
     }
 
@@ -522,7 +520,7 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::HelixWordLeft])
+            ReedlineEvent::Edit(vec![EditCommand::SelectPrevWord])
         );
     }
 
@@ -552,8 +550,7 @@ mod test {
         assert_eq!(
             result,
             ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-                EditCommand::MoveRight { select: false },
+                EditCommand::ClearSelection,
                 EditCommand::MoveBigWordRightStart { select: true }
             ])
         );
@@ -602,8 +599,7 @@ mod test {
         assert_eq!(
             result,
             ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-                EditCommand::MoveRight { select: false },
+                EditCommand::ClearSelection,
                 EditCommand::MoveToLineStart { select: true }
             ])
         );
@@ -619,21 +615,26 @@ mod test {
         assert_eq!(
             result,
             ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-                EditCommand::MoveRight { select: false },
+                EditCommand::ClearSelection,
                 EditCommand::MoveToLineEnd { select: true }
             ])
         );
     }
 
     #[test]
-    fn x_selects_line_test() {
+    fn x_selects_current_line_test() {
         let mut helix = Helix::default();
         assert_eq!(helix.mode, HelixMode::Normal);
 
         let result = helix.parse_event(make_key_event(KeyCode::Char('x'), KeyModifiers::NONE));
 
-        assert_eq!(result, ReedlineEvent::Edit(vec![EditCommand::SelectAll]));
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![
+                EditCommand::MoveToLineStart { select: false },
+                EditCommand::MoveToLineEnd { select: true },
+            ])
+        );
     }
 
     #[test]
@@ -655,7 +656,7 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }])
+            ReedlineEvent::Edit(vec![EditCommand::ClearSelection])
         );
     }
 
@@ -960,12 +961,11 @@ mod test {
         let result = helix.parse_event(make_key_event(KeyCode::Char('h'), KeyModifiers::NONE));
         editor.set_edit_mode(helix.edit_mode());
 
-        // Expected: MoveLeft{false}, MoveRight{false}, MoveLeft{true}
+        // Expected: ClearSelection, MoveLeft{true}
         assert_eq!(
             result,
             ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-                EditCommand::MoveRight { select: false },
+                EditCommand::ClearSelection,
                 EditCommand::MoveLeft { select: true }
             ])
         );
@@ -977,14 +977,13 @@ mod test {
             }
         }
 
-        // After MoveLeft{false}, MoveRight{false}, MoveLeft{true}:
+        // After ClearSelection, MoveLeft{true}:
         // Starting from pos 4:
-        // 1. MoveLeft{false} -> pos 3, no selection
-        // 2. MoveRight{false} -> pos 4, no selection
-        // 3. MoveLeft{true} -> pos 3, selection anchor at 4, cursor at 3
-        // get_selection() returns (cursor, grapheme_right_from_anchor)
-        // So cursor should be at 3, anchor at 4, and selection should be (3, 5)
-        // This selects the character at position 3 ('l') and 4 ('o')
+        // 1. ClearSelection -> clears anchor, stays at pos 4
+        // 2. MoveLeft{true} -> anchor set at 4, cursor moves to 3
+        // get_selection() with inclusive: anchor=4 > cursor=3
+        //   start=3, end=grapheme_right(4)=5
+        // So selection is (3, 5) covering chars at position 3 ('l') and 4 ('o')
         assert_eq!(editor.insertion_point(), 3);
         assert_eq!(editor.get_selection(), Some((3, 5)));
     }
@@ -1001,8 +1000,8 @@ mod test {
         editor.set_edit_mode(helix.edit_mode());
 
         // Start at position 0 in normal mode
-        // Move right with 'l' - the sequence is: MoveLeft{false}, MoveRight{false}, MoveRight{true}
-        // From position 0: stays at 0, moves to 1, moves to 2 with selection
+        // Move right with 'l' - the sequence is: ClearSelection, MoveRight{true}
+        // From position 0: clear anchor, then move right with select
         let result = helix.parse_event(make_key_event(KeyCode::Char('l'), KeyModifiers::NONE));
         editor.set_edit_mode(helix.edit_mode());
         if let ReedlineEvent::Edit(commands) = result {
@@ -1011,32 +1010,28 @@ mod test {
             }
         }
 
-        // After the movement sequence, we should be at position 2
-        // with selection from position 1 to 2 (which displays as chars at index 1)
-        // get_selection returns (1, grapheme_right_from(2)) = (1, 3)
-        assert_eq!(editor.insertion_point(), 2);
-        assert_eq!(editor.get_selection(), Some((1, 3)));
+        // ClearSelection clears anchor, MoveRight{true} sets anchor at 0 then moves to 1
+        // get_selection with inclusive: anchor=0 < cursor=1
+        //   start=0, end=grapheme_right(1)=2
+        assert_eq!(editor.insertion_point(), 1);
+        assert_eq!(editor.get_selection(), Some((0, 2)));
 
         // Enter insert mode with 'i'
         let _result = helix.parse_event(make_key_event(KeyCode::Char('i'), KeyModifiers::NONE));
         assert_eq!(helix.mode, HelixMode::Insert);
         editor.set_edit_mode(helix.edit_mode());
 
-        // In insert mode, selection should be cleared automatically
-        // when transitioning (though we'd need to test this with full engine)
-
         // Exit insert mode with Esc - since we entered with 'i', restore_cursor=false, so NO cursor movement
         let result = helix.parse_event(make_key_event(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(helix.mode, HelixMode::Normal);
         editor.set_edit_mode(helix.edit_mode());
 
-        // When entering via insert (i), Esc should NOT move cursor left
         assert_eq!(
             result,
             ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint,])
         );
 
-        // Apply the Esc commands (no MoveLeft)
+        // Apply the Esc commands (no MoveLeft since entered with 'i')
         if let ReedlineEvent::Multiple(events) = result {
             for event in events {
                 if let ReedlineEvent::Edit(commands) = event {
@@ -1047,14 +1042,11 @@ mod test {
             }
         }
 
-        // After exiting insert mode from position 2, cursor stays at position 2
-        assert_eq!(editor.insertion_point(), 2);
+        // Cursor stays at position 1
+        assert_eq!(editor.insertion_point(), 1);
 
-        // Now move left with 'h' from position 2
-        // The sequence MoveLeft{false}, MoveRight{false}, MoveLeft{true} becomes:
-        // 1. MoveLeft{false} -> moves to pos 1
-        // 2. MoveRight{false} -> moves back to pos 2
-        // 3. MoveLeft{true} -> moves to pos 1, with anchor at 2, creating selection
+        // Now move left with 'h' from position 1
+        // ClearSelection clears anchor, MoveLeft{true} sets anchor at 1 then moves to 0
         let result = helix.parse_event(make_key_event(KeyCode::Char('h'), KeyModifiers::NONE));
         editor.set_edit_mode(helix.edit_mode());
         if let ReedlineEvent::Edit(commands) = result {
@@ -1063,10 +1055,10 @@ mod test {
             }
         }
 
-        // After the move sequence, cursor should be at 1 with selection including char at pos 1
-        // get_selection returns (1, grapheme_right_from(2)) = (1, 3)
-        assert_eq!(editor.insertion_point(), 1);
-        assert_eq!(editor.get_selection(), Some((1, 3)));
+        // get_selection with inclusive: anchor=1 > cursor=0
+        //   start=0, end=grapheme_right(1)=2
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.get_selection(), Some((0, 2)));
     }
 
     #[test]
@@ -1121,7 +1113,7 @@ mod test {
         editor.set_edit_mode(helix.edit_mode());
         assert_eq!(
             result,
-            ReedlineEvent::Edit(vec![EditCommand::HelixWordRightGap])
+            ReedlineEvent::Edit(vec![EditCommand::SelectNextWordToGap])
         );
 
         if let ReedlineEvent::Edit(commands) = result {
@@ -1451,11 +1443,11 @@ mod test {
             let w_result = helix.parse_event(make_key_event(KeyCode::Char('w'), KeyModifiers::NONE));
             prop_assert_eq!(
                 w_result,
-                ReedlineEvent::Edit(vec![EditCommand::HelixWordRightGap])
+                ReedlineEvent::Edit(vec![EditCommand::SelectNextWordToGap])
             );
 
             // Execute the command (recreate it to avoid move)
-            editor.run_edit_command(&EditCommand::HelixWordRightGap);
+            editor.run_edit_command(&EditCommand::SelectNextWordToGap);
 
             // PROPERTY 1: Cursor should have moved forward from the start
             let actual_cursor_pos = editor.insertion_point();
@@ -1592,10 +1584,10 @@ mod test {
             let b_result = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
         prop_assert_eq!(
             b_result,
-            ReedlineEvent::Edit(vec![EditCommand::HelixWordLeft])
+            ReedlineEvent::Edit(vec![EditCommand::SelectPrevWord])
         );
 
-        editor.run_edit_command(&EditCommand::HelixWordLeft);
+        editor.run_edit_command(&EditCommand::SelectPrevWord);
 
             // PROPERTY 1: Cursor should have moved backward from the end
             let actual_cursor_pos = editor.insertion_point();
@@ -1699,9 +1691,9 @@ mod test {
             let b_event = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
             prop_assert_eq!(
                 b_event,
-                ReedlineEvent::Edit(vec![EditCommand::HelixWordLeft])
+                ReedlineEvent::Edit(vec![EditCommand::SelectPrevWord])
             );
-            editor.run_edit_command(&EditCommand::HelixWordLeft);
+            editor.run_edit_command(&EditCommand::SelectPrevWord);
 
             let (sel_start, sel_end) = editor
                 .get_selection()
@@ -1874,5 +1866,347 @@ mod test {
         } else {
             panic!("Step 7 should result in an active selection");
         }
+    }
+
+    // =====================================================================
+    // Regression tests for ClearSelection-based anchor reset
+    // =====================================================================
+
+    /// Pressing 'l' at position 0 should create a selection starting from
+    /// position 0, not skip it. This is a regression test for the old
+    /// MoveLeft+MoveRight anchor-reset approach which incorrectly shifted
+    /// the anchor forward at the start of the buffer.
+    #[test]
+    fn l_motion_from_buffer_start_creates_correct_selection_test() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer("hello".to_string(), crate::UndoBehavior::CreateUndoPoint);
+        editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        // Press 'l' to move right from position 0
+        let l_result = helix.parse_event(make_key_event(KeyCode::Char('l'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = l_result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        // Cursor should be at position 1
+        assert_eq!(editor.insertion_point(), 1);
+        // Selection should start at 0 (where we were), not at 1
+        // In inclusive mode: anchor=0, cursor=1, selection = (0, grapheme_right(1)) = (0, 2)
+        assert_eq!(
+            editor.get_selection(),
+            Some((0, 2)),
+            "Selection should start from position 0, not skip due to anchor-reset"
+        );
+    }
+
+    /// Pressing 'h' at the end of the buffer should create a selection
+    /// anchored at the end position, covering the last character.
+    #[test]
+    fn h_motion_from_buffer_end_creates_correct_selection_test() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer("hello".to_string(), crate::UndoBehavior::CreateUndoPoint);
+        // set_buffer places cursor at end (position 5, past last char)
+
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        // Press 'h' to move left from end
+        let h_result = helix.parse_event(make_key_event(KeyCode::Char('h'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = h_result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        // Cursor should be at position 4 (the 'o')
+        assert_eq!(editor.insertion_point(), 4);
+        // Selection: anchor=5, cursor=4, inclusive: start=4, end=grapheme_right(5)=5
+        assert_eq!(
+            editor.get_selection(),
+            Some((4, 5)),
+            "Selection should cover the last character"
+        );
+    }
+
+    /// After making a selection with 'e', pressing ';' should collapse the
+    /// selection while keeping the cursor at its current position.
+    /// Regression test: the old implementation used MoveRight{select:false}
+    /// which moved the cursor right by one character.
+    #[test]
+    fn semicolon_collapses_without_moving_cursor_test() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer(
+            "hello world".to_string(),
+            crate::UndoBehavior::CreateUndoPoint,
+        );
+        editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        // Press 'e' to select "hello" (cursor at 4, anchor at 0)
+        let e_result = helix.parse_event(make_key_event(KeyCode::Char('e'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = e_result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.get_selection(), Some((0, 5))); // "hello" selected
+
+        // Press ';' to collapse selection
+        let semi_result =
+            helix.parse_event(make_key_event(KeyCode::Char(';'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = semi_result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        // Cursor should stay at position 4 (on the 'o' of "hello")
+        assert_eq!(
+            editor.insertion_point(),
+            4,
+            "';' should not move the cursor"
+        );
+        // Selection should be cleared
+        assert_eq!(
+            editor.get_selection(),
+            None,
+            "';' should clear the selection"
+        );
+    }
+
+    /// In Select mode, ';' should also collapse the selection without moving.
+    #[test]
+    fn semicolon_collapses_in_select_mode_test() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer(
+            "alpha beta gamma".to_string(),
+            crate::UndoBehavior::CreateUndoPoint,
+        );
+
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        // Enter select mode
+        let _ = helix.parse_event(make_key_event(KeyCode::Char('v'), KeyModifiers::NONE));
+        assert_eq!(helix.mode, HelixMode::Select);
+        editor.set_edit_mode(helix.edit_mode());
+
+        // Move backward with 'b' to create a selection
+        let b_result = helix.parse_event(make_key_event(KeyCode::Char('b'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = b_result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        let pos_before_semi = editor.insertion_point();
+        assert!(
+            editor.get_selection().is_some(),
+            "Should have a selection before ';'"
+        );
+
+        // Press ';' to collapse
+        let semi_result =
+            helix.parse_event(make_key_event(KeyCode::Char(';'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = semi_result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        assert_eq!(
+            editor.insertion_point(),
+            pos_before_semi,
+            "';' in select mode should not move the cursor"
+        );
+        assert_eq!(
+            editor.get_selection(),
+            None,
+            "';' in select mode should clear the selection"
+        );
+    }
+
+    /// Repeated 'l' presses from position 0 should produce contiguous
+    /// single-step selections, each anchored correctly.
+    #[test]
+    fn repeated_l_from_start_produces_correct_selections_test() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer("abcde".to_string(), crate::UndoBehavior::CreateUndoPoint);
+        editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        // First 'l': from position 0, should select (0, 2) -- chars 'a','b'
+        let result = helix.parse_event(make_key_event(KeyCode::Char('l'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+        assert_eq!(editor.insertion_point(), 1);
+        assert_eq!(editor.get_selection(), Some((0, 2)));
+
+        // Second 'l': ClearSelection resets anchor, then move right
+        // From position 1, anchor=1, cursor=2, selection=(1, 3) -- chars 'b','c'
+        let result = helix.parse_event(make_key_event(KeyCode::Char('l'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+        assert_eq!(editor.insertion_point(), 2);
+        assert_eq!(editor.get_selection(), Some((1, 3)));
+
+        // Third 'l': from position 2, selection=(2, 4) -- chars 'c','d'
+        let result = helix.parse_event(make_key_event(KeyCode::Char('l'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+        assert_eq!(editor.insertion_point(), 3);
+        assert_eq!(editor.get_selection(), Some((2, 4)));
+    }
+
+    /// On a single-line buffer, 'x' should select the entire line content.
+    #[test]
+    fn x_selects_single_line_content_test() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer(
+            "hello world".to_string(),
+            crate::UndoBehavior::CreateUndoPoint,
+        );
+        // Place cursor in the middle
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 5,
+            select: false,
+        });
+
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        let result = helix.parse_event(make_key_event(KeyCode::Char('x'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        // Cursor should be at end of line, selection covering the whole line
+        let selection = editor.get_selection().expect("x should create a selection");
+        let selected = &editor.get_buffer()[selection.0..selection.1];
+        assert_eq!(
+            selected, "hello world",
+            "x should select the entire current line"
+        );
+    }
+
+    /// On a multi-line buffer, 'x' should select only the current line
+    /// (including its trailing newline), not the entire buffer.
+    #[test]
+    fn x_selects_current_line_in_multiline_buffer_test() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer(
+            "first\nsecond\nthird".to_string(),
+            crate::UndoBehavior::CreateUndoPoint,
+        );
+        // Move cursor into the second line ("second")
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 8,
+            select: false,
+        });
+
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        let result = helix.parse_event(make_key_event(KeyCode::Char('x'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+
+        let selection = editor
+            .get_selection()
+            .expect("x should create a selection on the current line");
+        let selected = &editor.get_buffer()[selection.0..selection.1];
+        // In Helix, 'x' selects the full line including the trailing newline.
+        // MoveToLineEnd lands on the \n, and inclusive selection extends one
+        // grapheme right, so the newline is included in the selection.
+        assert_eq!(
+            selected, "second\n",
+            "x should select the current line (including trailing newline), not the entire buffer"
+        );
+    }
+
+    /// Pressing 'c' should cut the selection and enter insert mode.
+    /// This is handled by parse_event, not the keybinding map.
+    #[test]
+    fn c_enters_insert_mode_via_parse_event_test() {
+        use crate::core_editor::Editor;
+
+        let mut editor = Editor::default();
+        editor.set_buffer(
+            "hello world".to_string(),
+            crate::UndoBehavior::CreateUndoPoint,
+        );
+        editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+
+        let mut helix = Helix::default();
+        editor.set_edit_mode(helix.edit_mode());
+
+        // First select a word with 'e'
+        let e_result = helix.parse_event(make_key_event(KeyCode::Char('e'), KeyModifiers::NONE));
+        if let ReedlineEvent::Edit(commands) = e_result {
+            for cmd in &commands {
+                editor.run_edit_command(cmd);
+            }
+        }
+        assert_eq!(helix.mode, HelixMode::Normal);
+        assert!(
+            editor.get_selection().is_some(),
+            "Should have selection after 'e'"
+        );
+
+        // Press 'c' to change: should cut selection and enter insert mode
+        let c_result = helix.parse_event(make_key_event(KeyCode::Char('c'), KeyModifiers::NONE));
+        assert_eq!(helix.mode, HelixMode::Insert);
+
+        // Apply the result
+        if let ReedlineEvent::Multiple(events) = c_result {
+            for event in events {
+                if let ReedlineEvent::Edit(commands) = event {
+                    for cmd in &commands {
+                        editor.run_edit_command(cmd);
+                    }
+                }
+            }
+        }
+
+        // "hello" should have been deleted, leaving " world"
+        assert_eq!(editor.get_buffer(), " world");
     }
 }

@@ -68,11 +68,11 @@ impl Editor {
             EditCommand::MoveRight { select } => self.move_right(*select),
             EditCommand::MoveWordLeft { select } => self.move_word_left(*select),
             EditCommand::MoveBigWordLeft { select } => self.move_big_word_left(*select),
-            EditCommand::HelixWordLeft => self.helix_word_left(),
+            EditCommand::SelectPrevWord => self.select_prev_word(),
             EditCommand::MoveWordRight { select } => self.move_word_right(*select),
             EditCommand::MoveWordRightStart { select } => self.move_word_right_start(*select),
             EditCommand::MoveWordRightGap { select } => self.move_word_right_gap(*select),
-            EditCommand::HelixWordRightGap => self.helix_word_right_gap(),
+            EditCommand::SelectNextWordToGap => self.select_next_word_to_gap(),
             EditCommand::MoveBigWordRightStart { select } => {
                 self.move_big_word_right_start(*select)
             }
@@ -740,8 +740,15 @@ impl Editor {
         self.move_to_position(self.line_buffer.big_word_left_index(), select);
     }
 
-    fn helix_word_left(&mut self) {
-        if self.helix_prepare_backward_selection() {
+    /// Selection-aware backward word motion.
+    ///
+    /// When a forward selection exists (anchor <= cursor), reanchors at the
+    /// cursor and moves backward to the previous word start.  Otherwise, moves
+    /// to the previous word start without selection, then forward-selects
+    /// through the word gap so the word itself is highlighted, and swaps cursor
+    /// and anchor so the cursor ends up at the word start.
+    fn select_prev_word(&mut self) {
+        if self.prepare_backward_word_selection() {
             return;
         }
 
@@ -750,18 +757,22 @@ impl Editor {
         self.swap_cursor_and_anchor();
     }
 
-    fn helix_word_right_gap(&mut self) {
-        self.helix_prepare_forward_selection();
+    /// Selection-aware forward word-to-gap motion.
+    ///
+    /// Normalizes the current selection so the anchor sits on the word boundary
+    /// being left, then moves the cursor to the gap before the next word.
+    /// Repeated calls drop the previously selected word and pick up the next.
+    fn select_next_word_to_gap(&mut self) {
+        self.prepare_forward_word_selection();
 
         self.move_word_right_gap(true);
     }
 
-    /// When selections extend to the right, Helix expects a backward motion to keep the
-    /// highlight anchored on the word that was just traversed. This helper snaps the anchor to
-    /// the cursor and moves the insertion point back to the previous word start. Returns `true`
-    /// when the helper has fully handled the motion so no additional selection reshaping is
-    /// required by the caller.
-    fn helix_prepare_backward_selection(&mut self) -> bool {
+    /// If the selection extends forward (anchor <= cursor), snaps the anchor to
+    /// the cursor position and moves the insertion point back to the previous
+    /// word start.  Returns `true` when the motion is fully handled so the
+    /// caller can skip further selection reshaping.
+    fn prepare_backward_word_selection(&mut self) -> bool {
         if let Some(anchor_pos) = self.selection_anchor {
             let insertion = self.insertion_point();
 
@@ -775,10 +786,11 @@ impl Editor {
         false
     }
 
-    /// Normalizes the selection before a forward motion so that the anchor always sits on the
-    /// word boundary we are leaving. This matches Helix's expectation that repeated `w` presses
-    /// drop the previously selected word before extending to the next one.
-    fn helix_prepare_forward_selection(&mut self) {
+    /// Normalizes the selection before a forward word motion so the anchor sits
+    /// on the word boundary being left.  If the selection is backward, flips it.
+    /// If forward, advances both anchor and cursor to the start of the next
+    /// word so repeated forward motions drop the previous word selection.
+    fn prepare_forward_word_selection(&mut self) {
         if let Some(anchor_pos) = self.selection_anchor {
             let insertion = self.insertion_point();
             if anchor_pos > insertion {

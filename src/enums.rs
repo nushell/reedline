@@ -172,15 +172,18 @@ pub enum EditCommand {
         select: bool,
     },
 
-    /// Helix-specific backward word motion that preserves the existing word selection
-    /// when moving from the end of a word back to its start. Used to keep tutorial
-    /// selections anchored on the full word without capturing the trailing gap.
-    HelixWordLeft,
+    /// Selection-aware backward word motion: selects the previous word by
+    /// reanchoring at the current cursor position and moving backward.
+    /// When the selection already extends forward, snaps the anchor to the
+    /// cursor and moves to the previous word start. Otherwise, selects the
+    /// previous word boundary (start to gap) and places the cursor at the start.
+    SelectPrevWord,
 
-    /// Helix-specific forward word motion that normalizes selection orientation before
-    /// stepping into the inter-word gap. Ensures motions like Step 6 highlight behave
-    /// consistently regardless of cursor/anchor ordering.
-    HelixWordRightGap,
+    /// Selection-aware forward word motion: selects up to the gap before the
+    /// next word. Normalizes selection orientation first — if the selection is
+    /// backward it flips it, if forward it advances past the previously selected
+    /// word. Then moves the cursor to the next inter-word gap with selection.
+    SelectNextWordToGap,
 
     /// Move to position
     MoveToPosition {
@@ -525,8 +528,8 @@ impl Display for EditCommand {
             EditCommand::MoveBigWordRightStart { .. } => {
                 write!(f, "MoveBigWordRightStart Optional[select: <bool>]")
             }
-            EditCommand::HelixWordLeft => write!(f, "HelixWordLeft"),
-            EditCommand::HelixWordRightGap => write!(f, "HelixWordRightGap"),
+            EditCommand::SelectPrevWord => write!(f, "SelectPrevWord"),
+            EditCommand::SelectNextWordToGap => write!(f, "SelectNextWordToGap"),
             EditCommand::MoveToPosition { .. } => {
                 write!(f, "MoveToPosition  Value: <int>, Optional[select: <bool>]")
             }
@@ -654,7 +657,7 @@ impl EditCommand {
             | EditCommand::MoveLeftBefore { select, .. } => {
                 EditType::MoveCursor { select: *select }
             }
-            EditCommand::HelixWordLeft | EditCommand::HelixWordRightGap => {
+            EditCommand::SelectPrevWord | EditCommand::SelectNextWordToGap => {
                 EditType::MoveCursor { select: true }
             }
             EditCommand::ClearSelection => EditType::MoveCursor { select: false },
