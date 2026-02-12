@@ -2,7 +2,8 @@ use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
-        can_partially_complete, completer_input, floor_char_boundary, replace_in_buffer,
+        can_partially_complete, completer_input, floor_char_boundary, get_match_indices,
+        replace_in_buffer, style_suggestion, truncate_with_ansi,
     },
     painting::Painter,
     Completer, Suggestion,
@@ -73,6 +74,8 @@ pub struct ColumnarMenu {
     working_details: ColumnDetails,
     /// Menu cached values
     values: Vec<Suggestion>,
+    /// Cached display width of each suggestion in `values`
+    display_widths: Vec<usize>,
     /// column position of the cursor. Starts from 0
     col_pos: u16,
     /// row position in the menu. Starts from 0
@@ -97,6 +100,7 @@ impl Default for ColumnarMenu {
             min_rows: 3,
             working_details: ColumnDetails::default(),
             values: Vec::new(),
+            display_widths: Vec::new(),
             col_pos: 0,
             row_pos: 0,
             skip_rows: 0,
@@ -377,136 +381,79 @@ impl ColumnarMenu {
         &self,
         suggestion: &Suggestion,
         index: usize,
-        empty_space: usize,
         use_ansi_coloring: bool,
     ) -> String {
+        let selected = index == self.index();
+        let display_value = suggestion.display_value();
+        let empty_space = self.get_width().saturating_sub(self.display_widths[index]);
+
         if use_ansi_coloring {
-            // strip quotes
+            // TODO(ysthakur): let the user strip quotes, rather than doing it here
             let is_quote = |c: char| "`'\"".contains(c);
             let shortest_base = &self.working_details.shortest_base_string;
             let shortest_base = shortest_base
                 .strip_prefix(is_quote)
                 .unwrap_or(shortest_base);
-            let match_len = shortest_base.chars().count();
 
-            // Find match position - look for the base string in the suggestion (case-insensitive)
-            let match_position = suggestion
-                .value
-                .to_lowercase()
-                .find(&shortest_base.to_lowercase())
-                .unwrap_or(0);
+            let match_indices =
+                get_match_indices(display_value, &suggestion.match_indices, shortest_base);
 
-            // The match is just the part that matches the shortest_base
-            let match_str = {
-                let match_str = &suggestion.value[match_position..];
-                let match_len_bytes = match_str
-                    .char_indices()
-                    .nth(match_len)
-                    .map(|(i, _)| i)
-                    .unwrap_or_else(|| match_str.len());
-                &suggestion.value[match_position..match_position + match_len_bytes]
+            let left_text_size = self
+                .get_width()
+                .min(self.longest_suggestion + self.default_details.col_padding);
+            let description_size = self.get_width().saturating_sub(left_text_size);
+            let padding = left_text_size.saturating_sub(self.display_widths[index]);
+
+            let text_style = &suggestion.style.unwrap_or(self.settings.color.text_style);
+            let match_style = if selected {
+                &self.settings.color.selected_match_style
+            } else {
+                &self.settings.color.match_style
             };
+            let value_trunc = truncate_with_ansi(display_value, left_text_size);
+            let styled_value = style_suggestion(
+                &value_trunc,
+                &match_indices,
+                text_style,
+                match_style,
+                selected.then_some(&self.settings.color.selected_text_style),
+            );
 
-            // Prefix is everything before the match
-            let prefix = &suggestion.value[..match_position];
-
-            // Remaining is everything after the match
-            let remaining_str = &suggestion.value[match_position + match_str.len()..];
-
-            let suggestion_style_prefix = suggestion
-                .style
-                .unwrap_or(self.settings.color.text_style)
-                .prefix();
-
-            let left_text_size = self.longest_suggestion + self.default_details.col_padding;
-            let right_text_size = self.get_width().saturating_sub(left_text_size);
-
-            let max_remaining = left_text_size.saturating_sub(match_str.width() + prefix.width());
-            let max_match = max_remaining.saturating_sub(remaining_str.width());
-
-            if index == self.index() {
-                if let Some(description) = &suggestion.description {
+            match &suggestion.description {
+                Some(desc) if description_size > 3 => {
+                    let desc = desc.replace('\n', "");
+                    let desc_trunc = truncate_with_ansi(desc.as_str(), description_size);
+                    if selected {
+                        format!(
+                            "{}{}{}{}{}{}{}",
+                            styled_value,
+                            RESET,
+                            text_style.prefix(),
+                            self.settings.color.selected_text_style.prefix(),
+                            " ".repeat(padding),
+                            self.settings.color.description_style.paint(desc_trunc),
+                            RESET,
+                        )
+                    } else {
+                        format!(
+                            "{}{}{}{}{}",
+                            styled_value,
+                            RESET,
+                            " ".repeat(padding),
+                            self.settings.color.description_style.paint(desc_trunc),
+                            RESET,
+                        )
+                    }
+                }
+                _ => {
                     format!(
-                        "{}{}{}{}{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}{}",
-                        suggestion_style_prefix,
-                        self.settings.color.selected_text_style.prefix(),
-                        prefix,
-                        RESET,
-                        suggestion_style_prefix,
-                        self.settings.color.selected_match_style.prefix(),
-                        match_str,
-                        RESET,
-                        suggestion_style_prefix,
-                        self.settings.color.selected_text_style.prefix(),
-                        remaining_str,
-                        RESET,
-                        self.settings.color.description_style.prefix(),
-                        self.settings.color.selected_text_style.prefix(),
-                        description
-                            .chars()
-                            .take(right_text_size)
-                            .collect::<String>()
-                            .replace('\n', " "),
-                        RESET,
-                    )
-                } else {
-                    format!(
-                        "{}{}{}{}{}{}{}{}{}{}{}{}{:>empty$}",
-                        suggestion_style_prefix,
-                        self.settings.color.selected_text_style.prefix(),
-                        prefix,
-                        RESET,
-                        suggestion_style_prefix,
-                        self.settings.color.selected_match_style.prefix(),
-                        match_str,
-                        RESET,
-                        suggestion_style_prefix,
-                        self.settings.color.selected_text_style.prefix(),
-                        remaining_str,
+                        "{}{}{:>empty$}",
+                        styled_value,
                         RESET,
                         "",
-                        empty = empty_space,
+                        empty = empty_space
                     )
                 }
-            } else if let Some(description) = &suggestion.description {
-                format!(
-                    "{}{}{}{}{}{}{}{:max_match$}{:max_remaining$}{}{}{}{}",
-                    suggestion_style_prefix,
-                    prefix,
-                    RESET,
-                    suggestion_style_prefix,
-                    self.settings.color.match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    remaining_str,
-                    RESET,
-                    self.settings.color.description_style.prefix(),
-                    description
-                        .chars()
-                        .take(right_text_size)
-                        .collect::<String>()
-                        .replace('\n', " "),
-                    RESET,
-                )
-            } else {
-                format!(
-                    "{}{}{}{}{}{}{}{}{}{}{}{:>empty$}{}",
-                    suggestion_style_prefix,
-                    prefix,
-                    RESET,
-                    suggestion_style_prefix,
-                    self.settings.color.match_style.prefix(),
-                    match_str,
-                    RESET,
-                    suggestion_style_prefix,
-                    remaining_str,
-                    RESET,
-                    self.settings.color.description_style.prefix(),
-                    "",
-                    RESET,
-                    empty = empty_space,
-                )
             }
         } else {
             // If no ansi coloring is found, then the selection word is the line in uppercase
@@ -516,7 +463,7 @@ impl ColumnarMenu {
                 format!(
                     "{}{:max$}{}",
                     marker,
-                    &suggestion.value,
+                    display_value,
                     description
                         .chars()
                         .take(empty_space)
@@ -532,13 +479,13 @@ impl ColumnarMenu {
                 format!(
                     "{}{}{:>empty$}",
                     marker,
-                    &suggestion.value,
+                    display_value,
                     "",
                     empty = empty_space.saturating_sub(marker.width()),
                 )
             };
 
-            if index == self.index() {
+            if selected {
                 line.to_uppercase()
             } else {
                 line
@@ -604,6 +551,10 @@ impl Menu for ColumnarMenu {
 
     /// Updates menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
+        if self.settings.only_buffer_difference && self.input.is_none() {
+            self.input = Some(editor.get_buffer().to_string());
+        }
+
         let (input, pos) = completer_input(
             editor.get_buffer(),
             editor.insertion_point(),
@@ -614,6 +565,11 @@ impl Menu for ColumnarMenu {
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 
         self.values = values;
+        self.display_widths = self
+            .values
+            .iter()
+            .map(|sugg| sugg.display_value().width())
+            .collect();
         self.working_details.shortest_base_string = base_ranges
             .iter()
             .map(|range| {
@@ -638,20 +594,13 @@ impl Menu for ColumnarMenu {
         if let Some(event) = self.event.take() {
             match event {
                 MenuEvent::Activate(updated) => {
-                    self.active = true;
                     self.reset_position();
-
-                    self.input = if self.settings.only_buffer_difference {
-                        Some(editor.get_buffer().to_string())
-                    } else {
-                        None
-                    };
 
                     if !updated {
                         self.update_values(editor, completer);
                     }
                 }
-                MenuEvent::Deactivate => self.active = false,
+                MenuEvent::Deactivate => {}
                 MenuEvent::Edit(updated) => {
                     self.reset_position();
 
@@ -680,43 +629,25 @@ impl Menu for ColumnarMenu {
                 .iter()
                 .any(|suggestion| suggestion.description.is_some());
 
+            let screen_width = painter.screen_width() as usize;
+            self.longest_suggestion = *self.display_widths.iter().max().unwrap_or(&0);
             if exist_description {
                 self.working_details.columns = 1;
-                self.working_details.col_width = painter.screen_width() as usize;
-
-                self.longest_suggestion = self.get_values().iter().fold(0, |prev, suggestion| {
-                    if prev >= suggestion.value.width() {
-                        prev
-                    } else {
-                        suggestion.value.width()
-                    }
-                });
+                self.working_details.col_width = screen_width;
             } else {
-                let max_width = self.get_values().iter().fold(0, |acc, suggestion| {
-                    let str_len = suggestion.value.width() + self.default_details.col_padding;
-                    if str_len > acc {
-                        str_len
-                    } else {
-                        acc
-                    }
-                });
-
                 // If no default width is found, then the total screen width is used to estimate
                 // the column width based on the default number of columns
                 let default_width = if let Some(col_width) = self.default_details.col_width {
                     col_width
                 } else {
-                    let col_width = painter.screen_width() / self.default_details.columns;
-                    col_width as usize
+                    screen_width / self.default_details.columns as usize
                 };
 
                 // Adjusting the working width of the column based the max line width found
                 // in the menu values
-                if max_width > default_width {
-                    self.working_details.col_width = max_width;
-                } else {
-                    self.working_details.col_width = default_width;
-                };
+                self.working_details.col_width = default_width
+                    .max(self.longest_suggestion + self.default_details.col_padding)
+                    .min(screen_width);
 
                 // The working columns is adjusted based on possible number of columns
                 // that could be fitted in the screen with the calculated column width
@@ -789,14 +720,7 @@ impl Menu for ColumnarMenu {
                             .step_by(num_rows)
                             .take(self.get_cols().into())
                             .map(|(index, suggestion)| {
-                                let empty_space =
-                                    self.get_width().saturating_sub(suggestion.value.width());
-                                self.create_string(
-                                    suggestion,
-                                    index,
-                                    empty_space,
-                                    use_ansi_coloring,
-                                )
+                                self.create_string(suggestion, index, use_ansi_coloring)
                             })
                             .collect();
                         menu_string.push_str(&row_string);
@@ -817,8 +741,6 @@ impl Menu for ColumnarMenu {
                             // Correcting the enumerate index based on the number of skipped values
                             let index = index + skip_values;
                             let column = index % self.get_cols() as usize;
-                            let empty_space =
-                                self.get_width().saturating_sub(suggestion.value.width());
 
                             let end_of_line =
                                 if column == self.get_cols().saturating_sub(1) as usize {
@@ -828,12 +750,7 @@ impl Menu for ColumnarMenu {
                                 };
                             format!(
                                 "{}{}",
-                                self.create_string(
-                                    suggestion,
-                                    index,
-                                    empty_space,
-                                    use_ansi_coloring
-                                ),
+                                self.create_string(suggestion, index, use_ansi_coloring),
                                 end_of_line
                             )
                         })
@@ -846,6 +763,8 @@ impl Menu for ColumnarMenu {
 
 #[cfg(test)]
 mod tests {
+    use std::io::BufWriter;
+
     use crate::{Span, UndoBehavior};
 
     use super::*;
@@ -902,6 +821,24 @@ mod tests {
             completes_no_shared_prefix: ("all", "all"),
     }
 
+    // https://github.com/nushell/nushell/issues/15535
+    partial_completion_tests! {
+        name: partial_completion_with_quotes,
+        completions: ["`Foo bar`", "`Foo baz`"],
+
+        test_cases:
+            partial_completes_prefix_with_backtick: ("F", "`Foo ba"),
+            partial_completes_case_insensitive: ("foo", "`Foo ba"),
+    }
+
+    partial_completion_tests! {
+        name: partial_completion_unicode_case_folding,
+        completions: ["ßar", "ßaz"],
+
+        test_cases:
+            partial_completes_case_insensitive: ("ss", "ßa"),
+    }
+
     struct FakeCompleter {
         completions: Vec<String>,
     }
@@ -931,7 +868,21 @@ mod tests {
             extra: None,
             span: Span { start: 0, end: pos },
             append_whitespace: false,
+            ..Default::default()
         }
+    }
+
+    fn setup_menu(
+        menu: &mut ColumnarMenu,
+        editor: &mut Editor,
+        completer: &mut dyn Completer,
+        terminal_size: (u16, u16),
+    ) {
+        let mut painter = Painter::new(BufWriter::new(std::io::stderr()));
+        painter.handle_resize(terminal_size.0, terminal_size.1);
+
+        menu.menu_event(MenuEvent::Activate(false));
+        menu.update_working_details(editor, completer, &painter);
     }
 
     #[test]
@@ -961,9 +912,9 @@ mod tests {
         let mut completer = FakeCompleter::new(&["おはよう", "`おはよう(`"]);
         let mut menu = ColumnarMenu::default().with_name("testmenu");
         let mut editor = Editor::default();
-
         editor.set_buffer("おは".to_string(), UndoBehavior::CreateUndoPoint);
-        menu.update_values(&mut editor, &mut completer);
+        setup_menu(&mut menu, &mut editor, &mut completer, (10, 10));
+
         assert!(menu.menu_string(2, true).contains("おは"));
     }
 
@@ -973,10 +924,10 @@ mod tests {
         let mut completer = FakeCompleter::new(&["验abc/"]);
         let mut menu = ColumnarMenu::default().with_name("testmenu");
         let mut editor = Editor::default();
-
         editor.set_buffer("ac".to_string(), UndoBehavior::CreateUndoPoint);
-        menu.update_values(&mut editor, &mut completer);
-        assert!(menu.menu_string(10, true).contains("验"));
+        setup_menu(&mut menu, &mut editor, &mut completer, (10, 10));
+
+        assert!(menu.menu_string(2, true).contains("验"));
     }
 
     #[test]
@@ -985,9 +936,9 @@ mod tests {
         let mut completer = FakeCompleter::new(&[&("验".repeat(205) + "abc/")]);
         let mut menu = ColumnarMenu::default().with_name("testmenu");
         let mut editor = Editor::default();
-
         editor.set_buffer("a".to_string(), UndoBehavior::CreateUndoPoint);
-        menu.update_values(&mut editor, &mut completer);
+        setup_menu(&mut menu, &mut editor, &mut completer, (10, 10));
+
         assert!(menu.menu_string(10, true).contains("验"));
     }
 

@@ -151,6 +151,7 @@ pub trait Menu: Send {
     }
 }
 
+/// Struct to store configuration for a menu.
 pub struct MenuSettings {
     /// Menu name
     name: String,

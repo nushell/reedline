@@ -5,7 +5,7 @@ mod vi_keybindings;
 
 use std::str::FromStr;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
 use self::motion::ViCharSearch;
@@ -159,21 +159,42 @@ impl EditMode for Vi {
                     self.mode = ViMode::Normal;
                     ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
                 }
-                (_, KeyModifiers::NONE, KeyCode::Enter) => {
-                    self.mode = ViMode::Insert;
-                    ReedlineEvent::Enter
-                }
                 (ViMode::Normal | ViMode::Visual, _, _) => self
                     .normal_keybindings
                     .find_binding(modifiers, code)
-                    .unwrap_or(ReedlineEvent::None),
+                    .unwrap_or_else(|| {
+                        // Default Enter behavior when no custom binding
+                        if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
+                            self.mode = ViMode::Insert;
+                            ReedlineEvent::Enter
+                        } else {
+                            ReedlineEvent::None
+                        }
+                    }),
                 (ViMode::Insert, _, _) => self
                     .insert_keybindings
                     .find_binding(modifiers, code)
-                    .unwrap_or(ReedlineEvent::None),
+                    .unwrap_or_else(|| {
+                        // Default Enter behavior when no custom binding
+                        if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
+                            ReedlineEvent::Enter
+                        } else {
+                            ReedlineEvent::None
+                        }
+                    }),
             },
 
-            Event::Mouse(_) => ReedlineEvent::Mouse,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(button),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }) => ReedlineEvent::Mouse {
+                column,
+                row,
+                button: button.into(),
+            },
+            Event::Mouse(_) => ReedlineEvent::None,
             Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
             Event::FocusGained => ReedlineEvent::None,
             Event::FocusLost => ReedlineEvent::None,

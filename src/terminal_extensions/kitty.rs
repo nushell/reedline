@@ -16,11 +16,20 @@ use crossterm::{event, execute};
 pub(crate) struct KittyProtocolGuard {
     enabled: bool,
     active: bool,
+    /// Caches whether the terminal supports the kitty protocol; `None` means we haven't checked yet
+    /// and `Some(bool)` stores a cached answer.
+    support_kitty_protocol: Option<bool>,
 }
 
 impl KittyProtocolGuard {
     pub fn set(&mut self, enable: bool) {
-        self.enabled = enable && super::kitty_protocol_available();
+        // If we are enabling and haven't yet checked for support, do so now. We cache
+        // the result to avoid repeated checks.
+        if enable && self.support_kitty_protocol.is_none() {
+            self.support_kitty_protocol = Some(super::kitty_protocol_available());
+        }
+
+        self.enabled = enable && self.support_kitty_protocol.unwrap_or(false);
     }
     pub fn enter(&mut self) {
         if self.enabled && !self.active {

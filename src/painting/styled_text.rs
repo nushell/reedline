@@ -1,5 +1,6 @@
 use nu_ansi_term::Style;
 
+use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMarkers};
 use crate::Prompt;
 
 use super::utils::strip_ansi;
@@ -95,13 +96,13 @@ impl StyledText {
     /// string, saves the cursor position, prints the second half, and then restores
     /// the cursor position
     ///
-    /// Also inserts the multiline continuation prompt
+    /// Also inserts the multiline continuation prompt with optional semantic markers
     pub fn render_around_insertion_point(
         &self,
         insertion_point: usize,
         prompt: &dyn Prompt,
-        // multiline_prompt: &str,
         use_ansi_coloring: bool,
+        semantic_markers: Option<&dyn SemanticPromptMarkers>,
     ) -> (String, String) {
         let mut current_idx = 0;
         let mut left_string = String::new();
@@ -112,9 +113,19 @@ impl StyledText {
 
         for pair in &self.buffer {
             if current_idx >= insertion_point {
-                right_string.push_str(&render_as_string(pair, &prompt_style, &multiline_prompt));
+                right_string.push_str(&render_as_string(
+                    pair,
+                    &prompt_style,
+                    &multiline_prompt,
+                    semantic_markers,
+                ));
             } else if pair.1.len() + current_idx <= insertion_point {
-                left_string.push_str(&render_as_string(pair, &prompt_style, &multiline_prompt));
+                left_string.push_str(&render_as_string(
+                    pair,
+                    &prompt_style,
+                    &multiline_prompt,
+                    semantic_markers,
+                ));
             } else if pair.1.len() + current_idx > insertion_point {
                 let offset = insertion_point - current_idx;
 
@@ -125,11 +136,13 @@ impl StyledText {
                     &(pair.0, left_side),
                     &prompt_style,
                     &multiline_prompt,
+                    semantic_markers,
                 ));
                 right_string.push_str(&render_as_string(
                     &(pair.0, right_side),
                     &prompt_style,
                     &multiline_prompt,
+                    semantic_markers,
                 ));
             }
             current_idx += pair.1.len();
@@ -160,9 +173,24 @@ fn render_as_string(
     renderable: &(Style, String),
     prompt_style: &Style,
     multiline_prompt: &str,
+    semantic_markers: Option<&dyn SemanticPromptMarkers>,
 ) -> String {
     let mut rendered = String::new();
-    let formatted_multiline_prompt = format!("\n{multiline_prompt}");
+
+    // Build the formatted multiline prompt with optional semantic markers
+    let formatted_multiline_prompt = if let Some(markers) = semantic_markers {
+        // Wrap multiline indicator with secondary prompt markers:
+        // \n + A;k=s + multiline_prompt + B
+        format!(
+            "\n{}{}{}",
+            markers.prompt_start(PromptKind::Secondary),
+            multiline_prompt,
+            markers.command_input_start()
+        )
+    } else {
+        format!("\n{multiline_prompt}")
+    };
+
     for (line_number, line) in renderable.1.split('\n').enumerate() {
         if line_number != 0 {
             rendered.push_str(&prompt_style.paint(&formatted_multiline_prompt).to_string());
@@ -271,5 +299,51 @@ mod test {
         assert_eq!(styled_text.buffer[2], (before_style, "r".into()));
         assert_eq!(styled_text.buffer[3], (after_style, "u".into()));
         assert_eq!(styled_text.buffer[4], (before_style, "n".into()));
+    }
+
+    #[test]
+    fn test_render_multiline_without_semantic_markers() {
+        let style = Style::new();
+        let renderable = (style, "line1\nline2".to_string());
+        let prompt_style = Style::new();
+        let multiline_prompt = "::: ";
+
+        // Without semantic markers, just get newline + multiline prompt
+        let result = super::render_as_string(&renderable, &prompt_style, multiline_prompt, None);
+        assert!(result.contains("\n::: "));
+        assert!(!result.contains("\x1b]133;A;k=s"));
+    }
+
+    #[test]
+    fn test_render_multiline_with_semantic_markers() {
+        use crate::terminal_extensions::semantic_prompt::Osc133Markers;
+        let style = Style::new();
+        let renderable = (style, "line1\nline2".to_string());
+        let prompt_style = Style::new();
+        let multiline_prompt = "::: ";
+        let markers = Osc133Markers;
+
+        // With semantic markers, should wrap multiline prompt with A;k=s and B
+        let result =
+            super::render_as_string(&renderable, &prompt_style, multiline_prompt, Some(&markers));
+        // The result should contain the secondary prompt marker before ::: and B after
+        assert!(result.contains("\x1b]133;A;k=s\x1b\\"));
+        assert!(result.contains("\x1b]133;B\x1b\\"));
+    }
+
+    #[test]
+    fn test_render_single_line_no_markers_emitted() {
+        use crate::terminal_extensions::semantic_prompt::Osc133Markers;
+        let style = Style::new();
+        let renderable = (style, "single line".to_string());
+        let prompt_style = Style::new();
+        let multiline_prompt = "::: ";
+        let markers = Osc133Markers;
+
+        // Single line should not emit any markers
+        let result =
+            super::render_as_string(&renderable, &prompt_style, multiline_prompt, Some(&markers));
+        assert!(!result.contains("\x1b]133;A;k=s"));
+        assert!(!result.contains("\x1b]133;B"));
     }
 }

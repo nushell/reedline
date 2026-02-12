@@ -284,12 +284,13 @@ impl DescriptionMenu {
         empty_space: usize,
         use_ansi_coloring: bool,
     ) -> String {
+        let display_value = suggestion.display_value();
         if use_ansi_coloring {
             if index == self.index() {
                 format!(
                     "{}{}{}{:>empty$}{}",
                     self.settings.color.selected_text_style.prefix(),
-                    &suggestion.value,
+                    display_value,
                     RESET,
                     "",
                     self.end_of_line(column, index),
@@ -299,7 +300,7 @@ impl DescriptionMenu {
                 format!(
                     "{}{}{}{:>empty$}{}",
                     self.settings.color.text_style.prefix(),
-                    &suggestion.value,
+                    display_value,
                     RESET,
                     "",
                     self.end_of_line(column, index),
@@ -318,7 +319,7 @@ impl DescriptionMenu {
             let line = format!(
                 "{}{}{:>empty$}{}",
                 marker,
-                &suggestion.value,
+                display_value,
                 "",
                 self.end_of_line(column, index),
                 empty = empty_space,
@@ -442,6 +443,10 @@ impl Menu for DescriptionMenu {
 
     /// Updates menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
+        if self.settings.only_buffer_difference && self.input.is_none() {
+            self.input = Some(editor.get_buffer().to_string());
+        }
+
         let (input, pos) = completer_input(
             editor.get_buffer(),
             editor.insertion_point(),
@@ -465,7 +470,6 @@ impl Menu for DescriptionMenu {
             match event {
                 MenuEvent::Activate(_) => {
                     self.reset_position();
-                    self.input = Some(editor.get_buffer().to_string());
                     self.update_values(editor, completer);
                 }
                 MenuEvent::Deactivate => self.active = false,
@@ -529,14 +533,14 @@ impl Menu for DescriptionMenu {
                 MenuEvent::PreviousPage | MenuEvent::NextPage => {}
             }
 
-            let max_width = self.get_values().iter().fold(0, |acc, suggestion| {
-                let str_len = suggestion.value.len() + self.default_details.col_padding;
-                if str_len > acc {
-                    str_len
-                } else {
-                    acc
-                }
-            });
+            let max_width = self
+                .get_values()
+                .iter()
+                .map(|suggestion| {
+                    suggestion.display_value().len() + self.default_details.col_padding
+                })
+                .max()
+                .unwrap_or(0);
 
             // If no default width is found, then the total screen width is used to estimate
             // the column width based on the default number of columns
@@ -643,7 +647,9 @@ impl Menu for DescriptionMenu {
                     // Correcting the enumerate index based on the number of skipped values
                     let index = index + skip_values;
                     let column = index as u16 % self.get_cols();
-                    let empty_space = self.get_width().saturating_sub(suggestion.value.len());
+                    let empty_space = self
+                        .get_width()
+                        .saturating_sub(suggestion.display_value().len());
 
                     self.create_entry_string(
                         suggestion,

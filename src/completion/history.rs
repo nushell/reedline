@@ -65,6 +65,7 @@ impl<'menu> HistoryCompleter<'menu> {
             extra: None,
             span,
             append_whitespace: false,
+            ..Default::default()
         }
     }
 }

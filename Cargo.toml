@@ -6,7 +6,7 @@ license = "MIT"
 name = "reedline"
 repository = "https://github.com/nushell/reedline"
 rust-version = "1.63.0"
-version = "0.43.0"
+version = "0.45.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
@@ -21,7 +21,7 @@ chrono = { version = "0.4.19", default-features = false, features = [
     "serde",
 ] }
 crossbeam = { version = "0.8.2", optional = true }
-crossterm = { version = "0.28.1", features = ["serde"] }
+crossterm = { version = "0.29.0", features = ["serde"] }
 fd-lock = "4.0.2"
 itertools = "0.13.0"
 nu-ansi-term = "0.50.0"
@@ -32,6 +32,7 @@ strip-ansi-escapes = "0.2.0"
 strum = "0.26"
 strum_macros = "0.26"
 thiserror = "2.0.12"
+unicase = "2.8.0"
 unicode-segmentation = "1.9.0"
 unicode-width = "0.2"
 
@@ -40,14 +41,17 @@ gethostname = "0.4.0"
 pretty_assertions = "1.4.0"
 proptest = "1.6.0"
 rstest = { version = "0.23.0", default-features = false }
+serde_json = "1.0"
 tempfile = "3.3.0"
 
 [features]
 bashisms = []
 external_printer = ["crossbeam"]
+idle_callback = []
 sqlite = ["rusqlite/bundled", "serde_json"]
 sqlite-dynlib = ["rusqlite", "serde_json"]
 system_clipboard = ["arboard"]
+libc = ["crossterm/libc"]
 
 [[example]]
 name = "cwd_aware_hinter"
@@ -60,4 +64,4 @@ required-features = ["external_printer"]
 [package.metadata.docs.rs]
 # Whether to pass `--all-features` to Cargo (default: false)
 all-features = false
-features = ["bashisms", "external_printer", "sqlite"]
+features = ["bashisms", "external_printer", "idle_callback", "sqlite"]

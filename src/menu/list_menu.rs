@@ -178,7 +178,7 @@ impl ListMenu {
                         Some(total_lines) => {
                             let new_total_lines = total_lines
                                 + self.number_of_lines(
-                                    &suggestion.value,
+                                    suggestion.display_value(),
                                     //  to account for the index and the indicator e.g. 0: XXXX
                                     painter.screen_width().saturating_sub(
                                         self.indicator().width() as u16 + count_digits(lines),
@@ -346,6 +346,10 @@ impl Menu for ListMenu {
 
     /// Collecting the value from the completer to be shown in the menu
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
+        if self.settings.only_buffer_difference && self.input.is_none() {
+            self.input = Some(editor.get_buffer().to_string());
+        }
+
         let (input, pos) = completer_input(
             editor.get_buffer(),
             editor.insertion_point(),
@@ -422,12 +426,6 @@ impl Menu for ListMenu {
                 MenuEvent::Activate(_) => {
                     self.reset_position();
 
-                    self.input = if self.settings.only_buffer_difference {
-                        Some(editor.get_buffer().to_string())
-                    } else {
-                        None
-                    };
-
                     self.update_values(editor, completer);
 
                     self.pages.push(Page {
@@ -435,10 +433,7 @@ impl Menu for ListMenu {
                         full: false,
                     });
                 }
-                MenuEvent::Deactivate => {
-                    self.active = false;
-                    self.input = None;
-                }
+                MenuEvent::Deactivate => {}
                 MenuEvent::Edit(_) => {
                     self.update_values(editor, completer);
                     self.pages.push(Page {
@@ -522,7 +517,7 @@ impl Menu for ListMenu {
             //  to account for the the index and the indicator e.g. 0: XXXX
             let ret = total_lines
                 + self.number_of_lines(
-                    &suggestion.value,
+                    suggestion.display_value(),
                     terminal_columns.saturating_sub(
                         self.indicator().width() as u16 + count_digits(entry_index),
                     ),
@@ -544,7 +539,7 @@ impl Menu for ListMenu {
                     .enumerate()
                     .map(|(index, suggestion)| {
                         // Final string with colors
-                        let line = &suggestion.value;
+                        let line = suggestion.display_value();
                         let line = if line.lines().count() > self.max_lines as usize {
                             let lines = line.lines().take(self.max_lines as usize).fold(
                                 String::new(),

@@ -113,6 +113,18 @@ impl LineBuffer {
         // str is guaranteed to be utf8, thus \n is safe to assume 1 byte long
     }
 
+    /// Move the cursor before the first non whitespace character of the line
+    pub fn move_to_line_non_blank_start(&mut self) {
+        let line_start = self.lines[..self.insertion_point]
+            .rfind('\n')
+            .map_or(0, |offset| offset + 1);
+        // str is guaranteed to be utf8, thus \n is safe to assume 1 byte long
+
+        self.insertion_point = self.lines[line_start..]
+            .find(|c: char| !c.is_whitespace() || c == '\n')
+            .map_or(self.lines.len(), |offset| line_start + offset);
+    }
+
     /// Move cursor position to the end of the line
     ///
     /// Insertion will append to the line.
@@ -328,8 +340,7 @@ impl LineBuffer {
     pub fn word_left_index(&self) -> usize {
         self.lines[..self.insertion_point]
             .split_word_bound_indices()
-            .filter(|(_, word)| !is_whitespace_str(word))
-            .next_back()
+            .rfind(|(_, word)| !is_whitespace_str(word))
             .map(|(i, _)| i)
             .unwrap_or(0)
     }
@@ -568,8 +579,7 @@ impl LineBuffer {
         let right_index = self.word_right_index();
         let left_index = self.lines[..right_index]
             .split_word_bound_indices()
-            .filter(|(_, word)| !is_whitespace_str(word))
-            .next_back()
+            .rfind(|(_, word)| !is_whitespace_str(word))
             .map(|(i, _)| i)
             .unwrap_or(0);
 
