@@ -77,6 +77,9 @@ fn main() -> reedline::Result<()> {
         vi_insert: Some(SetCursorStyle::BlinkingBar),
         vi_normal: Some(SetCursorStyle::SteadyBlock),
         emacs: None,
+        helix_insert: None,
+        helix_normal: None,
+        helix_select: None,
     };
 
     let mut line_editor = Reedline::create()

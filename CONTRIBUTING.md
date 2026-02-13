@@ -39,7 +39,7 @@ Before opening a PR, run these locally:
 - Format:
 
   ```shell
-  cargo fmt --all
+  cargo fmt --all -- --check
   ```
 
   > `--all` formats all packages in the workspace.
@@ -67,4 +67,3 @@ Before opening a PR, run these locally:
   ```shell
   cargo nextest run --all --all-features
   ```
-

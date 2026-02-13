@@ -2,7 +2,7 @@ use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
-use crate::prompt::{PromptEditMode, PromptViMode};
+use crate::prompt::{PromptEditMode, PromptHelixMode, PromptViMode};
 use crate::{core_editor::get_local_clipboard, EditCommand};
 use std::cmp::{max, min};
 use std::ops::{DerefMut, Range};
@@ -69,6 +69,7 @@ impl Editor {
             EditCommand::MoveWordLeft { select } => self.move_word_left(*select),
             EditCommand::MoveBigWordLeft { select } => self.move_big_word_left(*select),
             EditCommand::MoveWordRight { select } => self.move_word_right(*select),
+            EditCommand::MoveBigWordRight { select } => self.move_big_word_right(*select),
             EditCommand::MoveWordRightStart { select } => self.move_word_right_start(*select),
             EditCommand::MoveBigWordRightStart { select } => {
                 self.move_big_word_right_start(*select)
@@ -133,6 +134,9 @@ impl Editor {
             EditCommand::MoveLeftBefore { c, select } => {
                 self.move_left_until_char(*c, true, true, *select)
             }
+            EditCommand::ClearSelection => self.clear_selection(),
+            EditCommand::MoveToSelectionStart => self.move_to_selection_start(),
+            EditCommand::MoveToSelectionEnd => self.move_to_selection_end(),
             EditCommand::SelectAll => self.select_all(),
             EditCommand::CutSelection => self.cut_selection_to_cut_buffer(),
             EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
@@ -197,10 +201,24 @@ impl Editor {
             EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
             EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
         }
-        if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
-            self.clear_selection();
+        if !matches!(
+            command.edit_type(),
+            EditType::MoveCursor { select: true } | EditType::NoOp
+        ) {
+            // In Helix mode, there is always an implicit single-character
+            // selection under the cursor.  Instead of clearing the selection
+            // entirely, collapse it to the cursor position so that commands
+            // like `d` (CutSelection) still work after `h`/`l` navigation.
+            if matches!(
+                self.edit_mode,
+                PromptEditMode::Helix(PromptHelixMode::Normal | PromptHelixMode::Select)
+            ) {
+                self.selection_anchor = Some(self.insertion_point());
+                self.selection_mode = Some(self.edit_mode.clone());
+            } else {
+                self.clear_selection();
+            }
         }
-        if let EditType::MoveCursor { select: true } = command.edit_type() {}
 
         let new_undo_behavior = match (command, command.edit_type()) {
             (_, EditType::MoveCursor { .. }) => UndoBehavior::MoveCursor,
@@ -230,6 +248,30 @@ impl Editor {
     pub(crate) fn clear_selection(&mut self) {
         self.selection_anchor = None;
         self.selection_mode = None;
+    }
+
+    /// Move the cursor to the start (left edge) of the current selection and
+    /// clear the selection.  Used for Helix `i` (insert before selection).
+    /// If there is no active selection, this is a no-op.
+    fn move_to_selection_start(&mut self) {
+        if let Some((start, _end)) = self.get_selection() {
+            self.line_buffer.set_insertion_point(start);
+        }
+        self.clear_selection();
+    }
+
+    /// Move the cursor to the end (right edge, exclusive) of the current
+    /// selection and clear the selection.  Used for Helix `a` (append after
+    /// selection).  If there is no active selection, move right by one
+    /// grapheme (standard append behavior).
+    fn move_to_selection_end(&mut self) {
+        if let Some((_start, end)) = self.get_selection() {
+            self.line_buffer.set_insertion_point(end);
+        } else {
+            let right = self.line_buffer.grapheme_right_index();
+            self.line_buffer.set_insertion_point(right);
+        }
+        self.clear_selection();
     }
 
     fn update_selection_anchor(&mut self, select: bool) {
@@ -675,6 +717,7 @@ impl Editor {
         let inclusive = matches!(
             self.selection_mode.as_ref().unwrap_or(&self.edit_mode),
             PromptEditMode::Vi(PromptViMode::Normal)
+                | PromptEditMode::Helix(PromptHelixMode::Normal | PromptHelixMode::Select)
         );
 
         let selection_is_from_left_to_right = selection_anchor < self.insertion_point();
@@ -685,14 +728,32 @@ impl Editor {
             self.insertion_point()
         };
 
+        let is_helix = matches!(
+            self.selection_mode.as_ref().unwrap_or(&self.edit_mode),
+            PromptEditMode::Helix(PromptHelixMode::Normal | PromptHelixMode::Select)
+        );
+
         let end_pos = if selection_is_from_left_to_right {
             if inclusive {
                 self.line_buffer.grapheme_right_index()
             } else {
                 self.insertion_point()
             }
+        } else if selection_anchor == self.insertion_point() {
+            // Collapsed selection (anchor == cursor): include the cursor
+            // character so Helix/Vi have a 1-char selection.
+            if inclusive {
+                self.line_buffer.grapheme_right_index()
+            } else {
+                selection_anchor
+            }
+        } else if is_helix {
+            // Helix right-to-left: use anchor directly without extending
+            // by one grapheme.  This prevents backward motions (like `b`)
+            // from bleeding into the previously selected word.
+            selection_anchor
         } else {
-            // selection is from right to left
+            // Vi right-to-left: inclusive of the anchor character.
             if inclusive {
                 self.line_buffer
                     .grapheme_right_index_from_pos(selection_anchor)
@@ -735,8 +796,13 @@ impl Editor {
         self.move_to_position(self.line_buffer.big_word_left_index(), select);
     }
 
+
     fn move_word_right(&mut self, select: bool) {
         self.move_to_position(self.line_buffer.word_right_index(), select);
+    }
+
+    fn move_big_word_right(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.big_word_right_index(), select);
     }
 
     fn move_word_right_start(&mut self, select: bool) {
@@ -1465,6 +1531,34 @@ mod test {
         // Should have " world" left (removed "hello" including the 'o')
         assert_eq!(editor.get_buffer(), " world");
         assert_eq!(editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn test_helix_yank_preserves_selection() {
+        // Yanking (CopySelection) in Helix normal mode should not collapse the
+        // selection.  Previously the selection was reset because NoOp edit-type
+        // was not exempted from the post-command selection collapse.
+        let mut editor = editor_with("hello world");
+        editor.set_edit_mode(PromptEditMode::Helix(PromptHelixMode::Normal));
+
+        // Place cursor at 0 and create a selection spanning "hello"
+        editor.line_buffer.set_insertion_point(0);
+        editor.update_selection_anchor(true);
+        for _ in 0..4 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+
+        let selection_before = editor.get_selection();
+        assert!(selection_before.is_some());
+
+        // Yank – selection must survive
+        editor.run_edit_command(&EditCommand::CopySelection);
+
+        assert_eq!(
+            editor.get_selection(),
+            selection_before,
+            "CopySelection should not change the selection"
+        );
     }
 
     #[cfg(feature = "system_clipboard")]
