@@ -606,9 +606,11 @@ impl Editor {
     }
 
     fn replace_char(&mut self, character: char) {
+        let insertion_point = self.line_buffer.insertion_point();
         self.line_buffer.delete_right_grapheme();
 
         self.line_buffer.insert_char(character);
+        self.line_buffer.set_insertion_point(insertion_point);
     }
 
     fn replace_chars(&mut self, n_chars: usize, string: &str) {
