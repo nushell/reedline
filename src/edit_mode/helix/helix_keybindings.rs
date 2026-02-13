@@ -96,59 +96,27 @@ fn add_normal_motion(
 /// Normal-mode motions reset the selection anchor before each movement so that
 /// a fresh one-motion selection is created every time.
 ///
-/// Motions: h, l, w, b, e, W, B, E, 0, $
-/// Shared:  Enter, Ctrl+C/D, x, d, y, p/P, ;, Alt+;, u/U
+/// Motions: h, l, w, b, e, W, B, E
+/// Goto (g prefix, handled in parse_event): gh, gl, gs
+/// Shared: x, d, y, p/P, ;, Alt+;, u/U
 pub fn default_helix_normal_keybindings() -> Keybindings {
     let mut kb = Keybindings::default();
     add_common_keybindings(&mut kb);
 
     // -- character motions --
-    add_normal_motion(&mut kb, KeyModifiers::NONE, 'h', EditCommand::MoveLeft { select: true });
-    add_normal_motion(&mut kb, KeyModifiers::NONE, 'l', EditCommand::MoveRight { select: true });
+    // h/l just move the cursor without selecting, keeping anchor == cursor.
+    kb.add_binding(KeyModifiers::NONE, KeyCode::Char('h'), ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]));
+    kb.add_binding(KeyModifiers::NONE, KeyCode::Char('l'), ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }]));
 
     // -- word motions --
-    kb.add_binding(
-        KeyModifiers::NONE,
-        KeyCode::Char('w'),
-        ReedlineEvent::Edit(vec![EditCommand::SelectNextWordToGap]),
-    );
-    kb.add_binding(
-        KeyModifiers::NONE,
-        KeyCode::Char('b'),
-        ReedlineEvent::Edit(vec![EditCommand::SelectPrevWord]),
-    );
-    kb.add_binding(
-        KeyModifiers::NONE,
-        KeyCode::Char('e'),
-        ReedlineEvent::Edit(vec![
-            EditCommand::ClearSelection,
-            EditCommand::MoveWordRightEnd { select: true },
-        ]),
-    );
+    add_normal_motion(&mut kb, KeyModifiers::NONE, 'w', EditCommand::MoveWordRight { select: true });
+    add_normal_motion(&mut kb, KeyModifiers::NONE, 'b', EditCommand::MoveWordLeft { select: true });
+    add_normal_motion(&mut kb, KeyModifiers::NONE, 'e', EditCommand::MoveWordRightEnd { select: true });
 
     // -- WORD motions --
-    add_normal_motion(&mut kb, KeyModifiers::SHIFT, 'w', EditCommand::MoveBigWordRightStart { select: true });
-    kb.add_binding(
-        KeyModifiers::SHIFT,
-        KeyCode::Char('b'),
-        ReedlineEvent::Edit(vec![
-            EditCommand::MoveBigWordLeft { select: false },
-            EditCommand::MoveBigWordRightEnd { select: true },
-            EditCommand::SwapCursorAndAnchor,
-        ]),
-    );
-    kb.add_binding(
-        KeyModifiers::SHIFT,
-        KeyCode::Char('e'),
-        ReedlineEvent::Edit(vec![
-            EditCommand::ClearSelection,
-            EditCommand::MoveBigWordRightEnd { select: true },
-        ]),
-    );
-
-    // -- line motions --
-    add_normal_motion(&mut kb, KeyModifiers::NONE, '0', EditCommand::MoveToLineStart { select: true });
-    add_normal_motion(&mut kb, KeyModifiers::SHIFT, '$', EditCommand::MoveToLineEnd { select: true });
+    add_normal_motion(&mut kb, KeyModifiers::SHIFT, 'w', EditCommand::MoveBigWordRight { select: true });
+    add_normal_motion(&mut kb, KeyModifiers::SHIFT, 'b', EditCommand::MoveBigWordLeft { select: true });
+    add_normal_motion(&mut kb, KeyModifiers::SHIFT, 'e', EditCommand::MoveBigWordRightEnd { select: true });
 
     kb
 }
@@ -158,7 +126,8 @@ pub fn default_helix_normal_keybindings() -> Keybindings {
 /// Select-mode motions keep the existing anchor fixed and extend the selection,
 /// so they emit the bare motion command without `ClearSelection`.
 ///
-/// Motions: h, l, w, b, e, W, B, E, 0, $
+/// Motions: h, l, w, b, e, W, B, E
+/// Goto (g prefix, handled in parse_event): gh, gl, gs
 /// Shared:  Enter, Ctrl+C/D, x, d, y, p/P, ;, Alt+;, u/U
 pub fn default_helix_select_keybindings() -> Keybindings {
     let mut kb = Keybindings::default();
@@ -169,18 +138,14 @@ pub fn default_helix_select_keybindings() -> Keybindings {
     kb.add_binding(KeyModifiers::NONE, KeyCode::Char('l'), ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: true }]));
 
     // -- word motions --
-    kb.add_binding(KeyModifiers::NONE, KeyCode::Char('w'), ReedlineEvent::Edit(vec![EditCommand::MoveWordRightStart { select: true }]));
+    kb.add_binding(KeyModifiers::NONE, KeyCode::Char('w'), ReedlineEvent::Edit(vec![EditCommand::MoveWordRight { select: true }]));
     kb.add_binding(KeyModifiers::NONE, KeyCode::Char('b'), ReedlineEvent::Edit(vec![EditCommand::MoveWordLeft { select: true }]));
     kb.add_binding(KeyModifiers::NONE, KeyCode::Char('e'), ReedlineEvent::Edit(vec![EditCommand::MoveWordRightEnd { select: true }]));
 
     // -- WORD motions --
-    kb.add_binding(KeyModifiers::SHIFT, KeyCode::Char('w'), ReedlineEvent::Edit(vec![EditCommand::MoveBigWordRightStart { select: true }]));
+    kb.add_binding(KeyModifiers::SHIFT, KeyCode::Char('w'), ReedlineEvent::Edit(vec![EditCommand::MoveBigWordRight { select: true }]));
     kb.add_binding(KeyModifiers::SHIFT, KeyCode::Char('b'), ReedlineEvent::Edit(vec![EditCommand::MoveBigWordLeft { select: true }]));
     kb.add_binding(KeyModifiers::SHIFT, KeyCode::Char('e'), ReedlineEvent::Edit(vec![EditCommand::MoveBigWordRightEnd { select: true }]));
-
-    // -- line motions --
-    kb.add_binding(KeyModifiers::NONE, KeyCode::Char('0'), ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: true }]));
-    kb.add_binding(KeyModifiers::SHIFT, KeyCode::Char('$'), ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd { select: true }]));
 
     kb
 }

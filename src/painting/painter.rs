@@ -484,12 +484,16 @@ impl Painter {
             });
 
         if shape.is_none() {
-            // Fall back to Helix's native cursor style when no explicit configuration is
-            // provided so the selection block stays visible for Normal/Select modes.
+            // Fall back to Helix's native cursor styles when no explicit
+            // configuration is provided: block for Normal/Select (selection
+            // highlight), thin bar for Insert.
             shape = match &prompt_mode {
                 PromptEditMode::Helix(PromptHelixMode::Normal)
                 | PromptEditMode::Helix(PromptHelixMode::Select) => {
-                    Some(cursor::SetCursorStyle::BlinkingBlock)
+                    Some(cursor::SetCursorStyle::SteadyBlock)
+                }
+                PromptEditMode::Helix(PromptHelixMode::Insert) => {
+                    Some(cursor::SetCursorStyle::SteadyBar)
                 }
                 _ => None,
             };

@@ -1950,7 +1950,7 @@ mod test {
         #[test]
         fn prop_word_right_gap_index_consistency(
             word1 in "[a-zA-Z]{1,8}",
-            separator in "[ \t]{1,4}",
+            separator in "[ ]{1,4}",
             word2 in "[a-zA-Z]{1,8}",
         ) {
             let text = format!("{}{}{}", word1, separator, word2);

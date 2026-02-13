@@ -141,19 +141,16 @@ pub enum EditCommand {
         /// Select the text between the current cursor position and destination
         select: bool,
     },
-
+    /// Move one WORD to the right
+    MoveBigWordRight {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
     /// Move one word to the right, stop at start of word
     MoveWordRightStart {
         /// Select the text between the current cursor position and destination
         select: bool,
     },
-
-    /// Move one word to the right, stopping in the whitespace gap before the next word
-    MoveWordRightGap {
-        /// Select the text between the current cursor position and destination
-        select: bool,
-    },
-
     /// Move one WORD to the right, stop at start of WORD
     MoveBigWordRightStart {
         /// Select the text between the current cursor position and destination
@@ -172,18 +169,18 @@ pub enum EditCommand {
         select: bool,
     },
 
-    /// Selection-aware backward word motion: selects the previous word by
-    /// reanchoring at the current cursor position and moving backward.
-    /// When the selection already extends forward, snaps the anchor to the
-    /// cursor and moves to the previous word start. Otherwise, selects the
-    /// previous word boundary (start to gap) and places the cursor at the start.
-    SelectPrevWord,
+    // /// Selection-aware backward word motion: selects the previous word by
+    // /// reanchoring at the current cursor position and moving backward.
+    // /// When the selection already extends forward, snaps the anchor to the
+    // /// cursor and moves to the previous word start. Otherwise, selects the
+    // /// previous word boundary (start to gap) and places the cursor at the start.
+    // SelectPrevWord,
 
-    /// Selection-aware forward word motion: selects up to the gap before the
-    /// next word. Normalizes selection orientation first — if the selection is
-    /// backward it flips it, if forward it advances past the previously selected
-    /// word. Then moves the cursor to the next inter-word gap with selection.
-    SelectNextWordToGap,
+    // /// Selection-aware forward word motion: selects up to the gap before the
+    // /// next word. Normalizes selection orientation first — if the selection is
+    // /// backward it flips it, if forward it advances past the previously selected
+    // /// word. Then moves the cursor to the next inter-word gap with selection.
+    // SelectNextWordToGap,
 
     /// Move to position
     MoveToPosition {
@@ -364,6 +361,15 @@ pub enum EditCommand {
     /// Clear any active selection while keeping the cursor in place
     ClearSelection,
 
+    /// Move the cursor to the start (left edge) of the current selection
+    /// and clear the selection.  Used by Helix `i` (insert before selection).
+    MoveToSelectionStart,
+
+    /// Move the cursor to the end (right edge, exclusive) of the current
+    /// selection and clear the selection.  Used by Helix `a` (append after
+    /// selection).
+    MoveToSelectionEnd,
+
     /// Select whole input buffer
     SelectAll,
 
@@ -516,20 +522,18 @@ impl Display for EditCommand {
             EditCommand::MoveWordRightEnd { .. } => {
                 write!(f, "MoveWordRightEnd Optional[select: <bool>]")
             }
+            EditCommand::MoveBigWordRight { .. } => {
+                write!(f, "MoveBigWordRight Optional[select: <bool>]")
+            }
             EditCommand::MoveBigWordRightEnd { .. } => {
                 write!(f, "MoveBigWordRightEnd Optional[select: <bool>]")
             }
             EditCommand::MoveWordRightStart { .. } => {
                 write!(f, "MoveWordRightStart Optional[select: <bool>]")
             }
-            EditCommand::MoveWordRightGap { .. } => {
-                write!(f, "MoveWordRightGap Optional[select: <bool>]")
-            }
             EditCommand::MoveBigWordRightStart { .. } => {
                 write!(f, "MoveBigWordRightStart Optional[select: <bool>]")
             }
-            EditCommand::SelectPrevWord => write!(f, "SelectPrevWord"),
-            EditCommand::SelectNextWordToGap => write!(f, "SelectNextWordToGap"),
             EditCommand::MoveToPosition { .. } => {
                 write!(f, "MoveToPosition  Value: <int>, Optional[select: <bool>]")
             }
@@ -588,6 +592,8 @@ impl Display for EditCommand {
             EditCommand::CutLeftUntil(_) => write!(f, "CutLeftUntil Value: <char>"),
             EditCommand::CutLeftBefore(_) => write!(f, "CutLeftBefore Value: <char>"),
             EditCommand::ClearSelection => write!(f, "ClearSelection"),
+            EditCommand::MoveToSelectionStart => write!(f, "MoveToSelectionStart"),
+            EditCommand::MoveToSelectionEnd => write!(f, "MoveToSelectionEnd"),
             EditCommand::SelectAll => write!(f, "SelectAll"),
             EditCommand::CutSelection => write!(f, "CutSelection"),
             EditCommand::CopySelection => write!(f, "CopySelection"),
@@ -646,8 +652,8 @@ impl EditCommand {
             | EditCommand::MoveWordLeft { select, .. }
             | EditCommand::MoveBigWordLeft { select, .. }
             | EditCommand::MoveWordRight { select, .. }
+            | EditCommand::MoveBigWordRight { select, .. }
             | EditCommand::MoveWordRightStart { select, .. }
-            | EditCommand::MoveWordRightGap { select, .. }
             | EditCommand::MoveBigWordRightStart { select, .. }
             | EditCommand::MoveWordRightEnd { select, .. }
             | EditCommand::MoveBigWordRightEnd { select, .. }
@@ -657,10 +663,9 @@ impl EditCommand {
             | EditCommand::MoveLeftBefore { select, .. } => {
                 EditType::MoveCursor { select: *select }
             }
-            EditCommand::SelectPrevWord | EditCommand::SelectNextWordToGap => {
-                EditType::MoveCursor { select: true }
-            }
-            EditCommand::ClearSelection => EditType::MoveCursor { select: false },
+            EditCommand::ClearSelection
+            | EditCommand::MoveToSelectionStart
+            | EditCommand::MoveToSelectionEnd => EditType::MoveCursor { select: false },
             EditCommand::SwapCursorAndAnchor => EditType::MoveCursor { select: true },
 
             EditCommand::SelectAll => EditType::MoveCursor { select: true },

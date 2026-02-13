@@ -66,4 +66,4 @@ Before opening a PR, run these locally:
 
   ```shell
   cargo nextest run --all --all-features
- ```
+  ```
