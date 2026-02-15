@@ -864,10 +864,10 @@ pub enum ReedlineEvent {
     /// Move left to the next column, or completion entry
     Left,
 
-    /// Move to the start
+    /// Move to the start of the buffer
     ToStart,
 
-    /// Move to the end
+    /// Move to the end of the buffer
     ToEnd,
 
     /// Navigate to the next historic buffer
