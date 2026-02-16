@@ -1094,14 +1094,19 @@ impl Reedline {
                             }
                         }
 
-                        if self.partial_completions
-                            && menu.can_partially_complete(
+                        if self.partial_completions {
+                            if !self.quick_completions {
+                                menu.update_values(
+                                    &mut self.editor,
+                                    self.completer.as_mut(),
+                                    self.history.as_ref(),
+                                );
+                            }
+                            menu.can_partially_complete(
                                 &mut self.editor,
                                 self.completer.as_mut(),
                                 self.history.as_ref(),
-                            )
-                        {
-                            return Ok(EventStatus::Handled);
+                            );
                         }
 
                         return Ok(EventStatus::Handled);
