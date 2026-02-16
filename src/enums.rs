@@ -904,6 +904,9 @@ pub enum ReedlineEvent {
     /// Move to the previous history page
     MenuPagePrevious,
 
+    /// Complete the command given the common prefix of items in current open menu
+    PartialComplete,
+
     /// Way to bind the execution of a whole command (directly returning from [`crate::Reedline::read_line()`]) to a keybinding
     ExecuteHostCommand(String),
 
@@ -912,9 +915,6 @@ pub enum ReedlineEvent {
 
     /// Change mode (vi mode only)
     ViChangeMode(String),
-
-    /// Complete the command given the common prefix of items in current open menu
-    PartialComplete,
 }
 
 impl Display for ReedlineEvent {
