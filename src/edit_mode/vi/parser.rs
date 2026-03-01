@@ -613,17 +613,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case(&['2', 'k'], ReedlineEvent::Multiple(vec![ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::MenuUp,
-                ReedlineEvent::Up,
-            ]), ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::MenuUp,
-                ReedlineEvent::Up,
+    #[case(&['2', 'k'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![
+                EditCommand::MoveLineUp { select: true },
+            ]), ReedlineEvent::Edit(vec![
+                EditCommand::MoveLineUp { select: true },
             ])]))]
-    #[case(&['k'], ReedlineEvent::Multiple(vec![ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::MenuUp,
-                ReedlineEvent::Up,
-            ])]))]
+    #[case(&['k'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveLineUp { select: true }])]))]
     #[case(&['w'],
         ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveWordRightStart{select:true}])]))]
     #[case(&['W'],
