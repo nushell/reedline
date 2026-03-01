@@ -112,6 +112,18 @@ pub enum EditCommand {
         select: bool,
     },
 
+    /// Move one line up
+    MoveLineUp {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move one line down
+    MoveLineDown {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
     /// Move one character to the left
     MoveLeft {
         /// Select the text between the current cursor position and destination
@@ -482,6 +494,8 @@ impl Display for EditCommand {
             EditCommand::MoveToLineEnd { .. } => {
                 write!(f, "MoveToLineEnd Optional[select: <bool>]")
             }
+            EditCommand::MoveLineUp { .. } => write!(f, "MoveLineUp Optional[select: <bool>]"),
+            EditCommand::MoveLineDown { .. } => write!(f, "MoveLineDown Optional[select: <bool>]"),
             EditCommand::MoveLeft { .. } => write!(f, "MoveLeft Optional[select: <bool>]"),
             EditCommand::MoveRight { .. } => write!(f, "MoveRight Optional[select: <bool>]"),
             EditCommand::MoveWordLeft { .. } => write!(f, "MoveWordLeft Optional[select: <bool>]"),
@@ -613,6 +627,8 @@ impl EditCommand {
             | EditCommand::MoveToLineEnd { select, .. }
             | EditCommand::MoveToLineNonBlankStart { select, .. }
             | EditCommand::MoveToPosition { select, .. }
+            | EditCommand::MoveLineUp { select, .. }
+            | EditCommand::MoveLineDown { select, .. }
             | EditCommand::MoveLeft { select, .. }
             | EditCommand::MoveRight { select, .. }
             | EditCommand::MoveWordLeft { select, .. }
