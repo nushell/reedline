@@ -1,11 +1,15 @@
 use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
+#[cfg(feature = "hx")]
+use crate::edit_mode::hx::word;
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
 use crate::prompt::{PromptEditMode, PromptViMode};
 use crate::{core_editor::get_local_clipboard, EditCommand};
 use std::cmp::{max, min};
 use std::ops::{DerefMut, Range};
+#[cfg(feature = "hx")]
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Stateful editor executing changes to the underlying [`LineBuffer`]
 ///
@@ -21,6 +25,8 @@ pub struct Editor {
     selection_anchor: Option<usize>,
     selection_mode: Option<PromptEditMode>,
     edit_mode: PromptEditMode,
+    #[cfg(feature = "hx")]
+    hx_selection: Option<HxRange>,
 }
 
 impl Default for Editor {
@@ -35,6 +41,73 @@ impl Default for Editor {
             selection_anchor: None,
             selection_mode: None,
             edit_mode: PromptEditMode::Default,
+            #[cfg(feature = "hx")]
+            hx_selection: None,
+        }
+    }
+}
+
+// ── Helix selection range ─────────────────────────────────────────────
+
+/// A single selection range with anchor and head.
+///
+/// Both `anchor` and `head` are byte offsets into the buffer.
+/// The anchor is where the selection started; the head is where
+/// the cursor currently sits. Uses gap indexing (left-inclusive,
+/// right-exclusive), matching Helix semantics.
+#[cfg(feature = "hx")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HxRange {
+    pub(crate) anchor: usize,
+    pub(crate) head: usize,
+}
+
+#[cfg(feature = "hx")]
+impl HxRange {
+    /// Ascending byte range for slicing/rendering.
+    /// Returns (min, max) of anchor and head.
+    #[must_use]
+    pub fn range(&self) -> (usize, usize) {
+        (min(self.head, self.anchor), max(self.head, self.anchor))
+    }
+
+    /// Clamp anchor and head so they lie on char boundaries within `buf`.
+    /// Selections can become stale after buffer mutations (undo, delete, paste).
+    pub fn clamp(&mut self, buf: &str) {
+        let len = buf.len();
+        self.anchor = Self::snap_to_char_boundary(buf, min(self.anchor, len));
+        self.head = Self::snap_to_char_boundary(buf, min(self.head, len));
+    }
+
+    /// Round a byte offset down to the nearest char boundary in `buf`.
+    fn snap_to_char_boundary(buf: &str, offset: usize) -> usize {
+        if offset >= buf.len() {
+            return buf.len();
+        }
+        // Walk backwards until we find a char boundary.
+        let mut pos = offset;
+        while !buf.is_char_boundary(pos) && pos > 0 {
+            pos -= 1;
+        }
+        pos
+    }
+
+    /// Block cursor position: the byte offset where the cursor
+    /// should be rendered. For a forward range the cursor sits
+    /// one grapheme before head; for a backward or empty range
+    /// it sits at head.
+    #[must_use]
+    pub fn cursor(&self, buf: &str) -> usize {
+        // Clamp head to buffer length to avoid panic on stale selections.
+        let head = min(self.head, buf.len());
+        let anchor = min(self.anchor, buf.len());
+        if head > anchor {
+            buf[..head]
+                .grapheme_indices(true)
+                .next_back()
+                .map_or(head, |(i, _)| i)
+        } else {
+            head
         }
     }
 }
@@ -196,11 +269,52 @@ impl Editor {
             EditCommand::CopyAroundPair { left, right } => self.copy_around_pair(*left, *right),
             EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
             EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
+            #[cfg(feature = "hx")]
+            EditCommand::HxRestartSelection => self.hx_restart_selection(),
+            #[cfg(feature = "hx")]
+            EditCommand::HxClearSelection => self.reset_hx_state(),
+            #[cfg(feature = "hx")]
+            EditCommand::HxEnsureSelection => self.hx_ensure_selection(),
+            #[cfg(feature = "hx")]
+            EditCommand::HxSyncCursor => self.hx_sync_cursor(),
+            #[cfg(feature = "hx")]
+            EditCommand::HxSyncCursorWithRestart => self.hx_sync_cursor_with_restart(),
+            #[cfg(feature = "hx")]
+            EditCommand::HxWordMotion {
+                target,
+                movement,
+                count,
+            } => self.hx_word_motion(*target, *movement, *count),
+            #[cfg(feature = "hx")]
+            EditCommand::HxFlipSelection => self.hx_flip_selection(),
+            #[cfg(feature = "hx")]
+            EditCommand::HxMoveToSelectionStart => self.hx_move_to_selection_start(),
+            #[cfg(feature = "hx")]
+            EditCommand::HxMoveToSelectionEnd => self.hx_move_to_selection_end(),
+            #[cfg(feature = "hx")]
+            EditCommand::HxSwitchCaseSelection => self.hx_switch_case_selection(),
+            #[cfg(feature = "hx")]
+            EditCommand::HxReplaceSelectionWithChar(c) => self.hx_replace_selection_with_char(*c),
+            #[cfg(feature = "hx")]
+            EditCommand::HxDeleteSelection => self.hx_delete_selection(),
+            #[cfg(feature = "hx")]
+            EditCommand::HxExtendSelectionToInsertionPoint => {
+                self.hx_extend_selection_to_insertion_point()
+            }
+            #[cfg(feature = "hx")]
+            EditCommand::HxShiftSelectionToInsertionPoint => {
+                self.hx_shift_selection_to_insertion_point()
+            }
         }
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
             self.clear_selection();
         }
-        if let EditType::MoveCursor { select: true } = command.edit_type() {}
+
+        // NoOp commands (e.g. Hx selection bookkeeping) must not touch the undo
+        // stack at all — otherwise they corrupt the redo chain after an undo.
+        if command.edit_type() == EditType::NoOp {
+            return;
+        }
 
         let new_undo_behavior = match (command, command.edit_type()) {
             (_, EditType::MoveCursor { .. }) => UndoBehavior::MoveCursor,
@@ -230,6 +344,343 @@ impl Editor {
     pub(crate) fn clear_selection(&mut self) {
         self.selection_anchor = None;
         self.selection_mode = None;
+        // NOTE: hx_selection is NOT cleared here. Helix mode manages its own
+        // selection lifecycle via reset_hx_state() / hx_restart_selection().
+    }
+
+    /// Disable Helix selection tracking (e.g. when switching away from Helix mode).
+    #[cfg(feature = "hx")]
+    pub(crate) fn reset_hx_state(&mut self) {
+        self.hx_selection = None;
+    }
+
+    /// Reset the hx selection to a 1-grapheme-wide range at the current
+    /// insertion point, matching Helix's invariant that selections always
+    /// cover at least one grapheme.
+    ///
+    /// On an empty buffer, clears the selection instead (no grapheme to
+    /// select).
+    #[cfg(feature = "hx")]
+    pub(crate) fn hx_restart_selection(&mut self) {
+        if self.line_buffer.get_buffer().is_empty() {
+            self.hx_selection = None;
+            return;
+        }
+        let pos = self.insertion_point();
+        let next = self.line_buffer.grapheme_right_index_from_pos(pos);
+        self.hx_selection = Some(HxRange {
+            anchor: pos,
+            head: next,
+        });
+    }
+
+    /// Ensure an hx selection exists.  If one already exists, leave it
+    /// untouched; otherwise create a collapsed selection at the cursor.
+    #[cfg(feature = "hx")]
+    pub(crate) fn hx_ensure_selection(&mut self) {
+        if self.hx_selection.is_none() {
+            self.hx_restart_selection();
+        }
+    }
+
+    /// Implements Helix `put_cursor` semantics for Select mode.
+    ///
+    /// Reads the current insertion point (where the motion landed), then:
+    /// 1. Adjusts the anchor if the selection direction flipped
+    ///    (Helix "1-width" block-cursor semantics).
+    /// 2. Sets head: for forward selections, one grapheme past the
+    ///    cursor position; for backward, at the cursor position.
+    /// 3. Sets the insertion point to `sel.cursor()` for display.
+    ///
+    /// Motions start from `cursor()` (the display position), which is
+    /// consistent with Helix's `move_horizontally`.
+    #[cfg(feature = "hx")]
+    pub(crate) fn hx_sync_cursor(&mut self) {
+        let pos = self.insertion_point();
+        if let Some(sel) = &mut self.hx_selection {
+            let buf = self.line_buffer.get_buffer();
+            sel.clamp(buf);
+
+            // Anchor adjustment when direction flips.
+            if sel.head >= sel.anchor && pos < sel.anchor {
+                // Was forward, now backward: advance anchor by 1 grapheme.
+                sel.anchor = buf[sel.anchor..]
+                    .grapheme_indices(true)
+                    .nth(1)
+                    .map_or(buf.len(), |(i, _)| sel.anchor + i);
+            } else if sel.head < sel.anchor && pos >= sel.anchor {
+                // Was backward, now forward: retreat anchor by 1 grapheme.
+                sel.anchor = buf[..sel.anchor]
+                    .grapheme_indices(true)
+                    .next_back()
+                    .map_or(0, |(i, _)| i);
+            }
+
+            // Set head with 1-width semantics.
+            if pos >= sel.anchor {
+                sel.head = buf[pos..]
+                    .grapheme_indices(true)
+                    .nth(1)
+                    .map_or(buf.len(), |(i, _)| pos + i);
+            } else {
+                sel.head = pos;
+            }
+
+            self.line_buffer.set_insertion_point(sel.cursor(buf));
+        }
+    }
+
+    /// Atomic restart + sync for extending motions in Normal mode.
+    ///
+    /// Compares the current insertion point with the existing selection's
+    /// display cursor.  If they differ (the motion moved), restarts the
+    /// anchor at the old cursor position and syncs the head to the new
+    /// position.  If they match (the motion was a no-op), the selection
+    /// is left unchanged — matching Helix's `map_or(range, ...)` pattern.
+    ///
+    /// Direction-flip logic (as in `hx_sync_cursor`) is intentionally
+    /// absent here: restart always creates a fresh anchor at the old cursor
+    /// position, so the selection is either strictly forward (motion moved
+    /// right) or strictly backward (motion moved left) — never a flip from
+    /// a prior extended selection.
+    #[cfg(feature = "hx")]
+    pub(crate) fn hx_sync_cursor_with_restart(&mut self) {
+        let pos = self.insertion_point();
+        if let Some(sel) = &mut self.hx_selection {
+            let buf = self.line_buffer.get_buffer();
+            sel.clamp(buf);
+
+            let old_cursor = sel.cursor(buf);
+            if pos == old_cursor {
+                // Motion made no progress — leave the selection as-is.
+                return;
+            }
+
+            // Restart: collapse to a point at the old cursor, then extend to
+            // the new position.  This matches Helix's
+            //   Range::point(cursor).put_cursor(text, pos, true)
+            // When the motion goes backward (pos < cursor), advance the
+            // anchor by one grapheme so the cursor character is included.
+            if pos < old_cursor {
+                sel.anchor = buf[old_cursor..]
+                    .grapheme_indices(true)
+                    .nth(1)
+                    .map_or(buf.len(), |(i, _)| old_cursor + i);
+                sel.head = pos;
+            } else {
+                sel.anchor = old_cursor;
+                sel.head = buf[pos..]
+                    .grapheme_indices(true)
+                    .nth(1)
+                    .map_or(buf.len(), |(i, _)| pos + i);
+            }
+
+            self.line_buffer.set_insertion_point(sel.cursor(buf));
+        } else {
+            // No selection exists yet; create one.
+            self.hx_restart_selection();
+        }
+    }
+
+    /// Get a reference to the current Helix selection, if any.
+    ///
+    /// Exposes the full [`HxRange`] with anchor/head distinction, unlike
+    /// [`get_selection`](Self::get_selection) which only returns `(min, max)`.
+    #[cfg(feature = "hx")]
+    #[allow(dead_code)] // available for internal use; currently used in tests
+    pub(crate) fn hx_selection(&self) -> Option<&HxRange> {
+        self.hx_selection.as_ref()
+    }
+
+    #[cfg(feature = "hx")]
+    #[cfg(test)]
+    pub(crate) fn set_hx_selection(&mut self, sel: HxRange) {
+        self.hx_selection = Some(sel);
+    }
+
+    /// Run a word motion that takes and returns an HxRange.
+    ///
+    /// For `Movement::Move` (Normal mode): restarts the selection at the
+    /// current cursor position before computing the motion.
+    /// For `Movement::Extend` (Select mode): operates on the existing
+    /// selection with anchor preserved.
+    ///
+    /// If the motion makes no progress (cursor position unchanged),
+    /// the existing selection is preserved — matching Helix behavior
+    /// where a failed motion at end-of-buffer keeps the last selection.
+    #[cfg(feature = "hx")]
+    fn hx_word_motion(
+        &mut self,
+        target: crate::enums::WordMotionTarget,
+        movement: crate::enums::Movement,
+        count: usize,
+    ) {
+        let buf = self.line_buffer.get_buffer();
+        let pos = self.insertion_point();
+        let next = self.line_buffer.grapheme_right_index_from_pos(pos);
+        let mut sel = self.hx_selection.unwrap_or(HxRange {
+            anchor: pos,
+            head: next,
+        });
+        sel.clamp(buf);
+
+        // For Move mode, restart selection at cursor before the motion.
+        let input_sel = match movement {
+            crate::enums::Movement::Move => {
+                let cursor_pos = sel.cursor(buf);
+                let cursor_next = self.line_buffer.grapheme_right_index_from_pos(cursor_pos);
+                HxRange {
+                    anchor: cursor_pos,
+                    head: cursor_next,
+                }
+            }
+            crate::enums::Movement::Extend => sel,
+        };
+
+        let new = word::word_move(buf, &input_sel, count, target);
+
+        // If the cursor position didn't change, the motion made no
+        // progress (e.g. at end-of-buffer). Keep the existing selection.
+        if new.cursor(buf) == sel.cursor(buf) {
+            return;
+        }
+
+        self.line_buffer.set_insertion_point(new.cursor(buf));
+        self.hx_selection = Some(new);
+    }
+
+    /// Swap anchor and head of the Helix selection, updating the cursor.
+    #[cfg(feature = "hx")]
+    fn hx_flip_selection(&mut self) {
+        if let Some(sel) = &mut self.hx_selection {
+            sel.clamp(self.line_buffer.get_buffer());
+            std::mem::swap(&mut sel.anchor, &mut sel.head);
+            let buf = self.line_buffer.get_buffer();
+            self.line_buffer.set_insertion_point(sel.cursor(buf));
+        }
+    }
+
+    /// Move cursor to the ascending start of the Helix selection.
+    #[cfg(feature = "hx")]
+    fn hx_move_to_selection_start(&mut self) {
+        if let Some(sel) = &mut self.hx_selection {
+            sel.clamp(self.line_buffer.get_buffer());
+            self.line_buffer.set_insertion_point(sel.range().0);
+        }
+    }
+
+    /// Move cursor past the ascending end of the Helix selection.
+    #[cfg(feature = "hx")]
+    fn hx_move_to_selection_end(&mut self) {
+        if let Some(sel) = &mut self.hx_selection {
+            sel.clamp(self.line_buffer.get_buffer());
+            self.line_buffer.set_insertion_point(sel.range().1);
+        }
+    }
+
+    /// Transform the text inside the Helix selection, then update the
+    /// selection to cover the (possibly resized) replacement.
+    #[cfg(feature = "hx")]
+    fn hx_transform_selection(&mut self, transform: impl FnOnce(&str) -> String) {
+        if let Some(sel) = &mut self.hx_selection {
+            sel.clamp(self.line_buffer.get_buffer());
+            let (start, end) = sel.range();
+            let selected = &self.line_buffer.get_buffer()[start..end];
+            let result = transform(selected);
+            let new_end = start + result.len();
+            self.line_buffer.clear_range_safe(start..end);
+            self.line_buffer.set_insertion_point(start);
+            self.line_buffer.insert_str(&result);
+            // Preserve selection direction over the new content.
+            if sel.anchor <= sel.head {
+                sel.anchor = start;
+                sel.head = new_end;
+            } else {
+                sel.anchor = new_end;
+                sel.head = start;
+            }
+            // Restore cursor to the display position within the updated selection.
+            let buf = self.line_buffer.get_buffer();
+            self.line_buffer.set_insertion_point(sel.cursor(buf));
+        }
+    }
+
+    /// Toggle case of every character in the Helix selection.
+    #[cfg(feature = "hx")]
+    fn hx_switch_case_selection(&mut self) {
+        self.hx_transform_selection(|selected| {
+            selected
+                .chars()
+                .flat_map(|c| {
+                    if c.is_lowercase() {
+                        c.to_uppercase().collect::<Vec<_>>()
+                    } else {
+                        c.to_lowercase().collect::<Vec<_>>()
+                    }
+                })
+                .collect()
+        });
+    }
+
+    /// Replace every character in the Helix selection with the given char.
+    /// Counts characters (not grapheme clusters) to match Helix behavior.
+    #[cfg(feature = "hx")]
+    fn hx_replace_selection_with_char(&mut self, c: char) {
+        self.hx_transform_selection(|selected| {
+            let char_count = selected.chars().count();
+            std::iter::repeat(c).take(char_count).collect()
+        });
+    }
+
+    /// Delete the Helix selection range without saving to the cut buffer.
+    /// Clears hx_selection afterwards so subsequent commands see no selection.
+    #[cfg(feature = "hx")]
+    fn hx_delete_selection(&mut self) {
+        if let Some(mut sel) = self.hx_selection.take() {
+            sel.clamp(self.line_buffer.get_buffer());
+            let (start, end) = sel.range();
+            self.line_buffer.clear_range_safe(start..end);
+            self.line_buffer.set_insertion_point(start);
+        }
+    }
+
+    /// Extend the Helix selection head to the current insertion point.
+    /// Used in `a` (append) insert mode so the selection grows as the
+    /// user types. The anchor is pinned to the selection start (min side)
+    /// and head tracks the cursor forward. This normalization ensures
+    /// backward selections are handled correctly: a backward selection
+    /// (anchor > head) is flipped so anchor holds the start before extending.
+    #[cfg(feature = "hx")]
+    fn hx_extend_selection_to_insertion_point(&mut self) {
+        let pos = self.insertion_point();
+        if let Some(sel) = &mut self.hx_selection {
+            sel.anchor = sel.range().0;
+            sel.head = pos;
+        }
+    }
+
+    /// Shift both anchor and head of the Helix selection so the selection
+    /// tracks the same text after an edit before it.
+    ///
+    /// Called after `InsertChar` or `Backspace` in `i` (insert-before) mode.
+    /// The cursor sits at the selection start; after the edit it has moved
+    /// forward (insert) or backward (backspace).  We compute the delta as
+    /// `insertion_point − selection_start` and apply it to both ends.
+    #[cfg(feature = "hx")]
+    fn hx_shift_selection_to_insertion_point(&mut self) {
+        let pos = self.insertion_point();
+        if let Some(sel) = &mut self.hx_selection {
+            let start = sel.range().0;
+            if pos > start {
+                let shift = pos - start;
+                sel.anchor += shift;
+                sel.head += shift;
+            } else if pos < start {
+                let shift = start - pos;
+                sel.anchor = sel.anchor.saturating_sub(shift);
+                sel.head = sel.head.saturating_sub(shift);
+            }
+        }
     }
 
     fn update_selection_anchor(&mut self, select: bool) {
@@ -246,6 +697,18 @@ impl Editor {
     /// Set the current edit mode
     pub fn set_edit_mode(&mut self, mode: PromptEditMode) {
         self.edit_mode = mode;
+    }
+
+    /// Check if the editor is currently in Helix edit mode.
+    fn is_hx_mode(&self) -> bool {
+        #[cfg(feature = "hx")]
+        {
+            matches!(self.edit_mode, PromptEditMode::Helix(_))
+        }
+        #[cfg(not(feature = "hx"))]
+        {
+            false
+        }
     }
     fn move_to_position(&mut self, position: usize, select: bool) {
         self.update_selection_anchor(select);
@@ -544,7 +1007,8 @@ impl Editor {
     ) {
         self.update_selection_anchor(select);
         if before_char {
-            self.line_buffer.move_right_before(c, current_line);
+            let skip = self.is_hx_mode();
+            self.line_buffer.move_right_before(c, current_line, skip);
         } else {
             self.line_buffer.move_right_until(c, current_line);
         }
@@ -559,7 +1023,8 @@ impl Editor {
     ) {
         self.update_selection_anchor(select);
         if before_char {
-            self.line_buffer.move_left_before(c, current_line);
+            let skip = self.is_hx_mode();
+            self.line_buffer.move_left_before(c, current_line, skip);
         } else {
             self.line_buffer.move_left_until(c, current_line);
         }
@@ -641,6 +1106,8 @@ impl Editor {
             self.system_clipboard.set(cut_slice, ClipboardMode::Normal);
             self.cut_range(start..end);
             self.clear_selection();
+            #[cfg(feature = "hx")]
+            self.reset_hx_state();
         }
     }
 
@@ -648,6 +1115,8 @@ impl Editor {
         if let Some((start, end)) = self.get_selection() {
             self.cut_range(start..end);
             self.clear_selection();
+            #[cfg(feature = "hx")]
+            self.reset_hx_state();
         }
     }
 
@@ -668,7 +1137,24 @@ impl Editor {
 
     /// If a selection is active returns the selected range, otherwise None.
     /// The range is guaranteed to be ascending.
+    ///
+    /// # Helix selection design note
+    ///
+    /// When `hx` is enabled and `hx_selection` is `Some`, this returns the
+    /// hx range with priority. This is correct for **read-only** consumers
+    /// (painter highlighting, `CopySelection`, `CutSelection`) but
+    /// **`delete_selection()` deliberately ignores it** via the
+    /// `selection_anchor.is_none()` early return. The reason: Helix keeps
+    /// the selection visible as context during Insert mode — implicit
+    /// deletion by `insert_char`/`backspace` etc. must not consume it.
+    /// Only explicit Helix commands (`CutSelection`, `HxDeleteSelection`)
+    /// should delete the hx-selected text.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
+        #[cfg(feature = "hx")]
+        if let Some(sel) = &self.hx_selection {
+            return Some(sel.range());
+        }
+
         let selection_anchor = self.selection_anchor?;
 
         // Use the mode that was active when the selection was created, not the current mode
@@ -705,9 +1191,20 @@ impl Editor {
     }
 
     fn delete_selection(&mut self) {
+        // Only delete based on legacy selection_anchor (Vi visual mode,
+        // Emacs mark).  Helix mode manages its own selection deletion via
+        // explicit commands (CutSelection, HxDeleteSelection) — the
+        // hx_selection must NOT be consumed implicitly by insert_char,
+        // backspace, etc., because Helix keeps the selection visible as
+        // context while typing in insert mode.
+        if self.selection_anchor.is_none() {
+            return;
+        }
         if let Some((start, end)) = self.get_selection() {
             self.line_buffer.clear_range_safe(start..end);
             self.clear_selection();
+            #[cfg(feature = "hx")]
+            self.reset_hx_state();
         }
     }
 
@@ -2144,5 +2641,659 @@ mod test {
 
         assert_eq!(bracket_result, expected_bracket);
         assert_eq!(quote_result, expected_quote);
+    }
+
+    #[cfg(feature = "hx")]
+    mod hx_selection_tests {
+        use super::{editor_with, HxRange};
+        use crate::prompt::{PromptEditMode, PromptHelixMode};
+        use crate::EditCommand;
+        use pretty_assertions::assert_eq;
+
+        #[test]
+        fn restart_sets_anchor_and_head() {
+            let mut editor = editor_with("hello world");
+            editor.line_buffer.set_insertion_point(3);
+            editor.hx_restart_selection();
+            let sel = editor.hx_selection().unwrap();
+            assert_eq!(sel.anchor, 3);
+            // 1-grapheme-wide: head is one grapheme past anchor
+            assert_eq!(sel.head, 4);
+            assert_eq!(editor.get_selection(), Some((3, 4)));
+        }
+
+        #[test]
+        fn sync_cursor_extends_selection_forward() {
+            let mut editor = editor_with("hello world");
+            editor.line_buffer.set_insertion_point(0);
+            editor.hx_restart_selection();
+            // Simulate a motion landing at position 5
+            editor.line_buffer.set_insertion_point(5);
+            editor.hx_sync_cursor();
+            let sel = editor.hx_selection().unwrap();
+            assert_eq!(sel.anchor, 0);
+            // Forward range: head is one grapheme past cursor (1-width semantics)
+            assert_eq!(sel.head, 6);
+            assert_eq!(editor.get_selection(), Some((0, 6)));
+        }
+
+        #[test]
+        fn restart_after_sync_resets_both() {
+            let mut editor = editor_with("hello world");
+            editor.line_buffer.set_insertion_point(0);
+            editor.hx_restart_selection();
+            editor.line_buffer.set_insertion_point(5);
+            editor.hx_sync_cursor();
+            // Now restart at the cursor display position
+            editor.hx_restart_selection();
+            let sel = editor.hx_selection().unwrap();
+            assert_eq!(sel.anchor, 5);
+            // 1-grapheme-wide: head is one grapheme past anchor
+            assert_eq!(sel.head, 6);
+        }
+
+        #[test]
+        fn sync_cursor_backward_selection() {
+            let mut editor = editor_with("hello world");
+            editor.line_buffer.set_insertion_point(5);
+            editor.hx_restart_selection();
+            // Simulate a motion landing at position 2
+            editor.line_buffer.set_insertion_point(2);
+            editor.hx_sync_cursor();
+            let sel = editor.hx_selection().unwrap();
+            // Backward: anchor shifts forward by 1 grapheme (direction flip)
+            assert_eq!(sel.anchor, 6);
+            assert_eq!(sel.head, 2);
+            assert!(sel.head < sel.anchor);
+        }
+
+        #[test]
+        fn reset_hx_state_clears_hx() {
+            let mut editor = editor_with("hello");
+            editor.line_buffer.set_insertion_point(0);
+            editor.hx_restart_selection();
+            editor.reset_hx_state();
+            assert!(editor.hx_selection().is_none());
+            assert_eq!(editor.get_selection(), None);
+        }
+
+        #[test]
+        fn hx_selection_takes_priority_over_legacy() {
+            let mut editor = editor_with("hello world");
+            // Set legacy selection
+            editor.selection_anchor = Some(0);
+            editor.line_buffer.set_insertion_point(3);
+            // Set hx selection to different range
+            editor.hx_selection = Some(HxRange { anchor: 1, head: 4 });
+            // hx_selection should win
+            assert_eq!(editor.get_selection(), Some((1, 4)));
+        }
+
+        #[test]
+        fn ensure_selection_creates_when_none() {
+            let mut editor = editor_with("hello");
+            editor.line_buffer.set_insertion_point(2);
+            assert!(editor.hx_selection().is_none());
+            editor.hx_ensure_selection();
+            let sel = editor.hx_selection().unwrap();
+            assert_eq!(sel.anchor, 2);
+            assert_eq!(sel.head, 3);
+        }
+
+        #[test]
+        fn ensure_selection_preserves_existing() {
+            let mut editor = editor_with("hello world");
+            editor.hx_selection = Some(HxRange { anchor: 0, head: 5 });
+            editor.hx_ensure_selection();
+            let sel = editor.hx_selection().unwrap();
+            assert_eq!((sel.anchor, sel.head), (0, 5));
+        }
+
+        #[test]
+        fn flip_selection_swaps_anchor_and_head() {
+            let mut editor = editor_with("hello world");
+            editor.hx_selection = Some(HxRange { anchor: 0, head: 5 });
+            editor.hx_flip_selection();
+            let sel = editor.hx_selection().unwrap();
+            assert_eq!((sel.anchor, sel.head), (5, 0));
+        }
+
+        #[test]
+        fn move_to_selection_start_forward() {
+            let mut editor = editor_with("hello world");
+            editor.line_buffer.set_insertion_point(8);
+            editor.hx_selection = Some(HxRange { anchor: 2, head: 7 });
+            editor.hx_move_to_selection_start();
+            assert_eq!(editor.insertion_point(), 2);
+        }
+
+        #[test]
+        fn move_to_selection_start_backward() {
+            let mut editor = editor_with("hello world");
+            editor.line_buffer.set_insertion_point(0);
+            editor.hx_selection = Some(HxRange { anchor: 7, head: 2 });
+            editor.hx_move_to_selection_start();
+            assert_eq!(editor.insertion_point(), 2);
+        }
+
+        #[test]
+        fn move_to_selection_end_forward() {
+            let mut editor = editor_with("hello world");
+            editor.line_buffer.set_insertion_point(0);
+            editor.hx_selection = Some(HxRange { anchor: 2, head: 7 });
+            editor.hx_move_to_selection_end();
+            assert_eq!(editor.insertion_point(), 7);
+        }
+
+        #[test]
+        fn switch_case_toggles() {
+            let mut editor = editor_with("Hello");
+            editor.hx_selection = Some(HxRange { anchor: 0, head: 5 });
+            editor.hx_switch_case_selection();
+            assert_eq!(editor.get_buffer(), "hELLO");
+            // Selection should still cover the full word
+            let sel = editor.hx_selection().unwrap();
+            assert_eq!((sel.anchor, sel.head), (0, 5));
+        }
+
+        #[test]
+        fn replace_selection_with_char() {
+            let mut editor = editor_with("hello world");
+            editor.hx_selection = Some(HxRange { anchor: 0, head: 5 });
+            editor.hx_replace_selection_with_char('x');
+            assert_eq!(editor.get_buffer(), "xxxxx world");
+            let sel = editor.hx_selection().unwrap();
+            assert_eq!((sel.anchor, sel.head), (0, 5));
+        }
+
+        #[test]
+        fn delete_selection_removes_range() {
+            let mut editor = editor_with("hello world");
+            editor.hx_selection = Some(HxRange { anchor: 0, head: 6 });
+            editor.hx_delete_selection();
+            assert_eq!(editor.get_buffer(), "world");
+            assert_eq!(editor.insertion_point(), 0);
+            assert!(editor.hx_selection().is_none());
+        }
+
+        #[test]
+        fn delete_selection_backward_range() {
+            let mut editor = editor_with("hello world");
+            editor.hx_selection = Some(HxRange { anchor: 6, head: 0 });
+            editor.hx_delete_selection();
+            assert_eq!(editor.get_buffer(), "world");
+            assert_eq!(editor.insertion_point(), 0);
+        }
+
+        #[test]
+        fn restart_on_empty_buffer_clears() {
+            let mut editor = editor_with("");
+            editor.hx_restart_selection();
+            assert!(editor.hx_selection().is_none());
+        }
+
+        // ── sync_cursor direction flip tests ────────────────────────────
+
+        #[test]
+        fn sync_cursor_backward_to_forward_flip() {
+            // Start with backward selection (anchor > head), then move forward past anchor.
+            let mut editor = editor_with("hello world");
+            editor.line_buffer.set_insertion_point(5);
+            editor.hx_restart_selection();
+            // Force backward: simulate motion landing at 2
+            editor.line_buffer.set_insertion_point(2);
+            editor.hx_sync_cursor();
+            let sel = editor.hx_selection().unwrap();
+            assert!(sel.head < sel.anchor, "should be backward");
+
+            // Now simulate motion landing past the (adjusted) anchor
+            editor.line_buffer.set_insertion_point(8);
+            editor.hx_sync_cursor();
+            let sel = editor.hx_selection().unwrap();
+            assert!(
+                sel.head > sel.anchor,
+                "should flip to forward: anchor={} head={}",
+                sel.anchor,
+                sel.head
+            );
+        }
+
+        // ── transform_selection with length change ──────────────────────
+
+        #[test]
+        fn replace_selection_with_char_multibyte_shrinks() {
+            // Replace multi-byte chars with single-byte — selection should shrink.
+            let mut editor = editor_with("café world");
+            // "café" = bytes [0..5) (é is 2 bytes), 4 chars
+            editor.hx_selection = Some(HxRange { anchor: 0, head: 5 });
+            editor.hx_replace_selection_with_char('x');
+            // 4 chars → 4 'x' = 4 bytes
+            assert_eq!(editor.get_buffer(), "xxxx world");
+            let sel = editor.hx_selection().unwrap();
+            assert_eq!((sel.anchor, sel.head), (0, 4));
+        }
+
+        #[test]
+        fn replace_selection_with_multibyte_char_expands() {
+            // Replace ASCII selection with a multi-byte char — selection should expand.
+            let mut editor = editor_with("hello world");
+            editor.hx_selection = Some(HxRange { anchor: 0, head: 5 });
+            // 'é' is 2 bytes; 5 chars × 2 bytes = 10 bytes
+            editor.hx_replace_selection_with_char('é');
+            assert_eq!(editor.get_buffer(), "ééééé world");
+            let sel = editor.hx_selection().unwrap();
+            assert_eq!((sel.anchor, sel.head), (0, 10));
+        }
+
+        #[test]
+        fn replace_counts_chars_not_graphemes() {
+            // "e\u{0301}" is 2 chars (e + combining acute) but 1 grapheme cluster.
+            // Replace should count chars, matching Helix behavior.
+            let mut editor = editor_with("e\u{0301}!");
+            // "e\u{0301}" = 3 bytes (e=1, combining=2), "!" = 1 byte → total 4 bytes
+            // Selection covers "e\u{0301}!" = 4 bytes, 3 chars
+            editor.hx_selection = Some(HxRange { anchor: 0, head: 4 });
+            editor.hx_replace_selection_with_char('x');
+            // 3 chars → "xxx" = 3 bytes
+            assert_eq!(editor.get_buffer(), "xxx");
+            let sel = editor.hx_selection().unwrap();
+            assert_eq!((sel.anchor, sel.head), (0, 3));
+        }
+
+        #[test]
+        fn switch_case_preserves_multibyte() {
+            let mut editor = editor_with("café");
+            editor.hx_selection = Some(HxRange { anchor: 0, head: 5 });
+            editor.hx_switch_case_selection();
+            assert_eq!(editor.get_buffer(), "CAFÉ");
+            let sel = editor.hx_selection().unwrap();
+            // É is also 2 bytes, so length stays the same
+            assert_eq!((sel.anchor, sel.head), (0, 5));
+        }
+
+        // ── Full edit sequences through run_edit_command ────────────────
+
+        #[test]
+        fn word_motion_then_delete() {
+            use crate::enums::{Movement, WordMotionTarget};
+            let mut editor = editor_with("hello world test");
+            editor.line_buffer.set_insertion_point(0);
+            // w: select "hello " (Normal mode = Move)
+            editor.run_edit_command(&EditCommand::HxWordMotion {
+                target: WordMotionTarget::NextWordStart,
+                movement: Movement::Move,
+                count: 1,
+            });
+            let sel = editor.hx_selection().unwrap();
+            let selected = &editor.get_buffer()[sel.range().0..sel.range().1];
+            assert_eq!(selected, "hello ");
+            // d: cut selection
+            editor.run_edit_command(&EditCommand::CutSelection);
+            assert_eq!(editor.get_buffer(), "world test");
+        }
+
+        #[test]
+        fn two_word_motions_then_delete() {
+            use crate::enums::{Movement, WordMotionTarget};
+            let mut editor = editor_with("aaa bbb ccc ddd");
+            editor.line_buffer.set_insertion_point(0);
+            // First w: select "aaa "
+            editor.run_edit_command(&EditCommand::HxWordMotion {
+                target: WordMotionTarget::NextWordStart,
+                movement: Movement::Move,
+                count: 1,
+            });
+            // Second w: restart and select "bbb "
+            editor.run_edit_command(&EditCommand::HxWordMotion {
+                target: WordMotionTarget::NextWordStart,
+                movement: Movement::Move,
+                count: 1,
+            });
+            let sel = editor.hx_selection().unwrap();
+            let selected = &editor.get_buffer()[sel.range().0..sel.range().1];
+            assert_eq!(selected, "bbb ");
+            // d: cut "bbb "
+            editor.run_edit_command(&EditCommand::CutSelection);
+            assert_eq!(editor.get_buffer(), "aaa ccc ddd");
+        }
+
+        #[test]
+        fn word_motion_with_count_2() {
+            use crate::enums::{Movement, WordMotionTarget};
+            let mut editor = editor_with("aaa bbb ccc ddd");
+            editor.line_buffer.set_insertion_point(0);
+            // 2w: skip two words at once
+            editor.run_edit_command(&EditCommand::HxWordMotion {
+                target: WordMotionTarget::NextWordStart,
+                movement: Movement::Move,
+                count: 2,
+            });
+            let sel = editor.hx_selection().unwrap();
+            let selected = &editor.get_buffer()[sel.range().0..sel.range().1];
+            // Each count iteration in word_right restarts the anchor at the
+            // new word boundary (Helix semantics), so 2w selects only the
+            // second word span, not both words from the origin.
+            assert_eq!(selected, "bbb ");
+        }
+
+        // ── h/l motions through run_edit_command ────────────────────────
+
+        #[test]
+        fn h_motion_moves_left_and_restarts() {
+            let mut editor = editor_with("hello");
+            editor.line_buffer.set_insertion_point(3);
+            editor.hx_restart_selection();
+            // Simulate Normal mode: MoveLeft then HxRestartSelection
+            editor.run_edit_command(&EditCommand::MoveLeft { select: false });
+            editor.run_edit_command(&EditCommand::HxRestartSelection);
+            assert_eq!(editor.insertion_point(), 2);
+            let sel = editor.hx_selection().unwrap();
+            // 1-wide selection at position 2
+            assert_eq!(sel.anchor, 2);
+            assert_eq!(sel.head, 3);
+        }
+
+        #[test]
+        fn l_motion_moves_right_and_restarts() {
+            let mut editor = editor_with("hello");
+            editor.line_buffer.set_insertion_point(1);
+            editor.hx_restart_selection();
+            // Simulate Normal mode: MoveRight then HxRestartSelection
+            editor.run_edit_command(&EditCommand::MoveRight { select: false });
+            editor.run_edit_command(&EditCommand::HxRestartSelection);
+            assert_eq!(editor.insertion_point(), 2);
+            let sel = editor.hx_selection().unwrap();
+            assert_eq!(sel.anchor, 2);
+            assert_eq!(sel.head, 3);
+        }
+
+        // ── f/t motions through run_edit_command ────────────────────────
+
+        #[test]
+        fn f_motion_extends_to_char() {
+            let mut editor = editor_with("hello world");
+            editor.line_buffer.set_insertion_point(0);
+            editor.run_edit_command(&EditCommand::HxRestartSelection);
+            // Simulate Normal mode f w: MoveRightUntil + HxSyncCursorWithRestart
+            editor.run_edit_command(&EditCommand::MoveRightUntil {
+                c: 'w',
+                select: false,
+            });
+            editor.run_edit_command(&EditCommand::HxSyncCursorWithRestart);
+            let sel = editor.hx_selection().unwrap();
+            // Forward selection from 0 to past 'w' (byte 6 + 1 = 7)
+            assert_eq!(sel.anchor, 0);
+            assert!(sel.head > 6, "head should be past 'w': head={}", sel.head);
+        }
+
+        #[test]
+        fn t_motion_stops_before_char() {
+            let mut editor = editor_with("hello world");
+            editor.line_buffer.set_insertion_point(0);
+            editor.run_edit_command(&EditCommand::HxRestartSelection);
+            // Simulate Normal mode t w: MoveRightBefore + HxSyncCursorWithRestart
+            editor.run_edit_command(&EditCommand::MoveRightBefore {
+                c: 'w',
+                select: false,
+            });
+            editor.run_edit_command(&EditCommand::HxSyncCursorWithRestart);
+            let sel = editor.hx_selection().unwrap();
+            // Should stop before 'w' (at the space, byte 5)
+            assert_eq!(sel.anchor, 0);
+            // Cursor should be before 'w'
+            let cursor = sel.cursor(editor.get_buffer());
+            assert!(cursor < 6, "cursor should be before 'w': cursor={}", cursor);
+        }
+
+        #[test]
+        fn t_motion_twice_preserves_selection() {
+            let mut editor = editor_with("hello world");
+            editor.line_buffer.set_insertion_point(0);
+            editor.run_edit_command(&EditCommand::HxRestartSelection);
+            // First t w — extending motion uses HxSyncCursorWithRestart
+            editor.run_edit_command(&EditCommand::MoveRightBefore {
+                c: 'w',
+                select: false,
+            });
+            editor.run_edit_command(&EditCommand::HxSyncCursorWithRestart);
+
+            let sel_after_first = *editor.hx_selection().unwrap();
+
+            // Second t w — should NOT collapse the selection
+            editor.run_edit_command(&EditCommand::MoveRightBefore {
+                c: 'w',
+                select: false,
+            });
+            editor.run_edit_command(&EditCommand::HxSyncCursorWithRestart);
+
+            let sel_after_second = *editor.hx_selection().unwrap();
+            assert_eq!(
+                sel_after_first.anchor, sel_after_second.anchor,
+                "anchor should not change on repeat t: first={:?}, second={:?}",
+                sel_after_first, sel_after_second
+            );
+            assert_eq!(
+                sel_after_first.head, sel_after_second.head,
+                "head should not change on repeat t: first={:?}, second={:?}",
+                sel_after_first, sel_after_second
+            );
+        }
+
+        #[test]
+        fn t_then_reverse_t_restarts_correctly() {
+            // "abcabc": cursor at 0, selection [a] = {anchor:0, head:1}.
+            // `ta` restarts: anchor = old cursor (0), extends to before
+            // second 'a' → {0, 3}, cursor on 'c' at 2.
+            // `Ta` restarts: anchor = old cursor (2), backward → anchor
+            // advances to 3 (direction flip), head = 1.
+            // Selection = {3, 1}, covering "bc" backward.
+            let mut editor = editor_with("abcabc");
+            editor.line_buffer.set_insertion_point(0);
+            editor.run_edit_command(&EditCommand::HxRestartSelection);
+
+            // Forward `ta`
+            editor.run_edit_command(&EditCommand::MoveRightBefore {
+                c: 'a',
+                select: false,
+            });
+            editor.run_edit_command(&EditCommand::HxSyncCursorWithRestart);
+            let sel = *editor.hx_selection().unwrap();
+            assert_eq!((sel.anchor, sel.head), (0, 3), "after ta");
+
+            // Backward `Ta`
+            editor.run_edit_command(&EditCommand::MoveLeftBefore {
+                c: 'a',
+                select: false,
+            });
+            editor.run_edit_command(&EditCommand::HxSyncCursorWithRestart);
+            let sel = *editor.hx_selection().unwrap();
+            // Anchor restarts at old cursor (2), then flips to 3 because
+            // the motion went backward. Head = 1 (after 'a' at 0).
+            assert_eq!(
+                (sel.anchor, sel.head),
+                (3, 1),
+                "anchor should flip to 3, head at 1"
+            );
+        }
+
+        #[test]
+        fn t_motion_advances_to_next_occurrence() {
+            // "axbxc": cursor at 0, next grapheme is 'x'.
+            // Helix t x skips the immediate 'x' and stops before
+            // the second 'x' (byte 2, before byte 3).
+            let mut editor = editor_with("axbxc");
+            editor.set_edit_mode(PromptEditMode::Helix(PromptHelixMode::Normal));
+            editor.line_buffer.set_insertion_point(0);
+            editor.run_edit_command(&EditCommand::HxRestartSelection);
+
+            // t x from pos 0: skip immediate 'x' at 1, find 'x' at 3,
+            // stop before it → cursor at 2.
+            editor.run_edit_command(&EditCommand::MoveRightBefore {
+                c: 'x',
+                select: false,
+            });
+            editor.run_edit_command(&EditCommand::HxSyncCursorWithRestart);
+            let sel = *editor.hx_selection().unwrap();
+            // Selection from 0 to byte 3 (just past 'b')
+            assert_eq!(sel.anchor, 0);
+            assert_eq!(sel.head, 3);
+
+            // Second t x: cursor is at 2 ('b'), next grapheme is 'x' at 3.
+            // Skip that 'x', no third 'x' → no movement → selection preserved.
+            editor.run_edit_command(&EditCommand::MoveRightBefore {
+                c: 'x',
+                select: false,
+            });
+            editor.run_edit_command(&EditCommand::HxSyncCursorWithRestart);
+            let sel2 = *editor.hx_selection().unwrap();
+            assert_eq!(sel2.anchor, sel.anchor, "selection should be preserved");
+            assert_eq!(sel2.head, sel.head, "selection should be preserved");
+        }
+
+        // ── sync_cursor_with_restart when no prior selection ─────────
+
+        #[test]
+        fn sync_cursor_with_restart_creates_fresh_selection() {
+            // No prior hx_selection; should create a 1-wide selection at cursor.
+            let mut editor = editor_with("hello");
+            editor.line_buffer.set_insertion_point(2);
+            assert!(editor.hx_selection().is_none());
+
+            editor.run_edit_command(&EditCommand::HxSyncCursorWithRestart);
+            let sel = editor.hx_selection().unwrap();
+            // Fresh restart creates a 1-wide selection: anchor=2, head=3.
+            assert_eq!(sel.anchor, 2);
+            assert_eq!(sel.head, 3);
+        }
+
+        // ── InsertStyle::Before (i) selection tracking ──────────────
+
+        #[test]
+        fn i_mode_shift_tracks_insertion() {
+            // Simulate: 'i' mode — type 'xy' before selection [w]orld
+            // The selection [w] (anchor=0, head=1) should shift to (2, 3).
+            let mut editor = editor_with("world");
+            editor.line_buffer.set_insertion_point(0);
+            editor.run_edit_command(&EditCommand::HxRestartSelection);
+            let sel0 = *editor.hx_selection().unwrap();
+            assert_eq!((sel0.anchor, sel0.head), (0, 1));
+
+            // Move to selection start (i mode).
+            editor.run_edit_command(&EditCommand::HxMoveToSelectionStart);
+
+            // Insert 'x', then shift.
+            editor.run_edit_command(&EditCommand::InsertChar('x'));
+            editor.run_edit_command(&EditCommand::HxShiftSelectionToInsertionPoint);
+            let sel1 = *editor.hx_selection().unwrap();
+            assert_eq!((sel1.anchor, sel1.head), (1, 2));
+
+            // Insert 'y', then shift.
+            editor.run_edit_command(&EditCommand::InsertChar('y'));
+            editor.run_edit_command(&EditCommand::HxShiftSelectionToInsertionPoint);
+            let sel2 = *editor.hx_selection().unwrap();
+            assert_eq!((sel2.anchor, sel2.head), (2, 3));
+
+            // Buffer should be "xyworld".
+            assert_eq!(editor.get_buffer(), "xyworld");
+        }
+
+        #[test]
+        fn i_mode_shift_tracks_backspace() {
+            // Simulate: 'i' mode — type 'xy' then backspace once.
+            // Start: "world", selection [w] at (0, 1).
+            let mut editor = editor_with("world");
+            editor.line_buffer.set_insertion_point(0);
+            editor.run_edit_command(&EditCommand::HxRestartSelection);
+
+            // Move to selection start (i mode), insert 'x', 'y'.
+            editor.run_edit_command(&EditCommand::HxMoveToSelectionStart);
+            editor.run_edit_command(&EditCommand::InsertChar('x'));
+            editor.run_edit_command(&EditCommand::HxShiftSelectionToInsertionPoint);
+            editor.run_edit_command(&EditCommand::InsertChar('y'));
+            editor.run_edit_command(&EditCommand::HxShiftSelectionToInsertionPoint);
+            // Selection is now (2, 3) covering 'w' in "xyworld".
+            let sel = *editor.hx_selection().unwrap();
+            assert_eq!((sel.anchor, sel.head), (2, 3));
+
+            // Backspace: deletes 'y', cursor goes from 2 to 1.
+            editor.run_edit_command(&EditCommand::Backspace);
+            editor.run_edit_command(&EditCommand::HxShiftSelectionToInsertionPoint);
+            let sel = *editor.hx_selection().unwrap();
+            assert_eq!((sel.anchor, sel.head), (1, 2));
+            assert_eq!(editor.get_buffer(), "xworld");
+        }
+
+        #[test]
+        fn a_mode_extend_tracks_backspace() {
+            // Start: "hello", selection [h] at (0, 1).
+            let mut editor = editor_with("hello");
+            editor.line_buffer.set_insertion_point(0);
+            editor.run_edit_command(&EditCommand::HxRestartSelection);
+
+            // Move to selection end (a mode), insert 'x', 'y'.
+            editor.run_edit_command(&EditCommand::HxMoveToSelectionEnd);
+            editor.run_edit_command(&EditCommand::InsertChar('x'));
+            editor.run_edit_command(&EditCommand::HxExtendSelectionToInsertionPoint);
+            editor.run_edit_command(&EditCommand::InsertChar('y'));
+            editor.run_edit_command(&EditCommand::HxExtendSelectionToInsertionPoint);
+            // Selection is (0, 3) covering "hxy" in "hxyello".
+            let sel = *editor.hx_selection().unwrap();
+            assert_eq!((sel.anchor, sel.head), (0, 3));
+
+            // Backspace: deletes 'y', cursor from 3 to 2.
+            editor.run_edit_command(&EditCommand::Backspace);
+            editor.run_edit_command(&EditCommand::HxExtendSelectionToInsertionPoint);
+            let sel = *editor.hx_selection().unwrap();
+            assert_eq!((sel.anchor, sel.head), (0, 2));
+            assert_eq!(editor.get_buffer(), "hxello");
+        }
+
+        // ── InsertStyle::After (a) selection tracking ───────────────
+
+        #[test]
+        fn a_mode_extend_tracks_insertion() {
+            // Simulate: 'a' mode — type 'xy' after selection [h]ello
+            // The selection should extend from (0, 1) → (0, 2) → (0, 3).
+            let mut editor = editor_with("hello");
+            editor.line_buffer.set_insertion_point(0);
+            editor.run_edit_command(&EditCommand::HxRestartSelection);
+
+            // Move to selection end (a mode).
+            editor.run_edit_command(&EditCommand::HxMoveToSelectionEnd);
+
+            // Insert 'x', then extend.
+            editor.run_edit_command(&EditCommand::InsertChar('x'));
+            editor.run_edit_command(&EditCommand::HxExtendSelectionToInsertionPoint);
+            let sel1 = *editor.hx_selection().unwrap();
+            assert_eq!((sel1.anchor, sel1.head), (0, 2));
+
+            // Insert 'y', then extend.
+            editor.run_edit_command(&EditCommand::InsertChar('y'));
+            editor.run_edit_command(&EditCommand::HxExtendSelectionToInsertionPoint);
+            let sel2 = *editor.hx_selection().unwrap();
+            assert_eq!((sel2.anchor, sel2.head), (0, 3));
+
+            // Buffer should be "hxyello".
+            assert_eq!(editor.get_buffer(), "hxyello");
+        }
+
+        #[test]
+        fn a_mode_extend_normalizes_backward_selection() {
+            // Start with a backward selection: anchor=5, head=2.
+            // After 'a' mode extend, anchor should be normalized to min (2).
+            let mut editor = editor_with("hello world");
+            editor.set_hx_selection(HxRange { anchor: 5, head: 2 });
+
+            // Move to selection end (range().1 = 5).
+            editor.run_edit_command(&EditCommand::HxMoveToSelectionEnd);
+            assert_eq!(editor.insertion_point(), 5);
+
+            // Insert 'x', then extend.
+            editor.run_edit_command(&EditCommand::InsertChar('x'));
+            editor.run_edit_command(&EditCommand::HxExtendSelectionToInsertionPoint);
+            let sel = *editor.hx_selection().unwrap();
+            // anchor should be normalized to 2 (min), head at 6 (insertion point).
+            assert_eq!((sel.anchor, sel.head), (2, 6));
+        }
     }
 }

@@ -466,6 +466,107 @@ pub enum EditCommand {
         /// The text object to operate on
         text_object: TextObject,
     },
+
+    /// Reset the hx selection anchor+head to the current insertion point
+    #[cfg(feature = "hx")]
+    HxRestartSelection,
+
+    /// Clear hx selection entirely (e.g. when entering Insert mode)
+    #[cfg(feature = "hx")]
+    HxClearSelection,
+
+    /// Ensure an hx selection exists; no-op if one is already set
+    #[cfg(feature = "hx")]
+    HxEnsureSelection,
+
+    /// Adjust insertion point to block-cursor display position after a motion
+    #[cfg(feature = "hx")]
+    HxSyncCursor,
+
+    /// Atomic restart + sync for extending motions (f/t/F/T) in Normal mode.
+    ///
+    /// If the cursor moved from the current selection's display position,
+    /// restarts the anchor at the old cursor and syncs the head to the new
+    /// position.  If the cursor did not move, the selection is left
+    /// unchanged — preventing collapse on repeated motions like `t`.
+    #[cfg(feature = "hx")]
+    HxSyncCursorWithRestart,
+
+    /// Helix word/WORD motion (w/b/e/W/B/E)
+    #[cfg(feature = "hx")]
+    HxWordMotion {
+        /// Which word motion to perform
+        target: WordMotionTarget,
+        /// Whether to reset or extend the selection anchor
+        movement: Movement,
+        /// Repeat count (from numeric prefix, minimum 1)
+        count: usize,
+    },
+
+    /// Flip the Helix selection (swap anchor and head)
+    #[cfg(feature = "hx")]
+    HxFlipSelection,
+
+    /// Move cursor to the start of the Helix selection (min of anchor, head)
+    #[cfg(feature = "hx")]
+    HxMoveToSelectionStart,
+
+    /// Move cursor to the end of the Helix selection (max of anchor, head)
+    #[cfg(feature = "hx")]
+    HxMoveToSelectionEnd,
+
+    /// Toggle case of entire Helix selection
+    #[cfg(feature = "hx")]
+    HxSwitchCaseSelection,
+
+    /// Replace every grapheme in the Helix selection with the given char
+    #[cfg(feature = "hx")]
+    HxReplaceSelectionWithChar(char),
+
+    /// Delete the Helix selection range without saving to cut buffer
+    #[cfg(feature = "hx")]
+    HxDeleteSelection,
+
+    /// Extend the Helix selection head to the current insertion point.
+    /// Used after `a` (append) so the selection grows as the user types.
+    #[cfg(feature = "hx")]
+    HxExtendSelectionToInsertionPoint,
+
+    /// Shift both anchor and head of the Helix selection forward so the
+    /// selection tracks text that was pushed right by an insertion before it.
+    /// Used after `i` (insert) so the selection stays on the same text.
+    #[cfg(feature = "hx")]
+    HxShiftSelectionToInsertionPoint,
+}
+
+/// Whether a motion resets the selection anchor (Move) or keeps it (Extend).
+#[cfg(feature = "hx")]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Movement {
+    /// Normal mode: anchor follows boundary logic
+    #[default]
+    Move,
+    /// Select mode: anchor stays fixed
+    Extend,
+}
+
+/// Which word motion to perform. Encodes direction and big/small.
+#[cfg(feature = "hx")]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WordMotionTarget {
+    /// `w` -- next word start
+    #[default]
+    NextWordStart,
+    /// `e` -- next word end
+    NextWordEnd,
+    /// `b` -- previous word start
+    PrevWordStart,
+    /// `W` -- next WORD start
+    NextLongWordStart,
+    /// `E` -- next WORD end
+    NextLongWordEnd,
+    /// `B` -- previous WORD start
+    PrevLongWordStart,
 }
 
 impl Display for EditCommand {
@@ -597,6 +698,42 @@ impl Display for EditCommand {
             EditCommand::CopyAroundPair { .. } => write!(f, "CopyAroundPair Value: <char> <char>"),
             EditCommand::CutTextObject { .. } => write!(f, "CutTextObject Value: <TextObject>"),
             EditCommand::CopyTextObject { .. } => write!(f, "CopyTextObject Value: <TextObject>"),
+            #[cfg(feature = "hx")]
+            EditCommand::HxRestartSelection => write!(f, "HxRestartSelection"),
+            #[cfg(feature = "hx")]
+            EditCommand::HxClearSelection => write!(f, "HxClearSelection"),
+            #[cfg(feature = "hx")]
+            EditCommand::HxEnsureSelection => write!(f, "HxEnsureSelection"),
+            #[cfg(feature = "hx")]
+            EditCommand::HxSyncCursor => write!(f, "HxSyncCursor"),
+            #[cfg(feature = "hx")]
+            EditCommand::HxSyncCursorWithRestart => write!(f, "HxSyncCursorWithRestart"),
+            #[cfg(feature = "hx")]
+            EditCommand::HxWordMotion { target, .. } => {
+                write!(f, "HxWordMotion({:?})", target)
+            }
+            #[cfg(feature = "hx")]
+            EditCommand::HxFlipSelection => write!(f, "HxFlipSelection"),
+            #[cfg(feature = "hx")]
+            EditCommand::HxMoveToSelectionStart => write!(f, "HxMoveToSelectionStart"),
+            #[cfg(feature = "hx")]
+            EditCommand::HxMoveToSelectionEnd => write!(f, "HxMoveToSelectionEnd"),
+            #[cfg(feature = "hx")]
+            EditCommand::HxSwitchCaseSelection => write!(f, "HxSwitchCaseSelection"),
+            #[cfg(feature = "hx")]
+            EditCommand::HxReplaceSelectionWithChar(c) => {
+                write!(f, "HxReplaceSelectionWithChar({c})")
+            }
+            #[cfg(feature = "hx")]
+            EditCommand::HxDeleteSelection => write!(f, "HxDeleteSelection"),
+            #[cfg(feature = "hx")]
+            EditCommand::HxExtendSelectionToInsertionPoint => {
+                write!(f, "HxExtendSelectionToInsertionPoint")
+            }
+            #[cfg(feature = "hx")]
+            EditCommand::HxShiftSelectionToInsertionPoint => {
+                write!(f, "HxShiftSelectionToInsertionPoint")
+            }
         }
     }
 }
@@ -709,6 +846,25 @@ impl EditCommand {
             | EditCommand::CopyInsidePair { .. }
             | EditCommand::CopyAroundPair { .. }
             | EditCommand::CopyTextObject { .. } => EditType::NoOp,
+
+            #[cfg(feature = "hx")]
+            EditCommand::HxRestartSelection
+            | EditCommand::HxClearSelection
+            | EditCommand::HxEnsureSelection
+            | EditCommand::HxSyncCursor
+            | EditCommand::HxSyncCursorWithRestart
+            | EditCommand::HxFlipSelection
+            | EditCommand::HxMoveToSelectionStart
+            | EditCommand::HxMoveToSelectionEnd => EditType::NoOp,
+            #[cfg(feature = "hx")]
+            EditCommand::HxWordMotion { .. } => EditType::MoveCursor { select: false },
+            #[cfg(feature = "hx")]
+            EditCommand::HxSwitchCaseSelection
+            | EditCommand::HxReplaceSelectionWithChar(_)
+            | EditCommand::HxDeleteSelection => EditType::EditText,
+            #[cfg(feature = "hx")]
+            EditCommand::HxExtendSelectionToInsertionPoint
+            | EditCommand::HxShiftSelectionToInsertionPoint => EditType::NoOp,
         }
     }
 }
