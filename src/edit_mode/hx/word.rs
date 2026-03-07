@@ -6,8 +6,13 @@
 //! - **Punctuation**: everything else that isn't whitespace
 //! - **Whitespace**: spaces, tabs, etc.
 //!
-//! "Small word" motions (w/b/e) break at any class transition.
-//! "Big WORD" motions (W/B/E) only break at whitespace boundaries.
+  //! "Small word" motions (w/b/e) break at any class transition.
+  //! "Big WORD" motions (W/B/E) only break at whitespace boundaries.
+  //!
+  //! Reedline's existing word motions use Unicode word boundary rules.
+  //! Helix uses a simpler three-class model where `_` is a word character
+  //! (so `hello_world` is one word) and apostrophes are punctuation
+  //! (so `don't` is three segments). Line endings are also a distinct class.
 //!
 //! Motion functions take an `HxRange` (anchor + head) and return a new
 //! `HxRange` with both anchor and head adjusted. This keeps boundary
