@@ -5,7 +5,7 @@ use {
         borrow::Cow,
         fmt::{Display, Formatter},
     },
-    strum_macros::EnumIter,
+    strum::EnumIter,
 };
 
 /// The default color for the prompt, indicator, and right prompt

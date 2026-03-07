@@ -1,7 +1,7 @@
 use crossterm::event::{Event, KeyEvent, KeyEventKind};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
-use strum_macros::EnumIter;
+use strum::{EnumDiscriminants, EnumIter, EnumString, VariantArray};
 
 /// Which mouse button was pressed.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,7 +80,10 @@ impl Default for TextObject {
 ///
 /// Executed by `Reedline::run_edit_commands()`
 #[non_exhaustive]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq, EnumIter)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq, EnumDiscriminants, EnumIter)]
+#[strum_discriminants(doc = "This is the auto generated discriminant type for [`EditCommand`]")]
+#[strum_discriminants(derive(EnumString, VariantArray))]
+#[strum_discriminants(strum(ascii_case_insensitive))]
 pub enum EditCommand {
     /// Move to the start of the buffer
     MoveToStart {
@@ -781,7 +784,10 @@ impl UndoBehavior {
 }
 
 /// Reedline supported actions.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, EnumIter)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, EnumDiscriminants, EnumIter)]
+#[strum_discriminants(doc = "This is the auto generated discriminant type for [`ReedlineEvent`]")]
+#[strum_discriminants(derive(EnumString, VariantArray))]
+#[strum_discriminants(strum(ascii_case_insensitive))]
 pub enum ReedlineEvent {
     /// No op event
     None,
@@ -828,6 +834,7 @@ pub enum ReedlineEvent {
     SubmitOrNewline,
 
     /// Esc event
+    #[strum_discriminants(strum(serialize = "Esc", serialize = "Escape"))]
     Esc,
 
     /// Mouse click event with screen coordinates
