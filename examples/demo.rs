@@ -73,11 +73,19 @@ fn main() -> reedline::Result<()> {
     ];
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
+    #[cfg(feature = "hx")]
     let cursor_config = CursorConfig {
         vi_insert: Some(SetCursorStyle::BlinkingBar),
         vi_normal: Some(SetCursorStyle::SteadyBlock),
         emacs: None,
         ..CursorConfig::default()
+    };
+
+    #[cfg(not(feature = "hx"))]
+    let cursor_config = CursorConfig {
+        vi_insert: Some(SetCursorStyle::BlinkingBar),
+        vi_normal: Some(SetCursorStyle::SteadyBlock),
+        emacs: None,
     };
 
     let mut line_editor = Reedline::create()
