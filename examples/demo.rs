@@ -215,6 +215,7 @@ fn main() -> reedline::Result<()> {
             Ok(Signal::CtrlC) => {
                 // Prompt has been cleared and should start on the next line
             }
+            Ok(_) => {}
             Err(err) => {
                 println!("Error: {err:?}");
             }

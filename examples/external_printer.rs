@@ -51,6 +51,7 @@ fn main() {
                     println!("\nAborted!");
                     break;
                 }
+                _ => {}
             }
             continue;
         }

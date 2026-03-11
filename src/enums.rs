@@ -26,6 +26,7 @@ impl From<crossterm::event::MouseButton> for MouseButton {
 }
 
 /// Valid ways how `Reedline::read_line()` can return
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum Signal {
     /// Entry succeeded with the provided content
@@ -34,6 +35,9 @@ pub enum Signal {
     CtrlC, // Interrupt current editing
     /// Abort with `Ctrl+D` signalling `EOF` or abort of a whole interactive session
     CtrlD, // End terminal session
+    /// An external signal requested that `read_line()` return.
+    /// Contains the current buffer contents at the time of interruption.
+    ExternalBreak(String),
 }
 
 /// Scope of text object operation ("i" inner or "a" around)
