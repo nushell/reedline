@@ -244,6 +244,16 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
 
     kb.add_binding(
         KM::SHIFT,
+        KC::Up,
+        edit_bind(EC::MoveLineUp { select: true }),
+    );
+    kb.add_binding(
+        KM::SHIFT,
+        KC::Down,
+        edit_bind(EC::MoveLineDown { select: true }),
+    );
+    kb.add_binding(
+        KM::SHIFT,
         KC::Left,
         edit_bind(EC::MoveLeft { select: true }),
     );

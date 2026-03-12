@@ -1662,7 +1662,7 @@ impl Reedline {
             // If we're at the top, move to previous history
             self.previous_history();
         } else {
-            self.editor.move_line_up();
+            self.editor.move_line_up(false);
         }
     }
 
@@ -1672,7 +1672,7 @@ impl Reedline {
             // If we're at the top, move to previous history
             self.next_history();
         } else {
-            self.editor.move_line_down();
+            self.editor.move_line_down(false);
         }
     }
 

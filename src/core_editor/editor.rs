@@ -64,6 +64,8 @@ impl Editor {
             EditCommand::MoveToPosition { position, select } => {
                 self.move_to_position(*position, *select)
             }
+            EditCommand::MoveLineUp { select } => self.move_line_up(*select),
+            EditCommand::MoveLineDown { select } => self.move_line_down(*select),
             EditCommand::MoveLeft { select } => self.move_left(*select),
             EditCommand::MoveRight { select } => self.move_right(*select),
             EditCommand::MoveWordLeft { select } => self.move_word_left(*select),
@@ -252,12 +254,14 @@ impl Editor {
         self.line_buffer.set_insertion_point(position)
     }
 
-    pub(crate) fn move_line_up(&mut self) {
+    pub(crate) fn move_line_up(&mut self, select: bool) {
+        self.update_selection_anchor(select);
         self.line_buffer.move_line_up();
         self.update_undo_state(UndoBehavior::MoveCursor);
     }
 
-    pub(crate) fn move_line_down(&mut self) {
+    pub(crate) fn move_line_down(&mut self, select: bool) {
+        self.update_selection_anchor(select);
         self.line_buffer.move_line_down();
         self.update_undo_state(UndoBehavior::MoveCursor);
     }

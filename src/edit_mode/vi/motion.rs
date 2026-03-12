@@ -179,16 +179,22 @@ impl Motion {
                     select: select_mode,
                 }]),
             ]))],
-            Motion::Up => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::MenuUp,
-                ReedlineEvent::Up,
-                // todo: add EditCommand::MoveLineUp
-            ]))],
-            Motion::Down => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::MenuDown,
-                ReedlineEvent::Down,
-                // todo: add EditCommand::MoveLineDown
-            ]))],
+            Motion::Up => vec![if select_mode {
+                ReedlineOption::Edit(EditCommand::MoveLineUp { select: true })
+            } else {
+                ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::MenuUp,
+                    ReedlineEvent::Up,
+                ]))
+            }],
+            Motion::Down => vec![if select_mode {
+                ReedlineOption::Edit(EditCommand::MoveLineDown { select: true })
+            } else {
+                ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::MenuDown,
+                    ReedlineEvent::Down,
+                ]))
+            }],
             Motion::NextWord => vec![ReedlineOption::Edit(EditCommand::MoveWordRightStart {
                 select: select_mode,
             })],
