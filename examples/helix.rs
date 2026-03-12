@@ -11,7 +11,7 @@ fn main() -> io::Result<()> {
     println!("Helix edit mode demo:\nAbort with Ctrl-C");
 
     let prompt = DefaultPrompt::default();
-    let mut line_editor = Reedline::create().with_edit_mode(Box::new(Helix));
+    let mut line_editor = Reedline::create().with_edit_mode(Box::new(Helix::default()));
 
     loop {
         let sig = line_editor.read_line(&prompt)?;
