@@ -765,8 +765,8 @@ pub enum UndoBehavior {
     /// Catch-all for actions that should always form a unique undo point and never be
     /// grouped with later edits
     CreateUndoPoint,
-    /// Undo/Redo actions shouldn't be reflected on the edit stack
-    UndoRedo,
+    /// For actions that shouldn't be reflected on the edit stack e.g. Undo/Redo
+    NoOp,
 }
 
 impl UndoBehavior {
