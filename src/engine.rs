@@ -47,7 +47,14 @@ use {
         terminal, QueueableCommand,
     },
     std::{
-        fs::File, io, io::Result, io::Write, process::Command, time::Duration, time::SystemTime,
+        fs::File,
+        io,
+        io::Result,
+        io::Write,
+        process::Command,
+        sync::{atomic::AtomicBool, Arc},
+        time::Duration,
+        time::SystemTime,
     },
 };
 
@@ -195,6 +202,10 @@ pub struct Reedline {
     // Whether lines should be accepted immediately
     immediately_accept: bool,
 
+    // External break signal: when set to `true`, `read_line()` will return
+    // `Signal::ExternalBreak` with the current buffer contents.
+    break_signal: Option<Arc<AtomicBool>>,
+
     // Maximum time to block on input before yielding control for features that
     // require periodic processing (external printer, idle callback).
     // Only used when external_printer or idle_callback is configured.
@@ -281,6 +292,7 @@ impl Reedline {
             bracketed_paste: BracketedPasteGuard::default(),
             kitty_protocol: KittyProtocolGuard::default(),
             immediately_accept: false,
+            break_signal: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
             #[cfg(feature = "external_printer")]
             external_printer: None,
@@ -628,6 +640,17 @@ impl Reedline {
         self
     }
 
+    /// A builder that configures an external break signal.
+    ///
+    /// When the [`AtomicBool`] is set to `true` by an external thread,
+    /// [`Reedline::read_line()`] will return [`Signal::ExternalBreak`] with the
+    /// current buffer contents. The flag is automatically reset to `false`
+    /// after being consumed.
+    pub fn with_break_signal(mut self, signal: Arc<AtomicBool>) -> Self {
+        self.break_signal = Some(signal);
+        self
+    }
+
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
         self.edit_mode.edit_mode()
@@ -789,6 +812,16 @@ impl Reedline {
                 callback();
             }
 
+            if let Some(ref signal) = self.break_signal {
+                if signal.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                    let buffer = self.editor.get_buffer().to_string();
+                    self.input_mode = InputMode::Regular;
+                    self.painter.move_cursor_to_end()?;
+                    self.editor.reset_undo_stack();
+                    return Ok(Signal::ExternalBreak(buffer));
+                }
+            }
+
             #[cfg(feature = "external_printer")]
             if let Some(ref external_printer) = self.external_printer {
                 // get messages from printer as crlf separated "lines"
@@ -829,7 +862,7 @@ impl Reedline {
                 // using the shared poll_interval for the timeout.
                 let needs_polling = {
                     #[allow(unused_mut)]
-                    let mut result = false;
+                    let mut result = self.break_signal.is_some();
                     #[cfg(feature = "external_printer")]
                     if self.external_printer.is_some() {
                         result = true;
@@ -1672,7 +1705,7 @@ impl Reedline {
             // If we're at the top, move to previous history
             self.previous_history();
         } else {
-            self.editor.move_line_up();
+            self.editor.move_line_up(false);
         }
     }
 
@@ -1682,7 +1715,7 @@ impl Reedline {
             // If we're at the top, move to previous history
             self.next_history();
         } else {
-            self.editor.move_line_down();
+            self.editor.move_line_down(false);
         }
     }
 
@@ -2303,5 +2336,31 @@ mod tests {
             reedline.prompt_edit_mode(),
             PromptEditMode::Helix(PromptHelixMode::Normal)
         ));
+    }
+
+    #[test]
+    fn break_signal_builder_pattern() {
+        let signal = Arc::new(AtomicBool::new(false));
+        let _reedline = Reedline::create()
+            .with_quick_completions(true)
+            .with_break_signal(signal)
+            .with_partial_completions(true);
+    }
+
+    #[test]
+    fn break_signal_is_send() {
+        fn f<S: Send>(_: S) {}
+        let signal = Arc::new(AtomicBool::new(false));
+        f(Reedline::create().with_break_signal(signal));
+    }
+
+    #[test]
+    fn signal_external_break_pattern_match() {
+        let buffer_content = "some partial input".to_string();
+        let signal = Signal::ExternalBreak(buffer_content.clone());
+        match signal {
+            Signal::ExternalBreak(buf) => assert_eq!(buf, buffer_content),
+            _ => panic!("Expected Signal::ExternalBreak"),
+        }
     }
 }

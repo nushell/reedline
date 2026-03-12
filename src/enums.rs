@@ -26,6 +26,7 @@ impl From<crossterm::event::MouseButton> for MouseButton {
 }
 
 /// Valid ways how `Reedline::read_line()` can return
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum Signal {
     /// Entry succeeded with the provided content
@@ -34,6 +35,9 @@ pub enum Signal {
     CtrlC, // Interrupt current editing
     /// Abort with `Ctrl+D` signalling `EOF` or abort of a whole interactive session
     CtrlD, // End terminal session
+    /// An external signal requested that `read_line()` return.
+    /// Contains the current buffer contents at the time of interruption.
+    ExternalBreak(String),
 }
 
 /// Scope of text object operation ("i" inner or "a" around)
@@ -111,6 +115,18 @@ pub enum EditCommand {
 
     /// Move to the end of the current line
     MoveToLineEnd {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move one line up
+    MoveLineUp {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move one line down
+    MoveLineDown {
         /// Select the text between the current cursor position and destination
         select: bool,
     },
@@ -586,6 +602,8 @@ impl Display for EditCommand {
             EditCommand::MoveToLineEnd { .. } => {
                 write!(f, "MoveToLineEnd Optional[select: <bool>]")
             }
+            EditCommand::MoveLineUp { .. } => write!(f, "MoveLineUp Optional[select: <bool>]"),
+            EditCommand::MoveLineDown { .. } => write!(f, "MoveLineDown Optional[select: <bool>]"),
             EditCommand::MoveLeft { .. } => write!(f, "MoveLeft Optional[select: <bool>]"),
             EditCommand::MoveRight { .. } => write!(f, "MoveRight Optional[select: <bool>]"),
             EditCommand::MoveWordLeft { .. } => write!(f, "MoveWordLeft Optional[select: <bool>]"),
@@ -753,6 +771,8 @@ impl EditCommand {
             | EditCommand::MoveToLineEnd { select, .. }
             | EditCommand::MoveToLineNonBlankStart { select, .. }
             | EditCommand::MoveToPosition { select, .. }
+            | EditCommand::MoveLineUp { select, .. }
+            | EditCommand::MoveLineDown { select, .. }
             | EditCommand::MoveLeft { select, .. }
             | EditCommand::MoveRight { select, .. }
             | EditCommand::MoveWordLeft { select, .. }
@@ -905,8 +925,8 @@ pub enum UndoBehavior {
     /// Catch-all for actions that should always form a unique undo point and never be
     /// grouped with later edits
     CreateUndoPoint,
-    /// Undo/Redo actions shouldn't be reflected on the edit stack
-    UndoRedo,
+    /// For actions that shouldn't be reflected on the edit stack e.g. Undo/Redo
+    NoOp,
 }
 
 impl UndoBehavior {

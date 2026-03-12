@@ -80,6 +80,7 @@ fn main() -> io::Result<()> {
                 println!("\nAborted!");
                 break Ok(());
             }
+            _ => {}
         }
         iterations += 1;
     }
