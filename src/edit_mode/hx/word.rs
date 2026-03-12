@@ -380,6 +380,9 @@ pub(crate) fn word_move(
 mod tests {
     use super::*;
 
+    type MotionScenario = (usize, HxRange, HxRange);
+    type MotionTestCase<'a> = (&'a str, Vec<MotionScenario>);
+
     // ── Test runner ─────────────────────────────────────────────────────
     //
     // Adapted from [helix-core/src/movement.rs](https://github.com/helix-editor/helix/blob/51ec572a27a8c1267afbc07e6c1583585c6363dc/helix-core/src/movement.rs) test infrastructure.
@@ -391,7 +394,7 @@ mod tests {
     fn run_motion_tests(
         f: fn(&str, &HxRange, usize, bool) -> HxRange,
         big: bool,
-        tests: &[(&str, Vec<(usize, HxRange, HxRange)>)],
+        tests: &[MotionTestCase<'_>],
     ) {
         for (sample, scenarios) in tests {
             for (count, begin, expected) in scenarios {
