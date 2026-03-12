@@ -76,6 +76,40 @@ fn skip_buffer_lines_range(string: &str, skip: usize, offset: Option<usize>) -> 
     (index, limit)
 }
 
+/// Configuration for bottom margin that reserves space at the bottom of the terminal.
+/// This is useful for ensuring completion menus and hints have room to display.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BottomMargin {
+    /// Reserve a fixed number of lines at the bottom
+    Fixed(u16),
+    /// Reserve a proportional amount of screen height (0.0 to 1.0)
+    Proportional(f32),
+}
+
+impl Default for BottomMargin {
+    fn default() -> Self {
+        BottomMargin::Fixed(0)
+    }
+}
+
+impl BottomMargin {
+    /// Calculate the effective number of lines to reserve based on screen height.
+    /// This is a "soft" margin - if the screen is too small, it returns 0
+    /// rather than causing errors.
+    pub fn lines(&self, screen_height: u16) -> u16 {
+        let raw_margin = match self {
+            BottomMargin::Fixed(n) => *n,
+            BottomMargin::Proportional(p) => {
+                let p = p.clamp(0.0, 1.0);
+                (screen_height as f32 * p) as u16
+            }
+        };
+        // Cap at half the screen to prevent completely broken layout
+        // but don't error - just do the best we can
+        raw_margin.min(screen_height / 2)
+    }
+}
+
 /// the type used by crossterm operations
 pub type W = std::io::BufWriter<std::io::Stderr>;
 
@@ -177,6 +211,8 @@ pub struct Painter {
     semantic_markers: Option<Box<dyn SemanticPromptMarkers>>,
     /// Layout computed during the last paint cycle.
     pub(crate) last_layout: Option<PromptLayout>,
+    /// Bottom margin to reserve space for completion menus and hints
+    bottom_margin: BottomMargin,
 }
 
 impl Painter {
@@ -192,6 +228,7 @@ impl Painter {
             after_cursor_lines: None,
             semantic_markers: None,
             last_layout: None,
+            bottom_margin: BottomMargin::default(),
         }
     }
 
@@ -203,6 +240,11 @@ impl Painter {
     /// Width of the current terminal window
     pub fn screen_width(&self) -> u16 {
         self.terminal_size.0
+    }
+
+    /// Sets the bottom margin for the prompt
+    pub fn set_bottom_margin(&mut self, margin: BottomMargin) {
+        self.bottom_margin = margin;
     }
 
     /// Sets the semantic prompt markers for terminal integration (OSC 133/633)
@@ -227,7 +269,10 @@ impl Painter {
     /// If you want the number of empty lines below the prompt,
     /// use [`Painter::remaining_lines_real`] instead.
     pub fn remaining_lines(&self) -> u16 {
-        self.screen_height().saturating_sub(self.prompt_start_row)
+        let margin = self.bottom_margin.lines(self.screen_height());
+        self.screen_height()
+            .saturating_sub(self.prompt_start_row)
+            .saturating_sub(margin)
     }
 
     /// Computes layout values shared between rendering and snapshot creation.

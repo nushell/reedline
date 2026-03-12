@@ -439,6 +439,27 @@ impl Reedline {
         self
     }
 
+    /// Configure the bottom margin to reserve space for completion menus and hints.
+    /// This can be either a fixed number of lines or a proportional amount of screen height.
+    ///
+    /// # Example
+    /// ```rust
+    /// use reedline::{BottomMargin, Reedline};
+    ///
+    /// // Reserve exactly 5 lines at the bottom
+    /// let editor = Reedline::create()
+    ///     .with_bottom_margin(BottomMargin::Fixed(5));
+    ///
+    /// // Reserve 30% of the screen height
+    /// let editor = Reedline::create()
+    ///     .with_bottom_margin(BottomMargin::Proportional(0.3));
+    /// ```
+    #[must_use]
+    pub fn with_bottom_margin(mut self, margin: crate::painting::BottomMargin) -> Self {
+        self.painter.set_bottom_margin(margin);
+        self
+    }
+
     /// A builder that configures the highlighter for your instance of the Reedline engine
     /// # Example
     /// ```rust

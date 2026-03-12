@@ -245,7 +245,7 @@ pub use enums::{
 };
 
 mod painting;
-pub use painting::{Painter, StyledText};
+pub use painting::{BottomMargin, Painter, StyledText};
 
 mod engine;
 pub use engine::{MouseClickMode, Reedline};
