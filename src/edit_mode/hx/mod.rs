@@ -1,3 +1,4 @@
+#[cfg(test)]
 pub(crate) mod word;
 
 use super::helix::Helix as MinimalHelix;

@@ -1,8 +1,9 @@
-// Create a reedline object with the experimental Helix edit mode.
+// Create a reedline object with the full experimental Helix edit mode.
 // cargo run --example helix --features helix
 //
-// The current Helix example maps Ctrl-D to exit and uses the default prompt,
-// which renders the active Helix mode indicator.
+// This example uses the public Helix mode exported by the crate, including
+// Select mode and the extended normal-mode command set. The default prompt
+// renders the active Helix mode indicator.
 
 use reedline::{DefaultPrompt, Helix, Reedline, Signal};
 use std::io;

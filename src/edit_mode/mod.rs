@@ -3,7 +3,7 @@ mod cursors;
 mod emacs;
 #[cfg(feature = "helix")]
 mod helix;
-#[cfg(all(feature = "helix", test))]
+#[cfg(feature = "helix")]
 pub(crate) mod hx;
 mod keybindings;
 mod vi;
@@ -14,6 +14,6 @@ pub use cursors::CursorConfig;
 pub use cursors::{HX_CURSOR_INSERT, HX_CURSOR_NORMAL, HX_CURSOR_SELECT};
 pub use emacs::{default_emacs_keybindings, Emacs};
 #[cfg(feature = "helix")]
-pub use helix::Helix;
+pub use hx::Helix;
 pub use keybindings::Keybindings;
 pub use vi::{default_vi_insert_keybindings, default_vi_normal_keybindings, Vi};

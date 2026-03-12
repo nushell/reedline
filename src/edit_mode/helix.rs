@@ -34,8 +34,7 @@ impl Helix {
         ReedlineEvent::Multiple(events)
     }
 
-    #[cfg(test)]
-    pub(super) fn enter_plain_insert(&mut self) {
+    pub(crate) fn enter_plain_insert(&mut self) {
         self.mode = HelixMode::Insert;
         self.selection_adjustment = None;
     }
