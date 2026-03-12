@@ -590,7 +590,7 @@ impl EditMode for Helix {
                 },
                 (KeyCode::Delete, _) => {
                     self.insert_style = InsertStyle::Plain;
-                    ReedlineEvent::Edit(vec![EditCommand::Delete, EditCommand::HxClearSelection])
+                    ReedlineEvent::Edit(vec![EditCommand::Delete])
                 }
                 // Arrow keys / Home / End move the cursor away from the
                 // insert position — clear the selection since byte offsets
