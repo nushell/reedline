@@ -588,10 +588,7 @@ impl EditMode for Helix {
                     ]),
                     InsertStyle::Plain => ReedlineEvent::Edit(vec![EditCommand::Backspace]),
                 },
-                (KeyCode::Delete, _) => {
-                    self.insert_style = InsertStyle::Plain;
-                    ReedlineEvent::Edit(vec![EditCommand::Delete])
-                }
+                (KeyCode::Delete, _) => ReedlineEvent::Edit(vec![EditCommand::Delete]),
                 // Arrow keys / Home / End move the cursor away from the
                 // insert position — clear the selection since byte offsets
                 // become meaningless after arbitrary cursor movement.
@@ -970,10 +967,7 @@ mod tests {
             ..Default::default()
         };
         let event = hx.parse_event(key_press(KeyCode::Delete, KeyModifiers::NONE));
-        assert_eq!(
-            event,
-            ReedlineEvent::Edit(vec![EditCommand::Delete])
-        );
+        assert_eq!(event, ReedlineEvent::Edit(vec![EditCommand::Delete]));
         assert_eq!(hx.insert_style, InsertStyle::Before);
     }
 

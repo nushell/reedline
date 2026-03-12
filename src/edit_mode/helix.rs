@@ -1,56 +1,26 @@
-use crate::{
-    enums::{EventStatus, ReedlineEvent, ReedlineRawEvent},
-    PromptEditMode, PromptViMode,
-};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-
-use super::EditMode;
-
-/// A minimal custom edit mode example for Helix-style integrations.
-#[derive(Default)]
-pub struct Helix;
-
-impl EditMode for Helix {
-    fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
-        match Event::from(event) {
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            }) => ReedlineEvent::CtrlC,
-            _ => ReedlineEvent::None,
-        }
-    }
-
-    fn edit_mode(&self) -> PromptEditMode {
-        PromptEditMode::Vi(PromptViMode::Normal)
-    }
-
-    fn handle_mode_specific_event(&mut self, _event: ReedlineEvent) -> EventStatus {
-        EventStatus::Inapplicable
-    }
-}
+pub use super::hx::Helix;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PromptViMode;
+    use crate::{EditMode, PromptEditMode, PromptHelixMode, ReedlineEvent, ReedlineRawEvent};
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
     fn helix_edit_mode_defaults_to_normal_mode() {
-        let helix_mode = Helix;
+        let helix_mode = Helix::default();
 
         let edit_mode = helix_mode.edit_mode();
 
         assert!(matches!(
             edit_mode,
-            PromptEditMode::Vi(PromptViMode::Normal)
+            PromptEditMode::Helix(PromptHelixMode::Normal)
         ));
     }
 
     #[test]
     fn helix_edit_mode_parses_ctrl_c_event() {
-        let mut helix_mode = Helix;
+        let mut helix_mode = Helix::default();
         let ctrl_c_raw_event = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('c'),
             KeyModifiers::CONTROL,
