@@ -1,14 +1,14 @@
 use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 use crate::edit_mode::hx::word;
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
 use crate::prompt::{PromptEditMode, PromptViMode};
 use crate::{core_editor::get_local_clipboard, EditCommand};
 use std::cmp::{max, min};
 use std::ops::{DerefMut, Range};
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Stateful editor executing changes to the underlying [`LineBuffer`]
@@ -25,7 +25,7 @@ pub struct Editor {
     selection_anchor: Option<usize>,
     selection_mode: Option<PromptEditMode>,
     edit_mode: PromptEditMode,
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     hx_selection: Option<HxRange>,
 }
 
@@ -41,7 +41,7 @@ impl Default for Editor {
             selection_anchor: None,
             selection_mode: None,
             edit_mode: PromptEditMode::Default,
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             hx_selection: None,
         }
     }
@@ -55,14 +55,14 @@ impl Default for Editor {
 /// The anchor is where the selection started; the head is where
 /// the cursor currently sits. Uses gap indexing (left-inclusive,
 /// right-exclusive), matching Helix semantics.
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct HxRange {
     pub(crate) anchor: usize,
     pub(crate) head: usize,
 }
 
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 impl HxRange {
     /// Ascending byte range for slicing/rendering.
     /// Returns (min, max) of anchor and head.
@@ -269,39 +269,39 @@ impl Editor {
             EditCommand::CopyAroundPair { left, right } => self.copy_around_pair(*left, *right),
             EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
             EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxRestartSelection => self.hx_restart_selection(),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxClearSelection => self.reset_hx_state(),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxEnsureSelection => self.hx_ensure_selection(),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxSyncCursor => self.hx_sync_cursor(),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxSyncCursorWithRestart => self.hx_sync_cursor_with_restart(),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxWordMotion {
                 target,
                 movement,
                 count,
             } => self.hx_word_motion(*target, *movement, *count),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxFlipSelection => self.hx_flip_selection(),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxMoveToSelectionStart => self.hx_move_to_selection_start(),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxMoveToSelectionEnd => self.hx_move_to_selection_end(),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxSwitchCaseSelection => self.hx_switch_case_selection(),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxReplaceSelectionWithChar(c) => self.hx_replace_selection_with_char(*c),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxDeleteSelection => self.hx_delete_selection(),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxExtendSelectionToInsertionPoint => {
                 self.hx_extend_selection_to_insertion_point()
             }
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             EditCommand::HxShiftSelectionToInsertionPoint => {
                 self.hx_shift_selection_to_insertion_point()
             }
@@ -349,7 +349,7 @@ impl Editor {
     }
 
     /// Disable Helix selection tracking (e.g. when switching away from Helix mode).
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     pub(crate) fn reset_hx_state(&mut self) {
         self.hx_selection = None;
     }
@@ -360,7 +360,7 @@ impl Editor {
     ///
     /// On an empty buffer, clears the selection instead (no grapheme to
     /// select).
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     pub(crate) fn hx_restart_selection(&mut self) {
         if self.line_buffer.get_buffer().is_empty() {
             self.hx_selection = None;
@@ -376,7 +376,7 @@ impl Editor {
 
     /// Ensure an hx selection exists.  If one already exists, leave it
     /// untouched; otherwise create a collapsed selection at the cursor.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     pub(crate) fn hx_ensure_selection(&mut self) {
         if self.hx_selection.is_none() {
             self.hx_restart_selection();
@@ -394,7 +394,7 @@ impl Editor {
     ///
     /// Motions start from `cursor()` (the display position), which is
     /// consistent with Helix's `move_horizontally`.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     pub(crate) fn hx_sync_cursor(&mut self) {
         let pos = self.insertion_point();
         if let Some(sel) = &mut self.hx_selection {
@@ -443,7 +443,7 @@ impl Editor {
     /// position, so the selection is either strictly forward (motion moved
     /// right) or strictly backward (motion moved left) — never a flip from
     /// a prior extended selection.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     pub(crate) fn hx_sync_cursor_with_restart(&mut self) {
         let pos = self.insertion_point();
         if let Some(sel) = &mut self.hx_selection {
@@ -486,13 +486,13 @@ impl Editor {
     ///
     /// Exposes the full [`HxRange`] with anchor/head distinction, unlike
     /// [`get_selection`](Self::get_selection) which only returns `(min, max)`.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     #[allow(dead_code)] // available for internal use; currently used in tests
     pub(crate) fn hx_selection(&self) -> Option<&HxRange> {
         self.hx_selection.as_ref()
     }
 
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     #[cfg(test)]
     pub(crate) fn set_hx_selection(&mut self, sel: HxRange) {
         self.hx_selection = Some(sel);
@@ -508,7 +508,7 @@ impl Editor {
     /// If the motion makes no progress (cursor position unchanged),
     /// the existing selection is preserved — matching Helix behavior
     /// where a failed motion at end-of-buffer keeps the last selection.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     fn hx_word_motion(
         &mut self,
         target: crate::enums::WordMotionTarget,
@@ -550,7 +550,7 @@ impl Editor {
     }
 
     /// Swap anchor and head of the Helix selection, updating the cursor.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     fn hx_flip_selection(&mut self) {
         if let Some(sel) = &mut self.hx_selection {
             sel.clamp(self.line_buffer.get_buffer());
@@ -561,7 +561,7 @@ impl Editor {
     }
 
     /// Move cursor to the ascending start of the Helix selection.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     fn hx_move_to_selection_start(&mut self) {
         if let Some(sel) = &mut self.hx_selection {
             sel.clamp(self.line_buffer.get_buffer());
@@ -570,7 +570,7 @@ impl Editor {
     }
 
     /// Move cursor past the ascending end of the Helix selection.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     fn hx_move_to_selection_end(&mut self) {
         if let Some(sel) = &mut self.hx_selection {
             sel.clamp(self.line_buffer.get_buffer());
@@ -580,7 +580,7 @@ impl Editor {
 
     /// Transform the text inside the Helix selection, then update the
     /// selection to cover the (possibly resized) replacement.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     fn hx_transform_selection(&mut self, transform: impl FnOnce(&str) -> String) {
         if let Some(sel) = &mut self.hx_selection {
             sel.clamp(self.line_buffer.get_buffer());
@@ -606,7 +606,7 @@ impl Editor {
     }
 
     /// Toggle case of every character in the Helix selection.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     fn hx_switch_case_selection(&mut self) {
         self.hx_transform_selection(|selected| {
             selected
@@ -624,7 +624,7 @@ impl Editor {
 
     /// Replace every character in the Helix selection with the given char.
     /// Counts characters (not grapheme clusters) to match Helix behavior.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     fn hx_replace_selection_with_char(&mut self, c: char) {
         self.hx_transform_selection(|selected| {
             let char_count = selected.chars().count();
@@ -634,7 +634,7 @@ impl Editor {
 
     /// Delete the Helix selection range without saving to the cut buffer.
     /// Clears hx_selection afterwards so subsequent commands see no selection.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     fn hx_delete_selection(&mut self) {
         if let Some(mut sel) = self.hx_selection.take() {
             sel.clamp(self.line_buffer.get_buffer());
@@ -650,7 +650,7 @@ impl Editor {
     /// and head tracks the cursor forward. This normalization ensures
     /// backward selections are handled correctly: a backward selection
     /// (anchor > head) is flipped so anchor holds the start before extending.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     fn hx_extend_selection_to_insertion_point(&mut self) {
         let pos = self.insertion_point();
         if let Some(sel) = &mut self.hx_selection {
@@ -666,7 +666,7 @@ impl Editor {
     /// The cursor sits at the selection start; after the edit it has moved
     /// forward (insert) or backward (backspace).  We compute the delta as
     /// `insertion_point − selection_start` and apply it to both ends.
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     fn hx_shift_selection_to_insertion_point(&mut self) {
         let pos = self.insertion_point();
         if let Some(sel) = &mut self.hx_selection {
@@ -701,11 +701,11 @@ impl Editor {
 
     /// Check if the editor is currently in Helix edit mode.
     fn is_hx_mode(&self) -> bool {
-        #[cfg(feature = "hx")]
+        #[cfg(feature = "helix")]
         {
             matches!(self.edit_mode, PromptEditMode::Helix(_))
         }
-        #[cfg(not(feature = "hx"))]
+        #[cfg(not(feature = "helix"))]
         {
             false
         }
@@ -1106,7 +1106,7 @@ impl Editor {
             self.system_clipboard.set(cut_slice, ClipboardMode::Normal);
             self.cut_range(start..end);
             self.clear_selection();
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             self.reset_hx_state();
         }
     }
@@ -1115,7 +1115,7 @@ impl Editor {
         if let Some((start, end)) = self.get_selection() {
             self.cut_range(start..end);
             self.clear_selection();
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             self.reset_hx_state();
         }
     }
@@ -1150,7 +1150,7 @@ impl Editor {
     /// Only explicit Helix commands (`CutSelection`, `HxDeleteSelection`)
     /// should delete the hx-selected text.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
-        #[cfg(feature = "hx")]
+        #[cfg(feature = "helix")]
         if let Some(sel) = &self.hx_selection {
             return Some(sel.range());
         }
@@ -1203,7 +1203,7 @@ impl Editor {
         if let Some((start, end)) = self.get_selection() {
             self.line_buffer.clear_range_safe(start..end);
             self.clear_selection();
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             self.reset_hx_state();
         }
     }
@@ -2643,7 +2643,7 @@ mod test {
         assert_eq!(quote_result, expected_quote);
     }
 
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     mod hx_selection_tests {
         use super::{editor_with, HxRange};
         use crate::prompt::{PromptEditMode, PromptHelixMode};

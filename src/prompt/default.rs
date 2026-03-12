@@ -1,4 +1,4 @@
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 use crate::PromptHelixMode;
 use crate::{Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode};
 
@@ -14,13 +14,13 @@ pub static DEFAULT_VI_NORMAL_PROMPT_INDICATOR: &str = "〉";
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 
 /// The default prompt indicator for helix normal mode
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 pub static DEFAULT_HX_NORMAL_PROMPT_INDICATOR: &str = "〉";
 /// The default prompt indicator for helix insert mode
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 pub static DEFAULT_HX_INSERT_PROMPT_INDICATOR: &str = ": ";
 /// The default prompt indicator for helix select mode
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 pub static DEFAULT_HX_SELECT_PROMPT_INDICATOR: &str = "» ";
 
 /// Simple [`Prompt`] displaying a configurable left and a right prompt.
@@ -78,7 +78,7 @@ impl Prompt for DefaultPrompt {
                 PromptViMode::Normal => DEFAULT_VI_NORMAL_PROMPT_INDICATOR.into(),
                 PromptViMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
             },
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             PromptEditMode::Helix(hx_mode) => match hx_mode {
                 PromptHelixMode::Normal => DEFAULT_HX_NORMAL_PROMPT_INDICATOR.into(),
                 PromptHelixMode::Insert => DEFAULT_HX_INSERT_PROMPT_INDICATOR.into(),
@@ -174,7 +174,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     #[test]
     fn default_prompt_helix_indicators() {
         use crate::PromptHelixMode;
@@ -194,7 +194,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     #[test]
     fn helix_display_impl() {
         use crate::PromptHelixMode;

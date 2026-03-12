@@ -56,7 +56,7 @@ pub enum PromptEditMode {
     Vi(PromptViMode),
 
     /// A helix-specific mode
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     Helix(PromptHelixMode),
 
     /// A custom mode
@@ -75,7 +75,7 @@ pub enum PromptViMode {
 }
 
 /// The helix-specific modes that the prompt can be in
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 #[derive(Serialize, Deserialize, Clone, Debug, EnumIter, Default)]
 pub enum PromptHelixMode {
     /// Normal (command) mode
@@ -95,7 +95,7 @@ impl Display for PromptEditMode {
             PromptEditMode::Default => write!(f, "Default"),
             PromptEditMode::Emacs => write!(f, "Emacs"),
             PromptEditMode::Vi(_) => write!(f, "Vi_Normal\nVi_Insert"),
-            #[cfg(feature = "hx")]
+            #[cfg(feature = "helix")]
             PromptEditMode::Helix(_) => {
                 write!(f, "Helix_Normal\nHelix_Insert\nHelix_Select")
             }

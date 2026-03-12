@@ -73,7 +73,7 @@ fn main() -> reedline::Result<()> {
     ];
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     let cursor_config = CursorConfig {
         vi_insert: Some(SetCursorStyle::BlinkingBar),
         vi_normal: Some(SetCursorStyle::SteadyBlock),
@@ -81,7 +81,7 @@ fn main() -> reedline::Result<()> {
         ..CursorConfig::default()
     };
 
-    #[cfg(not(feature = "hx"))]
+    #[cfg(not(feature = "helix"))]
     let cursor_config = CursorConfig {
         vi_insert: Some(SetCursorStyle::BlinkingBar),
         vi_normal: Some(SetCursorStyle::SteadyBlock),

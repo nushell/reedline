@@ -1,4 +1,4 @@
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 use std::collections::HashMap;
 
 use crossterm::cursor::SetCursorStyle;
@@ -25,11 +25,11 @@ pub struct CursorConfig {
     /// Cursor shapes for Helix and custom edit modes, keyed by mode name.
     /// Helix modes use keys [`HX_CURSOR_NORMAL`], [`HX_CURSOR_INSERT`],
     /// [`HX_CURSOR_SELECT`].
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     pub custom: HashMap<String, SetCursorStyle>,
 }
 
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 impl CursorConfig {
     /// Create a default config with Helix cursor shapes pre-populated.
     pub fn with_hx_defaults() -> Self {
@@ -51,17 +51,17 @@ impl CursorConfig {
 }
 
 /// Cursor config key for Helix Normal mode.
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 pub const HX_CURSOR_NORMAL: &str = "HX_NORMAL";
 /// Cursor config key for Helix Insert mode.
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 pub const HX_CURSOR_INSERT: &str = "HX_INSERT";
 /// Cursor config key for Helix Select mode.
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 pub const HX_CURSOR_SELECT: &str = "HX_SELECT";
 
 /// Methods available when the `hx` feature is enabled.
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 impl CursorConfig {
     /// Register a cursor shape for a custom edit mode name.
     ///
@@ -86,7 +86,7 @@ mod tests {
         assert!(config.emacs.is_none());
     }
 
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     #[test]
     fn hx_defaults_are_set() {
         let config = CursorConfig::with_hx_defaults();
@@ -104,7 +104,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "hx")]
+    #[cfg(feature = "helix")]
     #[test]
     fn hx_builders_override_defaults() {
         let config = CursorConfig::with_hx_defaults()

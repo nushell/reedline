@@ -1474,7 +1474,7 @@ impl Reedline {
         self.update_buffer_from_history();
         self.editor.move_to_start(false);
         self.editor.move_to_line_end(false);
-        #[cfg(feature = "hx")]
+        #[cfg(feature = "helix")]
         self.editor.hx_restart_selection();
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
@@ -1510,7 +1510,7 @@ impl Reedline {
         }
         self.update_buffer_from_history();
         self.editor.move_to_end(false);
-        #[cfg(feature = "hx")]
+        #[cfg(feature = "helix")]
         self.editor.hx_restart_selection();
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation)
@@ -1602,7 +1602,7 @@ impl Reedline {
         // When the buffer is replaced by history navigation, any Helix-mode
         // selection is stale (byte offsets from the old buffer).  Clear it so
         // the caller can re-establish a fresh selection after cursor positioning.
-        #[cfg(feature = "hx")]
+        #[cfg(feature = "helix")]
         self.editor.reset_hx_state();
 
         match self.history_cursor.get_navigation() {

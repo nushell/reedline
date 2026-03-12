@@ -476,7 +476,7 @@ impl Painter {
                 PromptEditMode::Emacs => shapes.emacs,
                 PromptEditMode::Vi(PromptViMode::Insert) => shapes.vi_insert,
                 PromptEditMode::Vi(PromptViMode::Normal) => shapes.vi_normal,
-                #[cfg(feature = "hx")]
+                #[cfg(feature = "helix")]
                 PromptEditMode::Helix(ref mode) => {
                     use crate::{HX_CURSOR_INSERT, HX_CURSOR_NORMAL, HX_CURSOR_SELECT};
                     let key = match mode {
@@ -486,7 +486,7 @@ impl Painter {
                     };
                     shapes.custom.get(key).copied()
                 }
-                #[cfg(feature = "hx")]
+                #[cfg(feature = "helix")]
                 PromptEditMode::Custom(name) => shapes.custom.get(name.as_str()).copied(),
                 _ => None,
             };
