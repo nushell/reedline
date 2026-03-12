@@ -1,7 +1,10 @@
 use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
-#[cfg(feature = "helix")]
+#[cfg(all(feature = "helix", not(test)))]
+#[path = "../edit_mode/hx/word.rs"]
+mod word;
+#[cfg(all(feature = "helix", test))]
 use crate::edit_mode::hx::word;
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
 use crate::prompt::{PromptEditMode, PromptViMode};

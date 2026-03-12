@@ -3,7 +3,7 @@ mod cursors;
 mod emacs;
 #[cfg(feature = "helix")]
 mod helix;
-#[cfg(feature = "helix")]
+#[cfg(all(feature = "helix", test))]
 pub(crate) mod hx;
 mod keybindings;
 mod vi;

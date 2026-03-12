@@ -1,24 +1,13 @@
 pub(crate) mod word;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use super::helix::Helix as MinimalHelix;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
 use crate::{
     edit_mode::EditMode,
     enums::{Movement, ReedlineEvent, ReedlineRawEvent, WordMotionTarget},
     EditCommand, PromptEditMode, PromptHelixMode,
 };
-
-/// Helix-style editor modes.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum HelixMode {
-    /// Insert mode -- typing inserts text.
-    Insert,
-    /// Normal (command) mode -- keys are motions/actions.
-    #[default]
-    Normal,
-    /// Visual selection mode -- motions extend the selection.
-    Select,
-}
 
 /// Pending state for multi-key sequences (g_, f/t/F/T + char).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -39,37 +28,50 @@ enum Pending {
     Replace,
 }
 
-/// How the Helix selection should be adjusted as the user types in Insert mode.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum InsertStyle {
-    /// No selection tracking (entered via `I`, `A`, `c`, or other commands
-    /// that clear the selection before entering Insert mode).
-    #[default]
-    Plain,
-    /// Entered via `i`: text is inserted *before* the selection, so both
-    /// anchor and head must be shifted forward by the inserted byte length.
-    Before,
-    /// Entered via `a`: text is inserted *after* the selection, so the
-    /// selection head extends to track the cursor.
-    After,
-}
-
 /// Helix-inspired edit mode for reedline.
 ///
-/// Supports three modes (Insert / Normal / Select) with word-granularity
-/// motions and Helix-style selection semantics.
+/// Reuses the minimal Insert/Normal implementation from `edit_mode::helix`
+/// and layers the extra Select/count/pending/edit commands used by the
+/// fuller Helix prototype on top.
 #[derive(Default)]
 pub struct Helix {
-    mode: HelixMode,
+    base: MinimalHelix,
     pending: Pending,
     /// Accumulated numeric prefix (0 = none entered).
     count: usize,
-    /// How each `InsertChar` should adjust the Helix selection.
-    /// Set when entering Insert mode, reset to `Plain` on Esc.
-    insert_style: InsertStyle,
+    select_mode: bool,
 }
 
 impl Helix {
+    fn key_press(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
+        Event::Key(KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })
+        .try_into()
+        .unwrap()
+    }
+
+    fn delegate_to_base(&mut self, code: KeyCode, modifiers: KeyModifiers) -> ReedlineEvent {
+        self.base.parse_event(Self::key_press(code, modifiers))
+    }
+
+    fn in_insert_mode(&self) -> bool {
+        matches!(
+            self.base.edit_mode(),
+            PromptEditMode::Helix(PromptHelixMode::Insert)
+        )
+    }
+
+    fn enter_insert(&mut self, pre_cmds: Vec<ReedlineEvent>) -> ReedlineEvent {
+        self.base.enter_plain_insert();
+        let mut events = pre_cmds;
+        events.push(ReedlineEvent::Repaint);
+        ReedlineEvent::Multiple(events)
+    }
+
     /// Wrap motion commands for Select mode: execute motion then apply
     /// Helix `put_cursor` semantics to extend the selection.
     ///
@@ -91,7 +93,7 @@ impl Helix {
     /// the target, with direction-flip adjustment when going backward.
     /// Select mode simply extends the existing selection.
     fn extending_motion_event(&self, cmds: Vec<EditCommand>) -> ReedlineEvent {
-        if self.mode == HelixMode::Select {
+        if self.select_mode {
             return Self::hx_extend(cmds);
         }
         let mut v = cmds;
@@ -103,20 +105,12 @@ impl Helix {
     /// - Normal => motion + collapse at new position (1-wide block cursor)
     /// - Select => motion + extend, anchor stays
     fn motion_event(&self, cmds: Vec<EditCommand>) -> ReedlineEvent {
-        if self.mode == HelixMode::Select {
+        if self.select_mode {
             return Self::hx_extend(cmds);
         }
         let mut v = cmds;
         v.push(EditCommand::HxRestartSelection);
         ReedlineEvent::Edit(v)
-    }
-
-    /// Switch to Insert mode and execute `pre_cmds` before returning Repaint.
-    fn enter_insert(&mut self, pre_cmds: Vec<ReedlineEvent>) -> ReedlineEvent {
-        self.mode = HelixMode::Insert;
-        let mut events = pre_cmds;
-        events.push(ReedlineEvent::Repaint);
-        ReedlineEvent::Multiple(events)
     }
 
     /// Consume the accumulated count prefix, returning at least 1.
@@ -135,7 +129,7 @@ impl Helix {
     /// that no-progress motions (e.g. at end-of-buffer) can preserve the
     /// existing selection instead of collapsing it.
     fn word_motion_event(&self, target: WordMotionTarget, count: usize) -> ReedlineEvent {
-        let movement = if self.mode == HelixMode::Select {
+        let movement = if self.select_mode {
             Movement::Extend
         } else {
             Movement::Move
@@ -214,27 +208,31 @@ impl Helix {
     /// the appropriate selection restart/extend commands based on the mode.
     /// All inner MoveLeft/MoveRight use `select: false` since selection is
     /// managed through HxRestartSelection/HxSyncCursor.
-    fn parse_normal_select(&mut self, code: KeyCode, modifiers: KeyModifiers) -> ReedlineEvent {
+    fn parse_normal_select(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Option<ReedlineEvent> {
         // ── Resolve pending multi-key sequences ─────────────────────────
         match self.pending {
-            Pending::Goto => return self.parse_goto(code),
+            Pending::Goto => return Some(self.parse_goto(code)),
             Pending::FindForward
             | Pending::TilForward
             | Pending::FindBackward
             | Pending::TilBackward => {
                 let p = self.pending;
                 if let KeyCode::Char(c) = code {
-                    return self.parse_find_char(p, c);
+                    return Some(self.parse_find_char(p, c));
                 }
                 self.pending = Pending::None;
-                return ReedlineEvent::None;
+                return Some(ReedlineEvent::None);
             }
             Pending::Replace => {
                 if let KeyCode::Char(c) = code {
-                    return self.parse_replace_char(c);
+                    return Some(self.parse_replace_char(c));
                 }
                 self.pending = Pending::None;
-                return ReedlineEvent::None;
+                return Some(ReedlineEvent::None);
             }
             Pending::None => {}
         }
@@ -246,11 +244,11 @@ impl Helix {
                     .count
                     .saturating_mul(10)
                     .saturating_add((c as usize) - ('0' as usize));
-                return ReedlineEvent::None;
+                return Some(ReedlineEvent::None);
             }
             KeyCode::Char('0') if self.count > 0 => {
                 self.count = self.count.saturating_mul(10);
-                return ReedlineEvent::None;
+                return Some(ReedlineEvent::None);
             }
             _ => {}
         }
@@ -259,27 +257,27 @@ impl Helix {
             // ── Pending keys: don't consume count, just set pending state ──
             KeyCode::Char('g') => {
                 self.pending = Pending::Goto;
-                return ReedlineEvent::None;
+                return Some(ReedlineEvent::None);
             }
             KeyCode::Char('f') => {
                 self.pending = Pending::FindForward;
-                return ReedlineEvent::None;
+                return Some(ReedlineEvent::None);
             }
             KeyCode::Char('t') => {
                 self.pending = Pending::TilForward;
-                return ReedlineEvent::None;
+                return Some(ReedlineEvent::None);
             }
             KeyCode::Char('F') => {
                 self.pending = Pending::FindBackward;
-                return ReedlineEvent::None;
+                return Some(ReedlineEvent::None);
             }
             KeyCode::Char('T') => {
                 self.pending = Pending::TilBackward;
-                return ReedlineEvent::None;
+                return Some(ReedlineEvent::None);
             }
             KeyCode::Char('r') => {
                 self.pending = Pending::Replace;
-                return ReedlineEvent::None;
+                return Some(ReedlineEvent::None);
             }
             _ => {}
         }
@@ -287,7 +285,7 @@ impl Helix {
         // Try counted motion keys first, then fall through to mode switches
         // and selection/editing commands which don't use count.
         if let Some(event) = self.parse_motion(code) {
-            return event;
+            return Some(event);
         }
 
         // Everything below ignores count — reset so it doesn't leak.
@@ -295,44 +293,33 @@ impl Helix {
 
         match code {
             // ── Mode switches ─────────────────────────────────────────
-            KeyCode::Char('i') => {
-                self.insert_style = InsertStyle::Before;
-                self.enter_insert(vec![ReedlineEvent::Edit(vec![
-                    EditCommand::HxEnsureSelection,
-                    EditCommand::HxMoveToSelectionStart,
-                ])])
+            KeyCode::Char('i') | KeyCode::Char('a') | KeyCode::Char('I') | KeyCode::Char('A')
+                if self.select_mode =>
+            {
+                self.select_mode = false;
+                Some(self.delegate_to_base(code, modifiers))
             }
-            KeyCode::Char('a') => {
-                self.insert_style = InsertStyle::After;
-                self.enter_insert(vec![ReedlineEvent::Edit(vec![
-                    EditCommand::HxEnsureSelection,
-                    EditCommand::HxMoveToSelectionEnd,
-                ])])
-            }
-            KeyCode::Char('I') => self.enter_insert(vec![ReedlineEvent::Edit(vec![
-                EditCommand::HxClearSelection,
-                EditCommand::MoveToLineStart { select: false },
-            ])]),
-            KeyCode::Char('A') => self.enter_insert(vec![ReedlineEvent::Edit(vec![
-                EditCommand::HxClearSelection,
-                EditCommand::MoveToLineEnd { select: false },
-            ])]),
-            KeyCode::Char('v') => match self.mode {
-                HelixMode::Normal => {
-                    self.mode = HelixMode::Select;
-                    ReedlineEvent::Repaint
-                }
-                HelixMode::Select => {
-                    self.mode = HelixMode::Normal;
-                    ReedlineEvent::Multiple(vec![
+            KeyCode::Char('v') => {
+                if self.select_mode {
+                    self.select_mode = false;
+                    Some(ReedlineEvent::Multiple(vec![
                         ReedlineEvent::Edit(vec![EditCommand::HxRestartSelection]),
                         ReedlineEvent::Repaint,
-                    ])
+                    ]))
+                } else {
+                    self.select_mode = true;
+                    Some(ReedlineEvent::Repaint)
                 }
-                HelixMode::Insert => ReedlineEvent::None,
-            },
-            KeyCode::Char(';') => ReedlineEvent::Edit(vec![EditCommand::HxRestartSelection]),
-            _ => self.parse_non_counted(code, modifiers),
+            }
+            KeyCode::Char(';') => Some(ReedlineEvent::Edit(vec![EditCommand::HxRestartSelection])),
+            _ => {
+                let event = self.parse_non_counted(code, modifiers);
+                if self.select_mode || !matches!(event, ReedlineEvent::None) {
+                    Some(event)
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -344,8 +331,12 @@ impl Helix {
         let event = match code {
             // ── Basic motions (h/l/j/k) ───────────────────────────
             KeyCode::Char('h') => {
+                if !self.select_mode && self.count == 0 {
+                    return None;
+                }
+
                 let count = self.take_count();
-                if self.mode == HelixMode::Select {
+                if self.select_mode {
                     let motion = Self::hx_extend(vec![EditCommand::MoveLeft { select: false }]);
                     if count <= 1 {
                         motion
@@ -360,6 +351,10 @@ impl Helix {
                 }
             }
             KeyCode::Char('l') => {
+                if !self.select_mode && self.count == 0 {
+                    return None;
+                }
+
                 let count = self.take_count();
                 let motion = ReedlineEvent::UntilFound(vec![
                     ReedlineEvent::HistoryHintComplete,
@@ -540,121 +535,42 @@ impl EditMode for Helix {
             return ReedlineEvent::None;
         };
 
-        // ── Global bindings ───────────────────────────────────────────
-        // Ctrl+C is always interrupt. Ctrl+D is EOF in Normal/Select but
-        // delete-forward in Insert (handled below).
+        if self.in_insert_mode() {
+            return self.delegate_to_base(code, modifiers);
+        }
+
         if modifiers == KeyModifiers::CONTROL && code == KeyCode::Char('c') {
             return ReedlineEvent::CtrlC;
         }
 
-        match self.mode {
-            // ── Insert mode ───────────────────────────────────────────
-            HelixMode::Insert => match (code, modifiers) {
-                (KeyCode::Esc, _) => {
-                    self.mode = HelixMode::Normal;
-                    self.insert_style = InsertStyle::Plain;
-                    ReedlineEvent::Multiple(vec![
-                        ReedlineEvent::Esc,
-                        // Step back so the block cursor lands ON the last typed character
-                        // (Insert cursor is between chars; Normal cursor is on a char).
-                        ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
-                        ReedlineEvent::Edit(vec![EditCommand::HxRestartSelection]),
-                        ReedlineEvent::Repaint,
-                    ])
-                }
-                (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-                    ReedlineEvent::Edit(vec![EditCommand::Delete])
-                }
-                (KeyCode::Char(c), _) => match self.insert_style {
-                    InsertStyle::Before => ReedlineEvent::Edit(vec![
-                        EditCommand::InsertChar(c),
-                        EditCommand::HxShiftSelectionToInsertionPoint,
-                    ]),
-                    InsertStyle::After => ReedlineEvent::Edit(vec![
-                        EditCommand::InsertChar(c),
-                        EditCommand::HxExtendSelectionToInsertionPoint,
-                    ]),
-                    InsertStyle::Plain => ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)]),
-                },
-                (KeyCode::Enter, _) => ReedlineEvent::Enter,
-                (KeyCode::Backspace, _) => match self.insert_style {
-                    InsertStyle::Before => ReedlineEvent::Edit(vec![
-                        EditCommand::Backspace,
-                        EditCommand::HxShiftSelectionToInsertionPoint,
-                    ]),
-                    InsertStyle::After => ReedlineEvent::Edit(vec![
-                        EditCommand::Backspace,
-                        EditCommand::HxExtendSelectionToInsertionPoint,
-                    ]),
-                    InsertStyle::Plain => ReedlineEvent::Edit(vec![EditCommand::Backspace]),
-                },
-                (KeyCode::Delete, _) => ReedlineEvent::Edit(vec![EditCommand::Delete]),
-                // Arrow keys / Home / End move the cursor away from the
-                // insert position — clear the selection since byte offsets
-                // become meaningless after arbitrary cursor movement.
-                (KeyCode::Left, _) => {
-                    self.insert_style = InsertStyle::Plain;
-                    ReedlineEvent::Edit(vec![
-                        EditCommand::MoveLeft { select: false },
-                        EditCommand::HxClearSelection,
-                    ])
-                }
-                (KeyCode::Right, _) => {
-                    self.insert_style = InsertStyle::Plain;
-                    ReedlineEvent::Edit(vec![
-                        EditCommand::MoveRight { select: false },
-                        EditCommand::HxClearSelection,
-                    ])
-                }
-                (KeyCode::Home, _) => {
-                    self.insert_style = InsertStyle::Plain;
-                    ReedlineEvent::Edit(vec![
-                        EditCommand::MoveToLineStart { select: false },
-                        EditCommand::HxClearSelection,
-                    ])
-                }
-                (KeyCode::End, _) => {
-                    self.insert_style = InsertStyle::Plain;
-                    ReedlineEvent::Edit(vec![
-                        EditCommand::MoveToLineEnd { select: false },
-                        EditCommand::HxClearSelection,
-                    ])
-                }
-                (KeyCode::Up, _) => ReedlineEvent::Up,
-                (KeyCode::Down, _) => ReedlineEvent::Down,
-                (KeyCode::Tab, _) => ReedlineEvent::None,
-                _ => ReedlineEvent::None,
-            },
-
-            // ── Normal / Select mode ──────────────────────────────────
-            HelixMode::Normal | HelixMode::Select => {
-                if modifiers == KeyModifiers::CONTROL && code == KeyCode::Char('d') {
-                    return ReedlineEvent::CtrlD;
-                }
-                match code {
-                    KeyCode::Esc => {
-                        self.mode = HelixMode::Normal;
-                        self.pending = Pending::None;
-                        self.count = 0;
-                        // Collapse selection so stale extended selection doesn't persist.
-                        ReedlineEvent::Multiple(vec![
-                            ReedlineEvent::Esc,
-                            ReedlineEvent::Edit(vec![EditCommand::HxRestartSelection]),
-                            ReedlineEvent::Repaint,
-                        ])
-                    }
-                    _ => self.parse_normal_select(code, modifiers),
-                }
-            }
+        if modifiers == KeyModifiers::CONTROL && code == KeyCode::Char('d') {
+            return ReedlineEvent::CtrlD;
         }
+
+        if code == KeyCode::Esc {
+            self.select_mode = false;
+            self.pending = Pending::None;
+            self.count = 0;
+            return ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Esc,
+                ReedlineEvent::Edit(vec![EditCommand::HxRestartSelection]),
+                ReedlineEvent::Repaint,
+            ]);
+        }
+
+        if let Some(event) = self.parse_normal_select(code, modifiers) {
+            return event;
+        }
+
+        self.delegate_to_base(code, modifiers)
     }
 
     /// Return the current prompt edit mode indicator.
     fn edit_mode(&self) -> PromptEditMode {
-        match self.mode {
-            HelixMode::Insert => PromptEditMode::Helix(PromptHelixMode::Insert),
-            HelixMode::Normal => PromptEditMode::Helix(PromptHelixMode::Normal),
-            HelixMode::Select => PromptEditMode::Helix(PromptHelixMode::Select),
+        if self.select_mode {
+            PromptEditMode::Helix(PromptHelixMode::Select)
+        } else {
+            self.base.edit_mode()
         }
     }
 }
@@ -688,191 +604,44 @@ mod tests {
         }
     }
 
+    fn select_hx() -> Helix {
+        Helix {
+            select_mode: true,
+            ..Default::default()
+        }
+    }
+
     // ── parse_event unit tests ──────────────────────────────────────────
 
     #[test]
-    fn ctrl_c_works_in_all_modes() {
-        for initial_mode in [HelixMode::Insert, HelixMode::Normal, HelixMode::Select] {
-            let mut hx = Helix {
-                mode: initial_mode,
-                ..Default::default()
-            };
-            let event = hx.parse_event(key_press(KeyCode::Char('c'), KeyModifiers::CONTROL));
-            assert_eq!(event, ReedlineEvent::CtrlC);
-        }
-    }
+    fn ctrl_d_eof_in_select_mode() {
+        let mut hx = select_hx();
 
-    #[test]
-    fn ctrl_d_eof_in_normal_and_select() {
-        for initial_mode in [HelixMode::Normal, HelixMode::Select] {
-            let mut hx = Helix {
-                mode: initial_mode,
-                ..Default::default()
-            };
-            let event = hx.parse_event(key_press(KeyCode::Char('d'), KeyModifiers::CONTROL));
-            assert_eq!(event, ReedlineEvent::CtrlD);
-        }
-    }
-
-    #[test]
-    fn ctrl_d_deletes_forward_in_insert() {
-        let mut hx = Helix {
-            mode: HelixMode::Insert,
-            ..Default::default()
-        };
         let event = hx.parse_event(key_press(KeyCode::Char('d'), KeyModifiers::CONTROL));
-        assert_eq!(event, ReedlineEvent::Edit(vec![EditCommand::Delete]));
-    }
 
-    #[test]
-    fn esc_from_insert_enters_normal() {
-        let mut hx = Helix {
-            mode: HelixMode::Insert,
-            ..Default::default()
-        };
-        let event = hx.parse_event(key_press(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(
-            event,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Esc,
-                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
-                ReedlineEvent::Edit(vec![EditCommand::HxRestartSelection]),
-                ReedlineEvent::Repaint,
-            ])
-        );
-        assert_eq!(hx.mode, HelixMode::Normal);
-    }
-
-    #[test]
-    fn i_from_normal_enters_insert() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
-        let event = hx.parse_event(char_key('i'));
-        assert_eq!(
-            event,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![
-                    EditCommand::HxEnsureSelection,
-                    EditCommand::HxMoveToSelectionStart,
-                ]),
-                ReedlineEvent::Repaint,
-            ])
-        );
-        assert_eq!(hx.mode, HelixMode::Insert);
-        assert_eq!(hx.insert_style, InsertStyle::Before);
-    }
-
-    #[test]
-    fn a_from_normal_enters_insert_after_selection() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
-        let event = hx.parse_event(char_key('a'));
-        assert_eq!(
-            event,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![
-                    EditCommand::HxEnsureSelection,
-                    EditCommand::HxMoveToSelectionEnd,
-                ]),
-                ReedlineEvent::Repaint,
-            ])
-        );
-        assert_eq!(hx.mode, HelixMode::Insert);
-        assert_eq!(hx.insert_style, InsertStyle::After);
+        assert_eq!(event, ReedlineEvent::CtrlD);
     }
 
     #[test]
     fn v_toggles_select_mode() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         // Normal -> Select
         let event = hx.parse_event(char_key('v'));
         assert_eq!(event, ReedlineEvent::Repaint);
-        assert_eq!(hx.mode, HelixMode::Select);
+        assert!(hx.select_mode);
 
         // Select -> Normal (with selection restart)
         let event = hx.parse_event(char_key('v'));
         assert!(matches!(event, ReedlineEvent::Multiple(_)));
-        assert_eq!(hx.mode, HelixMode::Normal);
-    }
-
-    #[test]
-    fn insert_char_in_insert_mode() {
-        let mut hx = Helix {
-            mode: HelixMode::Insert,
-            ..Default::default()
-        };
-        let event = hx.parse_event(char_key('x'));
-        assert_eq!(
-            event,
-            ReedlineEvent::Edit(vec![EditCommand::InsertChar('x')])
-        );
-    }
-
-    #[test]
-    fn insert_char_in_append_mode_extends_selection() {
-        let mut hx = Helix {
-            mode: HelixMode::Insert,
-            insert_style: InsertStyle::After,
-            ..Default::default()
-        };
-        let event = hx.parse_event(char_key('x'));
-        assert_eq!(
-            event,
-            ReedlineEvent::Edit(vec![
-                EditCommand::InsertChar('x'),
-                EditCommand::HxExtendSelectionToInsertionPoint,
-            ])
-        );
-    }
-
-    #[test]
-    fn insert_char_in_before_mode_shifts_selection() {
-        let mut hx = Helix {
-            mode: HelixMode::Insert,
-            insert_style: InsertStyle::Before,
-            ..Default::default()
-        };
-        let event = hx.parse_event(char_key('x'));
-        assert_eq!(
-            event,
-            ReedlineEvent::Edit(vec![
-                EditCommand::InsertChar('x'),
-                EditCommand::HxShiftSelectionToInsertionPoint,
-            ])
-        );
-    }
-
-    #[test]
-    fn h_in_normal_produces_motion_with_collapse() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
-        let event = hx.parse_event(char_key('h'));
-        // Normal mode: move then collapse (no visible selection).
-        assert_eq!(
-            event,
-            ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-                EditCommand::HxRestartSelection,
-            ])
-        );
+        assert!(!hx.select_mode);
     }
 
     #[test]
     fn h_in_select_extends_without_restart() {
-        let mut hx = Helix {
-            mode: HelixMode::Select,
-            ..Default::default()
-        };
+        let mut hx = select_hx();
+
         let event = hx.parse_event(char_key('h'));
+
         assert_eq!(
             event,
             ReedlineEvent::Edit(vec![
@@ -884,11 +653,10 @@ mod tests {
 
     #[test]
     fn w_in_normal_produces_word_motion() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
+
         let event = hx.parse_event(char_key('w'));
+
         // Word motions handle their own selection (restart is internal to
         // hx_word_motion so no-progress motions can preserve the selection).
         assert_eq!(
@@ -902,99 +670,8 @@ mod tests {
     }
 
     #[test]
-    fn enter_in_insert_mode() {
-        let mut hx = Helix {
-            mode: HelixMode::Insert,
-            ..Default::default()
-        };
-        let event = hx.parse_event(key_press(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(event, ReedlineEvent::Enter);
-    }
-
-    #[test]
-    fn backspace_plain_insert_is_bare() {
-        let mut hx = Helix {
-            mode: HelixMode::Insert,
-            ..Default::default()
-        };
-        let event = hx.parse_event(key_press(KeyCode::Backspace, KeyModifiers::NONE));
-        assert_eq!(event, ReedlineEvent::Edit(vec![EditCommand::Backspace]));
-        assert_eq!(hx.insert_style, InsertStyle::Plain);
-    }
-
-    #[test]
-    fn backspace_in_a_mode_extends_selection() {
-        let mut hx = Helix {
-            mode: HelixMode::Insert,
-            insert_style: InsertStyle::After,
-            ..Default::default()
-        };
-        let event = hx.parse_event(key_press(KeyCode::Backspace, KeyModifiers::NONE));
-        assert_eq!(
-            event,
-            ReedlineEvent::Edit(vec![
-                EditCommand::Backspace,
-                EditCommand::HxExtendSelectionToInsertionPoint,
-            ])
-        );
-        // insert_style stays After — selection is still tracked.
-        assert_eq!(hx.insert_style, InsertStyle::After);
-    }
-
-    #[test]
-    fn backspace_in_i_mode_shifts_selection() {
-        let mut hx = Helix {
-            mode: HelixMode::Insert,
-            insert_style: InsertStyle::Before,
-            ..Default::default()
-        };
-        let event = hx.parse_event(key_press(KeyCode::Backspace, KeyModifiers::NONE));
-        assert_eq!(
-            event,
-            ReedlineEvent::Edit(vec![
-                EditCommand::Backspace,
-                EditCommand::HxShiftSelectionToInsertionPoint,
-            ])
-        );
-        assert_eq!(hx.insert_style, InsertStyle::Before);
-    }
-
-    #[test]
-    fn delete_in_insert_preserves_selection() {
-        let mut hx = Helix {
-            mode: HelixMode::Insert,
-            insert_style: InsertStyle::Before,
-            ..Default::default()
-        };
-        let event = hx.parse_event(key_press(KeyCode::Delete, KeyModifiers::NONE));
-        assert_eq!(event, ReedlineEvent::Edit(vec![EditCommand::Delete]));
-        assert_eq!(hx.insert_style, InsertStyle::Before);
-    }
-
-    #[test]
-    fn arrow_left_in_insert_clears_selection() {
-        let mut hx = Helix {
-            mode: HelixMode::Insert,
-            insert_style: InsertStyle::After,
-            ..Default::default()
-        };
-        let event = hx.parse_event(key_press(KeyCode::Left, KeyModifiers::NONE));
-        assert_eq!(
-            event,
-            ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-                EditCommand::HxClearSelection,
-            ])
-        );
-        assert_eq!(hx.insert_style, InsertStyle::Plain);
-    }
-
-    #[test]
     fn count_not_consumed_by_editing_commands() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         // Press '3' then 'd' — count should be discarded, not affect deletion.
         hx.parse_event(char_key('3'));
         assert_eq!(hx.count, 3);
@@ -1013,24 +690,16 @@ mod tests {
 
     #[test]
     fn count_applies_to_j_k() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         hx.parse_event(char_key('3'));
         let event = hx.parse_event(char_key('j'));
         assert!(matches!(event, ReedlineEvent::Multiple(ref v) if v.len() == 3));
     }
 
     #[test]
-    fn edit_mode_returns_correct_prompt() {
-        let mut hx = Helix::default();
-        assert!(matches!(edit_mode_hx(&hx), PromptHelixMode::Normal));
+    fn edit_mode_reports_select_prompt() {
+        let hx = select_hx();
 
-        hx.mode = HelixMode::Insert;
-        assert!(matches!(edit_mode_hx(&hx), PromptHelixMode::Insert));
-
-        hx.mode = HelixMode::Select;
         assert!(matches!(edit_mode_hx(&hx), PromptHelixMode::Select));
     }
 
@@ -1287,10 +956,7 @@ mod tests {
 
     #[test]
     fn count_prefix_repeats_h_motion_normal() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         // Press '3' then 'h' — Normal mode batches moves + one restart.
         let event = hx.parse_event(char_key('3'));
         assert_eq!(event, ReedlineEvent::None);
@@ -1308,10 +974,7 @@ mod tests {
 
     #[test]
     fn count_prefix_repeats_h_motion_select() {
-        let mut hx = Helix {
-            mode: HelixMode::Select,
-            ..Default::default()
-        };
+        let mut hx = select_hx();
         // Press '3' then 'h' — Select mode needs per-step sync.
         hx.parse_event(char_key('3'));
         let event = hx.parse_event(char_key('h'));
@@ -1320,10 +983,7 @@ mod tests {
 
     #[test]
     fn count_prefix_passes_to_word_motion() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         hx.parse_event(char_key('2'));
         let event = hx.parse_event(char_key('w'));
         assert_eq!(
@@ -1338,10 +998,7 @@ mod tests {
 
     #[test]
     fn count_zero_extends_digit() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         hx.parse_event(char_key('1'));
         hx.parse_event(char_key('0'));
         let event = hx.parse_event(char_key('l'));
@@ -1353,10 +1010,7 @@ mod tests {
 
     #[test]
     fn invalid_key_after_goto_cancels() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         hx.parse_event(char_key('g'));
         let event = hx.parse_event(char_key('z')); // invalid goto target
         assert_eq!(event, ReedlineEvent::None);
@@ -1365,10 +1019,7 @@ mod tests {
 
     #[test]
     fn invalid_key_after_find_cancels() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         hx.parse_event(char_key('f'));
         // Esc is handled by the top-level Normal/Select match before pending
         // resolution, so it resets everything (mode, pending, count).
@@ -1379,10 +1030,7 @@ mod tests {
 
     #[test]
     fn goto_gg_moves_to_start() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         hx.parse_event(char_key('g'));
         let event = hx.parse_event(char_key('g'));
         assert_eq!(
@@ -1396,10 +1044,7 @@ mod tests {
 
     #[test]
     fn goto_ge_is_unbound() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         hx.parse_event(char_key('g'));
         let event = hx.parse_event(char_key('e'));
         // ge is not yet implemented (needs PrevWordEnd motion target).
@@ -1408,10 +1053,7 @@ mod tests {
 
     #[test]
     fn f_char_produces_extending_motion() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         hx.parse_event(char_key('f'));
         let event = hx.parse_event(char_key('x'));
         assert_eq!(
@@ -1426,56 +1068,11 @@ mod tests {
         );
     }
 
-    // ── I/A mode switch tests ─────────────────────────────────────────
-
-    #[test]
-    fn big_i_enters_insert_at_line_start() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
-        let event = hx.parse_event(char_key('I'));
-        assert_eq!(
-            event,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![
-                    EditCommand::HxClearSelection,
-                    EditCommand::MoveToLineStart { select: false },
-                ]),
-                ReedlineEvent::Repaint,
-            ])
-        );
-        assert_eq!(hx.mode, HelixMode::Insert);
-    }
-
-    #[test]
-    fn big_a_enters_insert_at_line_end() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
-        let event = hx.parse_event(char_key('A'));
-        assert_eq!(
-            event,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![
-                    EditCommand::HxClearSelection,
-                    EditCommand::MoveToLineEnd { select: false },
-                ]),
-                ReedlineEvent::Repaint,
-            ])
-        );
-        assert_eq!(hx.mode, HelixMode::Insert);
-    }
-
     // ── Edit command tests ────────────────────────────────────────────
 
     #[test]
     fn d_deletes_with_yank() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         let event = hx.parse_event(char_key('d'));
         assert_eq!(
             event,
@@ -1489,10 +1086,7 @@ mod tests {
 
     #[test]
     fn alt_d_deletes_without_yank() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         let event = hx.parse_event(key_press(KeyCode::Char('d'), KeyModifiers::ALT));
         assert_eq!(
             event,
@@ -1506,10 +1100,7 @@ mod tests {
 
     #[test]
     fn c_changes_with_yank() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         let event = hx.parse_event(char_key('c'));
         assert_eq!(
             event,
@@ -1522,15 +1113,12 @@ mod tests {
                 ReedlineEvent::Repaint,
             ])
         );
-        assert_eq!(hx.mode, HelixMode::Insert);
+        assert!(matches!(edit_mode_hx(&hx), PromptHelixMode::Insert));
     }
 
     #[test]
     fn y_yanks_preserving_selection() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         let event = hx.parse_event(char_key('y'));
         assert_eq!(
             event,
@@ -1543,10 +1131,7 @@ mod tests {
 
     #[test]
     fn p_pastes_after_selection() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         let event = hx.parse_event(char_key('p'));
         assert_eq!(
             event,
@@ -1562,10 +1147,7 @@ mod tests {
 
     #[test]
     fn big_p_pastes_before_selection() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         let event = hx.parse_event(char_key('P'));
         assert_eq!(
             event,
@@ -1583,10 +1165,7 @@ mod tests {
 
     #[test]
     fn semicolon_restarts_selection() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         let event = hx.parse_event(char_key(';'));
         assert_eq!(
             event,
@@ -1596,10 +1175,7 @@ mod tests {
 
     #[test]
     fn percent_selects_entire_buffer() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         let event = hx.parse_event(char_key('%'));
         assert_eq!(
             event,
@@ -1614,10 +1190,7 @@ mod tests {
 
     #[test]
     fn x_selects_entire_line() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         let event = hx.parse_event(char_key('x'));
         assert_eq!(
             event,
@@ -1632,10 +1205,7 @@ mod tests {
 
     #[test]
     fn o_flips_selection() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         let event = hx.parse_event(char_key('o'));
         assert_eq!(
             event,
@@ -1647,10 +1217,7 @@ mod tests {
 
     #[test]
     fn u_undoes() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         let event = hx.parse_event(char_key('u'));
         assert_eq!(
             event,
@@ -1660,10 +1227,7 @@ mod tests {
 
     #[test]
     fn big_u_redoes() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         let event = hx.parse_event(char_key('U'));
         assert_eq!(
             event,
@@ -1675,10 +1239,7 @@ mod tests {
 
     #[test]
     fn r_char_replaces_selection() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         hx.parse_event(char_key('r'));
         let event = hx.parse_event(char_key('z'));
         assert_eq!(
@@ -1694,10 +1255,7 @@ mod tests {
 
     #[test]
     fn tilde_switches_case() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         let event = hx.parse_event(char_key('~'));
         assert_eq!(
             event,
@@ -1712,39 +1270,21 @@ mod tests {
 
     #[test]
     fn esc_in_normal_resets_pending_and_count() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         hx.parse_event(char_key('5')); // count
         hx.parse_event(char_key('g')); // pending goto
         let event = hx.parse_event(key_press(KeyCode::Esc, KeyModifiers::NONE));
         assert!(matches!(event, ReedlineEvent::Multiple(_)));
-        assert_eq!(hx.mode, HelixMode::Normal);
+        assert!(!hx.select_mode);
         assert_eq!(hx.pending, Pending::None);
         assert_eq!(hx.count, 0);
-    }
-
-    // ── Enter in Normal mode submits ──────────────────────────────────
-
-    #[test]
-    fn enter_in_normal_submits() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
-        let event = hx.parse_event(key_press(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(event, ReedlineEvent::Enter);
     }
 
     // ── F/T backward find/til tests ─────────────────────────────────────
 
     #[test]
     fn big_f_char_produces_extending_motion() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         hx.parse_event(char_key('F'));
         let event = hx.parse_event(char_key('a'));
         assert_eq!(
@@ -1761,10 +1301,7 @@ mod tests {
 
     #[test]
     fn big_t_char_produces_extending_motion() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         hx.parse_event(char_key('T'));
         let event = hx.parse_event(char_key('a'));
         assert_eq!(
@@ -1781,10 +1318,7 @@ mod tests {
 
     #[test]
     fn count_with_f_produces_multiple_events() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         hx.parse_event(char_key('2'));
         hx.parse_event(char_key('f'));
         let event = hx.parse_event(char_key('x'));
@@ -1830,10 +1364,7 @@ mod tests {
 
     #[test]
     fn count_zero_at_start_is_not_count() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         // '0' at start should not be a count digit (count is 0, so it's not > 0)
         let event = hx.parse_event(char_key('0'));
         // Falls through to match code block (no motion bound to '0')
@@ -1843,10 +1374,7 @@ mod tests {
 
     #[test]
     fn large_count_on_short_buffer_does_not_panic() {
-        let mut hx = Helix {
-            mode: HelixMode::Normal,
-            ..Default::default()
-        };
+        let mut hx = Helix::default();
         // Enter count 100
         hx.parse_event(char_key('1'));
         hx.parse_event(char_key('0'));
@@ -1883,20 +1411,6 @@ mod tests {
         }];
         // "über cool" — ü is 2 bytes
         assert_sel(&b, "über coo[l]", "über ]cool[");
-    }
-
-    // ── Esc from Insert resets insert_style ─────────────────────────────
-
-    #[test]
-    fn esc_from_insert_resets_insert_style() {
-        let mut hx = Helix {
-            mode: HelixMode::Insert,
-            insert_style: InsertStyle::After,
-            ..Default::default()
-        };
-        hx.parse_event(key_press(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(hx.mode, HelixMode::Normal);
-        assert_eq!(hx.insert_style, InsertStyle::Plain);
     }
 
     // ── f/t extending motion integration tests ──────────────────────────
