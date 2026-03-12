@@ -68,8 +68,7 @@ impl EditMode for Helix {
                     self.selection_adjustment = None;
                     ReedlineEvent::Multiple(vec![
                         ReedlineEvent::Esc,
-                        ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
-                        ReedlineEvent::Edit(vec![EditCommand::HxRestartSelection]),
+                        ReedlineEvent::Edit(vec![EditCommand::HxEnsureSelection]),
                         ReedlineEvent::Repaint,
                     ])
                 }
@@ -288,8 +287,7 @@ mod tests {
             helix_mode.parse_event(key_press(KeyCode::Esc, KeyModifiers::NONE)),
             ReedlineEvent::Multiple(vec![
                 ReedlineEvent::Esc,
-                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
-                ReedlineEvent::Edit(vec![EditCommand::HxRestartSelection]),
+                ReedlineEvent::Edit(vec![EditCommand::HxEnsureSelection]),
                 ReedlineEvent::Repaint,
             ])
         );

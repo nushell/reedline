@@ -3227,6 +3227,59 @@ mod test {
         }
 
         #[test]
+        fn i_mode_escape_keeps_cursor_after_inserted_text() {
+            let mut editor = editor_with("world");
+            editor.set_edit_mode(PromptEditMode::Helix(PromptHelixMode::Insert));
+            editor.line_buffer.set_insertion_point(0);
+            editor.run_edit_command(&EditCommand::HxRestartSelection);
+
+            editor.run_edit_command(&EditCommand::HxMoveToSelectionStart);
+            editor.run_edit_command(&EditCommand::InsertChar('x'));
+            editor.run_edit_command(&EditCommand::HxShiftSelectionToInsertionPoint);
+            editor.run_edit_command(&EditCommand::InsertChar('y'));
+            editor.run_edit_command(&EditCommand::HxShiftSelectionToInsertionPoint);
+
+            assert_eq!(editor.get_buffer(), "xyworld");
+            assert_eq!(editor.insertion_point(), 2);
+
+            editor.run_edit_command(&EditCommand::HxEnsureSelection);
+
+            assert_eq!(editor.get_buffer(), "xyworld");
+            assert_eq!(editor.insertion_point(), 2);
+
+            let sel = *editor.hx_selection().unwrap();
+            assert_eq!((sel.anchor, sel.head), (2, 3));
+        }
+
+        #[test]
+        fn a_mode_escape_preserves_entire_selection() {
+            let mut editor = editor_with("hello");
+            editor.set_edit_mode(PromptEditMode::Helix(PromptHelixMode::Insert));
+            editor.line_buffer.set_insertion_point(0);
+            editor.run_edit_command(&EditCommand::HxRestartSelection);
+
+            editor.run_edit_command(&EditCommand::HxMoveToSelectionEnd);
+            editor.run_edit_command(&EditCommand::InsertChar('x'));
+            editor.run_edit_command(&EditCommand::HxExtendSelectionToInsertionPoint);
+            editor.run_edit_command(&EditCommand::InsertChar('y'));
+            editor.run_edit_command(&EditCommand::HxExtendSelectionToInsertionPoint);
+
+            assert_eq!(editor.get_buffer(), "hxyello");
+            assert_eq!(editor.insertion_point(), 3);
+
+            let before_escape = *editor.hx_selection().unwrap();
+            assert_eq!((before_escape.anchor, before_escape.head), (0, 3));
+
+            editor.run_edit_command(&EditCommand::HxEnsureSelection);
+
+            assert_eq!(editor.get_buffer(), "hxyello");
+            assert_eq!(editor.insertion_point(), 3);
+
+            let after_escape = *editor.hx_selection().unwrap();
+            assert_eq!(after_escape, before_escape);
+        }
+
+        #[test]
         fn a_mode_extend_tracks_backspace() {
             // Start: "hello", selection [h] at (0, 1).
             let mut editor = editor_with("hello");
