@@ -1,17 +1,17 @@
 mod base;
 mod cursors;
 mod emacs;
-#[cfg(feature = "hx")]
-pub(crate) mod hx;
+#[cfg(feature = "helix")]
+mod helix;
 mod keybindings;
 mod vi;
 
 pub use base::EditMode;
 pub use cursors::CursorConfig;
-#[cfg(feature = "hx")]
+#[cfg(feature = "helix")]
 pub use cursors::{HX_CURSOR_INSERT, HX_CURSOR_NORMAL, HX_CURSOR_SELECT};
 pub use emacs::{default_emacs_keybindings, Emacs};
-#[cfg(feature = "hx")]
-pub use hx::Helix;
+#[cfg(feature = "helix")]
+pub use helix::Helix;
 pub use keybindings::Keybindings;
 pub use vi::{default_vi_insert_keybindings, default_vi_normal_keybindings, Vi};
