@@ -382,7 +382,7 @@ mod tests {
 
     // ── Test runner ─────────────────────────────────────────────────────
     //
-    // Adapted from helix-core/src/movement.rs test infrastructure.
+    // Adapted from [helix-core/src/movement.rs](https://github.com/helix-editor/helix/blob/51ec572a27a8c1267afbc07e6c1583585c6363dc/helix-core/src/movement.rs) test infrastructure.
     // Internally word motions use char indices but convert to byte offsets
     // via CharOffsets. All ASCII test strings have identical char/byte values.
 
