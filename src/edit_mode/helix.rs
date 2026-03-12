@@ -13,19 +13,17 @@ enum HelixMode {
     Normal,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum InsertStyle {
-    #[default]
-    Plain,
-    Before,
-    After,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SelectionAdjustment {
+    Shifting,
+    Anchored,
 }
 
 /// Minimal Helix-inspired edit mode supporting Normal and Insert states.
 #[derive(Default)]
 pub struct Helix {
     mode: HelixMode,
-    insert_style: InsertStyle,
+    selection_adjustment: Option<SelectionAdjustment>,
 }
 
 impl Helix {
@@ -39,7 +37,7 @@ impl Helix {
     #[cfg(test)]
     pub(super) fn enter_plain_insert(&mut self) {
         self.mode = HelixMode::Insert;
-        self.insert_style = InsertStyle::Plain;
+        self.selection_adjustment = None;
     }
 }
 
@@ -60,7 +58,7 @@ impl EditMode for Helix {
             HelixMode::Insert => match (code, modifiers) {
                 (KeyCode::Esc, _) => {
                     self.mode = HelixMode::Normal;
-                    self.insert_style = InsertStyle::Plain;
+                    self.selection_adjustment = None;
                     ReedlineEvent::Multiple(vec![
                         ReedlineEvent::Esc,
                         ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
@@ -71,53 +69,53 @@ impl EditMode for Helix {
                 (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
                     ReedlineEvent::Edit(vec![EditCommand::Delete])
                 }
-                (KeyCode::Char(c), _) => match self.insert_style {
-                    InsertStyle::Before => ReedlineEvent::Edit(vec![
+                (KeyCode::Char(c), _) => match self.selection_adjustment {
+                    Some(SelectionAdjustment::Shifting) => ReedlineEvent::Edit(vec![
                         EditCommand::InsertChar(c),
                         EditCommand::HxShiftSelectionToInsertionPoint,
                     ]),
-                    InsertStyle::After => ReedlineEvent::Edit(vec![
+                    Some(SelectionAdjustment::Anchored) => ReedlineEvent::Edit(vec![
                         EditCommand::InsertChar(c),
                         EditCommand::HxExtendSelectionToInsertionPoint,
                     ]),
-                    InsertStyle::Plain => ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)]),
+                    None => ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)]),
                 },
                 (KeyCode::Enter, _) => ReedlineEvent::Enter,
-                (KeyCode::Backspace, _) => match self.insert_style {
-                    InsertStyle::Before => ReedlineEvent::Edit(vec![
+                (KeyCode::Backspace, _) => match self.selection_adjustment {
+                    Some(SelectionAdjustment::Shifting) => ReedlineEvent::Edit(vec![
                         EditCommand::Backspace,
                         EditCommand::HxShiftSelectionToInsertionPoint,
                     ]),
-                    InsertStyle::After => ReedlineEvent::Edit(vec![
+                    Some(SelectionAdjustment::Anchored) => ReedlineEvent::Edit(vec![
                         EditCommand::Backspace,
                         EditCommand::HxExtendSelectionToInsertionPoint,
                     ]),
-                    InsertStyle::Plain => ReedlineEvent::Edit(vec![EditCommand::Backspace]),
+                    None => ReedlineEvent::Edit(vec![EditCommand::Backspace]),
                 },
                 (KeyCode::Delete, _) => ReedlineEvent::Edit(vec![EditCommand::Delete]),
                 (KeyCode::Left, _) => {
-                    self.insert_style = InsertStyle::Plain;
+                    self.selection_adjustment = None;
                     ReedlineEvent::Edit(vec![
                         EditCommand::MoveLeft { select: false },
                         EditCommand::HxClearSelection,
                     ])
                 }
                 (KeyCode::Right, _) => {
-                    self.insert_style = InsertStyle::Plain;
+                    self.selection_adjustment = None;
                     ReedlineEvent::Edit(vec![
                         EditCommand::MoveRight { select: false },
                         EditCommand::HxClearSelection,
                     ])
                 }
                 (KeyCode::Home, _) => {
-                    self.insert_style = InsertStyle::Plain;
+                    self.selection_adjustment = None;
                     ReedlineEvent::Edit(vec![
                         EditCommand::MoveToLineStart { select: false },
                         EditCommand::HxClearSelection,
                     ])
                 }
                 (KeyCode::End, _) => {
-                    self.insert_style = InsertStyle::Plain;
+                    self.selection_adjustment = None;
                     ReedlineEvent::Edit(vec![
                         EditCommand::MoveToLineEnd { select: false },
                         EditCommand::HxClearSelection,
@@ -140,14 +138,14 @@ impl EditMode for Helix {
                         ReedlineEvent::Repaint,
                     ]),
                     KeyCode::Char('i') => {
-                        self.insert_style = InsertStyle::Before;
+                        self.selection_adjustment = Some(SelectionAdjustment::Shifting);
                         self.enter_insert(vec![ReedlineEvent::Edit(vec![
                             EditCommand::HxEnsureSelection,
                             EditCommand::HxMoveToSelectionStart,
                         ])])
                     }
                     KeyCode::Char('a') => {
-                        self.insert_style = InsertStyle::After;
+                        self.selection_adjustment = Some(SelectionAdjustment::Anchored);
                         self.enter_insert(vec![ReedlineEvent::Edit(vec![
                             EditCommand::HxEnsureSelection,
                             EditCommand::HxMoveToSelectionEnd,
@@ -245,7 +243,10 @@ mod tests {
             ])
         );
         assert_eq!(helix_mode.mode, HelixMode::Insert);
-        assert_eq!(helix_mode.insert_style, InsertStyle::Before);
+        assert_eq!(
+            helix_mode.selection_adjustment,
+            Some(SelectionAdjustment::Shifting)
+        );
     }
 
     #[test]
@@ -263,14 +264,17 @@ mod tests {
             ])
         );
         assert_eq!(helix_mode.mode, HelixMode::Insert);
-        assert_eq!(helix_mode.insert_style, InsertStyle::After);
+        assert_eq!(
+            helix_mode.selection_adjustment,
+            Some(SelectionAdjustment::Anchored)
+        );
     }
 
     #[test]
     fn helix_edit_mode_exits_insert_with_escape() {
         let mut helix_mode = Helix {
             mode: HelixMode::Insert,
-            insert_style: InsertStyle::After,
+            selection_adjustment: Some(SelectionAdjustment::Anchored),
         };
 
         assert_eq!(
@@ -283,14 +287,14 @@ mod tests {
             ])
         );
         assert_eq!(helix_mode.mode, HelixMode::Normal);
-        assert_eq!(helix_mode.insert_style, InsertStyle::Plain);
+        assert_eq!(helix_mode.selection_adjustment, None);
     }
 
     #[test]
     fn helix_edit_mode_ctrl_d_is_delete_in_insert() {
         let mut helix_mode = Helix {
             mode: HelixMode::Insert,
-            insert_style: InsertStyle::Plain,
+            selection_adjustment: None,
         };
 
         assert_eq!(
@@ -310,10 +314,10 @@ mod tests {
     }
 
     #[test]
-    fn helix_edit_mode_insert_char_tracks_before_mode() {
+    fn helix_edit_mode_insert_char_uses_shifting_adjustment() {
         let mut helix_mode = Helix {
             mode: HelixMode::Insert,
-            insert_style: InsertStyle::Before,
+            selection_adjustment: Some(SelectionAdjustment::Shifting),
         };
 
         assert_eq!(
@@ -326,10 +330,10 @@ mod tests {
     }
 
     #[test]
-    fn helix_edit_mode_insert_char_tracks_after_mode() {
+    fn helix_edit_mode_insert_char_uses_anchored_adjustment() {
         let mut helix_mode = Helix {
             mode: HelixMode::Insert,
-            insert_style: InsertStyle::After,
+            selection_adjustment: Some(SelectionAdjustment::Anchored),
         };
 
         assert_eq!(
@@ -392,7 +396,7 @@ mod tests {
     fn helix_edit_mode_delete_clears_selection_tracking() {
         let mut helix_mode = Helix {
             mode: HelixMode::Insert,
-            insert_style: InsertStyle::Before,
+            selection_adjustment: Some(SelectionAdjustment::Shifting),
         };
 
         assert_eq!(
@@ -402,6 +406,6 @@ mod tests {
                 EditCommand::HxClearSelection,
             ])
         );
-        assert_eq!(helix_mode.insert_style, InsertStyle::Plain);
+        assert_eq!(helix_mode.selection_adjustment, None);
     }
 }

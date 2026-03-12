@@ -3169,7 +3169,7 @@ mod test {
             assert_eq!(sel.head, 3);
         }
 
-        // ── InsertStyle::Before (i) selection tracking ──────────────
+        // ── SelectionAdjustment::Shifting (`i`) tracking ───────────
 
         #[test]
         fn i_mode_shift_tracks_insertion() {
@@ -3251,7 +3251,7 @@ mod test {
             assert_eq!(editor.get_buffer(), "hxello");
         }
 
-        // ── InsertStyle::After (a) selection tracking ───────────────
+        // ── SelectionAdjustment::Anchored (`a`) tracking ───────────
 
         #[test]
         fn a_mode_extend_tracks_insertion() {
