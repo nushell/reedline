@@ -476,6 +476,18 @@ impl Painter {
                 PromptEditMode::Emacs => shapes.emacs,
                 PromptEditMode::Vi(PromptViMode::Insert) => shapes.vi_insert,
                 PromptEditMode::Vi(PromptViMode::Normal) => shapes.vi_normal,
+                #[cfg(feature = "helix")]
+                PromptEditMode::Helix(ref mode) => {
+                    use crate::{HX_CURSOR_INSERT, HX_CURSOR_NORMAL, HX_CURSOR_SELECT};
+                    let key = match mode {
+                        crate::PromptHelixMode::Normal => HX_CURSOR_NORMAL,
+                        crate::PromptHelixMode::Insert => HX_CURSOR_INSERT,
+                        crate::PromptHelixMode::Select => HX_CURSOR_SELECT,
+                    };
+                    shapes.custom.get(key).copied()
+                }
+                #[cfg(feature = "helix")]
+                PromptEditMode::Custom(name) => shapes.custom.get(name.as_str()).copied(),
                 _ => None,
             };
             if let Some(shape) = shape {

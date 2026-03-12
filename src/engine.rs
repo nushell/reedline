@@ -1507,6 +1507,8 @@ impl Reedline {
         self.update_buffer_from_history();
         self.editor.move_to_start(false);
         self.editor.move_to_line_end(false);
+        #[cfg(feature = "helix")]
+        self.editor.hx_restart_selection();
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
     }
@@ -1541,6 +1543,8 @@ impl Reedline {
         }
         self.update_buffer_from_history();
         self.editor.move_to_end(false);
+        #[cfg(feature = "helix")]
+        self.editor.hx_restart_selection();
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation)
     }
@@ -1628,6 +1632,12 @@ impl Reedline {
     /// When using the up/down traversal or fish/zsh style prefix search update the main line buffer accordingly.
     /// Not used for the separate modal reverse search!
     fn update_buffer_from_history(&mut self) {
+        // When the buffer is replaced by history navigation, any Helix-mode
+        // selection is stale (byte offsets from the old buffer).  Clear it so
+        // the caller can re-establish a fresh selection after cursor positioning.
+        #[cfg(feature = "helix")]
+        self.editor.reset_hx_state();
+
         match self.history_cursor.get_navigation() {
             _ if self.history_cursor_on_excluded => self.editor.set_buffer(
                 self.history_excluded_item
@@ -2318,13 +2328,13 @@ mod tests {
     #[test]
     #[cfg(feature = "helix")]
     fn with_edit_mode_builder_accepts_custom_helix_mode() {
-        use crate::PromptViMode;
+        use crate::PromptHelixMode;
 
-        let reedline = Reedline::create().with_edit_mode(Box::new(crate::Helix));
+        let reedline = Reedline::create().with_edit_mode(Box::new(crate::Helix::normal()));
 
         assert!(matches!(
             reedline.prompt_edit_mode(),
-            PromptEditMode::Vi(PromptViMode::Normal)
+            PromptEditMode::Helix(PromptHelixMode::Normal)
         ));
     }
 
