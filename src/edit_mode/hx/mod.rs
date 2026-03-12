@@ -963,7 +963,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_in_insert_clears_selection() {
+    fn delete_in_insert_preserves_selection() {
         let mut hx = Helix {
             mode: HelixMode::Insert,
             insert_style: InsertStyle::Before,
@@ -972,9 +972,9 @@ mod tests {
         let event = hx.parse_event(key_press(KeyCode::Delete, KeyModifiers::NONE));
         assert_eq!(
             event,
-            ReedlineEvent::Edit(vec![EditCommand::Delete, EditCommand::HxClearSelection])
+            ReedlineEvent::Edit(vec![EditCommand::Delete])
         );
-        assert_eq!(hx.insert_style, InsertStyle::Plain);
+        assert_eq!(hx.insert_style, InsertStyle::Before);
     }
 
     #[test]
