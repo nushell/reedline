@@ -8,8 +8,8 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum HelixMode {
-    Insert,
     #[default]
+    Insert,
     Normal,
 }
 
@@ -27,6 +27,14 @@ pub struct Helix {
 }
 
 impl Helix {
+    #[cfg(test)]
+    pub(crate) fn normal() -> Self {
+        Self {
+            mode: HelixMode::Normal,
+            selection_adjustment: None,
+        }
+    }
+
     fn enter_insert(&mut self, pre_cmds: Vec<ReedlineEvent>) -> ReedlineEvent {
         self.mode = HelixMode::Insert;
         let mut events = pre_cmds;
@@ -206,20 +214,20 @@ mod tests {
     }
 
     #[test]
-    fn helix_edit_mode_defaults_to_normal_mode() {
+    fn helix_edit_mode_defaults_to_insert_mode() {
         let helix_mode = Helix::default();
 
         let edit_mode = helix_mode.edit_mode();
 
         assert!(matches!(
             edit_mode,
-            PromptEditMode::Helix(PromptHelixMode::Normal)
+            PromptEditMode::Helix(PromptHelixMode::Insert)
         ));
     }
 
     #[test]
     fn helix_edit_mode_parses_ctrl_c_event() {
-        let mut helix_mode = Helix::default();
+        let mut helix_mode = Helix::normal();
 
         assert_eq!(
             helix_mode.parse_event(key_press(KeyCode::Char('c'), KeyModifiers::CONTROL)),
@@ -229,7 +237,7 @@ mod tests {
 
     #[test]
     fn helix_edit_mode_enters_insert_with_i() {
-        let mut helix_mode = Helix::default();
+        let mut helix_mode = Helix::normal();
 
         assert_eq!(
             helix_mode.parse_event(char_key('i')),
@@ -250,7 +258,7 @@ mod tests {
 
     #[test]
     fn helix_edit_mode_enters_append_with_a() {
-        let mut helix_mode = Helix::default();
+        let mut helix_mode = Helix::normal();
 
         assert_eq!(
             helix_mode.parse_event(char_key('a')),
@@ -304,7 +312,7 @@ mod tests {
 
     #[test]
     fn helix_edit_mode_ctrl_d_is_eof_in_normal() {
-        let mut helix_mode = Helix::default();
+        let mut helix_mode = Helix::normal();
 
         assert_eq!(
             helix_mode.parse_event(key_press(KeyCode::Char('d'), KeyModifiers::CONTROL)),
@@ -346,7 +354,7 @@ mod tests {
 
     #[test]
     fn helix_edit_mode_normal_h_restarts_selection() {
-        let mut helix_mode = Helix::default();
+        let mut helix_mode = Helix::normal();
 
         assert_eq!(
             helix_mode.parse_event(char_key('h')),
@@ -359,7 +367,7 @@ mod tests {
 
     #[test]
     fn helix_edit_mode_normal_l_uses_until_found() {
-        let mut helix_mode = Helix::default();
+        let mut helix_mode = Helix::normal();
 
         assert_eq!(
             helix_mode.parse_event(char_key('l')),
@@ -376,7 +384,7 @@ mod tests {
 
     #[test]
     fn helix_edit_mode_big_i_enters_insert_at_line_start() {
-        let mut helix_mode = Helix::default();
+        let mut helix_mode = Helix::normal();
 
         assert_eq!(
             helix_mode.parse_event(char_key('I')),

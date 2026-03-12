@@ -44,6 +44,16 @@ pub struct Helix {
 }
 
 impl Helix {
+    #[cfg(test)]
+    pub(crate) fn normal() -> Self {
+        Self {
+            base: MinimalHelix::normal(),
+            pending: Pending::None,
+            count: 0,
+            select_mode: false,
+        }
+    }
+
     fn key_press(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
         Event::Key(KeyEvent {
             code,
@@ -605,10 +615,14 @@ mod tests {
         }
     }
 
+    fn normal_hx() -> Helix {
+        Helix::normal()
+    }
+
     fn select_hx() -> Helix {
         Helix {
             select_mode: true,
-            ..Default::default()
+            ..normal_hx()
         }
     }
 
@@ -625,7 +639,7 @@ mod tests {
 
     #[test]
     fn v_toggles_select_mode() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         // Normal -> Select
         let event = hx.parse_event(char_key('v'));
         assert_eq!(event, ReedlineEvent::Repaint);
@@ -654,7 +668,7 @@ mod tests {
 
     #[test]
     fn w_in_normal_produces_word_motion() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
 
         let event = hx.parse_event(char_key('w'));
 
@@ -672,7 +686,7 @@ mod tests {
 
     #[test]
     fn count_not_consumed_by_editing_commands() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         // Press '3' then 'd' — count should be discarded, not affect deletion.
         hx.parse_event(char_key('3'));
         assert_eq!(hx.count, 3);
@@ -691,7 +705,7 @@ mod tests {
 
     #[test]
     fn count_applies_to_j_k() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         hx.parse_event(char_key('3'));
         let event = hx.parse_event(char_key('j'));
         assert!(matches!(event, ReedlineEvent::Multiple(ref v) if v.len() == 3));
@@ -957,7 +971,7 @@ mod tests {
 
     #[test]
     fn count_prefix_repeats_h_motion_normal() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         // Press '3' then 'h' — Normal mode batches moves + one restart.
         let event = hx.parse_event(char_key('3'));
         assert_eq!(event, ReedlineEvent::None);
@@ -984,7 +998,7 @@ mod tests {
 
     #[test]
     fn count_prefix_passes_to_word_motion() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         hx.parse_event(char_key('2'));
         let event = hx.parse_event(char_key('w'));
         assert_eq!(
@@ -999,7 +1013,7 @@ mod tests {
 
     #[test]
     fn count_zero_extends_digit() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         hx.parse_event(char_key('1'));
         hx.parse_event(char_key('0'));
         let event = hx.parse_event(char_key('l'));
@@ -1011,7 +1025,7 @@ mod tests {
 
     #[test]
     fn invalid_key_after_goto_cancels() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         hx.parse_event(char_key('g'));
         let event = hx.parse_event(char_key('z')); // invalid goto target
         assert_eq!(event, ReedlineEvent::None);
@@ -1020,7 +1034,7 @@ mod tests {
 
     #[test]
     fn invalid_key_after_find_cancels() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         hx.parse_event(char_key('f'));
         // Esc is handled by the top-level Normal/Select match before pending
         // resolution, so it resets everything (mode, pending, count).
@@ -1031,7 +1045,7 @@ mod tests {
 
     #[test]
     fn goto_gg_moves_to_start() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         hx.parse_event(char_key('g'));
         let event = hx.parse_event(char_key('g'));
         assert_eq!(
@@ -1045,7 +1059,7 @@ mod tests {
 
     #[test]
     fn goto_ge_is_unbound() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         hx.parse_event(char_key('g'));
         let event = hx.parse_event(char_key('e'));
         // ge is not yet implemented (needs PrevWordEnd motion target).
@@ -1054,7 +1068,7 @@ mod tests {
 
     #[test]
     fn f_char_produces_extending_motion() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         hx.parse_event(char_key('f'));
         let event = hx.parse_event(char_key('x'));
         assert_eq!(
@@ -1073,7 +1087,7 @@ mod tests {
 
     #[test]
     fn d_deletes_with_yank() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         let event = hx.parse_event(char_key('d'));
         assert_eq!(
             event,
@@ -1087,7 +1101,7 @@ mod tests {
 
     #[test]
     fn alt_d_deletes_without_yank() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         let event = hx.parse_event(key_press(KeyCode::Char('d'), KeyModifiers::ALT));
         assert_eq!(
             event,
@@ -1101,7 +1115,7 @@ mod tests {
 
     #[test]
     fn c_changes_with_yank() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         let event = hx.parse_event(char_key('c'));
         assert_eq!(
             event,
@@ -1119,7 +1133,7 @@ mod tests {
 
     #[test]
     fn y_yanks_preserving_selection() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         let event = hx.parse_event(char_key('y'));
         assert_eq!(
             event,
@@ -1132,7 +1146,7 @@ mod tests {
 
     #[test]
     fn p_pastes_after_selection() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         let event = hx.parse_event(char_key('p'));
         assert_eq!(
             event,
@@ -1148,7 +1162,7 @@ mod tests {
 
     #[test]
     fn big_p_pastes_before_selection() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         let event = hx.parse_event(char_key('P'));
         assert_eq!(
             event,
@@ -1166,7 +1180,7 @@ mod tests {
 
     #[test]
     fn semicolon_restarts_selection() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         let event = hx.parse_event(char_key(';'));
         assert_eq!(
             event,
@@ -1176,7 +1190,7 @@ mod tests {
 
     #[test]
     fn percent_selects_entire_buffer() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         let event = hx.parse_event(char_key('%'));
         assert_eq!(
             event,
@@ -1191,7 +1205,7 @@ mod tests {
 
     #[test]
     fn x_selects_entire_line() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         let event = hx.parse_event(char_key('x'));
         assert_eq!(
             event,
@@ -1206,7 +1220,7 @@ mod tests {
 
     #[test]
     fn o_flips_selection() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         let event = hx.parse_event(char_key('o'));
         assert_eq!(
             event,
@@ -1218,7 +1232,7 @@ mod tests {
 
     #[test]
     fn u_undoes() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         let event = hx.parse_event(char_key('u'));
         assert_eq!(
             event,
@@ -1228,7 +1242,7 @@ mod tests {
 
     #[test]
     fn big_u_redoes() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         let event = hx.parse_event(char_key('U'));
         assert_eq!(
             event,
@@ -1240,7 +1254,7 @@ mod tests {
 
     #[test]
     fn r_char_replaces_selection() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         hx.parse_event(char_key('r'));
         let event = hx.parse_event(char_key('z'));
         assert_eq!(
@@ -1256,7 +1270,7 @@ mod tests {
 
     #[test]
     fn tilde_switches_case() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         let event = hx.parse_event(char_key('~'));
         assert_eq!(
             event,
@@ -1271,7 +1285,7 @@ mod tests {
 
     #[test]
     fn esc_in_normal_resets_pending_and_count() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         hx.parse_event(char_key('5')); // count
         hx.parse_event(char_key('g')); // pending goto
         let event = hx.parse_event(key_press(KeyCode::Esc, KeyModifiers::NONE));
@@ -1285,7 +1299,7 @@ mod tests {
 
     #[test]
     fn big_f_char_produces_extending_motion() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         hx.parse_event(char_key('F'));
         let event = hx.parse_event(char_key('a'));
         assert_eq!(
@@ -1302,7 +1316,7 @@ mod tests {
 
     #[test]
     fn big_t_char_produces_extending_motion() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         hx.parse_event(char_key('T'));
         let event = hx.parse_event(char_key('a'));
         assert_eq!(
@@ -1319,7 +1333,7 @@ mod tests {
 
     #[test]
     fn count_with_f_produces_multiple_events() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         hx.parse_event(char_key('2'));
         hx.parse_event(char_key('f'));
         let event = hx.parse_event(char_key('x'));
@@ -1365,7 +1379,7 @@ mod tests {
 
     #[test]
     fn count_zero_at_start_is_not_count() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         // '0' at start should not be a count digit (count is 0, so it's not > 0)
         let event = hx.parse_event(char_key('0'));
         // Falls through to match code block (no motion bound to '0')
@@ -1375,7 +1389,7 @@ mod tests {
 
     #[test]
     fn large_count_on_short_buffer_does_not_panic() {
-        let mut hx = Helix::default();
+        let mut hx = normal_hx();
         // Enter count 100
         hx.parse_event(char_key('1'));
         hx.parse_event(char_key('0'));
