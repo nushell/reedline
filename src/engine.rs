@@ -2320,7 +2320,7 @@ mod tests {
     fn with_edit_mode_builder_accepts_custom_helix_mode() {
         use crate::PromptViMode;
 
-        let reedline = Reedline::create().with_edit_mode(Box::new(crate::Helix::insert()));
+        let reedline = Reedline::create().with_edit_mode(Box::new(crate::Helix::default()));
 
         assert!(matches!(
             reedline.prompt_edit_mode(),

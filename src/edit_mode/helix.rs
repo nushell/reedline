@@ -1,62 +1,189 @@
 use crate::{
     edit_mode::EditMode,
-    enums::{ReedlineEvent, ReedlineRawEvent},
+    enums::{EditCommand, ReedlineEvent, ReedlineRawEvent},
     PromptEditMode, PromptViMode,
 };
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use modalkit::{
+    key::TerminalKey,
+    keybindings::{
+        BindingMachine, EdgeEvent, EdgePath, EdgeRepeat, EmptyKeyClass, EmptyKeyState,
+        InputBindings, InputKey, ModalMachine, Mode, ModeKeys,
+    },
+};
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
 enum HelixMode {
     #[default]
     Insert,
     Normal,
 }
 
-/// A minimal custom edit mode example for Helix-style integrations.
+impl Mode<HelixAction, EmptyKeyState> for HelixMode {}
+
+impl ModeKeys<TerminalKey, HelixAction, EmptyKeyState> for HelixMode {
+    fn unmapped(
+        &self,
+        key: &TerminalKey,
+        _: &mut EmptyKeyState,
+    ) -> (Vec<HelixAction>, Option<HelixMode>) {
+        match self {
+            HelixMode::Normal => (vec![], None),
+            HelixMode::Insert => {
+                if let Some(c) = key.get_char() {
+                    return (vec![HelixAction::Type(c)], None);
+                }
+
+                (vec![], None)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+enum HelixAction {
+    Type(char),
+    MoveCharRight,
+    MoveCharLeft,
+    #[default]
+    NoOp,
+}
+
+type HelixStep = (Option<HelixAction>, Option<HelixMode>);
+
+type HelixEdgePath = EdgePath<TerminalKey, EmptyKeyClass>;
+
+type HelixMachine = ModalMachine<TerminalKey, HelixStep>;
+
 #[derive(Default)]
+struct HelixBindings;
+
+impl HelixBindings {
+    fn add_single_keypress_mapping(
+        machine: &mut HelixMachine,
+        mode: HelixMode,
+        code: KeyCode,
+        step: HelixStep,
+    ) {
+        let path: &HelixEdgePath = &[(EdgeRepeat::Once, EdgeEvent::Key(TerminalKey::from(code)))];
+        machine.add_mapping(mode, path, &step);
+    }
+}
+
+impl InputBindings<TerminalKey, HelixStep> for HelixBindings {
+    fn setup(&self, machine: &mut HelixMachine) {
+        Self::add_single_keypress_mapping(
+            machine,
+            HelixMode::Insert,
+            KeyCode::Esc,
+            (None, Some(HelixMode::Normal)),
+        );
+        Self::add_single_keypress_mapping(
+            machine,
+            HelixMode::Normal,
+            KeyCode::Char('i'),
+            (None, Some(HelixMode::Insert)),
+        );
+        for code in [KeyCode::Char('h'), KeyCode::Left] {
+            Self::add_single_keypress_mapping(
+                machine,
+                HelixMode::Normal,
+                code,
+                (Some(HelixAction::MoveCharLeft), None),
+            );
+        }
+        for code in [KeyCode::Char('l'), KeyCode::Right] {
+            Self::add_single_keypress_mapping(
+                machine,
+                HelixMode::Normal,
+                code,
+                (Some(HelixAction::MoveCharRight), None),
+            );
+        }
+    }
+}
+
+/// A minimal custom edit mode example for Helix-style integrations.
 pub struct Helix {
-    mode: HelixMode,
+    machine: HelixMachine,
+}
+
+impl std::fmt::Debug for Helix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Helix")
+            .field("mode", &self.machine.mode())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for Helix {
+    fn default() -> Self {
+        Self::new(PromptViMode::Insert)
+    }
 }
 
 impl Helix {
-    #[cfg(test)]
-    pub(crate) fn insert() -> Self {
-        Self {
-            mode: HelixMode::Insert,
-        }
-    }
+    /// Creates a Helix editor with the requested initial mode.
+    pub fn new(initial_mode: PromptViMode) -> Self {
+        let mut machine = HelixMachine::from_bindings::<HelixBindings>();
 
-    #[cfg(test)]
-    pub(crate) fn normal() -> Self {
-        Self {
-            mode: HelixMode::Normal,
+        if matches!(initial_mode, PromptViMode::Normal) {
+            machine.input_key(TerminalKey::from(KeyCode::Esc));
+            let _ = machine.pop();
         }
+        Self { machine }
     }
 }
 
 impl EditMode for Helix {
     fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
-        match event.into() {
-            Event::Key(KeyEvent {
-                code, modifiers, ..
-            }) => match (self.mode, modifiers, code) {
-                (_, KeyModifiers::CONTROL, KeyCode::Char('c')) => ReedlineEvent::CtrlC,
-                (HelixMode::Insert, _, KeyCode::Esc) => {
-                    self.mode = HelixMode::Normal;
+        let Ok(key_event) = KeyEvent::try_from(event) else {
+            return ReedlineEvent::None;
+        };
+
+        if matches!(
+            &key_event,
+            KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }
+        ) {
+            return ReedlineEvent::CtrlC;
+        }
+
+        let previous_mode = self.machine.mode();
+        self.machine.input_key(key_event.into());
+        let mode_changed = self.machine.mode() != previous_mode;
+
+        let Some((action, _ctx)) = self.machine.pop() else {
+            return if mode_changed {
+                ReedlineEvent::Repaint
+            } else {
+                ReedlineEvent::None
+            };
+        };
+
+        match action {
+            HelixAction::Type(c) => ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)]),
+            HelixAction::MoveCharLeft => {
+                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }])
+            }
+            HelixAction::MoveCharRight => {
+                ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }])
+            }
+            HelixAction::NoOp => {
+                if mode_changed {
                     ReedlineEvent::Repaint
+                } else {
+                    ReedlineEvent::None
                 }
-                (HelixMode::Normal, _, KeyCode::Char('i')) => {
-                    self.mode = HelixMode::Insert;
-                    ReedlineEvent::Repaint
-                }
-                _ => ReedlineEvent::None,
-            },
-            _ => ReedlineEvent::None,
+            }
         }
     }
 
     fn edit_mode(&self) -> PromptEditMode {
-        match self.mode {
+        match self.machine.mode() {
             HelixMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
             HelixMode::Normal => PromptEditMode::Vi(PromptViMode::Normal),
         }
@@ -66,7 +193,8 @@ impl EditMode for Helix {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{KeyEventKind, KeyEventState};
+    use crossterm::event::{Event, KeyEventKind, KeyEventState};
+    use rstest::rstest;
 
     fn key_press(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
         Event::Key(KeyEvent {
@@ -76,19 +204,22 @@ mod tests {
             state: KeyEventState::NONE,
         })
         .try_into()
-        .unwrap()
+        .expect("valid crossterm key event")
     }
 
     #[test]
     fn helix_editor_defaults_to_insert_mode() {
         let helix_editor = Helix::default();
 
-        assert_eq!(helix_editor.mode, HelixMode::Insert);
+        assert!(matches!(
+            helix_editor.edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Insert)
+        ));
     }
 
     #[test]
-    fn normal_mode_parses_ctrl_c_event() {
-        let mut helix_mode = Helix::normal();
+    fn ctrl_c_maps_to_interrupt_event() {
+        let mut helix_mode = Helix::default();
 
         assert_eq!(
             helix_mode.parse_event(key_press(KeyCode::Char('c'), KeyModifiers::CONTROL)),
@@ -98,17 +229,64 @@ mod tests {
 
     #[test]
     fn pressing_esc_in_insert_mode_switches_to_normal() {
-        let mut helix_mode = Helix::insert();
-        helix_mode.parse_event(key_press(KeyCode::Esc, KeyModifiers::NONE));
+        let mut helix_mode = Helix::new(PromptViMode::Insert);
 
-        assert_eq!(helix_mode.mode, HelixMode::Normal);
+        assert_eq!(
+            helix_mode.parse_event(key_press(KeyCode::Esc, KeyModifiers::NONE)),
+            ReedlineEvent::Repaint
+        );
+
+        assert!(matches!(
+            helix_mode.edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Normal)
+        ));
     }
 
     #[test]
     fn pressing_i_in_normal_mode_switches_to_insert() {
-        let mut helix_mode = Helix::normal();
-        helix_mode.parse_event(key_press(KeyCode::Char('i'), KeyModifiers::NONE));
+        let mut helix_mode = Helix::new(PromptViMode::Normal);
 
-        assert_eq!(helix_mode.mode, HelixMode::Insert);
+        assert_eq!(
+            helix_mode.parse_event(key_press(KeyCode::Char('i'), KeyModifiers::NONE)),
+            ReedlineEvent::Repaint
+        );
+        assert!(matches!(
+            helix_mode.edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Insert)
+        ));
+    }
+
+    #[test]
+    fn typing_in_insert_mode_produces_insert_char_event() {
+        let mut helix_mode = Helix::new(PromptViMode::Insert);
+
+        assert_eq!(
+            helix_mode.parse_event(key_press(KeyCode::Char('a'), KeyModifiers::NONE)),
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('a')])
+        );
+    }
+
+    #[rstest]
+    #[case(KeyCode::Char('h'))]
+    #[case(KeyCode::Left)]
+    fn pressing_left_key_or_h_in_normal_mode_moves_cursor_left(#[case] key_code: KeyCode) {
+        let mut helix_mode = Helix::new(PromptViMode::Normal);
+
+        assert_eq!(
+            helix_mode.parse_event(key_press(key_code, KeyModifiers::NONE)),
+            ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }])
+        );
+    }
+
+    #[rstest]
+    #[case(KeyCode::Char('l'))]
+    #[case(KeyCode::Right)]
+    fn pressing_right_key_or_l_in_normal_mode_moves_cursor_right(#[case] key_code: KeyCode) {
+        let mut helix_mode = Helix::new(PromptViMode::Normal);
+
+        assert_eq!(
+            helix_mode.parse_event(key_press(key_code, KeyModifiers::NONE)),
+            ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }])
+        );
     }
 }

@@ -1042,3 +1042,15 @@ impl From<ReedlineRawEvent> for Event {
         event.0
     }
 }
+
+#[cfg(feature = "helix")]
+impl TryFrom<ReedlineRawEvent> for KeyEvent {
+    type Error = ReedlineRawEvent;
+
+    fn try_from(event: ReedlineRawEvent) -> Result<Self, Self::Error> {
+        match event.0 {
+            Event::Key(key_event) => Ok(key_event),
+            other => Err(ReedlineRawEvent(other)),
+        }
+    }
+}
