@@ -4,12 +4,9 @@ use crate::{
     PromptEditMode, PromptViMode,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use modalkit::{
-    key::TerminalKey,
-    keybindings::{
-        BindingMachine, EdgeEvent, EdgePath, EdgeRepeat, EmptyKeyClass, EmptyKeyState,
-        InputBindings, InputKey, ModalMachine, Mode, ModeKeys,
-    },
+use modalkit::keybindings::{
+    BindingMachine, EdgeEvent, EdgePath, EdgeRepeat, EmptyKeyClass, EmptyKeyState, InputBindings,
+    InputKey, ModalMachine, Mode, ModeKeys,
 };
 
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
@@ -19,12 +16,73 @@ enum HelixMode {
     Normal,
 }
 
+/// A simple `InputKey` implementation around `crossterm` types.
+///
+/// This avoids pulling in the `crossterm` types used by `modalkit` (which can be a different
+/// version than the one used by `reedline`).
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+struct HelixKey {
+    code: KeyCode,
+    modifiers: KeyModifiers,
+}
+
+impl HelixKey {
+    fn new(mut code: KeyCode, mut modifiers: KeyModifiers) -> Self {
+        if let KeyCode::Char(ref mut c) = code {
+            if modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL) {
+                *c = c.to_ascii_uppercase();
+            } else if c.is_ascii_uppercase() {
+                modifiers.insert(KeyModifiers::SHIFT);
+            }
+
+            if modifiers == KeyModifiers::SHIFT && *c != ' ' {
+                modifiers -= KeyModifiers::SHIFT;
+            }
+        }
+
+        Self { code, modifiers }
+    }
+
+    fn from_event(event: KeyEvent) -> Self {
+        Self::new(event.code, event.modifiers)
+    }
+
+    fn get_char(&self) -> Option<char> {
+        if let KeyCode::Char(c) = self.code {
+            if (self.modifiers - KeyModifiers::SHIFT).is_empty() {
+                return Some(c);
+            }
+        }
+
+        None
+    }
+}
+
+impl InputKey for HelixKey {
+    type Error = std::convert::Infallible;
+
+    fn decompose(&mut self) -> Option<Self> {
+        None
+    }
+
+    fn from_macro_str(mstr: &str) -> Result<Vec<Self>, Self::Error> {
+        Ok(mstr
+            .chars()
+            .map(|c| HelixKey::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .collect())
+    }
+
+    fn get_char(&self) -> Option<char> {
+        self.get_char()
+    }
+}
+
 impl Mode<HelixAction, EmptyKeyState> for HelixMode {}
 
-impl ModeKeys<TerminalKey, HelixAction, EmptyKeyState> for HelixMode {
+impl ModeKeys<HelixKey, HelixAction, EmptyKeyState> for HelixMode {
     fn unmapped(
         &self,
-        key: &TerminalKey,
+        key: &HelixKey,
         _: &mut EmptyKeyState,
     ) -> (Vec<HelixAction>, Option<HelixMode>) {
         match self {
@@ -51,9 +109,9 @@ enum HelixAction {
 
 type HelixStep = (Option<HelixAction>, Option<HelixMode>);
 
-type HelixEdgePath = EdgePath<TerminalKey, EmptyKeyClass>;
+type HelixEdgePath = EdgePath<HelixKey, EmptyKeyClass>;
 
-type HelixMachine = ModalMachine<TerminalKey, HelixStep>;
+type HelixMachine = ModalMachine<HelixKey, HelixStep>;
 
 #[derive(Default)]
 struct HelixBindings;
@@ -65,12 +123,15 @@ impl HelixBindings {
         code: KeyCode,
         step: HelixStep,
     ) {
-        let path: &HelixEdgePath = &[(EdgeRepeat::Once, EdgeEvent::Key(TerminalKey::from(code)))];
+        let path: &HelixEdgePath = &[(
+            EdgeRepeat::Once,
+            EdgeEvent::Key(HelixKey::new(code, KeyModifiers::NONE)),
+        )];
         machine.add_mapping(mode, path, &step);
     }
 }
 
-impl InputBindings<TerminalKey, HelixStep> for HelixBindings {
+impl InputBindings<HelixKey, HelixStep> for HelixBindings {
     fn setup(&self, machine: &mut HelixMachine) {
         Self::add_single_keypress_mapping(
             machine,
@@ -128,7 +189,7 @@ impl Helix {
         let mut machine = HelixMachine::from_bindings::<HelixBindings>();
 
         if matches!(initial_mode, PromptViMode::Normal) {
-            machine.input_key(TerminalKey::from(KeyCode::Esc));
+            machine.input_key(HelixKey::new(KeyCode::Esc, KeyModifiers::NONE));
             let _ = machine.pop();
         }
         Self { machine }
@@ -153,7 +214,7 @@ impl EditMode for Helix {
         }
 
         let previous_mode = self.machine.mode();
-        self.machine.input_key(key_event.into());
+        self.machine.input_key(HelixKey::from_event(key_event));
         let mode_changed = self.machine.mode() != previous_mode;
 
         let Some((action, _ctx)) = self.machine.pop() else {
