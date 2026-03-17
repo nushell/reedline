@@ -145,6 +145,8 @@ pub struct IdeMenu {
     working_details: IdeMenuDetails,
     /// Menu cached values
     values: Vec<Suggestion>,
+    /// Cached display width of each suggestion in `values`
+    display_widths: Vec<usize>,
     /// Selected value. Starts at 0
     selected: u16,
     /// Number of values that are skipped when printing,
@@ -166,6 +168,7 @@ impl Default for IdeMenu {
             default_details: DefaultIdeMenuDetails::default(),
             working_details: IdeMenuDetails::default(),
             values: Vec::new(),
+            display_widths: Vec::new(),
             selected: 0,
             skip_values: 0,
             event: None,
@@ -498,7 +501,7 @@ impl IdeMenu {
         let display_value = suggestion.display_value();
 
         let padding_right = (self.working_details.completion_width as usize)
-            .saturating_sub(display_value.width() + border_width + padding);
+            .saturating_sub(self.display_widths[index] + border_width + padding);
 
         let max_string_width =
             (self.working_details.completion_width as usize).saturating_sub(border_width + padding);
@@ -630,6 +633,11 @@ impl Menu for IdeMenu {
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 
         self.values = values;
+        self.display_widths = self
+            .values
+            .iter()
+            .map(|sugg| strip_ansi_escapes::strip_str(sugg.display_value()).width())
+            .collect();
         self.working_details.shortest_base_string = base_ranges
             .iter()
             .map(|range| {
@@ -639,6 +647,7 @@ impl Menu for IdeMenu {
             })
             .min_by_key(|s| s.width())
             .unwrap_or_default();
+        self.longest_suggestion = *self.display_widths.iter().max().unwrap_or(&0);
 
         self.reset_position();
     }
@@ -675,13 +684,6 @@ impl Menu for IdeMenu {
                 | MenuEvent::PreviousPage
                 | MenuEvent::NextPage => {}
             }
-
-            self.longest_suggestion = self
-                .get_values()
-                .iter()
-                .map(|s| s.display_value().width())
-                .max()
-                .unwrap_or_default();
 
             let terminal_width = painter.screen_width();
 

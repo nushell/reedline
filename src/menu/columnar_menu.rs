@@ -438,8 +438,8 @@ impl ColumnarMenu {
                         format!(
                             "{}{}{}{}{}",
                             styled_value,
-                            RESET,
                             " ".repeat(padding),
+                            RESET,
                             self.settings.color.description_style.paint(desc_trunc),
                             RESET,
                         )
@@ -568,7 +568,7 @@ impl Menu for ColumnarMenu {
         self.display_widths = self
             .values
             .iter()
-            .map(|sugg| sugg.display_value().width())
+            .map(|sugg| strip_ansi_escapes::strip_str(sugg.display_value()).width())
             .collect();
         self.working_details.shortest_base_string = base_ranges
             .iter()
@@ -579,6 +579,7 @@ impl Menu for ColumnarMenu {
             })
             .min_by_key(|s| s.width())
             .unwrap_or_default();
+        self.longest_suggestion = *self.display_widths.iter().max().unwrap_or(&0);
 
         self.reset_position();
     }
@@ -630,7 +631,6 @@ impl Menu for ColumnarMenu {
                 .any(|suggestion| suggestion.description.is_some());
 
             let screen_width = painter.screen_width() as usize;
-            self.longest_suggestion = *self.display_widths.iter().max().unwrap_or(&0);
             if exist_description {
                 self.working_details.columns = 1;
                 self.working_details.col_width = screen_width;
