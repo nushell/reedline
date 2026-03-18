@@ -90,6 +90,15 @@ impl LineBuffer {
         self.lines[..self.insertion_point].matches('\n').count()
     }
 
+    /// Calculates the character index in the line the user is on
+    ///
+    /// Zero-based index
+    pub fn col(&self) -> usize {
+        self.lines[self.line_start()..self.insertion_point]
+            .chars()
+            .count()
+    }
+
     /// Counts the number of lines in the buffer
     pub fn num_lines(&self) -> usize {
         self.lines.split('\n').count()

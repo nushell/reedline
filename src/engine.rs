@@ -1,7 +1,7 @@
-use std::path::PathBuf;
-
 use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
+use std::ffi::OsStr;
+use std::path::PathBuf;
 
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
@@ -47,6 +47,7 @@ use {
         terminal, QueueableCommand,
     },
     std::{
+        ffi::OsString,
         fs::File,
         io,
         io::Result,
@@ -559,10 +560,6 @@ impl Reedline {
     /// ```
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
-        let mut editor = editor;
-        if !editor.get_args().contains(&temp_file.as_os_str()) {
-            editor.arg(&temp_file);
-        }
         self.buffer_editor = Some(BufferEditor {
             command: editor,
             temp_file,
@@ -1359,7 +1356,15 @@ impl Reedline {
                 }
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),
+            ReedlineEvent::OpenEditor => {
+                if let Some(buffer_editor) = &self.buffer_editor {
+                    let new_buffer = self.open_editor(buffer_editor)?;
+                    self.editor
+                        .set_buffer(new_buffer, UndoBehavior::CreateUndoPoint);
+                }
+
+                Ok(EventStatus::Handled)
+            }
             ReedlineEvent::Resize(width, height) => {
                 self.last_render_snapshot = None;
                 self.painter.handle_resize(width, height);
@@ -1872,30 +1877,69 @@ impl Reedline {
         }
     }
 
-    fn open_editor(&mut self) -> Result<()> {
-        match &mut self.buffer_editor {
-            Some(BufferEditor {
-                ref mut command,
-                ref temp_file,
-            }) => {
-                {
-                    let mut file = File::create(temp_file)?;
-                    write!(file, "{}", self.editor.get_buffer())?;
-                }
-                {
-                    let mut child = command.spawn()?;
-                    child.wait()?;
-                }
+    /// opens the current buffer in the editor described in [`buffer_editor`]
+    /// returns the new buffer, after processing the changes via the editor
+    fn open_editor(&self, buffer_editor: &BufferEditor) -> Result<String> {
+        let mut command = Self::render_editor_command(buffer_editor, self.editor.line_buffer());
 
-                let res = std::fs::read_to_string(temp_file)?;
-                let res = res.trim_end().to_string();
-
-                self.editor.set_buffer(res, UndoBehavior::CreateUndoPoint);
-
-                Ok(())
-            }
-            _ => Ok(()),
+        // flush buffer to temp file, so it can be read by the editor
+        {
+            let mut file = File::create(&buffer_editor.temp_file)?;
+            write!(file, "{}", self.editor.get_buffer())?;
         }
+
+        command.spawn()?.wait()?;
+
+        // fetch contents of buffer after editor is done
+        let mut buffer = std::fs::read_to_string(&buffer_editor.temp_file)?;
+        let content_len = buffer.trim_end().len();
+        buffer.truncate(content_len);
+
+        Ok(buffer)
+    }
+
+    /// renders the template command described in [`buffer_editor`],
+    /// by substituting the placeholders in the pattern, if any
+    fn render_editor_command(buffer_editor: &BufferEditor, line_buffer: &LineBuffer) -> Command {
+        use std::ops::Add as _;
+
+        let mut cmd = Command::new(buffer_editor.command.get_program());
+
+        const FILE: &str = "{file}";
+        const LINE: &str = "{line}";
+        const COL: &str = "{col}";
+
+        // kind of a wonky check, but it's enough to know
+        // that we have somewhere to stick that temp_file path in
+        let is_template = buffer_editor
+            .command
+            .get_args()
+            .map(OsStr::to_string_lossy)
+            .any(|arg| arg.contains(FILE));
+
+        if is_template {
+            // TODO: there are more efficient ways to do this.
+            // e.g. "format args"-style structs
+
+            let file = buffer_editor.temp_file.to_string_lossy();
+            let line = line_buffer.line().add(1).to_string();
+            let col = line_buffer.col().add(1).to_string();
+
+            let actual_args = buffer_editor
+                .command
+                .get_args()
+                .map(OsStr::to_string_lossy)
+                .map(|arg| arg.replace(FILE, &file))
+                .map(|arg| arg.replace(LINE, &line))
+                .map(|arg| arg.replace(COL, &col));
+
+            cmd.args(actual_args);
+        } else {
+            cmd.args(buffer_editor.command.get_args());
+            cmd.arg(&buffer_editor.temp_file);
+        }
+
+        cmd
     }
 
     /// Repaint logic for the history reverse search
