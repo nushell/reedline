@@ -1,7 +1,5 @@
 use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
-use std::ffi::OsStr;
-use std::path::PathBuf;
 
 use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
@@ -47,11 +45,12 @@ use {
         terminal, QueueableCommand,
     },
     std::{
-        ffi::OsString,
+        ffi::OsStr,
         fs::File,
         io,
         io::Result,
         io::Write,
+        path::PathBuf,
         process::Command,
         sync::{atomic::AtomicBool, Arc},
         time::Duration,
