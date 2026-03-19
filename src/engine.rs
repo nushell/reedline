@@ -797,7 +797,7 @@ impl Reedline {
         self.painter
             .initialize_prompt_position(self.suspended_state.as_ref())?;
         if self.suspended_state.is_some() {
-            // Last editor was suspended to run a ExecuteHostCommand event,
+            // Last editor was suspended (ExecuteHostCommand or ExternalBreak),
             // we are resuming operation now.
             self.suspended_state = None;
         }
@@ -816,6 +816,7 @@ impl Reedline {
                 if signal.swap(false, std::sync::atomic::Ordering::Relaxed) {
                     let buffer = self.editor.get_buffer().to_string();
                     self.input_mode = InputMode::Regular;
+                    self.last_render_snapshot = None;
                     self.suspended_state = Some(self.painter.state_before_suspension());
                     self.editor.reset_undo_stack();
                     return Ok(Signal::ExternalBreak(buffer));

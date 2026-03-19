@@ -49,11 +49,10 @@ fn main() -> io::Result<()> {
             Signal::ExternalBreak(buffer) => {
                 // The buffer contents are preserved across the break.
                 // Simply call read_line() again to let the user continue
-                // editing — the prompt stays on the same line because
-                // ExternalBreak now saves suspended state.
-                if !buffer.is_empty() {
-                    println!("\n[break] Buffer had: {buffer:?} — resuming prompt");
-                }
+                // editing — the prompt stays on the same line as long as
+                // nothing is printed between the break and the next
+                // read_line() call.
+                eprintln!("[break] buffer: {buffer:?}");
                 continue;
             }
             _ => {}
