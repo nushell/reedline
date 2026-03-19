@@ -816,7 +816,7 @@ impl Reedline {
                 if signal.swap(false, std::sync::atomic::Ordering::Relaxed) {
                     let buffer = self.editor.get_buffer().to_string();
                     self.input_mode = InputMode::Regular;
-                    self.painter.move_cursor_to_end()?;
+                    self.suspended_state = Some(self.painter.state_before_suspension());
                     self.editor.reset_undo_stack();
                     return Ok(Signal::ExternalBreak(buffer));
                 }
