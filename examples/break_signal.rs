@@ -1,7 +1,10 @@
 // Demonstrates the external break signal feature.
-// A background thread sets the break signal after 3 seconds,
+//
+// A background thread sets the break signal every 5 seconds,
 // causing `read_line()` to return `Signal::ExternalBreak` with
-// the current buffer contents.
+// the current buffer contents. The example then resumes editing
+// by calling `read_line()` again — the prompt stays on the same
+// line thanks to suspended-state preservation.
 //
 // To run:
 // cargo run --example break_signal
@@ -23,15 +26,15 @@ fn main() -> io::Result<()> {
     let mut line_editor = Reedline::create().with_break_signal(break_signal.clone());
     let prompt = DefaultPrompt::default();
 
-    // Spawn a thread that triggers the break signal after 3 seconds
+    // Spawn a thread that triggers the break signal periodically
     let signal = break_signal.clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_secs(3));
-        println!("\n[background] Setting break signal in...");
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_secs(5));
         signal.store(true, Ordering::Relaxed);
     });
 
-    println!("Type something. The break signal will fire in 3 seconds...");
+    println!("Type something. The break signal fires every 5 seconds.");
+    println!("The prompt will stay in place after each ExternalBreak.\n");
 
     loop {
         let sig = line_editor.read_line(&prompt)?;
@@ -44,8 +47,13 @@ fn main() -> io::Result<()> {
                 break Ok(());
             }
             Signal::ExternalBreak(buffer) => {
-                println!("\nExternalBreak received! Buffer contents: {buffer:?}");
-                break Ok(());
+                // The buffer contents are preserved across the break.
+                // Simply call read_line() again to let the user continue
+                // editing — the prompt stays on the same line as long as
+                // nothing is printed between the break and the next
+                // read_line() call.
+                eprintln!("[break] buffer: {buffer:?}");
+                continue;
             }
             _ => {}
         }
