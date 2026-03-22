@@ -542,19 +542,29 @@ impl Reedline {
     ///
     /// # Example
     /// ```rust,no_run
-    /// // Create a reedline object with vim as editor
-    ///
     /// use reedline::Reedline;
     /// use std::env::temp_dir;
     /// use std::process::Command;
     ///
-    /// let temp_file = std::env::temp_dir().join("my-random-unique.file");
+    /// let temp = temp_dir().join("my-random-unique.file");
+    ///
     /// let mut command = Command::new("vim");
     /// // you can provide additional flags:
     /// command.arg("-p"); // open in a vim tab (just for demonstration)
-    /// // you don't have to pass the filename to the command
-    /// let mut line_editor =
-    /// Reedline::create().with_buffer_editor(command, temp_file);
+    /// // ...and the filename will be appended at the end of the command
+    /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
+    ///
+    /// // optionally, {file}, {line}, and {col} placeholders can used.
+    /// // they will be replaced with the corresponding filename and current cursor position
+    /// let mut command = Command::new("hx");
+    /// command.args(["+{line}:{col}", "{file}"]);
+    /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
+    ///
+    /// // if {file} is omitted, the filename is still appended at the end,
+    /// // as in the above example
+    /// let mut command = Command::new("emacs");
+    /// command.arg("+{line}:{col}");
+    /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp);
     /// ```
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
