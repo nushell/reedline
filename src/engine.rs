@@ -2214,6 +2214,7 @@ mod tests {
     use super::*;
     use crate::terminal_extensions::semantic_prompt::PromptKind;
     use crate::DefaultPrompt;
+    use rstest::rstest;
 
     #[test]
     fn test_cursor_position_after_multiline_history_navigation() {
@@ -2394,5 +2395,60 @@ mod tests {
             Signal::ExternalBreak(buf) => assert_eq!(buf, buffer_content),
             _ => panic!("Expected Signal::ExternalBreak"),
         }
+    }
+
+    fn command_from_strs(command: &[&str]) -> Command {
+        let (program, args) = command.split_first().unwrap();
+
+        let mut command = Command::new(program);
+        command.args(args);
+        command
+    }
+
+    fn command_into_string(command: Command) -> String {
+        use itertools::Itertools;
+        use std::iter::once;
+
+        once(command.get_program())
+            .chain(command.get_args())
+            .map(|os_str| os_str.to_str().unwrap())
+            .join(" ")
+    }
+
+    #[rstest]
+    #[case(&["nano"], "nano foo.rs")]
+    #[case(&["code", "--goto", "{file}:{line}:{col}"], "code --goto foo.rs:2:4")]
+    #[case(&["hx", "{file}:{line}:{col}"], "hx foo.rs:2:4")]
+    #[case(&["nvim", "{file}", "\"call cursor({line}, {col})\""], "nvim foo.rs \"call cursor(2, 4)\"")]
+    #[case(&["vim", "+{line}", "{file}"], "vim +2 foo.rs")]
+    #[case(&["emacs", "+{line}:{col}", "{file}"], "emacs +2:4 foo.rs")]
+    fn render_editor_command_with_pattern(#[case] command: &[&str], #[case] expected: &str) {
+        // we're not actually spawning anything,
+        // so no need to create an actual file
+        let temp_file = PathBuf::from("foo.rs");
+
+        let buffer_editor = BufferEditor {
+            command: command_from_strs(command),
+            temp_file,
+        };
+
+        let line_buffer = {
+            let mut line_buffer = LineBuffer::new();
+
+            line_buffer.insert_str("a mulatto\n");
+            line_buffer.insert_str("an albino\n");
+            line_buffer.insert_str("a mosquito\n");
+            line_buffer.insert_str("my libido\n");
+            line_buffer.move_line_up();
+            line_buffer.move_line_up();
+            line_buffer.move_word_left();
+
+            line_buffer
+        };
+
+        let actual = Reedline::render_editor_command(&buffer_editor, &line_buffer);
+        let actual = command_into_string(actual);
+
+        assert_eq!(actual, expected);
     }
 }
