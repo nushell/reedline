@@ -1907,33 +1907,30 @@ impl Reedline {
         const LINE: &str = "{line}";
         const COL: &str = "{col}";
 
-        // kind of a wonky check, but it's enough to know
-        // that we have somewhere to stick that temp_file path in
-        let is_template = buffer_editor
+        let has_file_placholder = buffer_editor
             .command
             .get_args()
             .map(OsStr::to_string_lossy)
             .any(|arg| arg.contains(FILE));
 
-        if is_template {
-            // TODO: there are more efficient ways to do this.
-            // e.g. "format args"-style structs
+        // there are more efficient ways to do this.
+        // e.g. "format args"-style structs
 
-            let file = buffer_editor.temp_file.to_string_lossy();
-            let line = line_buffer.line().add(1).to_string();
-            let col = line_buffer.col().add(1).to_string();
+        let file = buffer_editor.temp_file.to_string_lossy();
+        let line = line_buffer.line().add(1).to_string();
+        let col = line_buffer.col().add(1).to_string();
 
-            let actual_args = buffer_editor
-                .command
-                .get_args()
-                .map(OsStr::to_string_lossy)
-                .map(|arg| arg.replace(FILE, &file))
-                .map(|arg| arg.replace(LINE, &line))
-                .map(|arg| arg.replace(COL, &col));
+        let args = buffer_editor
+            .command
+            .get_args()
+            .map(OsStr::to_string_lossy)
+            .map(|arg| arg.replace(FILE, &file))
+            .map(|arg| arg.replace(LINE, &line))
+            .map(|arg| arg.replace(COL, &col));
 
-            cmd.args(actual_args);
-        } else {
-            cmd.args(buffer_editor.command.get_args());
+        cmd.args(args);
+
+        if !has_file_placholder {
             cmd.arg(&buffer_editor.temp_file);
         }
 
@@ -2422,6 +2419,7 @@ mod tests {
     #[case(&["nvim", "{file}", "\"call cursor({line}, {col})\""], "nvim foo.rs \"call cursor(2, 4)\"")]
     #[case(&["vim", "+{line}", "{file}"], "vim +2 foo.rs")]
     #[case(&["emacs", "+{line}:{col}", "{file}"], "emacs +2:4 foo.rs")]
+    #[case(&["emacs", "+{line}:{col}"], "emacs +2:4 foo.rs")]
     fn render_editor_command_with_pattern(#[case] command: &[&str], #[case] expected: &str) {
         // we're not actually spawning anything,
         // so no need to create an actual file
