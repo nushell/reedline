@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
 
 use crate::{enums::ReedlineRawEvent, CursorConfig};
