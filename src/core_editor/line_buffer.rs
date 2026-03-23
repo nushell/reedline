@@ -95,7 +95,7 @@ impl LineBuffer {
     /// Zero-based index
     pub fn col(&self) -> usize {
         self.lines[self.line_start()..self.insertion_point]
-            .chars()
+            .grapheme_indices(true)
             .count()
     }
 
