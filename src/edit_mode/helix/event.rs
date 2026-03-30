@@ -1,13 +1,8 @@
-use crate::{
-    enums::{ReedlineEvent, ReedlineRawEvent},
-};
+use crate::enums::{ReedlineEvent, ReedlineRawEvent};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use modalkit::keybindings::BindingMachine;
 
-use super::{
-    action::HelixAction,
-    mode::HelixMachine,
-};
+use super::{action::HelixAction, mode::HelixMachine};
 
 pub(super) fn parse_event(machine: &mut HelixMachine, event: ReedlineRawEvent) -> ReedlineEvent {
     let Some(key_event) = KeyEvent::try_from(event).ok() else {

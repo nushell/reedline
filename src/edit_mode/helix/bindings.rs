@@ -1,7 +1,5 @@
 use crossterm::event::{KeyCode, KeyModifiers};
-use modalkit::keybindings::{
-    EdgeEvent, EdgePath, EdgeRepeat, EmptyKeyClass, InputBindings,
-};
+use modalkit::keybindings::{EdgeEvent, EdgePath, EdgeRepeat, EmptyKeyClass, InputBindings};
 
 use super::{
     key::HelixKey,
@@ -25,7 +23,11 @@ impl HelixBindings {
         machine.add_mapping(mode, path, &step);
     }
 
-    fn add_bindings(machine: &mut HelixMachine, mode: HelixMode, bindings: &[(KeyCode, HelixStep)]) {
+    fn add_bindings(
+        machine: &mut HelixMachine,
+        mode: HelixMode,
+        bindings: &[(KeyCode, HelixStep)],
+    ) {
         for (code, step) in bindings {
             Self::add_single_keypress_mapping(machine, mode, *code, step.clone());
         }

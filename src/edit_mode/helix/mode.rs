@@ -1,7 +1,5 @@
 use crate::PromptViMode;
-use modalkit::keybindings::{
-    EmptyKeyState, InputKey, ModalMachine, Mode, ModeKeys,
-};
+use modalkit::keybindings::{EmptyKeyState, InputKey, ModalMachine, Mode, ModeKeys};
 
 use super::{action::HelixAction, key::HelixKey};
 
