@@ -318,6 +318,22 @@ mod tests {
     }
 
     #[test]
+    fn pressing_a_in_normal_mode_switches_to_insert_with_cursor_after_selection() {
+        let mut helix_mode = Helix::new(PromptViMode::Normal);
+
+        let event_result =
+            helix_mode.parse_event(key_press(KeyCode::Char('a'), KeyModifiers::NONE));
+        assert!(matches!(
+            helix_mode.edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Insert)
+        ));
+        assert_eq!(
+            event_result,
+            ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false },])
+        );
+    }
+
+    #[test]
     fn typing_in_insert_mode_produces_insert_char_event() {
         let mut helix_mode = Helix::new(PromptViMode::Insert);
 
