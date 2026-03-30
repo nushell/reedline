@@ -79,6 +79,15 @@ impl InputKey for HelixKey {
 
 impl Mode<HelixAction, EmptyKeyState> for HelixMode {}
 
+impl From<PromptViMode> for HelixMode {
+    fn from(mode: PromptViMode) -> Self {
+        match mode {
+            PromptViMode::Insert => HelixMode::Insert,
+            PromptViMode::Normal => HelixMode::Normal,
+        }
+    }
+}
+
 impl ModeKeys<HelixKey, HelixAction, EmptyKeyState> for HelixMode {
     fn unmapped(
         &self,
@@ -161,6 +170,12 @@ impl InputBindings<HelixKey, HelixStep> for HelixBindings {
                 (Some(HelixAction::MoveCharRight), None),
             );
         }
+        Self::add_single_keypress_mapping(
+            machine,
+            HelixMode::Normal,
+            KeyCode::Char('a'),
+            (Some(HelixAction::MoveCharRight), Some(HelixMode::Insert)),
+        );
     }
 }
 
@@ -187,12 +202,19 @@ impl Helix {
     /// Creates a Helix editor with the requested initial mode.
     pub fn new(initial_mode: PromptViMode) -> Self {
         let mut machine = HelixMachine::from_bindings::<HelixBindings>();
+        Self::initialize_mode(&mut machine, initial_mode.into());
 
-        if matches!(initial_mode, PromptViMode::Normal) {
-            machine.input_key(HelixKey::new(KeyCode::Esc, KeyModifiers::NONE));
-            let _ = machine.pop();
-        }
         Self { machine }
+    }
+
+    fn initialize_mode(machine: &mut HelixMachine, mode: HelixMode) {
+        if mode == HelixMode::Insert {
+            return;
+        }
+
+        machine.input_key(HelixKey::new(KeyCode::Esc, KeyModifiers::NONE));
+        let _ = machine.pop();
+
     }
 }
 
@@ -275,6 +297,16 @@ mod tests {
         assert!(matches!(
             helix_editor.edit_mode(),
             PromptEditMode::Vi(PromptViMode::Insert)
+        ));
+    }
+
+    #[test]
+    fn helix_editor_can_start_in_normal_mode() {
+        let helix_editor = Helix::new(PromptViMode::Normal);
+
+        assert!(matches!(
+            helix_editor.edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Normal)
         ));
     }
 
