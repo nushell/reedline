@@ -57,10 +57,6 @@ impl Helix {
         debug_assert_eq!(machine.mode(), mode);
     }
 
-    fn key_event_from_raw(event: ReedlineRawEvent) -> Option<KeyEvent> {
-        KeyEvent::try_from(event).ok()
-    }
-
     fn is_interrupt_event(key_event: &KeyEvent) -> bool {
         matches!(
             key_event,
@@ -105,7 +101,7 @@ impl Helix {
 
 impl EditMode for Helix {
     fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
-        let Some(key_event) = Self::key_event_from_raw(event) else {
+        let Some(key_event) = KeyEvent::try_from(event).ok() else {
             return ReedlineEvent::None;
         };
 
