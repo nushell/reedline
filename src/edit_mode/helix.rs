@@ -142,44 +142,37 @@ impl HelixBindings {
         )];
         machine.add_mapping(mode, path, &step);
     }
+
+    fn add_bindings(machine: &mut HelixMachine, mode: HelixMode, bindings: &[(KeyCode, HelixStep)]) {
+        for (code, step) in bindings {
+            Self::add_single_keypress_mapping(machine, mode, *code, step.clone());
+        }
+    }
 }
 
 impl InputBindings<HelixKey, HelixStep> for HelixBindings {
     fn setup(&self, machine: &mut HelixMachine) {
-        Self::add_single_keypress_mapping(
-            machine,
-            HelixMode::Insert,
-            KeyCode::Esc,
-            (None, Some(HelixMode::Normal)),
-        );
-        Self::add_single_keypress_mapping(
-            machine,
-            HelixMode::Normal,
-            KeyCode::Char('i'),
-            (None, Some(HelixMode::Insert)),
-        );
-        for code in [KeyCode::Char('h'), KeyCode::Left] {
-            Self::add_single_keypress_mapping(
-                machine,
-                HelixMode::Normal,
-                code,
+        let insert_bindings = [(KeyCode::Esc, (None, Some(HelixMode::Normal)))];
+        let normal_bindings = [
+            (KeyCode::Char('i'), (None, Some(HelixMode::Insert))),
+            (
+                KeyCode::Char('h'),
                 (Some(HelixAction::MoveCharLeft), None),
-            );
-        }
-        for code in [KeyCode::Char('l'), KeyCode::Right] {
-            Self::add_single_keypress_mapping(
-                machine,
-                HelixMode::Normal,
-                code,
+            ),
+            (KeyCode::Left, (Some(HelixAction::MoveCharLeft), None)),
+            (
+                KeyCode::Char('l'),
                 (Some(HelixAction::MoveCharRight), None),
-            );
-        }
-        Self::add_single_keypress_mapping(
-            machine,
-            HelixMode::Normal,
-            KeyCode::Char('a'),
-            (Some(HelixAction::MoveCharRight), Some(HelixMode::Insert)),
-        );
+            ),
+            (KeyCode::Right, (Some(HelixAction::MoveCharRight), None)),
+            (
+                KeyCode::Char('a'),
+                (Some(HelixAction::MoveCharRight), Some(HelixMode::Insert)),
+            ),
+        ];
+
+        Self::add_bindings(machine, HelixMode::Insert, &insert_bindings);
+        Self::add_bindings(machine, HelixMode::Normal, &normal_bindings);
     }
 }
 
