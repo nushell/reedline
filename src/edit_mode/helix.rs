@@ -9,12 +9,7 @@ use modalkit::keybindings::{
     InputKey, ModalMachine, Mode, ModeKeys,
 };
 
-#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
-enum HelixMode {
-    #[default]
-    Insert,
-    Normal,
-}
+
 
 /// A simple `InputKey` implementation around `crossterm` types.
 ///
@@ -29,17 +24,6 @@ struct HelixKey {
 impl HelixKey {
     fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
         Self { code, modifiers }
-    }
-
-    fn insertable_char(&self) -> Option<char> {
-        match self.code {
-            KeyCode::Char(c) if Self::is_plain_char(self.modifiers) => Some(c),
-            _ => None,
-        }
-    }
-
-    fn is_plain_char(modifiers: KeyModifiers) -> bool {
-        (modifiers - KeyModifiers::SHIFT).is_empty()
     }
 }
 
@@ -64,36 +48,9 @@ impl InputKey for HelixKey {
     }
 
     fn get_char(&self) -> Option<char> {
-        self.insertable_char()
-    }
-}
-
-impl Mode<HelixAction, EmptyKeyState> for HelixMode {}
-
-impl From<PromptViMode> for HelixMode {
-    fn from(mode: PromptViMode) -> Self {
-        match mode {
-            PromptViMode::Insert => HelixMode::Insert,
-            PromptViMode::Normal => HelixMode::Normal,
-        }
-    }
-}
-
-impl ModeKeys<HelixKey, HelixAction, EmptyKeyState> for HelixMode {
-    fn unmapped(
-        &self,
-        key: &HelixKey,
-        _: &mut EmptyKeyState,
-    ) -> (Vec<HelixAction>, Option<HelixMode>) {
-        match self {
-            HelixMode::Normal => (vec![], None),
-            HelixMode::Insert => {
-                if let Some(c) = key.insertable_char() {
-                    return (vec![HelixAction::Type(c)], None);
-                }
-
-                (vec![], None)
-            }
+        match self.code {
+            KeyCode::Char(c) => Some(c),
+            _ => None,
         }
     }
 }
@@ -121,6 +78,44 @@ impl HelixAction {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+enum HelixMode {
+    #[default]
+    Insert,
+    Normal,
+}
+
+impl Mode<HelixAction, EmptyKeyState> for HelixMode {}
+
+impl From<PromptViMode> for HelixMode {
+    fn from(mode: PromptViMode) -> Self {
+        match mode {
+            PromptViMode::Insert => HelixMode::Insert,
+            PromptViMode::Normal => HelixMode::Normal,
+        }
+    }
+}
+
+impl ModeKeys<HelixKey, HelixAction, EmptyKeyState> for HelixMode {
+    fn unmapped(
+        &self,
+        key: &HelixKey,
+        _: &mut EmptyKeyState,
+    ) -> (Vec<HelixAction>, Option<HelixMode>) {
+        match self {
+            HelixMode::Normal => (vec![], None),
+            HelixMode::Insert => {
+                if let Some(c) = key.get_char() {
+                    return (vec![HelixAction::Type(c)], None);
+                }
+
+                (vec![], None)
+            }
+        }
+    }
+}
+
 
 type HelixStep = (Option<HelixAction>, Option<HelixMode>);
 
