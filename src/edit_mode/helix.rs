@@ -116,6 +116,21 @@ enum HelixAction {
     NoOp,
 }
 
+impl HelixAction {
+    fn into_reedline_event(self) -> Option<ReedlineEvent> {
+        match self {
+            HelixAction::Type(c) => Some(ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])),
+            HelixAction::MoveCharLeft => Some(ReedlineEvent::Edit(vec![
+                EditCommand::MoveLeft { select: false },
+            ])),
+            HelixAction::MoveCharRight => Some(ReedlineEvent::Edit(vec![
+                EditCommand::MoveRight { select: false },
+            ])),
+            HelixAction::NoOp => None,
+        }
+    }
+}
+
 type HelixStep = (Option<HelixAction>, Option<HelixMode>);
 
 type HelixEdgePath = EdgePath<HelixKey, EmptyKeyClass>;
@@ -215,54 +230,62 @@ impl Helix {
         machine.input_key(HelixKey::new(KeyCode::Esc, KeyModifiers::NONE));
         let _ = machine.pop();
 
+        debug_assert_eq!(machine.mode(), mode);
     }
-}
 
-impl EditMode for Helix {
-    fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
-        let Ok(key_event) = KeyEvent::try_from(event) else {
-            return ReedlineEvent::None;
-        };
+    fn key_event_from_raw(event: ReedlineRawEvent) -> Option<KeyEvent> {
+        KeyEvent::try_from(event).ok()
+    }
 
-        if matches!(
-            &key_event,
+    fn is_interrupt_event(key_event: &KeyEvent) -> bool {
+        matches!(
+            key_event,
             KeyEvent {
                 code: KeyCode::Char('c'),
                 modifiers: KeyModifiers::CONTROL,
                 ..
             }
-        ) {
+        )
+    }
+
+    fn handle_key_event(&mut self, key_event: KeyEvent) -> ReedlineEvent {
+        if Self::is_interrupt_event(&key_event) {
             return ReedlineEvent::CtrlC;
         }
 
+        let (action, mode_changed) = self.apply_key_event(key_event);
+
+        action
+            .and_then(HelixAction::into_reedline_event)
+            .unwrap_or_else(|| Self::mode_change_event(mode_changed))
+    }
+
+    fn apply_key_event(&mut self, key_event: KeyEvent) -> (Option<HelixAction>, bool) {
         let previous_mode = self.machine.mode();
         self.machine.input_key(HelixKey::from_event(key_event));
-        let mode_changed = self.machine.mode() != previous_mode;
 
-        let Some((action, _ctx)) = self.machine.pop() else {
-            return if mode_changed {
-                ReedlineEvent::Repaint
-            } else {
-                ReedlineEvent::None
-            };
+        let mode_changed = self.machine.mode() != previous_mode;
+        let action = self.machine.pop().map(|(action, _ctx)| action);
+
+        (action, mode_changed)
+    }
+
+    fn mode_change_event(mode_changed: bool) -> ReedlineEvent {
+        if mode_changed {
+            ReedlineEvent::Repaint
+        } else {
+            ReedlineEvent::None
+        }
+    }
+}
+
+impl EditMode for Helix {
+    fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
+        let Some(key_event) = Self::key_event_from_raw(event) else {
+            return ReedlineEvent::None;
         };
 
-        match action {
-            HelixAction::Type(c) => ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)]),
-            HelixAction::MoveCharLeft => {
-                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }])
-            }
-            HelixAction::MoveCharRight => {
-                ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }])
-            }
-            HelixAction::NoOp => {
-                if mode_changed {
-                    ReedlineEvent::Repaint
-                } else {
-                    ReedlineEvent::None
-                }
-            }
-        }
+        self.handle_key_event(key_event)
     }
 
     fn edit_mode(&self) -> PromptEditMode {
