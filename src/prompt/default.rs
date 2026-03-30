@@ -6,9 +6,9 @@ use {
 };
 
 /// The default prompt indicator
-pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
+pub static DEFAULT_PROMPT_INDICATOR: &str = ">";
 pub static DEFAULT_VI_INSERT_PROMPT_INDICATOR: &str = ": ";
-pub static DEFAULT_VI_NORMAL_PROMPT_INDICATOR: &str = "〉";
+pub static DEFAULT_VI_NORMAL_PROMPT_INDICATOR: &str = ">";
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 
 /// Simple [`Prompt`] displaying a configurable left and a right prompt.
