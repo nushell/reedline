@@ -31,10 +31,6 @@ impl HelixKey {
         Self { code, modifiers }
     }
 
-    fn from_event(event: KeyEvent) -> Self {
-        Self::new(event.code, event.modifiers)
-    }
-
     fn insertable_char(&self) -> Option<char> {
         match self.code {
             KeyCode::Char(c) if Self::is_plain_char(self.modifiers) => Some(c),
@@ -44,6 +40,12 @@ impl HelixKey {
 
     fn is_plain_char(modifiers: KeyModifiers) -> bool {
         (modifiers - KeyModifiers::SHIFT).is_empty()
+    }
+}
+
+impl From<KeyEvent> for HelixKey {
+    fn from(event: KeyEvent) -> Self {
+        Self::new(event.code, event.modifiers)
     }
 }
 
@@ -244,7 +246,7 @@ impl Helix {
 
     fn apply_key_event(&mut self, key_event: KeyEvent) -> (Option<HelixAction>, bool) {
         let previous_mode = self.machine.mode();
-        self.machine.input_key(HelixKey::from_event(key_event));
+        self.machine.input_key(key_event.into());
 
         let mode_changed = self.machine.mode() != previous_mode;
         let action = self.machine.pop().map(|(action, _ctx)| action);
