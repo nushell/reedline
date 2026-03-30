@@ -27,19 +27,7 @@ struct HelixKey {
 }
 
 impl HelixKey {
-    fn new(mut code: KeyCode, mut modifiers: KeyModifiers) -> Self {
-        if let KeyCode::Char(ref mut c) = code {
-            if modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL) {
-                *c = c.to_ascii_uppercase();
-            } else if c.is_ascii_uppercase() {
-                modifiers.insert(KeyModifiers::SHIFT);
-            }
-
-            if modifiers == KeyModifiers::SHIFT && *c != ' ' {
-                modifiers -= KeyModifiers::SHIFT;
-            }
-        }
-
+    fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
         Self { code, modifiers }
     }
 
@@ -47,14 +35,15 @@ impl HelixKey {
         Self::new(event.code, event.modifiers)
     }
 
-    fn get_char(&self) -> Option<char> {
-        if let KeyCode::Char(c) = self.code {
-            if (self.modifiers - KeyModifiers::SHIFT).is_empty() {
-                return Some(c);
-            }
+    fn insertable_char(&self) -> Option<char> {
+        match self.code {
+            KeyCode::Char(c) if Self::is_plain_char(self.modifiers) => Some(c),
+            _ => None,
         }
+    }
 
-        None
+    fn is_plain_char(modifiers: KeyModifiers) -> bool {
+        (modifiers - KeyModifiers::SHIFT).is_empty()
     }
 }
 
@@ -73,7 +62,7 @@ impl InputKey for HelixKey {
     }
 
     fn get_char(&self) -> Option<char> {
-        self.get_char()
+        self.insertable_char()
     }
 }
 
@@ -97,7 +86,7 @@ impl ModeKeys<HelixKey, HelixAction, EmptyKeyState> for HelixMode {
         match self {
             HelixMode::Normal => (vec![], None),
             HelixMode::Insert => {
-                if let Some(c) = key.get_char() {
+                if let Some(c) = key.insertable_char() {
                     return (vec![HelixAction::Type(c)], None);
                 }
 
