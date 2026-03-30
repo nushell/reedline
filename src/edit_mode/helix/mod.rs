@@ -76,6 +76,7 @@ mod tests {
     use super::*;
     use crate::enums::EditCommand;
     use crossterm::event::{Event, KeyEvent, KeyEventKind, KeyEventState};
+    use proptest::{arbitrary::any, prop_assert_eq, proptest};
     use rstest::rstest;
 
     fn key_press(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
@@ -164,14 +165,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn typing_in_insert_mode_produces_insert_char_event() {
-        let mut helix_mode = Helix::new(PromptViMode::Insert);
+    proptest! {
+        #[test]
+        fn typing_in_insert_mode_produces_insert_char_event(character in any::<char>()) {
+            let mut helix_mode = Helix::new(PromptViMode::Insert);
 
-        assert_eq!(
-            helix_mode.parse_event(key_press(KeyCode::Char('a'), KeyModifiers::NONE)),
-            ReedlineEvent::Edit(vec![EditCommand::InsertChar('a')])
-        );
+            prop_assert_eq!(
+                helix_mode.parse_event(key_press(KeyCode::Char(character), KeyModifiers::NONE)),
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar(character)])
+            );
+        }
     }
 
     #[rstest]
