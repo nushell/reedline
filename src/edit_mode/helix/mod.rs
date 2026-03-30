@@ -1,5 +1,6 @@
 mod action;
 mod bindings;
+mod event;
 mod key;
 mod mode;
 
@@ -8,11 +9,10 @@ use crate::{
     enums::{ReedlineEvent, ReedlineRawEvent},
     PromptEditMode, PromptViMode,
 };
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers};
 use modalkit::keybindings::BindingMachine;
 
 use self::{
-    action::HelixAction,
     bindings::HelixBindings,
     key::HelixKey,
     mode::{HelixMachine, HelixMode},
@@ -56,56 +56,11 @@ impl Helix {
 
         debug_assert_eq!(machine.mode(), mode);
     }
-
-    fn is_interrupt_event(key_event: &KeyEvent) -> bool {
-        matches!(
-            key_event,
-            KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            }
-        )
-    }
-
-    fn handle_key_event(&mut self, key_event: KeyEvent) -> ReedlineEvent {
-        if Self::is_interrupt_event(&key_event) {
-            return ReedlineEvent::CtrlC;
-        }
-
-        let (action, mode_changed) = self.apply_key_event(key_event);
-
-        action
-            .and_then(HelixAction::into_reedline_event)
-            .unwrap_or_else(|| Self::mode_change_event(mode_changed))
-    }
-
-    fn apply_key_event(&mut self, key_event: KeyEvent) -> (Option<HelixAction>, bool) {
-        let previous_mode = self.machine.mode();
-        self.machine.input_key(key_event.into());
-
-        let mode_changed = self.machine.mode() != previous_mode;
-        let action = self.machine.pop().map(|(action, _ctx)| action);
-
-        (action, mode_changed)
-    }
-
-    fn mode_change_event(mode_changed: bool) -> ReedlineEvent {
-        if mode_changed {
-            ReedlineEvent::Repaint
-        } else {
-            ReedlineEvent::None
-        }
-    }
 }
 
 impl EditMode for Helix {
     fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
-        let Some(key_event) = KeyEvent::try_from(event).ok() else {
-            return ReedlineEvent::None;
-        };
-
-        self.handle_key_event(key_event)
+        event::parse_event(&mut self.machine, event)
     }
 
     fn edit_mode(&self) -> PromptEditMode {
@@ -120,7 +75,7 @@ impl EditMode for Helix {
 mod tests {
     use super::*;
     use crate::enums::EditCommand;
-    use crossterm::event::{Event, KeyEventKind, KeyEventState};
+    use crossterm::event::{Event, KeyEvent, KeyEventKind, KeyEventState};
     use rstest::rstest;
 
     fn key_press(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
