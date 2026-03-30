@@ -1,177 +1,22 @@
+mod action;
+mod bindings;
+mod key;
+mod mode;
+
 use crate::{
     edit_mode::EditMode,
-    enums::{EditCommand, ReedlineEvent, ReedlineRawEvent},
+    enums::{ReedlineEvent, ReedlineRawEvent},
     PromptEditMode, PromptViMode,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use modalkit::keybindings::{
-    BindingMachine, EdgeEvent, EdgePath, EdgeRepeat, EmptyKeyClass, EmptyKeyState, InputBindings,
-    InputKey, ModalMachine, Mode, ModeKeys,
+use modalkit::keybindings::BindingMachine;
+
+use self::{
+    action::HelixAction,
+    bindings::HelixBindings,
+    key::HelixKey,
+    mode::{HelixMachine, HelixMode},
 };
-
-
-
-/// A simple `InputKey` implementation around `crossterm` types.
-///
-/// This avoids pulling in the `crossterm` types used by `modalkit` (which can be a different
-/// version than the one used by `reedline`).
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-struct HelixKey {
-    code: KeyCode,
-    modifiers: KeyModifiers,
-}
-
-impl HelixKey {
-    fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
-        Self { code, modifiers }
-    }
-}
-
-impl From<KeyEvent> for HelixKey {
-    fn from(event: KeyEvent) -> Self {
-        Self::new(event.code, event.modifiers)
-    }
-}
-
-impl InputKey for HelixKey {
-    type Error = std::convert::Infallible;
-
-    fn decompose(&mut self) -> Option<Self> {
-        None
-    }
-
-    fn from_macro_str(mstr: &str) -> Result<Vec<Self>, Self::Error> {
-        Ok(mstr
-            .chars()
-            .map(|c| HelixKey::new(KeyCode::Char(c), KeyModifiers::NONE))
-            .collect())
-    }
-
-    fn get_char(&self) -> Option<char> {
-        match self.code {
-            KeyCode::Char(c) => Some(c),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-enum HelixAction {
-    Type(char),
-    MoveCharRight,
-    MoveCharLeft,
-    #[default]
-    NoOp,
-}
-
-impl HelixAction {
-    fn into_reedline_event(self) -> Option<ReedlineEvent> {
-        match self {
-            HelixAction::Type(c) => Some(ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)])),
-            HelixAction::MoveCharLeft => Some(ReedlineEvent::Edit(vec![
-                EditCommand::MoveLeft { select: false },
-            ])),
-            HelixAction::MoveCharRight => Some(ReedlineEvent::Edit(vec![
-                EditCommand::MoveRight { select: false },
-            ])),
-            HelixAction::NoOp => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
-enum HelixMode {
-    #[default]
-    Insert,
-    Normal,
-}
-
-impl Mode<HelixAction, EmptyKeyState> for HelixMode {}
-
-impl From<PromptViMode> for HelixMode {
-    fn from(mode: PromptViMode) -> Self {
-        match mode {
-            PromptViMode::Insert => HelixMode::Insert,
-            PromptViMode::Normal => HelixMode::Normal,
-        }
-    }
-}
-
-impl ModeKeys<HelixKey, HelixAction, EmptyKeyState> for HelixMode {
-    fn unmapped(
-        &self,
-        key: &HelixKey,
-        _: &mut EmptyKeyState,
-    ) -> (Vec<HelixAction>, Option<HelixMode>) {
-        match self {
-            HelixMode::Normal => (vec![], None),
-            HelixMode::Insert => {
-                if let Some(c) = key.get_char() {
-                    return (vec![HelixAction::Type(c)], None);
-                }
-
-                (vec![], None)
-            }
-        }
-    }
-}
-
-
-type HelixStep = (Option<HelixAction>, Option<HelixMode>);
-
-type HelixEdgePath = EdgePath<HelixKey, EmptyKeyClass>;
-
-type HelixMachine = ModalMachine<HelixKey, HelixStep>;
-
-#[derive(Default)]
-struct HelixBindings;
-
-impl HelixBindings {
-    fn add_single_keypress_mapping(
-        machine: &mut HelixMachine,
-        mode: HelixMode,
-        code: KeyCode,
-        step: HelixStep,
-    ) {
-        let path: &HelixEdgePath = &[(
-            EdgeRepeat::Once,
-            EdgeEvent::Key(HelixKey::new(code, KeyModifiers::NONE)),
-        )];
-        machine.add_mapping(mode, path, &step);
-    }
-
-    fn add_bindings(machine: &mut HelixMachine, mode: HelixMode, bindings: &[(KeyCode, HelixStep)]) {
-        for (code, step) in bindings {
-            Self::add_single_keypress_mapping(machine, mode, *code, step.clone());
-        }
-    }
-}
-
-impl InputBindings<HelixKey, HelixStep> for HelixBindings {
-    fn setup(&self, machine: &mut HelixMachine) {
-        let insert_bindings = [(KeyCode::Esc, (None, Some(HelixMode::Normal)))];
-        let normal_bindings = [
-            (KeyCode::Char('i'), (None, Some(HelixMode::Insert))),
-            (
-                KeyCode::Char('h'),
-                (Some(HelixAction::MoveCharLeft), None),
-            ),
-            (KeyCode::Left, (Some(HelixAction::MoveCharLeft), None)),
-            (
-                KeyCode::Char('l'),
-                (Some(HelixAction::MoveCharRight), None),
-            ),
-            (KeyCode::Right, (Some(HelixAction::MoveCharRight), None)),
-            (
-                KeyCode::Char('a'),
-                (Some(HelixAction::MoveCharRight), Some(HelixMode::Insert)),
-            ),
-        ];
-
-        Self::add_bindings(machine, HelixMode::Insert, &insert_bindings);
-        Self::add_bindings(machine, HelixMode::Normal, &normal_bindings);
-    }
-}
 
 /// A minimal custom edit mode example for Helix-style integrations.
 pub struct Helix {
@@ -278,6 +123,7 @@ impl EditMode for Helix {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::enums::EditCommand;
     use crossterm::event::{Event, KeyEventKind, KeyEventState};
     use rstest::rstest;
 
