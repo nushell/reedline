@@ -11,6 +11,7 @@ pub use columnar_menu::ColumnarMenu;
 pub use description_menu::DescriptionMenu;
 pub use ide_menu::DescriptionMode;
 pub use ide_menu::IdeMenu;
+pub use list_menu::DescriptionPosition;
 pub use list_menu::ListMenu;
 use nu_ansi_term::{Color, Style};
 
