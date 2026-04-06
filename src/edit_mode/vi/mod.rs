@@ -3,7 +3,9 @@ mod motion;
 mod parser;
 mod vi_keybindings;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use std::str::FromStr;
+
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
 use self::motion::ViCharSearch;
@@ -11,7 +13,7 @@ use self::motion::ViCharSearch;
 use super::EditMode;
 use crate::{
     edit_mode::{keybindings::Keybindings, vi::parser::parse},
-    enums::{EditCommand, ReedlineEvent, ReedlineRawEvent},
+    enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
     PromptEditMode, PromptViMode,
 };
 
@@ -20,6 +22,19 @@ enum ViMode {
     Normal,
     Insert,
     Visual,
+}
+
+impl FromStr for ViMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "normal" => Ok(ViMode::Normal),
+            "insert" => Ok(ViMode::Insert),
+            "visual" => Ok(ViMode::Visual),
+            _ => Err(()),
+        }
+    }
 }
 
 /// This parses incoming input `Event`s like a Vi-Style editor
@@ -89,11 +104,10 @@ impl EditMode for Vi {
                             self.cache.clear();
                             ReedlineEvent::None
                         } else if res.is_complete(self.mode) {
-                            if let Some(mode) = res.changes_mode() {
+                            let event = res.to_reedline_event(self);
+                            if let Some(mode) = res.changes_mode(self.mode) {
                                 self.mode = mode;
                             }
-
-                            let event = res.to_reedline_event(self);
                             self.cache.clear();
                             event
                         } else {
@@ -145,21 +159,42 @@ impl EditMode for Vi {
                     self.mode = ViMode::Normal;
                     ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
                 }
-                (_, KeyModifiers::NONE, KeyCode::Enter) => {
-                    self.mode = ViMode::Insert;
-                    ReedlineEvent::Enter
-                }
                 (ViMode::Normal | ViMode::Visual, _, _) => self
                     .normal_keybindings
                     .find_binding(modifiers, code)
-                    .unwrap_or(ReedlineEvent::None),
+                    .unwrap_or_else(|| {
+                        // Default Enter behavior when no custom binding
+                        if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
+                            self.mode = ViMode::Insert;
+                            ReedlineEvent::Enter
+                        } else {
+                            ReedlineEvent::None
+                        }
+                    }),
                 (ViMode::Insert, _, _) => self
                     .insert_keybindings
                     .find_binding(modifiers, code)
-                    .unwrap_or(ReedlineEvent::None),
+                    .unwrap_or_else(|| {
+                        // Default Enter behavior when no custom binding
+                        if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
+                            ReedlineEvent::Enter
+                        } else {
+                            ReedlineEvent::None
+                        }
+                    }),
             },
 
-            Event::Mouse(_) => ReedlineEvent::Mouse,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(button),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }) => ReedlineEvent::Mouse {
+                column,
+                row,
+                button: button.into(),
+            },
+            Event::Mouse(_) => ReedlineEvent::None,
             Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
             Event::FocusGained => ReedlineEvent::None,
             Event::FocusLost => ReedlineEvent::None,
@@ -175,6 +210,19 @@ impl EditMode for Vi {
             ViMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
         }
     }
+
+    fn handle_mode_specific_event(&mut self, event: ReedlineEvent) -> EventStatus {
+        match event {
+            ReedlineEvent::ViChangeMode(mode_str) => match ViMode::from_str(&mode_str) {
+                Ok(mode) => {
+                    self.mode = mode;
+                    EventStatus::Handled
+                }
+                Err(_) => EventStatus::Inapplicable,
+            },
+            _ => EventStatus::Inapplicable,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -185,11 +233,9 @@ mod test {
     #[test]
     fn esc_leads_to_normal_mode_test() {
         let mut vi = Vi::default();
-        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
-            KeyCode::Esc,
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
+        let esc =
+            ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+                .unwrap();
         let result = vi.parse_event(esc);
 
         assert_eq!(
@@ -215,7 +261,7 @@ mod test {
             ..Default::default()
         };
 
-        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let esc = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('e'),
             KeyModifiers::NONE,
         )))
@@ -241,9 +287,35 @@ mod test {
             ..Default::default()
         };
 
-        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let esc = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('$'),
             KeyModifiers::SHIFT,
+        )))
+        .unwrap();
+        let result = vi.parse_event(esc);
+
+        assert_eq!(result, ReedlineEvent::CtrlD);
+    }
+
+    #[test]
+    fn keybinding_with_super_modifier_test() {
+        let mut keybindings = default_vi_normal_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::SUPER,
+            KeyCode::Char('$'),
+            ReedlineEvent::CtrlD,
+        );
+
+        let mut vi = Vi {
+            insert_keybindings: default_vi_insert_keybindings(),
+            normal_keybindings: keybindings,
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let esc = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('$'),
+            KeyModifiers::SUPER,
         )))
         .unwrap();
         let result = vi.parse_event(esc);
@@ -261,7 +333,7 @@ mod test {
             ..Default::default()
         };
 
-        let esc = ReedlineRawEvent::convert_from(Event::Key(KeyEvent::new(
+        let esc = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
             KeyCode::Char('q'),
             KeyModifiers::NONE,
         )))

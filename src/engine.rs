@@ -27,13 +27,18 @@ use {
             FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
             HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
-        painting::{Painter, PainterSuspendedState, PromptLines},
+        painting::{Painter, PainterSuspendedState, PromptLines, RenderSnapshot},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
-        terminal_extensions::{bracketed_paste::BracketedPasteGuard, kitty::KittyProtocolGuard},
+        terminal_extensions::{
+            bracketed_paste::BracketedPasteGuard,
+            kitty::KittyProtocolGuard,
+            semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
+        },
         utils::text_manipulation,
-        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, Prompt,
-        PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
+        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton,
+        Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult,
+        Validator,
     },
     crossterm::{
         cursor::{SetCursorStyle, Show},
@@ -42,7 +47,14 @@ use {
         terminal, QueueableCommand,
     },
     std::{
-        fs::File, io, io::Result, io::Write, process::Command, time::Duration, time::SystemTime,
+        fs::File,
+        io,
+        io::Result,
+        io::Write,
+        process::Command,
+        sync::{atomic::AtomicBool, Arc},
+        time::Duration,
+        time::SystemTime,
     },
 };
 
@@ -51,12 +63,16 @@ use {
 // a POLL_WAIT of zero means that every single event is treated as soon as it
 // arrives. This doesn't allow for the possibility of more than 1 event
 // happening at the same time.
-const POLL_WAIT: u64 = 10;
-// Since a paste event is multiple Event::Key events happening at the same time, we specify
-// how many events should be in the crossterm_events vector before it is considered
-// a paste. 10 events in 10 milliseconds is conservative enough (unlikely somebody
-// will type more than 10 characters in 10 milliseconds)
+const POLL_WAIT: Duration = Duration::from_millis(100);
+// Since a paste event is multiple `Event::Key` events happening at the same
+// time, we specify how many events should be in the `crossterm_events` vector
+// before it is considered a paste. 10 events is conservative enough.
 const EVENTS_THRESHOLD: usize = 10;
+
+/// Default maximum time Reedline will block on input before yielding control
+/// for features that require periodic processing (e.g., external printer,
+/// idle callback).
+const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Determines if inputs should be used to extend the regular line buffer,
 /// traverse the history in the standard prompt or edit the search string in the
@@ -74,6 +90,24 @@ enum InputMode {
     /// Either bash style up/down history or fish style prefix search,
     /// Edits directly switch to [`InputMode::Regular`]
     HistoryTraversal,
+}
+
+/// Configuration for mouse click-to-cursor support.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum MouseClickMode {
+    /// Disable mouse click handling.
+    #[default]
+    Disabled,
+    /// Enable mouse click handling without emitting OSC 133 markers.
+    Enabled,
+    /// Enable mouse click handling and emit OSC 133 markers with `click_events=1`.
+    EnabledWithOsc133,
+}
+
+impl MouseClickMode {
+    fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled | Self::EnabledWithOsc133)
+    }
 }
 
 /// Line editor engine
@@ -112,6 +146,7 @@ pub struct Reedline {
     // State of the painter after a `ReedlineEvent::ExecuteHostCommand` was requested, used after
     // execution to decide if we can re-use the previous prompt or paint a new one.
     suspended_state: Option<PainterSuspendedState>,
+    last_render_snapshot: Option<RenderSnapshot>,
 
     // Validator
     validator: Option<Box<dyn Validator>>,
@@ -142,6 +177,9 @@ pub struct Reedline {
     // Use ansi coloring or not
     use_ansi_coloring: bool,
 
+    // Whether to enable mouse click-to-cursor functionality
+    mouse_click_mode: MouseClickMode,
+
     // Current working directory as defined by the application. If set, it will
     // override the actual working directory of the process.
     cwd: Option<String>,
@@ -161,8 +199,25 @@ pub struct Reedline {
     // Manage optional kitty protocol
     kitty_protocol: KittyProtocolGuard,
 
+    // Whether lines should be accepted immediately
+    immediately_accept: bool,
+
+    // External break signal: when set to `true`, `read_line()` will return
+    // `Signal::ExternalBreak` with the current buffer contents.
+    break_signal: Option<Arc<AtomicBool>>,
+
+    // Maximum time to block on input before yielding control for features that
+    // require periodic processing (external printer, idle callback).
+    // Only used when external_printer or idle_callback is configured.
+    poll_interval: Duration,
+
     #[cfg(feature = "external_printer")]
     external_printer: Option<ExternalPrinter<String>>,
+
+    // Callback function that is called periodically while waiting for input.
+    // Useful for processing external events (e.g., GUI updates) during idle time.
+    #[cfg(feature = "idle_callback")]
+    idle_callback: Option<Box<dyn FnMut() + Send>>,
 }
 
 struct BufferEditor {
@@ -216,6 +271,7 @@ impl Reedline {
             history_cursor_on_excluded: false,
             input_mode: InputMode::Regular,
             suspended_state: None,
+            last_render_snapshot: None,
             painter,
             transient_prompt: None,
             edit_mode,
@@ -228,14 +284,20 @@ impl Reedline {
             hide_hints: false,
             validator,
             use_ansi_coloring: true,
+            mouse_click_mode: MouseClickMode::default(),
             cwd: None,
             menus: Vec::new(),
             buffer_editor: None,
             cursor_shapes: None,
             bracketed_paste: BracketedPasteGuard::default(),
             kitty_protocol: KittyProtocolGuard::default(),
+            immediately_accept: false,
+            break_signal: None,
+            poll_interval: DEFAULT_POLL_INTERVAL,
             #[cfg(feature = "external_printer")]
             external_printer: None,
+            #[cfg(feature = "idle_callback")]
+            idle_callback: None,
         }
     }
 
@@ -362,6 +424,23 @@ impl Reedline {
     #[must_use]
     pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
         self.use_ansi_coloring = use_ansi_coloring;
+        self
+    }
+
+    /// Configure mouse click-to-cursor support.
+    ///
+    /// Use [`MouseClickMode::Enabled`] to handle click events when your host shell
+    /// emits OSC 133 markers. Use [`MouseClickMode::EnabledWithOsc133`] to have
+    /// Reedline emit OSC 133 markers with `click_events=1` so supporting terminals
+    /// can send click events.
+    /// See: https://sw.kovidgoyal.net/kitty/shell-integration/#notes-for-shell-developers
+    #[must_use]
+    pub fn with_mouse_click(mut self, mode: MouseClickMode) -> Self {
+        self.mouse_click_mode = mode;
+        if matches!(mode, MouseClickMode::EnabledWithOsc133) {
+            self.painter
+                .set_semantic_markers(Some(Osc133ClickEventsMarkers::boxed()));
+        }
         self
     }
 
@@ -505,6 +584,20 @@ impl Reedline {
         self
     }
 
+    /// A builder that configures semantic prompt markers for terminal integration.
+    ///
+    /// This enables semantic prompt support for terminals that support it, such as Ghostty.
+    /// Use `Osc133Markers::boxed()` for standard terminal support or `Osc633Markers::boxed()`
+    /// for VS Code integrated terminal support.
+    #[must_use]
+    pub fn with_semantic_markers(
+        mut self,
+        markers: Option<Box<dyn SemanticPromptMarkers>>,
+    ) -> Self {
+        self.painter.set_semantic_markers(markers);
+        self
+    }
+
     /// A builder which configures the edit mode for your instance of the Reedline engine
     #[must_use]
     pub fn with_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
@@ -538,6 +631,23 @@ impl Reedline {
     /// Do not use this if the cursor shape is set elsewhere, e.g. in the terminal settings or by ansi escape sequences.
     pub fn with_cursor_config(mut self, cursor_shapes: CursorConfig) -> Self {
         self.cursor_shapes = Some(cursor_shapes);
+        self
+    }
+
+    /// A builder that configures whether reedline should immediately accept the input.
+    pub fn with_immediately_accept(mut self, immediately_accept: bool) -> Self {
+        self.immediately_accept = immediately_accept;
+        self
+    }
+
+    /// A builder that configures an external break signal.
+    ///
+    /// When the [`AtomicBool`] is set to `true` by an external thread,
+    /// [`Reedline::read_line()`] will return [`Signal::ExternalBreak`] with the
+    /// current buffer contents. The flag is automatically reset to `false`
+    /// after being consumed.
+    pub fn with_break_signal(mut self, signal: Arc<AtomicBool>) -> Self {
+        self.break_signal = Some(signal);
         self
     }
 
@@ -687,7 +797,7 @@ impl Reedline {
         self.painter
             .initialize_prompt_position(self.suspended_state.as_ref())?;
         if self.suspended_state.is_some() {
-            // Last editor was suspended to run a ExecuteHostCommand event,
+            // Last editor was suspended (ExecuteHostCommand or ExternalBreak),
             // we are resuming operation now.
             self.suspended_state = None;
         }
@@ -695,11 +805,23 @@ impl Reedline {
 
         self.repaint(prompt)?;
 
-        let mut crossterm_events: Vec<ReedlineRawEvent> = vec![];
-        let mut reedline_events: Vec<ReedlineEvent> = vec![];
-
         loop {
-            let mut paste_enter_state = false;
+            // Call idle callback if set (for processing external events like GUI updates)
+            #[cfg(feature = "idle_callback")]
+            if let Some(ref mut callback) = self.idle_callback {
+                callback();
+            }
+
+            if let Some(ref signal) = self.break_signal {
+                if signal.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                    let buffer = self.editor.get_buffer().to_string();
+                    self.input_mode = InputMode::Regular;
+                    self.last_render_snapshot = None;
+                    self.suspended_state = Some(self.painter.state_before_suspension());
+                    self.editor.reset_undo_stack();
+                    return Ok(Signal::ExternalBreak(buffer));
+                }
+            }
 
             #[cfg(feature = "external_printer")]
             if let Some(ref external_printer) = self.external_printer {
@@ -716,76 +838,103 @@ impl Reedline {
                 }
             }
 
-            let mut latest_resize = None;
-            loop {
-                match event::read()? {
-                    Event::Resize(x, y) => {
-                        latest_resize = Some((x, y));
-                    }
-                    enter @ Event::Key(KeyEvent {
-                        code: KeyCode::Enter,
-                        modifiers: KeyModifiers::NONE,
-                        ..
-                    }) => {
-                        let enter = ReedlineRawEvent::convert_from(enter);
-                        if let Some(enter) = enter {
-                            crossterm_events.push(enter);
-                            // Break early to check if the input is complete and
-                            // can be send to the hosting application. If
-                            // multiple complete entries are submitted, events
-                            // are still in the crossterm queue for us to
-                            // process.
-                            paste_enter_state = crossterm_events.len() > EVENTS_THRESHOLD;
-                            break;
-                        }
-                    }
-                    x => {
-                        let raw_event = ReedlineRawEvent::convert_from(x);
-                        if let Some(evt) = raw_event {
-                            crossterm_events.push(evt);
-                        }
-                    }
-                }
-
-                // There could be multiple events queued up!
-                // pasting text, resizes, blocking this thread (e.g. during debugging)
-                // We should be able to handle all of them as quickly as possible without causing unnecessary output steps.
-                if !event::poll(Duration::from_millis(POLL_WAIT))? {
-                    break;
+            // Helper function that returns true if the input is complete and
+            // can be sent to the hosting application.
+            fn completed(events: &[Event]) -> bool {
+                if let Some(event) = events.last() {
+                    matches!(
+                        event,
+                        Event::Key(KeyEvent {
+                            code: KeyCode::Enter,
+                            modifiers: KeyModifiers::NONE,
+                            ..
+                        })
+                    )
+                } else {
+                    false
                 }
             }
 
-            if let Some((x, y)) = latest_resize {
+            let mut events: Vec<Event> = vec![];
+
+            if !self.immediately_accept {
+                // Determine if we need to poll (non-blocking) or can block on input.
+                // We need polling if external_printer or idle_callback is configured,
+                // using the shared poll_interval for the timeout.
+                let needs_polling = {
+                    #[allow(unused_mut)]
+                    let mut result = self.break_signal.is_some();
+                    #[cfg(feature = "external_printer")]
+                    if self.external_printer.is_some() {
+                        result = true;
+                    }
+                    #[cfg(feature = "idle_callback")]
+                    if self.idle_callback.is_some() {
+                        result = true;
+                    }
+                    result
+                };
+
+                if needs_polling {
+                    if event::poll(self.poll_interval)? {
+                        events.push(crossterm::event::read()?);
+                    }
+                } else {
+                    // Block until we receive an event
+                    events.push(crossterm::event::read()?);
+                }
+
+                // Receive all events in the queue without blocking. Will stop when
+                // a line of input is completed.
+                while !completed(&events) && event::poll(Duration::from_millis(0))? {
+                    events.push(crossterm::event::read()?);
+                }
+
+                // If we believe there's text pasting or resizing going on, batch
+                // more events at the cost of a slight delay.
+                if events.len() > EVENTS_THRESHOLD
+                    || events.iter().any(|e| matches!(e, Event::Resize(_, _)))
+                {
+                    while !completed(&events) && event::poll(POLL_WAIT)? {
+                        events.push(crossterm::event::read()?);
+                    }
+                }
+            }
+
+            // Convert `Event` into `ReedlineEvent`. Also, fuse consecutive
+            // `ReedlineEvent::EditCommand` into one. Also, if there're multiple
+            // `ReedlineEvent::Resize`, only keep the last one.
+            let mut reedline_events: Vec<ReedlineEvent> = vec![];
+            let mut edits = vec![];
+            let mut resize = None;
+            for event in events {
+                if let Ok(event) = ReedlineRawEvent::try_from(event) {
+                    match self.edit_mode.parse_event(event) {
+                        ReedlineEvent::Edit(edit) => edits.extend(edit),
+                        ReedlineEvent::Resize(x, y) => resize = Some((x, y)),
+                        event => {
+                            if !edits.is_empty() {
+                                reedline_events
+                                    .push(ReedlineEvent::Edit(std::mem::take(&mut edits)));
+                            }
+                            reedline_events.push(event);
+                        }
+                    }
+                }
+            }
+            if !edits.is_empty() {
+                reedline_events.push(ReedlineEvent::Edit(edits));
+            }
+            if let Some((x, y)) = resize {
                 reedline_events.push(ReedlineEvent::Resize(x, y));
             }
-
-            // Accelerate pasted text by fusing `EditCommand`s
-            //
-            // (Text should only be `EditCommand::InsertChar`s)
-            let mut last_edit_commands = None;
-            for event in crossterm_events.drain(..) {
-                match (&mut last_edit_commands, self.edit_mode.parse_event(event)) {
-                    (None, ReedlineEvent::Edit(ec)) => {
-                        last_edit_commands = Some(ec);
-                    }
-                    (None, other_event) => {
-                        reedline_events.push(other_event);
-                    }
-                    (Some(ref mut last_ecs), ReedlineEvent::Edit(ec)) => {
-                        last_ecs.extend(ec);
-                    }
-                    (ref mut a @ Some(_), other_event) => {
-                        reedline_events.push(ReedlineEvent::Edit(a.take().unwrap()));
-
-                        reedline_events.push(other_event);
-                    }
-                }
-            }
-            if let Some(ec) = last_edit_commands {
-                reedline_events.push(ReedlineEvent::Edit(ec));
+            if self.immediately_accept {
+                reedline_events.push(ReedlineEvent::Submit);
             }
 
-            for event in reedline_events.drain(..) {
+            // Handle reedline events.
+            let mut need_repaint = false;
+            for event in reedline_events {
                 match self.handle_event(prompt, event)? {
                     EventStatus::Exits(signal) => {
                         // Check if we are merely suspended (to process an ExecuteHostCommand event)
@@ -798,14 +947,15 @@ impl Reedline {
                         return Ok(signal);
                     }
                     EventStatus::Handled => {
-                        if !paste_enter_state {
-                            self.repaint(prompt)?;
-                        }
+                        need_repaint = true;
                     }
                     EventStatus::Inapplicable => {
                         // Nothing changed, no need to repaint
                     }
                 }
+            }
+            if need_repaint {
+                self.repaint(prompt)?;
             }
         }
     }
@@ -869,6 +1019,7 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
+                self.last_render_snapshot = None;
                 self.suspended_state = Some(self.painter.state_before_suspension());
                 Ok(EventStatus::Exits(Signal::Success(host_command)))
             }
@@ -876,10 +1027,20 @@ impl Reedline {
                 self.run_history_commands(&commands);
                 Ok(EventStatus::Handled)
             }
-            ReedlineEvent::Mouse => Ok(EventStatus::Handled),
+            ReedlineEvent::Mouse {
+                column,
+                row,
+                button,
+            } => {
+                if button == MouseButton::Left {
+                    self.handle_mouse_click(column, row)?;
+                }
+                Ok(EventStatus::Handled)
+            }
             ReedlineEvent::Resize(width, height) => {
+                self.last_render_snapshot = None;
                 self.painter.handle_resize(width, height);
-                Ok(EventStatus::Inapplicable)
+                Ok(EventStatus::Handled)
             }
             ReedlineEvent::Repaint => {
                 // A handled Event causes a repaint
@@ -910,6 +1071,8 @@ impl Reedline {
             // TODO: Check if events should be handled
             ReedlineEvent::Right
             | ReedlineEvent::Left
+            | ReedlineEvent::ToStart
+            | ReedlineEvent::ToEnd
             | ReedlineEvent::Multiple(_)
             | ReedlineEvent::None
             | ReedlineEvent::HistoryHintWordComplete
@@ -922,7 +1085,8 @@ impl Reedline {
             | ReedlineEvent::MenuLeft
             | ReedlineEvent::MenuRight
             | ReedlineEvent::MenuPageNext
-            | ReedlineEvent::MenuPagePrevious => Ok(EventStatus::Inapplicable),
+            | ReedlineEvent::MenuPagePrevious
+            | ReedlineEvent::ViChangeMode(_) => Ok(EventStatus::Inapplicable),
         }
     }
 
@@ -965,17 +1129,26 @@ impl Reedline {
                 }
                 Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::MenuNext => match self.active_menu() {
-                None => Ok(EventStatus::Inapplicable),
-                Some(menu) => {
+            ReedlineEvent::MenuNext => {
+                if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
                     if menu.get_values().len() == 1 && menu.can_quick_complete() {
                         self.handle_editor_event(prompt, ReedlineEvent::Enter)
                     } else {
+                        if self.partial_completions {
+                            menu.can_partially_complete(
+                                self.quick_completions,
+                                &mut self.editor,
+                                self.completer.as_mut(),
+                                self.history.as_ref(),
+                            );
+                        }
                         menu.menu_event(MenuEvent::NextElement);
                         Ok(EventStatus::Handled)
                     }
+                } else {
+                    Ok(EventStatus::Inapplicable)
                 }
-            },
+            }
             ReedlineEvent::MenuPrevious => {
                 self.active_menu()
                     .map_or(Ok(EventStatus::Inapplicable), |menu| {
@@ -1055,6 +1228,7 @@ impl Reedline {
             }
             ReedlineEvent::Esc => {
                 self.deactivate_menus();
+                self.editor.clear_selection();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::CtrlD => {
@@ -1139,6 +1313,7 @@ impl Reedline {
                 }
             }
             ReedlineEvent::ExecuteHostCommand(host_command) => {
+                self.last_render_snapshot = None;
                 self.suspended_state = Some(self.painter.state_before_suspension());
                 Ok(EventStatus::Exits(Signal::Success(host_command)))
             }
@@ -1187,8 +1362,9 @@ impl Reedline {
             }
             ReedlineEvent::OpenEditor => self.open_editor().map(|_| EventStatus::Handled),
             ReedlineEvent::Resize(width, height) => {
+                self.last_render_snapshot = None;
                 self.painter.handle_resize(width, height);
-                Ok(EventStatus::Inapplicable)
+                Ok(EventStatus::Handled)
             }
             ReedlineEvent::Repaint => {
                 // A handled Event causes a repaint
@@ -1216,6 +1392,14 @@ impl Reedline {
             }
             ReedlineEvent::Right => {
                 self.run_edit_commands(&[EditCommand::MoveRight { select: false }]);
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::ToStart => {
+                self.editor.move_to_start(false);
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::ToEnd => {
+                self.editor.move_to_end(false);
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::SearchHistory => {
@@ -1257,8 +1441,39 @@ impl Reedline {
                 // Exhausting the event handlers is still considered handled
                 Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::None | ReedlineEvent::Mouse => Ok(EventStatus::Inapplicable),
+            ReedlineEvent::ViChangeMode(_) => Ok(self.edit_mode.handle_mode_specific_event(event)),
+            ReedlineEvent::Mouse {
+                column,
+                row,
+                button,
+            } => {
+                if button == MouseButton::Left {
+                    self.handle_mouse_click(column, row)?;
+                }
+                Ok(EventStatus::Handled)
+            }
+            ReedlineEvent::None => Ok(EventStatus::Inapplicable),
         }
+    }
+
+    fn handle_mouse_click(&mut self, column: u16, row: u16) -> Result<()> {
+        let snapshot = match &self.last_render_snapshot {
+            Some(snapshot) => snapshot,
+            None => return Ok(()),
+        };
+        if self.input_mode != InputMode::Regular || self.menus.iter().any(|m| m.is_active()) {
+            return Ok(());
+        }
+        let buffer = self.editor.get_buffer();
+        if let Some(offset) = self.painter.screen_to_buffer_offset(snapshot, column, row) {
+            if buffer.is_char_boundary(offset) {
+                self.editor.edit_buffer(
+                    |buf| buf.set_insertion_point(offset),
+                    UndoBehavior::MoveCursor,
+                );
+            }
+        }
+        Ok(())
     }
 
     fn active_menu(&mut self) -> Option<&mut ReedlineMenu> {
@@ -1272,9 +1487,7 @@ impl Reedline {
     }
 
     fn previous_history(&mut self) {
-        if self.history_cursor_on_excluded {
-            self.history_cursor_on_excluded = false;
-        }
+        self.history_cursor_on_excluded = false;
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
             self.history_cursor = HistoryCursor::new(
@@ -1294,8 +1507,6 @@ impl Reedline {
         }
         self.update_buffer_from_history();
         self.editor.move_to_start(false);
-        self.editor
-            .update_undo_state(UndoBehavior::HistoryNavigation);
         self.editor.move_to_line_end(false);
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
@@ -1458,12 +1669,20 @@ impl Reedline {
                 HistoryNavigationQuery::Normal(_)
             ) {
                 if let Some(string) = self.history_cursor.string_at_cursor() {
-                    self.editor
-                        .set_buffer(string, UndoBehavior::HistoryNavigation);
+                    // NOTE: `set_buffer` resets the insertion point,
+                    // which we should avoid during history navigation through the same buffer
+                    // https://github.com/nushell/reedline/pull/899
+                    if string != self.editor.get_buffer() {
+                        self.editor
+                            .set_buffer(string, UndoBehavior::HistoryNavigation);
+                    }
                 }
             }
             self.input_mode = InputMode::Regular;
         }
+
+        // Update editor with current edit mode for mode-aware selection behavior
+        self.editor.set_edit_mode(self.edit_mode.edit_mode());
 
         // Run the commands over the edit buffer
         for command in commands {
@@ -1477,7 +1696,7 @@ impl Reedline {
             // If we're at the top, move to previous history
             self.previous_history();
         } else {
-            self.editor.move_line_up();
+            self.editor.move_line_up(false);
         }
     }
 
@@ -1487,7 +1706,7 @@ impl Reedline {
             // If we're at the top, move to previous history
             self.next_history();
         } else {
-            self.editor.move_line_down();
+            self.editor.move_line_down(false);
         }
     }
 
@@ -1658,10 +1877,10 @@ impl Reedline {
         match &mut self.buffer_editor {
             Some(BufferEditor {
                 ref mut command,
-                temp_file,
+                ref temp_file,
             }) => {
                 {
-                    let mut file = File::create(&temp_file)?;
+                    let mut file = File::create(temp_file)?;
                     write!(file, "{}", self.editor.get_buffer())?;
                 }
                 {
@@ -1748,6 +1967,7 @@ impl Reedline {
             cursor_position_in_buffer,
             prompt,
             self.use_ansi_coloring,
+            self.painter.semantic_markers(),
         );
 
         let hint: String = if self.hints_active() {
@@ -1807,7 +2027,22 @@ impl Reedline {
             menu,
             self.use_ansi_coloring,
             &self.cursor_shapes,
-        )
+        )?;
+
+        if self.mouse_click_mode.is_enabled() {
+            if let Some(layout) = &self.painter.last_layout {
+                let buffer = self.editor.get_buffer();
+                let (raw_before, raw_after) = buffer.split_at(cursor_position_in_buffer);
+                self.last_render_snapshot = Some(
+                    self.painter
+                        .render_snapshot(&lines, menu, raw_before, raw_after, layout),
+                );
+            }
+        } else {
+            self.last_render_snapshot = None;
+        }
+
+        Ok(())
     }
 
     /// Adds an external printer
@@ -1817,6 +2052,59 @@ impl Reedline {
     #[cfg(feature = "external_printer")]
     pub fn with_external_printer(mut self, printer: ExternalPrinter<String>) -> Self {
         self.external_printer = Some(printer);
+        self
+    }
+
+    /// Sets the poll interval used when features that require periodic processing
+    /// are active (e.g., external printer, idle callback).
+    ///
+    /// This controls how frequently Reedline yields control back to these features
+    /// while waiting for user input. The default is 100ms.
+    ///
+    /// Common values are 33ms (~30fps) for UI updates or 100ms for less frequent tasks.
+    ///
+    /// Note: This setting only takes effect when an external printer or idle callback
+    /// is configured. Without these features, Reedline blocks until input is received.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use reedline::Reedline;
+    ///
+    /// let editor = Reedline::create()
+    ///     .with_poll_interval(Duration::from_millis(50));
+    /// ```
+    pub fn with_poll_interval(mut self, interval: Duration) -> Self {
+        self.poll_interval = interval;
+        self
+    }
+
+    /// Sets an idle callback that is called periodically while waiting for user input.
+    ///
+    /// This is useful for applications that need to process external events
+    /// (such as GUI updates, network events, or timer-based operations) while
+    /// the user is typing or the editor is waiting for input.
+    ///
+    /// Use [`with_poll_interval`](Self::with_poll_interval) to control how frequently
+    /// the callback is invoked (default: 100ms).
+    ///
+    /// ## Required feature:
+    /// `idle_callback`
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use reedline::Reedline;
+    ///
+    /// let editor = Reedline::create()
+    ///     .with_poll_interval(Duration::from_millis(33))
+    ///     .with_idle_callback(Box::new(|| {
+    ///         // Process external events here
+    ///     }));
+    /// ```
+    #[cfg(feature = "idle_callback")]
+    pub fn with_idle_callback(mut self, callback: Box<dyn FnMut() + Send>) -> Self {
+        self.idle_callback = Some(callback);
         self
     }
 
@@ -1880,8 +2168,190 @@ impl Reedline {
     }
 }
 
-#[test]
-fn thread_safe() {
-    fn f<S: Send>(_: S) {}
-    f(Reedline::create());
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terminal_extensions::semantic_prompt::PromptKind;
+    use crate::DefaultPrompt;
+
+    #[test]
+    fn test_cursor_position_after_multiline_history_navigation() {
+        // Test for https://github.com/nushell/reedline/pull/899
+        // Ensure that after navigating to a multiline history entry and then
+        // running edit commands, the cursor doesn't jump unexpectedly.
+        // The fix prevents set_buffer() from being called unnecessarily,
+        // which would reset the insertion point.
+
+        let mut reedline = Reedline::create();
+
+        // Add a multiline entry to history
+        let multiline_command = "echo 'line 1'\necho 'line 2'\necho 'line 3'";
+        let history_item = HistoryItem::from_command_line(multiline_command);
+        reedline
+            .history
+            .save(history_item)
+            .expect("Failed to save history");
+
+        // Navigate to previous history
+        reedline.previous_history();
+
+        // Get the initial insertion point after history navigation
+        let initial_insertion_point = reedline.current_insertion_point();
+
+        // The buffer should contain our multiline command
+        assert_eq!(reedline.current_buffer_contents(), multiline_command);
+
+        // After the fix, previous_history() positions cursor at end of first line
+        // (after move_to_start + move_to_line_end)
+        let first_line_end = multiline_command.find('\n').unwrap();
+        assert_eq!(initial_insertion_point, first_line_end);
+
+        // Now simulate pressing the right arrow key, which should move cursor right
+        // Without the fix, set_buffer() would be called and reset the insertion point,
+        // causing the cursor to jump unexpectedly. With the fix, it stays where it is
+        // and moves correctly.
+        reedline.run_edit_commands(&[EditCommand::MoveRight { select: false }]);
+
+        let after_move_insertion_point = reedline.current_insertion_point();
+
+        // The cursor should have moved right by 1 from where it was
+        assert_eq!(after_move_insertion_point, initial_insertion_point + 1);
+
+        // The buffer should still be unchanged
+        assert_eq!(reedline.current_buffer_contents(), multiline_command);
+    }
+
+    #[test]
+    fn thread_safe() {
+        fn f<S: Send>(_: S) {}
+        f(Reedline::create());
+    }
+
+    #[test]
+    #[cfg(feature = "idle_callback")]
+    fn thread_safe_with_idle_callback() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        fn f<S: Send>(_: S) {}
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        let reedline = Reedline::create()
+            .with_poll_interval(Duration::from_millis(100))
+            .with_idle_callback(Box::new(move || {
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+            }));
+
+        // Verify that Reedline with idle_callback is still Send
+        f(reedline);
+    }
+
+    #[test]
+    #[cfg(feature = "idle_callback")]
+    fn idle_callback_builder_pattern() {
+        // Test that with_idle_callback can be chained with other builder methods
+        let _reedline = Reedline::create()
+            .with_quick_completions(true)
+            .with_poll_interval(Duration::from_millis(33))
+            .with_idle_callback(Box::new(|| {}))
+            .with_partial_completions(true);
+    }
+
+    #[test]
+    fn mouse_click_moves_cursor_in_regular_mode() {
+        let mut reedline = Reedline::create().with_mouse_click(MouseClickMode::Enabled);
+        let prompt = DefaultPrompt::default();
+
+        reedline
+            .editor
+            .set_buffer("hello".to_string(), UndoBehavior::CreateUndoPoint);
+        reedline
+            .editor
+            .edit_buffer(|buf| buf.set_insertion_point(5), UndoBehavior::MoveCursor);
+
+        reedline.last_render_snapshot = Some(RenderSnapshot {
+            screen_width: 20,
+            screen_height: 10,
+            prompt_start_row: 0,
+            prompt_height: 1,
+            large_buffer: false,
+            prompt_str_left: "".to_string(),
+            prompt_indicator: "".to_string(),
+            before_cursor: "hello".to_string(),
+            after_cursor: "".to_string(),
+            first_buffer_col: 0,
+            menu_active: false,
+            menu_start_row: None,
+            large_buffer_extra_rows_after_prompt: None,
+            large_buffer_offset: None,
+            right_prompt: None,
+        });
+
+        let result = reedline.handle_event(
+            &prompt,
+            ReedlineEvent::Mouse {
+                column: 0,
+                row: 0,
+                button: MouseButton::Left,
+            },
+        );
+
+        assert!(matches!(result, Ok(EventStatus::Handled)));
+        assert_eq!(reedline.current_insertion_point(), 0);
+    }
+
+    #[test]
+    fn mouse_click_osc133_sets_semantic_markers() {
+        let reedline = Reedline::create().with_mouse_click(MouseClickMode::EnabledWithOsc133);
+        let markers = reedline
+            .painter
+            .semantic_markers()
+            .expect("expected semantic markers");
+
+        assert_eq!(
+            markers.prompt_start(PromptKind::Primary).as_ref(),
+            "\x1b]133;A;k=i;click_events=1\x1b\\"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "helix")]
+    fn with_edit_mode_builder_accepts_custom_helix_mode() {
+        use crate::PromptViMode;
+
+        let reedline = Reedline::create().with_edit_mode(Box::new(crate::Helix));
+
+        assert!(matches!(
+            reedline.prompt_edit_mode(),
+            PromptEditMode::Vi(PromptViMode::Normal)
+        ));
+    }
+
+    #[test]
+    fn break_signal_builder_pattern() {
+        let signal = Arc::new(AtomicBool::new(false));
+        let _reedline = Reedline::create()
+            .with_quick_completions(true)
+            .with_break_signal(signal)
+            .with_partial_completions(true);
+    }
+
+    #[test]
+    fn break_signal_is_send() {
+        fn f<S: Send>(_: S) {}
+        let signal = Arc::new(AtomicBool::new(false));
+        f(Reedline::create().with_break_signal(signal));
+    }
+
+    #[test]
+    fn signal_external_break_pattern_match() {
+        let buffer_content = "some partial input".to_string();
+        let signal = Signal::ExternalBreak(buffer_content.clone());
+        match signal {
+            Signal::ExternalBreak(buf) => assert_eq!(buf, buffer_content),
+            _ => panic!("Expected Signal::ExternalBreak"),
+        }
+    }
 }

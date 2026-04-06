@@ -52,9 +52,13 @@ where
             let _ = input.next();
             ParseResult::Valid(Motion::NextBigWordEnd)
         }
-        Some('0' | '^') => {
+        Some('0') => {
             let _ = input.next();
             ParseResult::Valid(Motion::Start)
+        }
+        Some('^') => {
+            let _ = input.next();
+            ParseResult::Valid(Motion::NonBlankStart)
         }
         Some('$') => {
             let _ = input.next();
@@ -108,6 +112,21 @@ where
             let _ = input.next();
             ParseResult::Valid(Motion::ReverseCharSearch)
         }
+        Some('g') => {
+            let _ = input.next();
+            match input.peek() {
+                Some('g') => {
+                    input.next();
+                    ParseResult::Valid(Motion::FirstLine)
+                }
+                Some(_) => ParseResult::Invalid,
+                None => ParseResult::Incomplete,
+            }
+        }
+        Some('G') => {
+            let _ = input.next();
+            ParseResult::Valid(Motion::LastLine)
+        }
         ch if ch == command_char.as_ref().as_ref() && command_char.is_some() => {
             let _ = input.next();
             ParseResult::Valid(Motion::Line)
@@ -131,7 +150,10 @@ pub enum Motion {
     PreviousBigWord,
     Line,
     Start,
+    NonBlankStart,
     End,
+    FirstLine,
+    LastLine,
     RightUntil(char),
     RightBefore(char),
     LeftUntil(char),
@@ -157,16 +179,22 @@ impl Motion {
                     select: select_mode,
                 }]),
             ]))],
-            Motion::Up => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::MenuUp,
-                ReedlineEvent::Up,
-                // todo: add EditCommand::MoveLineUp
-            ]))],
-            Motion::Down => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::MenuDown,
-                ReedlineEvent::Down,
-                // todo: add EditCommand::MoveLineDown
-            ]))],
+            Motion::Up => vec![if select_mode {
+                ReedlineOption::Edit(EditCommand::MoveLineUp { select: true })
+            } else {
+                ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::MenuUp,
+                    ReedlineEvent::Up,
+                ]))
+            }],
+            Motion::Down => vec![if select_mode {
+                ReedlineOption::Edit(EditCommand::MoveLineDown { select: true })
+            } else {
+                ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::MenuDown,
+                    ReedlineEvent::Down,
+                ]))
+            }],
             Motion::NextWord => vec![ReedlineOption::Edit(EditCommand::MoveWordRightStart {
                 select: select_mode,
             })],
@@ -191,9 +219,24 @@ impl Motion {
             Motion::Start => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart {
                 select: select_mode,
             })],
+            Motion::NonBlankStart => {
+                vec![ReedlineOption::Edit(EditCommand::MoveToLineNonBlankStart {
+                    select: select_mode,
+                })]
+            }
             Motion::End => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd {
                 select: select_mode,
             })],
+            Motion::FirstLine => vec![if select_mode {
+                ReedlineOption::Edit(EditCommand::MoveToStart { select: true })
+            } else {
+                ReedlineOption::Event(ReedlineEvent::ToStart)
+            }],
+            Motion::LastLine => vec![if select_mode {
+                ReedlineOption::Edit(EditCommand::MoveToEnd { select: true })
+            } else {
+                ReedlineOption::Event(ReedlineEvent::ToEnd)
+            }],
             Motion::RightUntil(ch) => {
                 vi_state.last_char_search = Some(ViCharSearch::ToRight(*ch));
                 vec![ReedlineOption::Edit(EditCommand::MoveRightUntil {
@@ -293,6 +336,15 @@ impl ViCharSearch {
             ViCharSearch::ToLeft(c) => EditCommand::CutLeftUntil(*c),
             ViCharSearch::TillRight(c) => EditCommand::CutRightBefore(*c),
             ViCharSearch::TillLeft(c) => EditCommand::CutLeftBefore(*c),
+        }
+    }
+
+    pub fn to_copy(&self) -> EditCommand {
+        match self {
+            ViCharSearch::ToRight(c) => EditCommand::CopyRightUntil(*c),
+            ViCharSearch::TillRight(c) => EditCommand::CopyRightBefore(*c),
+            ViCharSearch::ToLeft(c) => EditCommand::CopyLeftUntil(*c),
+            ViCharSearch::TillLeft(c) => EditCommand::CopyLeftBefore(*c),
         }
     }
 }

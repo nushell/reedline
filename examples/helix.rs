@@ -1,15 +1,17 @@
-// Create a default reedline object to handle user input
-// cargo run --example basic
+// Create a reedline object with the experimental Helix edit mode.
+// cargo run --example helix --features helix
 //
-// You can browse the local (non persistent) history using Up/Down or Ctrl n/p.
+// The current Helix example maps Ctrl-D to exit and uses the default prompt,
+// which renders the active custom mode indicator as "(helix)".
 
-use reedline::{DefaultPrompt, Reedline, Signal};
+use reedline::{DefaultPrompt, Helix, Reedline, Signal};
 use std::io;
 
 fn main() -> io::Result<()> {
-    // Create a new Reedline engine with a local History that is not synchronized to a file.
-    let mut line_editor = Reedline::create();
+    println!("Helix edit mode demo:\nAbort with Ctrl-C");
+
     let prompt = DefaultPrompt::default();
+    let mut line_editor = Reedline::create().with_edit_mode(Box::new(Helix));
 
     loop {
         let sig = line_editor.read_line(&prompt)?;

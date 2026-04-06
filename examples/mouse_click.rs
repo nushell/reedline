@@ -1,15 +1,16 @@
-// Create a default reedline object to handle user input
-// cargo run --example basic
-//
-// You can browse the local (non persistent) history using Up/Down or Ctrl n/p.
+// Enable mouse click-to-cursor support.
+// cargo run --example mouse_click
 
-use reedline::{DefaultPrompt, Reedline, Signal};
+use reedline::{DefaultPrompt, MouseClickMode, Reedline, Signal};
 use std::io;
 
 fn main() -> io::Result<()> {
-    // Create a new Reedline engine with a local History that is not synchronized to a file.
-    let mut line_editor = Reedline::create();
+    let mut line_editor = Reedline::create().with_mouse_click(MouseClickMode::EnabledWithOsc133);
     let prompt = DefaultPrompt::default();
+
+    println!("Mouse click-to-cursor enabled.");
+    println!("Type some text, then click in the line to move the cursor.");
+    println!("Press Enter to submit, Ctrl-D/Ctrl-C to exit.");
 
     loop {
         let sig = line_editor.read_line(&prompt)?;

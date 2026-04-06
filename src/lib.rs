@@ -175,6 +175,15 @@
 //! )));
 //! ```
 //!
+//! ## Enable mouse click-to-cursor
+//!
+//! ```rust,no_run
+//! use reedline::{MouseClickMode, Reedline};
+//!
+//! let mut line_editor =
+//!     Reedline::create().with_mouse_click(MouseClickMode::EnabledWithOsc133);
+//! ```
+//!
 //! ## Crate features
 //!
 //! - `clipboard`: Enable support to use the `SystemClipboard`. Enabling this feature will return a `SystemClipboard` instead of a local clipboard when calling `get_default_clipboard()`.
@@ -185,7 +194,7 @@
 //!
 //! ## Are we prompt yet? (Development status)
 //!
-//! Nushell has now all the basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
+//! Reedline has now all the basic features to become the primary line editor for [nushell](https://github.com/nushell/nushell
 //! )
 //!
 //! - General editing functionality, that should feel familiar coming from other shells (e.g. bash, fish, zsh).
@@ -193,7 +202,7 @@
 //! - Configurable prompt
 //! - Content-aware syntax highlighting.
 //! - Autocompletion (With graphical selection menu or simple cycling inline).
-//! - History with interactive search options (optionally persists to file, can support multilple sessions accessing the same file)
+//! - History with interactive search options (optionally persists to file, can support multiple sessions accessing the same file)
 //! - Fish-style history autosuggestion hints
 //! - Undo support.
 //! - Clipboard integration
@@ -230,13 +239,16 @@ pub use core_editor::Editor;
 pub use core_editor::LineBuffer;
 
 mod enums;
-pub use enums::{EditCommand, ReedlineEvent, ReedlineRawEvent, Signal, UndoBehavior};
+pub use enums::{
+    EditCommand, EditCommandDiscriminants, MouseButton, ReedlineEvent, ReedlineEventDiscriminants,
+    ReedlineRawEvent, Signal, TextObject, TextObjectScope, TextObjectType, UndoBehavior,
+};
 
 mod painting;
 pub use painting::{Painter, StyledText};
 
 mod engine;
-pub use engine::Reedline;
+pub use engine::{MouseClickMode, Reedline};
 
 mod result;
 pub use result::{ReedlineError, ReedlineErrorVariants, Result};
@@ -245,9 +257,9 @@ mod history;
 #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
 pub use history::SqliteBackedHistory;
 pub use history::{
-    CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemId,
-    HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchFilter, SearchQuery,
-    HISTORY_SIZE,
+    CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemExtraInfo,
+    HistoryItemId, HistoryNavigationQuery, HistorySessionId, IgnoreAllExtraInfo, SearchDirection,
+    SearchFilter, SearchQuery, HISTORY_SIZE,
 };
 
 mod prompt;
@@ -257,6 +269,8 @@ pub use prompt::{
 };
 
 mod edit_mode;
+#[cfg(feature = "helix")]
+pub use edit_mode::Helix;
 pub use edit_mode::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     CursorConfig, EditMode, Emacs, Keybindings, Vi,
@@ -278,11 +292,15 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 mod menu;
 pub use menu::{
     menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, DescriptionPosition, IdeMenu,
-    ListMenu, Menu, MenuBuilder, MenuEvent, MenuTextStyle, ReedlineMenu,
+    ListMenu, Menu, MenuBuilder, MenuEvent, MenuSettings, MenuTextStyle, ReedlineMenu,
+    TraversalDirection,
 };
 
 mod terminal_extensions;
 pub use terminal_extensions::kitty_protocol_available;
+pub use terminal_extensions::semantic_prompt::{
+    Osc133ClickEventsMarkers, Osc133Markers, Osc633Markers, PromptKind, SemanticPromptMarkers,
+};
 
 mod utils;
 

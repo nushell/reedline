@@ -198,6 +198,13 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
         KC::Char('n'),
         ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuDown, ReedlineEvent::Down]),
     );
+
+    // Jump to the start/end of the buffer
+    kb.add_binding(KM::ALT, KC::Char('<'), ReedlineEvent::ToStart);
+    kb.add_binding(KM::ALT, KC::Char('>'), ReedlineEvent::ToEnd);
+    // For kitty keyboard protocol
+    kb.add_binding(KM::SHIFT | KM::ALT, KC::Char(','), ReedlineEvent::ToStart);
+    kb.add_binding(KM::SHIFT | KM::ALT, KC::Char('.'), ReedlineEvent::ToEnd);
 }
 
 /// Add basic functionality to edit
@@ -232,6 +239,9 @@ pub fn add_common_edit_bindings(kb: &mut Keybindings) {
         KC::Char('v'),
         edit_bind(EC::PasteSystem),
     );
+    kb.add_binding(KM::ALT, KC::Enter, edit_bind(EC::InsertNewline));
+    kb.add_binding(KM::SHIFT, KC::Enter, edit_bind(EC::InsertNewline));
+    kb.add_binding(KM::CONTROL, KC::Char('j'), ReedlineEvent::Enter);
 }
 
 pub fn add_common_selection_bindings(kb: &mut Keybindings) {
@@ -239,6 +249,16 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
     use KeyCode as KC;
     use KeyModifiers as KM;
 
+    kb.add_binding(
+        KM::SHIFT,
+        KC::Up,
+        edit_bind(EC::MoveLineUp { select: true }),
+    );
+    kb.add_binding(
+        KM::SHIFT,
+        KC::Down,
+        edit_bind(EC::MoveLineDown { select: true }),
+    );
     kb.add_binding(
         KM::SHIFT,
         KC::Left,

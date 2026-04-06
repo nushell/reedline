@@ -38,7 +38,7 @@ pub enum DefaultPromptSegment {
 /// Given a prompt segment, render it to a Cow<str> that we can use to
 /// easily implement [`Prompt`]'s `render_prompt_left` and `render_prompt_right`
 /// functions.
-fn render_prompt_segment(prompt: &DefaultPromptSegment) -> Cow<str> {
+fn render_prompt_segment(prompt: &DefaultPromptSegment) -> Cow<'_, str> {
     match &prompt {
         DefaultPromptSegment::Basic(s) => Cow::Borrowed(s),
         DefaultPromptSegment::WorkingDirectory => {
@@ -51,15 +51,15 @@ fn render_prompt_segment(prompt: &DefaultPromptSegment) -> Cow<str> {
 }
 
 impl Prompt for DefaultPrompt {
-    fn render_prompt_left(&self) -> Cow<str> {
+    fn render_prompt_left(&self) -> Cow<'_, str> {
         render_prompt_segment(&self.left_prompt)
     }
 
-    fn render_prompt_right(&self) -> Cow<str> {
+    fn render_prompt_right(&self) -> Cow<'_, str> {
         render_prompt_segment(&self.right_prompt)
     }
 
-    fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<str> {
+    fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<'_, str> {
         match edit_mode {
             PromptEditMode::Default | PromptEditMode::Emacs => DEFAULT_PROMPT_INDICATOR.into(),
             PromptEditMode::Vi(vi_mode) => match vi_mode {
@@ -70,14 +70,14 @@ impl Prompt for DefaultPrompt {
         }
     }
 
-    fn render_prompt_multiline_indicator(&self) -> Cow<str> {
+    fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
         Cow::Borrowed(DEFAULT_MULTILINE_INDICATOR)
     }
 
     fn render_prompt_history_search_indicator(
         &self,
         history_search: PromptHistorySearch,
-    ) -> Cow<str> {
+    ) -> Cow<'_, str> {
         let prefix = match history_search.status {
             PromptHistorySearchStatus::Passing => "",
             PromptHistorySearchStatus::Failing => "failing ",

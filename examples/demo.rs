@@ -215,6 +215,7 @@ fn main() -> reedline::Result<()> {
             Ok(Signal::CtrlC) => {
                 // Prompt has been cleared and should start on the next line
             }
+            Ok(_) => {}
             Err(err) => {
                 println!("Error: {err:?}");
             }
@@ -246,6 +247,7 @@ fn add_menu_keybindings(keybindings: &mut Keybindings) {
         KeyCode::Tab,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::Menu("completion_menu".to_string()),
+            ReedlineEvent::MenuNext,
             ReedlineEvent::Edit(vec![EditCommand::Complete]),
         ]),
     );

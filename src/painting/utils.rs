@@ -5,7 +5,7 @@ use unicode_width::UnicodeWidthStr;
 ///
 /// Needed for correct output in raw mode.
 /// Only replaces solitary LF with CRLF.
-pub(crate) fn coerce_crlf(input: &str) -> Cow<str> {
+pub(crate) fn coerce_crlf(input: &str) -> Cow<'_, str> {
     let mut result = Cow::Borrowed(input);
     let mut cursor: usize = 0;
     for (idx, _) in input.match_indices('\n') {

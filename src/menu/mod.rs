@@ -8,6 +8,7 @@ use crate::core_editor::Editor;
 use crate::History;
 use crate::{completion::history::HistoryCompleter, painting::Painter, Completer, Suggestion};
 pub use columnar_menu::ColumnarMenu;
+pub use columnar_menu::TraversalDirection;
 pub use description_menu::DescriptionMenu;
 pub use ide_menu::DescriptionMode;
 pub use ide_menu::IdeMenu;
@@ -151,6 +152,7 @@ pub trait Menu: Send {
     }
 }
 
+/// Struct to store configuration for a menu.
 pub struct MenuSettings {
     /// Menu name
     name: String,
