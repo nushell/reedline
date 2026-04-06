@@ -13,6 +13,19 @@ use {
 
 const SELECTION_CHAR: char = '!';
 
+/// Controls where the description is rendered relative to the completion value
+/// in a [`ListMenu`] row.
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+pub enum DescriptionPosition {
+    /// Description is shown **before** the value, wrapped in parentheses:
+    /// `(description) value`  — the original behaviour.
+    #[default]
+    Before,
+    /// Description is shown **after** the value with a leading space:
+    /// `value description`
+    After,
+}
+
 struct Page {
     size: usize,
     full: bool,
@@ -67,6 +80,8 @@ pub struct ListMenu {
     event: Option<MenuEvent>,
     /// String collected after the menu is activated
     input: Option<String>,
+    /// Controls where the description is rendered relative to the completion value
+    description_position: DescriptionPosition,
 }
 
 impl Default for ListMenu {
@@ -87,6 +102,7 @@ impl Default for ListMenu {
             pages: Vec::new(),
             event: None,
             input: None,
+            description_position: DescriptionPosition::default(),
         }
     }
 }
@@ -111,6 +127,15 @@ impl ListMenu {
     #[must_use]
     pub fn with_max_entry_lines(mut self, max_lines: u16) -> Self {
         self.max_lines = max_lines;
+        self
+    }
+
+    /// Menu builder to set where descriptions are rendered relative to the
+    /// completion value. Defaults to [`DescriptionPosition::Before`] for
+    /// backwards compatibility.
+    #[must_use]
+    pub fn with_description_position(mut self, position: DescriptionPosition) -> Self {
+        self.description_position = position;
         self
     }
 }
@@ -265,40 +290,80 @@ impl ListMenu {
         row_number: &str,
         use_ansi_coloring: bool,
     ) -> String {
-        let description = description.map_or("".to_string(), |desc| {
-            if use_ansi_coloring {
-                format!(
-                    "{}({}) {}",
-                    self.settings.color.description_style.prefix(),
-                    desc,
-                    RESET
-                )
-            } else {
-                format!("({desc}) ")
+        match self.description_position {
+            DescriptionPosition::Before => {
+                let description = description.map_or("".to_string(), |desc| {
+                    if use_ansi_coloring {
+                        format!(
+                            "{}({}) ",
+                            self.settings.color.description_style.prefix(),
+                            desc,
+                        )
+                    } else {
+                        format!("({desc}) ")
+                    }
+                });
+
+                if use_ansi_coloring {
+                    format!(
+                        "{}{}{}{}{}{}",
+                        row_number,
+                        description,
+                        self.text_style(index),
+                        &line,
+                        RESET,
+                        Self::end_of_line(),
+                    )
+                } else {
+                    // If no ansi coloring is found, then the selection word is
+                    // the line in uppercase
+                    let line_str = if index == self.index() {
+                        format!("{}{}>{}", row_number, description, line.to_uppercase())
+                    } else {
+                        format!("{row_number}{description}{line}")
+                    };
+
+                    // Final string with formatting
+                    format!("{}{}", line_str, Self::end_of_line())
+                }
             }
-        });
+            DescriptionPosition::After => {
+                let description = description.map_or("".to_string(), |desc| {
+                    if use_ansi_coloring {
+                        format!(
+                            " {}{}{}",
+                            self.settings.color.description_style.prefix(),
+                            desc,
+                            RESET
+                        )
+                    } else {
+                        format!(" {desc}")
+                    }
+                });
 
-        if use_ansi_coloring {
-            format!(
-                "{}{}{}{}{}{}",
-                row_number,
-                description,
-                self.text_style(index),
-                &line,
-                RESET,
-                Self::end_of_line(),
-            )
-        } else {
-            // If no ansi coloring is found, then the selection word is
-            // the line in uppercase
-            let line_str = if index == self.index() {
-                format!("{}{}>{}", row_number, description, line.to_uppercase())
-            } else {
-                format!("{row_number}{description}{line}")
-            };
+                if use_ansi_coloring {
+                    format!(
+                        "{}{}{}{}{}{}",
+                        row_number,
+                        self.text_style(index),
+                        &line,
+                        RESET,
+                        description,
+                        Self::end_of_line(),
+                    )
+                } else {
+                    // If no ansi coloring is found, then the selection word is
+                    // the line in uppercase
+                    let line_str = if index == self.index() {
+                        format!("{}>{}{}", row_number, line.to_uppercase(), description)
+                    } else {
+                        format!("{row_number}{line}{description}")
+                    };
 
-            // Final string with formatting
-            format!("{}{}", line_str, Self::end_of_line())
+                    // Final string with formatting
+                    format!("{}{}", line_str, Self::end_of_line())
+                }
+            }
         }
     }
 }
