@@ -8,7 +8,14 @@ use reedline::{DefaultPrompt, Helix, Reedline, Signal};
 use std::io;
 
 fn main() -> io::Result<()> {
-    println!("Helix edit mode demo:\nAbort with Ctrl-C");
+    println!(
+        "Helix edit mode demo:
+Default mode is insert (`:` prompt), so you can type words.
+Press Esc for normal mode.
+Press `i` to return to insert mode, or `a` to insert after the current selection.
+Only `h`/`l` motions are currently implemented.
+Abort with Ctrl-C"
+    );
 
     let prompt = DefaultPrompt::default();
     let mut line_editor = Reedline::create().with_edit_mode(Box::new(Helix::default()));
