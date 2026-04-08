@@ -1,6 +1,6 @@
 use crate::enums::{ReedlineEvent, ReedlineRawEvent};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use modalkit::keybindings::BindingMachine;
+use keybindings::BindingMachine;
 
 use super::{action::HelixAction, mode::HelixMachine};
 

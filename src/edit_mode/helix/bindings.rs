@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyModifiers};
-use modalkit::keybindings::{EdgeEvent, EdgePath, EdgeRepeat, EmptyKeyClass, InputBindings};
+use keybindings::{EdgeEvent, EdgePath, EdgeRepeat, EmptyKeyClass, InputBindings};
 
 use super::{
     key::HelixKey,

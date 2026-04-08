@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use modalkit::keybindings::InputKey;
+use keybindings::InputKey;
 
 /// A simple `InputKey` implementation around `crossterm` types.
 ///

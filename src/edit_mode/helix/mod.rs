@@ -10,7 +10,7 @@ use crate::{
     PromptEditMode, PromptViMode,
 };
 use crossterm::event::{KeyCode, KeyModifiers};
-use modalkit::keybindings::BindingMachine;
+use keybindings::BindingMachine;
 
 use self::{
     bindings::HelixBindings,

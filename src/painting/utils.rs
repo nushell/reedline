@@ -59,7 +59,7 @@ pub(crate) fn estimate_single_line_wraps(line: &str, terminal_columns: u16) -> u
     let terminal_columns: usize = terminal_columns.into();
 
     // integer ceiling rounding division for positive divisors
-    let estimated_line_count = estimated_width.div_ceil(terminal_columns);
+    let estimated_line_count = (estimated_width + terminal_columns - 1) / terminal_columns;
 
     // Any wrapping will add to our overall line count
     estimated_line_count.saturating_sub(1)
