@@ -39,7 +39,7 @@ fn main() -> reedline::Result<()> {
             history_session_id,
             Some(chrono::Utc::now()),
         )
-        .map_err(std::io::Error::other)?,
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
     );
     #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
@@ -195,7 +195,9 @@ fn main() -> reedline::Result<()> {
                 }
                 if buffer.trim() == "clear-history" {
                     let hstry = Box::new(line_editor.history_mut());
-                    hstry.clear().map_err(std::io::Error::other)?;
+                    hstry
+                        .clear()
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                     continue;
                 }
                 println!("Our buffer: {buffer}");
