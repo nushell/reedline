@@ -35,6 +35,15 @@ pub enum Signal {
     CtrlC, // Interrupt current editing
     /// Abort with `Ctrl+D` signalling `EOF` or abort of a whole interactive session
     CtrlD, // End terminal session
+
+    /// A custom, uninterpreted payload passed back to the host application.
+    ///
+    /// This signal is triggered by a [`ReedlineEvent::ExecuteHostCommand`].
+    /// The contained string is a "passthrough" value that Reedline does not
+    /// inspect or modify; it is up to the caller to define the protocol
+    /// and execution logic for this payload.
+    HostCommand(String),
+
     /// An external signal requested that `read_line()` return.
     /// Contains the current buffer contents at the time of interruption.
     ExternalBreak(String),
@@ -937,7 +946,12 @@ pub enum ReedlineEvent {
     /// Move to the previous history page
     MenuPagePrevious,
 
-    /// Way to bind the execution of a whole command (directly returning from [`crate::Reedline::read_line()`]) to a keybinding
+    /// Triggers an immediate return from `read_line()` with an opaque payload.
+    ///
+    /// Reedline does not inspect or validate the contents of this string. It is
+    /// passed directly through to the caller as a [`Signal::HostCommand`].
+    /// Use this to send custom instructions or serialized data from a keybinding
+    /// logic back to the main application loop.
     ExecuteHostCommand(String),
 
     /// Open text editor
