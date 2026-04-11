@@ -7,4 +7,6 @@ mod line_buffer;
 pub(crate) use clip_buffer::get_system_clipboard;
 pub(crate) use clip_buffer::{get_local_clipboard, Clipboard, ClipboardMode};
 pub use editor::Editor;
+#[cfg(feature = "helix")]
+pub(crate) use editor::HxRange;
 pub use line_buffer::LineBuffer;

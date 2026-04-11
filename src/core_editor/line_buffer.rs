@@ -770,13 +770,40 @@ impl LineBuffer {
         self.insertion_point
     }
 
-    /// Moves the insertion point before the next char to the right
-    pub fn move_right_before(&mut self, c: char, current_line: bool) -> usize {
+    /// Moves the insertion point before the next char to the right.
+    ///
+    /// When `skip_current` is true and the very next grapheme is already
+    /// `c`, skip that occurrence and search for the next one — matching
+    /// Helix `t` semantics so that repeating the motion advances instead
+    /// of collapsing.  When false, uses the standard find-and-step-back
+    /// behavior (Vi mode).
+    pub fn move_right_before(&mut self, c: char, current_line: bool, skip_current: bool) -> usize {
+        if skip_current {
+            let next_grapheme = self.grapheme_right_index();
+            if self.lines[next_grapheme..].starts_with(c) {
+                let search_from = next_grapheme + c.len_utf8();
+                let end = if current_line {
+                    self.current_line_range().end
+                } else {
+                    self.lines.len()
+                };
+                if search_from < end {
+                    if let Some(offset) = self.lines[search_from..end].find(c) {
+                        self.insertion_point = search_from + offset;
+                        self.insertion_point = self.grapheme_left_index();
+                        return self.insertion_point;
+                    }
+                }
+            }
+        }
+
+        // Fallthrough: either skip_current is false, or the next grapheme
+        // didn't match `c`, or no second occurrence was found.  Use the
+        // standard search which finds the first `c` to the right.
         if let Some(index) = self.find_char_right(c, current_line) {
             self.insertion_point = index;
             self.insertion_point = self.grapheme_left_index();
         }
-
         self.insertion_point
     }
 
@@ -789,12 +816,33 @@ impl LineBuffer {
         self.insertion_point
     }
 
-    /// Moves the insertion point before the next char to the left of offset
-    pub fn move_left_before(&mut self, c: char, current_line: bool) -> usize {
+    /// Moves the insertion point before the next char to the left of offset.
+    ///
+    /// When `skip_current` is true and the grapheme immediately to the
+    /// left is already `c`, skip that occurrence and search further left —
+    /// matching Helix `T` semantics so repeating the motion progresses.
+    /// When false, uses standard Vi behavior.
+    pub fn move_left_before(&mut self, c: char, current_line: bool, skip_current: bool) -> usize {
+        if skip_current {
+            let prev_grapheme = self.grapheme_left_index();
+            if self.lines[prev_grapheme..].starts_with(c) {
+                let start = if current_line {
+                    self.current_line_range().start
+                } else {
+                    0
+                };
+                if prev_grapheme > start {
+                    if let Some(offset) = self.lines[start..prev_grapheme].rfind(c) {
+                        self.insertion_point = start + offset + c.len_utf8();
+                        return self.insertion_point;
+                    }
+                }
+            }
+        }
+
         if let Some(index) = self.find_char_left(c, current_line) {
             self.insertion_point = index + c.len_utf8();
         }
-
         self.insertion_point
     }
 
@@ -1522,7 +1570,7 @@ mod test {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        line_buffer.move_right_before(c, current_line);
+        line_buffer.move_right_before(c, current_line, false);
 
         assert_eq!(line_buffer.insertion_point(), expected);
         line_buffer.assert_valid();
@@ -1603,7 +1651,7 @@ mod test {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        line_buffer.move_left_before(c, current_line);
+        line_buffer.move_left_before(c, current_line, false);
 
         assert_eq!(line_buffer.insertion_point(), expected);
         line_buffer.assert_valid();

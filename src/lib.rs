@@ -243,6 +243,8 @@ pub use enums::{
     EditCommand, EditCommandDiscriminants, MouseButton, ReedlineEvent, ReedlineEventDiscriminants,
     ReedlineRawEvent, Signal, TextObject, TextObjectScope, TextObjectType, UndoBehavior,
 };
+#[cfg(feature = "helix")]
+pub use enums::{Movement, WordMotionTarget};
 
 mod painting;
 pub use painting::{Painter, StyledText};
@@ -263,18 +265,20 @@ pub use history::{
 };
 
 mod prompt;
+#[cfg(feature = "helix")]
+pub use prompt::PromptHelixMode;
 pub use prompt::{
     DefaultPrompt, DefaultPromptSegment, Prompt, PromptEditMode, PromptHistorySearch,
     PromptHistorySearchStatus, PromptViMode,
 };
 
 mod edit_mode;
-#[cfg(feature = "helix")]
-pub use edit_mode::Helix;
 pub use edit_mode::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     CursorConfig, EditMode, Emacs, Keybindings, Vi,
 };
+#[cfg(feature = "helix")]
+pub use edit_mode::{Helix, HX_CURSOR_INSERT, HX_CURSOR_NORMAL, HX_CURSOR_SELECT};
 
 mod highlighter;
 pub use highlighter::{ExampleHighlighter, Highlighter, SimpleMatchHighlighter};

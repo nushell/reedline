@@ -1,3 +1,5 @@
+#[cfg(feature = "helix")]
+use crate::PromptHelixMode;
 use crate::{Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode};
 
 use {
@@ -10,6 +12,16 @@ pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
 pub static DEFAULT_VI_INSERT_PROMPT_INDICATOR: &str = ": ";
 pub static DEFAULT_VI_NORMAL_PROMPT_INDICATOR: &str = "〉";
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
+
+/// The default prompt indicator for helix normal mode
+#[cfg(feature = "helix")]
+pub static DEFAULT_HX_NORMAL_PROMPT_INDICATOR: &str = "〉";
+/// The default prompt indicator for helix insert mode
+#[cfg(feature = "helix")]
+pub static DEFAULT_HX_INSERT_PROMPT_INDICATOR: &str = ": ";
+/// The default prompt indicator for helix select mode
+#[cfg(feature = "helix")]
+pub static DEFAULT_HX_SELECT_PROMPT_INDICATOR: &str = "» ";
 
 /// Simple [`Prompt`] displaying a configurable left and a right prompt.
 /// For more fine-tuned configuration, implement the [`Prompt`] trait.
@@ -65,6 +77,12 @@ impl Prompt for DefaultPrompt {
             PromptEditMode::Vi(vi_mode) => match vi_mode {
                 PromptViMode::Normal => DEFAULT_VI_NORMAL_PROMPT_INDICATOR.into(),
                 PromptViMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
+            },
+            #[cfg(feature = "helix")]
+            PromptEditMode::Helix(hx_mode) => match hx_mode {
+                PromptHelixMode::Normal => DEFAULT_HX_NORMAL_PROMPT_INDICATOR.into(),
+                PromptHelixMode::Insert => DEFAULT_HX_INSERT_PROMPT_INDICATOR.into(),
+                PromptHelixMode::Select => DEFAULT_HX_SELECT_PROMPT_INDICATOR.into(),
             },
             PromptEditMode::Custom(str) => format!("({str})").into(),
         }
@@ -136,4 +154,55 @@ fn get_working_dir() -> Result<String, std::io::Error> {
 fn get_now() -> String {
     let now = Local::now();
     format!("{:>}", now.format("%m/%d/%Y %I:%M:%S %p"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Prompt;
+
+    #[test]
+    fn default_prompt_vi_indicators() {
+        let prompt = DefaultPrompt::default();
+        assert_eq!(
+            prompt.render_prompt_indicator(PromptEditMode::Vi(PromptViMode::Normal)),
+            DEFAULT_VI_NORMAL_PROMPT_INDICATOR
+        );
+        assert_eq!(
+            prompt.render_prompt_indicator(PromptEditMode::Vi(PromptViMode::Insert)),
+            DEFAULT_VI_INSERT_PROMPT_INDICATOR
+        );
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn default_prompt_helix_indicators() {
+        use crate::PromptHelixMode;
+
+        let prompt = DefaultPrompt::default();
+        assert_eq!(
+            prompt.render_prompt_indicator(PromptEditMode::Helix(PromptHelixMode::Normal)),
+            DEFAULT_HX_NORMAL_PROMPT_INDICATOR
+        );
+        assert_eq!(
+            prompt.render_prompt_indicator(PromptEditMode::Helix(PromptHelixMode::Insert)),
+            DEFAULT_HX_INSERT_PROMPT_INDICATOR
+        );
+        assert_eq!(
+            prompt.render_prompt_indicator(PromptEditMode::Helix(PromptHelixMode::Select)),
+            DEFAULT_HX_SELECT_PROMPT_INDICATOR
+        );
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_display_impl() {
+        use crate::PromptHelixMode;
+
+        let mode = PromptEditMode::Helix(PromptHelixMode::Normal);
+        let display = format!("{mode}");
+        assert!(display.contains("Helix_Normal"));
+        assert!(display.contains("Helix_Insert"));
+        assert!(display.contains("Helix_Select"));
+    }
 }
