@@ -946,7 +946,7 @@ pub enum ReedlineEvent {
     /// Move to the previous history page
     MenuPagePrevious,
 
-    /// Triggers an immediate return from `read_line()` with an opaque payload.
+    /// Triggers an immediate return from [`Reedline::read_line()`](crate::Reedline::read_line) with an opaque payload.
     ///
     /// Reedline does not inspect or validate the contents of this string. It is
     /// passed directly through to the caller as a [`Signal::HostCommand`].
