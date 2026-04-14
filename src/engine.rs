@@ -1241,10 +1241,14 @@ impl Reedline {
                 }
             }
             ReedlineEvent::CtrlC => {
-                self.deactivate_menus();
-                self.run_edit_commands(&[EditCommand::Clear]);
-                self.editor.reset_undo_stack();
-                Ok(EventStatus::Exits(Signal::CtrlC))
+                if self.editor.is_empty() {
+                    self.deactivate_menus();
+                    self.editor.reset_undo_stack();
+                    Ok(EventStatus::Exits(Signal::CtrlC))
+                } else {
+                    self.run_edit_commands(&[EditCommand::Clear]);
+                    Ok(EventStatus::Handled)
+                }
             }
             ReedlineEvent::ClearScreen => {
                 self.deactivate_menus();
