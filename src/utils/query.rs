@@ -102,11 +102,13 @@ pub fn get_reedline_keycodes() -> Vec<String> {
 }
 
 /// Return a `Vec<String>` of the Reedline [`ReedlineEvent`]s
+#[deprecated = "use ReedlineEventDiscriminants::iter() to display them"]
 pub fn get_reedline_reedline_events() -> Vec<String> {
     ReedlineEvent::iter().map(|rle| rle.to_string()).collect()
 }
 
 /// Return a `Vec<String>` of the Reedline [`EditCommand`]s
+#[deprecated = "use EditCommandDiscriminants::iter() to display them"]
 pub fn get_reedline_edit_commands() -> Vec<String> {
     EditCommand::iter().map(|edit| edit.to_string()).collect()
 }
