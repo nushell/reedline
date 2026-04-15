@@ -1241,8 +1241,8 @@ impl Reedline {
                 }
             }
             ReedlineEvent::CtrlC => {
+                self.deactivate_menus();
                 if self.editor.is_empty() {
-                    self.deactivate_menus();
                     self.editor.reset_undo_stack();
                     Ok(EventStatus::Exits(Signal::CtrlC))
                 } else {
