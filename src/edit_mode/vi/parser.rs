@@ -100,6 +100,8 @@ impl ParsedViSequence {
         match (&self.command, &self.motion) {
             (Some(Command::EnterViInsert), ParseResult::Incomplete)
             | (Some(Command::EnterViAppend), ParseResult::Incomplete)
+            | (Some(Command::NewlineAbove), ParseResult::Incomplete)
+            | (Some(Command::NewlineBelow), ParseResult::Incomplete)
             | (Some(Command::ChangeToLineEnd), ParseResult::Incomplete)
             | (Some(Command::AppendToEnd), ParseResult::Incomplete)
             | (Some(Command::PrependToStart), ParseResult::Incomplete)
@@ -181,12 +183,12 @@ where
     }
 }
 
-pub fn parse<'iter, I>(input: &mut Peekable<I>) -> ParsedViSequence
+pub fn parse<'iter, I>(mode: ViMode, input: &mut Peekable<I>) -> ParsedViSequence
 where
     I: Iterator<Item = &'iter char>,
 {
     let multiplier = parse_number(input);
-    let command = parse_command(input);
+    let command = parse_command(mode, input);
     let count = parse_number(input);
     let motion = parse_motion(input, command.as_ref().and_then(Command::whole_line_char));
 
@@ -205,7 +207,7 @@ mod tests {
     use rstest::rstest;
 
     fn vi_parse(input: &[char]) -> ParsedViSequence {
-        parse(&mut input.iter().peekable())
+        parse(ViMode::Normal, &mut input.iter().peekable())
     }
 
     #[test]

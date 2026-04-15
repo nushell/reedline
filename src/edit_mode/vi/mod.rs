@@ -98,7 +98,7 @@ impl EditMode for Vi {
                             c
                         });
 
-                        let res = parse(&mut self.cache.iter().peekable());
+                        let res = parse(self.mode, &mut self.cache.iter().peekable());
 
                         if !res.is_valid() {
                             self.cache.clear();
