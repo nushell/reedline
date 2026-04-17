@@ -155,7 +155,7 @@ where
         Some(&&o @ ('o' | 'O')) => match mode {
             ViMode::Normal => {
                 let _ = input.next();
-                if o == 'o' {
+                if o.is_ascii_lowercase() {
                     Some(Command::NewlineBelow)
                 } else {
                     Some(Command::NewlineAbove)
