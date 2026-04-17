@@ -1021,7 +1021,7 @@ impl Reedline {
             ReedlineEvent::ExecuteHostCommand(host_command) => {
                 self.last_render_snapshot = None;
                 self.suspended_state = Some(self.painter.state_before_suspension());
-                Ok(EventStatus::Exits(Signal::Success(host_command)))
+                Ok(EventStatus::Exits(Signal::HostCommand(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
                 self.run_history_commands(&commands);
@@ -1315,7 +1315,7 @@ impl Reedline {
             ReedlineEvent::ExecuteHostCommand(host_command) => {
                 self.last_render_snapshot = None;
                 self.suspended_state = Some(self.painter.state_before_suspension());
-                Ok(EventStatus::Exits(Signal::Success(host_command)))
+                Ok(EventStatus::Exits(Signal::HostCommand(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands);
