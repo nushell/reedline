@@ -90,6 +90,7 @@ pub fn get_reedline_keybinding_modifiers() -> Vec<String> {
 }
 
 /// Return a `Vec<String>` of the Reedline [`PromptEditMode`]s
+#[deprecated = "use PromptEditModeDiscriminants::iter() to display them"]
 pub fn get_reedline_prompt_edit_modes() -> Vec<String> {
     PromptEditMode::iter().map(|em| em.to_string()).collect()
 }
