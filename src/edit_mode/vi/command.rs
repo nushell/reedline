@@ -3,7 +3,7 @@ use crate::enums::{TextObject, TextObjectScope, TextObjectType};
 use crate::{EditCommand, ReedlineEvent, Vi};
 use std::iter::Peekable;
 
-pub fn parse_command<'iter, I>(input: &mut Peekable<I>) -> Option<Command>
+pub fn parse_command<'iter, I>(mode: ViMode, input: &mut Peekable<I>) -> Option<Command>
 where
     I: Iterator<Item = &'iter char>,
 {
@@ -152,10 +152,22 @@ where
             let _ = input.next();
             Some(Command::RepeatLastAction)
         }
-        Some('o') => {
-            let _ = input.next();
-            Some(Command::SwapCursorAndAnchor)
-        }
+        Some(&&o @ ('o' | 'O')) => match mode {
+            ViMode::Normal => {
+                let _ = input.next();
+                if o.is_ascii_lowercase() {
+                    Some(Command::NewlineBelow)
+                } else {
+                    Some(Command::NewlineAbove)
+                }
+            }
+            ViMode::Visual => {
+                let _ = input.next();
+                Some(Command::SwapCursorAndAnchor)
+            }
+            // This arm should be unreachable
+            ViMode::Insert => None,
+        },
         _ => None,
     }
 }
@@ -167,6 +179,8 @@ pub enum Command {
     DeleteChar,
     ReplaceChar(char),
     SubstituteCharWithInsert,
+    NewlineAbove,
+    NewlineBelow,
     PasteAfter,
     PasteBefore,
     EnterViAppend,
@@ -214,6 +228,8 @@ impl Command {
             Self::EnterViAppend => vec![ReedlineOption::Edit(EditCommand::MoveRight {
                 select: false,
             })],
+            Self::NewlineAbove => vec![ReedlineOption::Edit(EditCommand::InsertNewlineAbove)],
+            Self::NewlineBelow => vec![ReedlineOption::Edit(EditCommand::InsertNewlineBelow)],
             Self::PasteAfter => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferAfter)],
             Self::PasteBefore => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferBefore)],
             Self::Undo => vec![ReedlineOption::Edit(EditCommand::Undo)],

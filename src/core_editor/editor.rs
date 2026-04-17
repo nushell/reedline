@@ -81,6 +81,8 @@ impl Editor {
             EditCommand::Complete => {}
             EditCommand::InsertString(str) => self.insert_str(str),
             EditCommand::InsertNewline => self.insert_newline(),
+            EditCommand::InsertNewlineAbove => self.insert_newline_above(),
+            EditCommand::InsertNewlineBelow => self.insert_newline_below(),
             EditCommand::ReplaceChar(chr) => self.replace_char(*chr),
             EditCommand::ReplaceChars(n_chars, str) => self.replace_chars(*n_chars, str),
             EditCommand::Backspace => self.backspace(),
@@ -773,6 +775,21 @@ impl Editor {
 
     fn insert_newline(&mut self) {
         self.delete_selection();
+        self.line_buffer.insert_newline();
+    }
+
+    fn insert_newline_above(&mut self) {
+        let index = self.line_buffer.find_char_left('\n', false).unwrap_or(0);
+        self.line_buffer.set_insertion_point(index);
+        self.line_buffer.insert_newline();
+    }
+
+    fn insert_newline_below(&mut self) {
+        let index = self
+            .line_buffer
+            .find_char_right('\n', false)
+            .unwrap_or(self.line_buffer.len());
+        self.line_buffer.set_insertion_point(index);
         self.line_buffer.insert_newline();
     }
 
