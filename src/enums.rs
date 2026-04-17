@@ -492,7 +492,7 @@ pub enum EditCommand {
 // the users. Hence some are marked `Optional` and some have different parameter names.
 // This is also very hard to keep in sync with nushell.
 // So, recently its discriminants are exposed using the strum EnumDiscriminants, and downstream is
-// expected to use that if they want to display the list of availiable commands to their users.
+// expected to use that if they want to display the list of available commands to their users.
 impl Display for EditCommand {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
@@ -958,7 +958,7 @@ pub enum ReedlineEvent {
 // the users.
 // This is also very hard to keep in sync with nushell.
 // So, recently its discriminants are exposed using the strum EnumDiscriminants, and downstream is
-// expected to use that if they want to display the list of availiable commands to their users.
+// expected to use that if they want to display the list of available commands to their users.
 impl Display for ReedlineEvent {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
