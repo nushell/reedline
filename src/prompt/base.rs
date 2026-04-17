@@ -99,17 +99,6 @@ impl From<PromptViMode> for PromptEditMode {
     }
 }
 
-impl TryFrom<PromptEditMode> for PromptViMode {
-    type Error = ();
-
-    fn try_from(value: PromptEditMode) -> Result<Self, Self::Error> {
-        match value {
-            PromptEditMode::Vi(vi_mode) => Ok(vi_mode),
-            _ => Err(()),
-        }
-    }
-}
-
 impl Display for PromptEditMode {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         use PromptViMode as Vi;
