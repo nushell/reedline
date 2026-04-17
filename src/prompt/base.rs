@@ -5,7 +5,7 @@ use {
         borrow::Cow,
         fmt::{Display, Formatter},
     },
-    strum::EnumIter,
+    strum::{EnumIter, EnumString, IntoDiscriminant},
 };
 
 /// The default color for the prompt, indicator, and right prompt
@@ -70,16 +70,63 @@ pub enum PromptViMode {
     Insert,
 }
 
+/// This is the discriminant type for [`PromptEditMode`]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, EnumIter, EnumString)]
+#[strum(ascii_case_insensitive)]
+pub enum PromptEditModeDiscriminants {
+    /// The default mode
+    #[default]
+    Default,
+
+    /// Emacs normal mode
+    Emacs,
+
+    /// Vi normal mode
+    #[strum(serialize = "ViNormal", serialize = "vi_normal")]
+    ViNormal,
+
+    /// Vi insert mode
+    #[strum(serialize = "ViInsert", serialize = "vi_insert")]
+    ViInsert,
+
+    /// A custom mode
+    Custom,
+}
+
+impl From<PromptViMode> for PromptEditMode {
+    fn from(value: PromptViMode) -> Self {
+        Self::Vi(value)
+    }
+}
+
 impl Display for PromptEditMode {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        use PromptViMode as Vi;
         match self {
-            PromptEditMode::Default => write!(f, "Default"),
-            PromptEditMode::Emacs => write!(f, "Emacs"),
-            PromptEditMode::Vi(_) => write!(f, "Vi_Normal\nVi_Insert"),
-            PromptEditMode::Custom(s) => write!(f, "Custom_{s}"),
+            Self::Default => write!(f, "Default"),
+            Self::Emacs => write!(f, "Emacs"),
+            Self::Vi(Vi::Normal) => write!(f, "Vi_Normal"),
+            Self::Vi(Vi::Insert) => write!(f, "Vi_Insert"),
+            Self::Custom(s) => write!(f, "Custom_{s}"),
         }
     }
 }
+
+impl IntoDiscriminant for PromptEditMode {
+    type Discriminant = PromptEditModeDiscriminants;
+
+    fn discriminant(&self) -> Self::Discriminant {
+        use PromptViMode as Vi;
+        match self {
+            Self::Default => Self::Discriminant::Default,
+            Self::Emacs => Self::Discriminant::Emacs,
+            Self::Vi(Vi::Normal) => Self::Discriminant::ViNormal,
+            Self::Vi(Vi::Insert) => Self::Discriminant::ViInsert,
+            Self::Custom(_) => Self::Discriminant::Custom,
+        }
+    }
+}
+
 /// API to provide a custom prompt.
 ///
 /// Implementors have to provide [`str`]-based content which will be

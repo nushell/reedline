@@ -95,7 +95,7 @@ impl Default for TextObject {
 #[non_exhaustive]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq, EnumDiscriminants, EnumIter)]
 #[strum_discriminants(doc = "This is the auto generated discriminant type for [`EditCommand`]")]
-#[strum_discriminants(derive(EnumString, VariantArray))]
+#[strum_discriminants(derive(EnumIter, EnumString, VariantArray))]
 #[strum_discriminants(strum(ascii_case_insensitive))]
 pub enum EditCommand {
     /// Move to the start of the buffer
@@ -496,6 +496,12 @@ pub enum EditCommand {
     },
 }
 
+// FIXME: This implementation makes no sense to be here, and should be removed in a future version
+// It was originally added for nushell to show all the available commands and their parameters to
+// the users. Hence some are marked `Optional` and some have different parameter names.
+// This is also very hard to keep in sync with nushell.
+// So, recently its discriminants are exposed using the strum EnumDiscriminants, and downstream is
+// expected to use that if they want to display the list of available commands to their users.
 impl Display for EditCommand {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
@@ -815,7 +821,7 @@ impl UndoBehavior {
 /// Reedline supported actions.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, EnumDiscriminants, EnumIter)]
 #[strum_discriminants(doc = "This is the auto generated discriminant type for [`ReedlineEvent`]")]
-#[strum_discriminants(derive(EnumString, VariantArray))]
+#[strum_discriminants(derive(EnumIter, EnumString, VariantArray))]
 #[strum_discriminants(strum(ascii_case_insensitive))]
 pub enum ReedlineEvent {
     /// No op event
@@ -961,6 +967,12 @@ pub enum ReedlineEvent {
     ViChangeMode(String),
 }
 
+// FIXME: This implementation makes no sense to be here, and should be removed in a future version
+// It was originally added for nushell to show all the available commands and their parameters to
+// the users.
+// This is also very hard to keep in sync with nushell.
+// So, recently its discriminants are exposed using the strum EnumDiscriminants, and downstream is
+// expected to use that if they want to display the list of available commands to their users.
 impl Display for ReedlineEvent {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
