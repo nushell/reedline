@@ -53,10 +53,26 @@ pub(crate) fn estimate_required_lines(input: &str, screen_width: u16) -> usize {
 ///
 /// Does not account for any potential line breaks in `line`
 ///
-/// If `line` fits in `terminal_columns` returns 0
+/// If `line` fits in `terminal_columns` returns 0. A zero-width
+/// `terminal_columns` can be reported by terminals mid-resize or when
+/// the size is unknown; return 0 in that case rather than dividing by
+/// zero (see #842).
+///
+/// FIXME: The zero-column guard below papers over a caller bug, it
+/// doesn't solve it. `menu::list_menu::ListMenu::menu_required_lines`
+/// passes `terminal_columns.saturating_sub(indicator_width + count_digits)`,
+/// so on a terminal whose width is not greater than the indicator plus
+/// the entry-index digits this function receives 0 and every entry is
+/// reported as a single non-wrapping line. The real fix is to enforce a
+/// minimum viable column budget in `menu_required_lines` (or to stop
+/// subtracting the indicator width from the entry width). Tracked in
+/// #842 / #428; remove this comment once the caller is fixed.
 pub(crate) fn estimate_single_line_wraps(line: &str, terminal_columns: u16) -> usize {
-    let estimated_width = line_width(line);
     let terminal_columns: usize = terminal_columns.into();
+    if terminal_columns == 0 {
+        return 0;
+    }
+    let estimated_width = line_width(line);
 
     // integer ceiling rounding division for positive divisors
     let estimated_line_count = (estimated_width + terminal_columns - 1) / terminal_columns;
@@ -93,5 +109,27 @@ mod test {
             input != expected || matches!(result, Cow::Borrowed(_)),
             "Unnecessary allocation"
         )
+    }
+
+    /// Narrow-terminal regression: a zero-column terminal used to panic
+    /// with "attempt to divide by zero" inside the ceiling-division
+    /// expression (#842). Return 0 extra wraps instead.
+    #[test]
+    fn estimate_single_line_wraps_zero_columns_does_not_panic() {
+        assert_eq!(estimate_single_line_wraps("hello world", 0), 0);
+        assert_eq!(estimate_single_line_wraps("", 0), 0);
+    }
+
+    #[rstest]
+    #[case("", 80, 0)]
+    #[case("hello", 80, 0)]
+    #[case("abcdefghij", 5, 1)]
+    #[case("abcdefghijk", 5, 2)]
+    fn estimate_single_line_wraps_basic(
+        #[case] line: &str,
+        #[case] columns: u16,
+        #[case] expected: usize,
+    ) {
+        assert_eq!(estimate_single_line_wraps(line, columns), expected);
     }
 }
