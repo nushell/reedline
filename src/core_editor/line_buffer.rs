@@ -83,11 +83,20 @@ impl LineBuffer {
         self.insertion_point = self.lines.len();
     }
 
-    /// Calculates the current the user is on
+    /// Calculates the current line the user is on
     ///
     /// Zero-based index
     pub fn line(&self) -> usize {
         self.lines[..self.insertion_point].matches('\n').count()
+    }
+
+    /// Calculates the character index in the line the user is on
+    ///
+    /// Zero-based index
+    pub fn col(&self) -> usize {
+        self.lines[self.line_start()..self.insertion_point]
+            .grapheme_indices(true)
+            .count()
     }
 
     /// Counts the number of lines in the buffer
@@ -105,20 +114,21 @@ impl LineBuffer {
         self.insertion_point = 0;
     }
 
+    fn line_start(&self) -> usize {
+        self.lines[..self.insertion_point]
+            .rfind('\n')
+            .map_or(0, |offset| offset + 1)
+        // str is guaranteed to be utf8, thus \n is safe to assume 1 byte long
+    }
+
     /// Move the cursor before the first character of the line
     pub fn move_to_line_start(&mut self) {
-        self.insertion_point = self.lines[..self.insertion_point]
-            .rfind('\n')
-            .map_or(0, |offset| offset + 1);
-        // str is guaranteed to be utf8, thus \n is safe to assume 1 byte long
+        self.insertion_point = self.line_start();
     }
 
     /// Move the cursor before the first non whitespace character of the line
     pub fn move_to_line_non_blank_start(&mut self) {
-        let line_start = self.lines[..self.insertion_point]
-            .rfind('\n')
-            .map_or(0, |offset| offset + 1);
-        // str is guaranteed to be utf8, thus \n is safe to assume 1 byte long
+        let line_start = self.line_start();
 
         self.insertion_point = self.lines[line_start..]
             .find(|c: char| !c.is_whitespace() || c == '\n')
@@ -535,9 +545,7 @@ impl LineBuffer {
     /// extending beyond the potential carriage return and line feed characters
     /// terminating the line
     pub fn current_line_range(&self) -> Range<usize> {
-        let left_index = self.lines[..self.insertion_point]
-            .rfind('\n')
-            .map_or(0, |offset| offset + 1);
+        let left_index = self.line_start();
         let right_index = self.lines[self.insertion_point..]
             .find('\n')
             .map_or_else(|| self.lines.len(), |i| i + self.insertion_point + 1);
