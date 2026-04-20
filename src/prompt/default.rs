@@ -2,6 +2,7 @@ use crate::{Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStat
 
 use {
     chrono::Local,
+    crossterm::style::Color,
     std::{borrow::Cow, env},
 };
 
@@ -10,6 +11,11 @@ pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
 pub static DEFAULT_VI_INSERT_PROMPT_INDICATOR: &str = ": ";
 pub static DEFAULT_VI_NORMAL_PROMPT_INDICATOR: &str = "〉";
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
+/// The default prompt colors
+pub static DEFAULT_PROMPT_COLOR: Color = Color::Green;
+pub static DEFAULT_PROMPT_MULTILINE_COLOR: nu_ansi_term::Color = nu_ansi_term::Color::LightBlue;
+pub static DEFAULT_INDICATOR_COLOR: Color = Color::Cyan;
+pub static DEFAULT_PROMPT_RIGHT_COLOR: Color = Color::AnsiValue(5);
 
 /// Simple [`Prompt`] displaying a configurable left and a right prompt.
 /// For more fine-tuned configuration, implement the [`Prompt`] trait.
@@ -88,6 +94,22 @@ impl Prompt for DefaultPrompt {
             "({}reverse-search: {}) ",
             prefix, history_search.term
         ))
+    }
+
+    fn get_prompt_color(&self) -> Color {
+        DEFAULT_PROMPT_COLOR
+    }
+
+    fn get_prompt_multiline_color(&self) -> nu_ansi_term::Color {
+        DEFAULT_PROMPT_MULTILINE_COLOR
+    }
+
+    fn get_indicator_color(&self) -> Color {
+        DEFAULT_INDICATOR_COLOR
+    }
+
+    fn get_prompt_right_color(&self) -> Color {
+        DEFAULT_PROMPT_RIGHT_COLOR
     }
 }
 
