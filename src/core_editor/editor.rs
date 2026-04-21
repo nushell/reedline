@@ -77,6 +77,9 @@ impl Editor {
             }
             EditCommand::MoveWordRightEnd { select } => self.move_word_right_end(*select),
             EditCommand::MoveBigWordRightEnd { select } => self.move_big_word_right_end(*select),
+            EditCommand::MoveViWordLeft { select } => self.move_vi_word_left(*select),
+            EditCommand::MoveViWordRightStart { select } => self.move_vi_word_right_start(*select),
+            EditCommand::MoveViWordRightEnd { select } => self.move_vi_word_right_end(*select),
             EditCommand::InsertChar(c) => self.insert_char(*c),
             EditCommand::Complete => {}
             EditCommand::InsertString(str) => self.insert_str(str),
@@ -107,8 +110,11 @@ impl Editor {
             EditCommand::KillLine => self.kill_line(),
             EditCommand::CutWordLeft => self.cut_word_left(),
             EditCommand::CutBigWordLeft => self.cut_big_word_left(),
+            EditCommand::CutViWordLeft => self.cut_vi_word_left(),
             EditCommand::CutWordRight => self.cut_word_right(),
             EditCommand::CutBigWordRight => self.cut_big_word_right(),
+            EditCommand::CutViWordRightEnd => self.cut_vi_word_right_end(),
+            EditCommand::CutViBigWordRightEnd => self.cut_vi_big_word_right_end(),
             EditCommand::CutWordRightToNext => self.cut_word_right_to_next(),
             EditCommand::CutBigWordRightToNext => self.cut_big_word_right_to_next(),
             EditCommand::PasteCutBufferBefore => self.insert_cut_buffer_before(),
@@ -150,8 +156,11 @@ impl Editor {
             EditCommand::CopyToLineEnd => self.copy_to_line_end(),
             EditCommand::CopyWordLeft => self.copy_word_left(),
             EditCommand::CopyBigWordLeft => self.copy_big_word_left(),
+            EditCommand::CopyViWordLeft => self.copy_vi_word_left(),
             EditCommand::CopyWordRight => self.copy_word_right(),
             EditCommand::CopyBigWordRight => self.copy_big_word_right(),
+            EditCommand::CopyViWordRightEnd => self.copy_vi_word_right_end(),
+            EditCommand::CopyViBigWordRightEnd => self.copy_vi_big_word_right_end(),
             EditCommand::CopyWordRightToNext => self.copy_word_right_to_next(),
             EditCommand::CopyBigWordRightToNext => self.copy_big_word_right_to_next(),
             EditCommand::CopyRightUntil(c) => self.copy_right_until_char(*c, false, true),
@@ -472,7 +481,7 @@ impl Editor {
 
     fn cut_word_left(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let word_start = self.line_buffer.word_left_index();
+        let word_start = self.line_buffer.emacs_word_left_index();
         self.cut_range(word_start..insertion_offset);
     }
 
@@ -482,9 +491,15 @@ impl Editor {
         self.cut_range(big_word_start..insertion_offset);
     }
 
+    fn cut_vi_word_left(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let word_start = self.line_buffer.vi_word_left_index();
+        self.cut_range(word_start..insertion_offset);
+    }
+
     fn cut_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let word_end = self.line_buffer.word_right_index();
+        let word_end = self.line_buffer.emacs_word_right_index();
         self.cut_range(insertion_offset..word_end);
     }
 
@@ -494,9 +509,27 @@ impl Editor {
         self.cut_range(insertion_offset..big_word_end);
     }
 
+    /// Cut from cursor to end of next word (inclusive).
+    /// Used by Vi `de` — the `e` motion is inclusive.
+    fn cut_vi_word_right_end(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let word_end = self.line_buffer.vi_word_right_end_index();
+        let inclusive_end = self.line_buffer.grapheme_right_index_from_pos(word_end);
+        self.cut_range(insertion_offset..inclusive_end);
+    }
+
+    /// Cut from cursor to end of next WORD (inclusive).
+    /// Used by Vi `dE` — the `E` motion is inclusive.
+    fn cut_vi_big_word_right_end(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let word_end = self.line_buffer.big_word_right_end_index();
+        let inclusive_end = self.line_buffer.grapheme_right_index_from_pos(word_end);
+        self.cut_range(insertion_offset..inclusive_end);
+    }
+
     fn cut_word_right_to_next(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let next_word_start = self.line_buffer.word_right_start_index();
+        let next_word_start = self.line_buffer.vi_word_right_start_index();
         self.cut_range(insertion_offset..next_word_start);
     }
 
@@ -736,7 +769,7 @@ impl Editor {
     }
 
     fn move_word_left(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.word_left_index(), select);
+        self.move_to_position(self.line_buffer.emacs_word_left_index(), select);
     }
 
     fn move_big_word_left(&mut self, select: bool) {
@@ -744,11 +777,11 @@ impl Editor {
     }
 
     fn move_word_right(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.word_right_index(), select);
+        self.move_to_position(self.line_buffer.emacs_word_right_index(), select);
     }
 
     fn move_word_right_start(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.word_right_start_index(), select);
+        self.move_to_position(self.line_buffer.emacs_word_right_start_index(), select);
     }
 
     fn move_big_word_right_start(&mut self, select: bool) {
@@ -756,11 +789,23 @@ impl Editor {
     }
 
     fn move_word_right_end(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.word_right_end_index(), select);
+        self.move_to_position(self.line_buffer.emacs_word_right_end_index(), select);
     }
 
     fn move_big_word_right_end(&mut self, select: bool) {
         self.move_to_position(self.line_buffer.big_word_right_end_index(), select);
+    }
+
+    fn move_vi_word_left(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.vi_word_left_index(), select);
+    }
+
+    fn move_vi_word_right_start(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.vi_word_right_start_index(), select);
+    }
+
+    fn move_vi_word_right_end(&mut self, select: bool) {
+        self.move_to_position(self.line_buffer.vi_word_right_end_index(), select);
     }
 
     fn insert_char(&mut self, c: char) {
@@ -845,7 +890,7 @@ impl Editor {
         self.line_buffer
             .current_whitespace_range()
             .unwrap_or_else(|| {
-                let word_range = self.line_buffer.current_word_range();
+                let word_range = self.line_buffer.emacs_current_word_range();
                 match text_object_scope {
                     TextObjectScope::Inner => word_range,
                     TextObjectScope::Around => {
@@ -1028,7 +1073,7 @@ impl Editor {
 
     pub(crate) fn copy_word_left(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let word_start = self.line_buffer.word_left_index();
+        let word_start = self.line_buffer.emacs_word_left_index();
         self.copy_range(word_start..insertion_offset);
     }
 
@@ -1038,9 +1083,15 @@ impl Editor {
         self.copy_range(big_word_start..insertion_offset);
     }
 
+    pub(crate) fn copy_vi_word_left(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let word_start = self.line_buffer.vi_word_left_index();
+        self.copy_range(word_start..insertion_offset);
+    }
+
     pub(crate) fn copy_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let word_end = self.line_buffer.word_right_index();
+        let word_end = self.line_buffer.emacs_word_right_index();
         self.copy_range(insertion_offset..word_end);
     }
 
@@ -1050,9 +1101,27 @@ impl Editor {
         self.copy_range(insertion_offset..big_word_end);
     }
 
+    /// Copy from cursor to end of next word (inclusive).
+    /// Used by Vi `ye` — the `e` motion is inclusive.
+    pub(crate) fn copy_vi_word_right_end(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let word_end = self.line_buffer.vi_word_right_end_index();
+        let inclusive_end = self.line_buffer.grapheme_right_index_from_pos(word_end);
+        self.copy_range(insertion_offset..inclusive_end);
+    }
+
+    /// Copy from cursor to end of next WORD (inclusive).
+    /// Used by Vi `yE` — the `E` motion is inclusive.
+    pub(crate) fn copy_vi_big_word_right_end(&mut self) {
+        let insertion_offset = self.line_buffer.insertion_point();
+        let word_end = self.line_buffer.big_word_right_end_index();
+        let inclusive_end = self.line_buffer.grapheme_right_index_from_pos(word_end);
+        self.copy_range(insertion_offset..inclusive_end);
+    }
+
     pub(crate) fn copy_word_right_to_next(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let next_word_start = self.line_buffer.word_right_start_index();
+        let next_word_start = self.line_buffer.vi_word_right_start_index();
         self.copy_range(insertion_offset..next_word_start);
     }
 
@@ -1190,6 +1259,137 @@ mod test {
         editor.cut_big_word_left();
 
         assert_eq!(editor.get_buffer(), expected);
+    }
+
+    #[rstest]
+    // de from start of "abc def": cuts "abc" (inclusive end of word)
+    #[case("abc def", 0, "abc", " def")]
+    // de on 'b' in "a.b.c": cuts "b." (word 'b' end is 'b', next word '.'
+    // end is '.', so inclusive range covers "b.")
+    #[case("a.b.c", 2, "b.", "a.c")]
+    // de on 'a' in "abc.def": cuts "abc" (end of word 'abc')
+    #[case("abc.def", 0, "abc", ".def")]
+    fn test_cut_vi_word_right_end(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected_cut: &str,
+        #[case] expected_buffer: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.line_buffer.set_insertion_point(position);
+
+        editor.cut_vi_word_right_end();
+
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    #[rstest]
+    // dE from start of "abc-def ghi": cuts "abc-def" (inclusive end of WORD)
+    #[case("abc-def ghi", 0, "abc-def", " ghi")]
+    // dE from start of "abc def": cuts "abc" (inclusive end of WORD)
+    #[case("abc def", 0, "abc", " def")]
+    // dE on '-' in "abc-def ghi": cuts "-def" (rest of WORD)
+    #[case("abc-def ghi", 3, "-def", "abc ghi")]
+    fn test_cut_vi_big_word_right_end(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected_cut: &str,
+        #[case] expected_buffer: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.line_buffer.set_insertion_point(position);
+
+        editor.cut_vi_big_word_right_end();
+
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    #[rstest]
+    // ye from start of "abc def": yanks "abc" (inclusive), buffer unchanged
+    #[case("abc def", 0, "abc", "abc def")]
+    // ye on 'a' in "abc.def": yanks "abc"
+    #[case("abc.def", 0, "abc", "abc.def")]
+    // ye on '.' in "a.b.c": yanks ".b"
+    #[case("a.b.c", 1, ".b", "a.b.c")]
+    fn test_copy_vi_word_right_end(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected_copy: &str,
+        #[case] expected_buffer: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.line_buffer.set_insertion_point(position);
+
+        editor.copy_vi_word_right_end();
+
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.cut_buffer.get().0, expected_copy);
+    }
+
+    #[rstest]
+    // yE from start of "abc-def ghi": yanks "abc-def" (inclusive), buffer unchanged
+    #[case("abc-def ghi", 0, "abc-def", "abc-def ghi")]
+    // yE from '-' in "abc-def ghi": yanks "-def"
+    #[case("abc-def ghi", 3, "-def", "abc-def ghi")]
+    fn test_copy_vi_big_word_right_end(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected_copy: &str,
+        #[case] expected_buffer: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.line_buffer.set_insertion_point(position);
+
+        editor.copy_vi_big_word_right_end();
+
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.cut_buffer.get().0, expected_copy);
+    }
+
+    #[rstest]
+    // db from end of "abc.def": cuts "def"
+    #[case("abc.def", 7, "def", "abc.")]
+    // db from '.' in "abc.def": cuts "."
+    #[case("abc.def", 4, ".", "abcdef")]
+    // db from end of "abc def": cuts "def"
+    #[case("abc def", 7, "def", "abc ")]
+    fn test_cut_vi_word_left(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected_cut: &str,
+        #[case] expected_buffer: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.line_buffer.set_insertion_point(position);
+
+        editor.cut_vi_word_left();
+
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    #[rstest]
+    // yb from end of "abc.def": yanks "def", buffer unchanged
+    #[case("abc.def", 7, "def", "abc.def")]
+    // yb from '.' in "abc.def": yanks "."
+    #[case("abc.def", 4, ".", "abc.def")]
+    // yb from end of "abc def": yanks "def"
+    #[case("abc def", 7, "def", "abc def")]
+    fn test_copy_vi_word_left(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected_copy: &str,
+        #[case] expected_buffer: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.line_buffer.set_insertion_point(position);
+
+        editor.copy_vi_word_left();
+
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.cut_buffer.get().0, expected_copy);
     }
 
     #[rstest]
