@@ -321,10 +321,10 @@ pub enum EditCommand {
     CutBigWordRight,
 
     /// Cut from the insertion point to the end of the next word (inclusive, for Vi `de`)
-    CutWordRightEnd,
+    CutViWordRightEnd,
 
     /// Cut from the insertion point to the end of the next WORD (inclusive, for Vi `dE`)
-    CutBigWordRightEnd,
+    CutViBigWordRightEnd,
 
     /// Cut the word right of the insertion point and any following space
     CutWordRightToNext,
@@ -461,10 +461,10 @@ pub enum EditCommand {
     CopyBigWordRight,
 
     /// Copy from the insertion point to the end of the next word (inclusive, for Vi `ye`)
-    CopyWordRightEnd,
+    CopyViWordRightEnd,
 
     /// Copy from the insertion point to the end of the next WORD (inclusive, for Vi `yE`)
-    CopyBigWordRightEnd,
+    CopyViBigWordRightEnd,
 
     /// Copy the word right of the insertion point and any following space
     CopyWordRightToNext,
@@ -637,8 +637,8 @@ impl Display for EditCommand {
             EditCommand::CutBigWordLeft => write!(f, "CutBigWordLeft"),
             EditCommand::CutWordRight => write!(f, "CutWordRight"),
             EditCommand::CutBigWordRight => write!(f, "CutBigWordRight"),
-            EditCommand::CutWordRightEnd => write!(f, "CutWordRightEnd"),
-            EditCommand::CutBigWordRightEnd => write!(f, "CutBigWordRightEnd"),
+            EditCommand::CutViWordRightEnd => write!(f, "CutViWordRightEnd"),
+            EditCommand::CutViBigWordRightEnd => write!(f, "CutViBigWordRightEnd"),
             EditCommand::CutWordRightToNext => write!(f, "CutWordRightToNext"),
             EditCommand::CutBigWordRightToNext => write!(f, "CutBigWordRightToNext"),
             EditCommand::CutViWordLeft => write!(f, "CutViWordLeft"),
@@ -675,8 +675,8 @@ impl Display for EditCommand {
             EditCommand::CopyViWordLeft => write!(f, "CopyViWordLeft"),
             EditCommand::CopyWordRight => write!(f, "CopyWordRight"),
             EditCommand::CopyBigWordRight => write!(f, "CopyBigWordRight"),
-            EditCommand::CopyWordRightEnd => write!(f, "CopyWordRightEnd"),
-            EditCommand::CopyBigWordRightEnd => write!(f, "CopyBigWordRightEnd"),
+            EditCommand::CopyViWordRightEnd => write!(f, "CopyViWordRightEnd"),
+            EditCommand::CopyViBigWordRightEnd => write!(f, "CopyViBigWordRightEnd"),
             EditCommand::CopyWordRightToNext => write!(f, "CopyWordRightToNext"),
             EditCommand::CopyBigWordRightToNext => write!(f, "CopyBigWordRightToNext"),
             EditCommand::CopyLeft => write!(f, "CopyLeft"),
@@ -766,8 +766,8 @@ impl EditCommand {
             | EditCommand::CutBigWordLeft
             | EditCommand::CutWordRight
             | EditCommand::CutBigWordRight
-            | EditCommand::CutWordRightEnd
-            | EditCommand::CutBigWordRightEnd
+            | EditCommand::CutViWordRightEnd
+            | EditCommand::CutViBigWordRightEnd
             | EditCommand::CutWordRightToNext
             | EditCommand::CutBigWordRightToNext
             | EditCommand::CutViWordLeft
@@ -810,8 +810,8 @@ impl EditCommand {
             | EditCommand::CopyViWordLeft
             | EditCommand::CopyWordRight
             | EditCommand::CopyBigWordRight
-            | EditCommand::CopyWordRightEnd
-            | EditCommand::CopyBigWordRightEnd
+            | EditCommand::CopyViWordRightEnd
+            | EditCommand::CopyViBigWordRightEnd
             | EditCommand::CopyWordRightToNext
             | EditCommand::CopyBigWordRightToNext
             | EditCommand::CopyLeft

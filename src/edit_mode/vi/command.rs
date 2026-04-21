@@ -336,11 +336,11 @@ impl Command {
                     EditCommand::CutBigWordRightToNext,
                 )]),
                 Motion::NextWordEnd => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutWordRightEnd)])
+                    Some(vec![ReedlineOption::Edit(EditCommand::CutViWordRightEnd)])
                 }
-                Motion::NextBigWordEnd => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordRightEnd)])
-                }
+                Motion::NextBigWordEnd => Some(vec![ReedlineOption::Edit(
+                    EditCommand::CutViBigWordRightEnd,
+                )]),
                 Motion::PreviousWord => {
                     Some(vec![ReedlineOption::Edit(EditCommand::CutViWordLeft)])
                 }
@@ -398,17 +398,17 @@ impl Command {
                         ReedlineOption::Edit(EditCommand::CutToLineEnd),
                     ]),
                     Motion::NextWord => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutWordRightEnd)])
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutViWordRightEnd)])
                     }
-                    Motion::NextBigWord => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordRightEnd)])
-                    }
+                    Motion::NextBigWord => Some(vec![ReedlineOption::Edit(
+                        EditCommand::CutViBigWordRightEnd,
+                    )]),
                     Motion::NextWordEnd => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutWordRightEnd)])
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutViWordRightEnd)])
                     }
-                    Motion::NextBigWordEnd => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordRightEnd)])
-                    }
+                    Motion::NextBigWordEnd => Some(vec![ReedlineOption::Edit(
+                        EditCommand::CutViBigWordRightEnd,
+                    )]),
                     Motion::PreviousWord => {
                         Some(vec![ReedlineOption::Edit(EditCommand::CutViWordLeft)])
                     }
@@ -477,11 +477,11 @@ impl Command {
                     EditCommand::CopyBigWordRightToNext,
                 )]),
                 Motion::NextWordEnd => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyWordRightEnd)])
+                    Some(vec![ReedlineOption::Edit(EditCommand::CopyViWordRightEnd)])
                 }
-                Motion::NextBigWordEnd => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyBigWordRightEnd)])
-                }
+                Motion::NextBigWordEnd => Some(vec![ReedlineOption::Edit(
+                    EditCommand::CopyViBigWordRightEnd,
+                )]),
                 Motion::PreviousWord => {
                     Some(vec![ReedlineOption::Edit(EditCommand::CopyViWordLeft)])
                 }

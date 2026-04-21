@@ -113,8 +113,8 @@ impl Editor {
             EditCommand::CutViWordLeft => self.cut_vi_word_left(),
             EditCommand::CutWordRight => self.cut_word_right(),
             EditCommand::CutBigWordRight => self.cut_big_word_right(),
-            EditCommand::CutWordRightEnd => self.cut_word_right_end(),
-            EditCommand::CutBigWordRightEnd => self.cut_big_word_right_end(),
+            EditCommand::CutViWordRightEnd => self.cut_vi_word_right_end(),
+            EditCommand::CutViBigWordRightEnd => self.cut_vi_big_word_right_end(),
             EditCommand::CutWordRightToNext => self.cut_word_right_to_next(),
             EditCommand::CutBigWordRightToNext => self.cut_big_word_right_to_next(),
             EditCommand::PasteCutBufferBefore => self.insert_cut_buffer_before(),
@@ -159,8 +159,8 @@ impl Editor {
             EditCommand::CopyViWordLeft => self.copy_vi_word_left(),
             EditCommand::CopyWordRight => self.copy_word_right(),
             EditCommand::CopyBigWordRight => self.copy_big_word_right(),
-            EditCommand::CopyWordRightEnd => self.copy_word_right_end(),
-            EditCommand::CopyBigWordRightEnd => self.copy_big_word_right_end(),
+            EditCommand::CopyViWordRightEnd => self.copy_vi_word_right_end(),
+            EditCommand::CopyViBigWordRightEnd => self.copy_vi_big_word_right_end(),
             EditCommand::CopyWordRightToNext => self.copy_word_right_to_next(),
             EditCommand::CopyBigWordRightToNext => self.copy_big_word_right_to_next(),
             EditCommand::CopyRightUntil(c) => self.copy_right_until_char(*c, false, true),
@@ -511,7 +511,7 @@ impl Editor {
 
     /// Cut from cursor to end of next word (inclusive).
     /// Used by Vi `de` — the `e` motion is inclusive.
-    fn cut_word_right_end(&mut self) {
+    fn cut_vi_word_right_end(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let word_end = self.line_buffer.vi_word_right_end_index();
         let inclusive_end = self.line_buffer.grapheme_right_index_from_pos(word_end);
@@ -520,7 +520,7 @@ impl Editor {
 
     /// Cut from cursor to end of next WORD (inclusive).
     /// Used by Vi `dE` — the `E` motion is inclusive.
-    fn cut_big_word_right_end(&mut self) {
+    fn cut_vi_big_word_right_end(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let word_end = self.line_buffer.big_word_right_end_index();
         let inclusive_end = self.line_buffer.grapheme_right_index_from_pos(word_end);
@@ -1103,7 +1103,7 @@ impl Editor {
 
     /// Copy from cursor to end of next word (inclusive).
     /// Used by Vi `ye` — the `e` motion is inclusive.
-    pub(crate) fn copy_word_right_end(&mut self) {
+    pub(crate) fn copy_vi_word_right_end(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let word_end = self.line_buffer.vi_word_right_end_index();
         let inclusive_end = self.line_buffer.grapheme_right_index_from_pos(word_end);
@@ -1112,7 +1112,7 @@ impl Editor {
 
     /// Copy from cursor to end of next WORD (inclusive).
     /// Used by Vi `yE` — the `E` motion is inclusive.
-    pub(crate) fn copy_big_word_right_end(&mut self) {
+    pub(crate) fn copy_vi_big_word_right_end(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let word_end = self.line_buffer.big_word_right_end_index();
         let inclusive_end = self.line_buffer.grapheme_right_index_from_pos(word_end);
@@ -1269,7 +1269,7 @@ mod test {
     #[case("a.b.c", 2, "b.", "a.c")]
     // de on 'a' in "abc.def": cuts "abc" (end of word 'abc')
     #[case("abc.def", 0, "abc", ".def")]
-    fn test_cut_word_right_end(
+    fn test_cut_vi_word_right_end(
         #[case] input: &str,
         #[case] position: usize,
         #[case] expected_cut: &str,
@@ -1278,7 +1278,7 @@ mod test {
         let mut editor = editor_with(input);
         editor.line_buffer.set_insertion_point(position);
 
-        editor.cut_word_right_end();
+        editor.cut_vi_word_right_end();
 
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
