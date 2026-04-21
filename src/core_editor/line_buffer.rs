@@ -191,7 +191,18 @@ impl LineBuffer {
     }
 
     /// Cursor position *behind* the next word to the right
+    ///
+    /// Uses Unicode UAX #29 word boundaries. For Vi-style word boundaries,
+    /// use [`vi_word_right_index`](Self::vi_word_right_index).
+    #[deprecated(note = "use emacs_word_right_index or vi_word_right_index for clarity")]
     pub fn word_right_index(&self) -> usize {
+        self.emacs_word_right_index()
+    }
+
+    /// Cursor position *behind* the next Emacs word to the right
+    ///
+    /// Uses Unicode UAX #29 word boundaries.
+    pub fn emacs_word_right_index(&self) -> usize {
         self.lines[self.insertion_point..]
             .split_word_bound_indices()
             .find(|(_, word)| !is_whitespace_str(word))
@@ -222,7 +233,18 @@ impl LineBuffer {
     }
 
     /// Cursor position *at end of* the next word to the right
+    ///
+    /// Uses Unicode UAX #29 word boundaries. For Vi-style word boundaries,
+    /// use [`vi_word_right_end_index`](Self::vi_word_right_end_index).
+    #[deprecated(note = "use emacs_word_right_end_index or vi_word_right_end_index for clarity")]
     pub fn word_right_end_index(&self) -> usize {
+        self.emacs_word_right_end_index()
+    }
+
+    /// Cursor position *at end of* the next Emacs word to the right
+    ///
+    /// Uses Unicode UAX #29 word boundaries.
+    pub fn emacs_word_right_end_index(&self) -> usize {
         self.lines[self.insertion_point..]
             .split_word_bound_indices()
             .find_map(|(i, word)| {
@@ -284,7 +306,20 @@ impl LineBuffer {
     }
 
     /// Cursor position *in front of* the next word to the right
+    ///
+    /// Uses Unicode UAX #29 word boundaries. For Vi-style word boundaries,
+    /// use [`vi_word_right_start_index`](Self::vi_word_right_start_index).
+    #[deprecated(
+        note = "use emacs_word_right_start_index or vi_word_right_start_index for clarity"
+    )]
     pub fn word_right_start_index(&self) -> usize {
+        self.emacs_word_right_start_index()
+    }
+
+    /// Cursor position *in front of* the next Emacs word to the right
+    ///
+    /// Uses Unicode UAX #29 word boundaries.
+    pub fn emacs_word_right_start_index(&self) -> usize {
         self.lines[self.insertion_point..]
             .split_word_bound_indices()
             .find(|(i, word)| *i != 0 && !is_whitespace_str(word))
@@ -315,7 +350,18 @@ impl LineBuffer {
     }
 
     /// Cursor position *in front of* the next word to the left
+    ///
+    /// Uses Unicode UAX #29 word boundaries. For Vi-style word boundaries,
+    /// use [`vi_word_left_index`](Self::vi_word_left_index).
+    #[deprecated(note = "use emacs_word_left_index or vi_word_left_index for clarity")]
     pub fn word_left_index(&self) -> usize {
+        self.emacs_word_left_index()
+    }
+
+    /// Cursor position *in front of* the next Emacs word to the left
+    ///
+    /// Uses Unicode UAX #29 word boundaries.
+    pub fn emacs_word_left_index(&self) -> usize {
         self.lines[..self.insertion_point]
             .split_word_bound_indices()
             .rfind(|(_, word)| !is_whitespace_str(word))
@@ -415,7 +461,7 @@ impl LineBuffer {
 
     /// Move cursor position *in front of* the next word to the left
     pub fn move_word_left(&mut self) {
-        self.insertion_point = self.word_left_index();
+        self.insertion_point = self.emacs_word_left_index();
     }
 
     /// Move cursor position *in front of* the next WORD to the left
@@ -425,12 +471,12 @@ impl LineBuffer {
 
     /// Move cursor position *behind* the next word to the right
     pub fn move_word_right(&mut self) {
-        self.insertion_point = self.word_right_index();
+        self.insertion_point = self.emacs_word_right_index();
     }
 
     /// Move cursor position to the start of the next word
     pub fn move_word_right_start(&mut self) {
-        self.insertion_point = self.word_right_start_index();
+        self.insertion_point = self.emacs_word_right_start_index();
     }
 
     /// Move cursor position to the start of the next WORD
@@ -440,7 +486,7 @@ impl LineBuffer {
 
     /// Move cursor position to the end of the next word
     pub fn move_word_right_end(&mut self) {
-        self.insertion_point = self.word_right_end_index();
+        self.insertion_point = self.emacs_word_right_end_index();
     }
 
     /// Move cursor position to the end of the next WORD
@@ -561,8 +607,20 @@ impl LineBuffer {
     }
 
     /// Gets the range of the word the current edit position is pointing to
+    ///
+    /// Uses Unicode UAX #29 word boundaries. For Vi-style word boundaries,
+    /// use [`vi_current_word_range`](Self::vi_current_word_range).
+    #[deprecated(note = "use emacs_current_word_range or vi_current_word_range for clarity")]
+    #[allow(deprecated)]
     pub fn current_word_range(&self) -> Range<usize> {
-        let right_index = self.word_right_index();
+        self.emacs_current_word_range()
+    }
+
+    /// Gets the range of the Emacs word the current edit position is pointing to
+    ///
+    /// Uses Unicode UAX #29 word boundaries.
+    pub fn emacs_current_word_range(&self) -> Range<usize> {
+        let right_index = self.emacs_word_right_index();
         let left_index = self.lines[..right_index]
             .split_word_bound_indices()
             .rfind(|(_, word)| !is_whitespace_str(word))
@@ -602,7 +660,7 @@ impl LineBuffer {
 
     /// Uppercases the current word
     pub fn uppercase_word(&mut self) {
-        let change_range = self.current_word_range();
+        let change_range = self.emacs_current_word_range();
         let uppercased = self.get_buffer()[change_range.clone()].to_uppercase();
         self.replace_range(change_range, &uppercased);
         self.move_word_right();
@@ -610,7 +668,7 @@ impl LineBuffer {
 
     /// Lowercases the current word
     pub fn lowercase_word(&mut self) {
-        let change_range = self.current_word_range();
+        let change_range = self.emacs_current_word_range();
         let uppercased = self.get_buffer()[change_range.clone()].to_lowercase();
         self.replace_range(change_range, &uppercased);
         self.move_word_right();
@@ -678,22 +736,22 @@ impl LineBuffer {
 
     /// Deletes one word to the left
     pub fn delete_word_left(&mut self) {
-        let left_word_index = self.word_left_index();
+        let left_word_index = self.emacs_word_left_index();
         self.clear_range(left_word_index..self.insertion_point());
         self.insertion_point = left_word_index;
     }
 
     /// Deletes one word to the right
     pub fn delete_word_right(&mut self) {
-        let right_word_index = self.word_right_index();
+        let right_word_index = self.emacs_word_right_index();
         self.clear_range(self.insertion_point()..right_word_index);
     }
 
     /// Swaps current word with word on right
     pub fn swap_words(&mut self) {
-        let word_1_range = self.current_word_range();
+        let word_1_range = self.emacs_current_word_range();
         self.move_word_right();
-        let word_2_range = self.current_word_range();
+        let word_2_range = self.emacs_current_word_range();
 
         if word_1_range != word_2_range {
             self.move_word_left();
@@ -1912,7 +1970,7 @@ mod test {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        let index = line_buffer.word_left_index();
+        let index = line_buffer.emacs_word_left_index();
 
         assert_eq!(index, expected);
     }
@@ -1947,7 +2005,7 @@ mod test {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        let index = line_buffer.word_right_start_index();
+        let index = line_buffer.emacs_word_right_start_index();
 
         assert_eq!(index, expected);
     }
@@ -1984,7 +2042,7 @@ mod test {
         let mut line_buffer = buffer_with(input);
         line_buffer.set_insertion_point(position);
 
-        let index = line_buffer.word_right_end_index();
+        let index = line_buffer.emacs_word_right_end_index();
 
         assert_eq!(index, expected);
     }

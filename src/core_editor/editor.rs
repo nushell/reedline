@@ -481,7 +481,7 @@ impl Editor {
 
     fn cut_word_left(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let word_start = self.line_buffer.word_left_index();
+        let word_start = self.line_buffer.emacs_word_left_index();
         self.cut_range(word_start..insertion_offset);
     }
 
@@ -499,7 +499,7 @@ impl Editor {
 
     fn cut_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let word_end = self.line_buffer.word_right_index();
+        let word_end = self.line_buffer.emacs_word_right_index();
         self.cut_range(insertion_offset..word_end);
     }
 
@@ -769,7 +769,7 @@ impl Editor {
     }
 
     fn move_word_left(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.word_left_index(), select);
+        self.move_to_position(self.line_buffer.emacs_word_left_index(), select);
     }
 
     fn move_big_word_left(&mut self, select: bool) {
@@ -777,11 +777,11 @@ impl Editor {
     }
 
     fn move_word_right(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.word_right_index(), select);
+        self.move_to_position(self.line_buffer.emacs_word_right_index(), select);
     }
 
     fn move_word_right_start(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.word_right_start_index(), select);
+        self.move_to_position(self.line_buffer.emacs_word_right_start_index(), select);
     }
 
     fn move_big_word_right_start(&mut self, select: bool) {
@@ -789,7 +789,7 @@ impl Editor {
     }
 
     fn move_word_right_end(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.word_right_end_index(), select);
+        self.move_to_position(self.line_buffer.emacs_word_right_end_index(), select);
     }
 
     fn move_big_word_right_end(&mut self, select: bool) {
@@ -890,7 +890,7 @@ impl Editor {
         self.line_buffer
             .current_whitespace_range()
             .unwrap_or_else(|| {
-                let word_range = self.line_buffer.current_word_range();
+                let word_range = self.line_buffer.emacs_current_word_range();
                 match text_object_scope {
                     TextObjectScope::Inner => word_range,
                     TextObjectScope::Around => {
@@ -1073,7 +1073,7 @@ impl Editor {
 
     pub(crate) fn copy_word_left(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let word_start = self.line_buffer.word_left_index();
+        let word_start = self.line_buffer.emacs_word_left_index();
         self.copy_range(word_start..insertion_offset);
     }
 
@@ -1091,7 +1091,7 @@ impl Editor {
 
     pub(crate) fn copy_word_right(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
-        let word_end = self.line_buffer.word_right_index();
+        let word_end = self.line_buffer.emacs_word_right_index();
         self.copy_range(insertion_offset..word_end);
     }
 
