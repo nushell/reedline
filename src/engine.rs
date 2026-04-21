@@ -1780,14 +1780,12 @@ impl Reedline {
         if word_start >= word_end {
             // The first char in the buffer is a space or there are consecutive spaces
             return None;
+        } else if self.editor.is_inside_string_literal(word_start) {
+            return None;
         }
 
         let word: String = chars[word_start..word_end].iter().collect();
         if let Some(expansion) = self.abbreviations.get(word.as_bytes()) {
-            if self.editor.is_inside_string_literal(word_start) {
-                return None;
-            }
-
             let commands = vec![
                 EditCommand::MoveToPosition {
                     position: word_start,
