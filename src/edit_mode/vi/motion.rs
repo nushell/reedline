@@ -195,13 +195,13 @@ impl Motion {
                     ReedlineEvent::Down,
                 ]))
             }],
-            Motion::NextWord => vec![ReedlineOption::Edit(EditCommand::MoveWordRightStart {
+            Motion::NextWord => vec![ReedlineOption::Edit(EditCommand::MoveViWordRightStart {
                 select: select_mode,
             })],
             Motion::NextBigWord => vec![ReedlineOption::Edit(EditCommand::MoveBigWordRightStart {
                 select: select_mode,
             })],
-            Motion::NextWordEnd => vec![ReedlineOption::Edit(EditCommand::MoveWordRightEnd {
+            Motion::NextWordEnd => vec![ReedlineOption::Edit(EditCommand::MoveViWordRightEnd {
                 select: select_mode,
             })],
             Motion::NextBigWordEnd => {
@@ -209,7 +209,7 @@ impl Motion {
                     select: select_mode,
                 })]
             }
-            Motion::PreviousWord => vec![ReedlineOption::Edit(EditCommand::MoveWordLeft {
+            Motion::PreviousWord => vec![ReedlineOption::Edit(EditCommand::MoveViWordLeft {
                 select: select_mode,
             })],
             Motion::PreviousBigWord => vec![ReedlineOption::Edit(EditCommand::MoveBigWordLeft {

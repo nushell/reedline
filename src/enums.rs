@@ -194,6 +194,24 @@ pub enum EditCommand {
         select: bool,
     },
 
+    /// Move one Vi word to the left (uses Vi three-class word boundaries)
+    MoveViWordLeft {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move to the start of the next Vi word (uses Vi three-class word boundaries)
+    MoveViWordRightStart {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move to the end of the next Vi word (uses Vi three-class word boundaries)
+    MoveViWordRightEnd {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
     /// Move to position
     MoveToPosition {
         /// Position to move to
@@ -302,11 +320,20 @@ pub enum EditCommand {
     /// Cut the word right of the insertion point
     CutBigWordRight,
 
+    /// Cut from the insertion point to the end of the next word (inclusive, for Vi `de`)
+    CutWordRightEnd,
+
+    /// Cut from the insertion point to the end of the next WORD (inclusive, for Vi `dE`)
+    CutBigWordRightEnd,
+
     /// Cut the word right of the insertion point and any following space
     CutWordRightToNext,
 
     /// Cut the WORD right of the insertion point and any following space
     CutBigWordRightToNext,
+
+    /// Cut the Vi word left of the insertion point (uses Vi three-class word boundaries)
+    CutViWordLeft,
 
     /// Paste the cut buffer in front of the insertion point (Emacs, vi `P`)
     PasteCutBufferBefore,
@@ -424,11 +451,20 @@ pub enum EditCommand {
     /// Copy the WORD left of the insertion point
     CopyBigWordLeft,
 
+    /// Copy the Vi word left of the insertion point (uses Vi three-class word boundaries)
+    CopyViWordLeft,
+
     /// Copy the word right of the insertion point
     CopyWordRight,
 
     /// Copy the WORD right of the insertion point
     CopyBigWordRight,
+
+    /// Copy from the insertion point to the end of the next word (inclusive, for Vi `ye`)
+    CopyWordRightEnd,
+
+    /// Copy from the insertion point to the end of the next WORD (inclusive, for Vi `yE`)
+    CopyBigWordRightEnd,
 
     /// Copy the word right of the insertion point and any following space
     CopyWordRightToNext,
@@ -545,6 +581,15 @@ impl Display for EditCommand {
             EditCommand::MoveBigWordRightEnd { .. } => {
                 write!(f, "MoveBigWordRightEnd Optional[select: <bool>]")
             }
+            EditCommand::MoveViWordLeft { .. } => {
+                write!(f, "MoveViWordLeft Optional[select: <bool>]")
+            }
+            EditCommand::MoveViWordRightStart { .. } => {
+                write!(f, "MoveViWordRightStart Optional[select: <bool>]")
+            }
+            EditCommand::MoveViWordRightEnd { .. } => {
+                write!(f, "MoveViWordRightEnd Optional[select: <bool>]")
+            }
             EditCommand::MoveWordRightStart { .. } => {
                 write!(f, "MoveWordRightStart Optional[select: <bool>]")
             }
@@ -592,8 +637,11 @@ impl Display for EditCommand {
             EditCommand::CutBigWordLeft => write!(f, "CutBigWordLeft"),
             EditCommand::CutWordRight => write!(f, "CutWordRight"),
             EditCommand::CutBigWordRight => write!(f, "CutBigWordRight"),
+            EditCommand::CutWordRightEnd => write!(f, "CutWordRightEnd"),
+            EditCommand::CutBigWordRightEnd => write!(f, "CutBigWordRightEnd"),
             EditCommand::CutWordRightToNext => write!(f, "CutWordRightToNext"),
             EditCommand::CutBigWordRightToNext => write!(f, "CutBigWordRightToNext"),
+            EditCommand::CutViWordLeft => write!(f, "CutViWordLeft"),
             EditCommand::PasteCutBufferBefore => write!(f, "PasteCutBufferBefore"),
             EditCommand::PasteCutBufferAfter => write!(f, "PasteCutBufferAfter"),
             EditCommand::UppercaseWord => write!(f, "UppercaseWord"),
@@ -624,8 +672,11 @@ impl Display for EditCommand {
             EditCommand::CopyCurrentLine => write!(f, "CopyCurrentLine"),
             EditCommand::CopyWordLeft => write!(f, "CopyWordLeft"),
             EditCommand::CopyBigWordLeft => write!(f, "CopyBigWordLeft"),
+            EditCommand::CopyViWordLeft => write!(f, "CopyViWordLeft"),
             EditCommand::CopyWordRight => write!(f, "CopyWordRight"),
             EditCommand::CopyBigWordRight => write!(f, "CopyBigWordRight"),
+            EditCommand::CopyWordRightEnd => write!(f, "CopyWordRightEnd"),
+            EditCommand::CopyBigWordRightEnd => write!(f, "CopyBigWordRightEnd"),
             EditCommand::CopyWordRightToNext => write!(f, "CopyWordRightToNext"),
             EditCommand::CopyBigWordRightToNext => write!(f, "CopyBigWordRightToNext"),
             EditCommand::CopyLeft => write!(f, "CopyLeft"),
@@ -674,6 +725,9 @@ impl EditCommand {
             | EditCommand::MoveBigWordRightStart { select, .. }
             | EditCommand::MoveWordRightEnd { select, .. }
             | EditCommand::MoveBigWordRightEnd { select, .. }
+            | EditCommand::MoveViWordLeft { select, .. }
+            | EditCommand::MoveViWordRightStart { select, .. }
+            | EditCommand::MoveViWordRightEnd { select, .. }
             | EditCommand::MoveRightUntil { select, .. }
             | EditCommand::MoveRightBefore { select, .. }
             | EditCommand::MoveLeftUntil { select, .. }
@@ -712,8 +766,11 @@ impl EditCommand {
             | EditCommand::CutBigWordLeft
             | EditCommand::CutWordRight
             | EditCommand::CutBigWordRight
+            | EditCommand::CutWordRightEnd
+            | EditCommand::CutBigWordRightEnd
             | EditCommand::CutWordRightToNext
             | EditCommand::CutBigWordRightToNext
+            | EditCommand::CutViWordLeft
             | EditCommand::PasteCutBufferBefore
             | EditCommand::PasteCutBufferAfter
             | EditCommand::UppercaseWord
@@ -750,8 +807,11 @@ impl EditCommand {
             | EditCommand::CopyCurrentLine
             | EditCommand::CopyWordLeft
             | EditCommand::CopyBigWordLeft
+            | EditCommand::CopyViWordLeft
             | EditCommand::CopyWordRight
             | EditCommand::CopyBigWordRight
+            | EditCommand::CopyWordRightEnd
+            | EditCommand::CopyBigWordRightEnd
             | EditCommand::CopyWordRightToNext
             | EditCommand::CopyBigWordRightToNext
             | EditCommand::CopyLeft

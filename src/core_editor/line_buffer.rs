@@ -199,6 +199,14 @@ impl LineBuffer {
             .unwrap_or_else(|| self.lines.len())
     }
 
+    /// Cursor position *behind* the next Vi word to the right
+    pub fn vi_word_right_index(&self) -> usize {
+        vi_word_segments(&self.lines[self.insertion_point..])
+            .find(|(_, word)| !is_whitespace_str(word))
+            .map(|(i, word)| self.insertion_point + i + word.len())
+            .unwrap_or_else(|| self.lines.len())
+    }
+
     /// Cursor position *behind* the next WORD to the right
     pub fn big_word_right_index(&self) -> usize {
         let mut found_ws = false;
@@ -217,6 +225,24 @@ impl LineBuffer {
     pub fn word_right_end_index(&self) -> usize {
         self.lines[self.insertion_point..]
             .split_word_bound_indices()
+            .find_map(|(i, word)| {
+                word.grapheme_indices(true)
+                    .next_back()
+                    .map(|x| self.insertion_point + x.0 + i)
+                    .filter(|x| !is_whitespace_str(word) && *x != self.insertion_point)
+            })
+            .unwrap_or_else(|| {
+                self.lines
+                    .grapheme_indices(true)
+                    .next_back()
+                    .map(|x| x.0)
+                    .unwrap_or(0)
+            })
+    }
+
+    /// Cursor position *at end of* the next Vi word to the right
+    pub fn vi_word_right_end_index(&self) -> usize {
+        vi_word_segments(&self.lines[self.insertion_point..])
             .find_map(|(i, word)| {
                 word.grapheme_indices(true)
                     .next_back()
@@ -266,6 +292,14 @@ impl LineBuffer {
             .unwrap_or_else(|| self.lines.len())
     }
 
+    /// Cursor position *in front of* the next Vi word to the right
+    pub fn vi_word_right_start_index(&self) -> usize {
+        vi_word_segments(&self.lines[self.insertion_point..])
+            .find(|(i, word)| *i != 0 && !is_whitespace_str(word))
+            .map(|(i, _)| self.insertion_point + i)
+            .unwrap_or_else(|| self.lines.len())
+    }
+
     /// Cursor position *in front of* the next WORD to the right
     pub fn big_word_right_start_index(&self) -> usize {
         let mut found_ws = false;
@@ -285,6 +319,15 @@ impl LineBuffer {
         self.lines[..self.insertion_point]
             .split_word_bound_indices()
             .rfind(|(_, word)| !is_whitespace_str(word))
+            .map(|(i, _)| i)
+            .unwrap_or(0)
+    }
+
+    /// Cursor position *in front of* the next Vi word to the left
+    pub fn vi_word_left_index(&self) -> usize {
+        vi_word_segments(&self.lines[..self.insertion_point])
+            .filter(|(_, word)| !is_whitespace_str(word))
+            .last()
             .map(|(i, _)| i)
             .unwrap_or(0)
     }
@@ -523,6 +566,18 @@ impl LineBuffer {
         let left_index = self.lines[..right_index]
             .split_word_bound_indices()
             .rfind(|(_, word)| !is_whitespace_str(word))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+
+        left_index..right_index
+    }
+
+    /// Gets the range of the Vi word the current edit position is pointing to
+    pub fn vi_current_word_range(&self) -> Range<usize> {
+        let right_index = self.vi_word_right_index();
+        let left_index = vi_word_segments(&self.lines[..right_index])
+            .filter(|(_, word)| !is_whitespace_str(word))
+            .last()
             .map(|(i, _)| i)
             .unwrap_or(0);
 
@@ -1063,6 +1118,56 @@ impl LineBuffer {
             .find(|(_, char)| !char.is_whitespace())
             .map_or(0, |(i, char)| i + char.len_utf8())
     }
+}
+
+/// Character class for Vi-style word motions (w/e/b).
+///
+/// Vi defines three classes of characters:
+/// - **Keyword**: letters, digits, and underscores
+/// - **Punctuation**: non-blank, non-keyword characters
+/// - **Whitespace**: spaces, tabs, and other blanks
+///
+/// A *word* is a maximal sequence of keyword characters OR a maximal sequence
+/// of punctuation characters. Transitions between classes are word boundaries.
+///
+/// Reference: Vim's `:help word`, GNU Readline's `_rl_isident()`, POSIX vi.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViCharClass {
+    Keyword,
+    Punctuation,
+    Whitespace,
+}
+
+impl ViCharClass {
+    fn of(c: char) -> Self {
+        if c.is_alphanumeric() || c == '_' {
+            Self::Keyword
+        } else if c.is_whitespace() {
+            Self::Whitespace
+        } else {
+            Self::Punctuation
+        }
+    }
+}
+
+/// Iterate over Vi-style word segments in a string.
+///
+/// Each yielded item is `(byte_offset, substring)` where all characters in
+/// `substring` belong to the same [`ViCharClass`].
+fn vi_word_segments(s: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut chars = s.char_indices().peekable();
+    std::iter::from_fn(move || {
+        let (first_idx, first_char) = chars.next()?;
+        let class = ViCharClass::of(first_char);
+        while let Some(&(_, next_char)) = chars.peek() {
+            if ViCharClass::of(next_char) != class {
+                break;
+            }
+            chars.next();
+        }
+        let end = chars.peek().map_or(s.len(), |&(i, _)| i);
+        Some((first_idx, &s[first_idx..end]))
+    })
 }
 
 /// Match any sequence of characters that are considered a word boundary
@@ -1905,6 +2010,119 @@ mod test {
         let index = line_buffer.big_word_right_end_index();
 
         assert_eq!(index, expected);
+    }
+
+    // ── Vi word segmentation tests ──────────────────────────────────────
+
+    #[test]
+    fn test_vi_word_segments_basic() {
+        let segs: Vec<_> = vi_word_segments("abc def").collect();
+        assert_eq!(segs, vec![(0, "abc"), (3, " "), (4, "def")]);
+    }
+
+    #[test]
+    fn test_vi_word_segments_punctuation() {
+        // a.b.c → 5 segments: a, ., b, ., c
+        let segs: Vec<_> = vi_word_segments("a.b.c").collect();
+        assert_eq!(segs, vec![(0, "a"), (1, "."), (2, "b"), (3, "."), (4, "c")]);
+    }
+
+    #[test]
+    fn test_vi_word_segments_consecutive_punct() {
+        // "..." is a single punctuation word
+        let segs: Vec<_> = vi_word_segments("...").collect();
+        assert_eq!(segs, vec![(0, "...")]);
+    }
+
+    #[test]
+    fn test_vi_word_segments_mixed() {
+        let segs: Vec<_> = vi_word_segments("foo_bar.baz").collect();
+        assert_eq!(segs, vec![(0, "foo_bar"), (7, "."), (8, "baz")]);
+    }
+
+    #[test]
+    fn test_vi_word_segments_colons() {
+        let segs: Vec<_> = vi_word_segments("abc:def").collect();
+        assert_eq!(segs, vec![(0, "abc"), (3, ":"), (4, "def")]);
+    }
+
+    #[test]
+    fn test_vi_word_segments_mixed_punct() {
+        let segs: Vec<_> = vi_word_segments("abc...def").collect();
+        assert_eq!(segs, vec![(0, "abc"), (3, "..."), (6, "def")]);
+    }
+
+    #[test]
+    fn test_vi_word_segments_empty() {
+        let segs: Vec<_> = vi_word_segments("").collect();
+        assert_eq!(segs, Vec::<(usize, &str)>::new());
+    }
+
+    // ── Additional Vi word motion tests (punctuation) ───────────────────
+
+    #[rstest]
+    // a.b.c: w from 'a' → position 1 (the dot)
+    #[case("a.b.c", 0, 1)]
+    // abc:def: w from 'a' → position 3 (the colon)
+    #[case("abc:def", 0, 3)]
+    // abc...def: w from 'a' → position 3 (first dot)
+    #[case("abc...def", 0, 3)]
+    // foo_bar.baz: w from 'f' → position 7 (the dot)
+    #[case("foo_bar.baz", 0, 7)]
+    // a.b.c: w from position 1 (dot) → position 2 ('b')
+    #[case("a.b.c", 1, 2)]
+    fn test_word_right_start_index_punct(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+        assert_eq!(line_buffer.vi_word_right_start_index(), expected);
+    }
+
+    #[rstest]
+    // a.b.c: e from 'a' → position 1 (the dot, next non-ws word end)
+    #[case("a.b.c", 0, 1)]
+    // abc:def: e from 'a' → position 2 (end of 'abc')
+    #[case("abc:def", 0, 2)]
+    // abc...def: e from 'a' → position 2 (end of 'abc')
+    #[case("abc...def", 0, 2)]
+    // foo_bar.baz: e from 'f' → position 6 (end of 'foo_bar')
+    #[case("foo_bar.baz", 0, 6)]
+    // a.b.c: e from 'b' (pos 2) → position 3 (the dot after b)
+    #[case("a.b.c", 2, 3)]
+    fn test_word_right_end_index_punct(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+        assert_eq!(line_buffer.vi_word_right_end_index(), expected);
+    }
+
+    #[rstest]
+    // a.b.c: b from 'c' (pos 4) → position 3 (the second dot)
+    #[case("a.b.c", 4, 3)]
+    // abc:def: b from end (pos 7) → position 4 ('d')
+    #[case("abc:def", 7, 4)]
+    // abc:def: b from 'd' (pos 4) → position 3 (':')
+    #[case("abc:def", 4, 3)]
+    // abc...def: b from end (pos 9) → position 6 ('d')
+    #[case("abc...def", 9, 6)]
+    // foo_bar.baz: b from end (pos 11) → position 8 ('b')
+    #[case("foo_bar.baz", 11, 8)]
+    // a.b.c.d: b from '.' between c and d (pos 5) → position 4 ('c')
+    #[case("a.b.c.d", 5, 4)]
+    fn test_word_left_index_punct(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+        assert_eq!(line_buffer.vi_word_left_index(), expected);
     }
 
     #[rstest]
