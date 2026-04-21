@@ -2183,6 +2183,87 @@ mod test {
         assert_eq!(line_buffer.vi_word_left_index(), expected);
     }
 
+    // ── Vi word motion tests (basic / spaces / edge cases) ─────────────
+
+    #[rstest]
+    #[case("abc def ghi", 0, 4)] // basic: skip 'abc' + space
+    #[case("abc def ghi", 4, 8)] // from second word
+    #[case("abc", 0, 3)] // single word → end
+    #[case("", 0, 0)] // empty string
+    #[case("  abc", 0, 2)] // leading spaces
+    fn test_vi_word_right_start_index(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+        assert_eq!(line_buffer.vi_word_right_start_index(), expected);
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0, 2)] // end of 'abc'
+    #[case("abc", 1, 2)] // from middle of word
+    #[case("abc", 2, 2)] // already at end
+    #[case("abc def", 2, 6)] // skip to end of 'def'
+    fn test_vi_word_right_end_index(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+        assert_eq!(line_buffer.vi_word_right_end_index(), expected);
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 10, 8)] // from last word → start of 'ghi'
+    #[case("abc def ghi", 8, 4)] // from 'ghi' → start of 'def'
+    #[case("abc", 3, 0)] // single word → start
+    #[case("abc", 0, 0)] // already at start
+    fn test_vi_word_left_index(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+        assert_eq!(line_buffer.vi_word_left_index(), expected);
+    }
+
+    #[rstest]
+    #[case("abc def", 0, 3)] // first word end
+    #[case("abc def", 4, 7)] // second word end
+    #[case("abc", 0, 3)] // single word
+    #[case("a.b", 0, 1)] // stops at punctuation boundary
+    #[case("abc...def", 0, 3)] // stops at punctuation boundary
+    fn test_vi_word_right_index(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+        assert_eq!(line_buffer.vi_word_right_index(), expected);
+    }
+
+    #[rstest]
+    #[case("abc def", 0, 0..3)] // cursor on 'a' → word "abc"
+    #[case("abc def", 4, 4..7)] // cursor on 'd' → word "def"
+    #[case("abc.def", 0, 0..3)] // cursor on 'a' → word "abc" (not "abc.def")
+    #[case("abc.def", 3, 3..4)] // cursor on '.' → word "."
+    #[case("abc.def", 4, 4..7)] // cursor on 'd' → word "def"
+    #[case("a.b.c", 2, 2..3)] // cursor on 'b' → word "b"
+    fn test_vi_current_word_range(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: Range<usize>,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_insertion_point(position);
+        assert_eq!(line_buffer.vi_current_word_range(), expected);
+    }
+
     #[rstest]
     #[case("abc def", 0, 3)]
     #[case("abc def ghi", 3, 7)]
