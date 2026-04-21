@@ -1285,6 +1285,114 @@ mod test {
     }
 
     #[rstest]
+    // dE from start of "abc-def ghi": cuts "abc-def" (inclusive end of WORD)
+    #[case("abc-def ghi", 0, "abc-def", " ghi")]
+    // dE from start of "abc def": cuts "abc" (inclusive end of WORD)
+    #[case("abc def", 0, "abc", " def")]
+    // dE on '-' in "abc-def ghi": cuts "-def" (rest of WORD)
+    #[case("abc-def ghi", 3, "-def", "abc ghi")]
+    fn test_cut_vi_big_word_right_end(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected_cut: &str,
+        #[case] expected_buffer: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.line_buffer.set_insertion_point(position);
+
+        editor.cut_vi_big_word_right_end();
+
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    #[rstest]
+    // ye from start of "abc def": yanks "abc" (inclusive), buffer unchanged
+    #[case("abc def", 0, "abc", "abc def")]
+    // ye on 'a' in "abc.def": yanks "abc"
+    #[case("abc.def", 0, "abc", "abc.def")]
+    // ye on '.' in "a.b.c": yanks ".b"
+    #[case("a.b.c", 1, ".b", "a.b.c")]
+    fn test_copy_vi_word_right_end(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected_copy: &str,
+        #[case] expected_buffer: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.line_buffer.set_insertion_point(position);
+
+        editor.copy_vi_word_right_end();
+
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.cut_buffer.get().0, expected_copy);
+    }
+
+    #[rstest]
+    // yE from start of "abc-def ghi": yanks "abc-def" (inclusive), buffer unchanged
+    #[case("abc-def ghi", 0, "abc-def", "abc-def ghi")]
+    // yE from '-' in "abc-def ghi": yanks "-def"
+    #[case("abc-def ghi", 3, "-def", "abc-def ghi")]
+    fn test_copy_vi_big_word_right_end(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected_copy: &str,
+        #[case] expected_buffer: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.line_buffer.set_insertion_point(position);
+
+        editor.copy_vi_big_word_right_end();
+
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.cut_buffer.get().0, expected_copy);
+    }
+
+    #[rstest]
+    // db from end of "abc.def": cuts "def"
+    #[case("abc.def", 7, "def", "abc.")]
+    // db from '.' in "abc.def": cuts "."
+    #[case("abc.def", 4, ".", "abcdef")]
+    // db from end of "abc def": cuts "def"
+    #[case("abc def", 7, "def", "abc ")]
+    fn test_cut_vi_word_left(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected_cut: &str,
+        #[case] expected_buffer: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.line_buffer.set_insertion_point(position);
+
+        editor.cut_vi_word_left();
+
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    #[rstest]
+    // yb from end of "abc.def": yanks "def", buffer unchanged
+    #[case("abc.def", 7, "def", "abc.def")]
+    // yb from '.' in "abc.def": yanks "."
+    #[case("abc.def", 4, ".", "abc.def")]
+    // yb from end of "abc def": yanks "def"
+    #[case("abc def", 7, "def", "abc def")]
+    fn test_copy_vi_word_left(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected_copy: &str,
+        #[case] expected_buffer: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.line_buffer.set_insertion_point(position);
+
+        editor.copy_vi_word_left();
+
+        assert_eq!(editor.get_buffer(), expected_buffer);
+        assert_eq!(editor.cut_buffer.get().0, expected_copy);
+    }
+
+    #[rstest]
     #[case("hello world", 0, 'l', 1, false, "lo world")]
     #[case("hello world", 0, 'l', 1, true, "llo world")]
     #[ignore = "Deleting two consecutive chars is not implemented correctly and needs the multiplier explicitly."]
