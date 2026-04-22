@@ -187,7 +187,7 @@ pub struct Reedline {
     // Engine Menus
     menus: Vec<ReedlineMenu>,
 
-    abbreviations: HashMap<Vec<u8>, Vec<u8>>,
+    abbreviations: HashMap<String, String>,
 
     // Text editor used to open the line buffer for editing
     buffer_editor: Option<BufferEditor>,
@@ -625,7 +625,7 @@ impl Reedline {
     /// A builder that adds abbreviations to the Reedline engine
     ///
     /// Overwrites any existing abbreviations with the same key.
-    pub fn with_abbreviations(mut self, abbreviations: HashMap<Vec<u8>, Vec<u8>>) -> Self {
+    pub fn with_abbreviations(mut self, abbreviations: HashMap<String, String>) -> Self {
         self.abbreviations.extend(abbreviations);
         self
     }
@@ -1767,8 +1767,8 @@ impl Reedline {
 
         let chars: Vec<char> = buffer.chars().collect();
         let (offset, suffix) = match submitted {
-            true => (0, ""),
-            false => (1, " "),
+            true => (0, ""),   // expand on <enter>
+            false => (1, " "), // expand on <space>
         };
 
         let mut word_start = cursor_position_in_buffer - 1;
@@ -1780,13 +1780,14 @@ impl Reedline {
         if word_start >= word_end {
             // The first char in the buffer is a space or there are consecutive spaces
             return None;
-        } else if self.editor.is_inside_string_literal(word_start) {
+        }
+        if self.editor.is_inside_string_literal(word_start) {
             return None;
         }
 
         let word: String = chars[word_start..word_end].iter().collect();
-        if let Some(expansion) = self.abbreviations.get(word.as_bytes()) {
-            let commands = vec![
+        if let Some(expansion) = self.abbreviations.get(&word) {
+            return Some(ReedlineEvent::Edit(vec![
                 EditCommand::MoveToPosition {
                     position: word_start,
                     select: false,
@@ -1795,14 +1796,8 @@ impl Reedline {
                     position: word_end,
                     select: true,
                 },
-                EditCommand::InsertString(format!(
-                    "{}{}",
-                    String::from_utf8_lossy(expansion),
-                    suffix
-                )),
-            ];
-
-            return Some(ReedlineEvent::Edit(commands));
+                EditCommand::InsertString(format!("{}{}", expansion, suffix)),
+            ]));
         }
 
         None
