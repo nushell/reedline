@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
@@ -187,6 +187,8 @@ pub struct Reedline {
     // Engine Menus
     menus: Vec<ReedlineMenu>,
 
+    abbreviations: HashMap<String, String>,
+
     // Text editor used to open the line buffer for editing
     buffer_editor: Option<BufferEditor>,
 
@@ -287,6 +289,7 @@ impl Reedline {
             mouse_click_mode: MouseClickMode::default(),
             cwd: None,
             menus: Vec::new(),
+            abbreviations: HashMap::new(),
             buffer_editor: None,
             cursor_shapes: None,
             bracketed_paste: BracketedPasteGuard::default(),
@@ -616,6 +619,14 @@ impl Reedline {
     #[must_use]
     pub fn clear_menus(mut self) -> Self {
         self.menus = Vec::new();
+        self
+    }
+
+    /// A builder that adds abbreviations to the Reedline engine
+    ///
+    /// Overwrites any existing abbreviations with the same key.
+    pub fn with_abbreviations(mut self, abbreviations: HashMap<String, String>) -> Self {
+        self.abbreviations.extend(abbreviations);
         self
     }
 
@@ -1278,6 +1289,9 @@ impl Reedline {
                 if let Some(event) = self.parse_bang_command() {
                     return self.handle_editor_event(prompt, event);
                 }
+                if let Some(event) = self.try_expand_abbreviation_at_cursor(true) {
+                    return self.handle_editor_event(prompt, event);
+                }
 
                 let buffer = self.editor.get_buffer().to_string();
                 match self.validator.as_mut().map(|v| v.validate(&buffer)) {
@@ -1294,6 +1308,10 @@ impl Reedline {
                 if let Some(event) = self.parse_bang_command() {
                     return self.handle_editor_event(prompt, event);
                 }
+                if let Some(event) = self.try_expand_abbreviation_at_cursor(true) {
+                    return self.handle_editor_event(prompt, event);
+                }
+
                 Ok(self.submit_buffer(prompt)?)
             }
             ReedlineEvent::SubmitOrNewline => {
@@ -1301,6 +1319,10 @@ impl Reedline {
                 if let Some(event) = self.parse_bang_command() {
                     return self.handle_editor_event(prompt, event);
                 }
+                if let Some(event) = self.try_expand_abbreviation_at_cursor(true) {
+                    return self.handle_editor_event(prompt, event);
+                }
+
                 let cursor_position_in_buffer = self.editor.insertion_point();
                 let buffer = self.editor.get_buffer().to_string();
                 if cursor_position_in_buffer < buffer.len() {
@@ -1323,6 +1345,13 @@ impl Reedline {
             }
             ReedlineEvent::Edit(commands) => {
                 self.run_edit_commands(&commands);
+
+                // Check if a space was just inserted and try to expand abbreviations
+                if let Some(EditCommand::InsertChar(' ')) = commands.first() {
+                    if let Some(event) = self.try_expand_abbreviation_at_cursor(false) {
+                        return self.handle_editor_event(prompt, event);
+                    }
+                }
                 if let Some(menu) = self.menus.iter_mut().find(|men| men.is_active()) {
                     if self.quick_completions && menu.can_quick_complete() {
                         match commands.first() {
@@ -1727,6 +1756,51 @@ impl Reedline {
         } else {
             self.buffer_paint(prompt)
         }
+    }
+
+    /// Expands an abbreviation at the word before the cursor, if any exists
+    ///
+    /// Note, expansion does not occur when inside a string.
+    fn try_expand_abbreviation_at_cursor(&mut self, submitted: bool) -> Option<ReedlineEvent> {
+        let buffer = self.editor.get_buffer();
+        let cursor_position_in_buffer = self.editor.insertion_point();
+
+        let chars: Vec<char> = buffer.chars().collect();
+        let (offset, suffix) = match submitted {
+            true => (0, ""),   // expand on <enter>
+            false => (1, " "), // expand on <space>
+        };
+
+        let mut word_start = cursor_position_in_buffer - 1;
+        while word_start > 0 && !chars[word_start - 1].is_whitespace() {
+            word_start -= 1;
+        }
+        let word_end = cursor_position_in_buffer - offset;
+
+        if word_start >= word_end {
+            // The first char in the buffer is a space or there are consecutive spaces
+            return None;
+        }
+        if self.editor.is_inside_string_literal(word_start) {
+            return None;
+        }
+
+        let word: String = chars[word_start..word_end].iter().collect();
+        if let Some(expansion) = self.abbreviations.get(&word) {
+            return Some(ReedlineEvent::Edit(vec![
+                EditCommand::MoveToPosition {
+                    position: word_start,
+                    select: false,
+                },
+                EditCommand::MoveToPosition {
+                    position: word_end,
+                    select: true,
+                },
+                EditCommand::InsertString(format!("{}{}", expansion, suffix)),
+            ]));
+        }
+
+        None
     }
 
     #[cfg(feature = "bashisms")]

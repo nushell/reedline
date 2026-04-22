@@ -273,6 +273,59 @@ impl Editor {
         self.line_buffer.get_buffer()
     }
 
+    /// Check if a position in the buffer is inside an unclosed string literal
+    pub fn is_inside_string_literal(&self, position: usize) -> bool {
+        let buffer = self.get_buffer();
+
+        if buffer.is_empty() || position == 0 {
+            return false;
+        }
+        if !buffer.contains('"') && !buffer.contains('\'') {
+            return false;
+        }
+
+        let target_byte_pos = buffer
+            .char_indices()
+            .nth(position)
+            .map(|(byte_idx, _)| byte_idx)
+            .unwrap_or(buffer.len());
+
+        let bytes = buffer.as_bytes();
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        let mut escaped = false;
+        let mut byte_pos = 0;
+
+        for &byte in bytes {
+            if byte_pos > target_byte_pos {
+                break;
+            }
+
+            if escaped {
+                escaped = false;
+                byte_pos += 1;
+                continue;
+            }
+
+            match byte {
+                b'\\' => {
+                    escaped = true;
+                }
+                b'\'' if !in_double_quote => {
+                    in_single_quote = !in_single_quote;
+                }
+                b'"' if !in_single_quote => {
+                    in_double_quote = !in_double_quote;
+                }
+                _ => {}
+            }
+
+            byte_pos += 1;
+        }
+
+        in_single_quote || in_double_quote
+    }
+
     /// Edit the [`LineBuffer`] in an undo-safe manner.
     pub fn edit_buffer<F>(&mut self, func: F, undo_behavior: UndoBehavior)
     where
