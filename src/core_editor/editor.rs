@@ -306,7 +306,16 @@ impl Editor {
     }
 
     pub(crate) fn is_cursor_at_buffer_end(&self) -> bool {
-        self.line_buffer.insertion_point() == self.get_buffer().len()
+        let pos = self.line_buffer.insertion_point();
+        let len = self.get_buffer().len();
+        if pos == len {
+            return true;
+        }
+        // In Vi normal mode the cursor sits *on* the last character rather
+        // than after it.  Treat that position as "at buffer end" so that
+        // prefix history search still triggers after pressing Escape.
+        matches!(self.edit_mode, PromptEditMode::Vi(PromptViMode::Normal))
+            && self.line_buffer.grapheme_right_index() == len
     }
 
     pub(crate) fn reset_undo_stack(&mut self) {
@@ -2167,5 +2176,40 @@ mod test {
 
         assert_eq!(bracket_result, expected_bracket);
         assert_eq!(quote_result, expected_quote);
+    }
+
+    #[test]
+    fn test_is_cursor_at_buffer_end_vi_normal_mode() {
+        // In Vi normal mode, the cursor on the last character should count
+        // as "at buffer end" for prefix history search purposes.
+        let mut editor = editor_with("ls");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+
+        // Cursor on last char 's' (position 1)
+        editor.line_buffer.set_insertion_point(1);
+        assert!(editor.is_cursor_at_buffer_end());
+
+        // Cursor on first char 'l' (position 0) — not at end
+        editor.line_buffer.set_insertion_point(0);
+        assert!(!editor.is_cursor_at_buffer_end());
+
+        // Cursor after last char (position 2) — still at end
+        editor.line_buffer.set_insertion_point(2);
+        assert!(editor.is_cursor_at_buffer_end());
+    }
+
+    #[test]
+    fn test_is_cursor_at_buffer_end_insert_mode() {
+        // In insert mode, only cursor after the last character counts.
+        let mut editor = editor_with("ls");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Insert));
+
+        // Cursor on last char 's' (position 1) — NOT at end in insert mode
+        editor.line_buffer.set_insertion_point(1);
+        assert!(!editor.is_cursor_at_buffer_end());
+
+        // Cursor after last char (position 2) — at end
+        editor.line_buffer.set_insertion_point(2);
+        assert!(editor.is_cursor_at_buffer_end());
     }
 }
