@@ -1229,6 +1229,8 @@ impl Reedline {
             ReedlineEvent::Esc => {
                 self.deactivate_menus();
                 self.editor.clear_selection();
+                self.editor.set_edit_mode(self.edit_mode.edit_mode());
+                self.editor.clamp_cursor();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::CtrlD => {
