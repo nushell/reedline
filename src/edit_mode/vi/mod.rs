@@ -156,8 +156,20 @@ impl EditMode for Vi {
                 }
                 (_, KeyModifiers::NONE, KeyCode::Esc) => {
                     self.cache.clear();
+                    let was_insert = self.mode == ViMode::Insert;
                     self.mode = ViMode::Normal;
-                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+                    // In Vi, exiting insert mode moves the cursor one position
+                    // left because insert mode places the cursor between
+                    // characters while normal mode places it on a character.
+                    if was_insert {
+                        ReedlineEvent::Multiple(vec![
+                            ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
+                            ReedlineEvent::Esc,
+                            ReedlineEvent::Repaint,
+                        ])
+                    } else {
+                        ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+                    }
                 }
                 (ViMode::Normal | ViMode::Visual, _, _) => self
                     .normal_keybindings
@@ -231,13 +243,41 @@ mod test {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn esc_leads_to_normal_mode_test() {
+    fn esc_from_insert_mode_moves_cursor_left() {
         let mut vi = Vi::default();
+        assert!(matches!(vi.mode, ViMode::Insert));
+
         let esc =
             ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
                 .unwrap();
         let result = vi.parse_event(esc);
 
+        // Exiting insert mode should move the cursor left (Vi standard
+        // behavior: insert mode cursor is between characters, normal mode
+        // cursor is on a character).
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
+                ReedlineEvent::Esc,
+                ReedlineEvent::Repaint,
+            ])
+        );
+        assert!(matches!(vi.mode, ViMode::Normal));
+    }
+
+    #[test]
+    fn esc_from_normal_mode_does_not_move_cursor() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let esc =
+            ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+                .unwrap();
+        let result = vi.parse_event(esc);
+
+        // Esc from normal mode should NOT move the cursor left.
         assert_eq!(
             result,
             ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
