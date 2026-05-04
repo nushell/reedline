@@ -201,6 +201,9 @@ impl Editor {
             EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
             EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
         }
+
+        self.clamp_cursor();
+
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
             self.clear_selection();
         }
@@ -251,6 +254,17 @@ impl Editor {
     pub fn set_edit_mode(&mut self, mode: PromptEditMode) {
         self.edit_mode = mode;
     }
+
+    pub(crate) fn clamp_cursor(&mut self) {
+        if matches!(self.edit_mode, PromptEditMode::Vi(PromptViMode::Normal)) {
+            let len = self.get_buffer().len();
+            if !self.get_buffer().is_empty() && self.line_buffer.insertion_point() >= len {
+                let last = self.line_buffer.grapheme_left_index_from_pos(len);
+                self.line_buffer.set_insertion_point(last);
+            }
+        }
+    }
+
     fn move_to_position(&mut self, position: usize, select: bool) {
         self.update_selection_anchor(select);
         self.line_buffer.set_insertion_point(position)
@@ -287,6 +301,7 @@ impl Editor {
     pub(crate) fn set_buffer(&mut self, buffer: String, undo_behavior: UndoBehavior) {
         self.line_buffer.set_buffer(buffer);
         self.update_undo_state(undo_behavior);
+        self.clamp_cursor();
     }
 
     pub(crate) fn insertion_point(&self) -> usize {
@@ -306,7 +321,13 @@ impl Editor {
     }
 
     pub(crate) fn is_cursor_at_buffer_end(&self) -> bool {
-        self.line_buffer.insertion_point() == self.get_buffer().len()
+        let pos = self.line_buffer.insertion_point();
+        let len = self.get_buffer().len();
+        if pos == len {
+            return true;
+        }
+        matches!(self.edit_mode, PromptEditMode::Vi(PromptViMode::Normal))
+            && self.line_buffer.grapheme_right_index() == len
     }
 
     pub(crate) fn reset_undo_stack(&mut self) {
@@ -321,6 +342,7 @@ impl Editor {
     pub(crate) fn move_to_end(&mut self, select: bool) {
         self.update_selection_anchor(select);
         self.line_buffer.move_to_end();
+        self.clamp_cursor();
     }
 
     pub(crate) fn move_to_line_start(&mut self, select: bool) {
@@ -336,6 +358,7 @@ impl Editor {
     pub(crate) fn move_to_line_end(&mut self, select: bool) {
         self.update_selection_anchor(select);
         self.line_buffer.move_to_line_end();
+        self.clamp_cursor();
     }
 
     fn undo(&mut self) {
@@ -2167,5 +2190,122 @@ mod test {
 
         assert_eq!(bracket_result, expected_bracket);
         assert_eq!(quote_result, expected_quote);
+    }
+
+    #[test]
+    fn test_clamp_cursor_vi_normal_mode() {
+        let mut editor = editor_with("hello");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.line_buffer.set_insertion_point(5);
+        editor.clamp_cursor();
+        assert_eq!(editor.insertion_point(), 4);
+    }
+
+    #[test]
+    fn test_clamp_cursor_does_not_affect_insert_mode() {
+        let mut editor = editor_with("hello");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Insert));
+        editor.line_buffer.set_insertion_point(5);
+        editor.clamp_cursor();
+        assert_eq!(editor.insertion_point(), 5);
+    }
+
+    #[test]
+    fn test_clamp_cursor_empty_buffer() {
+        let mut editor = editor_with("");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.clamp_cursor();
+        assert_eq!(editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn test_clamp_cursor_already_in_bounds() {
+        let mut editor = editor_with("hello");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.line_buffer.set_insertion_point(2);
+        editor.clamp_cursor();
+        assert_eq!(editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn test_is_cursor_at_buffer_end_vi_normal() {
+        let mut editor = editor_with("ls");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+
+        // Cursor on last char 's' (position 1) — at end in normal mode
+        editor.line_buffer.set_insertion_point(1);
+        assert!(editor.is_cursor_at_buffer_end());
+
+        // Cursor on first char 'l' (position 0) — not at end
+        editor.line_buffer.set_insertion_point(0);
+        assert!(!editor.is_cursor_at_buffer_end());
+
+        // Cursor after last char (position 2) — still at end
+        editor.line_buffer.set_insertion_point(2);
+        assert!(editor.is_cursor_at_buffer_end());
+    }
+
+    #[test]
+    fn test_is_cursor_at_buffer_end_insert_mode() {
+        let mut editor = editor_with("ls");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Insert));
+
+        // Cursor on last char 's' — NOT at end in insert mode
+        editor.line_buffer.set_insertion_point(1);
+        assert!(!editor.is_cursor_at_buffer_end());
+
+        // Cursor after last char — at end
+        editor.line_buffer.set_insertion_point(2);
+        assert!(editor.is_cursor_at_buffer_end());
+    }
+
+    #[test]
+    fn test_move_to_end_vi_normal_clamps() {
+        let mut editor = editor_with("hello");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.line_buffer.set_insertion_point(0);
+        editor.move_to_end(false);
+        assert_eq!(editor.insertion_point(), 4);
+    }
+
+    #[test]
+    fn test_move_to_line_end_vi_normal_clamps() {
+        let mut editor = editor_with("hello");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.line_buffer.set_insertion_point(0);
+        editor.move_to_line_end(false);
+        assert_eq!(editor.insertion_point(), 4);
+    }
+
+    #[test]
+    fn test_set_buffer_vi_normal_clamps() {
+        let mut editor = editor_with("");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.set_buffer("hello".to_string(), UndoBehavior::CreateUndoPoint);
+        assert_eq!(editor.insertion_point(), 4);
+    }
+
+    #[test]
+    fn test_move_right_vi_normal_clamps() {
+        let mut editor = editor_with("ab");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.line_buffer.set_insertion_point(0);
+
+        editor.run_edit_command(&EditCommand::MoveRight { select: false });
+        assert_eq!(editor.insertion_point(), 1);
+
+        // Should not advance past last character
+        editor.run_edit_command(&EditCommand::MoveRight { select: false });
+        assert_eq!(editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn test_clamp_cursor_multibyte() {
+        let mut editor = editor_with("café");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.line_buffer.set_insertion_point("café".len());
+        editor.clamp_cursor();
+        // 'é' is 2 bytes, so last grapheme starts at byte index 3
+        assert_eq!(editor.insertion_point(), "caf".len());
     }
 }
