@@ -211,6 +211,36 @@ mod tests {
     }
 
     #[test]
+    fn test_delete_char_backward() {
+        let input = ['X'];
+        let output = vi_parse(&input);
+        assert_eq!(
+            output,
+            ParsedViSequence {
+                multiplier: None,
+                command: Some(Command::DeleteCharBackward),
+                count: None,
+                motion: ParseResult::Incomplete,
+            }
+        );
+    }
+
+    #[test]
+    fn test_two_delete_char_backward() {
+        let input = ['2', 'X'];
+        let output = vi_parse(&input);
+        assert_eq!(
+            output,
+            ParsedViSequence {
+                multiplier: Some(2),
+                command: Some(Command::DeleteCharBackward),
+                count: None,
+                motion: ParseResult::Incomplete,
+            }
+        );
+    }
+
+    #[test]
     fn test_delete_without_motion() {
         let input = ['d'];
         let output = vi_parse(&input);
