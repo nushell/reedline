@@ -109,6 +109,10 @@ where
             let _ = input.next();
             Some(Command::DeleteChar)
         }
+        Some('X') => {
+            let _ = input.next();
+            Some(Command::DeleteCharBackward)
+        }
         Some('r') => {
             let _ = input.next();
             input
@@ -177,6 +181,7 @@ pub enum Command {
     Incomplete,
     Delete,
     DeleteChar,
+    DeleteCharBackward,
     ReplaceChar(char),
     SubstituteCharWithInsert,
     NewlineAbove,
@@ -242,6 +247,16 @@ impl Command {
                 select: false,
             })],
             Self::RewriteCurrentLine => vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)],
+            Self::DeleteCharBackward => {
+                if vi_state.mode == ViMode::Visual {
+                    vec![ReedlineOption::Edit(EditCommand::CutSelection)]
+                } else {
+                    vec![
+                        ReedlineOption::Edit(EditCommand::MoveLeft { select: false }),
+                        ReedlineOption::Edit(EditCommand::CutChar),
+                    ]
+                }
+            }
             Self::DeleteChar => {
                 if vi_state.mode == ViMode::Visual {
                     vec![ReedlineOption::Edit(EditCommand::CutSelection)]
