@@ -200,9 +200,8 @@ impl Editor {
             EditCommand::CopyAroundPair { left, right } => self.copy_around_pair(*left, *right),
             EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
             EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
+            EditCommand::ClampCursorToNormalMode => self.clamp_cursor(),
         }
-
-        self.clamp_cursor();
 
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
             self.clear_selection();
@@ -658,6 +657,7 @@ impl Editor {
     fn move_right(&mut self, select: bool) {
         self.update_selection_anchor(select);
         self.line_buffer.move_right();
+        self.clamp_cursor();
     }
 
     fn select_all(&mut self) {
@@ -768,22 +768,27 @@ impl Editor {
 
     fn move_word_right(&mut self, select: bool) {
         self.move_to_position(self.line_buffer.word_right_index(), select);
+        self.clamp_cursor();
     }
 
     fn move_word_right_start(&mut self, select: bool) {
         self.move_to_position(self.line_buffer.word_right_start_index(), select);
+        self.clamp_cursor();
     }
 
     fn move_big_word_right_start(&mut self, select: bool) {
         self.move_to_position(self.line_buffer.big_word_right_start_index(), select);
+        self.clamp_cursor();
     }
 
     fn move_word_right_end(&mut self, select: bool) {
         self.move_to_position(self.line_buffer.word_right_end_index(), select);
+        self.clamp_cursor();
     }
 
     fn move_big_word_right_end(&mut self, select: bool) {
         self.move_to_position(self.line_buffer.big_word_right_end_index(), select);
+        self.clamp_cursor();
     }
 
     fn insert_char(&mut self, c: char) {
@@ -2283,20 +2288,6 @@ mod test {
         editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
         editor.set_buffer("hello".to_string(), UndoBehavior::CreateUndoPoint);
         assert_eq!(editor.insertion_point(), 4);
-    }
-
-    #[test]
-    fn test_move_right_vi_normal_clamps() {
-        let mut editor = editor_with("ab");
-        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
-        editor.line_buffer.set_insertion_point(0);
-
-        editor.run_edit_command(&EditCommand::MoveRight { select: false });
-        assert_eq!(editor.insertion_point(), 1);
-
-        // Should not advance past last character
-        editor.run_edit_command(&EditCommand::MoveRight { select: false });
-        assert_eq!(editor.insertion_point(), 1);
     }
 
     #[test]

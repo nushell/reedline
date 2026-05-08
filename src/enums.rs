@@ -506,6 +506,9 @@ pub enum EditCommand {
         /// The text object to operate on
         text_object: TextObject,
     },
+    /// Clamp the cursor to the last grapheme if in Vi normal mode.
+    /// Emitted by the Vi mode to enforce its cursor-on-character invariant.
+    ClampCursorToNormalMode,
 }
 
 // FIXME: This implementation makes no sense to be here, and should be removed in a future version
@@ -647,6 +650,7 @@ impl Display for EditCommand {
             EditCommand::CopyAroundPair { .. } => write!(f, "CopyAroundPair Value: <char> <char>"),
             EditCommand::CutTextObject { .. } => write!(f, "CutTextObject Value: <TextObject>"),
             EditCommand::CopyTextObject { .. } => write!(f, "CopyTextObject Value: <TextObject>"),
+            EditCommand::ClampCursorToNormalMode => write!(f, "ClampCursorToNormalMode"),
         }
     }
 }
@@ -680,6 +684,7 @@ impl EditCommand {
             | EditCommand::MoveLeftBefore { select, .. } => {
                 EditType::MoveCursor { select: *select }
             }
+            EditCommand::ClampCursorToNormalMode => EditType::MoveCursor { select: false },
             EditCommand::SwapCursorAndAnchor => EditType::MoveCursor { select: true },
 
             EditCommand::SelectAll => EditType::MoveCursor { select: true },

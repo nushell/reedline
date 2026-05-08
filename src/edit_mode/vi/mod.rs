@@ -243,6 +243,28 @@ mod test {
     use pretty_assertions::assert_eq;
 
     #[test]
+    fn normal_mode_delete_char_emits_clamp() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let xkey = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        let event = vi.parse_event(xkey);
+        match &event {
+            ReedlineEvent::Multiple(events) => {
+                assert!(events.contains(&ReedlineEvent::Edit(vec![
+                    EditCommand::ClampCursorToNormalMode
+                ])));
+            }
+            _ => panic!("Expected Multiple event, got {:?}", event),
+        }
+    }
+
+    #[test]
     fn esc_leads_to_normal_mode_test() {
         let mut vi = Vi::default();
         let esc =
