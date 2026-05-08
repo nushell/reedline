@@ -398,4 +398,153 @@ mod test {
 
         assert_eq!(result, ReedlineEvent::None);
     }
+
+    /// Helper: parse a sequence of chars in Vi normal mode and return the event.
+    fn parse_normal_keys(keys: &[char]) -> ReedlineEvent {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let mut event = ReedlineEvent::None;
+        for &c in keys {
+            event = vi.parse_event(
+                ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+                    KeyCode::Char(c),
+                    if c.is_ascii_uppercase() {
+                        KeyModifiers::SHIFT
+                    } else {
+                        KeyModifiers::NONE
+                    },
+                )))
+                .unwrap(),
+            );
+        }
+        event
+    }
+
+    /// Assert that parsing the given keys in normal mode produces an event
+    /// containing ClampCursorToNormalMode.
+    fn assert_emits_clamp(keys: &[char]) {
+        let event = parse_normal_keys(keys);
+        match &event {
+            ReedlineEvent::Multiple(events) => {
+                assert!(
+                    events.contains(&ReedlineEvent::Edit(vec![
+                        EditCommand::ClampCursorToNormalMode
+                    ])),
+                    "Expected ClampCursorToNormalMode in {:?} for keys {:?}",
+                    events,
+                    keys
+                );
+            }
+            _ => panic!(
+                "Expected Multiple event for keys {:?}, got {:?}",
+                keys, event
+            ),
+        }
+    }
+
+    /// Assert that parsing the given keys in normal mode produces an event
+    /// that does NOT contain ClampCursorToNormalMode.
+    fn assert_does_not_emit_clamp(keys: &[char]) {
+        let event = parse_normal_keys(keys);
+        let contains_clamp = match &event {
+            ReedlineEvent::Multiple(events) => events.contains(&ReedlineEvent::Edit(vec![
+                EditCommand::ClampCursorToNormalMode,
+            ])),
+            ReedlineEvent::Edit(cmds) => cmds.contains(&EditCommand::ClampCursorToNormalMode),
+            _ => false,
+        };
+        assert!(
+            !contains_clamp,
+            "Expected NO ClampCursorToNormalMode for keys {:?}, got {:?}",
+            keys, event
+        );
+    }
+
+    // --- Commands that SHOULD emit ClampCursorToNormalMode ---
+
+    #[test]
+    fn normal_mode_paste_after_emits_clamp() {
+        assert_emits_clamp(&['p']);
+    }
+
+    #[test]
+    fn normal_mode_paste_before_emits_clamp() {
+        assert_emits_clamp(&['P']);
+    }
+
+    #[test]
+    fn normal_mode_undo_emits_clamp() {
+        assert_emits_clamp(&['u']);
+    }
+
+    #[test]
+    fn normal_mode_delete_line_emits_clamp() {
+        assert_emits_clamp(&['d', 'd']);
+    }
+
+    #[test]
+    fn normal_mode_delete_to_end_emits_clamp() {
+        assert_emits_clamp(&['D']);
+    }
+
+    #[test]
+    fn normal_mode_switchcase_emits_clamp() {
+        assert_emits_clamp(&['~']);
+    }
+
+    #[test]
+    fn normal_mode_replace_char_emits_clamp() {
+        assert_emits_clamp(&['r', 'a']);
+    }
+
+    // --- Commands with motion that SHOULD emit ClampCursorToNormalMode ---
+
+    #[test]
+    fn normal_mode_delete_word_emits_clamp() {
+        assert_emits_clamp(&['d', 'w']);
+    }
+
+    #[test]
+    fn normal_mode_delete_back_word_emits_clamp() {
+        assert_emits_clamp(&['d', 'b']);
+    }
+
+    #[test]
+    fn normal_mode_delete_to_line_end_emits_clamp() {
+        assert_emits_clamp(&['d', '$']);
+    }
+
+    #[test]
+    fn normal_mode_yank_word_emits_clamp() {
+        assert_emits_clamp(&['y', 'w']);
+    }
+
+    // --- Commands that should NOT emit ClampCursorToNormalMode ---
+
+    #[test]
+    fn normal_mode_insert_does_not_emit_clamp() {
+        assert_does_not_emit_clamp(&['i']);
+    }
+
+    #[test]
+    fn normal_mode_append_does_not_emit_clamp() {
+        assert_does_not_emit_clamp(&['a']);
+    }
+
+    #[test]
+    fn normal_mode_change_line_does_not_emit_clamp() {
+        assert_does_not_emit_clamp(&['c', 'c']);
+    }
+
+    #[test]
+    fn normal_mode_change_word_does_not_emit_clamp() {
+        assert_does_not_emit_clamp(&['c', 'w']);
+    }
+
+    #[test]
+    fn normal_mode_substitute_does_not_emit_clamp() {
+        assert_does_not_emit_clamp(&['s']);
+    }
 }
