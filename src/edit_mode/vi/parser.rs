@@ -512,23 +512,29 @@ mod tests {
     #[case(&['0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart{select:false}])]))]
     #[case(&['$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd{select:false}])]))]
     #[case(&['i'], ReedlineEvent::Multiple(vec![ReedlineEvent::Repaint]))]
-    #[case(&['p'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter])]))]
+    #[case(&['p'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
     #[case(&['2', 'p'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter]),
-        ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter])
+        ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode]),
+        ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter]),
+        ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode]),
         ]))]
-    #[case(&['u'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Undo])]))]
+    #[case(&['u'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Undo]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
     #[case(&['2', 'u'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::Edit(vec![EditCommand::Undo]),
-        ReedlineEvent::Edit(vec![EditCommand::Undo])
+        ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode]),
+        ReedlineEvent::Edit(vec![EditCommand::Undo]),
+        ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode]),
         ]))]
     #[case(&['d', 'd'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
-    #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext])]))]
-    #[case(&['d', 'W'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRightToNext])]))]
-    #[case(&['d', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight])]))]
-    #[case(&['d', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordLeft])]))]
-    #[case(&['d', 'B'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordLeft])]))]
+        ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine]),
+        ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode]),
+    ]))]
+    #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', 'W'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRightToNext]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordLeft]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', 'B'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordLeft]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
     #[case(&['c', 'c'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: false }]), ReedlineEvent::Edit(vec![EditCommand::CutToLineEnd]), ReedlineEvent::Repaint]))]
     #[case(&['c', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight]), ReedlineEvent::Repaint]))]
@@ -536,21 +542,26 @@ mod tests {
     #[case(&['c', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight]), ReedlineEvent::Repaint]))]
     #[case(&['c', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordLeft]), ReedlineEvent::Repaint]))]
     #[case(&['c', 'B'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordLeft]), ReedlineEvent::Repaint]))]
-    #[case(&['d', 'h'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Backspace])]))]
-    #[case(&['d', 'l'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Delete])]))]
-    #[case(&['2', 'd', 'd'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine]), ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
+    #[case(&['d', 'h'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Backspace]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', 'l'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Delete]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['2', 'd', 'd'], ReedlineEvent::Multiple(vec![
+        ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine]),
+        ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode]),
+        ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine]),
+        ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode]),
+    ]))]
     // #[case(&['d', 'j'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine]), ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
     // #[case(&['d', 'k'], ReedlineEvent::Multiple(vec![ReedlineEvent::Up, ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine]), ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
-    #[case(&['d', 'E'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRight])]))]
-    #[case(&['d', '0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutFromLineStart])]))]
-    #[case(&['d', '^'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutFromLineNonBlankStart])]))]
-    #[case(&['d', '$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutToLineEnd])]))]
-    #[case(&['d', 'f', 'a'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutRightUntil('a')])]))]
-    #[case(&['d', 't', 'a'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutRightBefore('a')])]))]
-    #[case(&['d', 'F', 'a'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutLeftUntil('a')])]))]
-    #[case(&['d', 'T', 'a'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutLeftBefore('a')])]))]
-    #[case(&['d', 'g', 'g'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutFromStartLinewise { leave_blank_line: false }])]))]
-    #[case(&['d', 'G'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutToEndLinewise { leave_blank_line: false }])]))]
+    #[case(&['d', 'E'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRight]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', '0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutFromLineStart]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', '^'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutFromLineNonBlankStart]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', '$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutToLineEnd]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', 'f', 'a'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutRightUntil('a')]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', 't', 'a'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutRightBefore('a')]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', 'F', 'a'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutLeftUntil('a')]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', 'T', 'a'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutLeftBefore('a')]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', 'g', 'g'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutFromStartLinewise { leave_blank_line: false }]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['d', 'G'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutToEndLinewise { leave_blank_line: false }]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
     #[case(&['c', 'E'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRight]), ReedlineEvent::Repaint]))]
     #[case(&['c', '0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutFromLineStart]), ReedlineEvent::Repaint]))]
     #[case(&['c', '^'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutFromLineNonBlankStart]), ReedlineEvent::Repaint]))]
@@ -567,9 +578,9 @@ mod tests {
         ReedlineEvent::Edit(vec![EditCommand::CutToEndLinewise { leave_blank_line: true }]),
         ReedlineEvent::Repaint,
     ]))]
-    #[case(&['y', '^'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CopyFromLineNonBlankStart])]))]
-    #[case(&['y', 'g', 'g'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CopyFromStartLinewise])]))]
-    #[case(&['y', 'G'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CopyToEndLinewise])]))]
+    #[case(&['y', '^'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CopyFromLineNonBlankStart]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['y', 'g', 'g'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CopyFromStartLinewise]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['y', 'G'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CopyToEndLinewise]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
     fn test_reedline_move(#[case] input: &[char], #[case] expected: ReedlineEvent) {
         let mut vi = Vi::default();
         let res = vi_parse(input);
@@ -583,10 +594,10 @@ mod tests {
     #[case(&['f', 'a'], &[','], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveLeftUntil{c: 'a', select: false}])]))]
     #[case(&['F', 'a'], &[','], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveRightUntil{c: 'a', select: false}])]))]
     #[case(&['F', 'a'], &[';'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveLeftUntil{c: 'a', select: false}])]))]
-    #[case(&['f', 'a'], &['d', ';'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutRightUntil('a')])]))]
-    #[case(&['f', 'a'], &['d', ','], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutLeftUntil('a')])]))]
-    #[case(&['F', 'a'], &['d', ','], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutRightUntil('a')])]))]
-    #[case(&['F', 'a'], &['d', ';'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutLeftUntil('a')])]))]
+    #[case(&['f', 'a'], &['d', ';'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutRightUntil('a')]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['f', 'a'], &['d', ','], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutLeftUntil('a')]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['F', 'a'], &['d', ','], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutRightUntil('a')]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
+    #[case(&['F', 'a'], &['d', ';'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutLeftUntil('a')]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
     #[case(&['f', 'a'], &['c', ';'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutRightUntil('a')]), ReedlineEvent::Repaint]))]
     #[case(&['f', 'a'], &['c', ','], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutLeftUntil('a')]), ReedlineEvent::Repaint]))]
     #[case(&['F', 'a'], &['c', ','], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutRightUntil('a')]), ReedlineEvent::Repaint]))]
@@ -643,18 +654,24 @@ mod tests {
     #[case(&['0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart{select:true}])]))]
     #[case(&['$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd{select:true}])]))]
     #[case(&['i'], ReedlineEvent::Multiple(vec![ReedlineEvent::Repaint]))]
-    #[case(&['p'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter])]))]
+    #[case(&['p'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
     #[case(&['2', 'p'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter]),
-        ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter])
+        ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode]),
+        ReedlineEvent::Edit(vec![EditCommand::PasteCutBufferAfter]),
+        ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode]),
         ]))]
-    #[case(&['u'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Undo])]))]
+    #[case(&['u'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Undo]), ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode])]))]
     #[case(&['2', 'u'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::Edit(vec![EditCommand::Undo]),
-        ReedlineEvent::Edit(vec![EditCommand::Undo])
+        ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode]),
+        ReedlineEvent::Edit(vec![EditCommand::Undo]),
+        ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode]),
         ]))]
     #[case(&['d'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Edit(vec![EditCommand::CutSelection])]))]
+        ReedlineEvent::Edit(vec![EditCommand::CutSelection]),
+        ReedlineEvent::Edit(vec![EditCommand::ClampCursorToNormalMode]),
+    ]))]
     fn test_reedline_move_in_visual_mode(#[case] input: &[char], #[case] expected: ReedlineEvent) {
         let mut vi = Vi {
             mode: ViMode::Visual,
