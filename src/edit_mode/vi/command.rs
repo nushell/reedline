@@ -1,5 +1,7 @@
 use super::{motion::Motion, motion::ViCharSearch, parser::ReedlineOption, ViMode};
-use crate::enums::{TextObject, TextObjectScope, TextObjectType};
+use crate::enums::{
+    MotionTarget, TextObject, TextObjectScope, TextObjectType, WordFlavor, WordSize,
+};
 use crate::{EditCommand, ReedlineEvent, Vi};
 use std::iter::Peekable;
 
@@ -329,24 +331,36 @@ impl Command {
             Self::Delete => match motion {
                 Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)]),
                 Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)]),
-                Motion::NextWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutWordRightToNext)])
-                }
-                Motion::NextBigWord => Some(vec![ReedlineOption::Edit(
-                    EditCommand::CutBigWordRightToNext,
-                )]),
-                Motion::NextWordEnd => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutViWordRightEnd)])
-                }
-                Motion::NextBigWordEnd => Some(vec![ReedlineOption::Edit(
-                    EditCommand::CutViBigWordRightEnd,
-                )]),
-                Motion::PreviousWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutViWordLeft)])
-                }
-                Motion::PreviousBigWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordLeft)])
-                }
+                Motion::NextWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWord {
+                    flavor: WordFlavor::Vi,
+                    size: WordSize::Word,
+                    target: MotionTarget::RightToNext,
+                })]),
+                Motion::NextBigWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWord {
+                    flavor: WordFlavor::Vi,
+                    size: WordSize::BigWord,
+                    target: MotionTarget::RightToNext,
+                })]),
+                Motion::NextWordEnd => Some(vec![ReedlineOption::Edit(EditCommand::CutWord {
+                    flavor: WordFlavor::Vi,
+                    size: WordSize::Word,
+                    target: MotionTarget::RightEnd,
+                })]),
+                Motion::NextBigWordEnd => Some(vec![ReedlineOption::Edit(EditCommand::CutWord {
+                    flavor: WordFlavor::Vi,
+                    size: WordSize::BigWord,
+                    target: MotionTarget::RightEnd,
+                })]),
+                Motion::PreviousWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWord {
+                    flavor: WordFlavor::Vi,
+                    size: WordSize::Word,
+                    target: MotionTarget::Left,
+                })]),
+                Motion::PreviousBigWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWord {
+                    flavor: WordFlavor::Vi,
+                    size: WordSize::BigWord,
+                    target: MotionTarget::Left,
+                })]),
                 Motion::RightUntil(c) => {
                     vi_state.last_char_search = Some(ViCharSearch::ToRight(*c));
                     Some(vec![ReedlineOption::Edit(EditCommand::CutRightUntil(*c))])
@@ -397,23 +411,41 @@ impl Command {
                         ReedlineOption::Edit(EditCommand::MoveToLineStart { select: false }),
                         ReedlineOption::Edit(EditCommand::CutToLineEnd),
                     ]),
-                    Motion::NextWord => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutViWordRightEnd)])
+                    Motion::NextWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWord {
+                        flavor: WordFlavor::Vi,
+                        size: WordSize::Word,
+                        target: MotionTarget::RightEnd,
+                    })]),
+                    Motion::NextBigWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWord {
+                        flavor: WordFlavor::Vi,
+                        size: WordSize::BigWord,
+                        target: MotionTarget::RightEnd,
+                    })]),
+                    Motion::NextWordEnd => Some(vec![ReedlineOption::Edit(EditCommand::CutWord {
+                        flavor: WordFlavor::Vi,
+                        size: WordSize::Word,
+                        target: MotionTarget::RightEnd,
+                    })]),
+                    Motion::NextBigWordEnd => {
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutWord {
+                            flavor: WordFlavor::Vi,
+                            size: WordSize::BigWord,
+                            target: MotionTarget::RightEnd,
+                        })])
                     }
-                    Motion::NextBigWord => Some(vec![ReedlineOption::Edit(
-                        EditCommand::CutViBigWordRightEnd,
-                    )]),
-                    Motion::NextWordEnd => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutViWordRightEnd)])
-                    }
-                    Motion::NextBigWordEnd => Some(vec![ReedlineOption::Edit(
-                        EditCommand::CutViBigWordRightEnd,
-                    )]),
                     Motion::PreviousWord => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutViWordLeft)])
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutWord {
+                            flavor: WordFlavor::Vi,
+                            size: WordSize::Word,
+                            target: MotionTarget::Left,
+                        })])
                     }
                     Motion::PreviousBigWord => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordLeft)])
+                        Some(vec![ReedlineOption::Edit(EditCommand::CutWord {
+                            flavor: WordFlavor::Vi,
+                            size: WordSize::BigWord,
+                            target: MotionTarget::Left,
+                        })])
                     }
                     Motion::RightUntil(c) => {
                         vi_state.last_char_search = Some(ViCharSearch::ToRight(*c));
@@ -470,23 +502,37 @@ impl Command {
             Self::Yank => match motion {
                 Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CopyToLineEnd)]),
                 Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::CopyCurrentLine)]),
-                Motion::NextWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyWordRightToNext)])
-                }
-                Motion::NextBigWord => Some(vec![ReedlineOption::Edit(
-                    EditCommand::CopyBigWordRightToNext,
-                )]),
-                Motion::NextWordEnd => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyViWordRightEnd)])
-                }
-                Motion::NextBigWordEnd => Some(vec![ReedlineOption::Edit(
-                    EditCommand::CopyViBigWordRightEnd,
-                )]),
-                Motion::PreviousWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyViWordLeft)])
-                }
+                Motion::NextWord => Some(vec![ReedlineOption::Edit(EditCommand::CopyWord {
+                    flavor: WordFlavor::Vi,
+                    size: WordSize::Word,
+                    target: MotionTarget::RightToNext,
+                })]),
+                Motion::NextBigWord => Some(vec![ReedlineOption::Edit(EditCommand::CopyWord {
+                    flavor: WordFlavor::Vi,
+                    size: WordSize::BigWord,
+                    target: MotionTarget::RightToNext,
+                })]),
+                Motion::NextWordEnd => Some(vec![ReedlineOption::Edit(EditCommand::CopyWord {
+                    flavor: WordFlavor::Vi,
+                    size: WordSize::Word,
+                    target: MotionTarget::RightEnd,
+                })]),
+                Motion::NextBigWordEnd => Some(vec![ReedlineOption::Edit(EditCommand::CopyWord {
+                    flavor: WordFlavor::Vi,
+                    size: WordSize::BigWord,
+                    target: MotionTarget::RightEnd,
+                })]),
+                Motion::PreviousWord => Some(vec![ReedlineOption::Edit(EditCommand::CopyWord {
+                    flavor: WordFlavor::Vi,
+                    size: WordSize::Word,
+                    target: MotionTarget::Left,
+                })]),
                 Motion::PreviousBigWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyBigWordLeft)])
+                    Some(vec![ReedlineOption::Edit(EditCommand::CopyWord {
+                        flavor: WordFlavor::Vi,
+                        size: WordSize::BigWord,
+                        target: MotionTarget::Left,
+                    })])
                 }
                 Motion::RightUntil(c) => {
                     vi_state.last_char_search = Some(ViCharSearch::ToRight(*c));

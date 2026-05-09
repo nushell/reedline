@@ -1,5 +1,6 @@
 use std::iter::Peekable;
 
+use crate::enums::{MotionTarget, WordFlavor, WordSize};
 use crate::{edit_mode::vi::ViMode, EditCommand, ReedlineEvent, Vi};
 
 use super::parser::{ParseResult, ReedlineOption};
@@ -195,24 +196,42 @@ impl Motion {
                     ReedlineEvent::Down,
                 ]))
             }],
-            Motion::NextWord => vec![ReedlineOption::Edit(EditCommand::MoveViWordRightStart {
+            Motion::NextWord => vec![ReedlineOption::Edit(EditCommand::MoveWord {
+                flavor: WordFlavor::Vi,
+                size: WordSize::Word,
+                target: MotionTarget::RightStart,
                 select: select_mode,
             })],
-            Motion::NextBigWord => vec![ReedlineOption::Edit(EditCommand::MoveBigWordRightStart {
+            Motion::NextBigWord => vec![ReedlineOption::Edit(EditCommand::MoveWord {
+                flavor: WordFlavor::Vi,
+                size: WordSize::BigWord,
+                target: MotionTarget::RightStart,
                 select: select_mode,
             })],
-            Motion::NextWordEnd => vec![ReedlineOption::Edit(EditCommand::MoveViWordRightEnd {
+            Motion::NextWordEnd => vec![ReedlineOption::Edit(EditCommand::MoveWord {
+                flavor: WordFlavor::Vi,
+                size: WordSize::Word,
+                target: MotionTarget::RightEnd,
                 select: select_mode,
             })],
             Motion::NextBigWordEnd => {
-                vec![ReedlineOption::Edit(EditCommand::MoveBigWordRightEnd {
+                vec![ReedlineOption::Edit(EditCommand::MoveWord {
+                    flavor: WordFlavor::Vi,
+                    size: WordSize::BigWord,
+                    target: MotionTarget::RightEnd,
                     select: select_mode,
                 })]
             }
-            Motion::PreviousWord => vec![ReedlineOption::Edit(EditCommand::MoveViWordLeft {
+            Motion::PreviousWord => vec![ReedlineOption::Edit(EditCommand::MoveWord {
+                flavor: WordFlavor::Vi,
+                size: WordSize::Word,
+                target: MotionTarget::Left,
                 select: select_mode,
             })],
-            Motion::PreviousBigWord => vec![ReedlineOption::Edit(EditCommand::MoveBigWordLeft {
+            Motion::PreviousBigWord => vec![ReedlineOption::Edit(EditCommand::MoveWord {
+                flavor: WordFlavor::Vi,
+                size: WordSize::BigWord,
+                target: MotionTarget::Left,
                 select: select_mode,
             })],
             Motion::Line => vec![], // Placeholder as unusable standalone motion
