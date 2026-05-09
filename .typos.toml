@@ -21,3 +21,5 @@ l3ine = "l3ine"
 4should = "4should"
 wr5ap = "wr5ap"
 ine = "ine"
+# For testing multibyte cursor clamping
+caf = "caf"
