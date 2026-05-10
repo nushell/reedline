@@ -51,10 +51,10 @@ pub fn default_emacs_keybindings() -> Keybindings {
         KC::Char('y'),
         edit_bind(EC::PasteCutBufferBefore),
     );
-    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
+    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutEmacsWordLeft));
     kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::KillLine));
     kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
-    kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
+    kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutEmacsWordRight));
     // Edits
     kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
 
@@ -63,27 +63,27 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(
         KM::ALT,
         KC::Left,
-        edit_bind(EC::MoveWordLeft { select: false }),
+        edit_bind(EC::MoveEmacsWordLeft { select: false }),
     );
     kb.add_binding(
         KM::ALT,
         KC::Right,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWordRight { select: false }),
+            edit_bind(EC::MoveEmacsWordRight { select: false }),
         ]),
     );
     kb.add_binding(
         KM::ALT,
         KC::Char('b'),
-        edit_bind(EC::MoveWordLeft { select: false }),
+        edit_bind(EC::MoveEmacsWordLeft { select: false }),
     );
     kb.add_binding(
         KM::ALT,
         KC::Char('f'),
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWordRight { select: false }),
+            edit_bind(EC::MoveEmacsWordRight { select: false }),
         ]),
     );
     // Edits

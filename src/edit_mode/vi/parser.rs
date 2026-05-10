@@ -524,7 +524,7 @@ mod tests {
         ]))]
     #[case(&['d', 'd'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
-    #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext])]))]
+    #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutEmacsWordRightToNext])]))]
     #[case(&['d', 'W'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRightToNext])]))]
     #[case(&['d', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutViWordRightEnd])]))]
     #[case(&['d', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutViWordLeft])]))]

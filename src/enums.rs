@@ -153,7 +153,7 @@ pub enum EditCommand {
     },
 
     /// Move one word to the left
-    MoveWordLeft {
+    MoveEmacsWordLeft {
         /// Select the text between the current cursor position and destination
         select: bool,
     },
@@ -165,13 +165,13 @@ pub enum EditCommand {
     },
 
     /// Move one word to the right
-    MoveWordRight {
+    MoveEmacsWordRight {
         /// Select the text between the current cursor position and destination
         select: bool,
     },
 
     /// Move one word to the right, stop at start of word
-    MoveWordRightStart {
+    MoveEmacsWordRightStart {
         /// Select the text between the current cursor position and destination
         select: bool,
     },
@@ -183,7 +183,7 @@ pub enum EditCommand {
     },
 
     /// Move one word to the right, stop at end of word
-    MoveWordRightEnd {
+    MoveEmacsWordRightEnd {
         /// Select the text between the current cursor position and destination
         select: bool,
     },
@@ -309,13 +309,13 @@ pub enum EditCommand {
     KillLine,
 
     /// Cut the word left of the insertion point
-    CutWordLeft,
+    CutEmacsWordLeft,
 
     /// Cut the WORD left of the insertion point
     CutBigWordLeft,
 
     /// Cut the word right of the insertion point
-    CutWordRight,
+    CutEmacsWordRight,
 
     /// Cut the word right of the insertion point
     CutBigWordRight,
@@ -327,7 +327,7 @@ pub enum EditCommand {
     CutViBigWordRightEnd,
 
     /// Cut the word right of the insertion point and any following space
-    CutWordRightToNext,
+    CutEmacsWordRightToNext,
 
     /// Cut the WORD right of the insertion point and any following space
     CutBigWordRightToNext,
@@ -446,7 +446,7 @@ pub enum EditCommand {
     CopyCurrentLine,
 
     /// Copy the word left of the insertion point
-    CopyWordLeft,
+    CopyEmacsWordLeft,
 
     /// Copy the WORD left of the insertion point
     CopyBigWordLeft,
@@ -455,7 +455,7 @@ pub enum EditCommand {
     CopyViWordLeft,
 
     /// Copy the word right of the insertion point
-    CopyWordRight,
+    CopyEmacsWordRight,
 
     /// Copy the WORD right of the insertion point
     CopyBigWordRight,
@@ -467,7 +467,7 @@ pub enum EditCommand {
     CopyViBigWordRightEnd,
 
     /// Copy the word right of the insertion point and any following space
-    CopyWordRightToNext,
+    CopyEmacsWordRightToNext,
 
     /// Copy the WORD right of the insertion point and any following space
     CopyBigWordRightToNext,
@@ -568,15 +568,17 @@ impl Display for EditCommand {
             EditCommand::MoveLineDown { .. } => write!(f, "MoveLineDown Optional[select: <bool>]"),
             EditCommand::MoveLeft { .. } => write!(f, "MoveLeft Optional[select: <bool>]"),
             EditCommand::MoveRight { .. } => write!(f, "MoveRight Optional[select: <bool>]"),
-            EditCommand::MoveWordLeft { .. } => write!(f, "MoveWordLeft Optional[select: <bool>]"),
+            EditCommand::MoveEmacsWordLeft { .. } => {
+                write!(f, "MoveEmacsWordLeft Optional[select: <bool>]")
+            }
             EditCommand::MoveBigWordLeft { .. } => {
                 write!(f, "MoveBigWordLeft Optional[select: <bool>]")
             }
-            EditCommand::MoveWordRight { .. } => {
-                write!(f, "MoveWordRight Optional[select: <bool>]")
+            EditCommand::MoveEmacsWordRight { .. } => {
+                write!(f, "MoveEmacsWordRight Optional[select: <bool>]")
             }
-            EditCommand::MoveWordRightEnd { .. } => {
-                write!(f, "MoveWordRightEnd Optional[select: <bool>]")
+            EditCommand::MoveEmacsWordRightEnd { .. } => {
+                write!(f, "MoveEmacsWordRightEnd Optional[select: <bool>]")
             }
             EditCommand::MoveBigWordRightEnd { .. } => {
                 write!(f, "MoveBigWordRightEnd Optional[select: <bool>]")
@@ -590,8 +592,8 @@ impl Display for EditCommand {
             EditCommand::MoveViWordRightEnd { .. } => {
                 write!(f, "MoveViWordRightEnd Optional[select: <bool>]")
             }
-            EditCommand::MoveWordRightStart { .. } => {
-                write!(f, "MoveWordRightStart Optional[select: <bool>]")
+            EditCommand::MoveEmacsWordRightStart { .. } => {
+                write!(f, "MoveEmacsWordRightStart Optional[select: <bool>]")
             }
             EditCommand::MoveBigWordRightStart { .. } => {
                 write!(f, "MoveBigWordRightStart Optional[select: <bool>]")
@@ -633,13 +635,13 @@ impl Display for EditCommand {
             }
             EditCommand::CutToLineEnd => write!(f, "CutToLineEnd"),
             EditCommand::KillLine => write!(f, "KillLine"),
-            EditCommand::CutWordLeft => write!(f, "CutWordLeft"),
+            EditCommand::CutEmacsWordLeft => write!(f, "CutEmacsWordLeft"),
             EditCommand::CutBigWordLeft => write!(f, "CutBigWordLeft"),
-            EditCommand::CutWordRight => write!(f, "CutWordRight"),
+            EditCommand::CutEmacsWordRight => write!(f, "CutEmacsWordRight"),
             EditCommand::CutBigWordRight => write!(f, "CutBigWordRight"),
             EditCommand::CutViWordRightEnd => write!(f, "CutViWordRightEnd"),
             EditCommand::CutViBigWordRightEnd => write!(f, "CutViBigWordRightEnd"),
-            EditCommand::CutWordRightToNext => write!(f, "CutWordRightToNext"),
+            EditCommand::CutEmacsWordRightToNext => write!(f, "CutEmacsWordRightToNext"),
             EditCommand::CutBigWordRightToNext => write!(f, "CutBigWordRightToNext"),
             EditCommand::CutViWordLeft => write!(f, "CutViWordLeft"),
             EditCommand::PasteCutBufferBefore => write!(f, "PasteCutBufferBefore"),
@@ -670,14 +672,14 @@ impl Display for EditCommand {
             EditCommand::CopyToEndLinewise => write!(f, "CopyToEndLinewise"),
             EditCommand::CopyToLineEnd => write!(f, "CopyToLineEnd"),
             EditCommand::CopyCurrentLine => write!(f, "CopyCurrentLine"),
-            EditCommand::CopyWordLeft => write!(f, "CopyWordLeft"),
+            EditCommand::CopyEmacsWordLeft => write!(f, "CopyEmacsWordLeft"),
             EditCommand::CopyBigWordLeft => write!(f, "CopyBigWordLeft"),
             EditCommand::CopyViWordLeft => write!(f, "CopyViWordLeft"),
-            EditCommand::CopyWordRight => write!(f, "CopyWordRight"),
+            EditCommand::CopyEmacsWordRight => write!(f, "CopyEmacsWordRight"),
             EditCommand::CopyBigWordRight => write!(f, "CopyBigWordRight"),
             EditCommand::CopyViWordRightEnd => write!(f, "CopyViWordRightEnd"),
             EditCommand::CopyViBigWordRightEnd => write!(f, "CopyViBigWordRightEnd"),
-            EditCommand::CopyWordRightToNext => write!(f, "CopyWordRightToNext"),
+            EditCommand::CopyEmacsWordRightToNext => write!(f, "CopyEmacsWordRightToNext"),
             EditCommand::CopyBigWordRightToNext => write!(f, "CopyBigWordRightToNext"),
             EditCommand::CopyLeft => write!(f, "CopyLeft"),
             EditCommand::CopyRight => write!(f, "CopyRight"),
@@ -718,12 +720,12 @@ impl EditCommand {
             | EditCommand::MoveLineDown { select, .. }
             | EditCommand::MoveLeft { select, .. }
             | EditCommand::MoveRight { select, .. }
-            | EditCommand::MoveWordLeft { select, .. }
+            | EditCommand::MoveEmacsWordLeft { select, .. }
             | EditCommand::MoveBigWordLeft { select, .. }
-            | EditCommand::MoveWordRight { select, .. }
-            | EditCommand::MoveWordRightStart { select, .. }
+            | EditCommand::MoveEmacsWordRight { select, .. }
+            | EditCommand::MoveEmacsWordRightStart { select, .. }
             | EditCommand::MoveBigWordRightStart { select, .. }
-            | EditCommand::MoveWordRightEnd { select, .. }
+            | EditCommand::MoveEmacsWordRightEnd { select, .. }
             | EditCommand::MoveBigWordRightEnd { select, .. }
             | EditCommand::MoveViWordLeft { select, .. }
             | EditCommand::MoveViWordRightStart { select, .. }
@@ -762,13 +764,13 @@ impl EditCommand {
             | EditCommand::KillLine
             | EditCommand::CutToEnd
             | EditCommand::CutToEndLinewise { .. }
-            | EditCommand::CutWordLeft
+            | EditCommand::CutEmacsWordLeft
             | EditCommand::CutBigWordLeft
-            | EditCommand::CutWordRight
+            | EditCommand::CutEmacsWordRight
             | EditCommand::CutBigWordRight
             | EditCommand::CutViWordRightEnd
             | EditCommand::CutViBigWordRightEnd
-            | EditCommand::CutWordRightToNext
+            | EditCommand::CutEmacsWordRightToNext
             | EditCommand::CutBigWordRightToNext
             | EditCommand::CutViWordLeft
             | EditCommand::PasteCutBufferBefore
@@ -805,14 +807,14 @@ impl EditCommand {
             | EditCommand::CopyToEndLinewise
             | EditCommand::CopyToLineEnd
             | EditCommand::CopyCurrentLine
-            | EditCommand::CopyWordLeft
+            | EditCommand::CopyEmacsWordLeft
             | EditCommand::CopyBigWordLeft
             | EditCommand::CopyViWordLeft
-            | EditCommand::CopyWordRight
+            | EditCommand::CopyEmacsWordRight
             | EditCommand::CopyBigWordRight
             | EditCommand::CopyViWordRightEnd
             | EditCommand::CopyViBigWordRightEnd
-            | EditCommand::CopyWordRightToNext
+            | EditCommand::CopyEmacsWordRightToNext
             | EditCommand::CopyBigWordRightToNext
             | EditCommand::CopyLeft
             | EditCommand::CopyRight

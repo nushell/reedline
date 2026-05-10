@@ -139,14 +139,14 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
     kb.add_binding(
         KM::CONTROL,
         KC::Left,
-        edit_bind(EC::MoveWordLeft { select: false }),
+        edit_bind(EC::MoveEmacsWordLeft { select: false }),
     );
     kb.add_binding(
         KM::CONTROL,
         KC::Right,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWordRight { select: false }),
+            edit_bind(EC::MoveEmacsWordRight { select: false }),
         ]),
     );
     // Home/End & ctrl+a/ctrl+e
@@ -272,12 +272,12 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
     kb.add_binding(
         KM::SHIFT | KM::CONTROL,
         KC::Left,
-        edit_bind(EC::MoveWordLeft { select: true }),
+        edit_bind(EC::MoveEmacsWordLeft { select: true }),
     );
     kb.add_binding(
         KM::SHIFT | KM::CONTROL,
         KC::Right,
-        edit_bind(EC::MoveWordRight { select: true }),
+        edit_bind(EC::MoveEmacsWordRight { select: true }),
     );
     kb.add_binding(
         KM::SHIFT,

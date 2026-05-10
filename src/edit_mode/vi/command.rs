@@ -329,9 +329,9 @@ impl Command {
             Self::Delete => match motion {
                 Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)]),
                 Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)]),
-                Motion::NextWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutWordRightToNext)])
-                }
+                Motion::NextWord => Some(vec![ReedlineOption::Edit(
+                    EditCommand::CutEmacsWordRightToNext,
+                )]),
                 Motion::NextBigWord => Some(vec![ReedlineOption::Edit(
                     EditCommand::CutBigWordRightToNext,
                 )]),
@@ -470,9 +470,9 @@ impl Command {
             Self::Yank => match motion {
                 Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CopyToLineEnd)]),
                 Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::CopyCurrentLine)]),
-                Motion::NextWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyWordRightToNext)])
-                }
+                Motion::NextWord => Some(vec![ReedlineOption::Edit(
+                    EditCommand::CopyEmacsWordRightToNext,
+                )]),
                 Motion::NextBigWord => Some(vec![ReedlineOption::Edit(
                     EditCommand::CopyBigWordRightToNext,
                 )]),
