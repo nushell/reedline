@@ -1,10 +1,7 @@
 use super::{edit_stack::EditStack, Clipboard, ClipboardMode, LineBuffer};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
-use crate::enums::{
-    EditType, MotionTarget, TextObject, TextObjectScope, TextObjectType, UndoBehavior, WordFlavor,
-    WordSize,
-};
+use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
 use crate::prompt::{PromptEditMode, PromptViMode};
 use crate::{core_editor::get_local_clipboard, EditCommand};
 use std::cmp::{max, min};
@@ -71,69 +68,18 @@ impl Editor {
             EditCommand::MoveLineDown { select } => self.move_line_down(*select),
             EditCommand::MoveLeft { select } => self.move_left(*select),
             EditCommand::MoveRight { select } => self.move_right(*select),
-            EditCommand::MoveWord {
-                flavor: WordFlavor::Emacs,
-                size: WordSize::Word,
-                target: MotionTarget::Left,
-                select,
-            } => self.move_word_left(*select),
-            // BigWord semantics are identical for Vi and Emacs (non-whitespace sequences)
-            EditCommand::MoveWord {
-                size: WordSize::BigWord,
-                target: MotionTarget::Left,
-                select,
-                ..
-            } => self.move_big_word_left(*select),
-            EditCommand::MoveWord {
-                flavor: WordFlavor::Emacs,
-                size: WordSize::Word,
-                target: MotionTarget::Right,
-                select,
-            } => self.move_word_right(*select),
-            EditCommand::MoveWord {
-                flavor: WordFlavor::Emacs,
-                size: WordSize::Word,
-                target: MotionTarget::RightStart,
-                select,
-            } => self.move_word_right_start(*select),
-            EditCommand::MoveWord {
-                size: WordSize::BigWord,
-                target: MotionTarget::RightStart,
-                select,
-                ..
-            } => self.move_big_word_right_start(*select),
-            EditCommand::MoveWord {
-                flavor: WordFlavor::Emacs,
-                size: WordSize::Word,
-                target: MotionTarget::RightEnd,
-                select,
-            } => self.move_word_right_end(*select),
-            EditCommand::MoveWord {
-                size: WordSize::BigWord,
-                target: MotionTarget::RightEnd,
-                select,
-                ..
-            } => self.move_big_word_right_end(*select),
-            EditCommand::MoveWord {
-                flavor: WordFlavor::Vi,
-                size: WordSize::Word,
-                target: MotionTarget::Left,
-                select,
-            } => self.move_vi_word_left(*select),
-            EditCommand::MoveWord {
-                flavor: WordFlavor::Vi,
-                size: WordSize::Word,
-                target: MotionTarget::RightStart,
-                select,
-            } => self.move_vi_word_right_start(*select),
-            EditCommand::MoveWord {
-                flavor: WordFlavor::Vi,
-                size: WordSize::Word,
-                target: MotionTarget::RightEnd,
-                select,
-            } => self.move_vi_word_right_end(*select),
-            // Remaining MoveWord combinations are not yet implemented
-            EditCommand::MoveWord { .. } => unreachable!("invalid MoveWord combination"),
+            EditCommand::MoveWordLeft { select } => self.move_word_left(*select),
+            EditCommand::MoveBigWordLeft { select } => self.move_big_word_left(*select),
+            EditCommand::MoveWordRight { select } => self.move_word_right(*select),
+            EditCommand::MoveWordRightStart { select } => self.move_word_right_start(*select),
+            EditCommand::MoveBigWordRightStart { select } => {
+                self.move_big_word_right_start(*select)
+            }
+            EditCommand::MoveWordRightEnd { select } => self.move_word_right_end(*select),
+            EditCommand::MoveBigWordRightEnd { select } => self.move_big_word_right_end(*select),
+            EditCommand::MoveViWordLeft { select } => self.move_vi_word_left(*select),
+            EditCommand::MoveViWordRightStart { select } => self.move_vi_word_right_start(*select),
+            EditCommand::MoveViWordRightEnd { select } => self.move_vi_word_right_end(*select),
             EditCommand::InsertChar(c) => self.insert_char(*c),
             EditCommand::Complete => {}
             EditCommand::InsertString(str) => self.insert_str(str),
@@ -162,58 +108,15 @@ impl Editor {
             }
             EditCommand::CutToLineEnd => self.cut_to_line_end(),
             EditCommand::KillLine => self.kill_line(),
-            EditCommand::CutWord {
-                flavor: WordFlavor::Emacs,
-                size: WordSize::Word,
-                target: MotionTarget::Left,
-            } => self.cut_word_left(),
-            EditCommand::CutWord {
-                size: WordSize::BigWord,
-                target: MotionTarget::Left,
-                ..
-            } => self.cut_big_word_left(),
-            EditCommand::CutWord {
-                flavor: WordFlavor::Vi,
-                size: WordSize::Word,
-                target: MotionTarget::Left,
-            } => self.cut_vi_word_left(),
-            EditCommand::CutWord {
-                flavor: WordFlavor::Emacs,
-                size: WordSize::Word,
-                target: MotionTarget::Right,
-            } => self.cut_word_right(),
-            EditCommand::CutWord {
-                size: WordSize::BigWord,
-                target: MotionTarget::Right,
-                ..
-            } => self.cut_big_word_right(),
-            EditCommand::CutWord {
-                flavor: WordFlavor::Vi,
-                size: WordSize::Word,
-                target: MotionTarget::RightEnd,
-            } => self.cut_vi_word_right_end(),
-            EditCommand::CutWord {
-                size: WordSize::BigWord,
-                target: MotionTarget::RightEnd,
-                ..
-            } => self.cut_vi_big_word_right_end(),
-            EditCommand::CutWord {
-                flavor: WordFlavor::Emacs,
-                size: WordSize::Word,
-                target: MotionTarget::RightToNext,
-            } => self.cut_word_right_to_next(),
-            EditCommand::CutWord {
-                flavor: WordFlavor::Vi,
-                size: WordSize::Word,
-                target: MotionTarget::RightToNext,
-            } => self.cut_vi_word_right_to_next(),
-            EditCommand::CutWord {
-                size: WordSize::BigWord,
-                target: MotionTarget::RightToNext,
-                ..
-            } => self.cut_big_word_right_to_next(),
-            // Remaining CutWord combinations are not yet implemented
-            EditCommand::CutWord { .. } => unreachable!("invalid CutWord combination"),
+            EditCommand::CutWordLeft => self.cut_word_left(),
+            EditCommand::CutBigWordLeft => self.cut_big_word_left(),
+            EditCommand::CutViWordLeft => self.cut_vi_word_left(),
+            EditCommand::CutWordRight => self.cut_word_right(),
+            EditCommand::CutBigWordRight => self.cut_big_word_right(),
+            EditCommand::CutViWordRightEnd => self.cut_vi_word_right_end(),
+            EditCommand::CutViBigWordRightEnd => self.cut_vi_big_word_right_end(),
+            EditCommand::CutWordRightToNext => self.cut_word_right_to_next(),
+            EditCommand::CutBigWordRightToNext => self.cut_big_word_right_to_next(),
             EditCommand::PasteCutBufferBefore => self.insert_cut_buffer_before(),
             EditCommand::PasteCutBufferAfter => self.insert_cut_buffer_after(),
             EditCommand::UppercaseWord => self.line_buffer.uppercase_word(),
@@ -251,58 +154,15 @@ impl Editor {
             EditCommand::CopyToEnd => self.copy_from_end(),
             EditCommand::CopyToEndLinewise => self.copy_from_end_linewise(),
             EditCommand::CopyToLineEnd => self.copy_to_line_end(),
-            EditCommand::CopyWord {
-                flavor: WordFlavor::Emacs,
-                size: WordSize::Word,
-                target: MotionTarget::Left,
-            } => self.copy_word_left(),
-            EditCommand::CopyWord {
-                size: WordSize::BigWord,
-                target: MotionTarget::Left,
-                ..
-            } => self.copy_big_word_left(),
-            EditCommand::CopyWord {
-                flavor: WordFlavor::Vi,
-                size: WordSize::Word,
-                target: MotionTarget::Left,
-            } => self.copy_vi_word_left(),
-            EditCommand::CopyWord {
-                flavor: WordFlavor::Emacs,
-                size: WordSize::Word,
-                target: MotionTarget::Right,
-            } => self.copy_word_right(),
-            EditCommand::CopyWord {
-                size: WordSize::BigWord,
-                target: MotionTarget::Right,
-                ..
-            } => self.copy_big_word_right(),
-            EditCommand::CopyWord {
-                flavor: WordFlavor::Vi,
-                size: WordSize::Word,
-                target: MotionTarget::RightEnd,
-            } => self.copy_vi_word_right_end(),
-            EditCommand::CopyWord {
-                size: WordSize::BigWord,
-                target: MotionTarget::RightEnd,
-                ..
-            } => self.copy_vi_big_word_right_end(),
-            EditCommand::CopyWord {
-                flavor: WordFlavor::Emacs,
-                size: WordSize::Word,
-                target: MotionTarget::RightToNext,
-            } => self.copy_word_right_to_next(),
-            EditCommand::CopyWord {
-                flavor: WordFlavor::Vi,
-                size: WordSize::Word,
-                target: MotionTarget::RightToNext,
-            } => self.copy_vi_word_right_to_next(),
-            EditCommand::CopyWord {
-                size: WordSize::BigWord,
-                target: MotionTarget::RightToNext,
-                ..
-            } => self.copy_big_word_right_to_next(),
-            // Remaining CopyWord combinations are not yet implemented
-            EditCommand::CopyWord { .. } => unreachable!("invalid CopyWord combination"),
+            EditCommand::CopyWordLeft => self.copy_word_left(),
+            EditCommand::CopyBigWordLeft => self.copy_big_word_left(),
+            EditCommand::CopyViWordLeft => self.copy_vi_word_left(),
+            EditCommand::CopyWordRight => self.copy_word_right(),
+            EditCommand::CopyBigWordRight => self.copy_big_word_right(),
+            EditCommand::CopyViWordRightEnd => self.copy_vi_word_right_end(),
+            EditCommand::CopyViBigWordRightEnd => self.copy_vi_big_word_right_end(),
+            EditCommand::CopyWordRightToNext => self.copy_word_right_to_next(),
+            EditCommand::CopyBigWordRightToNext => self.copy_big_word_right_to_next(),
             EditCommand::CopyRightUntil(c) => self.copy_right_until_char(*c, false, true),
             EditCommand::CopyRightBefore(c) => self.copy_right_until_char(*c, true, true),
             EditCommand::CopyLeftUntil(c) => self.copy_left_until_char(*c, false, true),
@@ -668,12 +528,6 @@ impl Editor {
     }
 
     fn cut_word_right_to_next(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let next_word_start = self.line_buffer.emacs_word_right_start_index();
-        self.cut_range(insertion_offset..next_word_start);
-    }
-
-    fn cut_vi_word_right_to_next(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let next_word_start = self.line_buffer.vi_word_right_start_index();
         self.cut_range(insertion_offset..next_word_start);
@@ -1266,12 +1120,6 @@ impl Editor {
     }
 
     pub(crate) fn copy_word_right_to_next(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let next_word_start = self.line_buffer.emacs_word_right_start_index();
-        self.copy_range(insertion_offset..next_word_start);
-    }
-
-    pub(crate) fn copy_vi_word_right_to_next(&mut self) {
         let insertion_offset = self.line_buffer.insertion_point();
         let next_word_start = self.line_buffer.vi_word_right_start_index();
         self.copy_range(insertion_offset..next_word_start);

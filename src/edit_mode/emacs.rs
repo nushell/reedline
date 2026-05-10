@@ -6,7 +6,7 @@ use crate::{
         },
         EditMode,
     },
-    enums::{EditCommand, MotionTarget, ReedlineEvent, ReedlineRawEvent, WordFlavor, WordSize},
+    enums::{EditCommand, ReedlineEvent, ReedlineRawEvent},
     PromptEditMode,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
@@ -51,26 +51,10 @@ pub fn default_emacs_keybindings() -> Keybindings {
         KC::Char('y'),
         edit_bind(EC::PasteCutBufferBefore),
     );
-    kb.add_binding(
-        KM::CONTROL,
-        KC::Char('w'),
-        edit_bind(EC::CutWord {
-            flavor: WordFlavor::Emacs,
-            size: WordSize::Word,
-            target: MotionTarget::Left,
-        }),
-    );
+    kb.add_binding(KM::CONTROL, KC::Char('w'), edit_bind(EC::CutWordLeft));
     kb.add_binding(KM::CONTROL, KC::Char('k'), edit_bind(EC::KillLine));
     kb.add_binding(KM::CONTROL, KC::Char('u'), edit_bind(EC::CutFromStart));
-    kb.add_binding(
-        KM::ALT,
-        KC::Char('d'),
-        edit_bind(EC::CutWord {
-            flavor: WordFlavor::Emacs,
-            size: WordSize::Word,
-            target: MotionTarget::Right,
-        }),
-    );
+    kb.add_binding(KM::ALT, KC::Char('d'), edit_bind(EC::CutWordRight));
     // Edits
     kb.add_binding(KM::CONTROL, KC::Char('t'), edit_bind(EC::SwapGraphemes));
 
@@ -79,47 +63,27 @@ pub fn default_emacs_keybindings() -> Keybindings {
     kb.add_binding(
         KM::ALT,
         KC::Left,
-        edit_bind(EC::MoveWord {
-            flavor: WordFlavor::Emacs,
-            size: WordSize::Word,
-            target: MotionTarget::Left,
-            select: false,
-        }),
+        edit_bind(EC::MoveWordLeft { select: false }),
     );
     kb.add_binding(
         KM::ALT,
         KC::Right,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWord {
-                flavor: WordFlavor::Emacs,
-                size: WordSize::Word,
-                target: MotionTarget::Right,
-                select: false,
-            }),
+            edit_bind(EC::MoveWordRight { select: false }),
         ]),
     );
     kb.add_binding(
         KM::ALT,
         KC::Char('b'),
-        edit_bind(EC::MoveWord {
-            flavor: WordFlavor::Emacs,
-            size: WordSize::Word,
-            target: MotionTarget::Left,
-            select: false,
-        }),
+        edit_bind(EC::MoveWordLeft { select: false }),
     );
     kb.add_binding(
         KM::ALT,
         KC::Char('f'),
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWord {
-                flavor: WordFlavor::Emacs,
-                size: WordSize::Word,
-                target: MotionTarget::Right,
-                select: false,
-            }),
+            edit_bind(EC::MoveWordRight { select: false }),
         ]),
     );
     // Edits

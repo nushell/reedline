@@ -89,30 +89,6 @@ impl Default for TextObject {
     }
 }
 
-#[derive(Default, Clone, Serialize, Deserialize, Eq, PartialEq, Debug)]
-pub enum WordFlavor {
-    #[default]
-    Emacs,
-    Vi,
-}
-
-#[derive(Default, Clone, Serialize, Deserialize, Eq, PartialEq, Debug)]
-pub enum WordSize {
-    #[default]
-    Word,
-    BigWord,
-}
-
-#[derive(Default, Clone, Serialize, Deserialize, Eq, PartialEq, Debug)]
-pub enum MotionTarget {
-    #[default]
-    Left,
-    Right,
-    RightStart,
-    RightEnd,
-    RightToNext,
-}
-
 /// Editing actions which can be mapped to key bindings.
 ///
 /// Executed by `Reedline::run_edit_commands()`
@@ -176,14 +152,62 @@ pub enum EditCommand {
         select: bool,
     },
 
-    /// Move the cursor by word, using the specified flavor and motion target
-    MoveWord {
-        /// Which flavor of word movement to use (Emacs or Vi)
-        flavor: WordFlavor,
-        /// Whether to use "word" or "big word" movement rules
-        size: WordSize,
-        /// Which direction to move in
-        target: MotionTarget,
+    /// Move one word to the left
+    MoveWordLeft {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move one WORD to the left
+    MoveBigWordLeft {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move one word to the right
+    MoveWordRight {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move one word to the right, stop at start of word
+    MoveWordRightStart {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move one WORD to the right, stop at start of WORD
+    MoveBigWordRightStart {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move one word to the right, stop at end of word
+    MoveWordRightEnd {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move one WORD to the right, stop at end of WORD
+    MoveBigWordRightEnd {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move one Vi word to the left (uses Vi three-class word boundaries)
+    MoveViWordLeft {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move to the start of the next Vi word (uses Vi three-class word boundaries)
+    MoveViWordRightStart {
+        /// Select the text between the current cursor position and destination
+        select: bool,
+    },
+
+    /// Move to the end of the next Vi word (uses Vi three-class word boundaries)
+    MoveViWordRightEnd {
         /// Select the text between the current cursor position and destination
         select: bool,
     },
@@ -284,15 +308,32 @@ pub enum EditCommand {
     /// If the cursor is already at the end of the line, remove the newline character
     KillLine,
 
-    /// Cut a word
-    CutWord {
-        /// Which flavor of word movement to use (Emacs or Vi)
-        flavor: WordFlavor,
-        /// Whether to use "word" or "big word" movement rules
-        size: WordSize,
-        /// Which direction to move in
-        target: MotionTarget,
-    },
+    /// Cut the word left of the insertion point
+    CutWordLeft,
+
+    /// Cut the WORD left of the insertion point
+    CutBigWordLeft,
+
+    /// Cut the word right of the insertion point
+    CutWordRight,
+
+    /// Cut the word right of the insertion point
+    CutBigWordRight,
+
+    /// Cut from the insertion point to the end of the next word (inclusive, for Vi `de`)
+    CutViWordRightEnd,
+
+    /// Cut from the insertion point to the end of the next WORD (inclusive, for Vi `dE`)
+    CutViBigWordRightEnd,
+
+    /// Cut the word right of the insertion point and any following space
+    CutWordRightToNext,
+
+    /// Cut the WORD right of the insertion point and any following space
+    CutBigWordRightToNext,
+
+    /// Cut the Vi word left of the insertion point (uses Vi three-class word boundaries)
+    CutViWordLeft,
 
     /// Paste the cut buffer in front of the insertion point (Emacs, vi `P`)
     PasteCutBufferBefore,
@@ -404,15 +445,32 @@ pub enum EditCommand {
     /// Copy the current line
     CopyCurrentLine,
 
-    /// Copy a word
-    CopyWord {
-        /// Which flavor of word movement to use (Emacs or Vi)
-        flavor: WordFlavor,
-        /// Whether to use "word" or "big word" movement rules
-        size: WordSize,
-        /// Which direction to move in
-        target: MotionTarget,
-    },
+    /// Copy the word left of the insertion point
+    CopyWordLeft,
+
+    /// Copy the WORD left of the insertion point
+    CopyBigWordLeft,
+
+    /// Copy the Vi word left of the insertion point (uses Vi three-class word boundaries)
+    CopyViWordLeft,
+
+    /// Copy the word right of the insertion point
+    CopyWordRight,
+
+    /// Copy the WORD right of the insertion point
+    CopyBigWordRight,
+
+    /// Copy from the insertion point to the end of the next word (inclusive, for Vi `ye`)
+    CopyViWordRightEnd,
+
+    /// Copy from the insertion point to the end of the next WORD (inclusive, for Vi `yE`)
+    CopyViBigWordRightEnd,
+
+    /// Copy the word right of the insertion point and any following space
+    CopyWordRightToNext,
+
+    /// Copy the WORD right of the insertion point and any following space
+    CopyBigWordRightToNext,
 
     /// Copy one character to the left
     CopyLeft,
@@ -510,6 +568,34 @@ impl Display for EditCommand {
             EditCommand::MoveLineDown { .. } => write!(f, "MoveLineDown Optional[select: <bool>]"),
             EditCommand::MoveLeft { .. } => write!(f, "MoveLeft Optional[select: <bool>]"),
             EditCommand::MoveRight { .. } => write!(f, "MoveRight Optional[select: <bool>]"),
+            EditCommand::MoveWordLeft { .. } => write!(f, "MoveWordLeft Optional[select: <bool>]"),
+            EditCommand::MoveBigWordLeft { .. } => {
+                write!(f, "MoveBigWordLeft Optional[select: <bool>]")
+            }
+            EditCommand::MoveWordRight { .. } => {
+                write!(f, "MoveWordRight Optional[select: <bool>]")
+            }
+            EditCommand::MoveWordRightEnd { .. } => {
+                write!(f, "MoveWordRightEnd Optional[select: <bool>]")
+            }
+            EditCommand::MoveBigWordRightEnd { .. } => {
+                write!(f, "MoveBigWordRightEnd Optional[select: <bool>]")
+            }
+            EditCommand::MoveViWordLeft { .. } => {
+                write!(f, "MoveViWordLeft Optional[select: <bool>]")
+            }
+            EditCommand::MoveViWordRightStart { .. } => {
+                write!(f, "MoveViWordRightStart Optional[select: <bool>]")
+            }
+            EditCommand::MoveViWordRightEnd { .. } => {
+                write!(f, "MoveViWordRightEnd Optional[select: <bool>]")
+            }
+            EditCommand::MoveWordRightStart { .. } => {
+                write!(f, "MoveWordRightStart Optional[select: <bool>]")
+            }
+            EditCommand::MoveBigWordRightStart { .. } => {
+                write!(f, "MoveBigWordRightStart Optional[select: <bool>]")
+            }
             EditCommand::MoveToPosition { .. } => {
                 write!(f, "MoveToPosition  Value: <int>, Optional[select: <bool>]")
             }
@@ -518,33 +604,6 @@ impl Display for EditCommand {
             }
             EditCommand::MoveLeftBefore { .. } => {
                 write!(f, "MoveLeftBefore Value: <char>, Optional[select: <bool>]")
-            }
-            EditCommand::MoveWord {
-                flavor,
-                size,
-                target,
-                ..
-            } => {
-                let flavor_str = match flavor {
-                    WordFlavor::Emacs => "Emacs",
-                    WordFlavor::Vi => "Vi",
-                };
-                let size_str = match size {
-                    WordSize::Word => "Word",
-                    WordSize::BigWord => "BigWord",
-                };
-                let target_str = match target {
-                    MotionTarget::Left => "Left",
-                    MotionTarget::Right => "Right",
-                    MotionTarget::RightStart => "RightStart",
-                    MotionTarget::RightEnd => "RightEnd",
-                    MotionTarget::RightToNext => "RightToNext",
-                };
-                write!(
-                    f,
-                    "MoveWord Flavor: {}, Size: {}, Target: {}, Optional[select: <bool>]",
-                    flavor_str, size_str, target_str
-                )
             }
             EditCommand::InsertChar(_) => write!(f, "InsertChar  Value: <char>"),
             EditCommand::InsertString(_) => write!(f, "InsertString Value: <string>"),
@@ -574,32 +633,15 @@ impl Display for EditCommand {
             }
             EditCommand::CutToLineEnd => write!(f, "CutToLineEnd"),
             EditCommand::KillLine => write!(f, "KillLine"),
-            EditCommand::CutWord {
-                flavor,
-                size,
-                target,
-            } => {
-                let flavor_str = match flavor {
-                    WordFlavor::Emacs => "Emacs",
-                    WordFlavor::Vi => "Vi",
-                };
-                let size_str = match size {
-                    WordSize::Word => "Word",
-                    WordSize::BigWord => "BigWord",
-                };
-                let target_str = match target {
-                    MotionTarget::Left => "Left",
-                    MotionTarget::Right => "Right",
-                    MotionTarget::RightStart => "RightStart",
-                    MotionTarget::RightEnd => "RightEnd",
-                    MotionTarget::RightToNext => "RightToNext",
-                };
-                write!(
-                    f,
-                    "CutWord Flavor: {}, Size: {}, Target: {}",
-                    flavor_str, size_str, target_str
-                )
-            }
+            EditCommand::CutWordLeft => write!(f, "CutWordLeft"),
+            EditCommand::CutBigWordLeft => write!(f, "CutBigWordLeft"),
+            EditCommand::CutWordRight => write!(f, "CutWordRight"),
+            EditCommand::CutBigWordRight => write!(f, "CutBigWordRight"),
+            EditCommand::CutViWordRightEnd => write!(f, "CutViWordRightEnd"),
+            EditCommand::CutViBigWordRightEnd => write!(f, "CutViBigWordRightEnd"),
+            EditCommand::CutWordRightToNext => write!(f, "CutWordRightToNext"),
+            EditCommand::CutBigWordRightToNext => write!(f, "CutBigWordRightToNext"),
+            EditCommand::CutViWordLeft => write!(f, "CutViWordLeft"),
             EditCommand::PasteCutBufferBefore => write!(f, "PasteCutBufferBefore"),
             EditCommand::PasteCutBufferAfter => write!(f, "PasteCutBufferAfter"),
             EditCommand::UppercaseWord => write!(f, "UppercaseWord"),
@@ -628,32 +670,15 @@ impl Display for EditCommand {
             EditCommand::CopyToEndLinewise => write!(f, "CopyToEndLinewise"),
             EditCommand::CopyToLineEnd => write!(f, "CopyToLineEnd"),
             EditCommand::CopyCurrentLine => write!(f, "CopyCurrentLine"),
-            EditCommand::CopyWord {
-                flavor,
-                size,
-                target,
-            } => {
-                let flavor_str = match flavor {
-                    WordFlavor::Emacs => "Emacs",
-                    WordFlavor::Vi => "Vi",
-                };
-                let size_str = match size {
-                    WordSize::Word => "Word",
-                    WordSize::BigWord => "BigWord",
-                };
-                let target_str = match target {
-                    MotionTarget::Left => "Left",
-                    MotionTarget::Right => "Right",
-                    MotionTarget::RightStart => "RightStart",
-                    MotionTarget::RightEnd => "RightEnd",
-                    MotionTarget::RightToNext => "RightToNext",
-                };
-                write!(
-                    f,
-                    "CopyWord Flavor: {}, Size: {}, Target: {}",
-                    flavor_str, size_str, target_str
-                )
-            }
+            EditCommand::CopyWordLeft => write!(f, "CopyWordLeft"),
+            EditCommand::CopyBigWordLeft => write!(f, "CopyBigWordLeft"),
+            EditCommand::CopyViWordLeft => write!(f, "CopyViWordLeft"),
+            EditCommand::CopyWordRight => write!(f, "CopyWordRight"),
+            EditCommand::CopyBigWordRight => write!(f, "CopyBigWordRight"),
+            EditCommand::CopyViWordRightEnd => write!(f, "CopyViWordRightEnd"),
+            EditCommand::CopyViBigWordRightEnd => write!(f, "CopyViBigWordRightEnd"),
+            EditCommand::CopyWordRightToNext => write!(f, "CopyWordRightToNext"),
+            EditCommand::CopyBigWordRightToNext => write!(f, "CopyBigWordRightToNext"),
             EditCommand::CopyLeft => write!(f, "CopyLeft"),
             EditCommand::CopyRight => write!(f, "CopyRight"),
             EditCommand::CopyRightUntil(_) => write!(f, "CopyRightUntil Value: <char>"),
@@ -693,7 +718,16 @@ impl EditCommand {
             | EditCommand::MoveLineDown { select, .. }
             | EditCommand::MoveLeft { select, .. }
             | EditCommand::MoveRight { select, .. }
-            | EditCommand::MoveWord { select, .. }
+            | EditCommand::MoveWordLeft { select, .. }
+            | EditCommand::MoveBigWordLeft { select, .. }
+            | EditCommand::MoveWordRight { select, .. }
+            | EditCommand::MoveWordRightStart { select, .. }
+            | EditCommand::MoveBigWordRightStart { select, .. }
+            | EditCommand::MoveWordRightEnd { select, .. }
+            | EditCommand::MoveBigWordRightEnd { select, .. }
+            | EditCommand::MoveViWordLeft { select, .. }
+            | EditCommand::MoveViWordRightStart { select, .. }
+            | EditCommand::MoveViWordRightEnd { select, .. }
             | EditCommand::MoveRightUntil { select, .. }
             | EditCommand::MoveRightBefore { select, .. }
             | EditCommand::MoveLeftUntil { select, .. }
@@ -728,7 +762,15 @@ impl EditCommand {
             | EditCommand::KillLine
             | EditCommand::CutToEnd
             | EditCommand::CutToEndLinewise { .. }
-            | EditCommand::CutWord { .. }
+            | EditCommand::CutWordLeft
+            | EditCommand::CutBigWordLeft
+            | EditCommand::CutWordRight
+            | EditCommand::CutBigWordRight
+            | EditCommand::CutViWordRightEnd
+            | EditCommand::CutViBigWordRightEnd
+            | EditCommand::CutWordRightToNext
+            | EditCommand::CutBigWordRightToNext
+            | EditCommand::CutViWordLeft
             | EditCommand::PasteCutBufferBefore
             | EditCommand::PasteCutBufferAfter
             | EditCommand::UppercaseWord
@@ -763,7 +805,15 @@ impl EditCommand {
             | EditCommand::CopyToEndLinewise
             | EditCommand::CopyToLineEnd
             | EditCommand::CopyCurrentLine
-            | EditCommand::CopyWord { .. }
+            | EditCommand::CopyWordLeft
+            | EditCommand::CopyBigWordLeft
+            | EditCommand::CopyViWordLeft
+            | EditCommand::CopyWordRight
+            | EditCommand::CopyBigWordRight
+            | EditCommand::CopyViWordRightEnd
+            | EditCommand::CopyViBigWordRightEnd
+            | EditCommand::CopyWordRightToNext
+            | EditCommand::CopyBigWordRightToNext
             | EditCommand::CopyLeft
             | EditCommand::CopyRight
             | EditCommand::CopyRightUntil(_)

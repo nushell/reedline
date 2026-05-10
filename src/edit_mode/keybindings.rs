@@ -1,8 +1,5 @@
 use {
-    crate::{
-        enums::{MotionTarget, ReedlineEvent, WordFlavor, WordSize},
-        EditCommand,
-    },
+    crate::{enums::ReedlineEvent, EditCommand},
     crossterm::event::{KeyCode, KeyModifiers},
     serde::{Deserialize, Serialize},
     std::collections::HashMap,
@@ -142,24 +139,14 @@ pub fn add_common_navigation_bindings(kb: &mut Keybindings) {
     kb.add_binding(
         KM::CONTROL,
         KC::Left,
-        edit_bind(EC::MoveWord {
-            flavor: WordFlavor::Emacs,
-            size: WordSize::Word,
-            target: MotionTarget::Left,
-            select: false,
-        }),
+        edit_bind(EC::MoveWordLeft { select: false }),
     );
     kb.add_binding(
         KM::CONTROL,
         KC::Right,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::HistoryHintWordComplete,
-            edit_bind(EC::MoveWord {
-                flavor: WordFlavor::Emacs,
-                size: WordSize::Word,
-                target: MotionTarget::Right,
-                select: false,
-            }),
+            edit_bind(EC::MoveWordRight { select: false }),
         ]),
     );
     // Home/End & ctrl+a/ctrl+e
@@ -285,22 +272,12 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
     kb.add_binding(
         KM::SHIFT | KM::CONTROL,
         KC::Left,
-        edit_bind(EC::MoveWord {
-            flavor: WordFlavor::Emacs,
-            size: WordSize::Word,
-            target: MotionTarget::Left,
-            select: true,
-        }),
+        edit_bind(EC::MoveWordLeft { select: true }),
     );
     kb.add_binding(
         KM::SHIFT | KM::CONTROL,
         KC::Right,
-        edit_bind(EC::MoveWord {
-            flavor: WordFlavor::Emacs,
-            size: WordSize::Word,
-            target: MotionTarget::Right,
-            select: true,
-        }),
+        edit_bind(EC::MoveWordRight { select: true }),
     );
     kb.add_binding(
         KM::SHIFT,
