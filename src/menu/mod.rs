@@ -264,7 +264,7 @@ pub enum OutputMode {
     /// Replace the entire buffer (`0..buffer.len()`), ignoring `Suggestion::span`.
     FullBuffer,
     /// Keep `Suggestion::span.start`, force `end = buffer.len()`.
-    ExtentToEnd,
+    ExtendToEnd,
 }
 
 /// Common builder for all menus
@@ -330,6 +330,20 @@ pub trait MenuBuilder: Menu + Sized {
     #[must_use]
     fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
         self.settings_mut().only_buffer_difference = only_buffer_difference;
+        self
+    }
+
+    /// Menu builder with new value for input_mode. Overrides `only_buffer_difference` when set.
+    #[must_use]
+    fn with_input_mode(mut self, mode: InputMode) -> Self {
+        self.settings_mut().input_mode = Some(mode);
+        self
+    }
+
+    /// Menu builder with new value for output_mode. Defaults to `OutputMode::SuggestedSpan` when unset.
+    #[must_use]
+    fn with_output_mode(mut self, mode: OutputMode) -> Self {
+        self.settings_mut().output_mode = Some(mode);
         self
     }
 }
@@ -532,5 +546,30 @@ impl Menu for ReedlineMenu {
 
     fn set_cursor_pos(&mut self, pos: (u16, u16)) {
         self.as_mut().set_cursor_pos(pos);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::bool_only_false(false, None, InputMode::CursorPrefix)]
+    #[case::bool_only_true(true, None, InputMode::Diff)]
+    #[case::enum_overrides_false_bool(false, Some(InputMode::Diff), InputMode::Diff)]
+    #[case::enum_overrides_true_bool(true, Some(InputMode::CursorPrefix), InputMode::CursorPrefix)]
+    #[case::full_buffer(true, Some(InputMode::FullBuffer), InputMode::FullBuffer)]
+    fn test_effective_input_mode(
+        #[case] only_buffer_difference: bool,
+        #[case] input_mode: Option<InputMode>,
+        #[case] expected: InputMode,
+    ) {
+        let mut settings =
+            MenuSettings::default().with_only_buffer_difference(only_buffer_difference);
+        if let Some(mode) = input_mode {
+            settings = settings.with_input_mode(mode);
+        }
+        assert_eq!(settings.effective_input_mode(), expected);
     }
 }

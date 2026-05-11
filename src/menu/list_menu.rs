@@ -413,7 +413,7 @@ impl Menu for ListMenu {
 
     /// The buffer gets cleared with the actual value
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        replace_in_buffer(self.get_value(), editor);
+        replace_in_buffer(self.get_value(), editor, self.settings.output_mode);
     }
 
     fn update_working_details(

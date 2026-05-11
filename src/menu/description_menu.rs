@@ -594,7 +594,7 @@ impl Menu for DescriptionMenu {
                     .expect("the example index is always checked");
                 suggestion.value.clone_from(example);
             }
-            replace_in_buffer(Some(suggestion), editor);
+            replace_in_buffer(Some(suggestion), editor, self.settings.output_mode);
         }
     }
 

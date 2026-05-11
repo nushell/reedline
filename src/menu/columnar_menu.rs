@@ -682,7 +682,7 @@ impl Menu for ColumnarMenu {
 
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        replace_in_buffer(self.get_value(), editor);
+        replace_in_buffer(self.get_value(), editor, self.settings.output_mode);
     }
 
     /// Minimum rows that should be displayed by the menu

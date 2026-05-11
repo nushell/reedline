@@ -10,7 +10,10 @@ use nu_ansi_term::{ansi::RESET, Style};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::{menu::InputMode, Editor, Suggestion, UndoBehavior};
+use crate::{
+    menu::{InputMode, OutputMode},
+    Editor, Suggestion, UndoBehavior,
+};
 
 /// Index result obtained from parsing a string with an index marker
 /// For example, the next string:
@@ -318,7 +321,11 @@ pub fn floor_char_boundary(s: &str, index: usize) -> usize {
 }
 
 /// Helper to accept a completion suggestion and edit the buffer
-pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
+pub fn replace_in_buffer(
+    value: Option<Suggestion>,
+    editor: &mut Editor,
+    output_mode: Option<OutputMode>,
+) {
     if let Some(Suggestion {
         mut value,
         span,
@@ -326,8 +333,14 @@ pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
         ..
     }) = value
     {
-        let end = floor_char_boundary(editor.get_buffer(), span.end);
-        let start = floor_char_boundary(editor.get_buffer(), span.start).min(end);
+        let buffer_len = editor.get_buffer().len();
+        let (raw_start, raw_end) = match output_mode {
+            Some(OutputMode::FullBuffer) => (0, buffer_len),
+            Some(OutputMode::ExtendToEnd) => (span.start, buffer_len),
+            Some(OutputMode::SuggestedSpan) | None => (span.start, span.end),
+        };
+        let end = floor_char_boundary(editor.get_buffer(), raw_end);
+        let start = floor_char_boundary(editor.get_buffer(), raw_start).min(end);
         if append_whitespace {
             value.push(' ');
         }
@@ -959,6 +972,7 @@ mod tests {
     #[case("foobar", 3, Some("foobar"), InputMode::Diff, "", 3)]
     #[case("foobar", 6, Some("foo"), InputMode::Diff, "bar", 6)]
     #[case("foobar", 6, Some("for"), InputMode::Diff, "oba", 5)]
+    #[case("foobar baz", 3, None, InputMode::FullBuffer, "foobar baz", 3)]
     fn test_completer_input(
         #[case] buffer: String,
         #[case] insertion_point: usize,
@@ -998,6 +1012,57 @@ mod tests {
                 ..Default::default()
             }),
             &mut editor,
+            None,
+        );
+        assert_eq!(new_buffer, editor.get_buffer());
+        assert_eq!(new_insertion_point, editor.insertion_point());
+
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(orig_buffer, editor.get_buffer());
+        assert_eq!(orig_insertion_point, editor.insertion_point());
+    }
+
+    #[rstest]
+    #[case::full_buffer(
+        "old content",
+        11,
+        "new",
+        3,
+        "new",
+        Span::new(0, 0),
+        OutputMode::FullBuffer
+    )]
+    #[case::extend_to_end(
+        "hello world",
+        11,
+        "hello rust",
+        10,
+        "rust",
+        Span::new(6, 8),
+        OutputMode::ExtendToEnd
+    )]
+    fn test_replace_in_buffer_with_output_mode(
+        #[case] orig_buffer: &str,
+        #[case] orig_insertion_point: usize,
+        #[case] new_buffer: &str,
+        #[case] new_insertion_point: usize,
+        #[case] value: String,
+        #[case] span: Span,
+        #[case] output_mode: OutputMode,
+    ) {
+        let mut editor = Editor::default();
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.set_buffer(orig_buffer.to_owned());
+        line_buffer.set_insertion_point(orig_insertion_point);
+        editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
+        replace_in_buffer(
+            Some(Suggestion {
+                value,
+                span,
+                ..Default::default()
+            }),
+            &mut editor,
+            Some(output_mode),
         );
         assert_eq!(new_buffer, editor.get_buffer());
         assert_eq!(new_insertion_point, editor.insertion_point());
