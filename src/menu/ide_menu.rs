@@ -1,6 +1,7 @@
 use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
+    menu::InputMode,
     menu_functions::{
         can_partially_complete, completer_input, floor_char_boundary, get_match_indices,
         replace_in_buffer, style_suggestion, truncate_with_ansi,
@@ -620,7 +621,7 @@ impl Menu for IdeMenu {
 
     /// Update menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        if self.settings.only_buffer_difference && self.input.is_none() {
+        if self.settings.effective_input_mode() == InputMode::Diff && self.input.is_none() {
             self.input = Some(editor.get_buffer().to_string());
         }
 
@@ -628,7 +629,7 @@ impl Menu for IdeMenu {
             editor.get_buffer(),
             editor.insertion_point(),
             self.input.as_deref(),
-            self.settings.only_buffer_difference,
+            self.settings.effective_input_mode(),
         );
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 

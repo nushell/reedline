@@ -10,7 +10,7 @@ use nu_ansi_term::{ansi::RESET, Style};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::{Editor, Suggestion, UndoBehavior};
+use crate::{menu::InputMode, Editor, Suggestion, UndoBehavior};
 
 /// Index result obtained from parsing a string with an index marker
 /// For example, the next string:
@@ -272,28 +272,32 @@ pub fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &
 /// Get the part of the line that should be given as input to the completer, as well
 /// as the index of the end of that piece of text
 ///
-/// `prev_input` is the text in the buffer when the menu was activated. Needed if only_buffer_difference is true
+/// `prev_input` is the text in the buffer when the menu was activated. Needed for `InputMode::Diff`.
 pub fn completer_input(
     buffer: &str,
     insertion_point: usize,
     prev_input: Option<&str>,
-    only_buffer_difference: bool,
+    input_mode: InputMode,
 ) -> (String, usize) {
-    if only_buffer_difference {
-        if let Some(old_string) = prev_input {
-            let (start, input) = string_difference(buffer, old_string);
-            if !input.is_empty() {
-                (input.to_owned(), start + input.len())
+    match input_mode {
+        InputMode::FullBuffer => (buffer.to_owned(), insertion_point),
+        InputMode::CursorPrefix => {
+            // TODO previously, all but the list menu replaced newlines with spaces here
+            // The completers should be adapted to account for this, and tests need to be added
+            (buffer[..insertion_point].to_owned(), insertion_point)
+        }
+        InputMode::Diff => {
+            if let Some(old_string) = prev_input {
+                let (start, input) = string_difference(buffer, old_string);
+                if !input.is_empty() {
+                    (input.to_owned(), start + input.len())
+                } else {
+                    (String::new(), insertion_point)
+                }
             } else {
                 (String::new(), insertion_point)
             }
-        } else {
-            (String::new(), insertion_point)
         }
-    } else {
-        // TODO previously, all but the list menu replaced newlines with spaces here
-        // The completers should be adapted to account for this, and tests need to be added
-        (buffer[..insertion_point].to_owned(), insertion_point)
     }
 }
 
@@ -948,24 +952,24 @@ mod tests {
     }
 
     #[rstest]
-    #[case("foobar", 6, None, false, "foobar", 6)]
-    #[case("foo\r\nbar", 5, None, false, "foo\r\n", 5)]
-    #[case("foo\nbar", 4, None, false, "foo\n", 4)]
-    #[case("foobar", 6, None, true, "", 6)]
-    #[case("foobar", 3, Some("foobar"), true, "", 3)]
-    #[case("foobar", 6, Some("foo"), true, "bar", 6)]
-    #[case("foobar", 6, Some("for"), true, "oba", 5)]
+    #[case("foobar", 6, None, InputMode::CursorPrefix, "foobar", 6)]
+    #[case("foo\r\nbar", 5, None, InputMode::CursorPrefix, "foo\r\n", 5)]
+    #[case("foo\nbar", 4, None, InputMode::CursorPrefix, "foo\n", 4)]
+    #[case("foobar", 6, None, InputMode::Diff, "", 6)]
+    #[case("foobar", 3, Some("foobar"), InputMode::Diff, "", 3)]
+    #[case("foobar", 6, Some("foo"), InputMode::Diff, "bar", 6)]
+    #[case("foobar", 6, Some("for"), InputMode::Diff, "oba", 5)]
     fn test_completer_input(
         #[case] buffer: String,
         #[case] insertion_point: usize,
         #[case] prev_input: Option<&str>,
-        #[case] only_buffer_difference: bool,
+        #[case] input_mode: InputMode,
         #[case] output: String,
         #[case] pos: usize,
     ) {
         assert_eq!(
             (output, pos),
-            completer_input(&buffer, insertion_point, prev_input, only_buffer_difference)
+            completer_input(&buffer, insertion_point, prev_input, input_mode)
         )
     }
 

@@ -2,6 +2,7 @@ use {
     super::{menu_functions::parse_selection_char, Menu, MenuBuilder, MenuEvent, MenuSettings},
     crate::{
         core_editor::Editor,
+        menu::InputMode,
         menu_functions::{completer_input, replace_in_buffer},
         painting::{estimate_single_line_wraps, Painter},
         Completer, Suggestion,
@@ -346,7 +347,7 @@ impl Menu for ListMenu {
 
     /// Collecting the value from the completer to be shown in the menu
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        if self.settings.only_buffer_difference && self.input.is_none() {
+        if self.settings.effective_input_mode() == InputMode::Diff && self.input.is_none() {
             self.input = Some(editor.get_buffer().to_string());
         }
 
@@ -354,7 +355,7 @@ impl Menu for ListMenu {
             editor.get_buffer(),
             editor.insertion_point(),
             self.input.as_deref(),
-            self.settings.only_buffer_difference,
+            self.settings.effective_input_mode(),
         );
 
         let parsed = parse_selection_char(&input, SELECTION_CHAR);

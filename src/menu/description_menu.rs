@@ -1,6 +1,7 @@
 use {
     super::MenuSettings,
     crate::{
+        menu::InputMode,
         menu_functions::{completer_input, replace_in_buffer},
         Completer, Editor, Menu, MenuBuilder, MenuEvent, Painter, Suggestion,
     },
@@ -443,7 +444,7 @@ impl Menu for DescriptionMenu {
 
     /// Updates menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        if self.settings.only_buffer_difference && self.input.is_none() {
+        if self.settings.effective_input_mode() == InputMode::Diff && self.input.is_none() {
             self.input = Some(editor.get_buffer().to_string());
         }
 
@@ -451,7 +452,7 @@ impl Menu for DescriptionMenu {
             editor.get_buffer(),
             editor.insertion_point(),
             self.input.as_deref(),
-            self.settings.only_buffer_difference,
+            self.settings.effective_input_mode(),
         );
         self.values = completer.complete(&input, pos);
 
