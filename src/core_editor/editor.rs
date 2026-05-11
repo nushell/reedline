@@ -2215,4 +2215,38 @@ mod test {
         assert_eq!(bracket_result, expected_bracket);
         assert_eq!(quote_result, expected_quote);
     }
+
+    #[rstest]
+    // Not inside any string
+    #[case("hello world", 5, false)]
+    #[case("", 0, false)]
+    #[case("no quotes here", 0, false)]
+    // Closed double-quoted string — position is after the closing quote
+    #[case(r#""hello" world"#, 8, false)]
+    // Inside an unclosed double-quoted string
+    #[case(r#""hello world"#, 5, true)]
+    // Closed double-quoted string — position is inside it
+    #[case(r#""hello" world"#, 3, true)]
+    // Inside an unclosed single-quoted string
+    #[case("'hello world", 5, true)]
+    // Closed single-quoted string
+    #[case("'hello' world", 8, false)]
+    // Escaped quote does not open/close a string
+    #[case(r#"say \"hello"#, 6, false)]
+    // Escaped quote inside an open string — still inside
+    #[case(r#""say \"hello"#, 9, true)]
+    // Mixed: single inside double (single quote is literal)
+    #[case(r#""it's fine""#, 5, true)]
+    // Mixed: double inside single (double quote is literal)
+    #[case("'say \"hi\"'", 6, true)]
+    // Position 0 is never inside a string
+    #[case(r#""open"#, 0, false)]
+    fn test_is_inside_string_literal(
+        #[case] buffer: &str,
+        #[case] position: usize,
+        #[case] expected: bool,
+    ) {
+        let editor = editor_with(buffer);
+        assert_eq!(editor.is_inside_string_literal(position), expected);
+    }
 }
