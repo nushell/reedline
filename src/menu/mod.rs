@@ -162,6 +162,12 @@ pub struct MenuSettings {
     /// Calls the completer using only the line buffer difference difference
     /// after the menu was activated
     only_buffer_difference: bool,
+    /// Optional override for completer input handling.
+    /// If `Some`, takes precedence over `only_buffer_difference`.
+    input_mode: Option<InputMode>,
+    /// Optional override for the buffer range replaced on selection.
+    /// If `None`, the menu uses `Suggestion::span` as-is.
+    output_mode: Option<OutputMode>,
 }
 
 impl Default for MenuSettings {
@@ -171,6 +177,8 @@ impl Default for MenuSettings {
             color: MenuTextStyle::default(),
             marker: "| ".to_string(),
             only_buffer_difference: false,
+            input_mode: None,
+            output_mode: None,
         }
     }
 }
@@ -203,6 +211,60 @@ impl MenuSettings {
         self.only_buffer_difference = only_buffer_difference;
         self
     }
+
+    /// set the input mode. If set, this overrides `only_buffer_difference`.
+    pub fn with_input_mode(mut self, mode: InputMode) -> Self {
+        self.input_mode = Some(mode);
+        self
+    }
+
+    /// set the output mode. If unset, the menu uses `Suggestion::span` as-is.
+    pub fn with_output_mode(mut self, mode: OutputMode) -> Self {
+        self.output_mode = Some(mode);
+        self
+    }
+
+    /// Resolves input_mode and only_buffer_difference into concrete InputMode.
+    /// `input_mode` wins if set; otherwise falls back to the bool.
+    pub fn effective_input_mode(&self) -> InputMode {
+        match self.input_mode {
+            Some(mode) => mode,
+            None => {
+                if self.only_buffer_difference {
+                    InputMode::Diff
+                } else {
+                    InputMode::CursorPrefix
+                }
+            }
+        }
+    }
+}
+
+/// Controls what the menu hands to its completer.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    /// Completer receives only the text typed after menu activation.
+    /// Equivalent to `only_buffer_difference: true`.
+    Diff,
+    /// Completer receives the buffer up to the cursor (`buffer[..cursor]`).
+    /// Equivalent to `only_buffer_difference: false`.
+    CursorPrefix,
+    /// Completer receives the entire buffer including text after the cursor.
+    /// No bool equivalent
+    FullBuffer,
+}
+
+/// Controls what range og the buffer the menu replaces when a suggestion is selected.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputMode {
+    /// Replace the range specified by `Suggestion::span`. Default behaviour
+    SuggestedSpan,
+    /// Replace the entire buffer (`0..buffer.len()`), ignoring `Suggestion::span`.
+    FullBuffer,
+    /// Keep `Suggestion::span.start`, force `end = buffer.len()`.
+    ExtentToEnd,
 }
 
 /// Common builder for all menus
