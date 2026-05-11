@@ -231,16 +231,11 @@ impl MenuSettings {
     /// Resolves input_mode and only_buffer_difference into concrete InputMode.
     /// `input_mode` wins if set; otherwise falls back to the bool.
     pub fn effective_input_mode(&self) -> InputMode {
-        match self.input_mode {
-            Some(mode) => mode,
-            None => {
-                if self.only_buffer_difference {
-                    InputMode::Diff
-                } else {
-                    InputMode::CursorPrefix
-                }
-            }
-        }
+        self.input_mode.unwrap_or(if self.only_buffer_difference {
+            InputMode::Diff
+        } else {
+            InputMode::CursorPrefix
+        })
     }
 }
 
@@ -263,7 +258,8 @@ pub enum InputMode {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
-    /// Replace the range specified by `Suggestion::span`. Default behaviour
+    /// Replace the range specified by `Suggestion::span`.
+    /// Equivalent to leaving `output_mode` unset.
     SuggestedSpan,
     /// Replace the entire buffer (`0..buffer.len()`), ignoring `Suggestion::span`.
     FullBuffer,

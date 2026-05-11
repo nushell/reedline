@@ -11,7 +11,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    menu::{InputMode, OutputMode},
+    menu::{InputMode, MenuSettings, OutputMode},
     Editor, Suggestion, UndoBehavior,
 };
 
@@ -302,6 +302,27 @@ pub fn completer_input(
             }
         }
     }
+}
+
+/// Stashes the buffer on first call when in `InputMode::Diff` (so later calls can diff
+/// against the original), then resolves the completer input via [`completer_input`].
+///
+/// Centralises the input-resolution boilerplate shared by all menu `update_values` impls.
+pub fn resolve_completer_input(
+    editor: &Editor,
+    saved_input: &mut Option<String>,
+    settings: &MenuSettings,
+) -> (String, usize) {
+    let mode = settings.effective_input_mode();
+    if mode == InputMode::Diff && saved_input.is_none() {
+        *saved_input = Some(editor.get_buffer().to_string());
+    }
+    completer_input(
+        editor.get_buffer(),
+        editor.insertion_point(),
+        saved_input.as_deref(),
+        mode,
+    )
 }
 
 /// Find the closest index less than or equal to the current index that's a
