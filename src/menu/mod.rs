@@ -159,8 +159,8 @@ pub struct MenuSettings {
     color: MenuTextStyle,
     /// Menu marker when active
     marker: String,
-    /// Calls the completer using only the line buffer difference difference
-    /// after the menu was activated
+    /// Calls the completer using only the line buffer difference
+    /// after the menu was activated. Ignored if `input_mode` is set.
     only_buffer_difference: bool,
     /// Optional override for completer input handling.
     /// If `Some`, takes precedence over `only_buffer_difference`.
@@ -205,20 +205,24 @@ impl MenuSettings {
         self
     }
 
-    /// MenuSettings builder with only_buffer_difference
+    /// MenuSettings builder with only_buffer_difference.
+    /// Consider `with_input_mode` for finer control; the bool is ignored when
+    /// `input_mode` is set.
     #[must_use]
     pub fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
         self.only_buffer_difference = only_buffer_difference;
         self
     }
 
-    /// set the input mode. If set, this overrides `only_buffer_difference`.
+    /// Set the input mode. If set, this overrides `only_buffer_difference`.
+    #[must_use]
     pub fn with_input_mode(mut self, mode: InputMode) -> Self {
         self.input_mode = Some(mode);
         self
     }
 
-    /// set the output mode. If unset, the menu uses `Suggestion::span` as-is.
+    /// Set the output mode. If unset, the menu uses `Suggestion::span` as-is.
+    #[must_use]
     pub fn with_output_mode(mut self, mode: OutputMode) -> Self {
         self.output_mode = Some(mode);
         self
@@ -251,11 +255,11 @@ pub enum InputMode {
     /// Equivalent to `only_buffer_difference: false`.
     CursorPrefix,
     /// Completer receives the entire buffer including text after the cursor.
-    /// No bool equivalent
+    /// No bool equivalent.
     FullBuffer,
 }
 
-/// Controls what range og the buffer the menu replaces when a suggestion is selected.
+/// Controls what range of the buffer the menu replaces when a suggestion is selected.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
@@ -326,7 +330,8 @@ pub trait MenuBuilder: Menu + Sized {
         self
     }
 
-    /// Menu builder with new value for only_buffer_difference
+    /// Menu builder with new value for only_buffer_difference.
+    /// Ignored when `input_mode` is set; consider `with_input_mode` for finer control.
     #[must_use]
     fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
         self.settings_mut().only_buffer_difference = only_buffer_difference;
