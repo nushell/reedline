@@ -273,7 +273,7 @@ impl Editor {
         self.line_buffer.get_buffer()
     }
 
-    /// Check if a position in the buffer is inside an unclosed string literal
+    /// Check if `position` (a byte offset) is inside an unclosed string literal.
     pub fn is_inside_string_literal(&self, position: usize) -> bool {
         let buffer = self.get_buffer();
 
@@ -284,12 +284,6 @@ impl Editor {
             return false;
         }
 
-        let target_byte_pos = buffer
-            .char_indices()
-            .nth(position)
-            .map(|(byte_idx, _)| byte_idx)
-            .unwrap_or(buffer.len());
-
         let bytes = buffer.as_bytes();
         let mut in_single_quote = false;
         let mut in_double_quote = false;
@@ -297,7 +291,7 @@ impl Editor {
         let mut byte_pos = 0;
 
         for &byte in bytes {
-            if byte_pos > target_byte_pos {
+            if byte_pos > position {
                 break;
             }
 

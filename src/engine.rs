@@ -1764,18 +1764,23 @@ impl Reedline {
     fn try_expand_abbreviation_at_cursor(&mut self, submitted: bool) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
         let cursor_position_in_buffer = self.editor.insertion_point();
+        if cursor_position_in_buffer == 0 {
+            return None;
+        }
 
-        let chars: Vec<char> = buffer.chars().collect();
         let (offset, suffix) = match submitted {
             true => (0, ""),   // expand on <enter>
             false => (1, " "), // expand on <space>
         };
 
-        let mut word_start = cursor_position_in_buffer - 1;
-        while word_start > 0 && !chars[word_start - 1].is_whitespace() {
-            word_start -= 1;
-        }
         let word_end = cursor_position_in_buffer - offset;
+        let prefix = &buffer[..word_end];
+        let word_start = prefix
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| ch.is_whitespace())
+            .map(|(idx, ch)| idx + ch.len_utf8())
+            .unwrap_or(0); // byte offset of word start
 
         if word_start >= word_end {
             // The first char in the buffer is a space or there are consecutive spaces
@@ -1785,8 +1790,8 @@ impl Reedline {
             return None;
         }
 
-        let word: String = chars[word_start..word_end].iter().collect();
-        if let Some(expansion) = self.abbreviations.get(&word) {
+        let word = &buffer[word_start..word_end];
+        if let Some(expansion) = self.abbreviations.get(word) {
             return Some(ReedlineEvent::Edit(vec![
                 EditCommand::MoveToPosition {
                     position: word_start,
