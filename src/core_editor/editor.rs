@@ -2241,6 +2241,23 @@ mod test {
     #[case("'say \"hi\"'", 6, true)]
     // Position 0 is never inside a string
     #[case(r#""open"#, 0, false)]
+    // Cyrillic (2-byte UTF-8 chars): char boundary positions
+    #[case("Сегодня хороший день.", 14, false)]
+    #[case("Сегодня 'хороший' день.", 16, true)]
+    #[case("Сегодня 'хороший' день.", 31, false)]
+    #[case("'Сегодня хороший день.", 2, true)]
+    // Emoji (4-byte UTF-8 chars): char boundary positions
+    #[case("this is fire 🔥", 3, false)]
+    #[case("'hello there' 👋🏼", 13, false)]
+    #[case("'this is fire 🔥", 14, true)]
+    #[case("'hello there 👋🏼", 13, true)]
+    // Japanese (3-byte UTF-8 chars): char boundary and mid-char positions
+    #[case("今日はいい日だ。", 6, false)]
+    #[case("'今日はいい日だ。", 6, true)]
+    #[case("'今日はいい日だ。", 7, true)]
+    // Mid-char byte positions within multi-byte sequences are also handled correctly
+    #[case("Сегодня 'хороший' день.", 19, true)]
+    #[case("'hello there 👋🏼", 14, true)]
     fn test_is_inside_string_literal(
         #[case] buffer: &str,
         #[case] position: usize,
