@@ -1344,13 +1344,13 @@ impl Reedline {
                 Ok(EventStatus::Exits(Signal::HostCommand(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
+                self.run_edit_commands(&commands);
                 // Check if a space was just inserted and try to expand abbreviations
                 if let Some(EditCommand::InsertChar(' ')) = commands.first() {
                     if let Some(event) = self.try_expand_abbreviation_at_cursor(false) {
                         return self.handle_editor_event(prompt, event);
                     }
                 }
-                self.run_edit_commands(&commands);
                 if let Some(menu) = self.menus.iter_mut().find(|men| men.is_active()) {
                     if self.quick_completions && menu.can_quick_complete() {
                         match commands.first() {
