@@ -273,6 +273,53 @@ impl Editor {
         self.line_buffer.get_buffer()
     }
 
+    /// Check if `position` (a byte offset) is inside an unclosed string literal.
+    pub fn is_inside_string_literal(&self, position: usize) -> bool {
+        let buffer = self.get_buffer();
+
+        if buffer.is_empty() || position == 0 {
+            return false;
+        }
+        if !buffer.contains('"') && !buffer.contains('\'') {
+            return false;
+        }
+
+        let bytes = buffer.as_bytes();
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        let mut escaped = false;
+        let mut byte_pos = 0;
+
+        for &byte in bytes {
+            if byte_pos > position {
+                break;
+            }
+
+            if escaped {
+                escaped = false;
+                byte_pos += 1;
+                continue;
+            }
+
+            match byte {
+                b'\\' => {
+                    escaped = true;
+                }
+                b'\'' if !in_double_quote => {
+                    in_single_quote = !in_single_quote;
+                }
+                b'"' if !in_single_quote => {
+                    in_double_quote = !in_double_quote;
+                }
+                _ => {}
+            }
+
+            byte_pos += 1;
+        }
+
+        in_single_quote || in_double_quote
+    }
+
     /// Edit the [`LineBuffer`] in an undo-safe manner.
     pub fn edit_buffer<F>(&mut self, func: F, undo_behavior: UndoBehavior)
     where
@@ -2167,5 +2214,56 @@ mod test {
 
         assert_eq!(bracket_result, expected_bracket);
         assert_eq!(quote_result, expected_quote);
+    }
+
+    #[rstest]
+    // Not inside any string
+    #[case("hello world", 5, false)]
+    #[case("", 0, false)]
+    #[case("no quotes here", 0, false)]
+    // Closed double-quoted string — position is after the closing quote
+    #[case(r#""hello" world"#, 8, false)]
+    // Inside an unclosed double-quoted string
+    #[case(r#""hello world"#, 5, true)]
+    // Closed double-quoted string — position is inside it
+    #[case(r#""hello" world"#, 3, true)]
+    // Inside an unclosed single-quoted string
+    #[case("'hello world", 5, true)]
+    // Closed single-quoted string
+    #[case("'hello' world", 8, false)]
+    // Escaped quote does not open/close a string
+    #[case(r#"say \"hello"#, 6, false)]
+    // Escaped quote inside an open string — still inside
+    #[case(r#""say \"hello"#, 9, true)]
+    // Mixed: single inside double (single quote is literal)
+    #[case(r#""it's fine""#, 5, true)]
+    // Mixed: double inside single (double quote is literal)
+    #[case("'say \"hi\"'", 6, true)]
+    // Position 0 is never inside a string
+    #[case(r#""open"#, 0, false)]
+    // Cyrillic (2-byte UTF-8 chars): char boundary positions
+    #[case("Сегодня хороший день.", 14, false)]
+    #[case("Сегодня 'хороший' день.", 16, true)]
+    #[case("Сегодня 'хороший' день.", 31, false)]
+    #[case("'Сегодня хороший день.", 2, true)]
+    // Emoji (4-byte UTF-8 chars): char boundary positions
+    #[case("this is fire 🔥", 3, false)]
+    #[case("'hello there' 👋🏼", 13, false)]
+    #[case("'this is fire 🔥", 14, true)]
+    #[case("'hello there 👋🏼", 13, true)]
+    // Japanese (3-byte UTF-8 chars): char boundary and mid-char positions
+    #[case("今日はいい日だ。", 6, false)]
+    #[case("'今日はいい日だ。", 6, true)]
+    #[case("'今日はいい日だ。", 7, true)]
+    // Mid-char byte positions within multi-byte sequences are also handled correctly
+    #[case("Сегодня 'хороший' день.", 19, true)]
+    #[case("'hello there 👋🏼", 14, true)]
+    fn test_is_inside_string_literal(
+        #[case] buffer: &str,
+        #[case] position: usize,
+        #[case] expected: bool,
+    ) {
+        let editor = editor_with(buffer);
+        assert_eq!(editor.is_inside_string_literal(position), expected);
     }
 }
