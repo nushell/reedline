@@ -1821,6 +1821,10 @@ impl Reedline {
             }
         }
 
+        if self.editor.is_inside_string_literal(parsed.remainder.len()) {
+            return None;
+        }
+
         let history_result = parsed
             .index
             .zip(parsed.marker)
@@ -2529,5 +2533,72 @@ mod tests {
         let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
         set_buffer_at_end(&mut reedline, "   ");
         assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
+    }
+
+    #[cfg(feature = "bashisms")]
+    fn reedline_with_history(entries: &[&str]) -> Reedline {
+        let mut reedline = Reedline::create();
+        for entry in entries {
+            reedline
+                .history
+                .save(HistoryItem::from_command_line(*entry))
+                .expect("failed to save history");
+        }
+        reedline
+    }
+
+    #[test]
+    #[cfg(feature = "bashisms")]
+    fn bang_command_expands_outside_quotes() {
+        let mut reedline = reedline_with_history(&["git status"]);
+        set_buffer_at_end(&mut reedline, "!!");
+        assert!(
+            reedline.parse_bang_command().is_some(),
+            "!! must expand when not inside a quoted string"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "bashisms")]
+    fn bang_command_no_expansion_inside_unclosed_double_quote() {
+        let mut reedline = reedline_with_history(&["git status"]);
+        set_buffer_at_end(&mut reedline, "\"echo !!");
+        assert!(
+            reedline.parse_bang_command().is_none(),
+            "must not expand !! inside an unclosed double-quoted string"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "bashisms")]
+    fn bang_command_no_expansion_inside_unclosed_single_quote() {
+        let mut reedline = reedline_with_history(&["git status"]);
+        set_buffer_at_end(&mut reedline, "'echo !!");
+        assert!(
+            reedline.parse_bang_command().is_none(),
+            "must not expand !! inside an unclosed single-quoted string"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "bashisms")]
+    fn bang_prefix_no_expansion_inside_unclosed_double_quote() {
+        let mut reedline = reedline_with_history(&["git status"]);
+        set_buffer_at_end(&mut reedline, "\"echo !git");
+        assert!(
+            reedline.parse_bang_command().is_none(),
+            "must not expand !prefix inside an unclosed double-quoted string"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "bashisms")]
+    fn bang_prefix_no_expansion_inside_unclosed_single_quote() {
+        let mut reedline = reedline_with_history(&["git status"]);
+        set_buffer_at_end(&mut reedline, "'echo !git");
+        assert!(
+            reedline.parse_bang_command().is_none(),
+            "must not expand !prefix inside an unclosed single-quoted string"
+        );
     }
 }
