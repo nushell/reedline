@@ -2168,5 +2168,4 @@ mod test {
         assert_eq!(bracket_result, expected_bracket);
         assert_eq!(quote_result, expected_quote);
     }
-
 }
