@@ -1785,7 +1785,10 @@ impl Reedline {
             // The first char in the buffer is a space or there are consecutive spaces
             return None;
         }
-        if self.editor.is_inside_string_literal(word_start) {
+        if self
+            .highlighter
+            .is_inside_string_literal(buffer, word_start)
+        {
             return None;
         }
 
@@ -1821,7 +1824,10 @@ impl Reedline {
             }
         }
 
-        if self.editor.is_inside_string_literal(parsed.remainder.len()) {
+        if self
+            .highlighter
+            .is_inside_string_literal(buffer, parsed.remainder.len())
+        {
             return None;
         }
 
@@ -2446,7 +2452,9 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
-        Reedline::create().with_abbreviations(map)
+        Reedline::create()
+            .with_highlighter(Box::new(ExampleHighlighter::default()))
+            .with_abbreviations(map)
     }
 
     fn set_buffer_at_end(reedline: &mut Reedline, text: &str) {
@@ -2498,7 +2506,7 @@ mod tests {
     #[test]
     fn abbreviation_no_expansion_inside_double_quoted_string() {
         let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
-        set_buffer_at_end(&mut reedline, "\"gc");
+        set_buffer_at_end(&mut reedline, "\"hello gc");
         assert!(
             reedline.try_expand_abbreviation_at_cursor(true).is_none(),
             "must not expand inside an unclosed double-quoted string"
@@ -2508,10 +2516,21 @@ mod tests {
     #[test]
     fn abbreviation_no_expansion_inside_single_quoted_string() {
         let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
-        set_buffer_at_end(&mut reedline, "'gc");
+        set_buffer_at_end(&mut reedline, "'hello gc");
         assert!(
             reedline.try_expand_abbreviation_at_cursor(true).is_none(),
             "must not expand inside an unclosed single-quoted string"
+        );
+    }
+
+    #[test]
+    fn abbreviation_expands_after_closed_string() {
+        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, "\"hello\" gc");
+        let event = reedline.try_expand_abbreviation_at_cursor(true);
+        assert!(
+            event.is_some(),
+            "should expand when outside a closed string"
         );
     }
 
