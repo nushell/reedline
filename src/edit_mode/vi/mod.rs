@@ -2,6 +2,7 @@ mod command;
 mod motion;
 mod parser;
 mod vi_keybindings;
+mod word;
 
 use std::str::FromStr;
 
@@ -10,7 +11,7 @@ pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybin
 
 use self::motion::ViCharSearch;
 
-use super::EditMode;
+use super::{EditContext, EditMode, MotionTarget};
 use crate::{
     edit_mode::{keybindings::Keybindings, vi::parser::parse},
     enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
@@ -222,6 +223,24 @@ impl EditMode for Vi {
             },
             _ => EventStatus::Inapplicable,
         }
+    }
+
+    fn resolve_motion(&self, target: MotionTarget, ctx: &EditContext) -> Option<usize> {
+        use word::WordKind::{BigWord, Word};
+        let (buffer, cursor) = (ctx.buffer, ctx.cursor);
+        Some(match target {
+            MotionTarget::WordLeft => word::word_left_index(buffer, cursor, Word),
+            MotionTarget::WordRightStart => word::word_right_start_index(buffer, cursor, Word),
+            MotionTarget::WordRightEnd => word::word_right_end_index(buffer, cursor, Word),
+            MotionTarget::BigWordLeft => word::word_left_index(buffer, cursor, BigWord),
+            MotionTarget::BigWordRightStart => {
+                word::word_right_start_index(buffer, cursor, BigWord)
+            }
+            MotionTarget::BigWordRightEnd => word::word_right_end_index(buffer, cursor, BigWord),
+            // Emacs-style `M-f`; Vi never emits this. Defer to LineBuffer's
+            // UAX #29 path so behavior stays consistent if it ever reaches Vi.
+            MotionTarget::WordRight => return None,
+        })
     }
 }
 
