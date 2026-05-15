@@ -16,6 +16,7 @@ pub trait Highlighter: Send {
     /// The action that will take the current buffer and return whether the cursor position (a byte
     /// offset) is inside a string literal
     fn is_inside_string_literal(&self, line: &str, cursor: usize) -> bool {
+        let _ = (line, cursor);
         false // default for simple highlighters
     }
 }
