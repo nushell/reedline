@@ -625,6 +625,9 @@ impl Reedline {
     /// A builder that adds abbreviations to the Reedline engine
     ///
     /// Overwrites any existing abbreviations with the same key.
+    ///
+    /// Note, by default abbreviations are expanded within string literals. To change this behavior
+    /// override the `is_inside_string_literal` function defined by [`Highlighter`].
     pub fn with_abbreviations(mut self, abbreviations: HashMap<String, String>) -> Self {
         self.abbreviations.extend(abbreviations);
         self
@@ -1759,7 +1762,10 @@ impl Reedline {
 
     /// Expands an abbreviation at the word before the cursor, if any exists
     ///
-    /// Note, expansion does not occur when inside a string.
+    /// Note, this method uses the `is_inside_string_literal` function defined by [`Highlighter`]
+    /// to decide whether to expand an abbreviation when the cursor is inside a string literal.
+    /// Unless overridden, `is_inside_string_literal` returns `false`, resulting in abbreviations
+    /// being expanded even when inside a string literal.
     fn try_expand_abbreviation_at_cursor(&mut self, submitted: bool) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
         let cursor_position_in_buffer = self.editor.insertion_point();

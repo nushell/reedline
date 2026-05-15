@@ -13,11 +13,9 @@ pub trait Highlighter: Send {
     /// Cursor position as byte offsets in the string
     fn highlight(&self, line: &str, cursor: usize) -> StyledText;
 
-    /// The action that will takes the current buffer as a line and returns whether the cursor is
-    /// inside a string literal
-    ///
-    /// Cursor position as byte offsets in the string
-    fn is_inside_string_literal(&self, _line: &str, _cursor: usize) -> bool {
+    /// The action that will take the current buffer and return whether the cursor position (a byte
+    /// offset) is inside a string literal
+    fn is_inside_string_literal(&self, line: &str, cursor: usize) -> bool {
         false // default for simple highlighters
     }
 }
