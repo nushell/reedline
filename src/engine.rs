@@ -2585,8 +2585,22 @@ mod tests {
     }
 
     #[cfg(feature = "bashisms")]
-    fn reedline_with_history(entries: &[&str]) -> Reedline {
-        let mut reedline = Reedline::create();
+    fn reedline_with_history_and_string_lit_check(entries: &[&str]) -> Reedline {
+        let mut reedline =
+            Reedline::create().with_highlighter(Box::new(ExampleHighlighter::default()));
+        for entry in entries {
+            reedline
+                .history
+                .save(HistoryItem::from_command_line(*entry))
+                .expect("failed to save history");
+        }
+        reedline
+    }
+
+    #[cfg(feature = "bashisms")]
+    fn reedline_with_history_default(entries: &[&str]) -> Reedline {
+        let mut reedline =
+            Reedline::create().with_highlighter(Box::new(SimpleMatchHighlighter::default()));
         for entry in entries {
             reedline
                 .history
@@ -2607,7 +2621,7 @@ mod tests {
     #[case("'🔥 !!", false)]
     #[cfg(feature = "bashisms")]
     fn bang_string_detection_with_override(#[case] buffer: &str, #[case] should_expand: bool) {
-        let mut reedline = reedline_with_history(&["git status"]);
+        let mut reedline = reedline_with_history_and_string_lit_check(&["git status"]);
         set_buffer_at_end(&mut reedline, buffer);
         assert_eq!(reedline.parse_bang_command().is_some(), should_expand);
     }
@@ -2622,7 +2636,7 @@ mod tests {
     #[case("'🔥 !!")]
     #[cfg(feature = "bashisms")]
     fn bang_always_expands_without_override(#[case] buffer: &str) {
-        let mut reedline = reedline_with_history_no_string_check(&["git status"]);
+        let mut reedline = reedline_with_history_default(&["git status"]);
         set_buffer_at_end(&mut reedline, buffer);
         assert!(
             reedline.parse_bang_command().is_some(),
