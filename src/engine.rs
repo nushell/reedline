@@ -19,7 +19,7 @@ use {
     crate::{
         completion::{Completer, DefaultCompleter},
         core_editor::Editor,
-        edit_mode::{EditMode, Emacs},
+        edit_mode::{EditContext, EditMode, Emacs, MotionTarget},
         enums::{EventStatus, ReedlineEvent},
         highlighter::SimpleMatchHighlighter,
         hinter::Hinter,
@@ -1718,7 +1718,17 @@ impl Reedline {
 
         // Run the commands over the edit buffer
         for command in commands {
-            self.editor.run_edit_command(command);
+            let resolved = motion_intent(command).and_then(|(target, select)| {
+                let ctx = EditContext {
+                    buffer: self.editor.get_buffer(),
+                    cursor: self.editor.line_buffer().insertion_point(),
+                };
+                self.edit_mode
+                    .resolve_motion(target, &ctx)
+                    .map(|position| EditCommand::MoveToPosition { position, select })
+            });
+            self.editor
+                .run_edit_command(resolved.as_ref().unwrap_or(command));
         }
     }
 
@@ -2252,6 +2262,21 @@ impl Reedline {
 
         Ok(EventStatus::Exits(Signal::Success(buffer)))
     }
+}
+
+/// Classify an [`EditCommand`] as a motion. Returns `Some((target, select))`
+/// for motion-bearing commands, `None` for everything else.
+fn motion_intent(command: &EditCommand) -> Option<(MotionTarget, bool)> {
+    Some(match *command {
+        EditCommand::MoveWordLeft { select } => (MotionTarget::WordLeft, select),
+        EditCommand::MoveWordRight { select } => (MotionTarget::WordRight, select),
+        EditCommand::MoveWordRightStart { select } => (MotionTarget::WordRightStart, select),
+        EditCommand::MoveWordRightEnd { select } => (MotionTarget::WordRightEnd, select),
+        EditCommand::MoveBigWordLeft { select } => (MotionTarget::BigWordLeft, select),
+        EditCommand::MoveBigWordRightStart { select } => (MotionTarget::BigWordRightStart, select),
+        EditCommand::MoveBigWordRightEnd { select } => (MotionTarget::BigWordRightEnd, select),
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

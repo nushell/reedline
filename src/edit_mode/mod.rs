@@ -6,7 +6,7 @@ mod helix;
 mod keybindings;
 mod vi;
 
-pub use base::EditMode;
+pub use base::{EditContext, EditMode, MotionTarget};
 pub use cursors::CursorConfig;
 pub use emacs::{default_emacs_keybindings, Emacs};
 #[cfg(feature = "helix")]
