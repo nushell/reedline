@@ -16,6 +16,9 @@
 //! so multi-codepoint sequences (combining marks, ZWJ emoji) are treated as one
 //! unit, matching the rest of `core_editor`. Each cluster is classified by its
 //! first scalar.
+//!
+//! Classification uses Unicode-aware predicates, aligning with Helix's model
+//! rather than Vim's strict default `iskeyword` (Latin-1 only).
 
 use unicode_segmentation::UnicodeSegmentation;
 
