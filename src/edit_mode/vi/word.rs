@@ -58,8 +58,7 @@ pub(super) fn word_right_start_index(buffer: &str, cursor: usize, kind: WordKind
     };
     let start_class = class_of(first, kind);
 
-    let Some((boundary_pos, boundary_g)) =
-        iter.find(|&(_, g)| class_of(g, kind) != start_class)
+    let Some((boundary_pos, boundary_g)) = iter.find(|&(_, g)| class_of(g, kind) != start_class)
     else {
         return buffer.len();
     };
@@ -112,8 +111,7 @@ pub(super) fn word_left_index(buffer: &str, cursor: usize, kind: WordKind) -> us
 
     let mut iter = buffer[..cursor].grapheme_indices(true).rev();
 
-    let Some((mut pos, g)) = iter.find(|&(_, g)| class_of(g, kind) != CharClass::Whitespace)
-    else {
+    let Some((mut pos, g)) = iter.find(|&(_, g)| class_of(g, kind) != CharClass::Whitespace) else {
         return 0;
     };
     let target_class = class_of(g, kind);
@@ -148,7 +146,10 @@ mod tests {
     #[case("e\u{0301} foo", 0, 4)]
     #[case("👨‍👩‍👧 foo", 0, 19)]
     fn small_w(#[case] buffer: &str, #[case] cursor: usize, #[case] expected: usize) {
-        assert_eq!(word_right_start_index(buffer, cursor, WordKind::Word), expected);
+        assert_eq!(
+            word_right_start_index(buffer, cursor, WordKind::Word),
+            expected
+        );
     }
 
     // --- big word `W` ---
@@ -158,7 +159,10 @@ mod tests {
     #[case("foo   bar", 0, 6)]
     #[case("", 0, 0)]
     fn big_w(#[case] buffer: &str, #[case] cursor: usize, #[case] expected: usize) {
-        assert_eq!(word_right_start_index(buffer, cursor, WordKind::BigWord), expected);
+        assert_eq!(
+            word_right_start_index(buffer, cursor, WordKind::BigWord),
+            expected
+        );
     }
 
     // --- small word `e` ---
@@ -173,7 +177,10 @@ mod tests {
     // Unicode: lands on the byte offset of the last grapheme's start
     #[case("café foo", 0, 3)]
     fn small_e(#[case] buffer: &str, #[case] cursor: usize, #[case] expected: usize) {
-        assert_eq!(word_right_end_index(buffer, cursor, WordKind::Word), expected);
+        assert_eq!(
+            word_right_end_index(buffer, cursor, WordKind::Word),
+            expected
+        );
     }
 
     // --- big word `E` ---
@@ -181,7 +188,10 @@ mod tests {
     #[case("foo.bar baz", 0, 6)]
     #[case("foo bar", 0, 2)]
     fn big_e(#[case] buffer: &str, #[case] cursor: usize, #[case] expected: usize) {
-        assert_eq!(word_right_end_index(buffer, cursor, WordKind::BigWord), expected);
+        assert_eq!(
+            word_right_end_index(buffer, cursor, WordKind::BigWord),
+            expected
+        );
     }
 
     // --- small word `b` ---
