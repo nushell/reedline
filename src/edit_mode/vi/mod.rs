@@ -225,9 +225,12 @@ impl EditMode for Vi {
         }
     }
 
-    fn resolve_motion(&self, target: MotionTarget, ctx: &EditContext) -> Option<usize> {
+    fn resolve_motion(
+        &self,
+        target: MotionTarget,
+        &EditContext { buffer, cursor }: &EditContext,
+    ) -> Option<usize> {
         use word::WordKind::{BigWord, Word};
-        let (buffer, cursor) = (ctx.buffer, ctx.cursor);
         Some(match target {
             MotionTarget::WordLeft => word::word_left_index(buffer, cursor, Word),
             MotionTarget::WordRightStart => word::word_right_start_index(buffer, cursor, Word),
@@ -237,8 +240,7 @@ impl EditMode for Vi {
                 word::word_right_start_index(buffer, cursor, BigWord)
             }
             MotionTarget::BigWordRightEnd => word::word_right_end_index(buffer, cursor, BigWord),
-            // Emacs-style `M-f`; Vi never emits this. Defer to LineBuffer's
-            // UAX #29 path so behavior stays consistent if it ever reaches Vi.
+            // Vi never emits WordRight; defer to LineBuffer's UAX #29 path.
             MotionTarget::WordRight => return None,
         })
     }
