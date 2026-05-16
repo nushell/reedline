@@ -2247,7 +2247,7 @@ impl Reedline {
 mod tests {
     use super::*;
     use crate::terminal_extensions::semantic_prompt::PromptKind;
-    use crate::DefaultPrompt;
+    use crate::{ColumnarMenu, DefaultPrompt, MenuBuilder};
 
     #[test]
     fn test_cursor_position_after_multiline_history_navigation() {
@@ -2706,5 +2706,40 @@ mod tests {
                 last_line_start
             );
         }
+    }
+
+    #[test]
+    fn test_complete_line_from_history() {
+        let history = Box::new(FileBackedHistory::new(1).unwrap());
+        let completer = Box::new(DefaultCompleter::new(vec!["67".into()]));
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name("completion_menu"),
+        ));
+
+        let prompt = DefaultPrompt::default();
+        let mut reedline = Reedline::create()
+            .with_quick_completions(true)
+            .with_history(history)
+            .with_completer(completer)
+            .with_menu(completion_menu);
+
+        let insert_6 = ReedlineEvent::Edit(vec![EditCommand::InsertString("6".into())]);
+        let submit = ReedlineEvent::Submit;
+        let up = ReedlineEvent::Up;
+        let tab = ReedlineEvent::Menu("completion_menu".into());
+        let insert_x = ReedlineEvent::Edit(vec![EditCommand::InsertString("x".into())]);
+
+        // Insert 6, press enter, then re-select it from history.
+        // Press tab to automatically complete 67 using quick completion without actually showing the menu.
+        // Anything typed after this should be appended to the end of the string rather than replacing the completion.
+        // 67 + x should be 67x and not 6x
+
+        reedline.handle_event(&prompt, insert_6).unwrap();
+        reedline.handle_event(&prompt, submit).unwrap();
+        reedline.handle_event(&prompt, up).unwrap();
+        reedline.handle_event(&prompt, tab).unwrap();
+        reedline.handle_event(&prompt, insert_x).unwrap();
+
+        assert_eq!(reedline.editor.get_buffer(), "67x");
     }
 }
