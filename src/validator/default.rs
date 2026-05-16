@@ -38,16 +38,20 @@ fn incomplete_brackets(line: &str) -> bool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use rstest::rstest;
 
-    #[rstest]
-    #[case("(([[]]))", false)]
-    #[case("(([[]]", true)]
-    #[case("{[}]", true)]
-    #[case("{[]}{()}", false)]
-    fn test_incomplete_brackets(#[case] input: &str, #[case] expected: bool) {
-        let result = incomplete_brackets(input);
+    #[test]
+    fn test_incomplete_brackets() {
+        let cases = [
+            ("(([[]]))", false),
+            ("(([[]]", true),
+            ("{[}]", true),
+            ("{[]}{()}", false),
+        ];
 
-        assert_eq!(result, expected);
+        for (input, expected) in cases {
+            let result = incomplete_brackets(input);
+
+            assert_eq!(result, expected);
+        }
     }
 }

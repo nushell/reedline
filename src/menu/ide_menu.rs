@@ -1076,228 +1076,202 @@ mod tests {
 
     use super::*;
     use pretty_assertions::assert_eq;
-    use rstest::rstest;
 
-    #[rstest]
-    #[case(
-        "",
-        10,
-        vec![]
-    )]
-    #[case(
-        "description",
-        15,
-        vec![
-            "description".into(),
-        ]
-    )]
-    #[case(
-        "this is a description",
-        10,
-        vec![
-            "this is a".into(),
-            "descriptio".into(),
-            "n".into(),
-        ]
-    )]
-    #[case(
-        "this is another description",
-        2,
-        vec![
-            "th".into(),
-            "is".into(),
-            "is".into(),
-            "an".into(),
-            "ot".into(),
-            "he".into(),
-            "r".into(),
-            "de".into(),
-            "sc".into(),
-            "ri".into(),
-            "pt".into(),
-            "io".into(),
-            "n".into(),
-        ]
-    )]
-    #[case(
-        "this is a description",
-        10,
-        vec![
-            "this is a".into(),
-            "descriptio".into(),
-            "n".into(),
-        ]
-    )]
-    #[case(
-        "this is a description",
-        10,
-        vec![
-            "this is a".into(),
-            "descriptio".into(),
-            "n".into(),
-        ]
-    )]
-    #[case(
-        "this is a description",
-        12,
-        vec![
-            "this is a".into(),
-            "description".into(),
-        ]
-    )]
-    #[case(
-        "test",
-        1,
-        vec![
-            "t".into(),
-            "e".into(),
-            "s".into(),
-            "t".into(),
-        ]
-    )]
-    #[case(
-        "😊a😊 😊bc de😊fg",
-        2,
-        vec![
-            "😊".into(),
-            "a".into(),
-            "😊".into(),
-            "😊".into(),
-            "bc".into(),
-            "de".into(),
-            "😊".into(),
-            "fg".into(),
-        ]
-    )]
-    #[case(
-        "😊",
-        1,
-        vec![],
-    )]
-    #[case(
-        "t😊e😊s😊t",
-        1,
-        vec![
-            "t".into(),
-            "e".into(),
-            "s".into(),
-            "t".into(),
-        ]
-    )]
+    #[test]
+    fn test_split_string() {
+        let cases = [
+            ("", 10, vec![]),
+            ("description", 15, vec!["description".to_string()]),
+            (
+                "this is a description",
+                10,
+                vec![
+                    "this is a".to_string(),
+                    "descriptio".to_string(),
+                    "n".to_string(),
+                ],
+            ),
+            (
+                "this is another description",
+                2,
+                vec![
+                    "th".to_string(),
+                    "is".to_string(),
+                    "is".to_string(),
+                    "an".to_string(),
+                    "ot".to_string(),
+                    "he".to_string(),
+                    "r".to_string(),
+                    "de".to_string(),
+                    "sc".to_string(),
+                    "ri".to_string(),
+                    "pt".to_string(),
+                    "io".to_string(),
+                    "n".to_string(),
+                ],
+            ),
+            (
+                "this is a description",
+                10,
+                vec![
+                    "this is a".to_string(),
+                    "descriptio".to_string(),
+                    "n".to_string(),
+                ],
+            ),
+            (
+                "this is a description",
+                10,
+                vec![
+                    "this is a".to_string(),
+                    "descriptio".to_string(),
+                    "n".to_string(),
+                ],
+            ),
+            (
+                "this is a description",
+                12,
+                vec!["this is a".to_string(), "description".to_string()],
+            ),
+            (
+                "test",
+                1,
+                vec![
+                    "t".to_string(),
+                    "e".to_string(),
+                    "s".to_string(),
+                    "t".to_string(),
+                ],
+            ),
+            (
+                "😊a😊 😊bc de😊fg",
+                2,
+                vec![
+                    "😊".to_string(),
+                    "a".to_string(),
+                    "😊".to_string(),
+                    "😊".to_string(),
+                    "bc".to_string(),
+                    "de".to_string(),
+                    "😊".to_string(),
+                    "fg".to_string(),
+                ],
+            ),
+            ("😊", 1, vec![]),
+            (
+                "t😊e😊s😊t",
+                1,
+                vec![
+                    "t".to_string(),
+                    "e".to_string(),
+                    "s".to_string(),
+                    "t".to_string(),
+                ],
+            ),
+        ];
 
-    fn test_split_string(
-        #[case] input: &str,
-        #[case] max_width: usize,
-        #[case] expected: Vec<String>,
-    ) {
-        let result = split_string(input, max_width);
+        for (input, max_width, expected) in cases {
+            let result = split_string(input, max_width);
 
-        assert_eq!(result, expected)
+            assert_eq!(result, expected)
+        }
     }
 
-    #[rstest]
-    #[case(
-        &mut vec![
-            "this is a description".into(),
-            "that will be truncate".into(),
-            "d".into(),
-        ],
-        "...",
-        vec![
-            "this is a description".into(),
-            "that will be trunca..".into(),
-            ".".into(),
-        ]
-    )]
-    #[case(
-        &mut vec![
-            "this is a description".into(),
-            "that will be truncate".into(),
-            "d".into(),
-        ],
-        "....",
-        vec![
-            "this is a description".into(),
-            "that will be trunc...".into(),
-            ".".into(),
-        ]
-    )]
-    #[case(
-        &mut vec![
-            "😊a😊 😊bc de😊fg".into(),
-            "😊a😊 😊bc de😊fg".into(),
-            "😊a😊 😊bc de😊fg".into(),
-        ],
-        "...",
-        vec![
-            "😊a😊 😊bc de😊fg".into(),
-            "😊a😊 😊bc de😊fg".into(),
-            "😊a😊 😊bc de...".into(),
-        ]
-    )]
-    #[case(
-        &mut vec![
-            "t".into(),
-            "e".into(),
-            "s".into(),
-            "t".into(),
-        ],
-        "..",
-        vec![
-            "t".into(),
-            "e".into(),
-            ".".into(),
-            ".".into(),
-        ]
-    )]
-    #[case(
-        &mut vec![
-            "😊".into(),
-            "😊".into(),
-            "s".into(),
-            "t".into(),
-        ],
-        "..😊",
-        vec![
-            "😊".into(),
-            ".".into(),
-            ".".into(),
-            "😊".into(),
-        ]
-    )]
-    #[case(
-        &mut vec![
-            "".into(),
-        ],
-        "test",
-        vec![
-            "".into()
-        ],
-    )]
-    #[case(
-        &mut vec![
-            "t".into(),
-            "e".into(),
-            "s".into(),
-            "t".into()
-        ],
-        "",
-        vec![
-            "t".into(),
-            "e".into(),
-            "s".into(),
-            "t".into()
-        ],
-    )]
+    #[test]
+    fn test_truncate_list_string() {
+        let cases = [
+            (
+                &mut vec![
+                    "this is a description".to_string(),
+                    "that will be truncate".to_string(),
+                    "d".to_string(),
+                ],
+                "...",
+                vec![
+                    "this is a description".to_string(),
+                    "that will be trunca..".to_string(),
+                    ".".to_string(),
+                ],
+            ),
+            (
+                &mut vec![
+                    "this is a description".to_string(),
+                    "that will be truncate".to_string(),
+                    "d".to_string(),
+                ],
+                "....",
+                vec![
+                    "this is a description".to_string(),
+                    "that will be trunc...".to_string(),
+                    ".".to_string(),
+                ],
+            ),
+            (
+                &mut vec![
+                    "😊a😊 😊bc de😊fg".to_string(),
+                    "😊a😊 😊bc de😊fg".to_string(),
+                    "😊a😊 😊bc de😊fg".to_string(),
+                ],
+                "...",
+                vec![
+                    "😊a😊 😊bc de😊fg".to_string(),
+                    "😊a😊 😊bc de😊fg".to_string(),
+                    "😊a😊 😊bc de...".to_string(),
+                ],
+            ),
+            (
+                &mut vec![
+                    "t".to_string(),
+                    "e".to_string(),
+                    "s".to_string(),
+                    "t".to_string(),
+                ],
+                "..",
+                vec![
+                    "t".to_string(),
+                    "e".to_string(),
+                    ".".to_string(),
+                    ".".to_string(),
+                ],
+            ),
+            (
+                &mut vec![
+                    "😊".to_string(),
+                    "😊".to_string(),
+                    "s".to_string(),
+                    "t".to_string(),
+                ],
+                "..😊",
+                vec![
+                    "😊".to_string(),
+                    ".".to_string(),
+                    ".".to_string(),
+                    "😊".to_string(),
+                ],
+            ),
+            (&mut vec!["".to_string()], "test", vec!["".to_string()]),
+            (
+                &mut vec![
+                    "t".to_string(),
+                    "e".to_string(),
+                    "s".to_string(),
+                    "t".to_string(),
+                ],
+                "",
+                vec![
+                    "t".to_string(),
+                    "e".to_string(),
+                    "s".to_string(),
+                    "t".to_string(),
+                ],
+            ),
+        ];
 
-    fn test_truncate_list_string(
-        #[case] input: &mut Vec<String>,
-        #[case] truncation_chars: &str,
-        #[case] expected: Vec<String>,
-    ) {
-        truncate_string_list(input, truncation_chars);
+        for (input, truncation_chars, expected) in cases {
+            truncate_string_list(input, truncation_chars);
 
-        assert_eq!(*input, expected)
+            assert_eq!(*input, expected)
+        }
     }
 
     macro_rules! partial_completion_tests {

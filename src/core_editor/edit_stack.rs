@@ -65,7 +65,6 @@ where
 mod test {
     use super::*;
     use pretty_assertions::assert_eq;
-    use rstest::rstest;
 
     fn edit_stack<T>(values: &[T], index: usize) -> EditStack<T>
     where
@@ -77,37 +76,52 @@ mod test {
         }
     }
 
-    #[rstest]
-    #[case(edit_stack(&[1, 2, 3][..], 2), 2)]
-    #[case(edit_stack(&[1][..], 0), 1)]
-    fn undo_works(#[case] stack: EditStack<isize>, #[case] value_after_undo: isize) {
-        let mut stack = stack;
+    #[test]
+    fn undo_works() {
+        let cases = [
+            (edit_stack(&[1, 2, 3][..], 2), 2),
+            (edit_stack(&[1][..], 0), 1),
+        ];
 
-        let value = stack.undo();
-        assert_eq!(*value, value_after_undo);
+        for (stack, value_after_undo) in cases {
+            let mut stack = stack;
+
+            let value = stack.undo();
+            assert_eq!(*value, value_after_undo);
+        }
     }
 
-    #[rstest]
-    #[case(edit_stack(&[1, 2, 3][..], 1), 3)]
-    #[case(edit_stack(&[1][..], 0), 1)]
-    fn redo_works(#[case] stack: EditStack<isize>, #[case] value_after_undo: isize) {
-        let mut stack = stack;
+    #[test]
+    fn redo_works() {
+        let cases = [
+            (edit_stack(&[1, 2, 3][..], 1), 3),
+            (edit_stack(&[1][..], 0), 1),
+        ];
 
-        let value = stack.redo();
-        assert_eq!(*value, value_after_undo);
+        for (stack, value_after_undo) in cases {
+            let mut stack = stack;
+
+            let value = stack.redo();
+            assert_eq!(*value, value_after_undo);
+        }
     }
 
-    #[rstest]
-    #[case(edit_stack(&[1, 2, 3][..], 1), 4, edit_stack(&[1, 2, 4], 2))]
-    #[case(edit_stack(&[1, 2, 3][..], 2), 3, edit_stack(&[1, 2, 3, 3], 3))]
-    fn insert_works(
-        #[case] old_stack: EditStack<isize>,
-        #[case] value_to_insert: isize,
-        #[case] expected_stack: EditStack<isize>,
-    ) {
-        let mut stack = old_stack;
+    #[test]
+    fn insert_works() {
+        let cases = [
+            (edit_stack(&[1, 2, 3][..], 1), 4, edit_stack(&[1, 2, 4], 2)),
+            (
+                edit_stack(&[1, 2, 3][..], 2),
+                3,
+                edit_stack(&[1, 2, 3, 3], 3),
+            ),
+        ];
 
-        stack.insert(value_to_insert);
-        assert_eq!(stack, expected_stack);
+        for (old_stack, value_to_insert, expected_stack) in cases {
+            let mut stack = old_stack;
+
+            stack.insert(value_to_insert);
+            assert_eq!(stack, expected_stack);
+        }
     }
 }

@@ -686,7 +686,6 @@ mod tests {
     use super::*;
     use crate::{EditCommand, LineBuffer, Span};
     use nu_ansi_term::Color;
-    use rstest::rstest;
 
     #[test]
     fn parse_row_test() {
@@ -927,130 +926,194 @@ mod tests {
         assert_eq!(res, (1, "e"));
     }
 
-    #[rstest]
-    #[case::ascii(vec!["nushell", "null"], 2)]
-    #[case::non_ascii(vec!["ｎｕｓｈｅｌｌ", "ｎｕｌｌ"], 6)]
-    // https://github.com/nushell/nushell/pull/16765#issuecomment-3384411809
-    #[case::unsorted(vec!["a", "b", "ab"], 0)]
-    #[case::should_be_case_sensitive(vec!["a", "A"], 0)]
-    #[case::first_suggestion_longest(vec!["foobar", "foo"], 3)]
-    fn test_find_common_string(#[case] input: Vec<&str>, #[case] expected: usize) {
-        let input: Vec<_> = input
-            .into_iter()
-            .map(|s| Suggestion {
-                value: s.into(),
-                ..Default::default()
-            })
-            .collect();
-        let (_, len) = find_common_string(&input).unwrap();
+    #[test]
+    fn test_find_common_string() {
+        let cases = [
+            (vec!["nushell", "null"], 2),
+            (vec!["ｎｕｓｈｅｌｌ", "ｎｕｌｌ"], 6),
+            (vec!["a", "b", "ab"], 0),
+            (vec!["a", "A"], 0),
+            (vec!["foobar", "foo"], 3),
+        ];
 
-        assert!(len == expected);
+        for (input, expected) in cases {
+            let input: Vec<_> = input
+                .into_iter()
+                .map(|s| Suggestion {
+                    value: s.into(),
+                    ..Default::default()
+                })
+                .collect();
+            let (_, len) = find_common_string(&input).unwrap();
+
+            assert!(len == expected);
+        }
     }
 
-    #[rstest]
-    #[case("foobar", 6, None, false, "foobar", 6)]
-    #[case("foo\r\nbar", 5, None, false, "foo\r\n", 5)]
-    #[case("foo\nbar", 4, None, false, "foo\n", 4)]
-    #[case("foobar", 6, None, true, "", 6)]
-    #[case("foobar", 3, Some("foobar"), true, "", 3)]
-    #[case("foobar", 6, Some("foo"), true, "bar", 6)]
-    #[case("foobar", 6, Some("for"), true, "oba", 5)]
-    fn test_completer_input(
-        #[case] buffer: String,
-        #[case] insertion_point: usize,
-        #[case] prev_input: Option<&str>,
-        #[case] only_buffer_difference: bool,
-        #[case] output: String,
-        #[case] pos: usize,
-    ) {
-        assert_eq!(
-            (output, pos),
-            completer_input(&buffer, insertion_point, prev_input, only_buffer_difference)
-        )
+    #[test]
+    fn test_completer_input() {
+        let cases = [
+            ("foobar", 6, None, false, "foobar", 6),
+            ("foo\r\nbar", 5, None, false, "foo\r\n", 5),
+            ("foo\nbar", 4, None, false, "foo\n", 4),
+            ("foobar", 6, None, true, "", 6),
+            ("foobar", 3, Some("foobar"), true, "", 3),
+            ("foobar", 6, Some("foo"), true, "bar", 6),
+            ("foobar", 6, Some("for"), true, "oba", 5),
+        ];
+
+        for (buffer, insertion_point, prev_input, only_buffer_difference, output, pos) in cases {
+            assert_eq!(
+                (output.to_string(), pos),
+                completer_input(&buffer, insertion_point, prev_input, only_buffer_difference)
+            )
+        }
     }
 
-    #[rstest]
-    #[case("foobar baz", 6, "foobleh baz", 7, "bleh", 3, 6)]
-    #[case("foobar baz", 6, "foo baz", 3, "", 3, 6)]
-    #[case("foobar baz", 10, "foobleh", 7, "bleh", 3, 1000)]
-    fn test_replace_in_buffer(
-        #[case] orig_buffer: &str,
-        #[case] orig_insertion_point: usize,
-        #[case] new_buffer: &str,
-        #[case] new_insertion_point: usize,
-        #[case] value: String,
-        #[case] start: usize,
-        #[case] end: usize,
-    ) {
-        let mut editor = Editor::default();
-        let mut line_buffer = LineBuffer::new();
-        line_buffer.set_buffer(orig_buffer.to_owned());
-        line_buffer.set_insertion_point(orig_insertion_point);
-        editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
-        replace_in_buffer(
-            Some(Suggestion {
-                value,
-                span: Span::new(start, end),
-                ..Default::default()
-            }),
-            &mut editor,
-        );
-        assert_eq!(new_buffer, editor.get_buffer());
-        assert_eq!(new_insertion_point, editor.insertion_point());
+    #[test]
+    fn test_replace_in_buffer() {
+        let cases = [
+            ("foobar baz", 6, "foobleh baz", 7, "bleh", 3, 6),
+            ("foobar baz", 6, "foo baz", 3, "", 3, 6),
+            ("foobar baz", 10, "foobleh", 7, "bleh", 3, 1000),
+        ];
 
-        editor.run_edit_command(&EditCommand::Undo);
-        assert_eq!(orig_buffer, editor.get_buffer());
-        assert_eq!(orig_insertion_point, editor.insertion_point());
+        for (
+            orig_buffer,
+            orig_insertion_point,
+            new_buffer,
+            new_insertion_point,
+            value,
+            start,
+            end,
+        ) in cases
+        {
+            let mut editor = Editor::default();
+            let mut line_buffer = LineBuffer::new();
+            line_buffer.set_buffer(orig_buffer.to_owned());
+            line_buffer.set_insertion_point(orig_insertion_point);
+            editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
+            replace_in_buffer(
+                Some(Suggestion {
+                    value: value.to_string(),
+                    span: Span::new(start, end),
+                    ..Default::default()
+                }),
+                &mut editor,
+            );
+            assert_eq!(new_buffer, editor.get_buffer());
+            assert_eq!(new_insertion_point, editor.insertion_point());
+
+            editor.run_edit_command(&EditCommand::Undo);
+            assert_eq!(orig_buffer, editor.get_buffer());
+            assert_eq!(orig_insertion_point, editor.insertion_point());
+        }
     }
 
-    #[rstest]
-    #[case::plain("Foo", vec![AnsiSegment { escape: None, text: "Foo" }])]
-    #[case::unterminated("\x1b[", vec![AnsiSegment { escape: None, text: "\x1b[" }])]
-    #[case::invalid(
-        "\x1b[\x1b[mFoo",
-        vec![
-            AnsiSegment { escape: None, text: "\x1b[" },
-            AnsiSegment { escape: None, text: "Foo" },
-        ]
-    )]
-    #[case::no_args_reset(
-        "\x1b[3m\x1b[m\x1b[2mFoo",
-        vec![
-            AnsiSegment { escape: None, text: "" },
-            AnsiSegment { escape: Some("2m"), text: "Foo" },
-        ]
-    )]
-    #[case::empty_reset_with_args_afterwards(
-        "\x1b[3m\x1b[1;;20mFoo",
-        vec![
-            AnsiSegment { escape: None, text: "" },
-            AnsiSegment { escape: Some("20m"), text: "Foo" },
-        ]
-    )]
-    #[case::empty_reset_without_args_afterwards(
-        "\x1b[3m\x1b[1;mFoo",
-        vec![
-            AnsiSegment { escape: None, text: "" },
-            AnsiSegment { escape: None, text: "Foo" },
-        ]
-    )]
-    #[case::zero_reset_without_args_afterwards(
-        "\x1b[3m\x1b[10;0mFoo",
-        vec![
-            AnsiSegment { escape: None, text: "" },
-            AnsiSegment { escape: None, text: "Foo" },
-        ]
-    )]
-    #[case::multiple(
-        "Foo\x1b[1;0;2m\x1b[2;3m\x1b[Bar\x1b[1;2m\x1b[2;3mBaz",
-        vec![
-            AnsiSegment { escape: None, text: "Foo" },
-            AnsiSegment { escape: Some("2m\x1b[2;3m"), text: "\x1b[Bar" },
-            AnsiSegment { escape: Some("1;2m\x1b[2;3m"), text: "Baz" },
-        ]
-    )]
-    fn test_parse_ansi(#[case] s: &str, #[case] expected: Vec<AnsiSegment>) {
-        assert_eq!(parse_ansi(s), expected);
+    #[test]
+    fn test_parse_ansi() {
+        let cases = [
+            (
+                "Foo",
+                vec![AnsiSegment {
+                    escape: None,
+                    text: "Foo",
+                }],
+            ),
+            (
+                "\x1b[",
+                vec![AnsiSegment {
+                    escape: None,
+                    text: "\x1b[",
+                }],
+            ),
+            (
+                "\x1b[\x1b[mFoo",
+                vec![
+                    AnsiSegment {
+                        escape: None,
+                        text: "\x1b[",
+                    },
+                    AnsiSegment {
+                        escape: None,
+                        text: "Foo",
+                    },
+                ],
+            ),
+            (
+                "\x1b[3m\x1b[m\x1b[2mFoo",
+                vec![
+                    AnsiSegment {
+                        escape: None,
+                        text: "",
+                    },
+                    AnsiSegment {
+                        escape: Some("2m"),
+                        text: "Foo",
+                    },
+                ],
+            ),
+            (
+                "\x1b[3m\x1b[1;;20mFoo",
+                vec![
+                    AnsiSegment {
+                        escape: None,
+                        text: "",
+                    },
+                    AnsiSegment {
+                        escape: Some("20m"),
+                        text: "Foo",
+                    },
+                ],
+            ),
+            (
+                "\x1b[3m\x1b[1;mFoo",
+                vec![
+                    AnsiSegment {
+                        escape: None,
+                        text: "",
+                    },
+                    AnsiSegment {
+                        escape: None,
+                        text: "Foo",
+                    },
+                ],
+            ),
+            (
+                "\x1b[3m\x1b[10;0mFoo",
+                vec![
+                    AnsiSegment {
+                        escape: None,
+                        text: "",
+                    },
+                    AnsiSegment {
+                        escape: None,
+                        text: "Foo",
+                    },
+                ],
+            ),
+            (
+                "Foo\x1b[1;0;2m\x1b[2;3m\x1b[Bar\x1b[1;2m\x1b[2;3mBaz",
+                vec![
+                    AnsiSegment {
+                        escape: None,
+                        text: "Foo",
+                    },
+                    AnsiSegment {
+                        escape: Some("2m\x1b[2;3m"),
+                        text: "\x1b[Bar",
+                    },
+                    AnsiSegment {
+                        escape: Some("1;2m\x1b[2;3m"),
+                        text: "Baz",
+                    },
+                ],
+            ),
+        ];
+
+        for (s, expected) in cases {
+            assert_eq!(parse_ansi(s), expected);
+        }
     }
 
     #[test]
@@ -1141,25 +1204,25 @@ mod tests {
         );
     }
 
-    #[rstest]
-    #[case::no_ansi_shorter("asdf", 5, "asdf")]
-    #[case::with_ansi_shorter(
-        "\x1b[1;2;3;ma\x1b[1;15;ms\x1b[1;md\x1b[1;mf",
-        5,
-        "\x1b[1;2;3;ma\x1b[1;15;ms\x1b[1;md\x1b[1;mf"
-    )]
-    // Ｈ has width 2
-    #[case::no_ansi_one_longer("asdfＨ", 5, "as...")]
-    #[case::no_ansi_result_thinner_than_max("aＨＨＨ", 5, "a...")]
-    #[case::with_ansi_exact_width("\x1b[2masd\x1b[2;3;mＨ", 5, "\x1b[2masd\x1b[2;3;mＨ")]
-    #[case::no_ansi_nothing_left("foobar", 3, "...")]
-    #[case::trunc_with_short_segments("foobar\x1b[1;ma\x1b[2;mb\x1b[3;mc", 8, "fooba...")]
-    #[case::trunc_with_long_segment("foo\x1b[1;mBarbaz\x1b[2;mExtra", 8, "foo\x1b[0mBa...")]
-    fn test_truncate_with_ansi(
-        #[case] value: &str,
-        #[case] max_width: usize,
-        #[case] expected: &str,
-    ) {
-        assert_eq!(expected, truncate_with_ansi(value, max_width));
+    #[test]
+    fn test_truncate_with_ansi() {
+        let cases = [
+            ("asdf", 5, "asdf"),
+            (
+                "\x1b[1;2;3;ma\x1b[1;15;ms\x1b[1;md\x1b[1;mf",
+                5,
+                "\x1b[1;2;3;ma\x1b[1;15;ms\x1b[1;md\x1b[1;mf",
+            ),
+            ("asdfＨ", 5, "as..."),
+            ("aＨＨＨ", 5, "a..."),
+            ("\x1b[2masd\x1b[2;3;mＨ", 5, "\x1b[2masd\x1b[2;3;mＨ"),
+            ("foobar", 3, "..."),
+            ("foobar\x1b[1;ma\x1b[2;mb\x1b[3;mc", 8, "fooba..."),
+            ("foo\x1b[1;mBarbaz\x1b[2;mExtra", 8, "foo\x1b[0mBa..."),
+        ];
+
+        for (value, max_width, expected) in cases {
+            assert_eq!(expected, truncate_with_ansi(value, max_width));
+        }
     }
 }

@@ -1153,7 +1153,6 @@ fn insert_clipboard_content_before(line_buffer: &mut LineBuffer, clipboard: &mut
 mod test {
     use super::*;
     use pretty_assertions::assert_eq;
-    use rstest::rstest;
 
     fn editor_with(buffer: &str) -> Editor {
         let mut editor = Editor::default();
@@ -1161,80 +1160,84 @@ mod test {
         editor
     }
 
-    #[rstest]
-    #[case("abc def ghi", 11, "abc def ")]
-    #[case("abc def-ghi", 11, "abc def-")]
-    #[case("abc def.ghi", 11, "abc ")]
-    fn test_cut_word_left(#[case] input: &str, #[case] position: usize, #[case] expected: &str) {
-        let mut editor = editor_with(input);
-        editor.line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_cut_word_left() {
+        let cases = [
+            ("abc def ghi", 11, "abc def "),
+            ("abc def-ghi", 11, "abc def-"),
+            ("abc def.ghi", 11, "abc "),
+        ];
 
-        editor.cut_word_left();
+        for (input, position, expected) in cases {
+            let mut editor = editor_with(input);
+            editor.line_buffer.set_insertion_point(position);
 
-        assert_eq!(editor.get_buffer(), expected);
-    }
+            editor.cut_word_left();
 
-    #[rstest]
-    #[case("abc def ghi", 11, "abc def ")]
-    #[case("abc def-ghi", 11, "abc ")]
-    #[case("abc def.ghi", 11, "abc ")]
-    #[case("abc def gh ", 11, "abc def ")]
-    fn test_cut_big_word_left(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] expected: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.line_buffer.set_insertion_point(position);
-
-        editor.cut_big_word_left();
-
-        assert_eq!(editor.get_buffer(), expected);
-    }
-
-    #[rstest]
-    #[case("hello world", 0, 'l', 1, false, "lo world")]
-    #[case("hello world", 0, 'l', 1, true, "llo world")]
-    #[ignore = "Deleting two consecutive chars is not implemented correctly and needs the multiplier explicitly."]
-    #[case("hello world", 0, 'l', 2, false, "o world")]
-    #[case("hello world", 0, 'h', 1, false, "hello world")]
-    #[case("hello world", 0, 'l', 3, true, "ld")]
-    #[case("hello world", 4, 'o', 1, true, "hellorld")]
-    #[case("hello world", 4, 'w', 1, false, "hellorld")]
-    #[case("hello world", 4, 'o', 1, false, "hellrld")]
-    fn test_cut_right_until_char(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] search_char: char,
-        #[case] repeat: usize,
-        #[case] before_char: bool,
-        #[case] expected: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.line_buffer.set_insertion_point(position);
-        for _ in 0..repeat {
-            editor.cut_right_until_char(search_char, before_char, true);
+            assert_eq!(editor.get_buffer(), expected);
         }
-        assert_eq!(editor.get_buffer(), expected);
     }
 
-    #[rstest]
-    #[case("abc", 1, 'X', "aXc")]
-    #[case("abc", 1, '🔄', "a🔄c")]
-    #[case("a🔄c", 1, 'X', "aXc")]
-    #[case("a🔄c", 1, '🔀', "a🔀c")]
-    fn test_replace_char(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] replacement: char,
-        #[case] expected: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_cut_big_word_left() {
+        let cases = [
+            ("abc def ghi", 11, "abc def "),
+            ("abc def-ghi", 11, "abc "),
+            ("abc def.ghi", 11, "abc "),
+            ("abc def gh ", 11, "abc def "),
+        ];
 
-        editor.replace_char(replacement);
+        for (input, position, expected) in cases {
+            let mut editor = editor_with(input);
+            editor.line_buffer.set_insertion_point(position);
 
-        assert_eq!(editor.get_buffer(), expected);
+            editor.cut_big_word_left();
+
+            assert_eq!(editor.get_buffer(), expected);
+        }
+    }
+
+    #[test]
+    fn test_cut_right_until_char() {
+        let cases = [
+            ("hello world", 0, 'l', 1, false, "lo world"),
+            ("hello world", 0, 'l', 1, true, "llo world"),
+            // Deleting two consecutive chars is not implemented correctly and needs the multiplier explicitly
+            // ("hello world", 0, 'l', 2, false, "o world"),
+            ("hello world", 0, 'h', 1, false, "hello world"),
+            ("hello world", 0, 'l', 3, true, "ld"),
+            ("hello world", 4, 'o', 1, true, "hellorld"),
+            ("hello world", 4, 'w', 1, false, "hellorld"),
+            ("hello world", 4, 'o', 1, false, "hellrld"),
+        ];
+
+        for (input, position, search_char, repeat, before_char, expected) in cases {
+            let mut editor = editor_with(input);
+            editor.line_buffer.set_insertion_point(position);
+            for _ in 0..repeat {
+                editor.cut_right_until_char(search_char, before_char, true);
+            }
+            assert_eq!(editor.get_buffer(), expected);
+        }
+    }
+
+    #[test]
+    fn test_replace_char() {
+        let cases = [
+            ("abc", 1, 'X', "aXc"),
+            ("abc", 1, '🔄', "a🔄c"),
+            ("a🔄c", 1, 'X', "aXc"),
+            ("a🔄c", 1, '🔀', "a🔀c"),
+        ];
+
+        for (input, position, replacement, expected) in cases {
+            let mut editor = editor_with(input);
+            editor.line_buffer.set_insertion_point(position);
+
+            editor.replace_char(replacement);
+
+            assert_eq!(editor.get_buffer(), expected);
+        }
     }
 
     fn str_to_edit_commands(s: &str) -> Vec<EditCommand> {
@@ -1784,215 +1787,250 @@ mod test {
         assert_eq!(editor.cut_buffer.get().0, "hello");
     }
 
-    #[rstest]
-    #[case("hello world test", 7, "hello  test", 6, "world")] // cursor inside word
-    #[case("hello world test", 6, "hello  test", 6, "world")] // cursor at start of word
-    #[case("hello world test", 10, "hello  test", 6, "world")] // cursor at end of word
-    fn test_cut_inside_word(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] expected_buffer: &str,
-        #[case] expected_cursor: usize,
-        #[case] expected_cut: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(TextObject {
-            scope: TextObjectScope::Inner,
-            object_type: TextObjectType::Word,
-        });
-        assert_eq!(editor.get_buffer(), expected_buffer);
-        assert_eq!(editor.insertion_point(), expected_cursor);
-        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    #[test]
+    fn test_cut_inside_word() {
+        let cases = [
+            ("hello world test", 7, "hello  test", 6, "world"), // cursor inside word
+            ("hello world test", 6, "hello  test", 6, "world"), // cursor at start of word
+            ("hello world test", 10, "hello  test", 6, "world"), // cursor at end of word
+        ];
+
+        for (input, cursor_pos, expected_buffer, expected_cursor, expected_cut) in cases {
+            let mut editor = editor_with(input);
+            editor.move_to_position(cursor_pos, false);
+            editor.cut_text_object(TextObject {
+                scope: TextObjectScope::Inner,
+                object_type: TextObjectType::Word,
+            });
+            assert_eq!(editor.get_buffer(), expected_buffer);
+            assert_eq!(editor.insertion_point(), expected_cursor);
+            assert_eq!(editor.cut_buffer.get().0, expected_cut);
+        }
     }
 
-    #[rstest]
-    #[case("hello world test", 7, "world")] // cursor inside word
-    #[case("hello world test", 6, "world")] // cursor at start of word
-    #[case("hello world test", 10, "world")] // cursor at end of word
-    fn test_yank_inside_word(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] expected_yank: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.move_to_position(cursor_pos, false);
-        editor.copy_text_object(TextObject {
-            scope: TextObjectScope::Inner,
-            object_type: TextObjectType::Word,
-        });
-        assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
-        assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
-        assert_eq!(editor.cut_buffer.get().0, expected_yank);
+    #[test]
+    fn test_yank_inside_word() {
+        let cases = [
+            ("hello world test", 7, "world"),  // cursor inside word
+            ("hello world test", 6, "world"),  // cursor at start of word
+            ("hello world test", 10, "world"), // cursor at end of word
+        ];
+
+        for (input, cursor_pos, expected_yank) in cases {
+            let mut editor = editor_with(input);
+            editor.move_to_position(cursor_pos, false);
+            editor.copy_text_object(TextObject {
+                scope: TextObjectScope::Inner,
+                object_type: TextObjectType::Word,
+            });
+            assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
+            assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
+            assert_eq!(editor.cut_buffer.get().0, expected_yank);
+        }
     }
 
-    #[rstest]
-    #[case("hello world test", 7, "hello test", 6, "world ")] // word with following space
-    #[case("hello world", 7, "hello", 5, " world")] // word at end, gets preceding space
-    #[case("word test", 2, "test", 0, "word ")] // first word with following space
-    #[case("hello word", 7, "hello", 5, " word")] // last word gets preceding space
-    // Edge cases at end of string
-    #[case("word", 2, "", 0, "word")] // single word, no whitespace
-    #[case(" word", 2, "", 0, " word")] // word with only leading space
-    // Edge cases with punctuation boundaries
-    #[case("word.", 2, ".", 0, "word")] // word followed by punctuation
-    #[case(".word", 2, ".", 1, "word")] // word preceded by punctuation
-    #[case("(word)", 2, "()", 1, "word")] // word surrounded by punctuation
-    #[case("hello,world", 2, ",world", 0, "hello")] // word followed by punct+word
-    #[case("hello,world", 7, "hello,", 6, "world")] // word preceded by word+punct
-    fn test_cut_around_word(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] expected_buffer: &str,
-        #[case] expected_cursor: usize,
-        #[case] expected_cut: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(TextObject {
-            scope: TextObjectScope::Around,
-            object_type: TextObjectType::Word,
-        });
-        assert_eq!(editor.get_buffer(), expected_buffer);
-        assert_eq!(editor.insertion_point(), expected_cursor);
-        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    #[test]
+    fn test_cut_around_word() {
+        let cases = [
+            ("hello world test", 7, "hello test", 6, "world "), // word with following space
+            ("hello world", 7, "hello", 5, " world"),           // word at end, gets preceding space
+            ("word test", 2, "test", 0, "word "),               // first word with following space
+            ("hello word", 7, "hello", 5, " word"),             // last word gets preceding space
+            // Edge cases at end of string
+            ("word", 2, "", 0, "word"),   // single word, no whitespace
+            (" word", 2, "", 0, " word"), // word with only leading space
+            // Edge cases with punctuation boundaries
+            ("word.", 2, ".", 0, "word"), // word followed by punctuation
+            (".word", 2, ".", 1, "word"), // word preceded by punctuation
+            ("(word)", 2, "()", 1, "word"), // word surrounded by punctuation
+            ("hello,world", 2, ",world", 0, "hello"), // word followed by punct+word
+            ("hello,world", 7, "hello,", 6, "world"), // word preceded by word+punct
+        ];
+
+        for (input, cursor_pos, expected_buffer, expected_cursor, expected_cut) in cases {
+            let mut editor = editor_with(input);
+            editor.move_to_position(cursor_pos, false);
+            editor.cut_text_object(TextObject {
+                scope: TextObjectScope::Around,
+                object_type: TextObjectType::Word,
+            });
+            assert_eq!(editor.get_buffer(), expected_buffer);
+            assert_eq!(editor.insertion_point(), expected_cursor);
+            assert_eq!(editor.cut_buffer.get().0, expected_cut);
+        }
     }
 
-    #[rstest]
-    #[case("hello world test", 7, "world ")] // word with following space
-    #[case("hello world", 7, " world")] // word at end, gets preceding space
-    #[case("word test", 2, "word ")] // first word with following space
-    fn test_yank_around_word(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] expected_yank: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.move_to_position(cursor_pos, false);
-        editor.copy_text_object(TextObject {
-            scope: TextObjectScope::Around,
-            object_type: TextObjectType::Word,
-        });
-        assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
-        assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
-        assert_eq!(editor.cut_buffer.get().0, expected_yank);
+    #[test]
+    fn test_yank_around_word() {
+        let cases = [
+            ("hello world test", 7, "world "), // word with following space
+            ("hello world", 7, " world"),      // word at end, gets preceding space
+            ("word test", 2, "word "),         // first word with following space
+        ];
+
+        for (input, cursor_pos, expected_yank) in cases {
+            let mut editor = editor_with(input);
+            editor.move_to_position(cursor_pos, false);
+            editor.copy_text_object(TextObject {
+                scope: TextObjectScope::Around,
+                object_type: TextObjectType::Word,
+            });
+            assert_eq!(editor.get_buffer(), input); // Buffer shouldn't change
+            assert_eq!(editor.insertion_point(), cursor_pos); // Cursor should return to original position
+            assert_eq!(editor.cut_buffer.get().0, expected_yank);
+        }
     }
 
-    #[rstest]
-    #[case("hello big-word test", 10, "hello  test", 6, "big-word")] // big word with punctuation
-    #[case("hello BIGWORD test", 10, "hello  test", 6, "BIGWORD")] // simple big word
-    #[case("test@example.com file", 8, " file", 0, "test@example.com")] //cursor on email address
-    #[case("test@example.com file", 17, "test@example.com ", 17, "file")] // cursor at end of "file"
-    fn test_cut_inside_big_word(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] expected_buffer: &str,
-        #[case] expected_cursor: usize,
-        #[case] expected_cut: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(TextObject {
-            scope: TextObjectScope::Inner,
-            object_type: TextObjectType::BigWord,
-        });
+    #[test]
+    fn test_cut_inside_big_word() {
+        let cases = [
+            ("hello big-word test", 10, "hello  test", 6, "big-word"), // big word with punctuation
+            ("hello BIGWORD test", 10, "hello  test", 6, "BIGWORD"),   // simple big word
+            ("test@example.com file", 8, " file", 0, "test@example.com"), //cursor on email address
+            ("test@example.com file", 17, "test@example.com ", 17, "file"), // cursor at end of "file"
+        ];
 
-        assert_eq!(editor.get_buffer(), expected_buffer);
-        assert_eq!(editor.insertion_point(), expected_cursor);
-        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+        for (input, cursor_pos, expected_buffer, expected_cursor, expected_cut) in cases {
+            let mut editor = editor_with(input);
+            editor.move_to_position(cursor_pos, false);
+            editor.cut_text_object(TextObject {
+                scope: TextObjectScope::Inner,
+                object_type: TextObjectType::BigWord,
+            });
+
+            assert_eq!(editor.get_buffer(), expected_buffer);
+            assert_eq!(editor.insertion_point(), expected_cursor);
+            assert_eq!(editor.cut_buffer.get().0, expected_cut);
+        }
     }
 
-    #[rstest]
-    #[case("hello-world test", 2, "-world test", 0, "hello")] // cursor on "hello"
-    #[case("hello-world test", 5, "helloworld test", 5, "-")] // cursor on "-"
-    #[case("hello-world test", 8, "hello- test", 6, "world")] // cursor on "world"
-    #[case("a-b-c test", 0, "-b-c test", 0, "a")] // single char "a"
-    #[case("a-b-c test", 2, "a--c test", 2, "b")] // single char "b"
-    fn test_cut_inside_word_with_punctuation(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] expected_buffer: &str,
-        #[case] expected_cursor: usize,
-        #[case] expected_cut: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(TextObject {
-            scope: TextObjectScope::Inner,
-            object_type: TextObjectType::Word,
-        });
-        assert_eq!(editor.get_buffer(), expected_buffer);
-        assert_eq!(editor.insertion_point(), expected_cursor);
-        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    #[test]
+    fn test_cut_inside_word_with_punctuation() {
+        let cases = [
+            ("hello-world test", 2, "-world test", 0, "hello"), // cursor on "hello"
+            ("hello-world test", 5, "helloworld test", 5, "-"), // cursor on "-"
+            ("hello-world test", 8, "hello- test", 6, "world"), // cursor on "world"
+            ("a-b-c test", 0, "-b-c test", 0, "a"),             // single char "a"
+            ("a-b-c test", 2, "a--c test", 2, "b"),             // single char "b"
+        ];
+
+        for (input, cursor_pos, expected_buffer, expected_cursor, expected_cut) in cases {
+            let mut editor = editor_with(input);
+            editor.move_to_position(cursor_pos, false);
+            editor.cut_text_object(TextObject {
+                scope: TextObjectScope::Inner,
+                object_type: TextObjectType::Word,
+            });
+            assert_eq!(editor.get_buffer(), expected_buffer);
+            assert_eq!(editor.insertion_point(), expected_cursor);
+            assert_eq!(editor.cut_buffer.get().0, expected_cut);
+        }
     }
 
-    #[rstest]
-    #[case("hello-world test", 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "-world test", "hello")] // small word gets just "hello"
-    #[case("hello-world test", 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord }, " test", "hello-world")] // big word gets "hello-word"
-    #[case("test@example.com", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "test@", "example.com")] // small word in email (UAX#29 extends across punct)
-    #[case("test@example.com", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord }, "", "test@example.com")] // big word gets entire email
-    fn test_word_vs_big_word_comparison(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] text_object: TextObject,
-        #[case] expected_buffer: &str,
-        #[case] expected_cut: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(text_object);
-        assert_eq!(editor.get_buffer(), expected_buffer);
-        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    #[test]
+    fn test_word_vs_big_word_comparison() {
+        let cases = [
+            (
+                "hello-world test",
+                2,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Word,
+                },
+                "-world test",
+                "hello",
+            ), // small word gets just "hello"
+            (
+                "hello-world test",
+                2,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::BigWord,
+                },
+                " test",
+                "hello-world",
+            ), // big word gets "hello-word"
+            (
+                "test@example.com",
+                6,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Word,
+                },
+                "test@",
+                "example.com",
+            ), // small word in email (UAX#29 extends across punct)
+            (
+                "test@example.com",
+                6,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::BigWord,
+                },
+                "",
+                "test@example.com",
+            ), // big word gets entire email
+        ];
+
+        for (input, cursor_pos, text_object, expected_buffer, expected_cut) in cases {
+            let mut editor = editor_with(input);
+            editor.move_to_position(cursor_pos, false);
+            editor.cut_text_object(text_object);
+            assert_eq!(editor.get_buffer(), expected_buffer);
+            assert_eq!(editor.cut_buffer.get().0, expected_cut);
+        }
     }
 
-    #[rstest]
-    // Test inside operations (iw) at word boundaries
-    #[case("hello world", 0, "hello")] // start of first word
-    #[case("hello world", 4, "hello")] // end of first word
-    #[case("hello world", 6, "world")] // start of second word
-    #[case("hello world", 10, "world")] // end of second word
-    // Test at exact word boundaries with punctuation
-    #[case("hello-world", 4, "hello")] // just before punctuation
-    #[case("hello-world", 5, "-")] // on punctuation
-    #[case("hello-world", 6, "world")] // just after punctuation
-    fn test_cut_inside_word_boundaries(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] expected_cut: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(TextObject {
-            scope: TextObjectScope::Inner,
-            object_type: TextObjectType::Word,
-        });
-        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    #[test]
+    fn test_cut_inside_word_boundaries() {
+        let cases = [
+            // Test inside operations (iw) at word boundaries
+            ("hello world", 0, "hello"),  // start of first word
+            ("hello world", 4, "hello"),  // end of first word
+            ("hello world", 6, "world"),  // start of second word
+            ("hello world", 10, "world"), // end of second word
+            // Test at exact word boundaries with punctuation
+            ("hello-world", 4, "hello"), // just before punctuation
+            ("hello-world", 5, "-"),     // on punctuation
+            ("hello-world", 6, "world"), // just after punctuation
+        ];
+
+        for (input, cursor_pos, expected_cut) in cases {
+            let mut editor = editor_with(input);
+            editor.move_to_position(cursor_pos, false);
+            editor.cut_text_object(TextObject {
+                scope: TextObjectScope::Inner,
+                object_type: TextObjectType::Word,
+            });
+            assert_eq!(editor.cut_buffer.get().0, expected_cut);
+        }
     }
 
-    #[rstest]
-    // Test around operations (aw) at word boundaries
-    #[case("hello world", 0, "hello ")] // start of first word
-    #[case("hello world", 4, "hello ")] // end of first word
-    #[case("hello world", 6, " world")] // start of second word (gets preceding space)
-    #[case("hello world", 10, " world")] // end of second word
-    #[case("word", 0, "word")] // single word, no whitespace
-    #[case("word ", 0, "word ")] // word with trailing space
-    #[case(" word", 1, " word")] // word with leading space
-    fn test_cut_around_word_boundaries(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] expected_cut: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(TextObject {
-            scope: TextObjectScope::Around,
-            object_type: TextObjectType::Word,
-        });
-        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    #[test]
+    fn test_cut_around_word_boundaries() {
+        let cases = [
+            // Test around operations (aw) at word boundaries
+            ("hello world", 0, "hello "),  // start of first word
+            ("hello world", 4, "hello "),  // end of first word
+            ("hello world", 6, " world"),  // start of second word (gets preceding space)
+            ("hello world", 10, " world"), // end of second word
+            ("word", 0, "word"),           // single word, no whitespace
+            ("word ", 0, "word "),         // word with trailing space
+            (" word", 1, " word"),         // word with leading space
+        ];
+
+        for (input, cursor_pos, expected_cut) in cases {
+            let mut editor = editor_with(input);
+            editor.move_to_position(cursor_pos, false);
+            editor.cut_text_object(TextObject {
+                scope: TextObjectScope::Around,
+                object_type: TextObjectType::Word,
+            });
+            assert_eq!(editor.cut_buffer.get().0, expected_cut);
+        }
     }
 
-    #[rstest]
+    #[test]
     fn test_cut_text_object_unicode_safety() {
         let mut editor = editor_with("hello 🦀end");
         editor.move_to_position(10, false); // Position after the emoji
@@ -2006,166 +2044,472 @@ mod test {
         assert!(editor.line_buffer.is_valid()); // Should not panic or be invalid
     }
 
-    #[rstest]
-    // Test operations when cursor is IN WHITESPACE (middle of spaces)
-    #[case("hello world test", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld test", 5, " ")] // single space
-    #[case("hello  world", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld", 5, "  ")] // multiple spaces, cursor on second
-    #[case("hello   world", 7, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld", 5, "   ")] // multiple spaces, cursor on middle
-    #[case("   hello", 1, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "hello", 0, "   ")] // leading spaces, cursor on middle
-    #[case("hello   ", 7, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "hello", 5, "   ")] // trailing spaces, cursor on middle
-    #[case("hello\tworld", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld", 5, "\t")] // tab character
-    #[case("hello\nworld", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "helloworld", 5, "\n")] // newline character
-    #[case("hello world test", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord }, "helloworld test", 5, " ")] // single space (big word)
-    #[case("hello  world", 6, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::BigWord }, "helloworld", 5, "  ")] // multiple spaces (big word)
-    #[case("  ", 0, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "", 0, "  ")] // only whitespace at start
-    #[case("  ", 1, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "", 0, "  ")] // only whitespace at end
-    #[case("hello  ", 5, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "hello", 5, "  ")] // trailing whitespace at string end
-    #[case("  hello", 0, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Word }, "hello", 0, "  ")] // leading whitespace at string start
-    fn test_text_object_in_whitespace(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] text_object: TextObject,
-        #[case] expected_buffer: &str,
-        #[case] expected_cursor: usize,
-        #[case] expected_cut: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(text_object);
-        assert_eq!(editor.get_buffer(), expected_buffer);
-        assert_eq!(editor.insertion_point(), expected_cursor);
-        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    #[test]
+    fn test_text_object_in_whitespace() {
+        let cases = [
+            // Test operations when cursor is IN WHITESPACE (middle of spaces)
+            (
+                "hello world test",
+                5,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Word,
+                },
+                "helloworld test",
+                5,
+                " ",
+            ), // single space
+            (
+                "hello  world",
+                6,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Word,
+                },
+                "helloworld",
+                5,
+                "  ",
+            ), // multiple spaces, cursor on second
+            (
+                "hello   world",
+                7,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Word,
+                },
+                "helloworld",
+                5,
+                "   ",
+            ), // multiple spaces, cursor on middle
+            (
+                "   hello",
+                1,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Word,
+                },
+                "hello",
+                0,
+                "   ",
+            ), // leading spaces, cursor on middle
+            (
+                "hello   ",
+                7,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Word,
+                },
+                "hello",
+                5,
+                "   ",
+            ), // trailing spaces, cursor on middle
+            (
+                "hello\tworld",
+                5,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Word,
+                },
+                "helloworld",
+                5,
+                "\t",
+            ), // tab character
+            (
+                "hello\nworld",
+                5,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Word,
+                },
+                "helloworld",
+                5,
+                "\n",
+            ), // newline character
+            (
+                "hello world test",
+                5,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::BigWord,
+                },
+                "helloworld test",
+                5,
+                " ",
+            ), // single space (big word)
+            (
+                "hello  world",
+                6,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::BigWord,
+                },
+                "helloworld",
+                5,
+                "  ",
+            ), // multiple spaces (big word)
+            (
+                "  ",
+                0,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Word,
+                },
+                "",
+                0,
+                "  ",
+            ), // only whitespace at start
+            (
+                "  ",
+                1,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Word,
+                },
+                "",
+                0,
+                "  ",
+            ), // only whitespace at end
+            (
+                "hello  ",
+                5,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Word,
+                },
+                "hello",
+                5,
+                "  ",
+            ), // trailing whitespace at string end
+            (
+                "  hello",
+                0,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Word,
+                },
+                "hello",
+                0,
+                "  ",
+            ), // leading whitespace at string start
+        ];
+
+        for (input, cursor_pos, text_object, expected_buffer, expected_cursor, expected_cut) in
+            cases
+        {
+            let mut editor = editor_with(input);
+            editor.move_to_position(cursor_pos, false);
+            editor.cut_text_object(text_object);
+            assert_eq!(editor.get_buffer(), expected_buffer);
+            assert_eq!(editor.insertion_point(), expected_cursor);
+            assert_eq!(editor.cut_buffer.get().0, expected_cut);
+        }
     }
 
-    #[rstest]
-    // Test text object jumping behavior in various scenarios
-    // Cursor inside empty pairs should operate on current pair (cursor stays, nothing cut)
-    #[case(r#"foo()bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo()bar", 4, "")] // inside empty brackets
-    #[case(r#"foo""bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo\"\"bar", 4, "")] // inside empty quotes
-    // Cursor outside pairs should jump to next pair (even if empty)
-    #[case(r#"foo ()bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo ()bar", 5, "")] // jump to empty brackets
-    #[case(r#"foo ""bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "")] // jump to empty quote
-    #[case(r#"foo (content)bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo ()bar", 5, "content")] // jump to non-empty brackets
-    #[case(r#"foo "content"bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "content")] // jump to non-empty quotes
-    // Cursor between pairs should jump to next pair
-    #[case(r#"(first) (second)"#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "(first) ()", 9, "second")] // between brackets
-    #[case(r#""first" "second""#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "\"first\"\"second\"", 7, " ")] // between quotes
-    // Around scope should include the pair characters
-    #[case(r#"foo (bar)"#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Brackets }, "foo ", 4, "(bar)")] // around includes parentheses
-    #[case(r#"foo "bar""#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Quote }, "foo ", 4, "\"bar\"")] // around includes quotes
-    fn test_text_object_jumping_behavior(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] text_object: TextObject,
-        #[case] expected_buffer: &str,
-        #[case] expected_cursor: usize,
-        #[case] expected_cut: &str,
-    ) {
-        let mut editor = editor_with(input);
-        editor.move_to_position(cursor_pos, false);
-        editor.cut_text_object(text_object);
-        assert_eq!(editor.get_buffer(), expected_buffer);
-        assert_eq!(editor.insertion_point(), expected_cursor);
-        assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    #[test]
+    fn test_text_object_jumping_behavior() {
+        let cases = [
+            // Test text object jumping behavior in various scenarios
+            // Cursor inside empty pairs should operate on current pair (cursor stays, nothing cut)
+            (
+                r#"foo()bar"#,
+                4,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Brackets,
+                },
+                "foo()bar",
+                4,
+                "",
+            ), // inside empty brackets
+            (
+                r#"foo""bar"#,
+                4,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Quote,
+                },
+                "foo\"\"bar",
+                4,
+                "",
+            ), // inside empty quotes
+            // Cursor outside pairs should jump to next pair (even if empty)
+            (
+                r#"foo ()bar"#,
+                2,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Brackets,
+                },
+                "foo ()bar",
+                5,
+                "",
+            ), // jump to empty brackets
+            (
+                r#"foo ""bar"#,
+                2,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Quote,
+                },
+                "foo \"\"bar",
+                5,
+                "",
+            ), // jump to empty quote
+            (
+                r#"foo (content)bar"#,
+                2,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Brackets,
+                },
+                "foo ()bar",
+                5,
+                "content",
+            ), // jump to non-empty brackets
+            (
+                r#"foo "content"bar"#,
+                2,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Quote,
+                },
+                "foo \"\"bar",
+                5,
+                "content",
+            ), // jump to non-empty quotes
+            // Cursor between pairs should jump to next pair
+            (
+                r#"(first) (second)"#,
+                8,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Brackets,
+                },
+                "(first) ()",
+                9,
+                "second",
+            ), // between brackets
+            (
+                r#""first" "second""#,
+                8,
+                TextObject {
+                    scope: TextObjectScope::Inner,
+                    object_type: TextObjectType::Quote,
+                },
+                "\"first\"\"second\"",
+                7,
+                " ",
+            ), // between quotes
+            // Around scope should include the pair characters
+            (
+                r#"foo (bar)"#,
+                2,
+                TextObject {
+                    scope: TextObjectScope::Around,
+                    object_type: TextObjectType::Brackets,
+                },
+                "foo ",
+                4,
+                "(bar)",
+            ), // around includes parentheses
+            (
+                r#"foo "bar""#,
+                2,
+                TextObject {
+                    scope: TextObjectScope::Around,
+                    object_type: TextObjectType::Quote,
+                },
+                "foo ",
+                4,
+                "\"bar\"",
+            ), // around includes quotes
+        ];
+
+        for (input, cursor_pos, text_object, expected_buffer, expected_cursor, expected_cut) in
+            cases
+        {
+            let mut editor = editor_with(input);
+            editor.move_to_position(cursor_pos, false);
+            editor.cut_text_object(text_object);
+            assert_eq!(editor.get_buffer(), expected_buffer);
+            assert_eq!(editor.insertion_point(), expected_cursor);
+            assert_eq!(editor.cut_buffer.get().0, expected_cut);
+        }
     }
 
-    #[rstest]
-    // Test bracket_text_object_range with Inner scope - just the content inside brackets
-    #[case("foo(bar)baz", 5, TextObjectScope::Inner, Some(4..7))] // cursor inside brackets
-    #[case("foo[bar]baz", 5, TextObjectScope::Inner, Some(4..7))] // square brackets
-    #[case("foo{bar}baz", 5, TextObjectScope::Inner, Some(4..7))] // square brackets
-    #[case("foo()bar", 4, TextObjectScope::Inner, Some(4..4))] // empty brackets
-    #[case("(nested[inner]outer)", 8, TextObjectScope::Inner, Some(8..13))] // nested, innermost
-    #[case("(nested[mixed{inner}brackets]outer)", 8, TextObjectScope::Inner, Some(8..28))] // nested, innermost
-    #[case("next(nested[mixed{inner}brackets]outer)", 0, TextObjectScope::Inner, Some(5..38))] // next nested mixed
-    #[case("foo (bar)baz", 0, TextObjectScope::Inner, Some(5..8))] // next pair from line start
-    #[case("    (bar)baz", 1, TextObjectScope::Inner, Some(5..8))] // next pair from whitespace
-    #[case("foo(bar)baz", 2, TextObjectScope::Inner, Some(4..7))] // next pair from word
-    #[case("foo(bar\nbaz)qux", 8, TextObjectScope::Inner, Some(4..11))] // multi-line brackets
-    #[case("foo\n(bar\nbaz)qux", 0, TextObjectScope::Inner, Some(5..12))] // next multi-line brackets
-    #[case("foo\n(bar\nbaz)qux", 3, TextObjectScope::Around, Some(4..13))] // next multi-line brackets
-    #[case("{hello}", 3, TextObjectScope::Around, Some(0..7))] // includes curly brackets
-    #[case("foo()bar", 4, TextObjectScope::Around, Some(3..5))] // around empty brackets
-    #[case("(nested(inner)outer)", 8, TextObjectScope::Around, Some(7..14))] // nested around includes delimiters
-    #[case("start(nested(inner)outer)", 2, TextObjectScope::Around, Some(5..25))] // Next outer nested pair
-    #[case("(mixed{nested)brackets", 1, TextObjectScope::Inner, Some(1..13))] // mixed nesting
-    #[case("(unclosed(nested)brackets", 1, TextObjectScope::Inner, Some(10..16))] // unclosed bracket, find next closed
-    #[case("no brackets here", 5, TextObjectScope::Inner, None)] // no brackets found
-    #[case("(unclosed", 1, TextObjectScope::Inner, None)] // unclosed bracket
-    #[case("(mismatched}", 1, TextObjectScope::Inner, None)] // mismatched brackets
-    fn test_bracket_text_object_range(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] scope: TextObjectScope,
-        #[case] expected: Option<std::ops::Range<usize>>,
-    ) {
-        let mut editor = editor_with(input);
-        editor.move_to_position(cursor_pos, false);
-        let result = editor.bracket_text_object_range(scope);
-        assert_eq!(result, expected);
+    #[test]
+    fn test_bracket_text_object_range() {
+        let cases = [
+            // Test bracket_text_object_range with Inner scope - just the content inside brackets
+            ("foo(bar)baz", 5, TextObjectScope::Inner, Some(4..7)), // cursor inside brackets
+            ("foo[bar]baz", 5, TextObjectScope::Inner, Some(4..7)), // square brackets
+            ("foo{bar}baz", 5, TextObjectScope::Inner, Some(4..7)), // square brackets
+            ("foo()bar", 4, TextObjectScope::Inner, Some(4..4)),    // empty brackets
+            (
+                "(nested[inner]outer)",
+                8,
+                TextObjectScope::Inner,
+                Some(8..13),
+            ), // nested, innermost
+            (
+                "(nested[mixed{inner}brackets]outer)",
+                8,
+                TextObjectScope::Inner,
+                Some(8..28),
+            ), // nested, innermost
+            (
+                "next(nested[mixed{inner}brackets]outer)",
+                0,
+                TextObjectScope::Inner,
+                Some(5..38),
+            ), // next nested mixed
+            ("foo (bar)baz", 0, TextObjectScope::Inner, Some(5..8)), // next pair from line start
+            ("    (bar)baz", 1, TextObjectScope::Inner, Some(5..8)), // next pair from whitespace
+            ("foo(bar)baz", 2, TextObjectScope::Inner, Some(4..7)), // next pair from word
+            ("foo(bar\nbaz)qux", 8, TextObjectScope::Inner, Some(4..11)), // multi-line brackets
+            ("foo\n(bar\nbaz)qux", 0, TextObjectScope::Inner, Some(5..12)), // next multi-line brackets
+            (
+                "foo\n(bar\nbaz)qux",
+                3,
+                TextObjectScope::Around,
+                Some(4..13),
+            ), // next multi-line brackets
+            ("{hello}", 3, TextObjectScope::Around, Some(0..7)), // includes curly brackets
+            ("foo()bar", 4, TextObjectScope::Around, Some(3..5)), // around empty brackets
+            (
+                "(nested(inner)outer)",
+                8,
+                TextObjectScope::Around,
+                Some(7..14),
+            ), // nested around includes delimiters
+            (
+                "start(nested(inner)outer)",
+                2,
+                TextObjectScope::Around,
+                Some(5..25),
+            ), // Next outer nested pair
+            (
+                "(mixed{nested)brackets",
+                1,
+                TextObjectScope::Inner,
+                Some(1..13),
+            ), // mixed nesting
+            (
+                "(unclosed(nested)brackets",
+                1,
+                TextObjectScope::Inner,
+                Some(10..16),
+            ), // unclosed bracket, find next closed
+            ("no brackets here", 5, TextObjectScope::Inner, None), // no brackets found
+            ("(unclosed", 1, TextObjectScope::Inner, None),      // unclosed bracket
+            ("(mismatched}", 1, TextObjectScope::Inner, None),   // mismatched brackets
+        ];
+
+        for (input, cursor_pos, scope, expected) in cases {
+            let mut editor = editor_with(input);
+            editor.move_to_position(cursor_pos, false);
+            let result = editor.bracket_text_object_range(scope);
+            assert_eq!(result, expected);
+        }
     }
 
-    #[rstest]
-    // Test quote_text_object_range with Inner scope - just the content inside quotes
-    #[case(r#"foo"bar"baz"#, 5, TextObjectScope::Inner, Some(4..7))] // cursor inside double quotes
-    #[case("foo'bar'baz", 5, TextObjectScope::Inner, Some(4..7))] // single quotes
-    #[case("foo`bar`baz", 5, TextObjectScope::Inner, Some(4..7))] // backticks
-    #[case(r#"foo""bar"#, 4, TextObjectScope::Inner, Some(4..4))] // empty quotes
-    #[case(r#""nested'inner'outer""#, 8, TextObjectScope::Inner, Some(8..13))] // nested, innermost
-    #[case(r#""nested`mixed'inner'backticks`outer""#, 8, TextObjectScope::Inner, Some(8..29))] // nested, innermost
-    #[case(r#"next"nested'mixed`inner`quotes'outer""#, 0, TextObjectScope::Inner, Some(5..36))] // next nested mixed
-    #[case(r#"foo "bar"baz"#, 0, TextObjectScope::Inner, Some(5..8))] // next pair
-    #[case(r#"foo"bar"baz"#, 2, TextObjectScope::Inner, Some(4..7))] // next from inside word
-    #[case(r#"foo"bar"baz"#, 4, TextObjectScope::Around, Some(3..8))] // around includes quotes
-    #[case(r#"foo"bar"baz"#, 3, TextObjectScope::Around, Some(3..8))] // around on opening quote
-    #[case(r#"foo"bar"baz"#, 2, TextObjectScope::Around, Some(3..8))] // around next quotes
-    #[case(r#"foo""bar"#, 4, TextObjectScope::Around, Some(3..5))] // around empty quotes
-    #[case(r#"foo""bar"#, 1, TextObjectScope::Around, Some(3..5))] // around empty quotes
-    #[case(r#""nested"inner"outer""#, 8, TextObjectScope::Around, Some(7..14))] // nested around includes delimiters
-    #[case(r#"start"nested'inner'outer""#, 2, TextObjectScope::Around, Some(5..25))] // Next outer nested pair
-    #[case("no quotes here", 5, TextObjectScope::Inner, None)] // no quotes found
-    #[case(r#"foo"bar"#, 1, TextObjectScope::Inner, None)] // unclosed quote
-    #[case("foo'bar\nbaz'qux", 5, TextObjectScope::Inner, None)] // quotes don't span multiple lines
-    #[case("foo'bar\nbaz'qux", 0, TextObjectScope::Inner, None)] // quotes don't span multiple lines
-    #[case("foobar\n`baz`qux", 6, TextObjectScope::Inner, None)] // quotes don't span multiple lines
-    #[case("foo\n(bar\nbaz)qux", 0, TextObjectScope::Inner, None)] // next multi-line brackets
-    #[case("foo\n(bar\nbaz)qux", 3, TextObjectScope::Around, None)] // next multi-line brackets
-    fn test_quote_text_object_range(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] scope: TextObjectScope,
-        #[case] expected: Option<std::ops::Range<usize>>,
-    ) {
-        let mut editor = editor_with(input);
-        editor.line_buffer.set_insertion_point(cursor_pos);
-        let result = editor.quote_text_object_range(scope);
-        assert_eq!(result, expected);
+    #[test]
+    fn test_quote_text_object_range() {
+        let cases = [
+            // Test quote_text_object_range with Inner scope - just the content inside quotes
+            (r#"foo"bar"baz"#, 5, TextObjectScope::Inner, Some(4..7)), // cursor inside double quotes
+            ("foo'bar'baz", 5, TextObjectScope::Inner, Some(4..7)),    // single quotes
+            ("foo`bar`baz", 5, TextObjectScope::Inner, Some(4..7)),    // backticks
+            (r#"foo""bar"#, 4, TextObjectScope::Inner, Some(4..4)),    // empty quotes
+            (
+                r#""nested'inner'outer""#,
+                8,
+                TextObjectScope::Inner,
+                Some(8..13),
+            ), // nested, innermost
+            (
+                r#""nested`mixed'inner'backticks`outer""#,
+                8,
+                TextObjectScope::Inner,
+                Some(8..29),
+            ), // nested, innermost
+            (
+                r#"next"nested'mixed`inner`quotes'outer""#,
+                0,
+                TextObjectScope::Inner,
+                Some(5..36),
+            ), // next nested mixed
+            (r#"foo "bar"baz"#, 0, TextObjectScope::Inner, Some(5..8)), // next pair
+            (r#"foo"bar"baz"#, 2, TextObjectScope::Inner, Some(4..7)), // next from inside word
+            (r#"foo"bar"baz"#, 4, TextObjectScope::Around, Some(3..8)), // around includes quotes
+            (r#"foo"bar"baz"#, 3, TextObjectScope::Around, Some(3..8)), // around on opening quote
+            (r#"foo"bar"baz"#, 2, TextObjectScope::Around, Some(3..8)), // around next quotes
+            (r#"foo""bar"#, 4, TextObjectScope::Around, Some(3..5)),   // around empty quotes
+            (r#"foo""bar"#, 1, TextObjectScope::Around, Some(3..5)),   // around empty quotes
+            (
+                r#""nested"inner"outer""#,
+                8,
+                TextObjectScope::Around,
+                Some(7..14),
+            ), // nested around includes delimiters
+            (
+                r#"start"nested'inner'outer""#,
+                2,
+                TextObjectScope::Around,
+                Some(5..25),
+            ), // Next outer nested pair
+            ("no quotes here", 5, TextObjectScope::Inner, None),       // no quotes found
+            (r#"foo"bar"#, 1, TextObjectScope::Inner, None),           // unclosed quote
+            ("foo'bar\nbaz'qux", 5, TextObjectScope::Inner, None), // quotes don't span multiple lines
+            ("foo'bar\nbaz'qux", 0, TextObjectScope::Inner, None), // quotes don't span multiple lines
+            ("foobar\n`baz`qux", 6, TextObjectScope::Inner, None), // quotes don't span multiple lines
+            ("foo\n(bar\nbaz)qux", 0, TextObjectScope::Inner, None), // next multi-line brackets
+            ("foo\n(bar\nbaz)qux", 3, TextObjectScope::Around, None), // next multi-line brackets
+        ];
+
+        for (input, cursor_pos, scope, expected) in cases {
+            let mut editor = editor_with(input);
+            editor.line_buffer.set_insertion_point(cursor_pos);
+            let result = editor.quote_text_object_range(scope);
+            assert_eq!(result, expected);
+        }
     }
 
-    #[rstest]
-    // Test edge cases and complex scenarios for both bracket and quote text objects
-    #[case("", 0, TextObjectScope::Inner, None, None)] // empty buffer
-    #[case("a", 0, TextObjectScope::Inner, None, None)] // single character
-    #[case("()", 1, TextObjectScope::Inner, Some(1..1), None)] // empty brackets, cursor inside
-    #[case(r#""""#, 1, TextObjectScope::Inner, None, Some(1..1))] // empty quotes, cursor inside
-    #[case("([{}])", 3, TextObjectScope::Inner, Some(3..3), None)] // deeply nested brackets
-    #[case(r#""'`text`'""#, 5, TextObjectScope::Inner, None, Some(3..7))] // deeply nested quotes
-    #[case("(text) and [more]", 5, TextObjectScope::Around, Some(0..6), None)] // multiple bracket types
-    #[case(r#""text" and 'more'"#, 5, TextObjectScope::Around, None, Some(0..6))] // multiple quote types
-    fn test_text_object_edge_cases(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] scope: TextObjectScope,
-        #[case] expected_bracket: Option<std::ops::Range<usize>>,
-        #[case] expected_quote: Option<std::ops::Range<usize>>,
-    ) {
-        let mut editor = editor_with(input);
-        editor.move_to_position(cursor_pos, false);
+    #[test]
+    fn test_text_object_edge_cases() {
+        let cases = [
+            // Test edge cases and complex scenarios for both bracket and quote text objects
+            ("", 0, TextObjectScope::Inner, None, None), // empty buffer
+            ("a", 0, TextObjectScope::Inner, None, None), // single character
+            ("()", 1, TextObjectScope::Inner, Some(1..1), None), // empty brackets, cursor inside
+            (r#""""#, 1, TextObjectScope::Inner, None, Some(1..1)), // empty quotes, cursor inside
+            ("([{}])", 3, TextObjectScope::Inner, Some(3..3), None), // deeply nested brackets
+            (r#""'`text`'""#, 5, TextObjectScope::Inner, None, Some(3..7)), // deeply nested quotes
+            (
+                "(text) and [more]",
+                5,
+                TextObjectScope::Around,
+                Some(0..6),
+                None,
+            ), // multiple bracket types
+            (
+                r#""text" and 'more'"#,
+                5,
+                TextObjectScope::Around,
+                None,
+                Some(0..6),
+            ), // multiple quote types
+        ];
 
-        let bracket_result = editor.bracket_text_object_range(scope);
-        let quote_result = editor.quote_text_object_range(scope);
+        for (input, cursor_pos, scope, expected_bracket, expected_quote) in cases {
+            let mut editor = editor_with(input);
+            editor.move_to_position(cursor_pos, false);
 
-        assert_eq!(bracket_result, expected_bracket);
-        assert_eq!(quote_result, expected_quote);
+            let bracket_result = editor.bracket_text_object_range(scope);
+            let quote_result = editor.quote_text_object_range(scope);
+
+            assert_eq!(bracket_result, expected_bracket);
+            assert_eq!(quote_result, expected_quote);
+        }
     }
 }

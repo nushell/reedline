@@ -1055,7 +1055,6 @@ fn is_whitespace_str(s: &str) -> bool {
 mod test {
     use super::*;
     use pretty_assertions::assert_eq;
-    use rstest::rstest;
 
     fn buffer_with(content: &str) -> LineBuffer {
         let mut line_buffer = LineBuffer::new();
@@ -1109,76 +1108,85 @@ mod test {
         line_buffer.assert_valid();
     }
 
-    #[rstest]
-    #[case("hello", 5, "hello\n", 6)]
-    #[case("hello", 0, "\nhello", 1)]
-    #[case("hello", 3, "hel\nlo", 4)]
-    #[case("line1\nline2", 11, "line1\nline2\n", 12)]
-    #[case("", 0, "\n", 1)]
-    fn insert_newline_inserts_lf_only(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] output: &str,
-        #[case] out_location: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
+    #[test]
+    fn insert_newline_inserts_lf_only() {
+        let cases = [
+            ("hello", 5, "hello\n", 6),
+            ("hello", 0, "\nhello", 1),
+            ("hello", 3, "hel\nlo", 4),
+            ("line1\nline2", 11, "line1\nline2\n", 12),
+            ("", 0, "\n", 1),
+        ];
 
-        line_buffer.insert_newline();
+        for (input, in_location, output, out_location) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
 
-        assert_eq!(line_buffer.get_buffer(), output);
-        assert!(
-            !line_buffer.get_buffer().contains('\r'),
-            "Buffer should never contain CR"
-        );
-        assert_eq!(line_buffer.insertion_point(), out_location);
-        line_buffer.assert_valid();
+            line_buffer.insert_newline();
+
+            assert_eq!(line_buffer.get_buffer(), output);
+            assert!(
+                !line_buffer.get_buffer().contains('\r'),
+                "Buffer should never contain CR"
+            );
+            assert_eq!(line_buffer.insertion_point(), out_location);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("new string", 10)]
-    #[case("new line1\nnew line 2", 20)]
-    fn set_buffer_updates_insertion_point_to_new_buffer_length(
-        #[case] string_to_set: &str,
-        #[case] expected_insertion_point: usize,
-    ) {
-        let mut line_buffer = buffer_with("test string");
-        let before_operation_location = 11;
-        assert_eq!(before_operation_location, line_buffer.insertion_point());
+    #[test]
+    fn set_buffer_updates_insertion_point_to_new_buffer_length() {
+        let cases = [("new string", 10), ("new line1\nnew line 2", 20)];
 
-        line_buffer.set_buffer(string_to_set.to_string());
+        for (string_to_set, expected_insertion_point) in cases {
+            let mut line_buffer = buffer_with("test string");
+            let before_operation_location = 11;
+            assert_eq!(before_operation_location, line_buffer.insertion_point());
 
-        assert_eq!(expected_insertion_point, line_buffer.insertion_point());
-        line_buffer.assert_valid();
+            line_buffer.set_buffer(string_to_set.to_string());
+
+            assert_eq!(expected_insertion_point, line_buffer.insertion_point());
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("This is a test", "This is a tes")]
-    #[case("This is a test 😊", "This is a test ")]
-    #[case("", "")]
-    fn delete_left_grapheme_works(#[case] input: &str, #[case] expected: &str) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.delete_left_grapheme();
+    #[test]
+    fn delete_left_grapheme_works() {
+        let cases = [
+            ("This is a test", "This is a tes"),
+            ("This is a test 😊", "This is a test "),
+            ("", ""),
+        ];
 
-        let expected_line_buffer = buffer_with(expected);
+        for (input, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.delete_left_grapheme();
 
-        assert_eq!(expected_line_buffer, line_buffer);
-        line_buffer.assert_valid();
+            let expected_line_buffer = buffer_with(expected);
+
+            assert_eq!(expected_line_buffer, line_buffer);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("This is a test", "This is a tes")]
-    #[case("This is a test 😊", "This is a test ")]
-    #[case("", "")]
-    fn delete_right_grapheme_works(#[case] input: &str, #[case] expected: &str) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.move_left();
-        line_buffer.delete_right_grapheme();
+    #[test]
+    fn delete_right_grapheme_works() {
+        let cases = [
+            ("This is a test", "This is a tes"),
+            ("This is a test 😊", "This is a test "),
+            ("", ""),
+        ];
 
-        let expected_line_buffer = buffer_with(expected);
+        for (input, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.move_left();
+            line_buffer.delete_right_grapheme();
 
-        assert_eq!(expected_line_buffer, line_buffer);
-        line_buffer.assert_valid();
+            let expected_line_buffer = buffer_with(expected);
+
+            assert_eq!(expected_line_buffer, line_buffer);
+            line_buffer.assert_valid();
+        }
     }
 
     #[test]
@@ -1204,1004 +1212,1027 @@ mod test {
         line_buffer.assert_valid();
     }
 
-    #[rstest]
-    #[case("", 0, 0)] // Basecase
-    #[case("word", 0, 3)] // Cursor on top of the last grapheme of the word
-    #[case("word and another one", 0, 3)]
-    #[case("word and another one", 3, 7)] // repeat calling will move
-    #[case("word and another one", 4, 7)] // Starting from whitespace works
-    #[case("word\nline two", 0, 3)] // Multiline...
-    #[case("word\nline two", 3, 8)] // ... continues to next word end
-    #[case("weirdö characters", 0, 5)] // Multibyte unicode at the word end (latin UTF-8 should be two bytes long)
-    #[case("weirdö characters", 5, 17)] // continue with unicode (latin UTF-8 should be two bytes long)
-    #[case("weirdö", 0, 5)] // Multibyte unicode at the buffer end is fine as well
-    #[case("weirdö", 5, 5)] // Multibyte unicode at the buffer end is fine as well
-    #[case("word😇 with emoji", 0, 3)] // (Emojis are a separate word)
-    #[case("word😇 with emoji", 3, 4)] // Moves to end of "emoji word" as it is one grapheme, on top of the first byte
-    #[case("😇", 0, 0)] // More UTF-8 shenanigans
-    fn test_move_word_right_end(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
+    #[test]
+    fn test_move_word_right_end() {
+        let cases = [
+            ("", 0, 0),     // Basecase
+            ("word", 0, 3), // Cursor on top of the last grapheme of the word
+            ("word and another one", 0, 3),
+            ("word and another one", 3, 7), // repeat calling will move
+            ("word and another one", 4, 7), // Starting from whitespace works
+            ("word\nline two", 0, 3),       // Multiline...
+            ("word\nline two", 3, 8),       // ... continues to next word end
+            ("weirdö characters", 0, 5), // Multibyte unicode at the word end (latin UTF-8 should be two bytes long)
+            ("weirdö characters", 5, 17), // continue with unicode (latin UTF-8 should be two bytes long)
+            ("weirdö", 0, 5),             // Multibyte unicode at the buffer end is fine as well
+            ("weirdö", 5, 5),             // Multibyte unicode at the buffer end is fine as well
+            ("word😇 with emoji", 0, 3),  // (Emojis are a separate word)
+            ("word😇 with emoji", 3, 4), // Moves to end of "emoji word" as it is one grapheme, on top of the first byte
+            ("😇", 0, 0),                // More UTF-8 shenanigans
+        ];
 
-        line_buffer.move_word_right_end();
+        for (input, in_location, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
 
-        assert_eq!(line_buffer.insertion_point(), expected);
-        line_buffer.assert_valid();
+            line_buffer.move_word_right_end();
+
+            assert_eq!(line_buffer.insertion_point(), expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("This is a test", 13, "This is a tesT", 14)]
-    #[case("This is a test", 10, "This is a Test", 11)]
-    #[case("This is a test", 9, "This is a Test", 11)]
-    fn capitalize_char_works(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] output: &str,
-        #[case] out_location: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
-        line_buffer.capitalize_char();
+    #[test]
+    fn capitalize_char_works() {
+        let cases = [
+            ("This is a test", 13, "This is a tesT", 14),
+            ("This is a test", 10, "This is a Test", 11),
+            ("This is a test", 9, "This is a Test", 11),
+        ];
 
-        let mut expected = buffer_with(output);
-        expected.set_insertion_point(out_location);
+        for (input, in_location, output, out_location) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
+            line_buffer.capitalize_char();
 
-        assert_eq!(expected, line_buffer);
-        line_buffer.assert_valid();
+            let mut expected = buffer_with(output);
+            expected.set_insertion_point(out_location);
+
+            assert_eq!(expected, line_buffer);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("This is a test", 13, "This is a TEST", 14)]
-    #[case("This is a test", 10, "This is a TEST", 14)]
-    #[case("", 0, "", 0)]
-    #[case("This", 0, "THIS", 4)]
-    #[case("This", 4, "THIS", 4)]
-    fn uppercase_word_works(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] output: &str,
-        #[case] out_location: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
-        line_buffer.uppercase_word();
+    #[test]
+    fn uppercase_word_works() {
+        let cases = [
+            ("This is a test", 13, "This is a TEST", 14),
+            ("This is a test", 10, "This is a TEST", 14),
+            ("", 0, "", 0),
+            ("This", 0, "THIS", 4),
+            ("This", 4, "THIS", 4),
+        ];
 
-        let mut expected = buffer_with(output);
-        expected.set_insertion_point(out_location);
+        for (input, in_location, output, out_location) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
+            line_buffer.uppercase_word();
 
-        assert_eq!(expected, line_buffer);
-        line_buffer.assert_valid();
+            let mut expected = buffer_with(output);
+            expected.set_insertion_point(out_location);
+
+            assert_eq!(expected, line_buffer);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("This is a TEST", 13, "This is a test", 14)]
-    #[case("This is a TEST", 10, "This is a test", 14)]
-    #[case("", 0, "", 0)]
-    #[case("THIS", 0, "this", 4)]
-    #[case("THIS", 4, "this", 4)]
-    fn lowercase_word_works(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] output: &str,
-        #[case] out_location: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
-        line_buffer.lowercase_word();
+    #[test]
+    fn lowercase_word_works() {
+        let cases = [
+            ("This is a TEST", 13, "This is a test", 14),
+            ("This is a TEST", 10, "This is a test", 14),
+            ("", 0, "", 0),
+            ("THIS", 0, "this", 4),
+            ("THIS", 4, "this", 4),
+        ];
 
-        let mut expected = buffer_with(output);
-        expected.set_insertion_point(out_location);
+        for (input, in_location, output, out_location) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
+            line_buffer.lowercase_word();
 
-        assert_eq!(expected, line_buffer);
-        line_buffer.assert_valid();
+            let mut expected = buffer_with(output);
+            expected.set_insertion_point(out_location);
+
+            assert_eq!(expected, line_buffer);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("", 0, "", 0)]
-    #[case("a test", 2, "a Test", 3)]
-    #[case("a Test", 2, "a test", 3)]
-    #[case("test", 0, "Test", 1)]
-    #[case("Test", 0, "test", 1)]
-    #[case("test", 3, "tesT", 4)]
-    #[case("tesT", 3, "test", 4)]
-    #[case("ß", 0, "ß", 2)]
-    fn switchcase_char(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] output: &str,
-        #[case] out_location: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
-        line_buffer.switchcase_char();
+    #[test]
+    fn switchcase_char() {
+        let cases = [
+            ("", 0, "", 0),
+            ("a test", 2, "a Test", 3),
+            ("a Test", 2, "a test", 3),
+            ("test", 0, "Test", 1),
+            ("Test", 0, "test", 1),
+            ("test", 3, "tesT", 4),
+            ("tesT", 3, "test", 4),
+            ("ß", 0, "ß", 2),
+        ];
 
-        let mut expected = buffer_with(output);
-        expected.set_insertion_point(out_location);
+        for (input, in_location, output, out_location) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
+            line_buffer.switchcase_char();
 
-        assert_eq!(expected, line_buffer);
-        line_buffer.assert_valid();
+            let mut expected = buffer_with(output);
+            expected.set_insertion_point(out_location);
+
+            assert_eq!(expected, line_buffer);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("This is a test", 13, "This is a tets", 14)]
-    #[case("This is a test", 14, "This is a tets", 14)] // NOTE: Swapping works in opposite direction at last index
-    #[case("This is a test", 4, "Thi sis a test", 5)] // NOTE: Swaps space, moves right
-    #[case("This is a test", 0, "hTis is a test", 2)]
-    fn swap_graphemes_work(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] output: &str,
-        #[case] out_location: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
+    #[test]
+    fn swap_graphemes_work() {
+        let cases = [
+            ("This is a test", 13, "This is a tets", 14),
+            ("This is a test", 14, "This is a tets", 14), // NOTE: Swapping works in opposite direction at last index
+            ("This is a test", 4, "Thi sis a test", 5),   // NOTE: Swaps space, moves right
+            ("This is a test", 0, "hTis is a test", 2),
+        ];
 
-        line_buffer.swap_graphemes();
+        for (input, in_location, output, out_location) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
 
-        let mut expected = buffer_with(output);
-        expected.set_insertion_point(out_location);
+            line_buffer.swap_graphemes();
 
-        assert_eq!(line_buffer, expected);
-        line_buffer.assert_valid();
+            let mut expected = buffer_with(output);
+            expected.set_insertion_point(out_location);
+
+            assert_eq!(line_buffer, expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("This is a test", 8, "This is test a", 8)]
-    #[case("This is a test", 0, "is This a test", 0)]
-    #[case("This is a test", 14, "This is a test", 14)]
-    fn swap_words_works(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] output: &str,
-        #[case] out_location: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
+    #[test]
+    fn swap_words_works() {
+        let cases = [
+            ("This is a test", 8, "This is test a", 8),
+            ("This is a test", 0, "is This a test", 0),
+            ("This is a test", 14, "This is a test", 14),
+        ];
 
-        line_buffer.swap_words();
+        for (input, in_location, output, out_location) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
 
-        let mut expected = buffer_with(output);
-        expected.set_insertion_point(out_location);
+            line_buffer.swap_words();
 
-        assert_eq!(line_buffer, expected);
-        line_buffer.assert_valid();
+            let mut expected = buffer_with(output);
+            expected.set_insertion_point(out_location);
+
+            assert_eq!(line_buffer, expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("line 1\nline 2", 7, 0)]
-    #[case("line 1\nline 2", 8, 1)]
-    #[case("line 1\nline 2", 0, 0)]
-    #[case("line\nlong line", 14, 4)]
-    #[case("line\nlong line", 8, 3)]
-    #[case("line 1\n😇line 2", 11, 1)]
-    #[case("line\n\nline", 8, 5)]
-    fn moving_up_works(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] out_location: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
+    #[test]
+    fn moving_up_works() {
+        let cases = [
+            ("line 1\nline 2", 7, 0),
+            ("line 1\nline 2", 8, 1),
+            ("line 1\nline 2", 0, 0),
+            ("line\nlong line", 14, 4),
+            ("line\nlong line", 8, 3),
+            ("line 1\n😇line 2", 11, 1),
+            ("line\n\nline", 8, 5),
+        ];
 
-        line_buffer.move_line_up();
+        for (input, in_location, out_location) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
 
-        let mut expected = buffer_with(input);
-        expected.set_insertion_point(out_location);
+            line_buffer.move_line_up();
 
-        assert_eq!(line_buffer, expected);
-        line_buffer.assert_valid();
+            let mut expected = buffer_with(input);
+            expected.set_insertion_point(out_location);
+
+            assert_eq!(line_buffer, expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("line 1", 0, 0)]
-    #[case("line 1\nline 2", 0, 7)]
-    #[case("line 1\n😇line 2", 1, 11)]
-    #[case("line 😇 1\nline 2 long", 9, 18)]
-    #[case("line 1\nline 2", 7, 7)]
-    #[case("long line\nline", 8, 14)]
-    #[case("long line\nline", 4, 14)]
-    #[case("long line\nline", 3, 13)]
-    #[case("long line\nline\nline", 8, 14)]
-    #[case("line\n\nline", 3, 5)]
-    fn moving_down_works(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] out_location: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
+    #[test]
+    fn moving_down_works() {
+        let cases = [
+            ("line 1", 0, 0),
+            ("line 1\nline 2", 0, 7),
+            ("line 1\n😇line 2", 1, 11),
+            ("line 😇 1\nline 2 long", 9, 18),
+            ("line 1\nline 2", 7, 7),
+            ("long line\nline", 8, 14),
+            ("long line\nline", 4, 14),
+            ("long line\nline", 3, 13),
+            ("long line\nline\nline", 8, 14),
+            ("line\n\nline", 3, 5),
+        ];
 
-        line_buffer.move_line_down();
+        for (input, in_location, out_location) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
 
-        let mut expected = buffer_with(input);
-        expected.set_insertion_point(out_location);
+            line_buffer.move_line_down();
 
-        assert_eq!(line_buffer, expected);
-        line_buffer.assert_valid();
+            let mut expected = buffer_with(input);
+            expected.set_insertion_point(out_location);
+
+            assert_eq!(line_buffer, expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("line", 4, true)]
-    #[case("line 1\nline 2\nline 3", 0, true)]
-    #[case("line 1\nline 2\nline 3", 6, true)]
-    #[case("line 1\nline 2\nline 3", 8, false)]
-    fn test_first_line_detection(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] expected: bool,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
-        line_buffer.assert_valid();
+    #[test]
+    fn test_first_line_detection() {
+        let cases = [
+            ("line", 4, true),
+            ("line 1\nline 2\nline 3", 0, true),
+            ("line 1\nline 2\nline 3", 6, true),
+            ("line 1\nline 2\nline 3", 8, false),
+        ];
 
-        assert_eq!(line_buffer.is_cursor_at_first_line(), expected);
+        for (input, in_location, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
+            line_buffer.assert_valid();
+
+            assert_eq!(line_buffer.is_cursor_at_first_line(), expected);
+        }
     }
 
-    #[rstest]
-    #[case("line", 4, true)]
-    #[case("line\nline", 9, true)]
-    #[case("line 1\nline 2\nline 3", 8, false)]
-    #[case("line 1\nline 2\nline 3", 13, false)]
-    #[case("line 1\nline 2\nline 3", 14, true)]
-    #[case("line 1\nline 2\nline 3", 20, true)]
-    #[case("line 1\nline 2\nline 3\n", 20, false)]
-    #[case("line 1\nline 2\nline 3\n", 21, true)]
-    fn test_last_line_detection(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] expected: bool,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
-        line_buffer.assert_valid();
+    #[test]
+    fn test_last_line_detection() {
+        let cases = [
+            ("line", 4, true),
+            ("line\nline", 9, true),
+            ("line 1\nline 2\nline 3", 8, false),
+            ("line 1\nline 2\nline 3", 13, false),
+            ("line 1\nline 2\nline 3", 14, true),
+            ("line 1\nline 2\nline 3", 20, true),
+            ("line 1\nline 2\nline 3\n", 20, false),
+            ("line 1\nline 2\nline 3\n", 21, true),
+        ];
 
-        assert_eq!(line_buffer.is_cursor_at_last_line(), expected);
+        for (input, in_location, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
+            line_buffer.assert_valid();
+
+            assert_eq!(line_buffer.is_cursor_at_last_line(), expected);
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 0, 'c', true, 2)]
-    #[case("abc def ghi", 0, 'a', true, 0)]
-    #[case("abc def ghi", 0, 'z', true, 0)]
-    #[case("a😇c", 0, 'c', true, 5)]
-    #[case("😇bc", 0, 'c', true, 5)]
-    #[case("abc\ndef", 0, 'f', true, 0)]
-    #[case("abc\ndef", 3, 'f', true, 3)]
-    #[case("abc\ndef", 0, 'f', false, 6)]
-    #[case("abc\ndef", 3, 'f', false, 6)]
-    fn test_move_right_until(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] c: char,
-        #[case] current_line: bool,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_move_right_until() {
+        let cases = [
+            ("abc def ghi", 0, 'c', true, 2),
+            ("abc def ghi", 0, 'a', true, 0),
+            ("abc def ghi", 0, 'z', true, 0),
+            ("a😇c", 0, 'c', true, 5),
+            ("😇bc", 0, 'c', true, 5),
+            ("abc\ndef", 0, 'f', true, 0),
+            ("abc\ndef", 3, 'f', true, 3),
+            ("abc\ndef", 0, 'f', false, 6),
+            ("abc\ndef", 3, 'f', false, 6),
+        ];
 
-        line_buffer.move_right_until(c, current_line);
+        for (input, position, c, current_line, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(line_buffer.insertion_point(), expected);
-        line_buffer.assert_valid();
+            line_buffer.move_right_until(c, current_line);
+
+            assert_eq!(line_buffer.insertion_point(), expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 0, 'd', true, 3)]
-    #[case("abc def ghi", 3, 'd', true, 3)]
-    #[case("a😇c", 0, 'c', true, 1)]
-    #[case("😇bc", 0, 'c', true, 4)]
-    fn test_move_right_before(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] c: char,
-        #[case] current_line: bool,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_move_right_before() {
+        let cases = [
+            ("abc def ghi", 0, 'd', true, 3),
+            ("abc def ghi", 3, 'd', true, 3),
+            ("a😇c", 0, 'c', true, 1),
+            ("😇bc", 0, 'c', true, 4),
+        ];
 
-        line_buffer.move_right_before(c, current_line);
+        for (input, position, c, current_line, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(line_buffer.insertion_point(), expected);
-        line_buffer.assert_valid();
+            line_buffer.move_right_before(c, current_line);
+
+            assert_eq!(line_buffer.insertion_point(), expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 0, 'd', true, "ef ghi")]
-    #[case("abc def ghi", 0, 'i', true, "")]
-    #[case("abc def ghi", 0, 'z', true, "abc def ghi")]
-    #[case("abc def ghi", 0, 'a', true, "abc def ghi")]
-    fn test_delete_until(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] c: char,
-        #[case] current_line: bool,
-        #[case] expected: &str,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_delete_until() {
+        let cases = [
+            ("abc def ghi", 0, 'd', true, "ef ghi"),
+            ("abc def ghi", 0, 'i', true, ""),
+            ("abc def ghi", 0, 'z', true, "abc def ghi"),
+            ("abc def ghi", 0, 'a', true, "abc def ghi"),
+        ];
 
-        line_buffer.delete_right_until_char(c, current_line);
+        for (input, position, c, current_line, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(line_buffer.lines, expected);
-        line_buffer.assert_valid();
+            line_buffer.delete_right_until_char(c, current_line);
+
+            assert_eq!(line_buffer.lines, expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 0, 'b', true, "bc def ghi")]
-    #[case("abc def ghi", 0, 'i', true, "i")]
-    #[case("abc def ghi", 0, 'z', true, "abc def ghi")]
-    fn test_delete_before(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] c: char,
-        #[case] current_line: bool,
-        #[case] expected: &str,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_delete_before() {
+        let cases = [
+            ("abc def ghi", 0, 'b', true, "bc def ghi"),
+            ("abc def ghi", 0, 'i', true, "i"),
+            ("abc def ghi", 0, 'z', true, "abc def ghi"),
+        ];
 
-        line_buffer.delete_right_before_char(c, current_line);
+        for (input, position, c, current_line, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(line_buffer.lines, expected);
-        line_buffer.assert_valid();
+            line_buffer.delete_right_before_char(c, current_line);
+
+            assert_eq!(line_buffer.lines, expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 4, 'c', true, 2)]
-    #[case("abc def ghi", 0, 'a', true, 0)]
-    #[case("abc def ghi", 6, 'a', true, 0)]
-    fn test_move_left_until(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] c: char,
-        #[case] current_line: bool,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_move_left_until() {
+        let cases = [
+            ("abc def ghi", 4, 'c', true, 2),
+            ("abc def ghi", 0, 'a', true, 0),
+            ("abc def ghi", 6, 'a', true, 0),
+        ];
 
-        line_buffer.move_left_until(c, current_line);
+        for (input, position, c, current_line, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(line_buffer.insertion_point(), expected);
-        line_buffer.assert_valid();
+            line_buffer.move_left_until(c, current_line);
+
+            assert_eq!(line_buffer.insertion_point(), expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 4, 'c', true, 3)]
-    #[case("abc def ghi", 0, 'a', true, 0)]
-    #[case("abc def ghi", 6, 'a', true, 1)]
-    fn test_move_left_before(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] c: char,
-        #[case] current_line: bool,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_move_left_before() {
+        let cases = [
+            ("abc def ghi", 4, 'c', true, 3),
+            ("abc def ghi", 0, 'a', true, 0),
+            ("abc def ghi", 6, 'a', true, 1),
+        ];
 
-        line_buffer.move_left_before(c, current_line);
+        for (input, position, c, current_line, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(line_buffer.insertion_point(), expected);
-        line_buffer.assert_valid();
+            line_buffer.move_left_before(c, current_line);
+
+            assert_eq!(line_buffer.insertion_point(), expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 5, 'b', true, "aef ghi")]
-    #[case("abc def ghi", 5, 'e', true, "abc def ghi")]
-    #[case("abc def ghi", 10, 'a', true, "i")]
-    #[case("z\nabc def ghi", 10, 'z', true, "z\nabc def ghi")]
-    #[case("z\nabc def ghi", 12, 'z', false, "i")]
-    fn test_delete_until_left(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] c: char,
-        #[case] current_line: bool,
-        #[case] expected: &str,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_delete_until_left() {
+        let cases = [
+            ("abc def ghi", 5, 'b', true, "aef ghi"),
+            ("abc def ghi", 5, 'e', true, "abc def ghi"),
+            ("abc def ghi", 10, 'a', true, "i"),
+            ("z\nabc def ghi", 10, 'z', true, "z\nabc def ghi"),
+            ("z\nabc def ghi", 12, 'z', false, "i"),
+        ];
 
-        line_buffer.delete_left_until_char(c, current_line);
+        for (input, position, c, current_line, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(line_buffer.lines, expected);
-        line_buffer.assert_valid();
+            line_buffer.delete_left_until_char(c, current_line);
+
+            assert_eq!(line_buffer.lines, expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 5, 'b', true, "abef ghi")]
-    #[case("abc def ghi", 5, 'e', true, "abc def ghi")]
-    #[case("abc def ghi", 10, 'a', true, "ai")]
-    fn test_delete_before_left(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] c: char,
-        #[case] current_line: bool,
-        #[case] expected: &str,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_delete_before_left() {
+        let cases = [
+            ("abc def ghi", 5, 'b', true, "abef ghi"),
+            ("abc def ghi", 5, 'e', true, "abc def ghi"),
+            ("abc def ghi", 10, 'a', true, "ai"),
+        ];
 
-        line_buffer.delete_left_before_char(c, current_line);
+        for (input, position, c, current_line, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(line_buffer.lines, expected);
-        line_buffer.assert_valid();
+            line_buffer.delete_left_before_char(c, current_line);
+
+            assert_eq!(line_buffer.lines, expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("line", 0, 4)]
-    #[case("line\nline", 1, 4)]
-    #[case("line\nline", 7, 9)]
-    // TODO: Check if this behavior is desired for full vi consistency
-    #[case("line\n", 4, 4)]
-    #[case("line\n", 5, 5)]
-    // Platform agnostic
-    #[case("\n", 0, 0)]
-    #[case("\r\n", 0, 0)]
-    #[case("line\r\nword", 1, 4)]
-    #[case("line\r\nword", 7, 10)]
-    fn test_find_current_line_end(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
-        line_buffer.assert_valid();
+    #[test]
+    fn test_find_current_line_end() {
+        let cases = [
+            ("line", 0, 4),
+            ("line\nline", 1, 4),
+            ("line\nline", 7, 9),
+            // TODO: Check if this behavior is desired for full vi consistency
+            ("line\n", 4, 4),
+            ("line\n", 5, 5),
+            // Platform agnostic
+            ("\n", 0, 0),
+            ("\r\n", 0, 0),
+            ("line\r\nword", 1, 4),
+            ("line\r\nword", 7, 10),
+        ];
 
-        assert_eq!(line_buffer.find_current_line_end(), expected);
+        for (input, in_location, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
+            line_buffer.assert_valid();
+
+            assert_eq!(line_buffer.find_current_line_end(), expected);
+        }
     }
 
-    #[rstest]
-    #[case("", 0, 0)]
-    #[case("\n", 0, 0)]
-    #[case("\n", 1, 1)]
-    #[case("a\nb", 0, 0)]
-    #[case("a\nb", 1, 0)]
-    #[case("a\nb", 2, 1)]
-    #[case("a\nbc", 3, 1)]
-    #[case("a\r\nb", 3, 1)]
-    #[case("a\r\nbc", 4, 1)]
-    fn test_current_line_num(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
-        line_buffer.assert_valid();
+    #[test]
+    fn test_current_line_num() {
+        let cases = [
+            ("", 0, 0),
+            ("\n", 0, 0),
+            ("\n", 1, 1),
+            ("a\nb", 0, 0),
+            ("a\nb", 1, 0),
+            ("a\nb", 2, 1),
+            ("a\nbc", 3, 1),
+            ("a\r\nb", 3, 1),
+            ("a\r\nbc", 4, 1),
+        ];
 
-        assert_eq!(line_buffer.line(), expected);
+        for (input, in_location, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
+            line_buffer.assert_valid();
+
+            assert_eq!(line_buffer.line(), expected);
+        }
     }
 
-    #[rstest]
-    #[case("", 0, 1)]
-    #[case("line", 0, 1)]
-    #[case("\n", 0, 2)]
-    #[case("line\n", 0, 2)]
-    #[case("a\nb", 0, 2)]
-    fn test_num_lines(#[case] input: &str, #[case] in_location: usize, #[case] expected: usize) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
-        line_buffer.assert_valid();
+    #[test]
+    fn test_num_lines() {
+        let cases = [
+            ("", 0, 1),
+            ("line", 0, 1),
+            ("\n", 0, 2),
+            ("line\n", 0, 2),
+            ("a\nb", 0, 2),
+        ];
 
-        assert_eq!(line_buffer.num_lines(), expected);
+        for (input, in_location, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
+            line_buffer.assert_valid();
+
+            assert_eq!(line_buffer.num_lines(), expected);
+        }
     }
 
-    #[rstest]
-    #[case("", 0, 0)]
-    #[case("line", 0, 4)]
-    #[case("\n", 0, 0)]
-    #[case("line\n", 0, 4)]
-    #[case("a\nb", 2, 3)]
-    #[case("a\nb", 0, 1)]
-    #[case("a\r\nb", 0, 1)]
-    fn test_move_to_line_end(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
+    #[test]
+    fn test_move_to_line_end() {
+        let cases = [
+            ("", 0, 0),
+            ("line", 0, 4),
+            ("\n", 0, 0),
+            ("line\n", 0, 4),
+            ("a\nb", 2, 3),
+            ("a\nb", 0, 1),
+            ("a\r\nb", 0, 1),
+        ];
 
-        line_buffer.move_to_line_end();
+        for (input, in_location, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
 
-        assert_eq!(line_buffer.insertion_point(), expected);
-        line_buffer.assert_valid();
+            line_buffer.move_to_line_end();
+
+            assert_eq!(line_buffer.insertion_point(), expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("", 0, 0)]
-    #[case("line", 3, 0)]
-    #[case("\n", 1, 1)]
-    #[case("\n", 0, 0)]
-    #[case("\nline", 3, 1)]
-    #[case("a\nb", 2, 2)]
-    #[case("a\nb", 3, 2)]
-    #[case("a\r\nb", 3, 3)]
-    fn test_move_to_line_start(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
+    #[test]
+    fn test_move_to_line_start() {
+        let cases = [
+            ("", 0, 0),
+            ("line", 3, 0),
+            ("\n", 1, 1),
+            ("\n", 0, 0),
+            ("\nline", 3, 1),
+            ("a\nb", 2, 2),
+            ("a\nb", 3, 2),
+            ("a\r\nb", 3, 3),
+        ];
 
-        line_buffer.move_to_line_start();
+        for (input, in_location, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
 
-        assert_eq!(line_buffer.insertion_point(), expected);
-        line_buffer.assert_valid();
+            line_buffer.move_to_line_start();
+
+            assert_eq!(line_buffer.insertion_point(), expected);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("", 0, 0..0)]
-    #[case("line", 0, 0..4)]
-    #[case("line\n", 0, 0..5)]
-    #[case("line\n", 4, 0..5)]
-    #[case("line\r\n", 0, 0..6)]
-    #[case("line\r\n", 4, 0..6)] // Position 5 would be invalid from a grapheme perspective
-    #[case("line\nsecond", 5, 5..11)]
-    #[case("line\r\nsecond", 7, 6..12)]
-    fn test_current_line_range(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] expected: Range<usize>,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
-        line_buffer.assert_valid();
+    #[test]
+    fn test_current_line_range() {
+        let cases = [
+            ("", 0, 0..0),
+            ("line", 0, 0..4),
+            ("line\n", 0, 0..5),
+            ("line\n", 4, 0..5),
+            ("line\r\n", 0, 0..6),
+            ("line\r\n", 4, 0..6), // Position 5 would be invalid from a grapheme perspective
+            ("line\nsecond", 5, 5..11),
+            ("line\r\nsecond", 7, 6..12),
+        ];
 
-        assert_eq!(line_buffer.current_line_range(), expected);
+        for (input, in_location, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
+            line_buffer.assert_valid();
+
+            assert_eq!(line_buffer.current_line_range(), expected);
+        }
     }
 
-    #[rstest]
-    #[case("This is a test", 7, "This is", 7)]
-    #[case("This is a test\nunrelated", 7, "This is\nunrelated", 7)]
-    #[case("This is a test\r\nunrelated", 7, "This is\r\nunrelated", 7)]
-    fn test_clear_to_line_end(
-        #[case] input: &str,
-        #[case] in_location: usize,
-        #[case] output: &str,
-        #[case] out_location: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
+    #[test]
+    fn test_clear_to_line_end() {
+        let cases = [
+            ("This is a test", 7, "This is", 7),
+            ("This is a test\nunrelated", 7, "This is\nunrelated", 7),
+            ("This is a test\r\nunrelated", 7, "This is\r\nunrelated", 7),
+        ];
 
-        line_buffer.clear_to_line_end();
+        for (input, in_location, output, out_location) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(in_location);
 
-        let mut expected = buffer_with(output);
-        expected.set_insertion_point(out_location);
+            line_buffer.clear_to_line_end();
 
-        assert_eq!(expected, line_buffer);
-        line_buffer.assert_valid();
+            let mut expected = buffer_with(output);
+            expected.set_insertion_point(out_location);
+
+            assert_eq!(expected, line_buffer);
+            line_buffer.assert_valid();
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 10, 8)]
-    #[case("abc def-ghi", 10, 8)]
-    #[case("abc def.ghi", 10, 4)]
-    fn test_word_left_index(#[case] input: &str, #[case] position: usize, #[case] expected: usize) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_word_left_index() {
+        let cases = [
+            ("abc def ghi", 10, 8),
+            ("abc def-ghi", 10, 8),
+            ("abc def.ghi", 10, 4),
+        ];
 
-        let index = line_buffer.word_left_index();
+        for (input, position, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(index, expected);
+            let index = line_buffer.word_left_index();
+
+            assert_eq!(index, expected);
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 10, 8)]
-    #[case("abc def-ghi", 10, 4)]
-    #[case("abc def.ghi", 10, 4)]
-    #[case("abc def   i", 10, 4)]
-    fn test_big_word_left_index(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_big_word_left_index() {
+        let cases = [
+            ("abc def ghi", 10, 8),
+            ("abc def-ghi", 10, 4),
+            ("abc def.ghi", 10, 4),
+            ("abc def   i", 10, 4),
+        ];
 
-        let index = line_buffer.big_word_left_index();
+        for (input, position, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(index, expected,);
+            let index = line_buffer.big_word_left_index();
+
+            assert_eq!(index, expected,);
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 0, 4)]
-    #[case("abc-def ghi", 0, 3)]
-    #[case("abc.def ghi", 0, 8)]
-    fn test_word_right_start_index(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_word_right_start_index() {
+        let cases = [
+            ("abc def ghi", 0, 4),
+            ("abc-def ghi", 0, 3),
+            ("abc.def ghi", 0, 8),
+        ];
 
-        let index = line_buffer.word_right_start_index();
+        for (input, position, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(index, expected);
+            let index = line_buffer.word_right_start_index();
+
+            assert_eq!(index, expected);
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 0, 4)]
-    #[case("abc-def ghi", 0, 8)]
-    #[case("abc.def ghi", 0, 8)]
-    fn test_big_word_right_start_index(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_big_word_right_start_index() {
+        let cases = [
+            ("abc def ghi", 0, 4),
+            ("abc-def ghi", 0, 8),
+            ("abc.def ghi", 0, 8),
+        ];
 
-        let index = line_buffer.big_word_right_start_index();
+        for (input, position, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(index, expected);
+            let index = line_buffer.big_word_right_start_index();
+
+            assert_eq!(index, expected);
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 0, 2)]
-    #[case("abc-def ghi", 0, 2)]
-    #[case("abc.def ghi", 0, 6)]
-    #[case("abc", 1, 2)]
-    #[case("abc", 2, 2)]
-    #[case("abc def", 2, 6)]
-    fn test_word_right_end_index(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_word_right_end_index() {
+        let cases = [
+            ("abc def ghi", 0, 2),
+            ("abc-def ghi", 0, 2),
+            ("abc.def ghi", 0, 6),
+            ("abc", 1, 2),
+            ("abc", 2, 2),
+            ("abc def", 2, 6),
+        ];
 
-        let index = line_buffer.word_right_end_index();
+        for (input, position, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(index, expected);
+            let index = line_buffer.word_right_end_index();
+
+            assert_eq!(index, expected);
+        }
     }
 
-    #[rstest]
-    #[case("abc def ghi", 0, 2)]
-    #[case("abc-def ghi", 0, 6)]
-    #[case("abc-def ghi", 5, 6)]
-    #[case("abc-def ghi", 6, 10)]
-    #[case("abc.def ghi", 0, 6)]
-    #[case("abc", 1, 2)]
-    #[case("abc", 2, 2)]
-    #[case("abc def", 2, 6)]
-    #[case("abc-def", 6, 6)]
-    fn test_big_word_right_end_index(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] expected: usize,
-    ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_big_word_right_end_index() {
+        let cases = [
+            ("abc def ghi", 0, 2),
+            ("abc-def ghi", 0, 6),
+            ("abc-def ghi", 5, 6),
+            ("abc-def ghi", 6, 10),
+            ("abc.def ghi", 0, 6),
+            ("abc", 1, 2),
+            ("abc", 2, 2),
+            ("abc def", 2, 6),
+            ("abc-def", 6, 6),
+        ];
 
-        let index = line_buffer.big_word_right_end_index();
+        for (input, position, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(index, expected);
+            let index = line_buffer.big_word_right_end_index();
+
+            assert_eq!(index, expected);
+        }
     }
 
-    #[rstest]
-    #[case("abc def", 0, 3)]
-    #[case("abc def ghi", 3, 7)]
-    #[case("abc", 1, 3)]
-    fn test_next_whitespace(#[case] input: &str, #[case] position: usize, #[case] expected: usize) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
+    #[test]
+    fn test_next_whitespace() {
+        let cases = [("abc def", 0, 3), ("abc def ghi", 3, 7), ("abc", 1, 3)];
 
-        let index = line_buffer.next_whitespace();
+        for (input, position, expected) in cases {
+            let mut line_buffer = buffer_with(input);
+            line_buffer.set_insertion_point(position);
 
-        assert_eq!(index, expected);
+            let index = line_buffer.next_whitespace();
+
+            assert_eq!(index, expected);
+        }
     }
 
-    #[rstest]
-    #[case("abc", 0, 1)] // Basic ASCII
-    #[case("abc", 1, 2)] // From middle position
-    #[case("abc", 2, 3)] // From last char
-    #[case("abc", 3, 3)] // From end of string
-    #[case("🦀rust", 0, 4)] // Unicode emoji
-    #[case("🦀rust", 4, 5)] // After emoji
-    #[case("é́", 0, 4)] // Combining characters
-    fn test_grapheme_right_index_from_pos(
-        #[case] input: &str,
-        #[case] position: usize,
-        #[case] expected: usize,
-    ) {
-        let mut line = LineBuffer::new();
-        line.insert_str(input);
-        assert_eq!(
-            line.grapheme_right_index_from_pos(position),
-            expected,
-            "input: {input:?}, pos: {position}"
-        );
+    #[test]
+    fn test_grapheme_right_index_from_pos() {
+        let cases = [
+            ("abc", 0, 1),    // Basic ASCII
+            ("abc", 1, 2),    // From middle position
+            ("abc", 2, 3),    // From last char
+            ("abc", 3, 3),    // From end of string
+            ("🦀rust", 0, 4), // Unicode emoji
+            ("🦀rust", 4, 5), // After emoji
+            ("é́", 0, 4),      // Combining characters
+        ];
+        for (input, position, expected) in cases {
+            let mut line = LineBuffer::new();
+            line.insert_str(input);
+            assert_eq!(
+                line.grapheme_right_index_from_pos(position),
+                expected,
+                "input: {input:?}, pos: {position}"
+            );
+        }
     }
 
     const BRACKET_PAIRS: &[(char, char); 3] = &[('(', ')'), ('[', ']'), ('{', '}')];
     const QUOTE_PAIRS: &[(char, char); 3] = &[('"', '"'), ('\'', '\''), ('`', '`')];
     // Tests for range_inside_current_quote - cursor inside or on the boundary
-    #[rstest]
-    #[case("foo(bar)baz", 5, BRACKET_PAIRS, Some(4..7))] // cursor on 'a' in "bar"
-    #[case("foo[bar]baz", 5, BRACKET_PAIRS, Some(4..7))] // square brackets
-    #[case("foo{bar}baz", 5, BRACKET_PAIRS, Some(4..7))] // curly brackets
-    #[case("foo(bar(baz)qux)end", 9, BRACKET_PAIRS, Some(8..11))] // cursor on 'a' in "baz", finds inner
-    #[case("foo(bar(baz)qux)end", 5, BRACKET_PAIRS, Some(4..15))] // cursor on 'a' in "bar", finds outer
-    #[case("foo([bar])baz", 6, BRACKET_PAIRS, Some(5..8))] // mixed bracket types, cursor on 'a' - should find [bar], not (...)
-    #[case("foo[(bar)]baz", 6, BRACKET_PAIRS, Some(5..8))] // reversed nesting, cursor on 'a' - should find (bar), not [...]
-    #[case("foo(bar)baz", 4, BRACKET_PAIRS, Some(4..7))] // cursor just after opening bracket
-    #[case("foo(bar)baz", 7, BRACKET_PAIRS, Some(4..7))] // cursor just before closing bracket
-    #[case("foo[]bar", 4, BRACKET_PAIRS, Some(4..4))] // empty square brackets
-    #[case("(content)", 0, BRACKET_PAIRS, Some(1..8))] // brackets at buffer start/end
-    #[case("a(b)c", 2, BRACKET_PAIRS, Some(2..3))] // minimal case - cursor inside brackets
-    #[case(r#"foo("bar")baz"#, 6, BRACKET_PAIRS, Some(4..9))] // quotes inside brackets
-    #[case(r#"foo"(bar)"baz"#, 6, BRACKET_PAIRS, Some(5..8))] // brackets inside quotes
-    #[case("())", 1, BRACKET_PAIRS, Some(1..1))] // extra closing bracket
-    #[case("", 0, BRACKET_PAIRS, None)] // empty buffer
-    #[case("(", 0, BRACKET_PAIRS, None)] // single opening bracket
-    #[case(")", 0, BRACKET_PAIRS, None)] // single closing bracket
-    #[case("", 0, BRACKET_PAIRS, None)] // empty buffer
-    #[case(r#"foo"bar"baz"#, 5, QUOTE_PAIRS, Some(4..7))] // cursor on 'a' in "bar"
-    #[case("foo'bar'baz", 5, QUOTE_PAIRS, Some(4..7))] // single quotes
-    #[case("foo`bar`baz", 5, QUOTE_PAIRS, Some(4..7))] // backticks
-    #[case(r#"'foo"baz`bar`taz"baz'"#, 0, QUOTE_PAIRS, Some(1..20))] // backticks
-    #[case(r#""foo"'bar'`baz`"#, 0, QUOTE_PAIRS, Some(1..4))] // cursor at start, should find first (double)
-    #[case("no quotes here", 5, QUOTE_PAIRS, None)] // no quotes in buffer
-    #[case(r#"unclosed "quotes"#, 10, QUOTE_PAIRS, None)] // unmatched quotes
-    #[case("", 0, QUOTE_PAIRS, None)] // empty buffer
-    fn test_range_inside_current_pair_group(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] pairs: &[(char, char); 3],
-        #[case] expected: Option<Range<usize>>,
-    ) {
-        let mut buf = LineBuffer::from(input);
-        buf.set_insertion_point(cursor_pos);
-        assert_eq!(buf.range_inside_current_pair_in_group(pairs), expected);
+    #[test]
+    fn test_range_inside_current_pair_group() {
+        let cases = [
+            ("foo(bar)baz", 5, BRACKET_PAIRS, Some(4..7)), // cursor on 'a' in "bar"
+            ("foo[bar]baz", 5, BRACKET_PAIRS, Some(4..7)), // square brackets
+            ("foo{bar}baz", 5, BRACKET_PAIRS, Some(4..7)), // curly brackets
+            ("foo(bar(baz)qux)end", 9, BRACKET_PAIRS, Some(8..11)), // cursor on 'a' in "baz", finds inner
+            ("foo(bar(baz)qux)end", 5, BRACKET_PAIRS, Some(4..15)), // cursor on 'a' in "bar", finds outer
+            ("foo([bar])baz", 6, BRACKET_PAIRS, Some(5..8)), // mixed bracket types, cursor on 'a' - should find [bar], not (...)
+            ("foo[(bar)]baz", 6, BRACKET_PAIRS, Some(5..8)), // reversed nesting, cursor on 'a' - should find (bar), not [...]
+            ("foo(bar)baz", 4, BRACKET_PAIRS, Some(4..7)),   // cursor just after opening bracket
+            ("foo(bar)baz", 7, BRACKET_PAIRS, Some(4..7)),   // cursor just before closing bracket
+            ("foo[]bar", 4, BRACKET_PAIRS, Some(4..4)),      // empty square brackets
+            ("(content)", 0, BRACKET_PAIRS, Some(1..8)),     // brackets at buffer start/end
+            ("a(b)c", 2, BRACKET_PAIRS, Some(2..3)), // minimal case - cursor inside brackets
+            (r#"foo("bar")baz"#, 6, BRACKET_PAIRS, Some(4..9)), // quotes inside brackets
+            (r#"foo"(bar)"baz"#, 6, BRACKET_PAIRS, Some(5..8)), // brackets inside quotes
+            ("())", 1, BRACKET_PAIRS, Some(1..1)),   // extra closing bracket
+            ("", 0, BRACKET_PAIRS, None),            // empty buffer
+            ("(", 0, BRACKET_PAIRS, None),           // single opening bracket
+            (")", 0, BRACKET_PAIRS, None),           // single closing bracket
+            ("", 0, BRACKET_PAIRS, None),            // empty buffer
+            (r#"foo"bar"baz"#, 5, QUOTE_PAIRS, Some(4..7)), // cursor on 'a' in "bar"
+            ("foo'bar'baz", 5, QUOTE_PAIRS, Some(4..7)), // single quotes
+            ("foo`bar`baz", 5, QUOTE_PAIRS, Some(4..7)), // backticks
+            (r#"'foo"baz`bar`taz"baz'"#, 0, QUOTE_PAIRS, Some(1..20)), // backticks
+            (r#""foo"'bar'`baz`"#, 0, QUOTE_PAIRS, Some(1..4)), // cursor at start, should find first (double)
+            ("no quotes here", 5, QUOTE_PAIRS, None),           // no quotes in buffer
+            (r#"unclosed "quotes"#, 10, QUOTE_PAIRS, None),     // unmatched quotes
+            ("", 0, QUOTE_PAIRS, None),                         // empty buffer
+        ];
+
+        for (input, cursor_pos, pairs, expected) in cases {
+            let mut buf = LineBuffer::from(input);
+            buf.set_insertion_point(cursor_pos);
+            assert_eq!(buf.range_inside_current_pair_in_group(pairs), expected);
+        }
     }
 
     // Tests for range_inside_next_pair_in_group - cursor before pairs, return range inside next pair if exists
-    #[rstest]
-    #[case("foo (bar)baz", 1, BRACKET_PAIRS, Some(5..8))] // cursor before brackets
-    #[case("foo []bar", 1, BRACKET_PAIRS, Some(5..5))] // cursor before empty brackets
-    #[case("(first)(second)", 4, BRACKET_PAIRS, Some(8..14))] // inside first, should find second
-    #[case("foo{bar[baz]qux}end", 0, BRACKET_PAIRS, Some(4..15))] // cursor at start, finds outermost
-    #[case("foo{bar[baz]qux}end", 1, BRACKET_PAIRS, Some(4..15))] // cursor before nested, finds innermost
-    #[case("foo{bar[baz]qux}end", 4, BRACKET_PAIRS, Some(8..11))] // cursor before nested, finds innermost
-    #[case("(){}[]", 0, BRACKET_PAIRS, Some(1..1))] // cursor at start, finds first empty pair
-    #[case("(){}[]", 2, BRACKET_PAIRS, Some(3..3))] // cursor between pairs, finds next
-    #[case("no brackets here", 5, BRACKET_PAIRS, None)] // no brackets found
-    #[case("", 0, BRACKET_PAIRS, None)] // empty buffer
-    #[case(r#"foo "'bar'" baz"#, 1, QUOTE_PAIRS, Some(5..10))] // cursor before nested quotes
-    #[case(r#"foo '' "bar" baz"#, 1, QUOTE_PAIRS, Some(5..5))] // cursor before first quotes
-    #[case(r#""foo"'bar`b'az`"#, 1, QUOTE_PAIRS, Some(6..11))] // cursor inside first quotes, find single quotes
-    #[case(r#""foo"'bar'`baz`"#, 6, QUOTE_PAIRS, Some(11..14))] // cursor after second quotes, find backticks
-    #[case(r#"zaz'foo"b`a`r"baz'zaz"#, 3, QUOTE_PAIRS, Some(4..17))] // range inside outermost nested quotes
-    #[case(r#""""#, 0, QUOTE_PAIRS, Some(1..1))] // single quote pair (empty) - should find it ahead
-    #[case(r#"""asdf"#, 0, QUOTE_PAIRS, Some(1..1))] // unmatched trailing quote
-    #[case(r#""foo"'bar'`baz`"#, 0, QUOTE_PAIRS, Some(1..4))] // cursor at start, should find first quotes
-    #[case(r#"foo'bar""#, 1, QUOTE_PAIRS, None)] // mismatched quotes
-    #[case("no quotes here", 5, QUOTE_PAIRS, None)] // no quotes in buffer
-    #[case("", 0, QUOTE_PAIRS, None)] // empty buffer
-    fn test_range_inside_next_pair_in_group(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] pairs: &[(char, char); 3],
-        #[case] expected: Option<Range<usize>>,
-    ) {
-        let mut buf = LineBuffer::from(input);
-        buf.set_insertion_point(cursor_pos);
-        assert_eq!(buf.range_inside_next_pair_in_group(pairs), expected);
+    #[test]
+    fn test_range_inside_next_pair_in_group() {
+        let cases = [
+            ("foo (bar)baz", 1, BRACKET_PAIRS, Some(5..8)), // cursor before brackets
+            ("foo []bar", 1, BRACKET_PAIRS, Some(5..5)),    // cursor before empty brackets
+            ("(first)(second)", 4, BRACKET_PAIRS, Some(8..14)), // inside first, should find second
+            ("foo{bar[baz]qux}end", 0, BRACKET_PAIRS, Some(4..15)), // cursor at start, finds outermost
+            ("foo{bar[baz]qux}end", 1, BRACKET_PAIRS, Some(4..15)), // cursor before nested, finds innermost
+            ("foo{bar[baz]qux}end", 4, BRACKET_PAIRS, Some(8..11)), // cursor before nested, finds innermost
+            ("(){}[]", 0, BRACKET_PAIRS, Some(1..1)), // cursor at start, finds first empty pair
+            ("(){}[]", 2, BRACKET_PAIRS, Some(3..3)), // cursor between pairs, finds next
+            ("no brackets here", 5, BRACKET_PAIRS, None), // no brackets found
+            ("", 0, BRACKET_PAIRS, None),             // empty buffer
+            (r#"foo "'bar'" baz"#, 1, QUOTE_PAIRS, Some(5..10)), // cursor before nested quotes
+            (r#"foo '' "bar" baz"#, 1, QUOTE_PAIRS, Some(5..5)), // cursor before first quotes
+            (r#""foo"'bar`b'az`"#, 1, QUOTE_PAIRS, Some(6..11)), // cursor inside first quotes, find single quotes
+            (r#""foo"'bar'`baz`"#, 6, QUOTE_PAIRS, Some(11..14)), // cursor after second quotes, find backticks
+            (r#"zaz'foo"b`a`r"baz'zaz"#, 3, QUOTE_PAIRS, Some(4..17)), // range inside outermost nested quotes
+            (r#""""#, 0, QUOTE_PAIRS, Some(1..1)), // single quote pair (empty) - should find it ahead
+            (r#"""asdf"#, 0, QUOTE_PAIRS, Some(1..1)), // unmatched trailing quote
+            (r#""foo"'bar'`baz`"#, 0, QUOTE_PAIRS, Some(1..4)), // cursor at start, should find first quotes
+            (r#"foo'bar""#, 1, QUOTE_PAIRS, None),              // mismatched quotes
+            ("no quotes here", 5, QUOTE_PAIRS, None),           // no quotes in buffer
+            ("", 0, QUOTE_PAIRS, None),                         // empty buffer
+        ];
+
+        for (input, cursor_pos, pairs, expected) in cases {
+            let mut buf = LineBuffer::from(input);
+            buf.set_insertion_point(cursor_pos);
+            assert_eq!(buf.range_inside_next_pair_in_group(pairs), expected);
+        }
     }
 
     // Tests for range_inside_current_pair - when cursor is inside a pair
-    #[rstest]
-    #[case("(abc)", 1, '(', ')', Some(1..4))] // cursor inside simple pair
-    #[case("foo(bar)baz", 3, '(', ')', Some(4..7))] // cursor inside pair
-    #[case("[abc]", 1, '[', ']', Some(1..4))] // square brackets
-    #[case("{abc}", 1, '{', '}', Some(1..4))] // curly brackets
-    #[case("foo(🦀bar)baz", 8, '(', ')', Some(4..11))] // emoji inside brackets - cursor inside (on 'b')
-    #[case("🦀(bar)🦀", 6, '(', ')', Some(5..8))] // emoji outside brackets - cursor inside
-    #[case("()", 1, '(', ')', Some(1..1))] // empty pair
-    #[case("foo()bar", 4, '(', ')', Some(4..4))] // empty pair - cursor inside
-    // Cases where cursor is not inside any pair
-    #[case("(abc)", 0, '(', ')', Some(1..4))] // cursor at start, not inside
-    #[case("foo(bar)baz", 2, '(', ')', None)] // cursor before pair
-    #[case("foo(bar)baz", 0, '(', ')', None)] // cursor at start of buffer
-    #[case("", 0, '(', ')', None)] // empty string
-    #[case("no brackets", 5, '(', ')', None)] // no brackets
-    #[case("(unclosed", 1, '(', ')', None)] // unclosed bracket
-    #[case("unclosed)", 1, '(', ')', None)] // unclosed bracket
-    #[case("end of line", 11, '(', ')', None)] // unclosed bracket
-    fn test_range_inside_current_pair(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] open_char: char,
-        #[case] close_char: char,
-        #[case] expected: Option<Range<usize>>,
-    ) {
-        let mut buf = LineBuffer::from(input);
-        buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_current_pair(open_char, close_char);
-        assert_eq!(
-            result, expected,
-            "Failed for input: '{}', cursor: {}, chars: '{}' '{}'",
-            input, cursor_pos, open_char, close_char
-        );
+    #[test]
+    fn test_range_inside_current_pair() {
+        let cases = [
+            ("(abc)", 1, '(', ')', Some(1..4)), // cursor inside simple pair
+            ("foo(bar)baz", 3, '(', ')', Some(4..7)), // cursor inside pair
+            ("[abc]", 1, '[', ']', Some(1..4)), // square brackets
+            ("{abc}", 1, '{', '}', Some(1..4)), // curly brackets
+            ("foo(🦀bar)baz", 8, '(', ')', Some(4..11)), // emoji inside brackets - cursor inside (on 'b')
+            ("🦀(bar)🦀", 6, '(', ')', Some(5..8)),      // emoji outside brackets - cursor inside
+            ("()", 1, '(', ')', Some(1..1)),             // empty pair
+            ("foo()bar", 4, '(', ')', Some(4..4)),       // empty pair - cursor inside
+            // Cases where cursor is not inside any pair
+            ("(abc)", 0, '(', ')', Some(1..4)), // cursor at start, not inside
+            ("foo(bar)baz", 2, '(', ')', None), // cursor before pair
+            ("foo(bar)baz", 0, '(', ')', None), // cursor at start of buffer
+            ("", 0, '(', ')', None),            // empty string
+            ("no brackets", 5, '(', ')', None), // no brackets
+            ("(unclosed", 1, '(', ')', None),   // unclosed bracket
+            ("unclosed)", 1, '(', ')', None),   // unclosed bracket
+            ("end of line", 11, '(', ')', None), // unclosed bracket
+        ];
+
+        for (input, cursor_pos, open_char, close_char, expected) in cases {
+            let mut buf = LineBuffer::from(input);
+            buf.set_insertion_point(cursor_pos);
+            let result = buf.range_inside_current_pair(open_char, close_char);
+            assert_eq!(
+                result, expected,
+                "Failed for input: '{}', cursor: {}, chars: '{}' '{}'",
+                input, cursor_pos, open_char, close_char
+            );
+        }
     }
 
     // Tests for range_inside_next_pair - when looking for the next pair forward
-    #[rstest]
-    #[case("(abc)", 0, '(', ')', Some(1..4))] // cursor at start, find first pair
-    #[case("foo(bar)baz", 2, '(', ')', Some(4..7))] // cursor before pair
-    #[case("(first)(second)", 4, '(', ')', Some(8..14))] // inside first, should find second
-    #[case("()", 0, '(', ')', Some(1..1))] // empty pair
-    #[case("foo()bar", 2, '(', ')', Some(4..4))] // empty pair
-    #[case("[abc]", 0, '[', ']', Some(1..4))] // square brackets
-    #[case("{abc}", 0, '{', '}', Some(1..4))] // curly brackets
-    #[case("foo(🦀bar)baz", 0, '(', ')', Some(4..11))] // emoji inside brackets - find from start
-    #[case("🦀(bar)🦀", 0, '(', ')', Some(5..8))] // emoji outside brackets - find from start
-    #[case("", 0, '(', ')', None)] // empty string
-    #[case("no brackets", 5, '(', ')', None)] // no brackets
-    #[case("(unclosed", 1, '(', ')', None)] // unclosed bracket
-    #[case("(abc)", 4, '(', ')', None)] // cursor after pair, no more pairs
-    #[case(r#""""#, 0, '"', '"', Some(1..1))] // single quote pair (empty) - should find it ahead
-    #[case(r#"""asdf"#, 0, '"', '"', Some(1..1))] // unmatched quote - should find it ahead
-    #[case(r#""foo"'bar'`baz`"#, 0, '"', '"', Some(1..4))] // cursor at start, should find first quotes
-    fn test_range_inside_next_pair(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] open_char: char,
-        #[case] close_char: char,
-        #[case] expected: Option<Range<usize>>,
-    ) {
-        let mut buf = LineBuffer::from(input);
-        buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_next_pair(open_char, close_char);
-        assert_eq!(
-            result, expected,
-            "Failed for input: '{}', cursor: {}, chars: '{}' '{}'",
-            input, cursor_pos, open_char, close_char
-        );
+    #[test]
+    fn test_range_inside_next_pair() {
+        let cases = [
+            ("(abc)", 0, '(', ')', Some(1..4)), // cursor at start, find first pair
+            ("foo(bar)baz", 2, '(', ')', Some(4..7)), // cursor before pair
+            ("(first)(second)", 4, '(', ')', Some(8..14)), // inside first, should find second
+            ("()", 0, '(', ')', Some(1..1)),    // empty pair
+            ("foo()bar", 2, '(', ')', Some(4..4)), // empty pair
+            ("[abc]", 0, '[', ']', Some(1..4)), // square brackets
+            ("{abc}", 0, '{', '}', Some(1..4)), // curly brackets
+            ("foo(🦀bar)baz", 0, '(', ')', Some(4..11)), // emoji inside brackets - find from start
+            ("🦀(bar)🦀", 0, '(', ')', Some(5..8)), // emoji outside brackets - find from start
+            ("", 0, '(', ')', None),            // empty string
+            ("no brackets", 5, '(', ')', None), // no brackets
+            ("(unclosed", 1, '(', ')', None),   // unclosed bracket
+            ("(abc)", 4, '(', ')', None),       // cursor after pair, no more pairs
+            (r#""""#, 0, '"', '"', Some(1..1)), // single quote pair (empty) - should find it ahead
+            (r#"""asdf"#, 0, '"', '"', Some(1..1)), // unmatched quote - should find it ahead
+            (r#""foo"'bar'`baz`"#, 0, '"', '"', Some(1..4)), // cursor at start, should find first quotes
+        ];
+
+        for (input, cursor_pos, open_char, close_char, expected) in cases {
+            let mut buf = LineBuffer::from(input);
+            buf.set_insertion_point(cursor_pos);
+            let result = buf.range_inside_next_pair(open_char, close_char);
+            assert_eq!(
+                result, expected,
+                "Failed for input: '{}', cursor: {}, chars: '{}' '{}'",
+                input, cursor_pos, open_char, close_char
+            );
+        }
     }
 
-    #[rstest]
+    #[test]
     // Test next quote is restricted to single line
-    #[case("line1\n\"quote\"", 7, '"', '"', None)] // Inside second line quote, no quotes after
-    #[case("\"quote\"\nline2", 2, '"', '"', None)] // No next quote on current line
-    #[case("line1\n\"quote\"", 6, '"', '"', Some(7..12))] // cursor at start of line 2
-    #[case("line1\n\"quote\"", 0, '"', '"', None)] // cursor line 1 doesn't find quote on line 2
-    #[case("line1\n\"quote\"", 5, '"', '"', None)] // cursor at end of line 1
-    fn test_multiline_next_quote_multiline(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] open_char: char,
-        #[case] close_char: char,
-        #[case] expected: Option<Range<usize>>,
-    ) {
-        let mut buf = LineBuffer::from(input);
-        buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_next_pair(open_char, close_char);
-        assert_eq!(
-            result,
-            expected,
-            "MULTILINE TEST - Input: {:?}, cursor: {}, chars: '{}' '{}', lines: {:?}",
-            input,
-            cursor_pos,
-            open_char,
-            close_char,
-            input.lines().collect::<Vec<_>>()
-        );
+    fn test_multiline_next_quote_multiline() {
+        let cases = [
+            ("line1\n\"quote\"", 7, '"', '"', None), // Inside second line quote, no quotes after
+            ("\"quote\"\nline2", 2, '"', '"', None), // No next quote on current line
+            ("line1\n\"quote\"", 6, '"', '"', Some(7..12)), // cursor at start of line 2
+            ("line1\n\"quote\"", 0, '"', '"', None), // cursor line 1 doesn't find quote on line 2
+            ("line1\n\"quote\"", 5, '"', '"', None), // cursor at end of line 1
+        ];
+
+        for (input, cursor_pos, open_char, close_char, expected) in cases {
+            let mut buf = LineBuffer::from(input);
+            buf.set_insertion_point(cursor_pos);
+            let result = buf.range_inside_next_pair(open_char, close_char);
+            assert_eq!(
+                result,
+                expected,
+                "MULTILINE TEST - Input: {:?}, cursor: {}, chars: '{}' '{}', lines: {:?}",
+                input,
+                cursor_pos,
+                open_char,
+                close_char,
+                input.lines().collect::<Vec<_>>()
+            );
+        }
     }
 
     // Test that range_inside_current_pair work across multiple lines
-    #[rstest]
-    #[case("line1\n(bracket)", 7, '(', ')', Some(7..14))] // cursor at bracket start on line 2
-    #[case("(bracket)\nline2", 2, '(', ')', Some(1..8))] // cursor inside bracket on line 1
-    #[case("line1\n(bracket)", 5, '(', ')', None)] // cursor end of line 1
-    #[case("(1\ninner\n3)", 4, '(', ')', Some(1..10))] // bracket spanning 3 lines
-    #[case("(1\ninner\n3)", 2, '(', ')', Some(1..10))] // bracket spanning 3 lines, cursor end of line 1
-    #[case("outer(\ninner(\ndeep\n)\nback\n)", 15, '(', ')', Some(13..19))] // nested multiline brackets
-    #[case("outer(\ninner(\ndeep\n)\nback\n)", 8, '(', ')', Some(6..26))] // nested multiline brackets
-    #[case("{\nkey: [\n  value\n]\n}", 10, '[', ']', Some(8..17))] // mixed bracket types across lines
-    fn test_multiline_bracket_behavior(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] open_char: char,
-        #[case] close_char: char,
-        #[case] expected: Option<Range<usize>>,
-    ) {
-        let mut buf = LineBuffer::from(input);
-        buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_current_pair(open_char, close_char);
-        assert_eq!(
-            result,
-            expected,
-            "MULTILINE BRACKET TEST - Input: {:?}, cursor: {}, chars: '{}' '{}', lines: {:?}",
-            input,
-            cursor_pos,
-            open_char,
-            close_char,
-            input.lines().collect::<Vec<_>>()
-        );
+    #[test]
+    fn test_multiline_bracket_behavior() {
+        let cases = [
+            ("line1\n(bracket)", 7, '(', ')', Some(7..14)), // cursor at bracket start on line 2
+            ("(bracket)\nline2", 2, '(', ')', Some(1..8)),  // cursor inside bracket on line 1
+            ("line1\n(bracket)", 5, '(', ')', None),        // cursor end of line 1
+            ("(1\ninner\n3)", 4, '(', ')', Some(1..10)),    // bracket spanning 3 lines
+            ("(1\ninner\n3)", 2, '(', ')', Some(1..10)), // bracket spanning 3 lines, cursor end of line 1
+            (
+                "outer(\ninner(\ndeep\n)\nback\n)",
+                15,
+                '(',
+                ')',
+                Some(13..19),
+            ), // nested multiline brackets
+            ("outer(\ninner(\ndeep\n)\nback\n)", 8, '(', ')', Some(6..26)), // nested multiline brackets
+            ("{\nkey: [\n  value\n]\n}", 10, '[', ']', Some(8..17)), // mixed bracket types across lines
+        ];
+
+        for (input, cursor_pos, open_char, close_char, expected) in cases {
+            let mut buf = LineBuffer::from(input);
+            buf.set_insertion_point(cursor_pos);
+            let result = buf.range_inside_current_pair(open_char, close_char);
+            assert_eq!(
+                result,
+                expected,
+                "MULTILINE BRACKET TEST - Input: {:?}, cursor: {}, chars: '{}' '{}', lines: {:?}",
+                input,
+                cursor_pos,
+                open_char,
+                close_char,
+                input.lines().collect::<Vec<_>>()
+            );
+        }
     }
 
     // Test next brackets work across multiple lines (unlike quotes which are line-restricted)
-    #[rstest]
-    #[case("line1\n(bracket)", 2, '(', ')', Some(7..14))] // cursor at bracket start on line 2
-    #[case("line1\n(bracket)", 5, '(', ')', Some(7..14))] // cursor end of line 1
-    #[case("outer(\ninner(\ndeep\n)\nback\n)", 0, '(', ')', Some(6..26))] // nested multiline brackets
-    #[case("outer(\ninner(\ndeep\n)\nback\n)", 8, '(', ')', Some(13..19))] // nested multiline brackets
-    fn test_multiline_next_bracket_behavior(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] open_char: char,
-        #[case] close_char: char,
-        #[case] expected: Option<Range<usize>>,
-    ) {
-        let mut buf = LineBuffer::from(input);
-        buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_next_pair(open_char, close_char);
-        assert_eq!(
-            result,
-            expected,
-            "MULTILINE BRACKET TEST - Input: {:?}, cursor: {}, chars: '{}' '{}', lines: {:?}",
-            input,
-            cursor_pos,
-            open_char,
-            close_char,
-            input.lines().collect::<Vec<_>>()
-        );
+    #[test]
+    fn test_multiline_next_bracket_behavior() {
+        let cases = [
+            ("line1\n(bracket)", 2, '(', ')', Some(7..14)), // cursor at bracket start on line 2
+            ("line1\n(bracket)", 5, '(', ')', Some(7..14)), // cursor end of line 1
+            ("outer(\ninner(\ndeep\n)\nback\n)", 0, '(', ')', Some(6..26)), // nested multiline brackets
+            (
+                "outer(\ninner(\ndeep\n)\nback\n)",
+                8,
+                '(',
+                ')',
+                Some(13..19),
+            ), // nested multiline brackets
+        ];
+
+        for (input, cursor_pos, open_char, close_char, expected) in cases {
+            let mut buf = LineBuffer::from(input);
+            buf.set_insertion_point(cursor_pos);
+            let result = buf.range_inside_next_pair(open_char, close_char);
+            assert_eq!(
+                result,
+                expected,
+                "MULTILINE BRACKET TEST - Input: {:?}, cursor: {}, chars: '{}' '{}', lines: {:?}",
+                input,
+                cursor_pos,
+                open_char,
+                close_char,
+                input.lines().collect::<Vec<_>>()
+            );
+        }
     }
 
     // Unicode safety tests for core pair-finding functionality
-    #[rstest]
-    #[case("(🦀)", 1, '(', ')', Some(1..5))] // emoji inside brackets
-    #[case("🦀(text)🦀", 5, '(', ')', Some(5..9))] // emojis outside brackets
-    #[case("(multi👨‍👩‍👧‍👦family)", 1, '(', ')', Some(1..37))] // complex emoji family inside (25 bytes)
-    #[case("(åëïöü)", 1, '(', ')', Some(1..11))] // accented characters
-    #[case("(mixed🦀åëïtext)", 1, '(', ')', Some(1..20))] // mixed unicode content
-    #[case("'🦀emoji🦀'", 1, '\'', '\'', Some(1..14))] // emojis in quotes
-    #[case("'mixed👨‍👩‍👧‍👦åëï'", 1, '\'', '\'', Some(1..37))] // complex 25 byte family emoji
-    fn test_range_inside_current_pair_unicode_safety(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] open_char: char,
-        #[case] close_char: char,
-        #[case] expected: Option<Range<usize>>,
-    ) {
-        let mut buf = LineBuffer::from(input);
-        buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_current_pair(open_char, close_char);
-        assert_eq!(result, expected);
-        // Verify buffer remains valid after operations
-        assert!(buf.is_valid());
+    #[test]
+    fn test_range_inside_current_pair_unicode_safety() {
+        let cases = [
+            ("(🦀)", 1, '(', ')', Some(1..5)),       // emoji inside brackets
+            ("🦀(text)🦀", 5, '(', ')', Some(5..9)), // emojis outside brackets
+            ("(multi👨‍👩‍👧‍👦family)", 1, '(', ')', Some(1..37)), // complex emoji family inside (25 bytes)
+            ("(åëïöü)", 1, '(', ')', Some(1..11)),   // accented characters
+            ("(mixed🦀åëïtext)", 1, '(', ')', Some(1..20)), // mixed unicode content
+            ("'🦀emoji🦀'", 1, '\'', '\'', Some(1..14)), // emojis in quotes
+            ("'mixed👨‍👩‍👧‍👦åëï'", 1, '\'', '\'', Some(1..37)), // complex 25 byte family emoji
+        ];
+
+        for (input, cursor_pos, open_char, close_char, expected) in cases {
+            let mut buf = LineBuffer::from(input);
+            buf.set_insertion_point(cursor_pos);
+            let result = buf.range_inside_current_pair(open_char, close_char);
+            assert_eq!(result, expected);
+            // Verify buffer remains valid after operations
+            assert!(buf.is_valid());
+        }
     }
 
-    #[rstest]
-    #[case("start🦀(content)end", 0, '(', ')', Some(10..17))] // emoji before brackets
-    #[case("start(🦀)end", 0, '(', ')', Some(6..10))] // emoji inside brackets to find
-    #[case("🦀'text'🦀", 0, '\'', '\'', Some(5..9))] // emoji before quotes
-    #[case("start'🦀text🦀'", 0, '\'', '\'', Some(6..18))] // emoji before quotes
-    #[case("start'multi👨‍👩‍👧‍👦family'end", 0, '\'', '\'', Some(6..42))] // complex 25 byte family emoji
-    #[case("start'👨‍👩‍👧‍👦multifamily'end", 0, '\'', '\'', Some(6..42))] // complex 25 byte family emoji
-    fn test_range_inside_next_pair_unicode_safety(
-        #[case] input: &str,
-        #[case] cursor_pos: usize,
-        #[case] open_char: char,
-        #[case] close_char: char,
-        #[case] expected: Option<Range<usize>>,
-    ) {
-        let mut buf = LineBuffer::from(input);
-        buf.set_insertion_point(cursor_pos);
-        let result = buf.range_inside_next_pair(open_char, close_char);
-        assert_eq!(result, expected);
-        // Verify buffer remains valid after operations
-        assert!(buf.is_valid());
+    #[test]
+    fn test_range_inside_next_pair_unicode_safety() {
+        let cases = [
+            ("start🦀(content)end", 0, '(', ')', Some(10..17)), // emoji before brackets
+            ("start(🦀)end", 0, '(', ')', Some(6..10)),         // emoji inside brackets to find
+            ("🦀'text'🦀", 0, '\'', '\'', Some(5..9)),          // emoji before quotes
+            ("start'🦀text🦀'", 0, '\'', '\'', Some(6..18)),    // emoji before quotes
+            ("start'multi👨‍👩‍👧‍👦family'end", 0, '\'', '\'', Some(6..42)), // complex 25 byte family emoji
+            ("start'👨‍👩‍👧‍👦multifamily'end", 0, '\'', '\'', Some(6..42)), // complex 25 byte family emoji
+        ];
+
+        for (input, cursor_pos, open_char, close_char, expected) in cases {
+            let mut buf = LineBuffer::from(input);
+            buf.set_insertion_point(cursor_pos);
+            let result = buf.range_inside_next_pair(open_char, close_char);
+            assert_eq!(result, expected);
+            // Verify buffer remains valid after operations
+            assert!(buf.is_valid());
+        }
     }
 }

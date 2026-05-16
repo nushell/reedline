@@ -72,8 +72,6 @@ impl<'menu> HistoryCompleter<'menu> {
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
     use super::*;
     use crate::*;
 
@@ -134,26 +132,32 @@ mod tests {
         Ok(())
     }
 
-    #[rstest]
-    #[case(vec![], "any", vec![])]
-    #[case(vec!["old match","recent match","between","recent match"], "match", vec!["recent match","old match"])]
-    #[case(vec!["a","b","c","a","b","c"], "", vec!["c","b","a"])]
-    fn complete_doesnt_return_duplicates(
-        #[case] history_items: Vec<&str>,
-        #[case] line: &str,
-        #[case] expected: Vec<&str>,
-    ) -> Result<()> {
-        let mut history = FileBackedHistory::new(history_items.len())?;
-        for history_item in history_items {
-            history.save(new_history_item(history_item))?;
+    #[test]
+    fn complete_doesnt_return_duplicates() -> Result<()> {
+        let cases = [
+            (vec![], "any", vec![]),
+            (
+                vec!["old match", "recent match", "between", "recent match"],
+                "match",
+                vec!["recent match", "old match"],
+            ),
+            (vec!["a", "b", "c", "a", "b", "c"], "", vec!["c", "b", "a"]),
+        ];
+
+        for (history_items, line, expected) in cases {
+            let mut history = FileBackedHistory::new(history_items.len())?;
+            for history_item in history_items {
+                history.save(new_history_item(history_item))?;
+            }
+            let mut sut = HistoryCompleter::new(&history);
+            let actual: Vec<String> = sut
+                .complete(line, line.len())
+                .into_iter()
+                .map(|suggestion| suggestion.value)
+                .collect();
+            assert_eq!(actual, expected);
         }
-        let mut sut = HistoryCompleter::new(&history);
-        let actual: Vec<String> = sut
-            .complete(line, line.len())
-            .into_iter()
-            .map(|suggestion| suggestion.value)
-            .collect();
-        assert_eq!(actual, expected);
+
         Ok(())
     }
 }

@@ -90,25 +90,29 @@ pub(crate) fn line_width(line: &str) -> usize {
 mod test {
     use super::*;
     use pretty_assertions::assert_eq;
-    use rstest::rstest;
 
-    #[rstest]
-    #[case("sentence\nsentence", "sentence\r\nsentence")]
-    #[case("sentence\r\nsentence", "sentence\r\nsentence")]
-    #[case("sentence\nsentence\n", "sentence\r\nsentence\r\n")]
-    #[case("😇\nsentence", "😇\r\nsentence")]
-    #[case("sentence\n😇", "sentence\r\n😇")]
-    #[case("\n", "\r\n")]
-    #[case("", "")]
-    fn test_coerce_crlf(#[case] input: &str, #[case] expected: &str) {
-        let result = coerce_crlf(input);
+    #[test]
+    fn test_coerce_crlf() {
+        let cases = [
+            ("sentence\nsentence", "sentence\r\nsentence"),
+            ("sentence\r\nsentence", "sentence\r\nsentence"),
+            ("sentence\nsentence\n", "sentence\r\nsentence\r\n"),
+            ("😇\nsentence", "😇\r\nsentence"),
+            ("sentence\n😇", "sentence\r\n😇"),
+            ("\n", "\r\n"),
+            ("", ""),
+        ];
 
-        assert_eq!(result, expected);
+        for (input, expected) in cases {
+            let result = coerce_crlf(input);
 
-        assert!(
-            input != expected || matches!(result, Cow::Borrowed(_)),
-            "Unnecessary allocation"
-        )
+            assert_eq!(result, expected);
+
+            assert!(
+                input != expected || matches!(result, Cow::Borrowed(_)),
+                "Unnecessary allocation"
+            )
+        }
     }
 
     /// Narrow-terminal regression: a zero-column terminal used to panic
@@ -120,16 +124,17 @@ mod test {
         assert_eq!(estimate_single_line_wraps("", 0), 0);
     }
 
-    #[rstest]
-    #[case("", 80, 0)]
-    #[case("hello", 80, 0)]
-    #[case("abcdefghij", 5, 1)]
-    #[case("abcdefghijk", 5, 2)]
-    fn estimate_single_line_wraps_basic(
-        #[case] line: &str,
-        #[case] columns: u16,
-        #[case] expected: usize,
-    ) {
-        assert_eq!(estimate_single_line_wraps(line, columns), expected);
+    #[test]
+    fn estimate_single_line_wraps_basic() {
+        let cases = [
+            ("", 80, 0),
+            ("hello", 80, 0),
+            ("abcdefghij", 5, 1),
+            ("abcdefghijk", 5, 2),
+        ];
+
+        for (line, columns, expected) in cases {
+            assert_eq!(estimate_single_line_wraps(line, columns), expected);
+        }
     }
 }

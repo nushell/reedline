@@ -173,85 +173,35 @@ impl<'prompt> PromptLines<'prompt> {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-    use rstest::rstest;
 
-    #[rstest]
-    #[case(
-        "~/path/",
-        "❯ ",
-        "",
-        100,
-        (9, 0)
-    )]
-    #[case(
-        "~/longer/path/\n",
-        "❯ ",
-        "test",
-        100,
-        (6, 0)
-    )]
-    #[case(
-        "~/longer/path/",
-        "\n❯ ",
-        "test",
-        100,
-        (6, 0)
-    )]
-    #[case(
-        "~/longer/path/\n",
-        "\n❯ ",
-        "test",
-        100,
-        (6, 0)
-    )]
-    #[case(
-        "~/path/",
-        "❯ ",
-        "very long input that does not fit in a single line",
-        40,
-        (19, 1)
-    )]
-    #[case(
-        "~/path/\n",
-        "\n❯\n ",
-        "very long input that does not fit in a single line",
-        10,
-        (1, 5)
-    )]
-    #[case(
-        "~/path/",
-        "❯ ",
-        "this is a text that contains newlines\n::: and a multiline prompt",
-        40,
-        (26, 2)
-    )]
-    #[case(
-        "~/path/",
-        "❯ ",
-        "this is a text that contains newlines\n::: and very loooooooooooooooong text that wraps",
-        40,
-        (8, 3)
-    )]
+    #[test]
+    fn test_cursor_pos() {
+        let cases=[
+            ( "~/path/", "❯ ", "", 100, (9, 0) ),
+            ( "~/longer/path/\n", "❯ ", "test", 100, (6, 0) ),
+            ( "~/longer/path/", "\n❯ ", "test", 100, (6, 0) ),
+            ( "~/longer/path/\n", "\n❯ ", "test", 100, (6, 0) ),
+            ( "~/path/", "❯ ", "very long input that does not fit in a single line", 40, (19, 1) ),
+            ( "~/path/\n", "\n❯\n ", "very long input that does not fit in a single line", 10, (1, 5) ),
+            ( "~/path/", "❯ ", "this is a text that contains newlines\n::: and a multiline prompt", 40, (26, 2) ),
+            ( "~/path/", "❯ ", "this is a text that contains newlines\n::: and very loooooooooooooooong text that wraps", 40, (8, 3) ),
+        ];
 
-    fn test_cursor_pos(
-        #[case] prompt_str_left: &str,
-        #[case] prompt_indicator: &str,
-        #[case] before_cursor: &str,
-        #[case] terminal_columns: u16,
-        #[case] expected: (u16, u16),
-    ) {
-        let prompt_lines = PromptLines {
-            prompt_str_left: Cow::Borrowed(prompt_str_left),
-            prompt_str_right: Cow::Borrowed(""),
-            prompt_indicator: Cow::Borrowed(prompt_indicator),
-            before_cursor: Cow::Borrowed(before_cursor),
-            after_cursor: Cow::Borrowed(""),
-            hint: Cow::Borrowed(""),
-            right_prompt_on_last_line: false,
-        };
+        for (prompt_str_left, prompt_indicator, before_cursor, terminal_columns, expected) in cases
+        {
+            let prompt_lines = PromptLines {
+                prompt_str_left: Cow::Borrowed(prompt_str_left),
+                prompt_str_right: Cow::Borrowed(""),
+                prompt_indicator: Cow::Borrowed(prompt_indicator),
+                before_cursor: Cow::Borrowed(before_cursor),
+                after_cursor: Cow::Borrowed(""),
+                hint: Cow::Borrowed(""),
+                right_prompt_on_last_line: false,
+            };
 
-        let pos = prompt_lines.cursor_pos(terminal_columns);
+            let pos = prompt_lines.cursor_pos(terminal_columns);
 
-        assert_eq!(pos, expected);
+            assert_eq!(pos, expected);
+        }
     }
 }

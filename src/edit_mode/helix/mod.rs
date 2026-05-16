@@ -77,7 +77,6 @@ mod tests {
     use super::*;
     use crate::enums::EditCommand;
     use crossterm::event::{Event, KeyEvent, KeyEventKind, KeyEventState};
-    use rstest::rstest;
 
     fn key_press(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
         Event::Key(KeyEvent {
@@ -175,27 +174,31 @@ mod tests {
         );
     }
 
-    #[rstest]
-    #[case(KeyCode::Char('h'))]
-    #[case(KeyCode::Left)]
-    fn pressing_left_key_or_h_in_normal_mode_moves_cursor_left(#[case] key_code: KeyCode) {
-        let mut helix_mode = Helix::new(PromptViMode::Normal);
+    #[test]
+    fn pressing_left_key_or_h_in_normal_mode_moves_cursor_left() {
+        let cases = [(KeyCode::Char('h')), (KeyCode::Left)];
 
-        assert_eq!(
-            helix_mode.parse_event(key_press(key_code, KeyModifiers::NONE)),
-            ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }])
-        );
+        for key_code in cases {
+            let mut helix_mode = Helix::new(PromptViMode::Normal);
+
+            assert_eq!(
+                helix_mode.parse_event(key_press(key_code, KeyModifiers::NONE)),
+                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }])
+            );
+        }
     }
 
-    #[rstest]
-    #[case(KeyCode::Char('l'))]
-    #[case(KeyCode::Right)]
-    fn pressing_right_key_or_l_in_normal_mode_moves_cursor_right(#[case] key_code: KeyCode) {
-        let mut helix_mode = Helix::new(PromptViMode::Normal);
+    #[test]
+    fn pressing_right_key_or_l_in_normal_mode_moves_cursor_right() {
+        let cases = [(KeyCode::Char('l')), (KeyCode::Right)];
 
-        assert_eq!(
-            helix_mode.parse_event(key_press(key_code, KeyModifiers::NONE)),
-            ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }])
-        );
+        for key_code in cases {
+            let mut helix_mode = Helix::new(PromptViMode::Normal);
+
+            assert_eq!(
+                helix_mode.parse_event(key_press(key_code, KeyModifiers::NONE)),
+                ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }])
+            );
+        }
     }
 }
