@@ -2581,19 +2581,6 @@ mod tests {
     }
 
     #[cfg(feature = "bashisms")]
-    fn reedline_with_history_and_string_lit_check(entries: &[&str]) -> Reedline {
-        let mut reedline =
-            Reedline::create().with_highlighter(Box::new(ExampleHighlighter::default()));
-        for entry in entries {
-            reedline
-                .history
-                .save(HistoryItem::from_command_line(*entry))
-                .expect("failed to save history");
-        }
-        reedline
-    }
-
-    #[cfg(feature = "bashisms")]
     fn reedline_with_history_default(entries: &[&str]) -> Reedline {
         let mut reedline =
             Reedline::create().with_highlighter(Box::new(SimpleMatchHighlighter::default()));
@@ -2604,27 +2591,6 @@ mod tests {
                 .expect("failed to save history");
         }
         reedline
-    }
-
-    #[cfg(feature = "bashisms")]
-    fn bang_string_detection_with_override() {
-        let cases = [
-            ("!!", true),
-            ("\"echo !!", false),
-            ("'echo !!", false),
-            ("'echo' !!", true),
-            ("\"echo !git", false),
-            ("'echo !git", false),
-            ("'Сегодня !!", false),
-            ("'今日は !!", false),
-            ("'🔥 !!", false),
-        ];
-
-        for (buffer, should_expand) in cases {
-            let mut reedline = reedline_with_history_and_string_lit_check(&["git status"]);
-            set_buffer_at_end(&mut reedline, buffer);
-            assert_eq!(reedline.parse_bang_command().is_some(), should_expand);
-        }
     }
 
     #[test]
