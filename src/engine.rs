@@ -436,7 +436,7 @@ impl Reedline {
     /// emits OSC 133 markers. Use [`MouseClickMode::EnabledWithOsc133`] to have
     /// Reedline emit OSC 133 markers with `click_events=1` so supporting terminals
     /// can send click events.
-    /// See: https://sw.kovidgoyal.net/kitty/shell-integration/#notes-for-shell-developers
+    /// See: <https://sw.kovidgoyal.net/kitty/shell-integration/#notes-for-shell-developers>
     #[must_use]
     pub fn with_mouse_click(mut self, mode: MouseClickMode) -> Self {
         self.mouse_click_mode = mode;
