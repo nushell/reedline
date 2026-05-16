@@ -2512,42 +2512,50 @@ mod tests {
         assert_eq!(reedline.current_buffer_contents(), "sudo git commit");
     }
 
-    #[rstest]
-    #[case("\"hello gc", false)]
-    #[case("'hello gc", false)]
-    #[case("\"hello\" gc", true)]
-    #[case("'Сегодня хороший gc", false)]
-    #[case("'Сегодня' gc", true)]
-    #[case("'今日はいい日だ gc", false)]
-    #[case("'🔥🎉 gc", false)]
-    fn abbreviation_string_detection_with_override(
-        #[case] buffer: &str,
-        #[case] should_expand: bool,
-    ) {
-        let mut reedline = reedline_with_abbrevs_and_string_lit_override(&[("gc", "git commit")]);
-        set_buffer_at_end(&mut reedline, buffer);
-        assert_eq!(
-            reedline.try_expand_abbreviation_at_cursor(true).is_some(),
-            should_expand
-        );
+    #[test]
+    fn abbreviation_string_detection_with_override() {
+        let cases = [
+            ("\"hello gc", false),
+            ("'hello gc", false),
+            ("\"hello\" gc", true),
+            ("'Сегодня хороший gc", false),
+            ("'Сегодня' gc", true),
+            ("'今日はいい日だ gc", false),
+            ("'🔥🎉 gc", false),
+        ];
+
+        for (buffer, should_expand) in cases {
+            let mut reedline =
+                reedline_with_abbrevs_and_string_lit_override(&[("gc", "git commit")]);
+            set_buffer_at_end(&mut reedline, buffer);
+            assert_eq!(
+                reedline.try_expand_abbreviation_at_cursor(true).is_some(),
+                should_expand
+            );
+        }
     }
 
-    #[rstest]
-    #[case("\"hello gc")]
-    #[case("'hello gc")]
-    #[case("\"hello\" gc")]
-    #[case("'Сегодня хороший gc")]
-    #[case("'Сегодня' gc")]
-    #[case("'今日はいい日だ gc")]
-    #[case("'🔥🎉 gc")]
-    fn abbreviation_string_detection_default(#[case] buffer: &str) {
-        let mut reedline =
-            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
-        set_buffer_at_end(&mut reedline, buffer);
-        assert!(
-            reedline.try_expand_abbreviation_at_cursor(true).is_some(),
-            "must expand when highlighter does not override is_inside_string_literal"
-        );
+    #[test]
+    fn abbreviation_string_detection_default() {
+        let cases = [
+            ("\"hello gc"),
+            ("'hello gc"),
+            ("\"hello\" gc"),
+            ("'Сегодня хороший gc"),
+            ("'Сегодня' gc"),
+            ("'今日はいい日だ gc"),
+            ("'🔥🎉 gc"),
+        ];
+
+        for buffer in cases {
+            let mut reedline =
+                reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+            set_buffer_at_end(&mut reedline, buffer);
+            assert!(
+                reedline.try_expand_abbreviation_at_cursor(true).is_some(),
+                "must expand when highlighter does not override is_inside_string_literal"
+            );
+        }
     }
 
     #[test]
@@ -2598,40 +2606,49 @@ mod tests {
         reedline
     }
 
-    #[rstest]
-    #[case("!!", true)]
-    #[case("\"echo !!", false)]
-    #[case("'echo !!", false)]
-    #[case("'echo' !!", true)]
-    #[case("\"echo !git", false)]
-    #[case("'echo !git", false)]
-    #[case("'Сегодня !!", false)]
-    #[case("'今日は !!", false)]
-    #[case("'🔥 !!", false)]
     #[cfg(feature = "bashisms")]
-    fn bang_string_detection_with_override(#[case] buffer: &str, #[case] should_expand: bool) {
-        let mut reedline = reedline_with_history_and_string_lit_check(&["git status"]);
-        set_buffer_at_end(&mut reedline, buffer);
-        assert_eq!(reedline.parse_bang_command().is_some(), should_expand);
+    fn bang_string_detection_with_override() {
+        let cases = [
+            ("!!", true),
+            ("\"echo !!", false),
+            ("'echo !!", false),
+            ("'echo' !!", true),
+            ("\"echo !git", false),
+            ("'echo !git", false),
+            ("'Сегодня !!", false),
+            ("'今日は !!", false),
+            ("'🔥 !!", false),
+        ];
+
+        for (buffer, should_expand) in cases {
+            let mut reedline = reedline_with_history_and_string_lit_check(&["git status"]);
+            set_buffer_at_end(&mut reedline, buffer);
+            assert_eq!(reedline.parse_bang_command().is_some(), should_expand);
+        }
     }
 
-    #[rstest]
-    #[case("\"echo !!")]
-    #[case("'echo !!")]
-    #[case("'echo' !!")]
-    #[case("\"echo !git")]
-    #[case("'echo !git")]
-    #[case("'Сегодня !!")]
-    #[case("'今日は !!")]
-    #[case("'🔥 !!")]
+    #[test]
     #[cfg(feature = "bashisms")]
-    fn bang_always_expands_without_override(#[case] buffer: &str) {
-        let mut reedline = reedline_with_history_default(&["git status"]);
-        set_buffer_at_end(&mut reedline, buffer);
-        assert!(
-            reedline.parse_bang_command().is_some(),
-            "must expand when highlighter does not override is_inside_string_literal"
-        );
+    fn bang_always_expands_without_override() {
+        let cases = [
+            "\"echo !!",
+            "'echo !!",
+            "'echo' !!",
+            "\"echo !git",
+            "'echo !git",
+            "'Сегодня !!",
+            "'今日は !!",
+            "'🔥 !!",
+        ];
+
+        for buffer in cases {
+            let mut reedline = reedline_with_history_default(&["git status"]);
+            set_buffer_at_end(&mut reedline, buffer);
+            assert!(
+                reedline.parse_bang_command().is_some(),
+                "must expand when highlighter does not override is_inside_string_literal"
+            );
+        }
     }
 
     #[test]
