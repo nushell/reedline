@@ -1696,20 +1696,6 @@ impl Reedline {
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
     pub fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         if self.input_mode == InputMode::HistoryTraversal {
-            if matches!(
-                self.history_cursor.get_navigation(),
-                HistoryNavigationQuery::Normal(_)
-            ) {
-                if let Some(string) = self.history_cursor.string_at_cursor() {
-                    // NOTE: `set_buffer` resets the insertion point,
-                    // which we should avoid during history navigation through the same buffer
-                    // https://github.com/nushell/reedline/pull/899
-                    if string != self.editor.get_buffer() {
-                        self.editor
-                            .set_buffer(string, UndoBehavior::HistoryNavigation);
-                    }
-                }
-            }
             self.input_mode = InputMode::Regular;
         }
 
@@ -2600,5 +2586,122 @@ mod tests {
             reedline.parse_bang_command().is_none(),
             "must not expand !prefix inside an unclosed single-quoted string"
         );
+    }
+
+    #[test]
+    fn test_move_to_line_start() {
+        let cases = [
+            "",
+            "line of text",
+"longgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line of text"
+        ];
+
+        for input in cases {
+            let mut reedline = Reedline::create();
+            let prompt = DefaultPrompt::default();
+
+            let insert_input_event =
+                ReedlineEvent::Edit(vec![EditCommand::InsertString(input.to_string())]);
+            let move_to_line_start_event =
+                ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: false }]);
+
+            // Have to resize, or painting.utils.estimate_single_line_wraps panics with divide-by-zero.
+            reedline
+                .handle_event(&prompt, ReedlineEvent::Resize(u16::MAX, u16::MAX))
+                .unwrap();
+
+            // Write the string, and then move to the start of the line.
+            reedline.handle_event(&prompt, insert_input_event).unwrap();
+            reedline
+                .handle_event(&prompt, move_to_line_start_event.clone())
+                .unwrap();
+            assert_eq!(reedline.editor.line_buffer().insertion_point(), 0);
+
+            // Enter the string into history, then scroll back up and move to the start of the line.
+            reedline
+                .handle_event(&prompt, ReedlineEvent::Enter)
+                .unwrap();
+            reedline.handle_event(&prompt, ReedlineEvent::Up).unwrap();
+            reedline
+                .handle_event(&prompt, move_to_line_start_event)
+                .unwrap();
+            assert_eq!(reedline.editor.line_buffer().insertion_point(), 0);
+        }
+    }
+
+    #[test]
+    fn test_move_to_line_start_multiline() {
+        let cases = [
+            ("a\nb", 2, 2),
+            ("123456789\n123456789\n123456789", 10, 20),
+            ("0\n1\n2\n3\n4\n5\n6\n7\n8\n9", 2, 18),
+        ];
+
+        for (input, second_line_start, last_line_start) in cases {
+            let mut reedline = Reedline::create();
+            let prompt = DefaultPrompt::default();
+
+            let insert_input_event =
+                ReedlineEvent::Edit(vec![EditCommand::InsertString(input.to_string())]);
+            let move_to_line_start_event =
+                ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: false }]);
+            let move_to_end_event =
+                ReedlineEvent::Edit(vec![EditCommand::MoveToEnd { select: false }]);
+
+            // Have to resize, or painting.utils.estimate_single_line_wraps panics with divide-by-zero.
+            reedline
+                .handle_event(&prompt, ReedlineEvent::Resize(u16::MAX, u16::MAX))
+                .unwrap();
+
+            // Write the string, and then move to the start of the last line.
+            reedline.handle_event(&prompt, insert_input_event).unwrap();
+            reedline
+                .handle_event(&prompt, move_to_line_start_event.clone())
+                .unwrap();
+            assert_eq!(
+                reedline.editor.line_buffer().insertion_point(),
+                last_line_start
+            );
+
+            // Enter the string into history, then scroll back up and move to the start of the first line.
+            reedline
+                .handle_event(&prompt, ReedlineEvent::Enter)
+                .unwrap();
+            reedline.handle_event(&prompt, ReedlineEvent::Up).unwrap();
+            reedline
+                .handle_event(&prompt, move_to_line_start_event.clone())
+                .unwrap();
+            assert_eq!(reedline.editor.line_buffer().insertion_point(), 0);
+
+            // Enter the string again, then scroll up in history, move down one line,
+            // and move to the start of the second line.
+            reedline
+                .handle_event(&prompt, ReedlineEvent::Enter)
+                .unwrap();
+            reedline.handle_event(&prompt, ReedlineEvent::Up).unwrap();
+            reedline.handle_event(&prompt, ReedlineEvent::Down).unwrap();
+            reedline
+                .handle_event(&prompt, move_to_line_start_event.clone())
+                .unwrap();
+            assert_eq!(
+                reedline.editor.line_buffer().insertion_point(),
+                second_line_start
+            );
+
+            // Enter the string again, then scroll up in history, move to the end of the text,
+            // and move to the start of the last line.
+            reedline
+                .handle_event(&prompt, ReedlineEvent::Enter)
+                .unwrap();
+            reedline.handle_event(&prompt, ReedlineEvent::Up).unwrap();
+            reedline.handle_event(&prompt, move_to_end_event).unwrap();
+            reedline
+                .handle_event(&prompt, move_to_line_start_event)
+                .unwrap();
+            assert_eq!(
+                reedline.editor.line_buffer().insertion_point(),
+                last_line_start
+            );
+        }
     }
 }
