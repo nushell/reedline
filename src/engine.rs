@@ -625,6 +625,9 @@ impl Reedline {
     /// A builder that adds abbreviations to the Reedline engine
     ///
     /// Overwrites any existing abbreviations with the same key.
+    ///
+    /// Note, by default abbreviations are expanded within string literals. To change this behavior
+    /// override the `is_inside_string_literal` function defined by [`Highlighter`].
     pub fn with_abbreviations(mut self, abbreviations: HashMap<String, String>) -> Self {
         self.abbreviations.extend(abbreviations);
         self
@@ -1759,7 +1762,10 @@ impl Reedline {
 
     /// Expands an abbreviation at the word before the cursor, if any exists
     ///
-    /// Note, expansion does not occur when inside a string.
+    /// Note, this method uses the `is_inside_string_literal` function defined by [`Highlighter`]
+    /// to decide whether to expand an abbreviation when the cursor is inside a string literal.
+    /// Unless overridden, `is_inside_string_literal` returns `false`, resulting in abbreviations
+    /// being expanded even when inside a string literal.
     fn try_expand_abbreviation_at_cursor(&mut self, submitted: bool) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
         let cursor_position_in_buffer = self.editor.insertion_point();
@@ -1785,7 +1791,10 @@ impl Reedline {
             // The first char in the buffer is a space or there are consecutive spaces
             return None;
         }
-        if self.editor.is_inside_string_literal(word_start) {
+        if self
+            .highlighter
+            .is_inside_string_literal(buffer, word_start)
+        {
             return None;
         }
 
@@ -1821,7 +1830,10 @@ impl Reedline {
             }
         }
 
-        if self.editor.is_inside_string_literal(parsed.remainder.len()) {
+        if self
+            .highlighter
+            .is_inside_string_literal(buffer, parsed.remainder.len())
+        {
             return None;
         }
 
@@ -2259,6 +2271,7 @@ mod tests {
     use super::*;
     use crate::terminal_extensions::semantic_prompt::PromptKind;
     use crate::DefaultPrompt;
+    use rstest::rstest;
 
     #[test]
     fn test_cursor_position_after_multiline_history_navigation() {
@@ -2441,12 +2454,24 @@ mod tests {
         }
     }
 
-    fn reedline_with_abbrevs(abbrevs: &[(&str, &str)]) -> Reedline {
+    fn reedline_with_abbrevs_and_string_lit_override(abbrevs: &[(&str, &str)]) -> Reedline {
         let map = abbrevs
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
-        Reedline::create().with_abbreviations(map)
+        Reedline::create()
+            .with_highlighter(Box::new(ExampleHighlighter::default()))
+            .with_abbreviations(map)
+    }
+
+    fn reedline_with_abbrevs_and_default_string_lit_check(abbrevs: &[(&str, &str)]) -> Reedline {
+        let map = abbrevs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        Reedline::create()
+            .with_highlighter(Box::new(SimpleMatchHighlighter::default()))
+            .with_abbreviations(map)
     }
 
     fn set_buffer_at_end(reedline: &mut Reedline, text: &str) {
@@ -2458,7 +2483,8 @@ mod tests {
 
     #[test]
     fn abbreviation_expands_on_submit() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
         set_buffer_at_end(&mut reedline, "gc");
         let event = reedline.try_expand_abbreviation_at_cursor(true);
         assert!(event.is_some(), "expected expansion on submit");
@@ -2471,20 +2497,23 @@ mod tests {
 
     #[test]
     fn abbreviation_no_match_returns_none() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
         set_buffer_at_end(&mut reedline, "gx");
         assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
     }
 
     #[test]
     fn abbreviation_empty_buffer_returns_none() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
         assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
     }
 
     #[test]
     fn abbreviation_expands_last_word_only() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
         set_buffer_at_end(&mut reedline, "sudo gc");
         let event = reedline.try_expand_abbreviation_at_cursor(true);
         assert!(event.is_some());
@@ -2495,29 +2524,48 @@ mod tests {
         assert_eq!(reedline.current_buffer_contents(), "sudo git commit");
     }
 
-    #[test]
-    fn abbreviation_no_expansion_inside_double_quoted_string() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
-        set_buffer_at_end(&mut reedline, "\"gc");
-        assert!(
-            reedline.try_expand_abbreviation_at_cursor(true).is_none(),
-            "must not expand inside an unclosed double-quoted string"
+    #[rstest]
+    #[case("\"hello gc", false)]
+    #[case("'hello gc", false)]
+    #[case("\"hello\" gc", true)]
+    #[case("'Сегодня хороший gc", false)]
+    #[case("'Сегодня' gc", true)]
+    #[case("'今日はいい日だ gc", false)]
+    #[case("'🔥🎉 gc", false)]
+    fn abbreviation_string_detection_with_override(
+        #[case] buffer: &str,
+        #[case] should_expand: bool,
+    ) {
+        let mut reedline = reedline_with_abbrevs_and_string_lit_override(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, buffer);
+        assert_eq!(
+            reedline.try_expand_abbreviation_at_cursor(true).is_some(),
+            should_expand
         );
     }
 
-    #[test]
-    fn abbreviation_no_expansion_inside_single_quoted_string() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
-        set_buffer_at_end(&mut reedline, "'gc");
+    #[rstest]
+    #[case("\"hello gc")]
+    #[case("'hello gc")]
+    #[case("\"hello\" gc")]
+    #[case("'Сегодня хороший gc")]
+    #[case("'Сегодня' gc")]
+    #[case("'今日はいい日だ gc")]
+    #[case("'🔥🎉 gc")]
+    fn abbreviation_string_detection_default(#[case] buffer: &str) {
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, buffer);
         assert!(
-            reedline.try_expand_abbreviation_at_cursor(true).is_none(),
-            "must not expand inside an unclosed single-quoted string"
+            reedline.try_expand_abbreviation_at_cursor(true).is_some(),
+            "must expand when highlighter does not override is_inside_string_literal"
         );
     }
 
     #[test]
     fn abbreviation_non_ascii_key_and_expansion() {
-        let mut reedline = reedline_with_abbrevs(&[("café", "coffee shop")]);
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("café", "coffee shop")]);
         set_buffer_at_end(&mut reedline, "café");
         let event = reedline.try_expand_abbreviation_at_cursor(true);
         assert!(event.is_some(), "expected expansion for non-ASCII key");
@@ -2530,14 +2578,16 @@ mod tests {
 
     #[test]
     fn abbreviation_leading_spaces_returns_none() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
         set_buffer_at_end(&mut reedline, "   ");
         assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
     }
 
     #[cfg(feature = "bashisms")]
-    fn reedline_with_history(entries: &[&str]) -> Reedline {
-        let mut reedline = Reedline::create();
+    fn reedline_with_history_and_string_lit_check(entries: &[&str]) -> Reedline {
+        let mut reedline =
+            Reedline::create().with_highlighter(Box::new(ExampleHighlighter::default()));
         for entry in entries {
             reedline
                 .history
@@ -2547,58 +2597,52 @@ mod tests {
         reedline
     }
 
-    #[test]
     #[cfg(feature = "bashisms")]
-    fn bang_command_expands_outside_quotes() {
-        let mut reedline = reedline_with_history(&["git status"]);
-        set_buffer_at_end(&mut reedline, "!!");
+    fn reedline_with_history_default(entries: &[&str]) -> Reedline {
+        let mut reedline =
+            Reedline::create().with_highlighter(Box::new(SimpleMatchHighlighter::default()));
+        for entry in entries {
+            reedline
+                .history
+                .save(HistoryItem::from_command_line(*entry))
+                .expect("failed to save history");
+        }
+        reedline
+    }
+
+    #[rstest]
+    #[case("!!", true)]
+    #[case("\"echo !!", false)]
+    #[case("'echo !!", false)]
+    #[case("'echo' !!", true)]
+    #[case("\"echo !git", false)]
+    #[case("'echo !git", false)]
+    #[case("'Сегодня !!", false)]
+    #[case("'今日は !!", false)]
+    #[case("'🔥 !!", false)]
+    #[cfg(feature = "bashisms")]
+    fn bang_string_detection_with_override(#[case] buffer: &str, #[case] should_expand: bool) {
+        let mut reedline = reedline_with_history_and_string_lit_check(&["git status"]);
+        set_buffer_at_end(&mut reedline, buffer);
+        assert_eq!(reedline.parse_bang_command().is_some(), should_expand);
+    }
+
+    #[rstest]
+    #[case("\"echo !!")]
+    #[case("'echo !!")]
+    #[case("'echo' !!")]
+    #[case("\"echo !git")]
+    #[case("'echo !git")]
+    #[case("'Сегодня !!")]
+    #[case("'今日は !!")]
+    #[case("'🔥 !!")]
+    #[cfg(feature = "bashisms")]
+    fn bang_always_expands_without_override(#[case] buffer: &str) {
+        let mut reedline = reedline_with_history_default(&["git status"]);
+        set_buffer_at_end(&mut reedline, buffer);
         assert!(
             reedline.parse_bang_command().is_some(),
-            "!! must expand when not inside a quoted string"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "bashisms")]
-    fn bang_command_no_expansion_inside_unclosed_double_quote() {
-        let mut reedline = reedline_with_history(&["git status"]);
-        set_buffer_at_end(&mut reedline, "\"echo !!");
-        assert!(
-            reedline.parse_bang_command().is_none(),
-            "must not expand !! inside an unclosed double-quoted string"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "bashisms")]
-    fn bang_command_no_expansion_inside_unclosed_single_quote() {
-        let mut reedline = reedline_with_history(&["git status"]);
-        set_buffer_at_end(&mut reedline, "'echo !!");
-        assert!(
-            reedline.parse_bang_command().is_none(),
-            "must not expand !! inside an unclosed single-quoted string"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "bashisms")]
-    fn bang_prefix_no_expansion_inside_unclosed_double_quote() {
-        let mut reedline = reedline_with_history(&["git status"]);
-        set_buffer_at_end(&mut reedline, "\"echo !git");
-        assert!(
-            reedline.parse_bang_command().is_none(),
-            "must not expand !prefix inside an unclosed double-quoted string"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "bashisms")]
-    fn bang_prefix_no_expansion_inside_unclosed_single_quote() {
-        let mut reedline = reedline_with_history(&["git status"]);
-        set_buffer_at_end(&mut reedline, "'echo !git");
-        assert!(
-            reedline.parse_bang_command().is_none(),
-            "must not expand !prefix inside an unclosed single-quoted string"
+            "must expand when highlighter does not override is_inside_string_literal"
         );
     }
 }
