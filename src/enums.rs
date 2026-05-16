@@ -65,7 +65,7 @@ pub enum TextObjectType {
     Word,
     /// WORD (delimited only by whitespace)
     BigWord,
-    /// (, ), [, ], {, }
+    /// (, ), \[, ], {, }
     Brackets,
     /// ", ', `
     Quote,
