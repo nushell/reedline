@@ -2204,6 +2204,7 @@ impl Reedline {
         Ok(messages)
     }
 
+    #[allow(unused_variables)]
     fn submit_buffer(&mut self, prompt: &dyn Prompt) -> io::Result<EventStatus> {
         let buffer = self.editor.get_buffer().to_string();
         self.hide_hints = true;
@@ -2212,6 +2213,8 @@ impl Reedline {
             self.repaint(transient_prompt.as_ref())?;
             self.transient_prompt = Some(transient_prompt);
         } else {
+            // Don't repaint when running unit test as it will fill up stdout with garbage
+            #[cfg(not(test))]
             self.repaint(prompt)?;
         }
         if !buffer.is_empty() {
