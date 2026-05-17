@@ -965,7 +965,7 @@ mod tests {
         for (buffer, insertion_point, prev_input, only_buffer_difference, output, pos) in cases {
             assert_eq!(
                 (output.to_string(), pos),
-                completer_input(&buffer, insertion_point, prev_input, only_buffer_difference)
+                completer_input(buffer, insertion_point, prev_input, only_buffer_difference)
             )
         }
     }
