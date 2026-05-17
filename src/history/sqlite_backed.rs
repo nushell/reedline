@@ -171,6 +171,20 @@ impl History for SqliteBackedHistory {
         Ok(())
     }
 
+    fn delete_old(&mut self, keep: usize) -> Result<usize> {
+        let len = self
+            .db
+            .execute("DELETE FROM history WHERE start_timestamp <= (
+                        SELECT start_timestamp FROM history ORDER BY start_timestamp DESC LIMIT 1 OFFSET ?
+                    );",
+                params![keep])
+            .map_err(map_sqlite_err)?;
+        self.db
+            .query_one("PRAGMA wal_checkpoint(TRUNCATE);", [], |_| Ok(()))
+            .map_err(map_sqlite_err)?;
+        Ok(len)
+    }
+
     fn sync(&mut self) -> std::io::Result<()> {
         // no-op (todo?)
         Ok(())

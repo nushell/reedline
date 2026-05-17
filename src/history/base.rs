@@ -202,6 +202,8 @@ pub trait History: Send {
     fn clear(&mut self) -> Result<()>;
     /// remove an item from this history
     fn delete(&mut self, h: HistoryItemId) -> Result<()>;
+    /// remove all history items, except the `keep` newest entries
+    fn delete_old(&mut self, keep: usize) -> Result<usize>;
     /// ensure that this history is written to disk
     fn sync(&mut self) -> std::io::Result<()>;
     /// get the history session id
@@ -217,10 +219,16 @@ mod test {
 
     use crate::HistorySessionId;
 
-    fn create_item(session: i64, cwd: &str, cmd: &str, exit_status: i64) -> HistoryItem {
+    fn create_item(
+        session: i64,
+        cwd: &str,
+        cmd: &str,
+        exit_status: i64,
+        start_timestamp: i64,
+    ) -> HistoryItem {
         HistoryItem {
             id: None,
-            start_timestamp: None,
+            start_timestamp: chrono::DateTime::from_timestamp_millis(start_timestamp),
             command_line: cmd.to_string(),
             session_id: Some(HistorySessionId::new(session)),
             hostname: Some("foohost".to_string()),
@@ -233,26 +241,53 @@ mod test {
     use std::time::Duration;
 
     use super::*;
+    fn create_history_file_backed() -> Result<crate::FileBackedHistory> {
+        let mut history = crate::FileBackedHistory::default();
+        history.save(create_item(1, "/", "dummy", 0, 0))?; // add dummy item so ids start with 1
+        Ok(history)
+    }
+
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    fn create_history_sqlite_backed() -> Result<crate::SqliteBackedHistory> {
+        crate::SqliteBackedHistory::in_memory()
+    }
+
+    fn fill_example_history(history: &mut impl History) -> Result<()> {
+        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0, 1))?; // 1
+        history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1, 2))?; // 2
+        history.save(create_item(1, "/home/me/Downloads", "unzip foo.zip", 0, 3))?; // 3
+        history.save(create_item(1, "/home/me/Downloads", "cd foo", 0, 4))?; // 4
+        history.save(create_item(1, "/home/me/Downloads/foo", "ls", 0, 5))?; // 5
+        history.save(create_item(1, "/home/me/Downloads/foo", "ls -alh", 0, 6))?; // 6
+        history.save(create_item(1, "/home/me/Downloads/foo", "cat x.txt", 0, 7))?; // 7
+
+        history.save(create_item(1, "/home/me", "cd /etc/nginx", 0, 8))?; // 8
+        history.save(create_item(1, "/etc/nginx", "ls -l", 0, 9))?; // 9
+        history.save(create_item(1, "/etc/nginx", "vim nginx.conf", 0, 10))?; // 10
+        history.save(create_item(1, "/etc/nginx", "vim htpasswd", 0, 11))?; // 11
+        history.save(create_item(1, "/etc/nginx", "cat nginx.conf", 0, 12))?; // 12
+        Ok(())
+    }
+
+    fn create_filled_example_history_file_backed() -> Result<crate::FileBackedHistory> {
+        let mut history = create_history_file_backed()?;
+        fill_example_history(&mut history)?;
+        Ok(history)
+    }
+
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    fn create_filled_example_history_sqlite_backed() -> Result<crate::SqliteBackedHistory> {
+        let mut history = create_history_sqlite_backed()?;
+        fill_example_history(&mut history)?;
+        Ok(history)
+    }
+
     fn create_filled_example_history() -> Result<Box<dyn History>> {
         #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
-        let mut history = crate::SqliteBackedHistory::in_memory()?;
+        let mut history = create_history_sqlite_backed()?;
         #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
-        let mut history = crate::FileBackedHistory::default();
-        #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
-        history.save(create_item(1, "/", "dummy", 0))?; // add dummy item so ids start with 1
-        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
-        history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
-        history.save(create_item(1, "/home/me/Downloads", "unzip foo.zip", 0))?; // 3
-        history.save(create_item(1, "/home/me/Downloads", "cd foo", 0))?; // 4
-        history.save(create_item(1, "/home/me/Downloads/foo", "ls", 0))?; // 5
-        history.save(create_item(1, "/home/me/Downloads/foo", "ls -alh", 0))?; // 6
-        history.save(create_item(1, "/home/me/Downloads/foo", "cat x.txt", 0))?; // 7
-
-        history.save(create_item(1, "/home/me", "cd /etc/nginx", 0))?; // 8
-        history.save(create_item(1, "/etc/nginx", "ls -l", 0))?; // 9
-        history.save(create_item(1, "/etc/nginx", "vim nginx.conf", 0))?; // 10
-        history.save(create_item(1, "/etc/nginx", "vim htpasswd", 0))?; // 11
-        history.save(create_item(1, "/etc/nginx", "cat nginx.conf", 0))?; // 12
+        let mut history = create_history_file_backed()?;
+        fill_example_history(&mut history)?;
         Ok(Box::new(history))
     }
 
@@ -415,8 +450,8 @@ mod test {
 
         // create history, add a few entries
         let mut history = open_history();
-        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
-        history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
+        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0, 1))?; // 1
+        history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1, 2))?; // 2
         assert_eq!(history.count_all()?, 2);
         drop(history);
 
@@ -438,7 +473,7 @@ mod test {
     #[test]
     fn history_size_zero() -> Result<()> {
         let mut history = crate::FileBackedHistory::new(0)?;
-        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?;
+        history.save(create_item(1, "/home/me", "cd ~/Downloads", 0, 0))?;
         assert_eq!(history.count_all()?, 0);
         let _ = history.sync();
         history.clear()?;
@@ -453,5 +488,43 @@ mod test {
 
         assert!(crate::FileBackedHistory::new(usize::MAX).is_err());
         assert!(crate::FileBackedHistory::new(HISTORY_SIZE).is_ok());
+    }
+
+    fn delete_old_history(mut history: impl History) -> Result<()> {
+        let count_before = history.count_all()?;
+        assert_ne!(count_before, 0);
+        // get last 2 elements
+        let mut items_keep = history.search(SearchQuery {
+            limit: Some(2),
+            ..SearchQuery::everything(SearchDirection::Backward, None)
+        })?;
+
+        // delete all history except the latest 2
+        let num_deleted = history.delete_old(2).unwrap();
+        assert_eq!(count_before - 2, i64::try_from(num_deleted).unwrap());
+        let count_after = history.count_all()?;
+        assert_eq!(count_after, 2);
+
+        // get all elements after delete old
+        let mut all_elements =
+            history.search(SearchQuery::everything(SearchDirection::Backward, None))?;
+
+        // make sure the elements are identical, except for the id, it can change
+        all_elements.iter_mut().for_each(|x| x.id = None);
+        items_keep.iter_mut().for_each(|x| x.id = None);
+        assert_eq!(all_elements, items_keep);
+
+        Ok(())
+    }
+
+    #[test]
+    fn delete_old_history_file_backed() -> Result<()> {
+        delete_old_history(create_filled_example_history_file_backed()?)
+    }
+
+    #[test]
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    fn delete_old_history_file_sqlite_backed() -> Result<()> {
+        delete_old_history(create_filled_example_history_sqlite_backed()?)
     }
 }

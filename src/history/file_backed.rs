@@ -209,6 +209,17 @@ impl History for FileBackedHistory {
         ))
     }
 
+    fn delete_old(&mut self, keep: usize) -> Result<usize> {
+        let len = self.entries.len();
+        if keep >= len {
+            return Ok(0)
+        }
+        let remove_len = len - keep;
+        let _ = self.entries.drain(..remove_len);
+        self.len_on_disk = self.len_on_disk.saturating_sub(remove_len);
+        Ok(remove_len)
+    }
+
     /// Writes unwritten history contents to disk.
     ///
     /// If file would exceed `capacity` truncates the oldest entries.
