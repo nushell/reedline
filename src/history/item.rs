@@ -27,11 +27,6 @@ impl HistorySessionId {
     pub(crate) const fn new(i: i64) -> HistorySessionId {
         HistorySessionId(i)
     }
-
-    /// get the raw value from this session id
-    pub fn as_raw(&self) -> i64 {
-        self.0
-    }
 }
 
 impl Display for HistorySessionId {
