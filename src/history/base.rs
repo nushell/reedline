@@ -527,4 +527,49 @@ mod test {
     fn delete_old_history_file_sqlite_backed() -> Result<()> {
         delete_old_history(create_filled_example_history_sqlite_backed()?)
     }
+
+    // truncate() must persist across a Drop -> sync -> reopen cycle for
+    // FileBackedHistory.
+    #[test]
+    fn truncate_history_with_backing_file() -> Result<()> {
+        let path: std::path::PathBuf = "target/test-history-truncate.txt".into();
+        let _ = std::fs::remove_file(&path);
+
+        // Write 12 entries; Drop runs sync() and persists them.
+        {
+            let mut history = crate::FileBackedHistory::with_file(100, path.clone())?;
+            fill_example_history(&mut history)?;
+        }
+
+        // Confirm the 12 entries are on disk.
+        {
+            let history = crate::FileBackedHistory::with_file(100, path.clone())?;
+            assert_eq!(history.count_all()?, 12);
+        }
+
+        // Truncate to 2, let Drop persist the deletion.
+        {
+            let mut history = crate::FileBackedHistory::with_file(100, path.clone())?;
+            let removed = history.truncate(2)?;
+            assert_eq!(removed, 10);
+            assert_eq!(
+                history.count_all()?,
+                2,
+                "in-memory truncate should leave 2 entries"
+            );
+        }
+
+        // The truncation must survive a reopen.
+        {
+            let history = crate::FileBackedHistory::with_file(100, path.clone())?;
+            assert_eq!(
+                history.count_all()?,
+                2,
+                "truncate must persist across reopen"
+            );
+        }
+
+        let _ = std::fs::remove_file(&path);
+        Ok(())
+    }
 }
