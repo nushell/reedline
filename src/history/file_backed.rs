@@ -209,7 +209,7 @@ impl History for FileBackedHistory {
         ))
     }
 
-    fn delete_old(&mut self, keep: usize) -> Result<usize> {
+    fn truncate(&mut self, keep: usize) -> Result<usize> {
         let len = self.entries.len();
         if keep >= len {
             return Ok(0)

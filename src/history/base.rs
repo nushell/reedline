@@ -202,8 +202,8 @@ pub trait History: Send {
     fn clear(&mut self) -> Result<()>;
     /// remove an item from this history
     fn delete(&mut self, h: HistoryItemId) -> Result<()>;
-    /// remove all history items, except the `keep` newest entries
-    fn delete_old(&mut self, keep: usize) -> Result<usize>;
+    /// remove history items, keeping the first `len` elements and removing the rest.
+    fn truncate(&mut self, len: usize) -> Result<usize>;
     /// ensure that this history is written to disk
     fn sync(&mut self) -> std::io::Result<()>;
     /// get the history session id
@@ -500,7 +500,7 @@ mod test {
         })?;
 
         // delete all history except the latest 2
-        let num_deleted = history.delete_old(2).unwrap();
+        let num_deleted = history.truncate(2).unwrap();
         assert_eq!(count_before - 2, i64::try_from(num_deleted).unwrap());
         let count_after = history.count_all()?;
         assert_eq!(count_after, 2);
