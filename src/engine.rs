@@ -1289,7 +1289,7 @@ impl Reedline {
                     return self.handle_editor_event(prompt, event);
                 }
                 if let Some(event) = self.try_expand_abbreviation_at_cursor(true) {
-                    return self.handle_editor_event(prompt, event);
+                    self.handle_editor_event(prompt, event)?;
                 }
 
                 let buffer = self.editor.get_buffer().to_string();
@@ -1308,7 +1308,7 @@ impl Reedline {
                     return self.handle_editor_event(prompt, event);
                 }
                 if let Some(event) = self.try_expand_abbreviation_at_cursor(true) {
-                    return self.handle_editor_event(prompt, event);
+                    self.handle_editor_event(prompt, event)?;
                 }
 
                 Ok(self.submit_buffer(prompt)?)
@@ -1319,7 +1319,7 @@ impl Reedline {
                     return self.handle_editor_event(prompt, event);
                 }
                 if let Some(event) = self.try_expand_abbreviation_at_cursor(true) {
-                    return self.handle_editor_event(prompt, event);
+                    self.handle_editor_event(prompt, event)?;
                 }
 
                 let cursor_position_in_buffer = self.editor.insertion_point();
