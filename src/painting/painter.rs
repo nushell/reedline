@@ -165,7 +165,15 @@ pub(crate) struct PromptLayout {
 pub struct Painter {
     // Stdout
     stdout: W,
+    /// Row where the prompt starts on screen. `_stale = false` means
+    /// the cached value is consistent with the terminal as of the
+    /// last successful query or paint; `true` means something may
+    /// have moved the cursor or written content we don't model, so
+    /// the next `repaint_buffer` must re-query. Call
+    /// `invalidate_prompt_start_row` from any new code path that
+    /// violates this invariant.
     prompt_start_row: u16,
+    prompt_start_row_stale: bool,
     // The number of lines that the prompt takes up
     prompt_height: u16,
     terminal_size: (u16, u16),
@@ -184,6 +192,9 @@ impl Painter {
         Painter {
             stdout,
             prompt_start_row: 0,
+            // `true` so `repaint_buffer` cannot trust an uninitialised
+            // row; `initialize_prompt_position` clears it.
+            prompt_start_row_stale: true,
             prompt_height: 0,
             terminal_size: (0, 0),
             last_required_lines: 0,
@@ -373,7 +384,18 @@ impl Painter {
                 }
             }
         };
+        // `prompt_start_row` matches the cursor row we just measured;
+        // mark fresh so subsequent paints can skip the drift-detection DSR.
+        self.prompt_start_row_stale = false;
         Ok(())
+    }
+
+    /// Mark `prompt_start_row` as possibly out of sync — the next
+    /// `repaint_buffer` will re-query the terminal. Call from any path
+    /// that lets something other than reedline's rendering move the
+    /// cursor (e.g. `$EDITOR`).
+    pub(crate) fn invalidate_prompt_start_row(&mut self) {
+        self.prompt_start_row_stale = true;
     }
 
     /// Main painter for the prompt and buffer
@@ -414,6 +436,9 @@ impl Painter {
                 .prompt_start_row
                 .saturating_sub(lines_before_cursor - 1);
             self.just_resized = false;
+            // Re-anchor complete; cache is back in sync with the
+            // prompt's post-resize screen origin.
+            self.prompt_start_row_stale = false;
         }
 
         // Lines and distance parameters
@@ -423,21 +448,36 @@ impl Painter {
         // Marking the painter state as larger buffer to avoid animations
         self.large_buffer = required_lines >= screen_height;
 
-        // This might not be terribly performant. Testing it out
-        let is_reset = || match cursor::position() {
-            // when output something without newline, the cursor position is at current line.
-            // but the prompt_start_row is next line.
-            // in this case we don't want to reset, need to `add 1` to handle for such case.
-            Ok(position) => position.1 + 1 < self.prompt_start_row,
-            Err(_) => false,
+        // True if the prompt has scrolled above the cached
+        // `prompt_start_row` and the caller must re-anchor at row 0.
+        // When stale, query the terminal; clear the stale flag if the
+        // query confirms no drift, so later paints can skip the query.
+        let should_reset_anchor = if self.prompt_start_row_stale {
+            match cursor::position() {
+                // The `+1` handles the case where the previous output
+                // ended without a newline, leaving the cursor on the
+                // same row as the next prompt.
+                Ok(position) => {
+                    let drifted = position.1 + 1 < self.prompt_start_row;
+                    if !drifted {
+                        self.prompt_start_row_stale = false;
+                    }
+                    drifted
+                }
+                Err(_) => false,
+            }
+        } else {
+            false
         };
 
         // Moving the start position of the cursor based on the size of the required lines
-        if self.large_buffer || is_reset() {
+        if self.large_buffer || should_reset_anchor {
             for _ in 0..screen_height.saturating_sub(lines_before_cursor) {
                 self.stdout.queue(Print(&coerce_crlf("\n")))?;
             }
             self.prompt_start_row = 0;
+            // The reset puts the prompt at row 0; cache is back in sync.
+            self.prompt_start_row_stale = false;
         } else if required_lines >= remaining_lines {
             let extra = required_lines.saturating_sub(remaining_lines);
             self.queue_universal_scroll(extra)?;
@@ -883,17 +923,17 @@ impl Painter {
     pub(crate) fn handle_resize(&mut self, width: u16, height: u16) {
         self.terminal_size = (width, height);
 
-        // `cursor::position() is blocking and can timeout.
-        // The question is whether we can afford it. If not, perhaps we should use it in some scenarios but not others
-        // The problem is trying to calculate this internally doesn't seem to be reliable because terminals might
-        // have additional text in their buffer that messes with the offset on scroll.
-        // It seems like it _should_ be ok because it only happens on resize.
+        // `prompt_start_row` is the cursor row here, not the prompt's
+        // screen origin; the `just_resized` branch in `repaint_buffer`
+        // will re-anchor and mark fresh.
+        self.invalidate_prompt_start_row();
 
-        // Known bug: on iterm2 and kitty, clearing the screen via CMD-K doesn't reset
-        // the position. Might need to special-case this.
+        // `cursor::position()` is blocking and can time out, but a
+        // resize happens infrequently enough that we accept the cost.
         //
-        // I assume this is a bug with the position() call but haven't figured that
-        // out yet.
+        // Known bug: on iterm2 and kitty, clearing the screen via CMD-K
+        // doesn't reset the cursor position — possibly a `position()`
+        // bug; not addressed here.
         #[cfg(not(test))]
         {
             if let Ok(position) = cursor::position() {
@@ -903,11 +943,15 @@ impl Painter {
         }
     }
 
-    /// Writes `line` to the terminal with a following carriage return and newline
+    /// Writes `line` to the terminal followed by `\r\n`. Invalidates
+    /// `prompt_start_row` defensively — current callers
+    /// (`print_history*`) only run between `read_line` cycles, but the
+    /// painter shouldn't trust a cache after content it didn't track.
     pub(crate) fn paint_line(&mut self, line: &str) -> Result<()> {
         self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
-
-        self.stdout.flush()
+        self.stdout.flush()?;
+        self.invalidate_prompt_start_row();
+        Ok(())
     }
 
     /// Goes to the beginning of the next line
@@ -998,6 +1042,12 @@ impl Painter {
                 self.prompt_start_row = new_start;
             }
         }
+        // External messages can contain ANSI escapes, ambiguous-width
+        // chars, embedded `\r`, etc. — modelling their on-screen extent
+        // precisely from the string is fragile. Invalidate instead; the
+        // next paint's DSR resynchronises. Cost: one DSR per
+        // external-printer batch.
+        self.invalidate_prompt_start_row();
         Ok(())
     }
 

@@ -1982,6 +1982,11 @@ impl Reedline {
                     child.wait()?;
                 }
 
+                // The spawned editor inherited our tty and may have left the
+                // cursor anywhere; ensure the next repaint will re-query the
+                // cursor position and accordingly update the prompt location.
+                self.painter.invalidate_prompt_start_row();
+
                 let res = std::fs::read_to_string(temp_file)?;
                 let res = res.trim_end().to_string();
 
