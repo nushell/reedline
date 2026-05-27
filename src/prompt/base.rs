@@ -43,7 +43,7 @@ impl PromptHistorySearch {
 }
 
 /// Modes that the prompt can be in
-#[derive(Serialize, Deserialize, Clone, Debug, EnumIter, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub enum PromptEditMode {
     /// The default mode
     #[default]
