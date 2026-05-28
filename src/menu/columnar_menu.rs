@@ -763,7 +763,7 @@ impl Menu for ColumnarMenu {
 
 #[cfg(test)]
 mod tests {
-    use std::io::BufWriter;
+    use crate::painting::W;
 
     use crate::{Span, UndoBehavior};
 
@@ -878,7 +878,7 @@ mod tests {
         completer: &mut dyn Completer,
         terminal_size: (u16, u16),
     ) {
-        let mut painter = Painter::new(BufWriter::new(std::io::stderr()));
+        let mut painter = Painter::new(W::sink());
         painter.handle_resize(terminal_size.0, terminal_size.1);
 
         menu.menu_event(MenuEvent::Activate(false));
