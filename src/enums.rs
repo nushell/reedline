@@ -384,6 +384,9 @@ pub enum EditCommand {
     /// Select whole input buffer
     SelectAll,
 
+    /// Select grapheme under cursor,
+    SelectChar,
+
     /// Cut selection to local buffer
     CutSelection,
 
@@ -536,9 +539,10 @@ impl EditCommand {
             | EditCommand::MoveLeftBefore { select, .. } => {
                 EditType::MoveCursor { select: *select }
             }
-            EditCommand::SwapCursorAndAnchor => EditType::MoveCursor { select: true },
-
-            EditCommand::SelectAll => EditType::MoveCursor { select: true },
+            // Selection
+            EditCommand::SwapCursorAndAnchor | EditCommand::SelectAll | EditCommand::SelectChar => {
+                EditType::MoveCursor { select: true }
+            }
             // Text edits
             EditCommand::InsertChar(_)
             | EditCommand::Backspace

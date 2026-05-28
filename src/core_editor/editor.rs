@@ -138,6 +138,7 @@ impl Editor {
                 self.move_left_until_char(*c, true, true, *select)
             }
             EditCommand::SelectAll => self.select_all(),
+            EditCommand::SelectChar => self.select_char(),
             EditCommand::CutSelection => self.cut_selection_to_cut_buffer(),
             EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
             EditCommand::Paste => self.paste_cut_buffer(),
@@ -640,6 +641,10 @@ impl Editor {
     fn select_all(&mut self) {
         self.selection_anchor = Some(0);
         self.line_buffer.move_to_end();
+    }
+
+    fn select_char(&mut self) {
+        self.update_selection_anchor(true);
     }
 
     #[cfg(feature = "system_clipboard")]
