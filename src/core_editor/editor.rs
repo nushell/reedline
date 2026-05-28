@@ -138,6 +138,7 @@ impl Editor {
                 self.move_left_until_char(*c, true, true, *select)
             }
             EditCommand::SelectAll => self.select_all(),
+            EditCommand::SelectChar => self.select_char(),
             EditCommand::CutSelection => self.cut_selection_to_cut_buffer(),
             EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
             EditCommand::Paste => self.paste_cut_buffer(),
@@ -640,6 +641,16 @@ impl Editor {
     fn select_all(&mut self) {
         self.selection_anchor = Some(0);
         self.line_buffer.move_to_end();
+    }
+
+    fn select_char(&mut self) {
+        self.update_selection_anchor(true);
+
+        // Normal vi mode already has inclusive selection via `get_selection`.
+        if !matches!(self.edit_mode, PromptEditMode::Vi(PromptViMode::Normal)) {
+            self.line_buffer
+                .set_insertion_point(self.line_buffer.grapheme_right_index());
+        }
     }
 
     #[cfg(feature = "system_clipboard")]
@@ -2167,5 +2178,47 @@ mod test {
 
         assert_eq!(bracket_result, expected_bracket);
         assert_eq!(quote_result, expected_quote);
+    }
+
+    #[rstest]
+    #[case("foo", 0, (0, 1))]
+    #[case("oof", 2, (2, 3))]
+    #[case("🇫oo", 0, (0, "🇫".len()))]
+    #[case("oo🇫", 2, (2, "oo🇫".len()))]
+    fn test_select_char(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected_selection: (usize, usize),
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(cursor_pos, false);
+        editor.select_char();
+
+        let selection = editor.get_selection();
+        assert_eq!(selection, Some(expected_selection));
+    }
+
+    #[rstest]
+    #[case("foo", 0, "oo")]
+    #[case("oof", 2, "oo")]
+    #[case("hello world", 6, "hello orld")]
+    #[case("🇫oo", 0, "oo")]
+    #[case("oo🇫", 2, "oo")]
+    fn test_vi_visual_mode_vd_deletes_char_under_cursor(
+        #[case] input: &str,
+        #[case] cursor_pos: usize,
+        #[case] expected: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.move_to_position(cursor_pos, false);
+
+        // `v` in normal mode -> select char under cursor
+        editor.run_edit_command(&EditCommand::SelectChar);
+        // `d` in visual mode -> cut the selection
+        editor.run_edit_command(&EditCommand::CutSelection);
+
+        assert_eq!(editor.get_buffer(), expected);
+        assert_eq!(editor.insertion_point(), cursor_pos);
     }
 }

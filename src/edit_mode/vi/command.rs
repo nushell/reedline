@@ -78,6 +78,13 @@ where
             let _ = input.next();
             Some(Command::EnterViAppend)
         }
+        Some('v') => {
+            let _ = input.next();
+            match mode {
+                ViMode::Normal => Some(Command::EnterViVisual),
+                _ => None,
+            }
+        }
         Some('u') => {
             let _ = input.next();
             Some(Command::Undo)
@@ -185,6 +192,7 @@ pub enum Command {
     PasteBefore,
     EnterViAppend,
     EnterViInsert,
+    EnterViVisual,
     Undo,
     ChangeToLineEnd,
     DeleteToEnd,
@@ -228,6 +236,10 @@ impl Command {
             Self::EnterViAppend => vec![ReedlineOption::Edit(EditCommand::MoveRight {
                 select: false,
             })],
+            Self::EnterViVisual => vec![
+                ReedlineOption::Event(ReedlineEvent::Esc),
+                ReedlineOption::Edit(EditCommand::SelectChar),
+            ],
             Self::NewlineAbove => vec![ReedlineOption::Edit(EditCommand::InsertNewlineAbove)],
             Self::NewlineBelow => vec![ReedlineOption::Edit(EditCommand::InsertNewlineBelow)],
             Self::PasteAfter => vec![ReedlineOption::Edit(EditCommand::PasteCutBufferAfter)],

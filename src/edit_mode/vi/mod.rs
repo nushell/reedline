@@ -78,11 +78,6 @@ impl EditMode for Vi {
             Event::Key(KeyEvent {
                 code, modifiers, ..
             }) => match (self.mode, modifiers, code) {
-                (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v')) => {
-                    self.cache.clear();
-                    self.mode = ViMode::Visual;
-                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
-                }
                 (ViMode::Normal | ViMode::Visual, modifier, KeyCode::Char(c)) => {
                     let c = c.to_ascii_lowercase();
 
@@ -341,5 +336,32 @@ mod test {
         let result = vi.parse_event(esc);
 
         assert_eq!(result, ReedlineEvent::None);
+    }
+
+    #[test]
+    fn v_selects_char_under_cursor_test() {
+        let mut vi = Vi {
+            insert_keybindings: default_vi_insert_keybindings(),
+            normal_keybindings: default_vi_normal_keybindings(),
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let v = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        let result = vi.parse_event(v);
+
+        // Should also select the grapheme, not just change mode
+        assert_eq!(vi.mode, ViMode::Visual);
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Esc,
+                ReedlineEvent::Edit(vec![EditCommand::SelectChar])
+            ])
+        );
     }
 }
