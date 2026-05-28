@@ -156,8 +156,20 @@ impl EditMode for Vi {
                 }
                 (_, KeyModifiers::NONE, KeyCode::Esc) => {
                     self.cache.clear();
+                    let was_insert = self.mode == ViMode::Insert;
                     self.mode = ViMode::Normal;
-                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+                    // In vim, exiting insert mode moves cursor left by one position
+                    // because insert mode cursor is between characters while normal mode
+                    // cursor is on a character
+                    if was_insert {
+                        ReedlineEvent::Multiple(vec![
+                            ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
+                            ReedlineEvent::Esc,
+                            ReedlineEvent::Repaint,
+                        ])
+                    } else {
+                        ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+                    }
                 }
                 (ViMode::Normal | ViMode::Visual, _, _) => self
                     .normal_keybindings
@@ -231,13 +243,17 @@ mod test {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn esc_leads_to_normal_mode_test() {
-        let mut vi = Vi::default();
+    fn esc_from_normal_mode_stays_in_normal_mode() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
         let esc =
             ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
                 .unwrap();
         let result = vi.parse_event(esc);
 
+        // Esc from normal mode should NOT move cursor left
         assert_eq!(
             result,
             ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
@@ -341,5 +357,30 @@ mod test {
         let result = vi.parse_event(esc);
 
         assert_eq!(result, ReedlineEvent::None);
+    }
+
+    #[test]
+    fn esc_from_insert_mode_moves_cursor_left() {
+        // In vim, pressing Escape from insert mode should move cursor left by one
+        // This is because insert mode cursor is between characters, but normal mode
+        // cursor is on a character. Repeating "i <esc> i <esc>" should slowly move backward.
+        let mut vi = Vi::default();
+        assert!(matches!(vi.mode, ViMode::Insert));
+
+        let esc =
+            ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+                .unwrap();
+        let result = vi.parse_event(esc);
+
+        // Should include MoveLeft to match vim behavior
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
+                ReedlineEvent::Esc,
+                ReedlineEvent::Repaint
+            ])
+        );
+        assert!(matches!(vi.mode, ViMode::Normal));
     }
 }
