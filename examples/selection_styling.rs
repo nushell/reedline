@@ -1,14 +1,14 @@
+#[allow(unused_imports)]
 use nu_ansi_term::{Color, Style};
 use reedline::{DefaultPrompt, Reedline, Signal, Vi};
 use std::io;
 
 fn main() -> io::Result<()> {
     // `with_visual_selection_style` accepts any `nu_ansi_term::Style`.
-    let selection_style = Style::new().on(Color::Blue).fg(Color::White);
+    let selection_style = Style::new().reverse();
 
     // Other shapes worth trying:
-    // let selection_style = Style::new().reverse();
-    // let selection_style = Style::new().fg(Color::Yellow).underline();
+    // let selection_style = Style::new().on(Color::Blue).fg(Color::White); let selection_style = Style::new().fg(Color::Yellow).underline();
     // let selection_style = Style::new().on(Color::Rgb(60, 60, 90)).bold();
 
     let mut line_editor = Reedline::create()
