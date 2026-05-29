@@ -52,6 +52,9 @@ impl<'menu> HistoryCompleter<'menu> {
         Self(history)
     }
 
+    /// Assumes `line.len() <= pos` (i.e. `line` is the cursor-prefix slice).
+    /// Update this span calculation before HistoryMenu opts into `InputMode::FullBuffer`,
+    /// where `line` would be the entire buffer and `pos - line.len()` would underflow.
     fn create_suggestion(&self, line: &str, pos: usize, value: &str) -> Suggestion {
         let span = Span {
             start: pos - line.len(),

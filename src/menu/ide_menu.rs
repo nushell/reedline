@@ -2,8 +2,8 @@ use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
-        can_partially_complete, completer_input, floor_char_boundary, get_match_indices,
-        replace_in_buffer, style_suggestion, truncate_with_ansi,
+        can_partially_complete, floor_char_boundary, get_match_indices, replace_in_buffer,
+        resolve_completer_input, style_suggestion, truncate_with_ansi,
     },
     painting::Painter,
     Completer, Suggestion,
@@ -620,16 +620,7 @@ impl Menu for IdeMenu {
 
     /// Update menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        if self.settings.only_buffer_difference && self.input.is_none() {
-            self.input = Some(editor.get_buffer().to_string());
-        }
-
-        let (input, pos) = completer_input(
-            editor.get_buffer(),
-            editor.insertion_point(),
-            self.input.as_deref(),
-            self.settings.only_buffer_difference,
-        );
+        let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
 
         self.values = values;
@@ -817,7 +808,7 @@ impl Menu for IdeMenu {
 
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        replace_in_buffer(self.get_value(), editor);
+        replace_in_buffer(self.get_value(), editor, self.settings.output_mode);
     }
 
     /// Minimum rows that should be displayed by the menu

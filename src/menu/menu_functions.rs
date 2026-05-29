@@ -10,7 +10,10 @@ use nu_ansi_term::{ansi::RESET, Style};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::{Editor, Suggestion, UndoBehavior};
+use crate::{
+    menu::{InputMode, MenuSettings, OutputMode},
+    Editor, Suggestion, UndoBehavior,
+};
 
 /// Index result obtained from parsing a string with an index marker
 /// For example, the next string:
@@ -272,29 +275,54 @@ pub fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &
 /// Get the part of the line that should be given as input to the completer, as well
 /// as the index of the end of that piece of text
 ///
-/// `prev_input` is the text in the buffer when the menu was activated. Needed if only_buffer_difference is true
+/// `prev_input` is the text in the buffer when the menu was activated. Needed for `InputMode::Diff`.
 pub fn completer_input(
     buffer: &str,
     insertion_point: usize,
     prev_input: Option<&str>,
-    only_buffer_difference: bool,
+    input_mode: InputMode,
 ) -> (String, usize) {
-    if only_buffer_difference {
-        if let Some(old_string) = prev_input {
-            let (start, input) = string_difference(buffer, old_string);
-            if !input.is_empty() {
-                (input.to_owned(), start + input.len())
+    match input_mode {
+        InputMode::FullBuffer => (buffer.to_owned(), insertion_point),
+        InputMode::CursorPrefix => {
+            // TODO previously, all but the list menu replaced newlines with spaces here
+            // The completers should be adapted to account for this, and tests need to be added
+            (buffer[..insertion_point].to_owned(), insertion_point)
+        }
+        InputMode::Diff => {
+            if let Some(old_string) = prev_input {
+                let (start, input) = string_difference(buffer, old_string);
+                if !input.is_empty() {
+                    (input.to_owned(), start + input.len())
+                } else {
+                    (String::new(), insertion_point)
+                }
             } else {
                 (String::new(), insertion_point)
             }
-        } else {
-            (String::new(), insertion_point)
         }
-    } else {
-        // TODO previously, all but the list menu replaced newlines with spaces here
-        // The completers should be adapted to account for this, and tests need to be added
-        (buffer[..insertion_point].to_owned(), insertion_point)
     }
+}
+
+/// Stashes the buffer on first call when in `InputMode::Diff` (so later calls can diff
+/// against the original), then resolves the completer input via [`completer_input`].
+///
+/// Centralises the input-resolution boilerplate shared by all menu `update_values` impls.
+pub fn resolve_completer_input(
+    editor: &Editor,
+    saved_input: &mut Option<String>,
+    settings: &MenuSettings,
+) -> (String, usize) {
+    let mode = settings.effective_input_mode();
+    if mode == InputMode::Diff && saved_input.is_none() {
+        *saved_input = Some(editor.get_buffer().to_string());
+    }
+    completer_input(
+        editor.get_buffer(),
+        editor.insertion_point(),
+        saved_input.as_deref(),
+        mode,
+    )
 }
 
 /// Find the closest index less than or equal to the current index that's a
@@ -314,7 +342,11 @@ pub fn floor_char_boundary(s: &str, index: usize) -> usize {
 }
 
 /// Helper to accept a completion suggestion and edit the buffer
-pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
+pub fn replace_in_buffer(
+    value: Option<Suggestion>,
+    editor: &mut Editor,
+    output_mode: Option<OutputMode>,
+) {
     if let Some(Suggestion {
         mut value,
         span,
@@ -322,8 +354,14 @@ pub fn replace_in_buffer(value: Option<Suggestion>, editor: &mut Editor) {
         ..
     }) = value
     {
-        let end = floor_char_boundary(editor.get_buffer(), span.end);
-        let start = floor_char_boundary(editor.get_buffer(), span.start).min(end);
+        let buffer_len = editor.get_buffer().len();
+        let (raw_start, raw_end) = match output_mode {
+            Some(OutputMode::FullBuffer) => (0, buffer_len),
+            Some(OutputMode::ExtendToEnd) => (span.start, buffer_len),
+            Some(OutputMode::SuggestedSpan) | None => (span.start, span.end),
+        };
+        let end = floor_char_boundary(editor.get_buffer(), raw_end);
+        let start = floor_char_boundary(editor.get_buffer(), raw_start).min(end);
         if append_whitespace {
             value.push(' ');
         }
@@ -948,24 +986,25 @@ mod tests {
     }
 
     #[rstest]
-    #[case("foobar", 6, None, false, "foobar", 6)]
-    #[case("foo\r\nbar", 5, None, false, "foo\r\n", 5)]
-    #[case("foo\nbar", 4, None, false, "foo\n", 4)]
-    #[case("foobar", 6, None, true, "", 6)]
-    #[case("foobar", 3, Some("foobar"), true, "", 3)]
-    #[case("foobar", 6, Some("foo"), true, "bar", 6)]
-    #[case("foobar", 6, Some("for"), true, "oba", 5)]
+    #[case("foobar", 6, None, InputMode::CursorPrefix, "foobar", 6)]
+    #[case("foo\r\nbar", 5, None, InputMode::CursorPrefix, "foo\r\n", 5)]
+    #[case("foo\nbar", 4, None, InputMode::CursorPrefix, "foo\n", 4)]
+    #[case("foobar", 6, None, InputMode::Diff, "", 6)]
+    #[case("foobar", 3, Some("foobar"), InputMode::Diff, "", 3)]
+    #[case("foobar", 6, Some("foo"), InputMode::Diff, "bar", 6)]
+    #[case("foobar", 6, Some("for"), InputMode::Diff, "oba", 5)]
+    #[case("foobar baz", 3, None, InputMode::FullBuffer, "foobar baz", 3)]
     fn test_completer_input(
         #[case] buffer: String,
         #[case] insertion_point: usize,
         #[case] prev_input: Option<&str>,
-        #[case] only_buffer_difference: bool,
+        #[case] input_mode: InputMode,
         #[case] output: String,
         #[case] pos: usize,
     ) {
         assert_eq!(
             (output, pos),
-            completer_input(&buffer, insertion_point, prev_input, only_buffer_difference)
+            completer_input(&buffer, insertion_point, prev_input, input_mode)
         )
     }
 
@@ -994,6 +1033,57 @@ mod tests {
                 ..Default::default()
             }),
             &mut editor,
+            None,
+        );
+        assert_eq!(new_buffer, editor.get_buffer());
+        assert_eq!(new_insertion_point, editor.insertion_point());
+
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(orig_buffer, editor.get_buffer());
+        assert_eq!(orig_insertion_point, editor.insertion_point());
+    }
+
+    #[rstest]
+    #[case::full_buffer(
+        "old content",
+        11,
+        "new",
+        3,
+        "new",
+        Span::new(0, 0),
+        OutputMode::FullBuffer
+    )]
+    #[case::extend_to_end(
+        "hello world",
+        11,
+        "hello rust",
+        10,
+        "rust",
+        Span::new(6, 8),
+        OutputMode::ExtendToEnd
+    )]
+    fn test_replace_in_buffer_with_output_mode(
+        #[case] orig_buffer: &str,
+        #[case] orig_insertion_point: usize,
+        #[case] new_buffer: &str,
+        #[case] new_insertion_point: usize,
+        #[case] value: String,
+        #[case] span: Span,
+        #[case] output_mode: OutputMode,
+    ) {
+        let mut editor = Editor::default();
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.set_buffer(orig_buffer.to_owned());
+        line_buffer.set_insertion_point(orig_insertion_point);
+        editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
+        replace_in_buffer(
+            Some(Suggestion {
+                value,
+                span,
+                ..Default::default()
+            }),
+            &mut editor,
+            Some(output_mode),
         );
         assert_eq!(new_buffer, editor.get_buffer());
         assert_eq!(new_insertion_point, editor.insertion_point());

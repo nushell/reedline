@@ -291,8 +291,9 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
 pub use menu::{
-    menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, IdeMenu, ListMenu, Menu,
-    MenuBuilder, MenuEvent, MenuSettings, MenuTextStyle, ReedlineMenu, TraversalDirection,
+    menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, IdeMenu, InputMode, ListMenu,
+    Menu, MenuBuilder, MenuEvent, MenuSettings, MenuTextStyle, OutputMode, ReedlineMenu,
+    TraversalDirection,
 };
 
 mod terminal_extensions;
