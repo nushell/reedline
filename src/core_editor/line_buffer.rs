@@ -1,4 +1,5 @@
 use {
+    crate::core_editor::graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
     itertools::Itertools,
     std::{convert::From, ops::Range},
     unicode_segmentation::UnicodeSegmentation,
@@ -174,20 +175,12 @@ impl LineBuffer {
 
     /// Cursor position *behind* the next unicode grapheme to the right from the given position
     pub fn grapheme_right_index_from_pos(&self, pos: usize) -> usize {
-        self.lines[pos..]
-            .grapheme_indices(true)
-            .nth(1)
-            .map(|(i, _)| pos + i)
-            .unwrap_or_else(|| self.lines.len())
+        next_grapheme_boundary(&self.lines, pos)
     }
 
     /// Cursor position *behind* the previous unicode grapheme to the left from the given position
     pub(crate) fn grapheme_left_index_from_pos(&self, pos: usize) -> usize {
-        self.lines[..pos]
-            .grapheme_indices(true)
-            .next_back()
-            .map(|(i, _)| i)
-            .unwrap_or(0)
+        prev_grapheme_boundary(&self.lines, pos)
     }
 
     /// Cursor position *behind* the next word to the right
@@ -223,13 +216,7 @@ impl LineBuffer {
                     .map(|x| self.insertion_point + x.0 + i)
                     .filter(|x| !is_whitespace_str(word) && *x != self.insertion_point)
             })
-            .unwrap_or_else(|| {
-                self.lines
-                    .grapheme_indices(true)
-                    .next_back()
-                    .map(|x| x.0)
-                    .unwrap_or(0)
-            })
+            .unwrap_or_else(|| prev_grapheme_boundary(&self.lines, self.lines.len()))
     }
 
     /// Cursor position *at end of* the next WORD to the right
@@ -248,13 +235,7 @@ impl LineBuffer {
                     None
                 }
             })
-            .unwrap_or_else(|| {
-                self.lines
-                    .grapheme_indices(true)
-                    .next_back()
-                    .map(|x| x.0)
-                    .unwrap_or(0)
-            })
+            .unwrap_or_else(|| prev_grapheme_boundary(&self.lines, self.lines.len()))
     }
 
     /// Cursor position *in front of* the next word to the right
@@ -426,7 +407,7 @@ impl LineBuffer {
     /// insertion point.
     ///
     /// Only LF is inserted regardless of platform. The painting layer
-    /// ([`coerce_crlf`]) is responsible for converting LF to CRLF when
+    /// (`coerce_crlf`) is responsible for converting LF to CRLF when
     /// writing to the terminal in raw mode.
     pub fn insert_newline(&mut self) {
         self.insert_char('\n');

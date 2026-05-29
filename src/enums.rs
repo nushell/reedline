@@ -1,6 +1,5 @@
 use crossterm::event::{Event, KeyEvent, KeyEventKind};
 use serde::{Deserialize, Serialize};
-use std::fmt::{Display, Formatter};
 use strum::{EnumDiscriminants, EnumIter, EnumString, VariantArray};
 
 /// Which mouse button was pressed.
@@ -65,7 +64,7 @@ pub enum TextObjectType {
     Word,
     /// WORD (delimited only by whitespace)
     BigWord,
-    /// (, ), [, ], {, }
+    /// (, ), \[, ], {, }
     Brackets,
     /// ", ', `
     Quote,
@@ -93,7 +92,7 @@ impl Default for TextObject {
 ///
 /// Executed by `Reedline::run_edit_commands()`
 #[non_exhaustive]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq, EnumDiscriminants, EnumIter)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq, EnumDiscriminants)]
 #[strum_discriminants(doc = "This is the auto generated discriminant type for [`EditCommand`]")]
 #[strum_discriminants(derive(EnumIter, EnumString, VariantArray))]
 #[strum_discriminants(strum(ascii_case_insensitive))]
@@ -511,150 +510,6 @@ pub enum EditCommand {
     },
 }
 
-// FIXME: This implementation makes no sense to be here, and should be removed in a future version
-// It was originally added for nushell to show all the available commands and their parameters to
-// the users. Hence some are marked `Optional` and some have different parameter names.
-// This is also very hard to keep in sync with nushell.
-// So, recently its discriminants are exposed using the strum EnumDiscriminants, and downstream is
-// expected to use that if they want to display the list of available commands to their users.
-impl Display for EditCommand {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        match self {
-            EditCommand::MoveToStart { .. } => write!(f, "MoveToStart Optional[select: <bool>]"),
-            EditCommand::MoveToLineStart { .. } => {
-                write!(f, "MoveToLineStart Optional[select: <bool>]")
-            }
-            EditCommand::MoveToLineNonBlankStart { .. } => {
-                write!(f, "MoveToLineNonBlankStart Optional[select: <bool>]")
-            }
-            EditCommand::MoveToEnd { .. } => write!(f, "MoveToEnd Optional[select: <bool>]"),
-            EditCommand::MoveToLineEnd { .. } => {
-                write!(f, "MoveToLineEnd Optional[select: <bool>]")
-            }
-            EditCommand::MoveLineUp { .. } => write!(f, "MoveLineUp Optional[select: <bool>]"),
-            EditCommand::MoveLineDown { .. } => write!(f, "MoveLineDown Optional[select: <bool>]"),
-            EditCommand::MoveLeft { .. } => write!(f, "MoveLeft Optional[select: <bool>]"),
-            EditCommand::MoveRight { .. } => write!(f, "MoveRight Optional[select: <bool>]"),
-            EditCommand::MoveWordLeft { .. } => write!(f, "MoveWordLeft Optional[select: <bool>]"),
-            EditCommand::MoveBigWordLeft { .. } => {
-                write!(f, "MoveBigWordLeft Optional[select: <bool>]")
-            }
-            EditCommand::MoveWordRight { .. } => {
-                write!(f, "MoveWordRight Optional[select: <bool>]")
-            }
-            EditCommand::MoveWordRightEnd { .. } => {
-                write!(f, "MoveWordRightEnd Optional[select: <bool>]")
-            }
-            EditCommand::MoveBigWordRightEnd { .. } => {
-                write!(f, "MoveBigWordRightEnd Optional[select: <bool>]")
-            }
-            EditCommand::MoveWordRightStart { .. } => {
-                write!(f, "MoveWordRightStart Optional[select: <bool>]")
-            }
-            EditCommand::MoveBigWordRightStart { .. } => {
-                write!(f, "MoveBigWordRightStart Optional[select: <bool>]")
-            }
-            EditCommand::MoveToPosition { .. } => {
-                write!(f, "MoveToPosition  Value: <int>, Optional[select: <bool>]")
-            }
-            EditCommand::MoveLeftUntil { .. } => {
-                write!(f, "MoveLeftUntil Value: <char>, Optional[select: <bool>]")
-            }
-            EditCommand::MoveLeftBefore { .. } => {
-                write!(f, "MoveLeftBefore Value: <char>, Optional[select: <bool>]")
-            }
-            EditCommand::InsertChar(_) => write!(f, "InsertChar  Value: <char>"),
-            EditCommand::InsertString(_) => write!(f, "InsertString Value: <string>"),
-            EditCommand::InsertNewline => write!(f, "InsertNewline"),
-            EditCommand::InsertNewlineAbove => write!(f, "InsertNewlineAbove"),
-            EditCommand::InsertNewlineBelow => write!(f, "InsertNewlineBelow"),
-            EditCommand::ReplaceChar(_) => write!(f, "ReplaceChar <char>"),
-            EditCommand::ReplaceChars(_, _) => write!(f, "ReplaceChars <int> <string>"),
-            EditCommand::Backspace => write!(f, "Backspace"),
-            EditCommand::Delete => write!(f, "Delete"),
-            EditCommand::CutChar => write!(f, "CutChar"),
-            EditCommand::CutCharLeft => write!(f, "CutCharLeft"),
-            EditCommand::BackspaceWord => write!(f, "BackspaceWord"),
-            EditCommand::DeleteWord => write!(f, "DeleteWord"),
-            EditCommand::Clear => write!(f, "Clear"),
-            EditCommand::ClearToLineEnd => write!(f, "ClearToLineEnd"),
-            EditCommand::Complete => write!(f, "Complete"),
-            EditCommand::CutCurrentLine => write!(f, "CutCurrentLine"),
-            EditCommand::CutFromStart => write!(f, "CutFromStart"),
-            EditCommand::CutFromStartLinewise { .. } => {
-                write!(f, "CutFromStartLinewise Value: <bool>")
-            }
-            EditCommand::CutFromLineStart => write!(f, "CutFromLineStart"),
-            EditCommand::CutFromLineNonBlankStart => write!(f, "CutFromLineNonBlankStart"),
-            EditCommand::CutToEnd => write!(f, "CutToEnd"),
-            EditCommand::CutToEndLinewise { .. } => {
-                write!(f, "CutToEndLinewise Value: <bool>")
-            }
-            EditCommand::CutToLineEnd => write!(f, "CutToLineEnd"),
-            EditCommand::KillLine => write!(f, "KillLine"),
-            EditCommand::CutWordLeft => write!(f, "CutWordLeft"),
-            EditCommand::CutBigWordLeft => write!(f, "CutBigWordLeft"),
-            EditCommand::CutWordRight => write!(f, "CutWordRight"),
-            EditCommand::CutBigWordRight => write!(f, "CutBigWordRight"),
-            EditCommand::CutWordRightToNext => write!(f, "CutWordRightToNext"),
-            EditCommand::CutBigWordRightToNext => write!(f, "CutBigWordRightToNext"),
-            EditCommand::PasteCutBufferBefore => write!(f, "PasteCutBufferBefore"),
-            EditCommand::PasteCutBufferAfter => write!(f, "PasteCutBufferAfter"),
-            EditCommand::UppercaseWord => write!(f, "UppercaseWord"),
-            EditCommand::LowercaseWord => write!(f, "LowercaseWord"),
-            EditCommand::SwitchcaseChar => write!(f, "SwitchcaseChar"),
-            EditCommand::CapitalizeChar => write!(f, "CapitalizeChar"),
-            EditCommand::SwapWords => write!(f, "SwapWords"),
-            EditCommand::SwapGraphemes => write!(f, "SwapGraphemes"),
-            EditCommand::Undo => write!(f, "Undo"),
-            EditCommand::Redo => write!(f, "Redo"),
-            EditCommand::CutRightUntil(_) => write!(f, "CutRightUntil Value: <char>"),
-            EditCommand::CutRightBefore(_) => write!(f, "CutRightBefore Value: <char>"),
-            EditCommand::MoveRightUntil { .. } => write!(f, "MoveRightUntil Value: <char>"),
-            EditCommand::MoveRightBefore { .. } => write!(f, "MoveRightBefore Value: <char>"),
-            EditCommand::CutLeftUntil(_) => write!(f, "CutLeftUntil Value: <char>"),
-            EditCommand::CutLeftBefore(_) => write!(f, "CutLeftBefore Value: <char>"),
-            EditCommand::SelectAll => write!(f, "SelectAll"),
-            EditCommand::CutSelection => write!(f, "CutSelection"),
-            EditCommand::CopySelection => write!(f, "CopySelection"),
-            EditCommand::Paste => write!(f, "Paste"),
-            EditCommand::CopyFromStart => write!(f, "CopyFromStart"),
-            EditCommand::CopyFromStartLinewise => write!(f, "CopyFromStartLinewise"),
-            EditCommand::CopyFromLineStart => write!(f, "CopyFromLineStart"),
-            EditCommand::CopyFromLineNonBlankStart => write!(f, "CopyFromLineNonBlankStart"),
-            EditCommand::CopyToEnd => write!(f, "CopyToEnd"),
-            EditCommand::CopyToEndLinewise => write!(f, "CopyToEndLinewise"),
-            EditCommand::CopyToLineEnd => write!(f, "CopyToLineEnd"),
-            EditCommand::CopyCurrentLine => write!(f, "CopyCurrentLine"),
-            EditCommand::CopyWordLeft => write!(f, "CopyWordLeft"),
-            EditCommand::CopyBigWordLeft => write!(f, "CopyBigWordLeft"),
-            EditCommand::CopyWordRight => write!(f, "CopyWordRight"),
-            EditCommand::CopyBigWordRight => write!(f, "CopyBigWordRight"),
-            EditCommand::CopyWordRightToNext => write!(f, "CopyWordRightToNext"),
-            EditCommand::CopyBigWordRightToNext => write!(f, "CopyBigWordRightToNext"),
-            EditCommand::CopyLeft => write!(f, "CopyLeft"),
-            EditCommand::CopyRight => write!(f, "CopyRight"),
-            EditCommand::CopyRightUntil(_) => write!(f, "CopyRightUntil Value: <char>"),
-            EditCommand::CopyRightBefore(_) => write!(f, "CopyRightBefore Value: <char>"),
-            EditCommand::CopyLeftUntil(_) => write!(f, "CopyLeftUntil Value: <char>"),
-            EditCommand::CopyLeftBefore(_) => write!(f, "CopyLeftBefore Value: <char>"),
-            EditCommand::SwapCursorAndAnchor => write!(f, "SwapCursorAndAnchor"),
-            #[cfg(feature = "system_clipboard")]
-            EditCommand::CutSelectionSystem => write!(f, "CutSelectionSystem"),
-            #[cfg(feature = "system_clipboard")]
-            EditCommand::CopySelectionSystem => write!(f, "CopySelectionSystem"),
-            #[cfg(feature = "system_clipboard")]
-            EditCommand::PasteSystem => write!(f, "PasteSystem"),
-            EditCommand::CutInsidePair { .. } => write!(f, "CutInsidePair Value: <char> <char>"),
-            EditCommand::CopyInsidePair { .. } => write!(f, "CopyInsidePair Value: <char> <char>"),
-            EditCommand::CutAroundPair { .. } => write!(f, "CutAroundPair Value: <char> <char>"),
-            EditCommand::CopyAroundPair { .. } => write!(f, "CopyAroundPair Value: <char> <char>"),
-            EditCommand::CutTextObject { .. } => write!(f, "CutTextObject Value: <TextObject>"),
-            EditCommand::CopyTextObject { .. } => write!(f, "CopyTextObject Value: <TextObject>"),
-        }
-    }
-}
-
 impl EditCommand {
     /// Determine if a certain operation should be undoable
     /// or if the operations should be coalesced for undoing
@@ -840,7 +695,7 @@ impl UndoBehavior {
 }
 
 /// Reedline supported actions.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, EnumDiscriminants, EnumIter)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, EnumDiscriminants)]
 #[strum_discriminants(doc = "This is the auto generated discriminant type for [`ReedlineEvent`]")]
 #[strum_discriminants(derive(EnumIter, EnumString, VariantArray))]
 #[strum_discriminants(strum(ascii_case_insensitive))]
@@ -986,64 +841,6 @@ pub enum ReedlineEvent {
 
     /// Change mode (vi mode only)
     ViChangeMode(String),
-}
-
-// FIXME: This implementation makes no sense to be here, and should be removed in a future version
-// It was originally added for nushell to show all the available commands and their parameters to
-// the users.
-// This is also very hard to keep in sync with nushell.
-// So, recently its discriminants are exposed using the strum EnumDiscriminants, and downstream is
-// expected to use that if they want to display the list of available commands to their users.
-impl Display for ReedlineEvent {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        match self {
-            ReedlineEvent::None => write!(f, "None"),
-            ReedlineEvent::HistoryHintComplete => write!(f, "HistoryHintComplete"),
-            ReedlineEvent::HistoryHintWordComplete => write!(f, "HistoryHintWordComplete"),
-            ReedlineEvent::CtrlD => write!(f, "CtrlD"),
-            ReedlineEvent::CtrlC => write!(f, "CtrlC"),
-            ReedlineEvent::ClearScreen => write!(f, "ClearScreen"),
-            ReedlineEvent::ClearScrollback => write!(f, "ClearScrollback"),
-            ReedlineEvent::Enter => write!(f, "Enter"),
-            ReedlineEvent::Submit => write!(f, "Submit"),
-            ReedlineEvent::SubmitOrNewline => write!(f, "SubmitOrNewline"),
-            ReedlineEvent::Esc => write!(f, "Esc"),
-            ReedlineEvent::Mouse {
-                column,
-                row,
-                button,
-            } => write!(f, "Mouse({}, {}, {:?})", column, row, button),
-            ReedlineEvent::Resize(_, _) => write!(f, "Resize <int> <int>"),
-            ReedlineEvent::Edit(_) => write!(
-                f,
-                "Edit: <EditCommand> or Edit: <EditCommand> value: <string>"
-            ),
-            ReedlineEvent::Repaint => write!(f, "Repaint"),
-            ReedlineEvent::PreviousHistory => write!(f, "PreviousHistory"),
-            ReedlineEvent::Up => write!(f, "Up"),
-            ReedlineEvent::Down => write!(f, "Down"),
-            ReedlineEvent::ToStart => write!(f, "ToStart"),
-            ReedlineEvent::ToEnd => write!(f, "ToEnd"),
-            ReedlineEvent::Right => write!(f, "Right"),
-            ReedlineEvent::Left => write!(f, "Left"),
-            ReedlineEvent::NextHistory => write!(f, "NextHistory"),
-            ReedlineEvent::SearchHistory => write!(f, "SearchHistory"),
-            ReedlineEvent::Multiple(_) => write!(f, "Multiple[ {{ ReedLineEvents, }} ]"),
-            ReedlineEvent::UntilFound(_) => write!(f, "UntilFound [ {{ ReedLineEvents, }} ]"),
-            ReedlineEvent::Menu(_) => write!(f, "Menu Name: <string>"),
-            ReedlineEvent::MenuNext => write!(f, "MenuNext"),
-            ReedlineEvent::MenuPrevious => write!(f, "MenuPrevious"),
-            ReedlineEvent::MenuUp => write!(f, "MenuUp"),
-            ReedlineEvent::MenuDown => write!(f, "MenuDown"),
-            ReedlineEvent::MenuLeft => write!(f, "MenuLeft"),
-            ReedlineEvent::MenuRight => write!(f, "MenuRight"),
-            ReedlineEvent::MenuPageNext => write!(f, "MenuPageNext"),
-            ReedlineEvent::MenuPagePrevious => write!(f, "MenuPagePrevious"),
-            ReedlineEvent::ExecuteHostCommand(_) => write!(f, "ExecuteHostCommand"),
-            ReedlineEvent::OpenEditor => write!(f, "OpenEditor"),
-            ReedlineEvent::ViChangeMode(_) => write!(f, "ViChangeMode mode: <string>"),
-        }
-    }
 }
 
 pub enum EventStatus {

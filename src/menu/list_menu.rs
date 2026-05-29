@@ -2,7 +2,7 @@ use {
     super::{menu_functions::parse_selection_char, Menu, MenuBuilder, MenuEvent, MenuSettings},
     crate::{
         core_editor::Editor,
-        menu_functions::{completer_input, replace_in_buffer},
+        menu_functions::{replace_in_buffer, resolve_completer_input},
         painting::{estimate_single_line_wraps, Painter},
         Completer, Suggestion,
     },
@@ -346,16 +346,7 @@ impl Menu for ListMenu {
 
     /// Collecting the value from the completer to be shown in the menu
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        if self.settings.only_buffer_difference && self.input.is_none() {
-            self.input = Some(editor.get_buffer().to_string());
-        }
-
-        let (input, pos) = completer_input(
-            editor.get_buffer(),
-            editor.insertion_point(),
-            self.input.as_deref(),
-            self.settings.only_buffer_difference,
-        );
+        let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
 
         let parsed = parse_selection_char(&input, SELECTION_CHAR);
         self.update_row_pos(parsed.index);
@@ -412,7 +403,7 @@ impl Menu for ListMenu {
 
     /// The buffer gets cleared with the actual value
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        replace_in_buffer(self.get_value(), editor);
+        replace_in_buffer(self.get_value(), editor, self.settings.output_mode);
     }
 
     fn update_working_details(

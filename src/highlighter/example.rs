@@ -15,6 +15,34 @@ pub struct ExampleHighlighter {
 }
 
 impl Highlighter for ExampleHighlighter {
+    fn is_inside_string_literal(&self, line: &str, cursor: usize) -> bool {
+        if line.is_empty() || cursor == 0 {
+            return false;
+        }
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut escaped = false;
+        let mut byte_pos = 0;
+        for &byte in line.as_bytes() {
+            if byte_pos >= cursor {
+                break;
+            }
+            if escaped {
+                escaped = false;
+                byte_pos += 1;
+                continue;
+            }
+            match byte {
+                b'\\' => escaped = true,
+                b'\'' if !in_double => in_single = !in_single,
+                b'"' if !in_single => in_double = !in_double,
+                _ => {}
+            }
+            byte_pos += 1;
+        }
+        in_single || in_double
+    }
+
     fn highlight(&self, line: &str, _cursor: usize) -> StyledText {
         let mut styled_text = StyledText::new();
 

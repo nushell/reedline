@@ -1,6 +1,7 @@
 mod clip_buffer;
 mod edit_stack;
 mod editor;
+mod graphemes;
 mod line_buffer;
 
 #[cfg(feature = "system_clipboard")]

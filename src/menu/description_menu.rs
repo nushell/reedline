@@ -1,7 +1,7 @@
 use {
     super::MenuSettings,
     crate::{
-        menu_functions::{completer_input, replace_in_buffer},
+        menu_functions::{replace_in_buffer, resolve_completer_input},
         Completer, Editor, Menu, MenuBuilder, MenuEvent, Painter, Suggestion,
     },
     nu_ansi_term::ansi::RESET,
@@ -443,16 +443,7 @@ impl Menu for DescriptionMenu {
 
     /// Updates menu values
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        if self.settings.only_buffer_difference && self.input.is_none() {
-            self.input = Some(editor.get_buffer().to_string());
-        }
-
-        let (input, pos) = completer_input(
-            editor.get_buffer(),
-            editor.insertion_point(),
-            self.input.as_deref(),
-            self.settings.only_buffer_difference,
-        );
+        let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
         self.values = completer.complete(&input, pos);
 
         self.reset_position();
@@ -593,7 +584,7 @@ impl Menu for DescriptionMenu {
                     .expect("the example index is always checked");
                 suggestion.value.clone_from(example);
             }
-            replace_in_buffer(Some(suggestion), editor);
+            replace_in_buffer(Some(suggestion), editor, self.settings.output_mode);
         }
     }
 
