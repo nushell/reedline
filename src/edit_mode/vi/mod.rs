@@ -347,10 +347,6 @@ mod test {
         assert_eq!(result, ReedlineEvent::None);
     }
 
-    // ==========================================================================
-    // Mode entry / exit
-    // ==========================================================================
-
     #[test]
     fn v_in_normal_enters_visual() {
         let mut vi = Vi {
@@ -391,10 +387,6 @@ mod test {
         let _ = vi.parse_event(key(KeyCode::Esc, KeyModifiers::NONE));
         assert!(vi.cache.is_empty(), "Esc should clear the cache");
     }
-
-    // ==========================================================================
-    // Char dispatch — parser path (Normal mode)
-    // ==========================================================================
 
     #[test]
     fn unbound_char_in_normal_feeds_parser() {
@@ -446,10 +438,6 @@ mod test {
         );
     }
 
-    // ==========================================================================
-    // Char dispatch — parser path (Visual mode)
-    // ==========================================================================
-
     #[test]
     fn d_in_visual_emits_cut_selection_and_returns_to_normal() {
         let mut vi = Vi {
@@ -464,10 +452,6 @@ mod test {
         );
         assert!(matches!(vi.mode, ViMode::Normal));
     }
-
-    // ==========================================================================
-    // Catch-all dispatch (non-Char keys in Normal/Visual)
-    // ==========================================================================
 
     #[test]
     fn non_char_key_in_normal_uses_keybindings() {
@@ -495,10 +479,6 @@ mod test {
         assert_eq!(result, ReedlineEvent::Enter);
         assert!(matches!(vi.mode, ViMode::Insert));
     }
-
-    // ==========================================================================
-    // Insert mode
-    // ==========================================================================
 
     #[test]
     fn unbound_char_in_insert_inserts_char() {
@@ -539,10 +519,6 @@ mod test {
         assert_eq!(result, ReedlineEvent::None);
     }
 
-    // ==========================================================================
-    // Mode transitions driven by parser-complete commands
-    // ==========================================================================
-
     #[test]
     fn i_in_normal_transitions_to_insert() {
         let mut vi = Vi {
@@ -552,10 +528,6 @@ mod test {
         let _ = vi.parse_event(key(KeyCode::Char('i'), KeyModifiers::NONE));
         assert!(matches!(vi.mode, ViMode::Insert));
     }
-
-    // ==========================================================================
-    // `previous` tracking for `.` repeat
-    // ==========================================================================
 
     #[test]
     fn previous_set_after_complete_command() {
@@ -570,10 +542,6 @@ mod test {
             "previous should track the last complete command"
         );
     }
-
-    // ==========================================================================
-    // Non-Key events
-    // ==========================================================================
 
     #[test]
     fn paste_event_produces_insert_string() {
@@ -623,10 +591,6 @@ mod test {
         );
     }
 
-    // ==========================================================================
-    // Multiplier sequences
-    // ==========================================================================
-
     #[test]
     fn multiplier_repeats_operator_motion() {
         let mut vi = Vi {
@@ -675,10 +639,6 @@ mod test {
         assert_eq!(result, ReedlineEvent::None);
         assert_eq!(vi.cache, vec!['2']);
     }
-
-    // ==========================================================================
-    // Invalid motion clears cache
-    // ==========================================================================
 
     #[test]
     fn invalid_motion_after_operator_clears_cache() {
