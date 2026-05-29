@@ -238,6 +238,9 @@ pub enum EditCommand {
     /// Delete in-place from the current insertion point
     Delete,
 
+    /// Cut the grapheme left from the current insertion point
+    CutCharLeft,
+
     /// Cut the grapheme right from the current insertion point
     CutChar,
 
@@ -570,6 +573,7 @@ impl Display for EditCommand {
             EditCommand::Backspace => write!(f, "Backspace"),
             EditCommand::Delete => write!(f, "Delete"),
             EditCommand::CutChar => write!(f, "CutChar"),
+            EditCommand::CutCharLeft => write!(f, "CutCharLeft"),
             EditCommand::BackspaceWord => write!(f, "BackspaceWord"),
             EditCommand::DeleteWord => write!(f, "DeleteWord"),
             EditCommand::Clear => write!(f, "Clear"),
@@ -688,6 +692,7 @@ impl EditCommand {
             | EditCommand::Backspace
             | EditCommand::Delete
             | EditCommand::CutChar
+            | EditCommand::CutCharLeft
             | EditCommand::InsertString(_)
             | EditCommand::InsertNewline
             | EditCommand::InsertNewlineAbove

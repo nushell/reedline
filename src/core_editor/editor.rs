@@ -88,6 +88,7 @@ impl Editor {
             EditCommand::Backspace => self.backspace(),
             EditCommand::Delete => self.delete(),
             EditCommand::CutChar => self.cut_char(),
+            EditCommand::CutCharLeft => self.cut_char_left(),
             EditCommand::BackspaceWord => self.line_buffer.delete_word_left(),
             EditCommand::DeleteWord => self.line_buffer.delete_word_right(),
             EditCommand::Clear => self.line_buffer.clear(),
@@ -727,6 +728,18 @@ impl Editor {
         }
     }
 
+    fn cut_char_left(&mut self) {
+        if self.selection_anchor.is_some() {
+            self.cut_selection_to_cut_buffer();
+        } else {
+            let cur_pos = self.line_buffer.insertion_point();
+            let left_index = self.line_buffer.grapheme_left_index();
+            if left_index < cur_pos && left_index >= self.line_buffer.current_line_range().start {
+                self.cut_range(left_index..cur_pos);
+            }
+        }
+    }
+
     fn delete(&mut self) {
         if self.selection_anchor.is_some() {
             self.delete_selection();
@@ -1322,6 +1335,24 @@ mod test {
         assert_eq!(editor.get_buffer(), "This is a \r\n");
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(editor.get_buffer(), "This is a \r\n test");
+    }
+
+    #[test]
+    fn test_cut_char_left_at_begining_of_line() {
+        let starting_line = "This is a single line test";
+        let mut editor = editor_with(starting_line);
+        editor.line_buffer.set_insertion_point(0);
+        editor.run_edit_command(&EditCommand::CutCharLeft);
+        assert_eq!(editor.get_buffer(), starting_line);
+    }
+
+    #[test]
+    fn test_cut_char_left_at_begining_of_2nd_line() {
+        let starting_line = "This is a \r\nmulti-line test";
+        let mut editor = editor_with(starting_line);
+        editor.line_buffer.set_insertion_point(12);
+        editor.run_edit_command(&EditCommand::CutCharLeft);
+        assert_eq!(editor.get_buffer(), starting_line);
     }
 
     #[test]

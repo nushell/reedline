@@ -251,10 +251,7 @@ impl Command {
                 if vi_state.mode == ViMode::Visual {
                     vec![ReedlineOption::Edit(EditCommand::CutSelection)]
                 } else {
-                    vec![
-                        ReedlineOption::Edit(EditCommand::MoveLeft { select: false }),
-                        ReedlineOption::Edit(EditCommand::CutChar),
-                    ]
+                    vec![ReedlineOption::Edit(EditCommand::CutCharLeft)]
                 }
             }
             Self::DeleteChar => {
