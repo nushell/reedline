@@ -531,16 +531,21 @@ impl LineBuffer {
 
     /// Range over the current line
     ///
+    /// See `line_range_for` for details on the range returned.
+    pub fn current_line_range(&self) -> Range<usize> {
+        self.line_range_for(self.insertion_point)
+    }
+
+    /// Range over the line for a given position
+    ///
     /// Starts on the first non-newline character and is an exclusive range
     /// extending beyond the potential carriage return and line feed characters
     /// terminating the line
-    pub fn current_line_range(&self) -> Range<usize> {
-        let left_index = self.lines[..self.insertion_point]
-            .rfind('\n')
-            .map_or(0, |offset| offset + 1);
-        let right_index = self.lines[self.insertion_point..]
+    pub fn line_range_for(&self, pos: usize) -> Range<usize> {
+        let left_index = self.lines[..pos].rfind('\n').map_or(0, |offset| offset + 1);
+        let right_index = self.lines[pos..]
             .find('\n')
-            .map_or_else(|| self.lines.len(), |i| i + self.insertion_point + 1);
+            .map_or_else(|| self.lines.len(), |i| i + pos + 1);
 
         left_index..right_index
     }
