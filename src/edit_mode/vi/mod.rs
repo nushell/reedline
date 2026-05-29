@@ -383,7 +383,10 @@ mod test {
             ..Default::default()
         };
         let _ = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
-        assert!(!vi.cache.is_empty(), "cache should hold the partial sequence");
+        assert!(
+            !vi.cache.is_empty(),
+            "cache should hold the partial sequence"
+        );
 
         let _ = vi.parse_event(key(KeyCode::Esc, KeyModifiers::NONE));
         assert!(vi.cache.is_empty(), "Esc should clear the cache");
