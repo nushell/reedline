@@ -729,8 +729,11 @@ impl Editor {
     }
 
     fn cut_char_left(&mut self) {
-        if self.selection_anchor.is_some() {
-            self.cut_selection_to_cut_buffer();
+        if let Some((start, end)) = self.get_selection() {
+            let line_start = self.line_buffer.line_range_for(start).start;
+            let line_end = self.line_buffer.line_range_for(end).end;
+            self.cut_range(line_start..line_end);
+            self.clear_selection();
         } else {
             let cur_pos = self.line_buffer.insertion_point();
             let left_index = self.line_buffer.grapheme_left_index();

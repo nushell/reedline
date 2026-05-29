@@ -248,11 +248,7 @@ impl Command {
             })],
             Self::RewriteCurrentLine => vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)],
             Self::DeleteCharBackward => {
-                if vi_state.mode == ViMode::Visual {
-                    vec![ReedlineOption::Edit(EditCommand::CutSelection)]
-                } else {
-                    vec![ReedlineOption::Edit(EditCommand::CutCharLeft)]
-                }
+                vec![ReedlineOption::Edit(EditCommand::CutCharLeft)]
             }
             Self::DeleteChar => {
                 if vi_state.mode == ViMode::Visual {
