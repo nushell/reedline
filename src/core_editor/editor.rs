@@ -1341,7 +1341,7 @@ mod test {
     }
 
     #[test]
-    fn test_cut_char_left_at_begining_of_line() {
+    fn test_cut_char_left_at_beginning_of_line() {
         let starting_line = "This is a single line test";
         let mut editor = editor_with(starting_line);
         editor.line_buffer.set_insertion_point(0);
@@ -1350,7 +1350,7 @@ mod test {
     }
 
     #[test]
-    fn test_cut_char_left_at_begining_of_2nd_line() {
+    fn test_cut_char_left_at_beginning_of_2nd_line() {
         let starting_line = "This is a \r\nmulti-line test";
         let mut editor = editor_with(starting_line);
         editor.line_buffer.set_insertion_point(12);
