@@ -824,6 +824,10 @@ impl Reedline {
             #[cfg(feature = "idle_callback")]
             if let Some(ref mut callback) = self.idle_callback {
                 callback();
+                // The callback owns stdout while it runs and may have
+                // written or moved the cursor. Re-verify the anchor on
+                // the next paint.
+                self.painter.invalidate_prompt_start_row();
             }
 
             if let Some(ref signal) = self.break_signal {
@@ -1979,13 +1983,20 @@ impl Reedline {
                 }
                 {
                     let mut child = command.spawn()?;
+                    // The child owns the tty now; invalidate eagerly so
+                    // any `?` early-return below still leaves the
+                    // painter in a safe state.
+                    self.painter.invalidate_prompt_start_row();
                     child.wait()?;
                 }
 
-                // The spawned editor inherited our tty and may have left the
-                // cursor anywhere; ensure the next repaint will re-query the
-                // cursor position and accordingly update the prompt location.
-                self.painter.invalidate_prompt_start_row();
+                // On the success path, re-initialize position and size
+                // from scratch (covers a resize-during-editor with no
+                // SIGWINCH). On query failure, the eager invalidate
+                // above is our floor — losing the size refresh is
+                // acceptable; losing the user's edited buffer below
+                // is not.
+                let _ = self.painter.initialize_prompt_position(None);
 
                 let res = std::fs::read_to_string(temp_file)?;
                 let res = res.trim_end().to_string();
