@@ -4,6 +4,7 @@ extend-exclude = ["src/core_editor/line_buffer.rs"]
 [default.extend-words]
 # Ignore false-positives
 iterm = "iterm"
+nd = "nd"
 # For testing completion of the word build
 bui = "bui"
 # For testing partial completion
@@ -21,4 +22,3 @@ l3ine = "l3ine"
 4should = "4should"
 wr5ap = "wr5ap"
 ine = "ine"
-2nd = "2nd"
