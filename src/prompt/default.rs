@@ -115,21 +115,62 @@ impl DefaultPrompt {
     }
 }
 
+#[allow(deprecated)] // home_dir is deprecated under our MSRV (1.63) but un-deprecated in 1.85
 fn get_working_dir() -> Result<String, std::io::Error> {
-    let mut path = env::current_dir()?;
+    let cwd = env::current_dir()?;
+    Ok(format_working_dir(&cwd, env::home_dir().as_deref()))
+}
 
-    if let Some(home) = env::home_dir() {
-        if let Ok(suffix) = path.clone().strip_prefix(home) {
-            path = std::path::PathBuf::from("~");
+/// Render `cwd` for the prompt, collapsing `home` to `~` when it is a prefix.
+fn format_working_dir(cwd: &std::path::Path, home: Option<&std::path::Path>) -> String {
+    if let Some(home) = home {
+        if let Ok(suffix) = cwd.strip_prefix(home) {
+            let mut path = std::path::PathBuf::from("~");
             if !suffix.as_os_str().is_empty() {
                 path = path.join(suffix);
             }
+            return path.display().to_string();
         }
     }
-    Ok(path.display().to_string())
+    cwd.display().to_string()
 }
 
 fn get_now() -> String {
     let now = Local::now();
     format!("{:>}", now.format("%m/%d/%Y %I:%M:%S %p"))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::format_working_dir;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn home_is_collapsed_to_tilde() {
+        let home = Path::new("/home/alice");
+        let cwd = PathBuf::from("/home/alice/projects");
+        assert_eq!(format_working_dir(&cwd, Some(home)), "~/projects");
+    }
+
+    #[test]
+    fn cwd_equal_to_home_is_just_tilde() {
+        // Regression: `cd ~` previously rendered the absolute path instead of `~`.
+        let home = Path::new("/home/alice");
+        let cwd = PathBuf::from("/home/alice");
+        assert_eq!(format_working_dir(&cwd, Some(home)), "~");
+    }
+
+    #[test]
+    fn shared_prefix_is_not_collapsed() {
+        // Regression: String::replace turned `/home/alicebob` into `~bob`.
+        let home = Path::new("/home/alice");
+        let cwd = PathBuf::from("/home/alicebob/x");
+        assert_eq!(format_working_dir(&cwd, Some(home)), "/home/alicebob/x");
+    }
+
+    #[test]
+    fn missing_home_leaves_path_untouched() {
+        let cwd = PathBuf::from("/var/log");
+        assert_eq!(format_working_dir(&cwd, None), "/var/log");
+    }
 }
