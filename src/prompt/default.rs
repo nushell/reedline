@@ -115,10 +115,14 @@ impl DefaultPrompt {
     }
 }
 
-#[allow(deprecated)] // home_dir is deprecated under our MSRV (1.63) but un-deprecated in 1.85
 fn get_working_dir() -> Result<String, std::io::Error> {
     let cwd = env::current_dir()?;
-    Ok(format_working_dir(&cwd, env::home_dir().as_deref()))
+    // `USERPROFILE` on Windows, `HOME` elsewhere. Avoids `env::home_dir()`,
+    // which is buggy on Windows before 1.85 (above our 1.63 MSRV).
+    let home = env::var_os("USERPROFILE")
+        .or_else(|| env::var_os("HOME"))
+        .map(std::path::PathBuf::from);
+    Ok(format_working_dir(&cwd, home.as_deref()))
 }
 
 /// Render `cwd` for the prompt, collapsing `home` to `~` when it is a prefix.
@@ -140,11 +144,12 @@ fn get_now() -> String {
     format!("{:>}", now.format("%m/%d/%Y %I:%M:%S %p"))
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::format_working_dir;
     use std::path::{Path, PathBuf};
 
+    #[cfg(unix)]
     #[test]
     fn home_is_collapsed_to_tilde() {
         let home = Path::new("/home/alice");
@@ -152,14 +157,16 @@ mod tests {
         assert_eq!(format_working_dir(&cwd, Some(home)), "~/projects");
     }
 
+    #[cfg(unix)]
     #[test]
     fn cwd_equal_to_home_is_just_tilde() {
-        // Regression: `cd ~` previously rendered the absolute path instead of `~`.
+        // Regression: `cd ~` rendered the absolute path, not `~`.
         let home = Path::new("/home/alice");
         let cwd = PathBuf::from("/home/alice");
         assert_eq!(format_working_dir(&cwd, Some(home)), "~");
     }
 
+    #[cfg(unix)]
     #[test]
     fn shared_prefix_is_not_collapsed() {
         // Regression: String::replace turned `/home/alicebob` into `~bob`.
@@ -168,9 +175,43 @@ mod tests {
         assert_eq!(format_working_dir(&cwd, Some(home)), "/home/alicebob/x");
     }
 
+    #[cfg(unix)]
     #[test]
     fn missing_home_leaves_path_untouched() {
         let cwd = PathBuf::from("/var/log");
         assert_eq!(format_working_dir(&cwd, None), "/var/log");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn home_is_collapsed_to_tilde() {
+        let home = Path::new(r"C:\Users\alice");
+        let cwd = PathBuf::from(r"C:\Users\alice\projects");
+        assert_eq!(format_working_dir(&cwd, Some(home)), r"~\projects");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cwd_equal_to_home_is_just_tilde() {
+        // Regression: `cd ~` previously rendered the absolute path instead of `~`.
+        let home = Path::new(r"C:\Users\alice");
+        let cwd = PathBuf::from(r"C:\Users\alice");
+        assert_eq!(format_working_dir(&cwd, Some(home)), "~");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shared_prefix_is_not_collapsed() {
+        // Regression: String::replace turned `C:\Users\alice` into `~bob`.
+        let home = Path::new(r"C:\Users\alice");
+        let cwd = PathBuf::from(r"C:\Users\alicebob\x");
+        assert_eq!(format_working_dir(&cwd, Some(home)), r"C:\Users\alicebob\x");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_home_leaves_path_untouched() {
+        let cwd = PathBuf::from(r"C:\Windows\System32");
+        assert_eq!(format_working_dir(&cwd, None), r"C:\Windows\System32");
     }
 }
