@@ -160,7 +160,7 @@ pub struct Reedline {
     edit_mode: Box<dyn EditMode>,
 
     // Provides the tab completions
-    completer: Box<dyn Completer>,
+    completer: Box<dyn Completer + Send>,
     quick_completions: bool,
     partial_completions: bool,
 
@@ -401,7 +401,7 @@ impl Reedline {
     /// let mut line_editor = Reedline::create().with_completer(completer);
     /// ```
     #[must_use]
-    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
+    pub fn with_completer(mut self, completer: Box<dyn Completer + Send>) -> Self {
         self.completer = completer;
         self
     }
@@ -2268,6 +2268,16 @@ mod tests {
     use crate::terminal_extensions::semantic_prompt::PromptKind;
     use crate::DefaultPrompt;
     use rstest::rstest;
+
+    #[test]
+    fn reedline_is_send() {
+        // `Reedline` must stay `Send` so it can be moved across threads.
+        // The `Send` bound lives on the stored `Box<dyn Completer + Send>`
+        // (engine + `ReedlineMenu`), not on the `Completer`/`Menu` traits
+        // themselves, so this guards against that bound being dropped.
+        fn assert_send<T: Send>() {}
+        assert_send::<Reedline>();
+    }
 
     #[test]
     fn test_cursor_position_after_multiline_history_navigation() {
