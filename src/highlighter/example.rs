@@ -1,4 +1,4 @@
-use crate::highlighter::Highlighter;
+use crate::highlighter::{AbbrExpandContext, Highlighter};
 use crate::StyledText;
 use nu_ansi_term::{Color, Style};
 
@@ -15,9 +15,10 @@ pub struct ExampleHighlighter {
 }
 
 impl Highlighter for ExampleHighlighter {
-    fn is_inside_string_literal(&self, line: &str, cursor: usize) -> bool {
+    // A simple example of disabling abbreviation expansion within string literals
+    fn should_expand_abbr(&self, line: &str, cursor: usize, _context: AbbrExpandContext) -> bool {
         if line.is_empty() || cursor == 0 {
-            return false;
+            return true;
         }
         let mut in_single = false;
         let mut in_double = false;
@@ -40,7 +41,7 @@ impl Highlighter for ExampleHighlighter {
             }
             byte_pos += 1;
         }
-        in_single || in_double
+        !(in_single || in_double)
     }
 
     fn highlight(&self, line: &str, _cursor: usize) -> StyledText {

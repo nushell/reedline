@@ -5,6 +5,19 @@ use crate::StyledText;
 
 pub use example::ExampleHighlighter;
 pub use simple_match::SimpleMatchHighlighter;
+
+/// The context in which abbreviation expansion is being attempted
+///
+/// Passed to [`Highlighter::should_expand_abbr`] so implementations can apply
+/// different veto rules depending on which expansion triggered the check
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbbrExpandContext {
+    /// Fish-style word abbreviation
+    WordAbbreviation,
+    /// Bashism history expansion
+    BangExpansion,
+}
+
 /// The syntax highlighting trait. Implementers of this trait will take in the current string and then
 /// return a `StyledText` object, which represents the contents of the original line as styled strings
 pub trait Highlighter: Send {
@@ -13,10 +26,15 @@ pub trait Highlighter: Send {
     /// Cursor position as byte offsets in the string
     fn highlight(&self, line: &str, cursor: usize) -> StyledText;
 
-    /// The action that will take the current buffer and return whether the cursor position (a byte
-    /// offset) is inside a string literal
-    fn is_inside_string_literal(&self, line: &str, cursor: usize) -> bool {
-        let _ = (line, cursor);
-        false // default for simple highlighters
+    /// Returns `true` if an abbreviation should be expanded at the given cursor position
+    /// (a byte offset into `line`), `false` if expansion should be suppressed
+    ///
+    /// `context` indicates which kind of expansion is being attempted so implementations
+    /// can apply different veto rules per site
+    ///
+    /// The default implementation always returns `true` (always expand)
+    fn should_expand_abbr(&self, line: &str, cursor: usize, context: AbbrExpandContext) -> bool {
+        let _ = (line, cursor, context);
+        true
     }
 }

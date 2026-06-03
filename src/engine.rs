@@ -36,9 +36,9 @@ use {
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
         },
         utils::text_manipulation,
-        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton,
-        Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult,
-        Validator,
+        AbbrExpandContext, EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu,
+        MenuEvent, MouseButton, Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior,
+        ValidationResult, Validator,
     },
     crossterm::{
         cursor::{SetCursorStyle, Show},
@@ -626,8 +626,8 @@ impl Reedline {
     ///
     /// Overwrites any existing abbreviations with the same key.
     ///
-    /// Note, by default abbreviations are expanded within string literals. To change this behavior
-    /// override the `is_inside_string_literal` function defined by [`Highlighter`].
+    /// Note, by default abbreviations are expanded everywhere. To suppress expansion in certain
+    /// syntactic positions (e.g. string literals), override [`Highlighter::should_expand_abbr`].
     pub fn with_abbreviations(mut self, abbreviations: HashMap<String, String>) -> Self {
         self.abbreviations.extend(abbreviations);
         self
@@ -1758,10 +1758,8 @@ impl Reedline {
 
     /// Expands an abbreviation at the word before the cursor, if any exists
     ///
-    /// Note, this method uses the `is_inside_string_literal` function defined by [`Highlighter`]
-    /// to decide whether to expand an abbreviation when the cursor is inside a string literal.
-    /// Unless overridden, `is_inside_string_literal` returns `false`, resulting in abbreviations
-    /// being expanded even when inside a string literal.
+    /// Calls [`Highlighter::should_expand_abbr`] with [`AbbrExpandContext::WordAbbreviation`]
+    /// to decide whether expansion is permitted at the cursor position
     fn try_expand_abbreviation_at_cursor(&mut self, submitted: bool) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
         let cursor_position_in_buffer = self.editor.insertion_point();
@@ -1787,10 +1785,11 @@ impl Reedline {
             // The first char in the buffer is a space or there are consecutive spaces
             return None;
         }
-        if self
-            .highlighter
-            .is_inside_string_literal(buffer, word_start)
-        {
+        if !self.highlighter.should_expand_abbr(
+            buffer,
+            word_start,
+            AbbrExpandContext::WordAbbreviation,
+        ) {
             return None;
         }
 
@@ -1826,10 +1825,11 @@ impl Reedline {
             }
         }
 
-        if self
-            .highlighter
-            .is_inside_string_literal(buffer, parsed.remainder.len())
-        {
+        if !self.highlighter.should_expand_abbr(
+            buffer,
+            parsed.remainder.len(),
+            AbbrExpandContext::BangExpansion,
+        ) {
             return None;
         }
 
@@ -2554,7 +2554,7 @@ mod tests {
         set_buffer_at_end(&mut reedline, buffer);
         assert!(
             reedline.try_expand_abbreviation_at_cursor(true).is_some(),
-            "must expand when highlighter does not override is_inside_string_literal"
+            "must expand when highlighter does not override should_expand_abbr"
         );
     }
 
@@ -2638,7 +2638,7 @@ mod tests {
         set_buffer_at_end(&mut reedline, buffer);
         assert!(
             reedline.parse_bang_command().is_some(),
-            "must expand when highlighter does not override is_inside_string_literal"
+            "must expand when highlighter does not override should_expand_abbr"
         );
     }
 }
