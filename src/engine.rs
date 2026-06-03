@@ -852,6 +852,22 @@ impl Reedline {
                 }
             }
 
+            // When a background completion finishes, re-populate the active
+            // menu so results appear without waiting for another keypress.
+            if self.completer.check_pending() {
+                let has_active = self.menus.iter().any(|m| m.is_active());
+                if has_active {
+                    if let Some(menu) = self.menus.iter_mut().find(|m| m.is_active()) {
+                        menu.update_values(
+                            &mut self.editor,
+                            self.completer.as_mut(),
+                            self.history.as_ref(),
+                        );
+                    }
+                    self.repaint(prompt)?;
+                }
+            }
+
             // Helper function that returns true if the input is complete and
             // can be sent to the hosting application.
             fn completed(events: &[Event]) -> bool {
@@ -875,9 +891,11 @@ impl Reedline {
                 // Determine if we need to poll (non-blocking) or can block on input.
                 // We need polling if external_printer or idle_callback is configured,
                 // using the shared poll_interval for the timeout.
+                let completer_pending = self.completer.has_pending();
                 let needs_polling = {
                     #[allow(unused_mut)]
                     let mut result = self.break_signal.is_some();
+                    result |= completer_pending;
                     #[cfg(feature = "external_printer")]
                     if self.external_printer.is_some() {
                         result = true;
