@@ -15,6 +15,7 @@ pub enum AbbrExpandContext {
     /// Fish-style word abbreviation
     WordAbbreviation,
     /// Bashism history expansion
+    #[cfg(feature = "bashisms")]
     BangExpansion,
 }
 
