@@ -1,5 +1,8 @@
 use {
-    crate::core_editor::graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
+    crate::core_editor::{
+        cursor::Cursor,
+        graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
+    },
     itertools::Itertools,
     std::{convert::From, ops::Range},
     unicode_segmentation::UnicodeSegmentation,
@@ -10,6 +13,7 @@ use {
 pub struct LineBuffer {
     lines: String,
     insertion_point: usize,
+    selection_anchor: Option<usize>,
 }
 
 impl From<&str> for LineBuffer {
@@ -61,16 +65,74 @@ impl LineBuffer {
         );
     }
 
-    /// Gets the current edit position
+    /// Gets the current edit position (head of the cursor).
     pub fn insertion_point(&self) -> usize {
         self.insertion_point
     }
 
-    /// Sets the current edit position
+    /// Sets the current edit position. Does not touch the selection anchor —
+    /// use [`clear_selection`](Self::clear_selection) explicitly when needed.
+    ///
     /// ## Unicode safety:
     /// Not checked, improper use may cause panics in following operations
     pub fn set_insertion_point(&mut self, offset: usize) {
         self.insertion_point = offset;
+    }
+
+    /// Returns the cursor as a [`Cursor`] (anchor + head), reflecting any
+    /// active selection.
+    pub(crate) fn cursor(&self) -> Cursor {
+        match self.selection_anchor {
+            Some(anchor) => Cursor::new(anchor, self.insertion_point),
+            None => Cursor::point(self.insertion_point),
+        }
+    }
+
+    /// Sets the cursor to the given [`Cursor`]. An empty cursor (anchor == head)
+    /// clears any selection; a non-empty cursor sets both anchor and head.
+    ///
+    /// ## Unicode safety:
+    /// Not checked, improper use may cause panics in following operations
+    pub(crate) fn set_cursor(&mut self, cursor: Cursor) {
+        self.insertion_point = cursor.head();
+        self.selection_anchor = if cursor.is_empty() {
+            None
+        } else {
+            Some(cursor.anchor())
+        };
+    }
+
+    /// The current selection anchor, if any. `Some(pos)` while a selection is
+    /// active; `None` otherwise.
+    pub fn selection_anchor(&self) -> Option<usize> {
+        self.selection_anchor
+    }
+
+    /// Sets the selection anchor without moving the cursor head.
+    pub fn set_selection_anchor(&mut self, anchor: Option<usize>) {
+        self.selection_anchor = anchor;
+    }
+
+    /// Clears any active selection. The cursor head is unchanged.
+    pub fn clear_selection(&mut self) {
+        self.selection_anchor = None;
+    }
+
+    /// Moves the cursor head to `pos`. If `select` is true, preserves any
+    /// existing selection anchor (or plants one at the current head if none
+    /// exists). If `select` is false, clears the selection.
+    ///
+    /// ## Unicode safety:
+    /// Not checked, improper use may cause panics in following operations
+    pub fn move_head(&mut self, pos: usize, select: bool) {
+        if select {
+            if self.selection_anchor.is_none() {
+                self.selection_anchor = Some(self.insertion_point);
+            }
+        } else {
+            self.selection_anchor = None;
+        }
+        self.insertion_point = pos;
     }
 
     /// Output the current line in the multiline buffer
@@ -106,24 +168,36 @@ impl LineBuffer {
         self.insertion_point = 0;
     }
 
+    /// Byte offset of the first character on the line containing the cursor.
+    ///
+    /// Returns 0 for the first line. Pure accessor — does not mutate state.
+    pub fn line_start_index(&self) -> usize {
+        self.lines[..self.insertion_point]
+            .rfind('\n')
+            .map_or(0, |offset| offset + 1)
+        // str is guaranteed to be utf8, thus \n is safe to assume 1 byte long
+    }
+
     /// Move the cursor before the first character of the line
     pub fn move_to_line_start(&mut self) {
-        self.insertion_point = self.lines[..self.insertion_point]
-            .rfind('\n')
-            .map_or(0, |offset| offset + 1);
-        // str is guaranteed to be utf8, thus \n is safe to assume 1 byte long
+        self.insertion_point = self.line_start_index();
+    }
+
+    /// Byte offset of the first non-whitespace character on the line
+    /// containing the cursor. If the line is entirely blank, returns the
+    /// position of its terminating `\n`; if no further non-whitespace or
+    /// newline exists, returns the buffer length. Pure accessor — does not
+    /// mutate state.
+    pub fn line_non_blank_start_index(&self) -> usize {
+        let line_start = self.line_start_index();
+        self.lines[line_start..]
+            .find(|c: char| !c.is_whitespace() || c == '\n')
+            .map_or(self.lines.len(), |offset| line_start + offset)
     }
 
     /// Move the cursor before the first non whitespace character of the line
     pub fn move_to_line_non_blank_start(&mut self) {
-        let line_start = self.lines[..self.insertion_point]
-            .rfind('\n')
-            .map_or(0, |offset| offset + 1);
-        // str is guaranteed to be utf8, thus \n is safe to assume 1 byte long
-
-        self.insertion_point = self.lines[line_start..]
-            .find(|c: char| !c.is_whitespace() || c == '\n')
-            .map_or(self.lines.len(), |offset| line_start + offset);
+        self.insertion_point = self.line_non_blank_start_index();
     }
 
     /// Move cursor position to the end of the line
