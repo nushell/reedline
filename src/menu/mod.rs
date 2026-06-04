@@ -360,7 +360,7 @@ pub enum ReedlineMenu {
         /// Base menu
         menu: Box<dyn Menu>,
         /// External completer defined outside Reedline
-        completer: Box<dyn Completer>,
+        completer: Box<dyn Completer + Send>,
     },
 }
 
