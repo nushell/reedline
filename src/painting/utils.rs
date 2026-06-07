@@ -10,24 +10,27 @@ pub(crate) fn coerce_crlf(input: &str) -> Cow<'_, str> {
     let mut cursor: usize = 0;
     for (idx, _) in input.match_indices('\n') {
         if !(idx > 0 && input.as_bytes()[idx - 1] == b'\r') {
-            if let Cow::Borrowed(_) = result {
-                // Best case 1 allocation, worst case 2 allocations
-                let mut owned = String::with_capacity(input.len() + 1);
-                // Optimization to avoid the `AddAssign for Cow<str>`
-                // optimization for `Cow<str>.is_empty` that would replace the
-                // preallocation
-                owned.push_str(&input[cursor..idx]);
-                result = Cow::Owned(owned);
-            } else {
-                result += &input[cursor..idx];
+            match &mut result {
+                Cow::Borrowed(_) => {
+                    // Best case 1 allocation, worst case 2 allocations.
+                    // Avoid `AddAssign for Cow<str>` because its empty-LHS
+                    // optimization may replace the preallocation.
+                    let mut owned = String::with_capacity(input.len() + 1);
+                    owned.push_str(&input[cursor..idx]);
+                    owned.push_str("\r\n");
+                    result = Cow::Owned(owned);
+                }
+                Cow::Owned(result) => {
+                    result.push_str(&input[cursor..idx]);
+                    result.push_str("\r\n");
+                }
             }
-            result += "\r\n";
             // Advance beyond the matched LF char (single byte)
             cursor = idx + 1;
         }
     }
-    if let Cow::Owned(_) = result {
-        result += &input[cursor..input.len()];
+    if let Cow::Owned(result) = &mut result {
+        result.push_str(&input[cursor..input.len()]);
     }
     result
 }
@@ -109,6 +112,15 @@ mod test {
             input != expected || matches!(result, Cow::Borrowed(_)),
             "Unnecessary allocation"
         )
+    }
+
+    /// Regression: no-color rendering strips ANSI bytes before CRLF coercion,
+    /// so text after the cursor can start with the raw LF that moves to the
+    /// next continuation prompt. The leading replacement was lost before
+    /// later newlines by `Cow<str> += ...`.
+    #[test]
+    fn coerce_crlf_preserves_leading_replacement_before_later_newline() {
+        assert_eq!(coerce_crlf("\n::: 3\n::: 4"), "\r\n::: 3\r\n::: 4");
     }
 
     /// Narrow-terminal regression: a zero-column terminal used to panic
