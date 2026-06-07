@@ -281,6 +281,35 @@ impl ListMenu {
         }
     }
 
+    fn description_text(&self, description: Option<&str>, use_ansi_coloring: bool) -> String {
+        description.map_or_else(String::new, |desc| match self.description_position {
+            DescriptionPosition::Before => {
+                if use_ansi_coloring {
+                    format!(
+                        "{}({}){} ",
+                        self.settings.color.description_style.prefix(),
+                        desc,
+                        RESET,
+                    )
+                } else {
+                    format!("({desc}) ")
+                }
+            }
+            DescriptionPosition::After => {
+                if use_ansi_coloring {
+                    format!(
+                        " {}{}{}",
+                        self.settings.color.description_style.prefix(),
+                        desc,
+                        RESET
+                    )
+                } else {
+                    format!(" {desc}")
+                }
+            }
+        })
+    }
+
     /// Creates default string that represents one line from a menu
     fn create_string(
         &self,
@@ -290,20 +319,10 @@ impl ListMenu {
         row_number: &str,
         use_ansi_coloring: bool,
     ) -> String {
+        let description = self.description_text(description, use_ansi_coloring);
+
         match self.description_position {
             DescriptionPosition::Before => {
-                let description = description.map_or("".to_string(), |desc| {
-                    if use_ansi_coloring {
-                        format!(
-                            "{}({}) ",
-                            self.settings.color.description_style.prefix(),
-                            desc,
-                        )
-                    } else {
-                        format!("({desc}) ")
-                    }
-                });
-
                 if use_ansi_coloring {
                     format!(
                         "{}{}{}{}{}{}",
@@ -328,19 +347,6 @@ impl ListMenu {
                 }
             }
             DescriptionPosition::After => {
-                let description = description.map_or("".to_string(), |desc| {
-                    if use_ansi_coloring {
-                        format!(
-                            " {}{}{}",
-                            self.settings.color.description_style.prefix(),
-                            desc,
-                            RESET
-                        )
-                    } else {
-                        format!(" {desc}")
-                    }
-                });
-
                 if use_ansi_coloring {
                     format!(
                         "{}{}{}{}{}{}",
@@ -714,5 +720,37 @@ mod tests {
 
         // There is an extra line showing ...
         assert_eq!(res, 4);
+    }
+
+    #[test]
+    fn description_before_resets_style_before_value() {
+        let menu = ListMenu::default();
+
+        assert_eq!(
+            menu.create_string("value", Some("desc"), 1, "", true),
+            format!(
+                "{}(desc){} {}value{}\r\n",
+                menu.settings.color.description_style.prefix(),
+                RESET,
+                menu.text_style(1),
+                RESET,
+            )
+        );
+    }
+
+    #[test]
+    fn description_after_resets_style_after_value() {
+        let menu = ListMenu::default().with_description_position(DescriptionPosition::After);
+
+        assert_eq!(
+            menu.create_string("value", Some("desc"), 1, "", true),
+            format!(
+                "{}value{} {}desc{}\r\n",
+                menu.text_style(1),
+                RESET,
+                menu.settings.color.description_style.prefix(),
+                RESET,
+            )
+        );
     }
 }
