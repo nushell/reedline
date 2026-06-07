@@ -320,57 +320,19 @@ impl ListMenu {
         use_ansi_coloring: bool,
     ) -> String {
         let description = self.description_text(description, use_ansi_coloring);
+        let value = if use_ansi_coloring {
+            format!("{}{}{}", self.text_style(index), line, RESET)
+        } else if index == self.index() {
+            format!(">{}", line.to_uppercase())
+        } else {
+            line.to_string()
+        };
+        let line = match self.description_position {
+            DescriptionPosition::Before => format!("{description}{value}"),
+            DescriptionPosition::After => format!("{value}{description}"),
+        };
 
-        match self.description_position {
-            DescriptionPosition::Before => {
-                if use_ansi_coloring {
-                    format!(
-                        "{}{}{}{}{}{}",
-                        row_number,
-                        description,
-                        self.text_style(index),
-                        &line,
-                        RESET,
-                        Self::end_of_line(),
-                    )
-                } else {
-                    // If no ansi coloring is found, then the selection word is
-                    // the line in uppercase
-                    let line_str = if index == self.index() {
-                        format!("{}{}>{}", row_number, description, line.to_uppercase())
-                    } else {
-                        format!("{row_number}{description}{line}")
-                    };
-
-                    // Final string with formatting
-                    format!("{}{}", line_str, Self::end_of_line())
-                }
-            }
-            DescriptionPosition::After => {
-                if use_ansi_coloring {
-                    format!(
-                        "{}{}{}{}{}{}",
-                        row_number,
-                        self.text_style(index),
-                        &line,
-                        RESET,
-                        description,
-                        Self::end_of_line(),
-                    )
-                } else {
-                    // If no ansi coloring is found, then the selection word is
-                    // the line in uppercase
-                    let line_str = if index == self.index() {
-                        format!("{}>{}{}", row_number, line.to_uppercase(), description)
-                    } else {
-                        format!("{row_number}{line}{description}")
-                    };
-
-                    // Final string with formatting
-                    format!("{}{}", line_str, Self::end_of_line())
-                }
-            }
-        }
+        format!("{}{}{}", row_number, line, Self::end_of_line())
     }
 }
 
