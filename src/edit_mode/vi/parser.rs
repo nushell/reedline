@@ -137,6 +137,7 @@ impl ParsedViSequence {
                 let events = self.apply_multiplier(Some(command.to_reedline(vi_state)));
                 match &events {
                     ReedlineEvent::None => {}
+                    _ if matches!(command, Command::RepeatLastAction) => {}
                     event => vi_state.previous = Some(event.clone()),
                 }
                 events

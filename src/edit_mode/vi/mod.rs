@@ -728,13 +728,8 @@ mod test {
     }
 
     #[test]
-    fn repeated_dot_accumulates_nesting_in_previous() {
-        // Each `.` press wraps `previous` in an outer Multiple AND
-        // assigns the wrapped result back to `previous`. So every
-        // press deepens the nesting by one. Observationally fine
-        // (engine flattens via recursion), but `previous` grows
-        // unboundedly over a session. Worse with multipliers — `2.`
-        // doubles the inner Vec each call.
+    fn repeated_dot_doesnt_accumulates_nesting_in_previous() {
+        // `.` replays the last change; it must not record itself
         fn depth(ev: &ReedlineEvent) -> usize {
             match ev {
                 ReedlineEvent::Multiple(v) if v.len() == 1 => 1 + depth(&v[0]),
@@ -750,13 +745,13 @@ mod test {
         assert_eq!(depth(vi.previous.as_ref().unwrap()), 1);
 
         let _ = vi.parse_event(key(KeyCode::Char('.'), KeyModifiers::NONE));
-        assert_eq!(depth(vi.previous.as_ref().unwrap()), 2);
+        assert_eq!(depth(vi.previous.as_ref().unwrap()), 1);
 
         let _ = vi.parse_event(key(KeyCode::Char('.'), KeyModifiers::NONE));
-        assert_eq!(depth(vi.previous.as_ref().unwrap()), 3);
+        assert_eq!(depth(vi.previous.as_ref().unwrap()), 1);
 
         let _ = vi.parse_event(key(KeyCode::Char('.'), KeyModifiers::NONE));
-        assert_eq!(depth(vi.previous.as_ref().unwrap()), 4);
+        assert_eq!(depth(vi.previous.as_ref().unwrap()), 1);
     }
 
     #[test]
