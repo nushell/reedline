@@ -284,6 +284,8 @@ impl ListMenu {
     fn description_text(&self, description: Option<&str>, use_ansi_coloring: bool) -> String {
         description.map_or_else(String::new, |desc| match self.description_position {
             DescriptionPosition::Before => {
+                // Before keeps the historical `(description) value` shape; After intentionally
+                // leaves the description unwrapped as `value description`.
                 if use_ansi_coloring {
                     format!(
                         "{}({}){} ",
@@ -713,6 +715,26 @@ mod tests {
                 menu.settings.color.description_style.prefix(),
                 RESET,
             )
+        );
+    }
+
+    #[test]
+    fn description_before_formats_without_ansi() {
+        let menu = ListMenu::default();
+
+        assert_eq!(
+            menu.create_string("value", Some("desc"), 0, "", false),
+            "(desc) >VALUE\r\n"
+        );
+    }
+
+    #[test]
+    fn description_after_formats_without_ansi() {
+        let menu = ListMenu::default().with_description_position(DescriptionPosition::After);
+
+        assert_eq!(
+            menu.create_string("value", Some("desc"), 0, "", false),
+            ">VALUE desc\r\n"
         );
     }
 }
