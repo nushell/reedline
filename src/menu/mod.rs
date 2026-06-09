@@ -12,6 +12,7 @@ pub use columnar_menu::TraversalDirection;
 pub use description_menu::DescriptionMenu;
 pub use ide_menu::DescriptionMode;
 pub use ide_menu::IdeMenu;
+pub use list_menu::DescriptionPosition;
 pub use list_menu::ListMenu;
 use nu_ansi_term::{Color, Style};
 
@@ -159,9 +160,15 @@ pub struct MenuSettings {
     color: MenuTextStyle,
     /// Menu marker when active
     marker: String,
-    /// Calls the completer using only the line buffer difference difference
-    /// after the menu was activated
+    /// Calls the completer using only the line buffer difference
+    /// after the menu was activated. Ignored if `input_mode` is set.
     only_buffer_difference: bool,
+    /// Optional override for completer input handling.
+    /// If `Some`, takes precedence over `only_buffer_difference`.
+    input_mode: Option<InputMode>,
+    /// Optional override for the buffer range replaced on selection.
+    /// If `None`, the menu uses `Suggestion::span` as-is.
+    output_mode: Option<OutputMode>,
 }
 
 impl Default for MenuSettings {
@@ -171,6 +178,8 @@ impl Default for MenuSettings {
             color: MenuTextStyle::default(),
             marker: "| ".to_string(),
             only_buffer_difference: false,
+            input_mode: None,
+            output_mode: None,
         }
     }
 }
@@ -197,12 +206,66 @@ impl MenuSettings {
         self
     }
 
-    /// MenuSettings builder with only_buffer_difference
+    /// MenuSettings builder with only_buffer_difference.
+    /// Consider `with_input_mode` for finer control; the bool is ignored when
+    /// `input_mode` is set.
     #[must_use]
     pub fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
         self.only_buffer_difference = only_buffer_difference;
         self
     }
+
+    /// Set the input mode. If set, this overrides `only_buffer_difference`.
+    #[must_use]
+    pub fn with_input_mode(mut self, mode: InputMode) -> Self {
+        self.input_mode = Some(mode);
+        self
+    }
+
+    /// Set the output mode. If unset, the menu uses `Suggestion::span` as-is.
+    #[must_use]
+    pub fn with_output_mode(mut self, mode: OutputMode) -> Self {
+        self.output_mode = Some(mode);
+        self
+    }
+
+    /// Resolves input_mode and only_buffer_difference into concrete InputMode.
+    /// `input_mode` wins if set; otherwise falls back to the bool.
+    pub fn effective_input_mode(&self) -> InputMode {
+        self.input_mode.unwrap_or(if self.only_buffer_difference {
+            InputMode::Diff
+        } else {
+            InputMode::CursorPrefix
+        })
+    }
+}
+
+/// Controls what the menu hands to its completer.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    /// Completer receives only the text typed after menu activation.
+    /// Equivalent to `only_buffer_difference: true`.
+    Diff,
+    /// Completer receives the buffer up to the cursor (`buffer[..cursor]`).
+    /// Equivalent to `only_buffer_difference: false`.
+    CursorPrefix,
+    /// Completer receives the entire buffer including text after the cursor.
+    /// No bool equivalent.
+    FullBuffer,
+}
+
+/// Controls what range of the buffer the menu replaces when a suggestion is selected.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputMode {
+    /// Replace the range specified by `Suggestion::span`.
+    /// Equivalent to leaving `output_mode` unset.
+    SuggestedSpan,
+    /// Replace the entire buffer (`0..buffer.len()`), ignoring `Suggestion::span`.
+    FullBuffer,
+    /// Keep `Suggestion::span.start`, force `end = buffer.len()`.
+    ExtendToEnd,
 }
 
 /// Common builder for all menus
@@ -264,10 +327,25 @@ pub trait MenuBuilder: Menu + Sized {
         self
     }
 
-    /// Menu builder with new value for only_buffer_difference
+    /// Menu builder with new value for only_buffer_difference.
+    /// Ignored when `input_mode` is set; consider `with_input_mode` for finer control.
     #[must_use]
     fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
         self.settings_mut().only_buffer_difference = only_buffer_difference;
+        self
+    }
+
+    /// Menu builder with new value for input_mode. Overrides `only_buffer_difference` when set.
+    #[must_use]
+    fn with_input_mode(mut self, mode: InputMode) -> Self {
+        self.settings_mut().input_mode = Some(mode);
+        self
+    }
+
+    /// Menu builder with new value for output_mode. Defaults to `OutputMode::SuggestedSpan` when unset.
+    #[must_use]
+    fn with_output_mode(mut self, mode: OutputMode) -> Self {
+        self.settings_mut().output_mode = Some(mode);
         self
     }
 }
@@ -283,7 +361,7 @@ pub enum ReedlineMenu {
         /// Base menu
         menu: Box<dyn Menu>,
         /// External completer defined outside Reedline
-        completer: Box<dyn Completer>,
+        completer: Box<dyn Completer + Send>,
     },
 }
 
@@ -470,5 +548,30 @@ impl Menu for ReedlineMenu {
 
     fn set_cursor_pos(&mut self, pos: (u16, u16)) {
         self.as_mut().set_cursor_pos(pos);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::bool_only_false(false, None, InputMode::CursorPrefix)]
+    #[case::bool_only_true(true, None, InputMode::Diff)]
+    #[case::enum_overrides_false_bool(false, Some(InputMode::Diff), InputMode::Diff)]
+    #[case::enum_overrides_true_bool(true, Some(InputMode::CursorPrefix), InputMode::CursorPrefix)]
+    #[case::full_buffer(true, Some(InputMode::FullBuffer), InputMode::FullBuffer)]
+    fn test_effective_input_mode(
+        #[case] only_buffer_difference: bool,
+        #[case] input_mode: Option<InputMode>,
+        #[case] expected: InputMode,
+    ) {
+        let mut settings =
+            MenuSettings::default().with_only_buffer_difference(only_buffer_difference);
+        if let Some(mode) = input_mode {
+            settings = settings.with_input_mode(mode);
+        }
+        assert_eq!(settings.effective_input_mode(), expected);
     }
 }

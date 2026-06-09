@@ -36,9 +36,9 @@ use {
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
         },
         utils::text_manipulation,
-        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton,
-        Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult,
-        Validator,
+        AbbrExpandContext, EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu,
+        MenuEvent, MouseButton, Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior,
+        ValidationResult, Validator,
     },
     crossterm::{
         cursor::{SetCursorStyle, Show},
@@ -160,7 +160,7 @@ pub struct Reedline {
     edit_mode: Box<dyn EditMode>,
 
     // Provides the tab completions
-    completer: Box<dyn Completer>,
+    completer: Box<dyn Completer + Send>,
     quick_completions: bool,
     partial_completions: bool,
 
@@ -404,7 +404,7 @@ impl Reedline {
     /// let mut line_editor = Reedline::create().with_completer(completer);
     /// ```
     #[must_use]
-    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
+    pub fn with_completer(mut self, completer: Box<dyn Completer + Send>) -> Self {
         self.completer = completer;
         self
     }
@@ -629,8 +629,8 @@ impl Reedline {
     ///
     /// Overwrites any existing abbreviations with the same key.
     ///
-    /// Note, by default abbreviations are expanded within string literals. To change this behavior
-    /// override the `is_inside_string_literal` function defined by [`Highlighter`].
+    /// Note, by default abbreviations are expanded everywhere. To suppress expansion in certain
+    /// syntactic positions (e.g. string literals), override [`Highlighter::should_expand_abbr`].
     pub fn with_abbreviations(mut self, abbreviations: HashMap<String, String>) -> Self {
         self.abbreviations.extend(abbreviations);
         self
@@ -1761,10 +1761,8 @@ impl Reedline {
 
     /// Expands an abbreviation at the word before the cursor, if any exists
     ///
-    /// Note, this method uses the `is_inside_string_literal` function defined by [`Highlighter`]
-    /// to decide whether to expand an abbreviation when the cursor is inside a string literal.
-    /// Unless overridden, `is_inside_string_literal` returns `false`, resulting in abbreviations
-    /// being expanded even when inside a string literal.
+    /// Calls [`Highlighter::should_expand_abbr`] with [`AbbrExpandContext::WordAbbreviation`]
+    /// to decide whether expansion is permitted at the cursor position
     fn try_expand_abbreviation_at_cursor(&mut self, submitted: bool) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
         let cursor_position_in_buffer = self.editor.insertion_point();
@@ -1790,10 +1788,11 @@ impl Reedline {
             // The first char in the buffer is a space or there are consecutive spaces
             return None;
         }
-        if self
-            .highlighter
-            .is_inside_string_literal(buffer, word_start)
-        {
+        if !self.highlighter.should_expand_abbr(
+            buffer,
+            word_start,
+            AbbrExpandContext::WordAbbreviation,
+        ) {
             return None;
         }
 
@@ -1829,10 +1828,11 @@ impl Reedline {
             }
         }
 
-        if self
-            .highlighter
-            .is_inside_string_literal(buffer, parsed.remainder.len())
-        {
+        if !self.highlighter.should_expand_abbr(
+            buffer,
+            parsed.remainder.len(),
+            AbbrExpandContext::BangExpansion,
+        ) {
             return None;
         }
 
@@ -2273,6 +2273,16 @@ mod tests {
     use rstest::rstest;
 
     #[test]
+    fn reedline_is_send() {
+        // `Reedline` must stay `Send` so it can be moved across threads.
+        // The `Send` bound lives on the stored `Box<dyn Completer + Send>`
+        // (engine + `ReedlineMenu`), not on the `Completer`/`Menu` traits
+        // themselves, so this guards against that bound being dropped.
+        fn assert_send<T: Send>() {}
+        assert_send::<Reedline>();
+    }
+
+    #[test]
     fn test_cursor_position_after_multiline_history_navigation() {
         // Test for https://github.com/nushell/reedline/pull/899
         // Ensure that after navigating to a multiline history entry and then
@@ -2557,7 +2567,7 @@ mod tests {
         set_buffer_at_end(&mut reedline, buffer);
         assert!(
             reedline.try_expand_abbreviation_at_cursor(true).is_some(),
-            "must expand when highlighter does not override is_inside_string_literal"
+            "must expand when highlighter does not override should_expand_abbr"
         );
     }
 
@@ -2641,7 +2651,7 @@ mod tests {
         set_buffer_at_end(&mut reedline, buffer);
         assert!(
             reedline.parse_bang_command().is_some(),
-            "must expand when highlighter does not override is_inside_string_literal"
+            "must expand when highlighter does not override should_expand_abbr"
         );
     }
 }

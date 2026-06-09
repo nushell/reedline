@@ -230,6 +230,10 @@ mod test {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
+        ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(code, modifiers))).unwrap()
+    }
+
     #[test]
     fn esc_leads_to_normal_mode_test() {
         let mut vi = Vi::default();
@@ -341,5 +345,381 @@ mod test {
         let result = vi.parse_event(esc);
 
         assert_eq!(result, ReedlineEvent::None);
+    }
+
+    #[test]
+    fn v_in_normal_enters_visual() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Char('v'), KeyModifiers::NONE));
+
+        assert!(matches!(vi.mode, ViMode::Visual));
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+        );
+    }
+
+    #[test]
+    fn esc_from_visual_returns_to_normal() {
+        let mut vi = Vi {
+            mode: ViMode::Visual,
+            ..Default::default()
+        };
+        let _ = vi.parse_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(matches!(vi.mode, ViMode::Normal));
+    }
+
+    #[test]
+    fn esc_clears_cache() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let _ = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
+        assert!(
+            !vi.cache.is_empty(),
+            "cache should hold the partial sequence"
+        );
+
+        let _ = vi.parse_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(vi.cache.is_empty(), "Esc should clear the cache");
+    }
+
+    #[test]
+    fn unbound_char_in_normal_feeds_parser() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let _ = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
+        let result = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::NONE));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![
+                EditCommand::CutWordRightToNext,
+            ])]),
+        );
+        assert!(
+            vi.cache.is_empty(),
+            "cache should be cleared after a complete sequence"
+        );
+    }
+
+    #[test]
+    fn incomplete_sequence_returns_none_and_holds_cache() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
+
+        assert_eq!(result, ReedlineEvent::None);
+        assert_eq!(vi.cache, vec!['d']);
+    }
+
+    #[test]
+    fn shift_char_pushed_uppercase_into_cache() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::SHIFT));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![
+                EditCommand::MoveBigWordRightStart { select: false },
+            ])]),
+        );
+    }
+
+    #[test]
+    fn d_in_visual_emits_cut_selection_and_returns_to_normal() {
+        let mut vi = Vi {
+            mode: ViMode::Visual,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutSelection])]),
+        );
+        assert!(matches!(vi.mode, ViMode::Normal));
+    }
+
+    #[test]
+    fn non_char_key_in_normal_uses_keybindings() {
+        let mut kb = default_vi_normal_keybindings();
+        kb.add_binding(KeyModifiers::NONE, KeyCode::Up, ReedlineEvent::Up);
+
+        let mut vi = Vi {
+            normal_keybindings: kb,
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let result = vi.parse_event(key(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(result, ReedlineEvent::Up);
+    }
+
+    #[test]
+    fn enter_in_normal_with_no_binding_submits_and_enters_insert() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(result, ReedlineEvent::Enter);
+        assert!(matches!(vi.mode, ViMode::Insert));
+    }
+
+    #[test]
+    fn unbound_char_in_insert_inserts_char() {
+        let mut vi = Vi {
+            mode: ViMode::Insert,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Char('x'), KeyModifiers::NONE));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('x')]),
+        );
+    }
+
+    #[test]
+    fn shift_char_in_insert_inserts_uppercase() {
+        let mut vi = Vi {
+            mode: ViMode::Insert,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Char('a'), KeyModifiers::SHIFT));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![EditCommand::InsertChar('A')]),
+        );
+    }
+
+    #[test]
+    fn ctrl_char_in_insert_with_no_binding_returns_none() {
+        let mut vi = Vi {
+            mode: ViMode::Insert,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Char('z'), KeyModifiers::CONTROL));
+
+        assert_eq!(result, ReedlineEvent::None);
+    }
+
+    #[test]
+    fn i_in_normal_transitions_to_insert() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let _ = vi.parse_event(key(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert!(matches!(vi.mode, ViMode::Insert));
+    }
+
+    #[test]
+    fn previous_set_after_complete_command() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let _ = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
+        let _ = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::NONE));
+        assert!(
+            vi.previous.is_some(),
+            "previous should track the last complete command"
+        );
+    }
+
+    #[test]
+    fn paste_event_produces_insert_string() {
+        let mut vi = Vi::default();
+        let paste = ReedlineRawEvent::try_from(Event::Paste("hello".to_string())).unwrap();
+        let result = vi.parse_event(paste);
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Edit(vec![EditCommand::InsertString("hello".to_string())]),
+        );
+    }
+
+    #[test]
+    fn resize_event_passes_through() {
+        let mut vi = Vi::default();
+        let resize = ReedlineRawEvent::try_from(Event::Resize(80, 24)).unwrap();
+        let result = vi.parse_event(resize);
+        assert_eq!(result, ReedlineEvent::Resize(80, 24));
+    }
+
+    #[test]
+    fn focus_gained_returns_none() {
+        let mut vi = Vi::default();
+        let ev = ReedlineRawEvent::try_from(Event::FocusGained).unwrap();
+        assert_eq!(vi.parse_event(ev), ReedlineEvent::None);
+    }
+
+    #[test]
+    fn mouse_down_event_produces_mouse_event() {
+        let mut vi = Vi::default();
+        let ev = ReedlineRawEvent::try_from(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 5,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+
+        assert_eq!(
+            vi.parse_event(ev),
+            ReedlineEvent::Mouse {
+                column: 5,
+                row: 10,
+                button: crate::enums::MouseButton::Left,
+            },
+        );
+    }
+
+    #[test]
+    fn multiplier_repeats_operator_motion() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let _ = vi.parse_event(key(KeyCode::Char('2'), KeyModifiers::NONE));
+        let _ = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
+        let result = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::NONE));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext]),
+                ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext]),
+            ]),
+        );
+        assert!(vi.cache.is_empty());
+    }
+
+    #[test]
+    fn multiplier_alone_repeats_motion() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let _ = vi.parse_event(key(KeyCode::Char('3'), KeyModifiers::NONE));
+        let result = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::NONE));
+
+        let mv = ReedlineEvent::Edit(vec![EditCommand::MoveWordRightStart { select: false }]);
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![mv.clone(), mv.clone(), mv]),
+        );
+        assert!(vi.cache.is_empty());
+    }
+
+    #[test]
+    fn partial_multiplier_holds_cache() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Char('2'), KeyModifiers::NONE));
+
+        assert_eq!(result, ReedlineEvent::None);
+        assert_eq!(vi.cache, vec!['2']);
+    }
+
+    #[test]
+    fn invalid_motion_after_operator_clears_cache() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let _ = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
+        assert_eq!(vi.cache, vec!['d']);
+
+        let result = vi.parse_event(key(KeyCode::Char('z'), KeyModifiers::NONE));
+
+        assert_eq!(result, ReedlineEvent::None);
+        assert!(
+            vi.cache.is_empty(),
+            "an invalid motion should drop the cached operator",
+        );
+    }
+
+    #[test]
+    fn linewise_dd_emits_cut_current_line() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let _ = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
+        let result = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]),
+        );
+        assert!(vi.cache.is_empty());
+    }
+
+    #[test]
+    fn repeated_dot_accumulates_nesting_in_previous() {
+        // Each `.` press wraps `previous` in an outer Multiple AND
+        // assigns the wrapped result back to `previous`. So every
+        // press deepens the nesting by one. Observationally fine
+        // (engine flattens via recursion), but `previous` grows
+        // unboundedly over a session. Worse with multipliers — `2.`
+        // doubles the inner Vec each call.
+        fn depth(ev: &ReedlineEvent) -> usize {
+            match ev {
+                ReedlineEvent::Multiple(v) if v.len() == 1 => 1 + depth(&v[0]),
+                _ => 0,
+            }
+        }
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let _ = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
+        let _ = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::NONE));
+        assert_eq!(depth(vi.previous.as_ref().unwrap()), 1);
+
+        let _ = vi.parse_event(key(KeyCode::Char('.'), KeyModifiers::NONE));
+        assert_eq!(depth(vi.previous.as_ref().unwrap()), 2);
+
+        let _ = vi.parse_event(key(KeyCode::Char('.'), KeyModifiers::NONE));
+        assert_eq!(depth(vi.previous.as_ref().unwrap()), 3);
+
+        let _ = vi.parse_event(key(KeyCode::Char('.'), KeyModifiers::NONE));
+        assert_eq!(depth(vi.previous.as_ref().unwrap()), 4);
+    }
+
+    #[test]
+    fn dot_replays_previous_wrapped_in_outer_multiple() {
+        // `.` produces Multiple([previous]) and writes it back to
+        // `previous`. See `repeated_dot_accumulates_nesting_in_previous`
+        // for the consequences — this assertion just pins the shape.
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let _ = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
+        let dw = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::NONE));
+        assert!(vi.previous.is_some());
+
+        let dot = vi.parse_event(key(KeyCode::Char('.'), KeyModifiers::NONE));
+        assert_eq!(dot, ReedlineEvent::Multiple(vec![dw]));
     }
 }

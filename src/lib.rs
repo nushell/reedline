@@ -277,7 +277,7 @@ pub use edit_mode::{
 };
 
 mod highlighter;
-pub use highlighter::{ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
+pub use highlighter::{AbbrExpandContext, ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
 
 mod completion;
 pub use completion::{Completer, DefaultCompleter, Span, Suggestion};
@@ -291,8 +291,9 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
 pub use menu::{
-    menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, IdeMenu, ListMenu, Menu,
-    MenuBuilder, MenuEvent, MenuSettings, MenuTextStyle, ReedlineMenu, TraversalDirection,
+    menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, DescriptionPosition, IdeMenu,
+    InputMode, ListMenu, Menu, MenuBuilder, MenuEvent, MenuTextStyle, OutputMode, ReedlineMenu,
+    TraversalDirection,
 };
 
 mod terminal_extensions;
