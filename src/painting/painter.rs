@@ -76,8 +76,54 @@ fn skip_buffer_lines_range(string: &str, skip: usize, offset: Option<usize>) -> 
     (index, limit)
 }
 
-/// the type used by crossterm operations
-pub type W = std::io::BufWriter<std::io::Stderr>;
+/// The writer used by crossterm operations.
+///
+/// In production this is a buffered stderr handle. During tests it can be
+/// backed by a sink, so painting runs normally without spilling escape
+/// sequences onto the real terminal: crossterm writes straight to the file
+/// descriptor, which bypasses libtest's output capture.
+pub enum W {
+    /// Buffered stderr — the real terminal.
+    // Constructed only in non-test builds; under `cfg(test)` we always use `Sink`.
+    #[cfg_attr(test, allow(dead_code))]
+    Terminal(std::io::BufWriter<std::io::Stderr>),
+    /// Discards all output, used in tests.
+    #[cfg(test)]
+    Sink(std::io::Sink),
+}
+
+impl W {
+    /// Writer targeting the real terminal (buffered stderr).
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn terminal() -> Self {
+        W::Terminal(std::io::BufWriter::new(std::io::stderr()))
+    }
+
+    /// Writer that discards everything, for tests that exercise painting
+    /// without printing to the terminal.
+    #[cfg(test)]
+    pub(crate) fn sink() -> Self {
+        W::Sink(std::io::sink())
+    }
+}
+
+impl Write for W {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        match self {
+            W::Terminal(w) => w.write(buf),
+            #[cfg(test)]
+            W::Sink(w) => w.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        match self {
+            W::Terminal(w) => w.flush(),
+            #[cfg(test)]
+            W::Sink(w) => w.flush(),
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct PainterSuspendedState {
@@ -1195,7 +1241,7 @@ mod tests {
         let mut snapshot = base_snapshot();
         snapshot.before_cursor = "hello world".to_string();
 
-        let painter = Painter::new(W::new(std::io::stderr()));
+        let painter = Painter::new(W::sink());
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 2, 0), Some(0));
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 3, 0), Some(1));
     }
@@ -1205,7 +1251,7 @@ mod tests {
         let mut snapshot = base_snapshot();
         snapshot.before_cursor = "hi".to_string();
 
-        let painter = Painter::new(W::new(std::io::stderr()));
+        let painter = Painter::new(W::sink());
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 10, 0), Some(2));
     }
 
@@ -1215,7 +1261,7 @@ mod tests {
         snapshot.screen_width = 5;
         snapshot.before_cursor = "abcdef".to_string();
 
-        let painter = Painter::new(W::new(std::io::stderr()));
+        let painter = Painter::new(W::sink());
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 1, 1), Some(4));
     }
 
@@ -1224,7 +1270,7 @@ mod tests {
         let mut snapshot = base_snapshot();
         snapshot.before_cursor = "ab\ncd".to_string();
 
-        let painter = Painter::new(W::new(std::io::stderr()));
+        let painter = Painter::new(W::sink());
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 1, 1), Some(4));
     }
 
@@ -1236,7 +1282,7 @@ mod tests {
         snapshot.before_cursor = "line1\nline2\nline3".to_string();
         snapshot.large_buffer_extra_rows_after_prompt = Some(1);
 
-        let painter = Painter::new(W::new(std::io::stderr()));
+        let painter = Painter::new(W::sink());
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 0), Some(6));
     }
 
@@ -1250,7 +1296,7 @@ mod tests {
             end_col: 12,
         });
 
-        let painter = Painter::new(W::new(std::io::stderr()));
+        let painter = Painter::new(W::sink());
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 10, 0), None);
     }
 
@@ -1260,12 +1306,12 @@ mod tests {
         snapshot.menu_active = true;
         snapshot.menu_start_row = Some(2);
 
-        let painter = Painter::new(W::new(std::io::stderr()));
+        let painter = Painter::new(W::sink());
         assert_eq!(painter.screen_to_buffer_offset(&snapshot, 0, 2), None);
     }
 
     fn make_painter(width: u16, height: u16, large_buffer: bool) -> Painter {
-        let mut p = Painter::new(W::new(std::io::stderr()));
+        let mut p = Painter::new(W::sink());
         p.terminal_size = (width, height);
         p.prompt_start_row = 0;
         p.prompt_height = 1;
@@ -1388,7 +1434,7 @@ mod tests {
             calls: Arc::clone(&calls),
         };
 
-        let mut painter = Painter::new(W::new(std::io::stderr()));
+        let mut painter = Painter::new(W::sink());
         painter.terminal_size = (20, 10);
         painter.prompt_start_row = 0;
         painter.prompt_height = 1;
