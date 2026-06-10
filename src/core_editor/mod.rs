@@ -1,4 +1,5 @@
 mod clip_buffer;
+mod cursor;
 mod edit_stack;
 mod editor;
 mod graphemes;
