@@ -88,6 +88,7 @@ impl Editor {
             EditCommand::Backspace => self.backspace(),
             EditCommand::Delete => self.delete(),
             EditCommand::CutChar => self.cut_char(),
+            EditCommand::CutCharLeft => self.cut_char_left(),
             EditCommand::BackspaceWord => self.line_buffer.delete_word_left(),
             EditCommand::DeleteWord => self.line_buffer.delete_word_right(),
             EditCommand::Clear => self.line_buffer.clear(),
@@ -727,6 +728,21 @@ impl Editor {
         }
     }
 
+    fn cut_char_left(&mut self) {
+        if let Some((start, end)) = self.get_selection() {
+            let line_start = self.line_buffer.line_range_for(start).start;
+            let line_end = self.line_buffer.line_range_for(end).end;
+            self.cut_range(line_start..line_end);
+            self.clear_selection();
+        } else {
+            let cur_pos = self.line_buffer.insertion_point();
+            let left_index = self.line_buffer.grapheme_left_index();
+            if left_index < cur_pos && left_index >= self.line_buffer.current_line_range().start {
+                self.cut_range(left_index..cur_pos);
+            }
+        }
+    }
+
     fn delete(&mut self) {
         if self.selection_anchor.is_some() {
             self.delete_selection();
@@ -1322,6 +1338,69 @@ mod test {
         assert_eq!(editor.get_buffer(), "This is a \r\n");
         editor.run_edit_command(&EditCommand::Undo);
         assert_eq!(editor.get_buffer(), "This is a \r\n test");
+    }
+
+    #[test]
+    fn test_cut_char_left_at_beginning_of_line() {
+        let starting_line = "This is a single line test";
+        let mut editor = editor_with(starting_line);
+        editor.line_buffer.set_insertion_point(0);
+        editor.run_edit_command(&EditCommand::CutCharLeft);
+        assert_eq!(editor.get_buffer(), starting_line);
+    }
+
+    #[test]
+    fn test_cut_char_left_at_beginning_of_2nd_line() {
+        let starting_line = "This is a \r\nmulti-line test";
+        let mut editor = editor_with(starting_line);
+        editor.line_buffer.set_insertion_point(12);
+        editor.run_edit_command(&EditCommand::CutCharLeft);
+        assert_eq!(editor.get_buffer(), starting_line);
+    }
+
+    #[test]
+    fn test_cut_char_left_visual_single_line() {
+        let mut editor = editor_with("hello world");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.line_buffer.set_insertion_point(2);
+        editor.update_selection_anchor(true);
+        // Select "llo" (positions 2..5 inclusive in normal mode)
+        for _ in 0..2 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+        editor.run_edit_command(&EditCommand::CutCharLeft);
+        // X in visual mode should cut the entire line
+        assert_eq!(editor.get_buffer(), "");
+    }
+
+    #[test]
+    fn test_cut_char_left_visual_multi_line() {
+        let mut editor = editor_with("first\nsecond\nthird");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        // Place cursor in "second", select a portion
+        editor.line_buffer.set_insertion_point(8); // 's' of "second"
+        editor.update_selection_anchor(true);
+        for _ in 0..2 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+        editor.run_edit_command(&EditCommand::CutCharLeft);
+        // X in visual mode should cut the entire line(s) covered by the selection
+        assert_eq!(editor.get_buffer(), "first\nthird");
+    }
+
+    #[test]
+    fn test_cut_char_left_visual_spanning_two_lines() {
+        let mut editor = editor_with("first\nsecond\nthird");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        // Select from end of "first" to beginning of "second"
+        editor.line_buffer.set_insertion_point(3); // in "first"
+        editor.update_selection_anchor(true);
+        for _ in 0..6 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+        editor.run_edit_command(&EditCommand::CutCharLeft);
+        // Should cut both "first\n" and "second\n"
+        assert_eq!(editor.get_buffer(), "third");
     }
 
     #[test]

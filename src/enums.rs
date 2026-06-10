@@ -237,6 +237,9 @@ pub enum EditCommand {
     /// Delete in-place from the current insertion point
     Delete,
 
+    /// Cut the grapheme left from the current insertion point
+    CutCharLeft,
+
     /// Cut the grapheme right from the current insertion point
     CutChar,
 
@@ -544,6 +547,7 @@ impl EditCommand {
             | EditCommand::Backspace
             | EditCommand::Delete
             | EditCommand::CutChar
+            | EditCommand::CutCharLeft
             | EditCommand::InsertString(_)
             | EditCommand::InsertNewline
             | EditCommand::InsertNewlineAbove
