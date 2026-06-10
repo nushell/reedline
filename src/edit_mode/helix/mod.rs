@@ -3,7 +3,6 @@ mod bindings;
 mod event;
 mod key;
 mod mode;
-mod range;
 
 use crate::{
     edit_mode::EditMode,
