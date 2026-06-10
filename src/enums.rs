@@ -88,6 +88,21 @@ impl Default for TextObject {
     }
 }
 
+/// Granularity of an operator and of the register it fills: inline characters or
+/// whole lines.
+///
+/// `LineWise` (vi `dd`/`yy`/`V`) operates on complete lines and pastes on a new
+/// line below/above; `CharWise` is the default inline behavior. Carried on the
+/// operator and stored on the cut buffer, so paste knows which to do.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
+pub enum Granularity {
+    /// Inline at the cursor — the default.
+    #[default]
+    CharWise,
+    /// Whole lines, pasted below/above.
+    LineWise,
+}
+
 /// Editing actions which can be mapped to key bindings.
 ///
 /// Executed by `Reedline::run_edit_commands()`
