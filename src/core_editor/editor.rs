@@ -1,11 +1,11 @@
-use super::{edit_stack::EditStack, Clipboard, LineBuffer};
-use crate::core_editor::commit;
+use super::{edit_stack::EditStack, Clipboard, Cursor, LineBuffer};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
+use crate::core_editor::{commit, line, operator_span, resolve_motion, RestPolicy};
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
-use crate::prompt::{PromptEditMode, PromptViMode};
-use crate::Granularity;
+use crate::prompt::PromptEditMode;
 use crate::{core_editor::get_local_clipboard, EditCommand};
+use crate::{Direction, Granularity, MotionTarget};
 use std::cmp::{max, min};
 use std::ops::{DerefMut, Range};
 
@@ -20,9 +20,21 @@ pub struct Editor {
     system_clipboard: Box<dyn Clipboard>,
     edit_stack: EditStack<LineBuffer>,
     last_undo_behavior: UndoBehavior,
-    selection_anchor: Option<usize>,
-    selection_mode: Option<PromptEditMode>,
+    /// Whether the active selection is inclusive, captured when its anchor was
+    /// planted. Fixed at creation so a later mode switch (e.g. Vi `c` → insert
+    /// before the cut) can't change the operated range. `None` when no selection.
+    selection_inclusive: Option<bool>,
     edit_mode: PromptEditMode,
+}
+
+enum OperatorVerb {
+    Cut,
+    Copy,
+    /// Cut, but a `LineWise` span keeps its line terminators so one blank line
+    /// remains — vi's change operator (`cc`/`cj`/`cgg`). Identical to `Cut`
+    /// for `CharWise` spans.
+    Change,
+    Erase,
 }
 
 impl Default for Editor {
@@ -34,8 +46,7 @@ impl Default for Editor {
             system_clipboard: get_system_clipboard(),
             edit_stack: EditStack::new(),
             last_undo_behavior: UndoBehavior::CreateUndoPoint,
-            selection_anchor: None,
-            selection_mode: None,
+            selection_inclusive: None,
             edit_mode: PromptEditMode::Default,
         }
     }
@@ -79,6 +90,39 @@ impl Editor {
             }
             EditCommand::MoveWordRightEnd { select } => self.move_word_right_end(*select),
             EditCommand::MoveBigWordRightEnd { select } => self.move_big_word_right_end(*select),
+            EditCommand::Move(t) => {
+                let head = self.resolve_head(*t);
+                self.move_head_to(head, false);
+            }
+            EditCommand::Extend(t) => {
+                let head = self.resolve_head(*t);
+                self.move_head_to(head, true);
+            }
+            EditCommand::Cut {
+                target,
+                granularity,
+            } => {
+                let sel = operator_span(self.get_buffer(), self.insertion_point(), *target);
+                self.operate(sel, OperatorVerb::Cut, *granularity);
+            }
+            EditCommand::Copy {
+                target,
+                granularity,
+            } => {
+                let sel = operator_span(self.get_buffer(), self.insertion_point(), *target);
+                self.operate(sel, OperatorVerb::Copy, *granularity);
+            }
+            EditCommand::Change {
+                target,
+                granularity,
+            } => {
+                let sel = operator_span(self.get_buffer(), self.insertion_point(), *target);
+                self.operate(sel, OperatorVerb::Change, *granularity);
+            }
+            EditCommand::Erase(t) => {
+                let sel = operator_span(self.get_buffer(), self.insertion_point(), *t);
+                self.operate(sel, OperatorVerb::Erase, Granularity::CharWise);
+            }
             EditCommand::InsertChar(c) => self.insert_char(*c),
             EditCommand::Complete => {}
             EditCommand::InsertString(str) => self.insert_str(str),
@@ -189,7 +233,9 @@ impl Editor {
                     );
                 }
             }
-            EditCommand::SwapCursorAndAnchor => self.swap_cursor_and_anchor(),
+            EditCommand::SwapCursorAndAnchor => self
+                .line_buffer
+                .set_cursor(self.line_buffer.cursor().flip()),
             #[cfg(feature = "system_clipboard")]
             EditCommand::CutSelectionSystem => self.cut_selection_to_system(),
             #[cfg(feature = "system_clipboard")]
@@ -227,23 +273,59 @@ impl Editor {
         self.update_undo_state(new_undo_behavior);
     }
 
-    fn swap_cursor_and_anchor(&mut self) {
-        if let Some(anchor) = self.selection_anchor {
-            self.selection_anchor = Some(self.insertion_point());
-            self.line_buffer.set_insertion_point(anchor);
+    pub(crate) fn clear_selection(&mut self) {
+        self.line_buffer.clear_selection();
+        self.selection_inclusive = None;
+    }
+
+    fn operate(&mut self, selection: Cursor, verb: OperatorVerb, granularity: Granularity) {
+        let range = match granularity {
+            Granularity::CharWise => selection.start()..selection.end(),
+            Granularity::LineWise => {
+                let buf = self.get_buffer();
+                let s = line::start_of_line(buf, selection.start());
+                match verb {
+                    // Change keeps the line terminators: only the lines'
+                    // content is consumed, so one blank line remains for the
+                    // re-entered insert mode.
+                    OperatorVerb::Change => s..line::end_of_line(buf, selection.end()),
+                    // Cut/Copy/Erase consume whole lines including the trailing
+                    // `\n`; on the last line (no trailing `\n`) eat the
+                    // *preceding* one instead so no stray blank line is left.
+                    _ => {
+                        let e = line::start_of_next_line(buf, selection.end()).unwrap_or(buf.len());
+                        let s = if e == buf.len() && s > 0 { s - 1 } else { s };
+                        s..e
+                    }
+                }
+            }
+        };
+
+        match verb {
+            OperatorVerb::Cut | OperatorVerb::Change => self.cut_range_with(range, granularity),
+            OperatorVerb::Copy => self.copy_range_with(range, granularity),
+            OperatorVerb::Erase => {
+                self.line_buffer.clear_range_safe(range.clone());
+                self.line_buffer.set_insertion_point(range.start);
+            }
         }
     }
 
-    pub(crate) fn clear_selection(&mut self) {
-        self.selection_anchor = None;
-        self.selection_mode = None;
+    /// When a fresh anchor is about to be planted, capture whether the selection
+    /// is inclusive under the current rest policy. No-op when an anchor already
+    /// exists or `select` is false.
+    fn note_selection_inclusivity_if_planting(&mut self, select: bool) {
+        if select && self.line_buffer.selection_anchor().is_none() {
+            self.selection_inclusive = Some(self.edit_mode.rest_policy() == RestPolicy::OnGrapheme);
+        }
     }
 
     fn update_selection_anchor(&mut self, select: bool) {
+        self.note_selection_inclusivity_if_planting(select);
         if select {
-            if self.selection_anchor.is_none() {
-                self.selection_anchor = Some(self.insertion_point());
-                self.selection_mode = Some(self.edit_mode.clone());
+            if self.line_buffer.selection_anchor().is_none() {
+                self.line_buffer
+                    .set_selection_anchor(Some(self.insertion_point()));
             }
         } else {
             self.clear_selection();
@@ -271,8 +353,43 @@ impl Editor {
     }
 
     fn move_to_position(&mut self, position: usize, select: bool) {
-        self.update_selection_anchor(select);
-        self.line_buffer.set_insertion_point(position)
+        self.note_selection_inclusivity_if_planting(select);
+        self.line_buffer.move_head(position, select);
+    }
+
+    /// Resolve a motion target to the head position the cursor would land on.
+    fn resolve_head(&self, target: MotionTarget) -> usize {
+        resolve_motion(
+            self.line_buffer.get_buffer(),
+            self.insertion_point(),
+            target,
+        )
+        .head
+    }
+
+    /// Move the cursor head to `head` — collapsing the selection unless `select`
+    /// keeps the anchor — then normalize at the commit boundary (RestPolicy snap
+    /// and selection bookkeeping). The single sink every motion funnels through,
+    /// after its target has been resolved via [`resolve_motion`].
+    fn move_head_to(&mut self, head: usize, select: bool) {
+        let was_empty = self.line_buffer.selection_anchor().is_none();
+        let cursor = self.line_buffer.cursor();
+        let next = if select {
+            cursor.move_head(head)
+        } else {
+            cursor.collapse_to(head)
+        };
+        self.line_buffer.set_cursor(next);
+        self.commit_cursor();
+
+        match (was_empty, self.line_buffer.selection_anchor().is_some()) {
+            (true, true) => {
+                self.selection_inclusive =
+                    Some(self.edit_mode.rest_policy() == RestPolicy::OnGrapheme)
+            }
+            (_, false) => self.selection_inclusive = None,
+            _ => {}
+        }
     }
 
     pub(crate) fn move_line_up(&mut self, select: bool) {
@@ -336,28 +453,23 @@ impl Editor {
     }
 
     pub(crate) fn move_to_start(&mut self, select: bool) {
-        self.update_selection_anchor(select);
-        self.line_buffer.move_to_start();
+        self.move_to_position(0, select);
     }
 
     pub(crate) fn move_to_end(&mut self, select: bool) {
-        self.update_selection_anchor(select);
-        self.line_buffer.move_to_end();
+        self.move_to_position(self.line_buffer.len(), select);
     }
 
     pub(crate) fn move_to_line_start(&mut self, select: bool) {
-        self.update_selection_anchor(select);
-        self.line_buffer.move_to_line_start();
+        self.move_to_position(self.line_buffer.line_start_index(), select);
     }
 
     pub(crate) fn move_to_line_non_blank_start(&mut self, select: bool) {
-        self.update_selection_anchor(select);
-        self.line_buffer.move_to_line_non_blank_start();
+        self.move_to_position(self.line_buffer.line_non_blank_start_index(), select);
     }
 
     pub(crate) fn move_to_line_end(&mut self, select: bool) {
-        self.update_selection_anchor(select);
-        self.line_buffer.move_to_line_end();
+        self.move_to_position(self.line_buffer.find_current_line_end(), select);
     }
 
     fn undo(&mut self) {
@@ -381,6 +493,12 @@ impl Editor {
         self.edit_stack.insert(self.line_buffer.clone());
         self.last_undo_behavior = undo_behavior;
     }
+
+    // The dedicated `*Linewise` cut/copy methods below back the legacy public
+    // `EditCommand` variants only — every builtin binding now lowers through
+    // `operate` + `Granularity::LineWise` (with the `Change` verb covering the
+    // `leave_blank_line` flavor). Linewise span fixes belong in `operate` /
+    // `core_editor::line`, not here.
 
     fn cut_current_line(&mut self) {
         let deletion_range = self.line_buffer.current_line_range();
@@ -529,7 +647,7 @@ impl Editor {
     }
 
     fn cut_char(&mut self) {
-        if self.selection_anchor.is_some() {
+        if self.line_buffer.selection_anchor().is_some() {
             self.cut_selection_to_cut_buffer();
         } else {
             let insertion_offset = self.line_buffer.insertion_point();
@@ -650,18 +768,21 @@ impl Editor {
     }
 
     fn move_left(&mut self, select: bool) {
-        self.update_selection_anchor(select);
-        self.line_buffer.move_left();
+        let head = self.resolve_head(MotionTarget::Grapheme(Direction::Backward));
+        self.move_head_to(head, select);
     }
 
     fn move_right(&mut self, select: bool) {
-        self.update_selection_anchor(select);
-        self.line_buffer.move_right();
+        let head = self.resolve_head(MotionTarget::Grapheme(Direction::Forward));
+        self.move_head_to(head, select);
     }
 
     fn select_all(&mut self) {
-        self.selection_anchor = Some(0);
-        self.line_buffer.move_to_end();
+        let end = self.line_buffer.len();
+        self.line_buffer.set_cursor(Cursor::new(0, end));
+        // Capture inclusivity exactly like an anchor planted on the motion
+        // path, so a later mode switch can't change the selected span.
+        self.selection_inclusive = Some(self.edit_mode.rest_policy() == RestPolicy::OnGrapheme);
     }
 
     #[cfg(feature = "system_clipboard")]
@@ -699,36 +820,28 @@ impl Editor {
     /// If a selection is active returns the selected range, otherwise None.
     /// The range is guaranteed to be ascending.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
-        let selection_anchor = self.selection_anchor?;
+        // `None` exactly when no anchor is planted. A planted anchor that
+        // happens to sit on the head is still a (degenerate) selection.
+        self.line_buffer.selection_anchor()?;
+        let cursor = self.line_buffer.cursor();
 
-        // Use the mode that was active when the selection was created, not the current mode
-        let inclusive = matches!(
-            self.selection_mode.as_ref().unwrap_or(&self.edit_mode),
-            PromptEditMode::Vi(PromptViMode::Normal)
-        );
+        // Inclusivity was captured (via the rest policy) when the selection was
+        // created, so a later mode switch doesn't change the operated range. The
+        // fallback to the current policy covers anchors that bypassed every
+        // planting path (e.g. a selection restored by undo/redo).
+        let inclusive = self
+            .selection_inclusive
+            .unwrap_or_else(|| self.edit_mode.rest_policy() == RestPolicy::OnGrapheme);
 
-        let selection_is_from_left_to_right = selection_anchor < self.insertion_point();
-
-        let start_pos = if selection_is_from_left_to_right {
-            selection_anchor
+        // The range is `[start, end)`. In inclusive (Vi normal) mode the
+        // grapheme under the high end is part of the selection, so the end
+        // extends one grapheme past it — direction-independent, since the
+        // cursor already normalizes anchor/head ordering.
+        let start_pos = cursor.start();
+        let end_pos = if inclusive {
+            self.line_buffer.grapheme_right_index_from_pos(cursor.end())
         } else {
-            self.insertion_point()
-        };
-
-        let end_pos = if selection_is_from_left_to_right {
-            if inclusive {
-                self.line_buffer.grapheme_right_index()
-            } else {
-                self.insertion_point()
-            }
-        } else {
-            // selection is from right to left
-            if inclusive {
-                self.line_buffer
-                    .grapheme_right_index_from_pos(selection_anchor)
-            } else {
-                selection_anchor
-            }
+            cursor.end()
         };
 
         Some((start_pos, end_pos.min(self.line_buffer.len())))
@@ -742,7 +855,7 @@ impl Editor {
     }
 
     fn backspace(&mut self) {
-        if self.selection_anchor.is_some() {
+        if self.line_buffer.selection_anchor().is_some() {
             self.delete_selection();
         } else {
             self.line_buffer.delete_left_grapheme();
@@ -750,7 +863,7 @@ impl Editor {
     }
 
     fn delete(&mut self) {
-        if self.selection_anchor.is_some() {
+        if self.line_buffer.selection_anchor().is_some() {
             self.delete_selection();
         } else {
             self.line_buffer.delete_right_grapheme();
@@ -827,17 +940,25 @@ impl Editor {
     }
 
     fn cut_range(&mut self, range: Range<usize>) {
+        self.cut_range_with(range, Granularity::CharWise);
+    }
+
+    fn cut_range_with(&mut self, range: Range<usize>, granularity: Granularity) {
         if range.start <= range.end {
-            self.copy_range(range.clone());
+            self.copy_range_with(range.clone(), granularity);
             self.line_buffer.clear_range_safe(range.clone());
             self.line_buffer.set_insertion_point(range.start);
         }
     }
 
     fn copy_range(&mut self, range: Range<usize>) {
+        self.copy_range_with(range, Granularity::CharWise);
+    }
+
+    fn copy_range_with(&mut self, range: Range<usize>, granularity: Granularity) {
         if range.start < range.end {
             let slice = &self.line_buffer.get_buffer()[range];
-            self.cut_buffer.set(slice, Granularity::CharWise);
+            self.cut_buffer.set(slice, granularity);
         }
     }
 
@@ -1174,6 +1295,8 @@ fn insert_clipboard_content_before(line_buffer: &mut LineBuffer, clipboard: &mut
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::prompt::PromptViMode;
+    use crate::{Direction, FindStop, WordEdge, WordKind};
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -1282,6 +1405,403 @@ mod test {
         });
         editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Insert));
         assert_eq!(editor.insertion_point(), 4);
+    }
+
+    // Selections built by selecting motions still cut the right bytes after the
+    // commit boundary runs on every move — including across a multibyte grapheme.
+
+    #[test]
+    fn vi_normal_selection_cut_is_inclusive() {
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 0,
+            select: false,
+        });
+        for _ in 0..2 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+        // head on 'l' (byte 2); Vi-normal selection is inclusive → covers [0,3)
+        assert_eq!(editor.get_selection(), Some((0, 3)));
+        editor.run_edit_command(&EditCommand::CutSelection);
+        assert_eq!(editor.get_buffer(), "lo");
+        assert_eq!(editor.cut_buffer.get().0, "hel");
+    }
+
+    #[test]
+    fn vi_normal_selection_cut_spans_multibyte_grapheme() {
+        let mut editor = vi_editor("caféx", PromptViMode::Normal);
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 0,
+            select: false,
+        });
+        for _ in 0..3 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+        // head on 'é' (byte 3); inclusive end extends over both bytes of é → 5
+        assert_eq!(editor.get_selection(), Some((0, 5)));
+        editor.run_edit_command(&EditCommand::CutSelection);
+        assert_eq!(editor.get_buffer(), "x");
+        assert_eq!(editor.cut_buffer.get().0, "café");
+    }
+
+    // Regression for #893: a single selecting move must extend the selection by
+    // exactly one grapheme, not two. The default (exclusive) policy means the
+    // selection end is the head — the cursor-as-range model has no place for the
+    // off-by-one that produced the two-char grab.
+    #[test]
+    fn shift_select_grabs_one_grapheme_per_step() {
+        let mut editor = editor_with("hello");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        assert_eq!(editor.get_selection(), Some((0, 1)));
+        editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        assert_eq!(editor.get_selection(), Some((0, 2)));
+    }
+
+    #[test]
+    fn shift_select_one_grapheme_over_multibyte() {
+        let mut editor = editor_with("café"); // 'é' is 2 bytes at [3,5)
+        editor.move_to_position(3, false);
+        editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        assert_eq!(editor.get_selection(), Some((3, 5))); // one grapheme, not two
+    }
+
+    #[test]
+    fn select_all_captures_inclusivity_at_plant_time() {
+        // `select_all` plants its anchor outside the motion path; it must still
+        // capture inclusivity, so a later mode switch (vi normal → insert here)
+        // can't shrink the selection by the final grapheme.
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.run_edit_command(&EditCommand::SelectAll);
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Insert));
+        assert_eq!(editor.get_selection(), Some((0, 5)));
+    }
+
+    // --- granularity gate -------------------------------------------------
+    //
+    // dd/dgg/dG/yy (and the cgg/cG blank-line variant) currently lower to
+    // dedicated linewise commands. The granularity axis will re-lower them
+    // through the operator verbs; these golden masters pin the exact buffer,
+    // cursor, cut content, and — crucially — the `Granularity::LineWise` register
+    // tag (what makes paste linewise) so the re-lowering stays behavior-preserving.
+    // Buffer "aaa\nbbb\nccc": a@0..3, \n@3, b@4..7, \n@7, c@8..11; cursor in "bbb".
+
+    fn linewise_editor() -> Editor {
+        let mut editor = editor_with("aaa\nbbb\nccc");
+        editor.move_to_position(5, false);
+        editor
+    }
+
+    #[test]
+    fn cut_current_line_is_linewise() {
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::CutCurrentLine);
+        assert_eq!(editor.get_buffer(), "aaa\nccc");
+        assert_eq!(editor.insertion_point(), 4);
+        let (content, mode) = editor.cut_buffer.get();
+        assert_eq!(content, "bbb\n");
+        assert!(matches!(mode, Granularity::LineWise));
+    }
+
+    // --- explicit-granularity target (Phase 2 step 3 makes these pass) ----
+    //
+    // The new vocab: `dd` = `Cut(LineEdge, LineWise)`, `dgg` = `Cut(BufferEdge(Bwd),
+    // LineWise)`, `dG` = `Cut(BufferEdge(Fwd), LineWise)`. `operate` must snap a
+    // LineWise span out to whole lines (incl. the `dG` leading-\n fixup) and tag
+    // the register `LineWise`. These mirror the dedicated-command golden masters
+    // above. (`operate` ignores granularity until step 3, so they start red.)
+
+    #[test]
+    fn cut_lineedge_linewise_matches_current_line() {
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::LineEdge(Direction::Forward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "aaa\nccc");
+        assert_eq!(editor.insertion_point(), 4);
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "bbb\n");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn cut_bufferedge_back_linewise_cuts_through_current_line() {
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::BufferEdge(Direction::Backward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "ccc");
+        assert_eq!(editor.insertion_point(), 0);
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "aaa\nbbb\n");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn cut_bufferedge_fwd_linewise_eats_leading_newline() {
+        // the `dG` fixup: reaching buffer end consumes the *preceding* \n so no
+        // stray blank line is left.
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::BufferEdge(Direction::Forward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "aaa");
+        assert_eq!(editor.insertion_point(), 3);
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "\nbbb\nccc");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn copy_lineedge_linewise_tags_register_nondestructively() {
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::Copy {
+            target: MotionTarget::LineEdge(Direction::Forward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "aaa\nbbb\nccc"); // unchanged
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "bbb\n");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn cut_lineedge_charwise_stays_charwise() {
+        // CharWise must NOT snap: `d$` from mid-line cuts to the line end only.
+        let mut editor = linewise_editor(); // cursor 5, inside "bbb"
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::LineEdge(Direction::Forward),
+            granularity: Granularity::CharWise,
+        });
+        assert_eq!(editor.get_buffer(), "aaa\nb\nccc"); // removed "bb"
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "bb");
+        assert_eq!(gran, Granularity::CharWise);
+    }
+
+    #[test]
+    fn cut_line_down_linewise_deletes_current_and_next() {
+        // `dj` from "bbb" deletes bbb + ccc, linewise.
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::Line(Direction::Forward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "aaa");
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "\nbbb\nccc");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn cut_line_up_linewise_deletes_current_and_prev() {
+        // `dk` from "bbb" deletes aaa + bbb, linewise.
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::Line(Direction::Backward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "ccc");
+        assert_eq!(editor.insertion_point(), 0);
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "aaa\nbbb\n");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn cut_line_down_on_last_line_cuts_only_that_line() {
+        // `dj` on the last line: the motion stays put (no line below), so the
+        // linewise snap consumes just the current line — including its
+        // *leading* `\n` (the buffer-end fixup), leaving no stray blank line.
+        let mut editor = editor_with("aaa\nbbb\nccc");
+        editor.move_to_position(9, false); // inside "ccc"
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::Line(Direction::Forward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "aaa\nbbb");
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "\nccc");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn cut_line_up_on_first_line_cuts_only_that_line() {
+        // `dk` on the first line: no line above, so only the current line goes.
+        let mut editor = editor_with("aaa\nbbb\nccc");
+        editor.move_to_position(1, false);
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::Line(Direction::Backward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "bbb\nccc");
+        assert_eq!(editor.insertion_point(), 0);
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "aaa\n");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn cut_line_down_on_single_line_buffer_empties_it() {
+        let mut editor = editor_with("aaa");
+        editor.move_to_position(1, false);
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::Line(Direction::Forward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "");
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "aaa");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    // --- the Change verb (vi linewise change: `cc`/`cj`/`cgg`/`cG`) ---------
+    //
+    // Change is Cut with the LineWise snap keeping the line terminators: the
+    // spanned lines' *content* is consumed and one blank line remains for the
+    // re-entered insert mode. The register is tagged LineWise like vim's.
+
+    #[test]
+    fn change_lineedge_linewise_blanks_current_line() {
+        // `cc` from "bbb": content gone, blank line kept, cursor at its start.
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::Change {
+            target: MotionTarget::LineEdge(Direction::Forward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "aaa\n\nccc");
+        assert_eq!(editor.insertion_point(), 4);
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "bbb");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn change_line_down_blanks_current_and_next() {
+        // `cj` from "bbb": bbb + ccc collapse into one blank line.
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::Change {
+            target: MotionTarget::Line(Direction::Forward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "aaa\n");
+        assert_eq!(editor.insertion_point(), 4);
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "bbb\nccc");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn change_line_up_blanks_current_and_prev() {
+        // `ck` from "bbb": aaa + bbb collapse into one blank line.
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::Change {
+            target: MotionTarget::Line(Direction::Backward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "\nccc");
+        assert_eq!(editor.insertion_point(), 0);
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "aaa\nbbb");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn change_bufferedge_back_matches_legacy_leave_blank_command() {
+        // `cgg` — must reproduce `CutFromStartLinewise { leave_blank_line: true }`
+        // (the golden master above) exactly.
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::Change {
+            target: MotionTarget::BufferEdge(Direction::Backward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "\nccc");
+        assert_eq!(editor.insertion_point(), 0);
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "aaa\nbbb");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn change_bufferedge_fwd_matches_legacy_leave_blank_command() {
+        // `cG` — must reproduce `CutToEndLinewise { leave_blank_line: true }`:
+        // no buffer-end fixup; the preceding `\n` stays so a blank line remains.
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::Change {
+            target: MotionTarget::BufferEdge(Direction::Forward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "aaa\n");
+        assert_eq!(editor.insertion_point(), 4);
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "bbb\nccc");
+        assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn change_charwise_behaves_like_cut() {
+        // For CharWise spans Change and Cut are the same operator.
+        let mut editor = linewise_editor(); // cursor 5, inside "bbb"
+        editor.run_edit_command(&EditCommand::Change {
+            target: MotionTarget::LineEdge(Direction::Forward),
+            granularity: Granularity::CharWise,
+        });
+        assert_eq!(editor.get_buffer(), "aaa\nb\nccc"); // removed "bb"
+        let (content, gran) = editor.cut_buffer.get();
+        assert_eq!(content, "bb");
+        assert_eq!(gran, Granularity::CharWise);
+    }
+
+    #[test]
+    fn cut_from_start_linewise_cuts_through_current_line() {
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::CutFromStartLinewise {
+            leave_blank_line: false,
+        });
+        assert_eq!(editor.get_buffer(), "ccc");
+        assert_eq!(editor.insertion_point(), 0);
+        let (content, mode) = editor.cut_buffer.get();
+        assert_eq!(content, "aaa\nbbb\n");
+        assert!(matches!(mode, Granularity::LineWise));
+    }
+
+    #[test]
+    fn cut_from_start_linewise_leave_blank_keeps_empty_line() {
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::CutFromStartLinewise {
+            leave_blank_line: true,
+        });
+        assert_eq!(editor.get_buffer(), "\nccc");
+        assert_eq!(editor.insertion_point(), 0);
+        let (content, mode) = editor.cut_buffer.get();
+        assert_eq!(content, "aaa\nbbb");
+        assert!(matches!(mode, Granularity::LineWise));
+    }
+
+    #[test]
+    fn cut_to_end_linewise_cuts_from_current_line() {
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::CutToEndLinewise {
+            leave_blank_line: false,
+        });
+        assert_eq!(editor.get_buffer(), "aaa");
+        assert_eq!(editor.insertion_point(), 3);
+        let (content, mode) = editor.cut_buffer.get();
+        assert_eq!(content, "\nbbb\nccc");
+        assert!(matches!(mode, Granularity::LineWise));
+    }
+
+    #[test]
+    fn copy_current_line_is_linewise_and_nondestructive() {
+        let mut editor = linewise_editor();
+        editor.run_edit_command(&EditCommand::CopyCurrentLine);
+        assert_eq!(editor.get_buffer(), "aaa\nbbb\nccc"); // unchanged
+        let (content, mode) = editor.cut_buffer.get();
+        assert_eq!(content, "bbb\n");
+        assert!(matches!(mode, Granularity::LineWise));
     }
 
     #[rstest]
@@ -1490,17 +2010,17 @@ mod test {
         for _ in 0..3 {
             editor.run_edit_command(&EditCommand::MoveRight { select: true });
         }
-        assert_eq!(editor.selection_anchor, Some(0));
+        assert_eq!(editor.line_buffer().selection_anchor(), Some(0));
         assert_eq!(editor.insertion_point(), 3);
         assert_eq!(editor.get_selection(), Some((0, 3)));
 
         editor.run_edit_command(&EditCommand::SwapCursorAndAnchor);
-        assert_eq!(editor.selection_anchor, Some(3));
+        assert_eq!(editor.line_buffer().selection_anchor(), Some(3));
         assert_eq!(editor.insertion_point(), 0);
         assert_eq!(editor.get_selection(), Some((0, 3)));
 
         editor.run_edit_command(&EditCommand::SwapCursorAndAnchor);
-        assert_eq!(editor.selection_anchor, Some(0));
+        assert_eq!(editor.line_buffer().selection_anchor(), Some(0));
         assert_eq!(editor.insertion_point(), 3);
         assert_eq!(editor.get_selection(), Some((0, 3)));
     }
@@ -1515,7 +2035,7 @@ mod test {
         for _ in 0..3 {
             editor.run_edit_command(&EditCommand::MoveRight { select: true });
         }
-        assert_eq!(editor.selection_anchor, Some(0));
+        assert_eq!(editor.line_buffer().selection_anchor(), Some(0));
         assert_eq!(editor.insertion_point(), 3);
         // In Vi normal mode, selection should be inclusive (include character at position 3)
         assert_eq!(editor.get_selection(), Some((0, 4)));
@@ -1531,7 +2051,7 @@ mod test {
         for _ in 0..3 {
             editor.run_edit_command(&EditCommand::MoveLeft { select: true });
         }
-        assert_eq!(editor.selection_anchor, Some(4));
+        assert_eq!(editor.line_buffer().selection_anchor(), Some(4));
         assert_eq!(editor.insertion_point(), 1); // cursor at position 1 ('h')
                                                  // In Vi normal mode, selection should be inclusive from cursor to anchor+1
                                                  // So it should select from position 1 to 5 (inclusive of char at position 4)
@@ -1619,7 +2139,9 @@ mod test {
         #[test]
         fn test_cut_selection_system() {
             let mut editor = editor_with("This is a test!");
-            editor.selection_anchor = Some(editor.line_buffer.len());
+            editor
+                .line_buffer
+                .set_selection_anchor(Some(editor.line_buffer.len()));
             editor.line_buffer.set_insertion_point(0);
             editor.run_edit_command(&EditCommand::CutSelectionSystem);
             assert!(editor.line_buffer.get_buffer().is_empty());
@@ -1628,7 +2150,9 @@ mod test {
         fn test_copypaste_selection_system() {
             let s = "This is a test!";
             let mut editor = editor_with(s);
-            editor.selection_anchor = Some(editor.line_buffer.len());
+            editor
+                .line_buffer
+                .set_selection_anchor(Some(editor.line_buffer.len()));
             editor.line_buffer.set_insertion_point(0);
             editor.run_edit_command(&EditCommand::CopySelectionSystem);
             editor.run_edit_command(&EditCommand::PasteSystem);
@@ -1830,7 +2354,7 @@ mod test {
         }
 
         assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.selection_anchor, Some(0));
+        assert_eq!(editor.line_buffer().selection_anchor(), Some(0));
         assert_eq!(editor.get_selection(), Some((0, 5))); // inclusive selection
 
         editor.run_edit_command(&EditCommand::CutSelection);
@@ -2290,5 +2814,477 @@ mod test {
 
         assert_eq!(bracket_result, expected_bracket);
         assert_eq!(quote_result, expected_quote);
+    }
+
+    // --- MotionTarget verbs (Move / Extend / Cut / Copy / Erase) ---
+    //
+    // These drive the public verbs through the full lowering
+    // (`MotionTarget` -> `resolve_motion`) in the default (emacs)
+    // editor, proving the substrate in isolation before any keymap emits it.
+
+    /// `w` as a target: small-word start, forward.
+    fn word_start_fwd() -> MotionTarget {
+        MotionTarget::Word {
+            kind: WordKind::Small,
+            edge: WordEdge::Start,
+            direction: Direction::Forward,
+        }
+    }
+
+    #[test]
+    fn move_word_forward_lands_on_next_word_start() {
+        let mut editor = editor_with("foo bar baz");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Move(word_start_fwd()));
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.get_selection(), None); // Move collapses — no selection
+    }
+
+    #[test]
+    fn move_grapheme_right_steps_over_multibyte() {
+        let mut editor = editor_with("café"); // 'é' is 2 bytes: graphemes at 0,1,2,3, len 5
+        editor.move_to_position(3, false);
+        editor.run_edit_command(&EditCommand::Move(MotionTarget::Grapheme(
+            Direction::Forward,
+        )));
+        assert_eq!(editor.insertion_point(), 5); // one grapheme, two bytes
+    }
+
+    #[test]
+    fn extend_word_forward_keeps_anchor_at_origin() {
+        let mut editor = editor_with("foo bar baz");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+        assert_eq!(editor.insertion_point(), 4);
+        assert_eq!(editor.get_selection(), Some((0, 4))); // anchor stays at the origin
+    }
+
+    #[test]
+    fn cut_word_forward_removes_range_and_yanks() {
+        let mut editor = editor_with("foo bar baz");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Cut {
+            target: word_start_fwd(),
+            granularity: Granularity::CharWise,
+        });
+        assert_eq!(editor.get_buffer(), "bar baz");
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.cut_buffer.get().0, "foo ");
+    }
+
+    #[test]
+    fn cut_word_backward_removes_preceding_word() {
+        let mut editor = editor_with("foo bar");
+        editor.move_to_position(7, false); // end of buffer
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::Word {
+                kind: WordKind::Small,
+                edge: WordEdge::Start,
+                direction: Direction::Backward,
+            },
+            granularity: Granularity::CharWise,
+        });
+        assert_eq!(editor.get_buffer(), "foo ");
+        assert_eq!(editor.insertion_point(), 4); // cursor lands at the range start
+        assert_eq!(editor.cut_buffer.get().0, "bar");
+    }
+
+    #[test]
+    fn copy_word_forward_yanks_without_editing() {
+        let mut editor = editor_with("foo bar");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Copy {
+            target: word_start_fwd(),
+            granularity: Granularity::CharWise,
+        });
+        assert_eq!(editor.get_buffer(), "foo bar"); // buffer untouched
+        assert_eq!(editor.insertion_point(), 0); // cursor untouched
+        assert_eq!(editor.cut_buffer.get().0, "foo ");
+    }
+
+    #[test]
+    fn erase_word_forward_deletes_without_touching_register() {
+        let mut editor = editor_with("foo bar baz");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Erase(word_start_fwd()));
+        assert_eq!(editor.get_buffer(), "bar baz");
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.cut_buffer.get().0, ""); // register left untouched
+    }
+
+    #[test]
+    fn erase_find_forward_is_inclusive() {
+        // op_end (inclusive forward find) must reach Erase through `operate`:
+        // `dt`-style would stop short, but `Find { On }` eats through the 'b'.
+        let mut editor = editor_with("foo bar baz");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Erase(find(
+            'b',
+            Direction::Forward,
+            FindStop::On,
+        )));
+        assert_eq!(editor.get_buffer(), "ar baz"); // removed "foo b"
+        assert_eq!(editor.insertion_point(), 0);
+        assert_eq!(editor.cut_buffer.get().0, ""); // register left untouched
+    }
+
+    #[test]
+    fn erase_grapheme_backward_over_multibyte() {
+        // backward span (origin > op_end) across a 2-byte grapheme.
+        let mut editor = editor_with("café"); // 'é' is [3,5)
+        editor.move_to_position(5, false);
+        editor.run_edit_command(&EditCommand::Erase(MotionTarget::Grapheme(
+            Direction::Backward,
+        )));
+        assert_eq!(editor.get_buffer(), "caf");
+        assert_eq!(editor.insertion_point(), 3);
+        assert_eq!(editor.cut_buffer.get().0, ""); // register left untouched
+    }
+
+    /// `e` as a target: small-word end, forward.
+    fn word_end_fwd() -> MotionTarget {
+        MotionTarget::Word {
+            kind: WordKind::Small,
+            edge: WordEdge::End,
+            direction: Direction::Forward,
+        }
+    }
+
+    #[test]
+    fn move_word_end_lands_on_last_char_exclusive() {
+        // The bare `e` motion lands the cursor *on* the word's last char.
+        let mut editor = editor_with("foo bar");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Move(word_end_fwd()));
+        assert_eq!(editor.insertion_point(), 2); // on the second 'o', not past it
+    }
+
+    #[test]
+    fn cut_word_end_is_inclusive_of_last_char() {
+        // vi `de`: same target as `e`, but the operator *consumes* the char the
+        // motion lands on — so `de` from the start of "foo" deletes all of "foo".
+        let mut editor = editor_with("foo bar");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Cut {
+            target: word_end_fwd(),
+            granularity: Granularity::CharWise,
+        });
+        assert_eq!(editor.get_buffer(), " bar");
+        assert_eq!(editor.cut_buffer.get().0, "foo");
+    }
+
+    // --- migration characterization -------------------------------------
+    //
+    // The new `MotionTarget` verbs must have the *same buffer effect* as the
+    // dedicated commands they replace — the old command is the spec. These
+    // assert `new == old` so they need no hand-computed vim semantics. They
+    // pass on the pre-migration code, so they retroactively prove C1's `0`/`$`
+    // re-lowering was behavior-preserving and *gate* C2's `f`/`t` re-lowering:
+    // they must stay green after the motions emit `Cut/Move(Find)`.
+
+    /// Run `cmd` on `buffer` from `cursor`; return (buffer, cursor, cut text).
+    fn outcome(
+        buffer: &str,
+        cursor: usize,
+        cmd: &EditCommand,
+    ) -> (String, usize, Option<(usize, usize)>, String) {
+        let mut editor = editor_with(buffer);
+        editor.move_to_position(cursor, false);
+        editor.run_edit_command(cmd);
+        (
+            editor.get_buffer().to_string(),
+            editor.insertion_point(),
+            editor.get_selection(),
+            editor.cut_buffer.get().0,
+        )
+    }
+
+    /// Assert two commands have identical effect from the same starting point.
+    fn equivalent(buffer: &str, cursor: usize, new: &EditCommand, old: &EditCommand) {
+        assert_eq!(outcome(buffer, cursor, new), outcome(buffer, cursor, old));
+    }
+
+    fn find(ch: char, direction: Direction, stop: FindStop) -> MotionTarget {
+        MotionTarget::Find {
+            ch,
+            direction,
+            stop,
+        }
+    }
+
+    // C1 backfill: `0`/`$` line edges vs the dedicated line cut/copy commands.
+
+    #[test]
+    fn cut_line_edge_matches_dedicated_line_cuts() {
+        // `d$` and `d0` on a single line.
+        equivalent(
+            "foo bar",
+            2,
+            &EditCommand::Cut {
+                target: MotionTarget::LineEdge(Direction::Forward),
+                granularity: Granularity::CharWise,
+            },
+            &EditCommand::CutToLineEnd,
+        );
+        equivalent(
+            "foo bar",
+            4,
+            &EditCommand::Cut {
+                target: MotionTarget::LineEdge(Direction::Backward),
+                granularity: Granularity::CharWise,
+            },
+            &EditCommand::CutFromLineStart,
+        );
+    }
+
+    #[test]
+    fn copy_line_edge_matches_dedicated_line_copies() {
+        equivalent(
+            "foo bar",
+            2,
+            &EditCommand::Copy {
+                target: MotionTarget::LineEdge(Direction::Forward),
+                granularity: Granularity::CharWise,
+            },
+            &EditCommand::CopyToLineEnd,
+        );
+        equivalent(
+            "foo bar",
+            4,
+            &EditCommand::Copy {
+                target: MotionTarget::LineEdge(Direction::Backward),
+                granularity: Granularity::CharWise,
+            },
+            &EditCommand::CopyFromLineStart,
+        );
+    }
+
+    #[test]
+    fn cut_line_edge_forward_stops_at_newline() {
+        // The riskiest C1 claim: on a multiline buffer `d$` must cut only to the
+        // `\n`, matching `CutToLineEnd` — not run to the buffer end.
+        equivalent(
+            "ab\ncd",
+            0,
+            &EditCommand::Cut {
+                target: MotionTarget::LineEdge(Direction::Forward),
+                granularity: Granularity::CharWise,
+            },
+            &EditCommand::CutToLineEnd,
+        );
+        let (buffer, cursor, _selection, cut) = outcome(
+            "ab\ncd",
+            0,
+            &EditCommand::Cut {
+                target: MotionTarget::LineEdge(Direction::Forward),
+                granularity: Granularity::CharWise,
+            },
+        );
+        assert_eq!(buffer, "\ncd");
+        assert_eq!(cursor, 0);
+        assert_eq!(cut, "ab");
+    }
+
+    // C3 gate: `gg`/`G` (BufferEdge) vs the dedicated MoveToStart/MoveToEnd.
+    // BufferEdge ignores line breaks — it goes to the buffer edge, not a line
+    // edge — so these also confirm the multiline behavior.
+
+    #[test]
+    fn move_buffer_edge_matches_move_to_start_end() {
+        equivalent(
+            "foo bar",
+            3,
+            &EditCommand::Move(MotionTarget::BufferEdge(Direction::Backward)),
+            &EditCommand::MoveToStart { select: false },
+        );
+        equivalent(
+            "foo bar",
+            3,
+            &EditCommand::Move(MotionTarget::BufferEdge(Direction::Forward)),
+            &EditCommand::MoveToEnd { select: false },
+        );
+    }
+
+    #[test]
+    fn extend_buffer_edge_matches_move_to_start_end_selecting() {
+        // visual `gg`/`G` — the selection must match too (now compared by `outcome`)
+        equivalent(
+            "foo bar",
+            3,
+            &EditCommand::Extend(MotionTarget::BufferEdge(Direction::Backward)),
+            &EditCommand::MoveToStart { select: true },
+        );
+        equivalent(
+            "foo bar",
+            3,
+            &EditCommand::Extend(MotionTarget::BufferEdge(Direction::Forward)),
+            &EditCommand::MoveToEnd { select: true },
+        );
+    }
+
+    #[test]
+    fn buffer_edge_spans_lines() {
+        // from the second line, `gg` lands at buffer start (not the line start)
+        // and `G` at buffer end.
+        equivalent(
+            "ab\ncd",
+            4,
+            &EditCommand::Move(MotionTarget::BufferEdge(Direction::Backward)),
+            &EditCommand::MoveToStart { select: false },
+        );
+        equivalent(
+            "ab\ncd",
+            0,
+            &EditCommand::Move(MotionTarget::BufferEdge(Direction::Forward)),
+            &EditCommand::MoveToEnd { select: false },
+        );
+    }
+
+    // C2 gate: `f`/`t`/`F`/`T` (Find) vs the dedicated char-search commands.
+
+    #[test]
+    fn cut_find_forward_on_matches_cut_right_until() {
+        // df b
+        equivalent(
+            "foo bar baz",
+            0,
+            &EditCommand::Cut {
+                target: find('b', Direction::Forward, FindStop::On),
+                granularity: Granularity::CharWise,
+            },
+            &EditCommand::CutRightUntil('b'),
+        );
+    }
+
+    #[test]
+    fn cut_find_forward_before_matches_cut_right_before() {
+        // dt b
+        equivalent(
+            "foo bar baz",
+            0,
+            &EditCommand::Cut {
+                target: find('b', Direction::Forward, FindStop::Before),
+                granularity: Granularity::CharWise,
+            },
+            &EditCommand::CutRightBefore('b'),
+        );
+    }
+
+    #[test]
+    fn cut_find_backward_on_matches_cut_left_until() {
+        // dF o (cursor at end of buffer)
+        equivalent(
+            "foo bar baz",
+            11,
+            &EditCommand::Cut {
+                target: find('o', Direction::Backward, FindStop::On),
+                granularity: Granularity::CharWise,
+            },
+            &EditCommand::CutLeftUntil('o'),
+        );
+    }
+
+    #[test]
+    fn cut_find_backward_before_matches_cut_left_before() {
+        // dT o
+        equivalent(
+            "foo bar baz",
+            11,
+            &EditCommand::Cut {
+                target: find('o', Direction::Backward, FindStop::Before),
+                granularity: Granularity::CharWise,
+            },
+            &EditCommand::CutLeftBefore('o'),
+        );
+    }
+
+    #[test]
+    fn cut_find_absent_char_is_noop() {
+        equivalent(
+            "foo bar",
+            0,
+            &EditCommand::Cut {
+                target: find('z', Direction::Forward, FindStop::On),
+                granularity: Granularity::CharWise,
+            },
+            &EditCommand::CutRightUntil('z'),
+        );
+    }
+
+    #[test]
+    fn copy_find_forward_matches_copy_right_until() {
+        equivalent(
+            "foo bar baz",
+            0,
+            &EditCommand::Copy {
+                target: find('b', Direction::Forward, FindStop::On),
+                granularity: Granularity::CharWise,
+            },
+            &EditCommand::CopyRightUntil('b'),
+        );
+    }
+
+    #[test]
+    fn move_find_forward_matches_move_right_until() {
+        // Guards the `f`-vs-`;` two-path divergence: bare `f` (which will emit
+        // `Move(Find)`) must land where the replay path `;` lands — and `;`
+        // keeps using `MoveRightUntil`.
+        equivalent(
+            "foo bar baz",
+            0,
+            &EditCommand::Move(find('b', Direction::Forward, FindStop::On)),
+            &EditCommand::MoveRightUntil {
+                c: 'b',
+                select: false,
+            },
+        );
+    }
+
+    // The remaining three `Move` corners gate C2(b): `;`/`,` replay re-emits
+    // `Move(stored Find)`, and `,` reverses the stored direction. Proving each
+    // `Move(Find{..})` matches the dedicated `Move*Until`/`Move*Before` it
+    // replaces means the replay migration preserves where the cursor lands —
+    // including the reversed (`,`) direction.
+
+    #[test]
+    fn move_find_forward_before_matches_move_right_before() {
+        // bare `;` after `t`
+        equivalent(
+            "foo bar baz",
+            0,
+            &EditCommand::Move(find('b', Direction::Forward, FindStop::Before)),
+            &EditCommand::MoveRightBefore {
+                c: 'b',
+                select: false,
+            },
+        );
+    }
+
+    #[test]
+    fn move_find_backward_on_matches_move_left_until() {
+        // bare `;` after `F`, and the `,`-reverse of `f`
+        equivalent(
+            "foo bar baz",
+            11,
+            &EditCommand::Move(find('o', Direction::Backward, FindStop::On)),
+            &EditCommand::MoveLeftUntil {
+                c: 'o',
+                select: false,
+            },
+        );
+    }
+
+    #[test]
+    fn move_find_backward_before_matches_move_left_before() {
+        // bare `;` after `T`, and the `,`-reverse of `t`
+        equivalent(
+            "foo bar baz",
+            11,
+            &EditCommand::Move(find('o', Direction::Backward, FindStop::Before)),
+            &EditCommand::MoveLeftBefore {
+                c: 'o',
+                select: false,
+            },
+        );
     }
 }
