@@ -6,6 +6,7 @@ use crate::{
 };
 
 const SELECTION_CHAR: char = '!';
+const MAX_SEARCH_PROMPT_BYTES: usize = 512;
 
 // The HistoryCompleter is created just before updating the menu
 // It pulls data from the object that contains access to the History
@@ -80,8 +81,14 @@ impl<'menu> HistoryCompleter<'menu> {
         }
     }
 
+    /// Use the editor buffer to rank history results by the existing left-hand prompt.
+    ///
+    /// LHS ranking is intended for single-line command prefixes. Multiline or large
+    /// buffers fall back to regular history ordering.
     pub fn with_buffer(mut self, buffer: &str) -> Self {
-        self.buffer = Some(buffer.to_string());
+        if buffer.len() <= MAX_SEARCH_PROMPT_BYTES && !buffer.contains('\n') {
+            self.buffer = Some(buffer.to_string());
+        }
         self
     }
 
