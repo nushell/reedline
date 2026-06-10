@@ -972,6 +972,13 @@ impl Reedline {
                 }
             }
             if need_repaint {
+                // Sync the editor's edit mode before painting so the cursor is
+                // normalized under the current rest policy. A mode change that
+                // bypasses the command path (e.g. Esc → Vi normal) otherwise
+                // wouldn't clamp until the next command, painting the cursor past
+                // the last grapheme for a frame.
+                let mode = self.edit_mode.edit_mode();
+                self.editor.set_edit_mode(mode);
                 self.repaint(prompt)?;
             }
         }

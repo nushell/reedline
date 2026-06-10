@@ -43,13 +43,11 @@ impl Cursor {
     }
 
     /// The anchor position.
-    #[allow(dead_code)] // wired at the rest-policy commit boundary
     pub fn anchor(&self) -> usize {
         self.anchor
     }
 
     /// The head position. This is what most callers think of as "the cursor".
-    #[allow(dead_code)] // wired at the rest-policy commit boundary
     pub fn head(&self) -> usize {
         self.head
     }
@@ -65,7 +63,6 @@ impl Cursor {
     }
 
     /// `true` when anchor and head are at the same position.
-    #[allow(dead_code)] // wired at the rest-policy commit boundary
     pub fn is_empty(&self) -> bool {
         self.anchor == self.head
     }

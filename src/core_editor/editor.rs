@@ -1,4 +1,5 @@
 use super::{edit_stack::EditStack, Clipboard, LineBuffer};
+use crate::core_editor::commit;
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
@@ -205,7 +206,8 @@ impl Editor {
         if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
             self.clear_selection();
         }
-        if let EditType::MoveCursor { select: true } = command.edit_type() {}
+
+        self.commit_cursor();
 
         let new_undo_behavior = match (command, command.edit_type()) {
             (_, EditType::MoveCursor { .. }) => UndoBehavior::MoveCursor,
@@ -251,7 +253,23 @@ impl Editor {
     /// Set the current edit mode
     pub fn set_edit_mode(&mut self, mode: PromptEditMode) {
         self.edit_mode = mode;
+        // A mode change can switch to a stricter rest policy (e.g. Vi insert →
+        // normal), so re-normalize the resting cursor under the new policy.
+        self.commit_cursor();
     }
+
+    /// Normalize the cursor at the single commit boundary: clamp + grapheme-snap
+    /// (universal), then apply the active mode's [`RestPolicy`]. Total and
+    /// idempotent, so it is safe to call after any state change.
+    fn commit_cursor(&mut self) {
+        let committed = commit(
+            self.line_buffer.get_buffer(),
+            self.line_buffer.cursor(),
+            self.edit_mode.rest_policy(),
+        );
+        self.line_buffer.set_cursor(committed);
+    }
+
     fn move_to_position(&mut self, position: usize, select: bool) {
         self.update_selection_anchor(select);
         self.line_buffer.set_insertion_point(position)
@@ -287,6 +305,9 @@ impl Editor {
     /// Insertion point update to the end of the buffer.
     pub(crate) fn set_buffer(&mut self, buffer: String, undo_behavior: UndoBehavior) {
         self.line_buffer.set_buffer(buffer);
+        // History navigation replaces the buffer outside the command path, so
+        // normalize the cursor here too (e.g. Vi normal must not sit past the end).
+        self.commit_cursor();
         self.update_undo_state(undo_behavior);
     }
 
@@ -1160,6 +1181,107 @@ mod test {
         let mut editor = Editor::default();
         editor.set_buffer(buffer.to_string(), UndoBehavior::CreateUndoPoint);
         editor
+    }
+
+    fn vi_editor(buffer: &str, vi_mode: PromptViMode) -> Editor {
+        let mut editor = editor_with(buffer);
+        editor.set_edit_mode(PromptEditMode::Vi(vi_mode));
+        editor
+    }
+
+    // The Vi-normal cursor invariant ("cursor never rests past the last
+    // grapheme") is enforced by the `RestPolicy` commit boundary in
+    // `run_edit_command`, not by a per-command clamp. These cover the
+    // behavioural scenarios from nushell/reedline#1069 by driving real
+    // `EditCommand`s through that boundary.
+
+    #[test]
+    fn vi_normal_clamps_cursor_off_the_end() {
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.run_edit_command(&EditCommand::MoveToEnd { select: false });
+        // rests on the last grapheme 'o' (byte 4), not past it (byte 5)
+        assert_eq!(editor.insertion_point(), 4);
+    }
+
+    #[test]
+    fn vi_normal_clamps_to_line_end() {
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.run_edit_command(&EditCommand::MoveToLineEnd { select: false });
+        assert_eq!(editor.insertion_point(), 4);
+    }
+
+    #[test]
+    fn vi_insert_does_not_clamp_off_the_end() {
+        let mut editor = vi_editor("hello", PromptViMode::Insert);
+        editor.run_edit_command(&EditCommand::MoveToEnd { select: false });
+        // insert mode's caret may sit past the last grapheme
+        assert_eq!(editor.insertion_point(), 5);
+    }
+
+    #[test]
+    fn vi_normal_empty_buffer_stays_at_zero() {
+        let mut editor = vi_editor("", PromptViMode::Normal);
+        editor.run_edit_command(&EditCommand::MoveToEnd { select: false });
+        assert_eq!(editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn vi_normal_within_bounds_is_unchanged() {
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 2,
+            select: false,
+        });
+        assert_eq!(editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn vi_normal_clamps_onto_multibyte_grapheme() {
+        let mut editor = vi_editor("café", PromptViMode::Normal);
+        editor.run_edit_command(&EditCommand::MoveToEnd { select: false });
+        // 'é' is 2 bytes, so the last grapheme starts at byte 3, not 4
+        assert_eq!(editor.insertion_point(), "caf".len());
+    }
+
+    // The commit boundary also fires on the two state changes that bypass
+    // `run_edit_command`: buffer replacement (history navigation) and edit-mode
+    // transitions (e.g. Esc into Vi normal). Both were clamped by #1069 too.
+
+    #[test]
+    fn vi_normal_set_buffer_clamps_cursor() {
+        // history navigation replaces the buffer (cursor lands at the end)
+        let mut editor = vi_editor("", PromptViMode::Normal);
+        editor.set_buffer("hello".to_string(), UndoBehavior::CreateUndoPoint);
+        assert_eq!(editor.insertion_point(), 4);
+    }
+
+    #[test]
+    fn vi_normal_set_buffer_clamps_multibyte() {
+        let mut editor = vi_editor("", PromptViMode::Normal);
+        editor.set_buffer("café".to_string(), UndoBehavior::CreateUndoPoint);
+        assert_eq!(editor.insertion_point(), "caf".len());
+    }
+
+    #[test]
+    fn entering_vi_normal_clamps_cursor() {
+        // simulates Esc: the cursor sits past the end in insert mode, then the
+        // mode flips to normal and the commit-on-mode-change pulls it back
+        let mut editor = vi_editor("hello", PromptViMode::Insert);
+        editor.run_edit_command(&EditCommand::MoveToEnd { select: false });
+        assert_eq!(editor.insertion_point(), 5);
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        assert_eq!(editor.insertion_point(), 4);
+    }
+
+    #[test]
+    fn entering_vi_insert_does_not_move_cursor() {
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 4,
+            select: false,
+        });
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Insert));
+        assert_eq!(editor.insertion_point(), 4);
     }
 
     #[rstest]

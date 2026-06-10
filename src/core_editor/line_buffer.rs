@@ -82,7 +82,6 @@ impl LineBuffer {
 
     /// Returns the cursor as a [`Cursor`] (anchor + head), reflecting any
     /// active selection.
-    #[allow(dead_code)] // wired at the rest-policy commit boundary
     pub(crate) fn cursor(&self) -> Cursor {
         match self.selection_anchor {
             Some(anchor) => Cursor::new(anchor, self.insertion_point),
@@ -95,7 +94,6 @@ impl LineBuffer {
     ///
     /// ## Unicode safety:
     /// Not checked, improper use may cause panics in following operations
-    #[allow(dead_code)] // wired at the rest-policy commit boundary
     pub(crate) fn set_cursor(&mut self, cursor: Cursor) {
         self.insertion_point = cursor.head();
         self.selection_anchor = if cursor.is_empty() {

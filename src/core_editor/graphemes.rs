@@ -61,7 +61,6 @@ fn is_grapheme_boundary(buf: &str, pos: usize) -> bool {
 /// past-the-end clamps to `buf.len()`). Like [`is_grapheme_boundary`], a local
 /// [`GraphemeCursor`] check with whole-buffer context — correct for
 /// context-sensitive sequences without re-segmenting the buffer.
-#[allow(dead_code)] // wired at the rest-policy commit boundary
 pub(crate) fn ensure_grapheme_boundary_prev(buf: &str, pos: usize) -> usize {
     // floor to a char boundary first so the cursor seed is valid
     let mut pos = pos.min(buf.len());
@@ -83,7 +82,6 @@ pub(crate) fn ensure_grapheme_boundary_prev(buf: &str, pos: usize) -> usize {
 /// past-the-end clamps to `buf.len()`). Like [`is_grapheme_boundary`], a local
 /// [`GraphemeCursor`] check with whole-buffer context — correct for
 /// context-sensitive sequences without re-segmenting the buffer.
-#[allow(dead_code)] // wired at the rest-policy commit boundary
 pub(crate) fn ensure_grapheme_boundary_next(buf: &str, pos: usize) -> usize {
     // ceil to a char boundary first so the cursor seed is valid (`buf.len()`
     // is always one, so this terminates)
