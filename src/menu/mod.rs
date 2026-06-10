@@ -394,7 +394,8 @@ impl ReedlineMenu {
                 menu.can_partially_complete(values_updated, editor, completer)
             }
             Self::HistoryMenu(menu) => {
-                let mut history_completer = HistoryCompleter::new(history);
+                let mut history_completer =
+                    HistoryCompleter::new(history).with_buffer(editor.get_buffer());
                 menu.can_partially_complete(values_updated, editor, &mut history_completer)
             }
             Self::WithCompleter {
@@ -413,7 +414,8 @@ impl ReedlineMenu {
         match self {
             Self::EngineCompleter(menu) => menu.update_values(editor, completer),
             Self::HistoryMenu(menu) => {
-                let mut history_completer = HistoryCompleter::new(history);
+                let mut history_completer =
+                    HistoryCompleter::new(history).with_buffer(editor.get_buffer());
                 menu.update_values(editor, &mut history_completer);
             }
             Self::WithCompleter {
@@ -437,7 +439,8 @@ impl ReedlineMenu {
                 menu.update_working_details(editor, completer, painter);
             }
             Self::HistoryMenu(menu) => {
-                let mut history_completer = HistoryCompleter::new(history);
+                let mut history_completer =
+                    HistoryCompleter::new(history).with_buffer(editor.get_buffer());
                 menu.update_working_details(editor, &mut history_completer, painter);
             }
             Self::WithCompleter {
