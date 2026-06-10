@@ -8,11 +8,12 @@ use {
     strum::{EnumIter, EnumString, IntoDiscriminant},
 };
 
-/// The default color for the prompt, indicator, and right prompt
-pub static DEFAULT_PROMPT_COLOR: Color = Color::Green;
-pub static DEFAULT_PROMPT_MULTILINE_COLOR: nu_ansi_term::Color = nu_ansi_term::Color::LightBlue;
-pub static DEFAULT_INDICATOR_COLOR: Color = Color::Cyan;
-pub static DEFAULT_PROMPT_RIGHT_COLOR: Color = Color::AnsiValue(5);
+/// Terminal-default colors for prompt implementations that do not opt into
+/// explicit styling.
+pub static BASE_PROMPT_COLOR: Color = Color::Reset;
+pub static BASE_PROMPT_MULTILINE_COLOR: nu_ansi_term::Color = nu_ansi_term::Color::Default;
+pub static BASE_INDICATOR_COLOR: Color = Color::Reset;
+pub static BASE_PROMPT_RIGHT_COLOR: Color = Color::Reset;
 
 /// The current success/failure of the history search
 pub enum PromptHistorySearchStatus {
@@ -145,21 +146,21 @@ pub trait Prompt: Send {
         &self,
         history_search: PromptHistorySearch,
     ) -> Cow<'_, str>;
-    /// Get the default prompt color
+    /// Get the base prompt color
     fn get_prompt_color(&self) -> Color {
-        DEFAULT_PROMPT_COLOR
+        BASE_PROMPT_COLOR
     }
-    /// Get the default multiline prompt color
+    /// Get the base multiline prompt color
     fn get_prompt_multiline_color(&self) -> nu_ansi_term::Color {
-        DEFAULT_PROMPT_MULTILINE_COLOR
+        BASE_PROMPT_MULTILINE_COLOR
     }
-    /// Get the default indicator color
+    /// Get the base indicator color
     fn get_indicator_color(&self) -> Color {
-        DEFAULT_INDICATOR_COLOR
+        BASE_INDICATOR_COLOR
     }
-    /// Get the default right prompt color
+    /// Get the base right prompt color
     fn get_prompt_right_color(&self) -> Color {
-        DEFAULT_PROMPT_RIGHT_COLOR
+        BASE_PROMPT_RIGHT_COLOR
     }
 
     /// Whether to render right prompt on the last line
