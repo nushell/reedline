@@ -162,7 +162,10 @@ mod tests {
 
     fn apply_suggestion(buffer: &str, suggestion: &Suggestion) -> String {
         let mut buffer = buffer.to_string();
-        buffer.replace_range(suggestion.span.start..suggestion.span.end, &suggestion.value);
+        buffer.replace_range(
+            suggestion.span.start..suggestion.span.end,
+            &suggestion.value,
+        );
         buffer
     }
 
@@ -276,10 +279,16 @@ mod tests {
             .map(|suggestion| suggestion.value.as_str())
             .collect();
 
-        assert_eq!(actual_values, ["git log --oneline", "hg log", "docker logs"]);
+        assert_eq!(
+            actual_values,
+            ["git log --oneline", "hg log", "docker logs"]
+        );
         assert_eq!(actual[0].span, Span::new(0, buffer.len()));
         assert_eq!(apply_suggestion(buffer, &actual[0]), "git log --oneline");
-        assert_eq!(actual[1].span, Span::new(buffer.len() - line.len(), buffer.len()));
+        assert_eq!(
+            actual[1].span,
+            Span::new(buffer.len() - line.len(), buffer.len())
+        );
         assert_eq!(apply_suggestion(buffer, &actual[1]), "git hg log");
         Ok(())
     }
