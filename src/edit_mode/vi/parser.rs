@@ -115,6 +115,9 @@ impl ParsedViSequence {
             (Some(Command::Delete), ParseResult::Incomplete) if mode == ViMode::Visual => {
                 Some(ViMode::Normal)
             }
+            (Some(Command::EnterViVisual), ParseResult::Incomplete) if mode == ViMode::Normal => {
+                Some(ViMode::Visual)
+            }
             (Some(Command::ChangeInsidePair { .. }), _) => Some(ViMode::Insert),
             (Some(Command::ChangeTextObject { .. }), _) => Some(ViMode::Insert),
             (Some(Command::Delete), ParseResult::Incomplete)

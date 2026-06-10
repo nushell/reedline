@@ -78,11 +78,6 @@ impl EditMode for Vi {
             Event::Key(KeyEvent {
                 code, modifiers, ..
             }) => match (self.mode, modifiers, code) {
-                (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v')) => {
-                    self.cache.clear();
-                    self.mode = ViMode::Visual;
-                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
-                }
                 (ViMode::Normal | ViMode::Visual, modifier, KeyCode::Char(c)) => {
                     let c = c.to_ascii_lowercase();
 
