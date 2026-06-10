@@ -235,14 +235,13 @@
 #![warn(missing_docs)]
 // #![deny(warnings)]
 mod core_editor;
-pub use core_editor::Editor;
-pub use core_editor::LineBuffer;
+pub use core_editor::{Editor, LineBuffer};
 
 mod enums;
 pub use enums::{
-    EditCommand, EditCommandDiscriminants, Granularity, MouseButton, ReedlineEvent,
-    ReedlineEventDiscriminants, ReedlineRawEvent, Signal, TextObject, TextObjectScope,
-    TextObjectType, UndoBehavior,
+    Direction, EditCommand, EditCommandDiscriminants, FindStop, Granularity, MotionTarget,
+    MouseButton, ReedlineEvent, ReedlineEventDiscriminants, ReedlineRawEvent, Signal, TextObject,
+    TextObjectScope, TextObjectType, UndoBehavior, WordEdge, WordKind,
 };
 
 mod painting;

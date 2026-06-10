@@ -88,6 +88,56 @@ impl Default for TextObject {
     }
 }
 
+/// Direction a cursor motion travels through the buffer.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum Direction {
+    /// Toward the end of the buffer (right / `w` / `$`).
+    Forward,
+    /// Toward the start of the buffer (left / `b` / `0`).
+    Backward,
+}
+
+impl Direction {
+    #[allow(dead_code)] // wired when vi lowers ;/, through Find
+    pub(crate) fn reversed(self) -> Self {
+        match self {
+            Direction::Forward => Direction::Backward,
+            Direction::Backward => Direction::Forward,
+        }
+    }
+}
+
+/// Which "word" notion a word motion uses.
+///
+/// The flavors differ only in which character-class transitions count as a
+/// boundary; see the classifier in `core_editor::word`.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum WordKind {
+    /// `w`/`b`/`e` — a boundary at any character-class change.
+    Small,
+    /// `W`/`B`/`E` — a boundary only at whitespace/line-ending, so a run like
+    /// `foo.bar` is one WORD.
+    Big,
+}
+
+/// Which edge of a word a motion lands on.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum WordEdge {
+    /// First character of the word — `w`/`W` (forward), `b`/`B` (backward).
+    Start,
+    /// Last character of the word, inclusive — `e`/`E`.
+    End,
+}
+
+/// Where a character-search motion stops relative to the found character.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum FindStop {
+    /// Land on the found character — vi `f`/`F`.
+    On,
+    /// Land just before it — vi `t`/`T`.
+    Before,
+}
+
 /// Granularity of an operator and of the register it fills: inline characters or
 /// whole lines.
 ///
@@ -101,6 +151,71 @@ pub enum Granularity {
     CharWise,
     /// Whole lines, pasted below/above.
     LineWise,
+}
+
+/// A human-readable, parameterized motion target — the public vocabulary every
+/// cursor motion lowers from.
+///
+/// `Move`/`Extend`/`Cut`/`Copy`/`Erase` over a `MotionTarget` are the
+/// going-forward motion API. They resolve through the private `resolve_motion`
+/// and apply to the cursor, both free to change. Mode differences (vi vs emacs
+/// vs helix word rules) are carried as *data* here (e.g. [`WordKind`]) rather
+/// than as separate commands.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum MotionTarget {
+    /// One grapheme in `direction` — `MoveLeft`/`MoveRight`.
+    Grapheme(Direction),
+    /// A word edge — vi `w`/`W`/`e`/`E`/`b`/`B`.
+    Word {
+        /// Small word vs big WORD.
+        kind: WordKind,
+        /// First vs last character of the word.
+        edge: WordEdge,
+        /// Travel direction.
+        direction: Direction,
+    },
+    /// Logical line edge: `Backward` = line start (`0`), `Forward` = line end (`$`).
+    LineEdge(Direction),
+    /// Whole-buffer edge: `Backward` = start (`gg`), `Forward` = end (`G`).
+    BufferEdge(Direction),
+    /// The adjacent logical line: `Forward` = line below (`j`), `Backward` =
+    /// line above (`k`). Used by the linewise operators (`dj`/`dk`); the head
+    /// lands on the adjacent line so a `LineWise` span covers both lines.
+    Line(Direction),
+    /// Character search — vi `f`/`F`/`t`/`T`.
+    Find {
+        /// The character to search for.
+        ch: char,
+        /// Travel direction.
+        direction: Direction,
+        /// Land on the character vs just before it.
+        stop: FindStop,
+    },
+    /// Absolute byte offset (clamped into the buffer).
+    Offset(usize),
+}
+
+impl MotionTarget {
+    /// The `,`-style reverse: flip a [`Find`](MotionTarget::Find)'s direction.
+    ///
+    /// Only `Find` is reversible — every other target passes through unchanged,
+    /// because a reversed word/line edge is a *different* motion, not the same
+    /// motion the other way (e.g. backward word-end is `ge`, not `e` flipped).
+    #[allow(dead_code)] // wired when vi lowers ;/, through Find
+    pub(crate) fn reversed(self) -> Self {
+        match self {
+            MotionTarget::Find {
+                ch,
+                direction,
+                stop,
+            } => MotionTarget::Find {
+                ch,
+                direction: direction.reversed(),
+                stop,
+            },
+            other => other,
+        }
+    }
 }
 
 /// Editing actions which can be mapped to key bindings.
