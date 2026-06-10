@@ -33,7 +33,6 @@ pub(crate) fn end_of_line(buf: &str, pos: usize) -> usize {
 
 /// Byte offset just past the `\n` terminating the line containing `pos`, or
 /// `None` when the line is unterminated (there is no line below).
-#[allow(dead_code)] // wired by the motion resolver and the linewise operator snap
 pub(crate) fn start_of_next_line(buf: &str, pos: usize) -> Option<usize> {
     buf[pos..].find('\n').map(|i| pos + i + 1)
 }

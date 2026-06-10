@@ -5,8 +5,9 @@ mod editor;
 mod graphemes;
 mod line;
 mod line_buffer;
+#[allow(dead_code)] // wired when the editor lowers the operator verbs
+mod resolve;
 mod rest_policy;
-#[allow(dead_code)] // wired by the motion resolver
 mod word;
 
 #[cfg(feature = "system_clipboard")]
