@@ -338,7 +338,7 @@ impl Command {
                     granularity: Granularity::LineWise,
                 })]),
                 // Word and line-edge motions lower through one parameterized verb:
-                // cut to the motion's target (`motion_range` makes `e`/`E` inclusive).
+                // cut to the motion's target (`operator_span` makes `e`/`E` inclusive).
                 Motion::NextWord
                 | Motion::NextBigWord
                 | Motion::NextWordEnd
