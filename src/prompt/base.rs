@@ -1,4 +1,5 @@
 use {
+    crate::core_editor::RestPolicy,
     crossterm::style::Color,
     serde::{Deserialize, Serialize},
     std::{
@@ -57,6 +58,22 @@ pub enum PromptEditMode {
 
     /// A custom mode
     Custom(String),
+}
+
+impl PromptEditMode {
+    pub(crate) fn rest_policy(&self) -> RestPolicy {
+        match self {
+            PromptEditMode::Vi(PromptViMode::Normal) => RestPolicy::OnGrapheme,
+            PromptEditMode::Vi(PromptViMode::Insert)
+            | PromptEditMode::Default
+            | PromptEditMode::Emacs => RestPolicy::Between,
+            // No catch-all `_ =>` arm over the variants on purpose: a future
+            // variant (e.g. a Helix mode) then fails to compile here until it is
+            // given an explicit policy, rather than silently defaulting. The `_`
+            // below only ignores the custom mode's name.
+            PromptEditMode::Custom(_) => RestPolicy::Between,
+        }
+    }
 }
 
 /// The vi-specific modes that the prompt can be in
