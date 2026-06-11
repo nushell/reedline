@@ -143,7 +143,11 @@ pub enum FindStop {
 /// `LineWise` (vi `dd`/`yy`/`V`) operates on complete lines and pastes on a new
 /// line below/above; `CharWise` is the default inline behavior. Carried on the
 /// operator and stored on the cut buffer, so paste knows which to do.
+///
+/// Non-exhaustive: granularities may be added (e.g. block-wise), so external
+/// matches need a wildcard arm.
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Granularity {
     /// Inline at the cursor — the default.
     #[default]
