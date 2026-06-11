@@ -1985,6 +1985,12 @@ impl Reedline {
                     let mut file = File::create(temp_file)?;
                     write!(file, "{}", self.editor.get_buffer())?;
                 }
+                // Capture the prompt's screen range so that an editor
+                // which leaves the cursor untouched (e.g. a GUI editor,
+                // or one that wrote nothing to the tty) re-uses the
+                // existing prompt rows instead of starting a new prompt
+                // a row below the old one.
+                let suspended_state = self.painter.state_before_suspension();
                 {
                     let mut child = command.spawn()?;
                     // The child owns the tty now; invalidate eagerly so
@@ -1995,12 +2001,15 @@ impl Reedline {
                 }
 
                 // On the success path, re-initialize position and size
-                // from scratch (covers a resize-during-editor with no
-                // SIGWINCH). On query failure, the eager invalidate
-                // above is our floor — losing the size refresh is
-                // acceptable; losing the user's edited buffer below
-                // is not.
-                let _ = self.painter.initialize_prompt_position(None);
+                // (covers a resize-during-editor with no SIGWINCH). If
+                // the editor moved the cursor out of the prompt's rows
+                // (it printed output), a fresh prompt starts below that
+                // output. On query failure, the eager invalidate above
+                // is our floor — losing the size refresh is acceptable;
+                // losing the user's edited buffer below is not.
+                let _ = self
+                    .painter
+                    .initialize_prompt_position(Some(&suspended_state));
 
                 let res = std::fs::read_to_string(temp_file)?;
                 let res = res.trim_end().to_string();
