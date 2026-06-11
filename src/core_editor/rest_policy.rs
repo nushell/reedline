@@ -76,7 +76,7 @@ pub(crate) fn commit(buf: &str, c: Cursor, policy: RestPolicy) -> Cursor {
     match policy {
         RestPolicy::Between => c,
         RestPolicy::OnGrapheme => {
-            if c.head() == len && len > 0 {
+            if c.head() == len && len > 0 && !buf.ends_with('\n') {
                 let prev = prev_grapheme_boundary(buf, c.head());
                 if c.is_empty() {
                     Cursor::point(prev)
@@ -202,6 +202,22 @@ mod tests {
         assert_eq!(
             commit("hello", Cursor::point(2), RestPolicy::OnGrapheme),
             Cursor::point(2)
+        );
+    }
+
+    #[test]
+    fn on_grapheme_rests_on_trailing_empty_line() {
+        // A buffer ending in `\n` has an empty last line; a head at `len` sits
+        // on it and must NOT be pulled back over the newline. This is the
+        // `dd`-on-the-last-line case: deleting the final line leaves the cursor
+        // on the new (empty) last line rather than jumping up a line.
+        assert_eq!(
+            commit("a\n", Cursor::point(2), RestPolicy::OnGrapheme),
+            Cursor::point(2)
+        );
+        assert_eq!(
+            commit("hello\n", Cursor::point(6), RestPolicy::OnGrapheme),
+            Cursor::point(6)
         );
     }
 
