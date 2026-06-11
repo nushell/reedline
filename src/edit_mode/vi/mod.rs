@@ -12,7 +12,7 @@ use super::EditMode;
 use crate::{
     edit_mode::{keybindings::Keybindings, vi::parser::parse},
     enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
-    MotionTarget, PromptEditMode, PromptViMode,
+    Direction, MotionTarget, PromptEditMode, PromptViMode,
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -154,8 +154,16 @@ impl EditMode for Vi {
                 }
                 (_, KeyModifiers::NONE, KeyCode::Esc) => {
                     self.cache.clear();
+                    let leaving_insert = self.mode == ViMode::Insert;
                     self.mode = ViMode::Normal;
-                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+                    let mut events = vec![ReedlineEvent::Esc];
+                    if leaving_insert {
+                        events.push(ReedlineEvent::Edit(vec![EditCommand::Move(
+                            MotionTarget::Grapheme(Direction::Backward),
+                        )]));
+                    }
+                    events.push(ReedlineEvent::Repaint);
+                    ReedlineEvent::Multiple(events)
                 }
                 (ViMode::Normal | ViMode::Visual, _, _) => self
                     .normal_keybindings
@@ -235,11 +243,36 @@ mod test {
 
     #[test]
     fn esc_leads_to_normal_mode_test() {
+        // `Vi::default()` starts in insert, so this also covers the
+        // leaving-insert cursor step-back.
         let mut vi = Vi::default();
         let esc =
             ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
                 .unwrap();
         let result = vi.parse_event(esc);
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Esc,
+                ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Grapheme(
+                    Direction::Backward
+                ))]),
+                ReedlineEvent::Repaint,
+            ])
+        );
+        assert!(matches!(vi.mode, ViMode::Normal));
+    }
+
+    #[test]
+    fn esc_from_normal_does_not_step_cursor() {
+        // Esc in normal mode only cancels a pending sequence; it must not
+        // walk the cursor left like leaving insert does.
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Esc, KeyModifiers::NONE));
 
         assert_eq!(
             result,
