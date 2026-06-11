@@ -676,7 +676,7 @@ mod test {
     }
 
     #[test]
-    fn linewise_dd_emits_cut_current_line() {
+    fn linewise_dd_emits_linewise_cut() {
         let mut vi = Vi {
             mode: ViMode::Normal,
             ..Default::default()
@@ -686,7 +686,10 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut {
+                target: MotionTarget::LineEdge(Direction::Forward),
+                granularity: Granularity::LineWise,
+            }])]),
         );
         assert!(vi.cache.is_empty());
     }
