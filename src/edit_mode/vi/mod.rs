@@ -228,6 +228,7 @@ impl EditMode for Vi {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::{Direction, Granularity, MotionTarget, WordEdge, WordKind};
     use pretty_assertions::assert_eq;
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
@@ -400,9 +401,14 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![
-                EditCommand::CutWordRightToNext,
-            ])]),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut {
+                target: MotionTarget::Word {
+                    kind: WordKind::Small,
+                    edge: WordEdge::Start,
+                    direction: Direction::Forward,
+                },
+                granularity: Granularity::CharWise
+            }])]),
         );
         assert!(
             vi.cache.is_empty(),
@@ -432,9 +438,13 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![
-                EditCommand::MoveBigWordRightStart { select: false },
-            ])]),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Move(
+                MotionTarget::Word {
+                    kind: WordKind::Big,
+                    edge: WordEdge::Start,
+                    direction: Direction::Forward,
+                }
+            )])]),
         );
     }
 
@@ -601,12 +611,17 @@ mod test {
         let _ = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
         let result = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::NONE));
 
+        let cut_word = ReedlineEvent::Edit(vec![EditCommand::Cut {
+            target: MotionTarget::Word {
+                kind: WordKind::Small,
+                edge: WordEdge::Start,
+                direction: Direction::Forward,
+            },
+            granularity: Granularity::CharWise,
+        }]);
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext]),
-                ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext]),
-            ]),
+            ReedlineEvent::Multiple(vec![cut_word.clone(), cut_word]),
         );
         assert!(vi.cache.is_empty());
     }
@@ -620,7 +635,11 @@ mod test {
         let _ = vi.parse_event(key(KeyCode::Char('3'), KeyModifiers::NONE));
         let result = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::NONE));
 
-        let mv = ReedlineEvent::Edit(vec![EditCommand::MoveWordRightStart { select: false }]);
+        let mv = ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Word {
+            kind: WordKind::Small,
+            edge: WordEdge::Start,
+            direction: Direction::Forward,
+        })]);
         assert_eq!(
             result,
             ReedlineEvent::Multiple(vec![mv.clone(), mv.clone(), mv]),

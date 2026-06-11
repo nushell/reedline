@@ -1,6 +1,9 @@
 use std::iter::Peekable;
 
-use crate::{edit_mode::vi::ViMode, EditCommand, ReedlineEvent, Vi};
+use crate::{
+    edit_mode::vi::ViMode, Direction, EditCommand, MotionTarget, ReedlineEvent, Vi, WordEdge,
+    WordKind,
+};
 
 use super::parser::{ParseResult, ReedlineOption};
 
@@ -163,6 +166,80 @@ pub enum Motion {
 }
 
 impl Motion {
+    /// The [`MotionTarget`] this motion resolves to, for motions with a static
+    /// target.
+    ///
+    /// `None` for motions that have no fixed mapping: `h`/`l`, `^`, the
+    /// doubled-operator `Line` (`dd`/`cc`/`yy`), and the `;`/`,` replays (whose
+    /// target is the dynamic `last_char_search`). Those keep their own lowering.
+    /// Every motion with a static target reads this one map on both the
+    /// bare-motion path (`Move`/`Extend`) and the operator path (`Cut`/`Copy`),
+    /// so its semantics live in a single place.
+    ///
+    /// `j`/`k` map to [`MotionTarget::Line`] for the *operator* path
+    /// (`dj`/`cj`/`yj` snap linewise); their bare-motion arms in
+    /// [`Motion::to_reedline`] never consult this map, because a bare `j`/`k`
+    /// is not a buffer motion at all — it lowers to menu/history events.
+    pub(super) fn target(&self) -> Option<MotionTarget> {
+        // A word target, spelled compactly.
+        let word = |kind: WordKind, edge: WordEdge, direction: Direction| MotionTarget::Word {
+            kind,
+            edge,
+            direction,
+        };
+
+        match self {
+            // `w` / `W` — start of the next word, forward.
+            Motion::NextWord => Some(word(WordKind::Small, WordEdge::Start, Direction::Forward)),
+            Motion::NextBigWord => Some(word(WordKind::Big, WordEdge::Start, Direction::Forward)),
+            // `e` / `E` — end of the next word, forward.
+            Motion::NextWordEnd => Some(word(WordKind::Small, WordEdge::End, Direction::Forward)),
+            Motion::NextBigWordEnd => Some(word(WordKind::Big, WordEdge::End, Direction::Forward)),
+            // `b` / `B` — start of the previous word, backward.
+            Motion::PreviousWord => {
+                Some(word(WordKind::Small, WordEdge::Start, Direction::Backward))
+            }
+            Motion::PreviousBigWord => {
+                Some(word(WordKind::Big, WordEdge::Start, Direction::Backward))
+            }
+
+            // `0` / `$` — start / end of the current line.
+            Motion::Start => Some(MotionTarget::LineEdge(Direction::Backward)),
+            Motion::End => Some(MotionTarget::LineEdge(Direction::Forward)),
+
+            Motion::RightUntil(c) => Some(MotionTarget::Find {
+                ch: *c,
+                direction: Direction::Forward,
+                stop: crate::FindStop::On,
+            }),
+            Motion::RightBefore(c) => Some(MotionTarget::Find {
+                ch: *c,
+                direction: Direction::Forward,
+                stop: crate::FindStop::Before,
+            }),
+            Motion::LeftUntil(c) => Some(MotionTarget::Find {
+                ch: *c,
+                direction: Direction::Backward,
+                stop: crate::FindStop::On,
+            }),
+            Motion::LeftBefore(c) => Some(MotionTarget::Find {
+                ch: *c,
+                direction: Direction::Backward,
+                stop: crate::FindStop::Before,
+            }),
+            Motion::FirstLine => Some(MotionTarget::BufferEdge(Direction::Backward)),
+            Motion::LastLine => Some(MotionTarget::BufferEdge(Direction::Forward)),
+
+            // `j`/`k` — the adjacent line, for the operator path only (see the
+            // method docs; the bare-motion arms lower to events instead).
+            Motion::Down => Some(MotionTarget::Line(Direction::Forward)),
+            Motion::Up => Some(MotionTarget::Line(Direction::Backward)),
+
+            // Not yet lowered — keep the existing per-variant EditCommand path.
+            _ => None,
+        }
+    }
+
     pub fn to_reedline(&self, vi_state: &mut Vi) -> Vec<ReedlineOption> {
         let select_mode = vi_state.mode == ViMode::Visual;
         match self {
@@ -195,26 +272,22 @@ impl Motion {
                     ReedlineEvent::Down,
                 ]))
             }],
-            Motion::NextWord => vec![ReedlineOption::Edit(EditCommand::MoveWordRightStart {
-                select: select_mode,
-            })],
-            Motion::NextBigWord => vec![ReedlineOption::Edit(EditCommand::MoveBigWordRightStart {
-                select: select_mode,
-            })],
-            Motion::NextWordEnd => vec![ReedlineOption::Edit(EditCommand::MoveWordRightEnd {
-                select: select_mode,
-            })],
-            Motion::NextBigWordEnd => {
-                vec![ReedlineOption::Edit(EditCommand::MoveBigWordRightEnd {
-                    select: select_mode,
-                })]
+            // Motions with a `MotionTarget` collapse to one dispatch: resolve the
+            // target (see `Motion::target`), then move or extend by visual mode.
+            Motion::NextWord
+            | Motion::NextBigWord
+            | Motion::NextWordEnd
+            | Motion::NextBigWordEnd
+            | Motion::PreviousWord
+            | Motion::PreviousBigWord => {
+                let target = self.target().expect("motion resolves to a MotionTarget");
+                let edit = if select_mode {
+                    EditCommand::Extend(target)
+                } else {
+                    EditCommand::Move(target)
+                };
+                vec![ReedlineOption::Edit(edit)]
             }
-            Motion::PreviousWord => vec![ReedlineOption::Edit(EditCommand::MoveWordLeft {
-                select: select_mode,
-            })],
-            Motion::PreviousBigWord => vec![ReedlineOption::Edit(EditCommand::MoveBigWordLeft {
-                select: select_mode,
-            })],
             Motion::Line => vec![], // Placeholder as unusable standalone motion
             Motion::Start => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart {
                 select: select_mode,

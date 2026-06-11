@@ -203,11 +203,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Direction, Granularity, MotionTarget, WordEdge, WordKind};
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
     fn vi_parse(input: &[char]) -> ParsedViSequence {
         parse(ViMode::Normal, &mut input.iter().peekable())
+    }
+
+    /// A `Word` motion target, for the parameterized verb cases below.
+    fn word(kind: WordKind, edge: WordEdge, direction: Direction) -> MotionTarget {
+        MotionTarget::Word {
+            kind,
+            edge,
+            direction,
+        }
     }
 
     #[test]
@@ -491,9 +501,9 @@ mod tests {
                 ReedlineEvent::Up,
             ])]))]
     #[case(&['w'],
-        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveWordRightStart{select:false}])]))]
+        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Word { kind: WordKind::Small, edge: WordEdge::Start, direction: Direction::Forward })])]))]
     #[case(&['W'],
-        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveBigWordRightStart{select:false}])]))]
+        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Word { kind: WordKind::Big, edge: WordEdge::Start, direction: Direction::Forward })])]))]
     #[case(&['2', 'l'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::UntilFound(vec![
                 ReedlineEvent::HistoryHintComplete,
@@ -524,24 +534,24 @@ mod tests {
         ]))]
     #[case(&['d', 'd'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
-    #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext])]))]
-    #[case(&['d', 'W'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRightToNext])]))]
-    #[case(&['d', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight])]))]
-    #[case(&['d', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordLeft])]))]
-    #[case(&['d', 'B'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordLeft])]))]
+    #[case(&['d', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut { target: word(WordKind::Small, WordEdge::Start, Direction::Forward), granularity: Granularity::CharWise }])]))]
+    #[case(&['d', 'W'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut { target: word(WordKind::Big, WordEdge::Start, Direction::Forward), granularity: Granularity::CharWise }])]))]
+    #[case(&['d', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut { target: word(WordKind::Small, WordEdge::End, Direction::Forward), granularity: Granularity::CharWise }])]))]
+    #[case(&['d', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut { target: word(WordKind::Small, WordEdge::Start, Direction::Backward), granularity: Granularity::CharWise }])]))]
+    #[case(&['d', 'B'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut { target: word(WordKind::Big, WordEdge::Start, Direction::Backward), granularity: Granularity::CharWise }])]))]
     #[case(&['c', 'c'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: false }]), ReedlineEvent::Edit(vec![EditCommand::CutToLineEnd]), ReedlineEvent::Repaint]))]
-    #[case(&['c', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight]), ReedlineEvent::Repaint]))]
-    #[case(&['c', 'W'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRight]), ReedlineEvent::Repaint]))]
-    #[case(&['c', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordRight]), ReedlineEvent::Repaint]))]
-    #[case(&['c', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutWordLeft]), ReedlineEvent::Repaint]))]
-    #[case(&['c', 'B'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordLeft]), ReedlineEvent::Repaint]))]
+    #[case(&['c', 'w'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut { target: word(WordKind::Small, WordEdge::End, Direction::Forward), granularity: Granularity::CharWise }]), ReedlineEvent::Repaint]))]
+    #[case(&['c', 'W'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut { target: word(WordKind::Big, WordEdge::End, Direction::Forward), granularity: Granularity::CharWise }]), ReedlineEvent::Repaint]))]
+    #[case(&['c', 'e'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut { target: word(WordKind::Small, WordEdge::End, Direction::Forward), granularity: Granularity::CharWise }]), ReedlineEvent::Repaint]))]
+    #[case(&['c', 'b'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut { target: word(WordKind::Small, WordEdge::Start, Direction::Backward), granularity: Granularity::CharWise }]), ReedlineEvent::Repaint]))]
+    #[case(&['c', 'B'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut { target: word(WordKind::Big, WordEdge::Start, Direction::Backward), granularity: Granularity::CharWise }]), ReedlineEvent::Repaint]))]
     #[case(&['d', 'h'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Backspace])]))]
     #[case(&['d', 'l'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Delete])]))]
     #[case(&['2', 'd', 'd'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine]), ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
     // #[case(&['d', 'j'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine]), ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
     // #[case(&['d', 'k'], ReedlineEvent::Multiple(vec![ReedlineEvent::Up, ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine]), ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]))]
-    #[case(&['d', 'E'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRight])]))]
+    #[case(&['d', 'E'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut { target: word(WordKind::Big, WordEdge::End, Direction::Forward), granularity: Granularity::CharWise }])]))]
     #[case(&['d', '0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutFromLineStart])]))]
     #[case(&['d', '^'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutFromLineNonBlankStart])]))]
     #[case(&['d', '$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutToLineEnd])]))]
@@ -551,7 +561,7 @@ mod tests {
     #[case(&['d', 'T', 'a'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutLeftBefore('a')])]))]
     #[case(&['d', 'g', 'g'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutFromStartLinewise { leave_blank_line: false }])]))]
     #[case(&['d', 'G'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutToEndLinewise { leave_blank_line: false }])]))]
-    #[case(&['c', 'E'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutBigWordRight]), ReedlineEvent::Repaint]))]
+    #[case(&['c', 'E'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut { target: word(WordKind::Big, WordEdge::End, Direction::Forward), granularity: Granularity::CharWise }]), ReedlineEvent::Repaint]))]
     #[case(&['c', '0'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutFromLineStart]), ReedlineEvent::Repaint]))]
     #[case(&['c', '^'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutFromLineNonBlankStart]), ReedlineEvent::Repaint]))]
     #[case(&['c', '$'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutToLineEnd]), ReedlineEvent::Repaint]))]
@@ -622,9 +632,9 @@ mod tests {
             ])]))]
     #[case(&['k'], ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveLineUp { select: true }])]))]
     #[case(&['w'],
-        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveWordRightStart{select:true}])]))]
+        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::Word { kind: WordKind::Small, edge: WordEdge::Start, direction: Direction::Forward })])]))]
     #[case(&['W'],
-        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::MoveBigWordRightStart{select:true}])]))]
+        ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::Word { kind: WordKind::Big, edge: WordEdge::Start, direction: Direction::Forward })])]))]
     #[case(&['2', 'l'], ReedlineEvent::Multiple(vec![
         ReedlineEvent::UntilFound(vec![
                 ReedlineEvent::HistoryHintComplete,
