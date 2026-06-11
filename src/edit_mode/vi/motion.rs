@@ -279,7 +279,9 @@ impl Motion {
             | Motion::NextWordEnd
             | Motion::NextBigWordEnd
             | Motion::PreviousWord
-            | Motion::PreviousBigWord => {
+            | Motion::PreviousBigWord
+            | Motion::Start
+            | Motion::End => {
                 let target = self.target().expect("motion resolves to a MotionTarget");
                 let edit = if select_mode {
                     EditCommand::Extend(target)
@@ -289,17 +291,11 @@ impl Motion {
                 vec![ReedlineOption::Edit(edit)]
             }
             Motion::Line => vec![], // Placeholder as unusable standalone motion
-            Motion::Start => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart {
-                select: select_mode,
-            })],
             Motion::NonBlankStart => {
                 vec![ReedlineOption::Edit(EditCommand::MoveToLineNonBlankStart {
                     select: select_mode,
                 })]
             }
-            Motion::End => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd {
-                select: select_mode,
-            })],
             Motion::FirstLine => vec![if select_mode {
                 ReedlineOption::Edit(EditCommand::MoveToStart { select: true })
             } else {
