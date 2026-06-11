@@ -334,10 +334,15 @@ impl Editor {
 
     /// Set the current edit mode
     pub fn set_edit_mode(&mut self, mode: PromptEditMode) {
+        // Called on every repaint, so skip the work when nothing relevant moved.
+        // `commit_cursor` depends only on the rest policy, and the cursor is
+        // already committed under the old one; re-normalize only when the policy
+        // actually changes (e.g. Vi insert → normal tightens to `OnGrapheme`).
+        let policy_changed = mode.rest_policy() != self.edit_mode.rest_policy();
         self.edit_mode = mode;
-        // A mode change can switch to a stricter rest policy (e.g. Vi insert →
-        // normal), so re-normalize the resting cursor under the new policy.
-        self.commit_cursor();
+        if policy_changed {
+            self.commit_cursor();
+        }
     }
 
     /// Normalize the cursor at the single commit boundary: clamp + grapheme-snap

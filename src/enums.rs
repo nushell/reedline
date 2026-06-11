@@ -336,9 +336,9 @@ pub enum EditCommand {
     /// Move the cursor to a [`MotionTarget`], collapsing any selection.
     ///
     /// The parameterized, human-readable face of the selection primitive.
-    /// `Move`/`Extend`/`Cut`/`Copy`/`Delete` over a [`MotionTarget`] are the
-    /// going-forward motion API; the older `MoveWord*`/`CutWord*` variants are
-    /// kept as sugar over them.
+    /// `Move`/`Extend`/`Cut`/`Copy`/`Change`/`Erase` over a [`MotionTarget`] are
+    /// the going-forward motion API; the older `MoveWord*`/`CutWord*` variants
+    /// are kept as sugar over them.
     Move(MotionTarget),
 
     /// Extend the selection to a [`MotionTarget`]: move the cursor head to the

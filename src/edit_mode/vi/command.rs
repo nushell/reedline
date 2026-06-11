@@ -346,24 +346,22 @@ impl Command {
                 | Motion::PreviousWord
                 | Motion::PreviousBigWord
                 | Motion::Start
-                | Motion::End => {
-                    let target = motion.target().expect("motion resolves to a target");
-                    Some(vec![ReedlineOption::Edit(EditCommand::Cut {
+                | Motion::End => motion.target().map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Cut {
                         target,
                         granularity: Granularity::CharWise,
-                    })])
-                }
+                    })]
+                }),
                 Motion::RightUntil(_)
                 | Motion::RightBefore(_)
                 | Motion::LeftUntil(_)
-                | Motion::LeftBefore(_) => {
-                    let target = motion.target().expect("char search resolves to a target");
+                | Motion::LeftBefore(_) => motion.target().map(|target| {
                     vi_state.last_char_search = Some(target);
-                    Some(vec![ReedlineOption::Edit(EditCommand::Cut {
+                    vec![ReedlineOption::Edit(EditCommand::Cut {
                         target,
                         granularity: Granularity::CharWise,
-                    })])
-                }
+                    })]
+                }),
                 Motion::NonBlankStart => Some(vec![ReedlineOption::Edit(
                     EditCommand::CutFromLineNonBlankStart,
                 )]),
@@ -373,13 +371,12 @@ impl Command {
                 // buffer edge, linewise. The targets + the LineWise snap (incl.
                 // the buffer-end `\n` fixup) reproduce the dedicated commands.
                 Motion::Down | Motion::Up | Motion::FirstLine | Motion::LastLine => {
-                    let target = motion
-                        .target()
-                        .expect("linewise motions resolve to a target");
-                    Some(vec![ReedlineOption::Edit(EditCommand::Cut {
-                        target,
-                        granularity: Granularity::LineWise,
-                    })])
+                    motion.target().map(|target| {
+                        vec![ReedlineOption::Edit(EditCommand::Cut {
+                            target,
+                            granularity: Granularity::LineWise,
+                        })]
+                    })
                 }
                 Motion::ReplayCharSearch => vi_state.last_char_search.map(|target| {
                     vec![ReedlineOption::Edit(EditCommand::Cut {
@@ -418,24 +415,24 @@ impl Command {
                             Motion::NextWord => Motion::NextWordEnd.target(),
                             Motion::NextBigWord => Motion::NextBigWordEnd.target(),
                             other => other.target(),
-                        }
-                        .expect("motion resolves to a target");
-                        Some(vec![ReedlineOption::Edit(EditCommand::Cut {
-                            target,
-                            granularity: Granularity::CharWise,
-                        })])
+                        };
+                        target.map(|target| {
+                            vec![ReedlineOption::Edit(EditCommand::Cut {
+                                target,
+                                granularity: Granularity::CharWise,
+                            })]
+                        })
                     }
                     Motion::RightUntil(_)
                     | Motion::RightBefore(_)
                     | Motion::LeftUntil(_)
-                    | Motion::LeftBefore(_) => {
-                        let target = motion.target().expect("char search resolves to a target");
+                    | Motion::LeftBefore(_) => motion.target().map(|target| {
                         vi_state.last_char_search = Some(target);
-                        Some(vec![ReedlineOption::Edit(EditCommand::Cut {
+                        vec![ReedlineOption::Edit(EditCommand::Cut {
                             target,
                             granularity: Granularity::CharWise,
-                        })])
-                    }
+                        })]
+                    }),
                     Motion::NonBlankStart => Some(vec![ReedlineOption::Edit(
                         EditCommand::CutFromLineNonBlankStart,
                     )]),
@@ -446,13 +443,12 @@ impl Command {
                     // re-enters on it (`Change`'s LineWise snap keeps the
                     // terminators where `Cut`'s consumes them).
                     Motion::Down | Motion::Up | Motion::FirstLine | Motion::LastLine => {
-                        let target = motion
-                            .target()
-                            .expect("linewise motions resolve to a target");
-                        Some(vec![ReedlineOption::Edit(EditCommand::Change {
-                            target,
-                            granularity: Granularity::LineWise,
-                        })])
+                        motion.target().map(|target| {
+                            vec![ReedlineOption::Edit(EditCommand::Change {
+                                target,
+                                granularity: Granularity::LineWise,
+                            })]
+                        })
                     }
                     Motion::ReplayCharSearch => vi_state.last_char_search.map(|target| {
                         vec![ReedlineOption::Edit(EditCommand::Cut {
@@ -486,24 +482,22 @@ impl Command {
                 | Motion::PreviousWord
                 | Motion::PreviousBigWord
                 | Motion::Start
-                | Motion::End => {
-                    let target = motion.target().expect("motion resolves to a target");
-                    Some(vec![ReedlineOption::Edit(EditCommand::Copy {
+                | Motion::End => motion.target().map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Copy {
                         target,
                         granularity: Granularity::CharWise,
-                    })])
-                }
+                    })]
+                }),
                 Motion::RightUntil(_)
                 | Motion::RightBefore(_)
                 | Motion::LeftUntil(_)
-                | Motion::LeftBefore(_) => {
-                    let target = motion.target().expect("char search resolves to a target");
+                | Motion::LeftBefore(_) => motion.target().map(|target| {
                     vi_state.last_char_search = Some(target);
-                    Some(vec![ReedlineOption::Edit(EditCommand::Copy {
+                    vec![ReedlineOption::Edit(EditCommand::Copy {
                         target,
                         granularity: Granularity::CharWise,
-                    })])
-                }
+                    })]
+                }),
                 Motion::NonBlankStart => Some(vec![ReedlineOption::Edit(
                     EditCommand::CopyFromLineNonBlankStart,
                 )]),
@@ -512,13 +506,12 @@ impl Command {
                 // `yj`/`yk`/`ygg`/`yG` — whole lines to the adjacent line or
                 // the buffer edge, linewise.
                 Motion::Down | Motion::Up | Motion::FirstLine | Motion::LastLine => {
-                    let target = motion
-                        .target()
-                        .expect("linewise motions resolve to a target");
-                    Some(vec![ReedlineOption::Edit(EditCommand::Copy {
-                        target,
-                        granularity: Granularity::LineWise,
-                    })])
+                    motion.target().map(|target| {
+                        vec![ReedlineOption::Edit(EditCommand::Copy {
+                            target,
+                            granularity: Granularity::LineWise,
+                        })]
+                    })
                 }
                 Motion::ReplayCharSearch => vi_state.last_char_search.map(|target| {
                     vec![ReedlineOption::Edit(EditCommand::Copy {

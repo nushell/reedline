@@ -284,7 +284,12 @@ impl Motion {
             | Motion::LastLine
             | Motion::Start
             | Motion::End => {
-                let target = self.target().expect("motion resolves to a MotionTarget");
+                // These arms cover exactly the variants `target()` resolves, so
+                // `None` is unreachable; degrade to a no-op rather than panic if
+                // that ever drifts.
+                let Some(target) = self.target() else {
+                    return vec![];
+                };
                 let edit = if select_mode {
                     EditCommand::Extend(target)
                 } else {
@@ -302,7 +307,9 @@ impl Motion {
             | Motion::RightBefore(_)
             | Motion::LeftUntil(_)
             | Motion::LeftBefore(_) => {
-                let target = self.target().expect("must resolve");
+                let Some(target) = self.target() else {
+                    return vec![];
+                };
                 vi_state.last_char_search = Some(target);
                 let edit = if select_mode {
                     EditCommand::Extend(target)

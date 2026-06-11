@@ -25,15 +25,18 @@ pub(crate) enum CharClass {
     Punctuation,
     /// Spaces, tabs, etc.
     Whitespace,
-    /// Line endings, kept separate from whitespace so a `\n` always forms a
+    /// Line endings, kept separate from whitespace so a newline always forms a
     /// boundary with adjacent spaces (a word motion never glides across lines).
+    /// Both `\n` and the `\r` of a `\r\n` terminator land here, so a word motion
+    /// never treats the carriage return as a punctuation "word" and never parks
+    /// the cursor or an operator edge on it (matches `line::end_of_line`).
     Eol,
 }
 
 /// Sort `ch` into a [`CharClass`].
 pub(crate) fn categorize_char(ch: char) -> CharClass {
     match ch {
-        '\n' => CharClass::Eol,
+        '\n' | '\r' => CharClass::Eol,
         ch if ch.is_alphanumeric() || ch == '_' => CharClass::Word,
         ch if ch.is_whitespace() => CharClass::Whitespace,
         _ => CharClass::Punctuation,
@@ -146,8 +149,19 @@ mod tests {
         assert_eq!(categorize_char(' '), CharClass::Whitespace);
         assert_eq!(categorize_char('\t'), CharClass::Whitespace);
         assert_eq!(categorize_char('\n'), CharClass::Eol);
+        assert_eq!(categorize_char('\r'), CharClass::Eol);
         assert_eq!(categorize_char('.'), CharClass::Punctuation);
         assert_eq!(categorize_char('-'), CharClass::Punctuation);
+    }
+
+    #[test]
+    fn carriage_return_is_eol_not_a_word() {
+        // A `\r\n` terminator must not read as a punctuation "word"; otherwise a
+        // forward word-end from "ab" would park on the `\r` (byte 2) instead of
+        // skipping the line ending to the 'd' of "cd" (byte 5). "ab\r\ncd" is
+        // bytes a=0 b=1 \r=2 \n=3 c=4 d=5.
+        let end = locate_word("ab\r\ncd", 1, WordKind::Small, WordEdge::End, true);
+        assert_eq!(end, 5);
     }
 
     #[test]

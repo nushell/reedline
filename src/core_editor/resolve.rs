@@ -30,10 +30,11 @@ pub(crate) fn operator_span(buf: &str, origin: usize, target: MotionTarget) -> C
 
 /// Resolve a public [`MotionTarget`] against `buf`, relative to `origin`.
 ///
-/// Total over every variant — a target with no resolution yet (`Find`) stays at
-/// `origin` (a no-op) rather than panicking, so a target constructed from config
-/// or another mode can never crash the editor. Context-aware (takes `buf`), so
-/// line/buffer edges resolve correctly where a context-free conversion couldn't.
+/// Total over every variant — a target that cannot land anywhere (a `Find` that
+/// misses, a `Line` past the first/last line) stays at `origin` (a no-op) rather
+/// than panicking, so a target constructed from config or another mode can never
+/// crash the editor. Context-aware (takes `buf`), so line/buffer edges resolve
+/// correctly where a context-free conversion couldn't.
 pub(crate) fn resolve_motion(buf: &str, origin: usize, target: MotionTarget) -> Movement {
     let span = |head: usize, inclusive: bool| Movement {
         head,
