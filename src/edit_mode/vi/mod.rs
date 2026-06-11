@@ -8,13 +8,11 @@ use std::str::FromStr;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
-use self::motion::ViCharSearch;
-
 use super::EditMode;
 use crate::{
     edit_mode::{keybindings::Keybindings, vi::parser::parse},
     enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
-    PromptEditMode, PromptViMode,
+    MotionTarget, PromptEditMode, PromptViMode,
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -45,7 +43,7 @@ pub struct Vi {
     mode: ViMode,
     previous: Option<ReedlineEvent>,
     // last f, F, t, T motion for ; and ,
-    last_char_search: Option<ViCharSearch>,
+    last_char_search: Option<MotionTarget>,
 }
 
 impl Default for Vi {

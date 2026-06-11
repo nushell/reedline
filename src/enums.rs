@@ -98,7 +98,6 @@ pub enum Direction {
 }
 
 impl Direction {
-    #[allow(dead_code)] // wired when vi lowers ;/, through Find
     pub(crate) fn reversed(self) -> Self {
         match self {
             Direction::Forward => Direction::Backward,
@@ -201,7 +200,6 @@ impl MotionTarget {
     /// Only `Find` is reversible — every other target passes through unchanged,
     /// because a reversed word/line edge is a *different* motion, not the same
     /// motion the other way (e.g. backward word-end is `ge`, not `e` flipped).
-    #[allow(dead_code)] // wired when vi lowers ;/, through Find
     pub(crate) fn reversed(self) -> Self {
         match self {
             MotionTarget::Find {
