@@ -953,6 +953,14 @@ impl Reedline {
                 reedline_events.push(ReedlineEvent::Submit);
             }
 
+            // The mode machine has parsed this batch, so the rest policy it
+            // declares is now final. Relay it to the editor before running the
+            // emitted commands so a command a mode transition issued (e.g. the
+            // Esc→normal grapheme step-back) resolves under the new policy. This
+            // does not commit the cursor — the commands settle it, and the
+            // pre-paint `set_edit_mode` below still clamps no-command switches.
+            self.editor.sync_edit_mode(self.edit_mode.edit_mode());
+
             // Handle reedline events.
             let mut need_repaint = false;
             for event in reedline_events {

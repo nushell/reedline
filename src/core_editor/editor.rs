@@ -345,6 +345,19 @@ impl Editor {
         }
     }
 
+    /// Adopt `mode`'s rest policy *without* committing the cursor.
+    ///
+    /// Called at the parse seam, before the events a mode transition emitted
+    /// are run, so those commands resolve under the new [`RestPolicy`] (e.g.
+    /// the Esc→normal grapheme step-back reads `OnGrapheme`). The cursor is
+    /// deliberately left where insert mode put it: the emitted commands move
+    /// and commit it under the new policy, and any no-command transition is
+    /// settled by the pre-paint `set_edit_mode`. Committing here would pull a
+    /// caret at the line end back a grapheme, double-stepping the Esc move.
+    pub fn sync_edit_mode(&mut self, mode: PromptEditMode) {
+        self.edit_mode = mode;
+    }
+
     /// Normalize the cursor at the single commit boundary: clamp + grapheme-snap
     /// (universal), then apply the active mode's [`RestPolicy`]. Total and
     /// idempotent, so it is safe to call after any state change.
@@ -364,12 +377,23 @@ impl Editor {
 
     /// Resolve a motion target to the head position the cursor would land on.
     fn resolve_head(&self, target: MotionTarget) -> usize {
-        resolve_motion(
-            self.line_buffer.get_buffer(),
-            self.insertion_point(),
-            target,
-        )
-        .head
+        let buf = self.line_buffer.get_buffer();
+        let origin = self.insertion_point();
+        let head = resolve_motion(buf, origin, target).head;
+        // A grapheme step lands on the adjacent rest the caret may take. Under a
+        // cell-caret policy (vi normal/visual) it can't cross the line
+        // terminator; under `Between` (emacs, vi insert) it moves freely. The
+        // other targets aim at buffer landmarks whose line-crossing is fixed,
+        // so only `Grapheme` consults the policy.
+        if let MotionTarget::Grapheme(direction) = target {
+            if self.edit_mode.rest_policy() != RestPolicy::Between {
+                return match direction {
+                    Direction::Backward => head.max(line::start_of_line(buf, origin)),
+                    Direction::Forward => head.min(line::end_of_line(buf, origin)),
+                };
+            }
+        }
+        head
     }
 
     /// Move the cursor head to `head` — collapsing the selection unless `select`
@@ -1369,6 +1393,55 @@ mod test {
         editor.run_edit_command(&EditCommand::MoveToEnd { select: false });
         // 'é' is 2 bytes, so the last grapheme starts at byte 3, not 4
         assert_eq!(editor.insertion_point(), "caf".len());
+    }
+
+    // Esc-from-insert is lowered (in the Vi machine) to a backward grapheme
+    // step, and the engine relays the new rest policy via `sync_edit_mode`
+    // *before* that step runs. These replicate that seam sequence — insert
+    // caret, `sync_edit_mode` (no commit), then the step — to pin the timing:
+    // the step must read `OnGrapheme`, must not double-step a caret sitting at
+    // the line end, and must not cross the line under the cell-caret policy.
+
+    /// Helper: caret in insert at `at`, then the Esc seam (policy relayed
+    /// without committing) followed by the backward grapheme step.
+    fn esc_back_from_insert(buffer: &str, at: usize) -> Editor {
+        let mut editor = vi_editor(buffer, PromptViMode::Insert);
+        editor.line_buffer.set_insertion_point(at);
+        editor.sync_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.run_edit_command(&EditCommand::Move(MotionTarget::Grapheme(
+            Direction::Backward,
+        )));
+        editor
+    }
+
+    #[test]
+    fn esc_back_steps_one_within_line() {
+        // caret on the last 'c' (as after `i`): steps back onto the first 'c'
+        let editor = esc_back_from_insert("aa bb cc", 7);
+        assert_eq!(editor.insertion_point(), 6);
+    }
+
+    #[test]
+    fn esc_back_at_line_end_does_not_double_step() {
+        // caret appended past the end (as after `A`): the relay must NOT commit
+        // and pull it back, or the step would land on 6 instead of the last 'c'
+        let editor = esc_back_from_insert("aa bb cc", 8);
+        assert_eq!(editor.insertion_point(), 7);
+    }
+
+    #[test]
+    fn esc_back_at_line_start_stays_in_line() {
+        // caret at column 0 of the second line: the cell-caret can't cross the
+        // newline, so it stays put rather than jumping onto the line above
+        let editor = esc_back_from_insert("ab\ncd", 3);
+        assert_eq!(editor.insertion_point(), 3);
+    }
+
+    #[test]
+    fn esc_back_on_trailing_empty_line_stays() {
+        // the `cc`/`S`-then-Esc shape: caret on a blank last line stays there
+        let editor = esc_back_from_insert("a\n\n", 3);
+        assert_eq!(editor.insertion_point(), 3);
     }
 
     // The commit boundary also fires on the two state changes that bypass
