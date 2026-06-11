@@ -280,6 +280,8 @@ impl Motion {
             | Motion::NextBigWordEnd
             | Motion::PreviousWord
             | Motion::PreviousBigWord
+            | Motion::FirstLine
+            | Motion::LastLine
             | Motion::Start
             | Motion::End => {
                 let target = self.target().expect("motion resolves to a MotionTarget");
@@ -296,16 +298,6 @@ impl Motion {
                     select: select_mode,
                 })]
             }
-            Motion::FirstLine => vec![if select_mode {
-                ReedlineOption::Edit(EditCommand::MoveToStart { select: true })
-            } else {
-                ReedlineOption::Event(ReedlineEvent::ToStart)
-            }],
-            Motion::LastLine => vec![if select_mode {
-                ReedlineOption::Edit(EditCommand::MoveToEnd { select: true })
-            } else {
-                ReedlineOption::Event(ReedlineEvent::ToEnd)
-            }],
             Motion::RightUntil(_)
             | Motion::RightBefore(_)
             | Motion::LeftUntil(_)

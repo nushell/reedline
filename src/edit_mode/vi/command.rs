@@ -362,14 +362,14 @@ impl Command {
                 Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
                 Motion::Up => None,
                 Motion::Down => None,
-                Motion::FirstLine => Some(vec![ReedlineOption::Edit(
-                    EditCommand::CutFromStartLinewise {
-                        leave_blank_line: false,
-                    },
-                )]),
-                Motion::LastLine => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutToEndLinewise {
-                        leave_blank_line: false,
+                // `dgg`/`dG` — whole lines to the buffer edge, linewise. The
+                // `BufferEdge` target + the LineWise snap (incl. the buffer-end
+                // `\n` fixup) reproduce the dedicated `*Linewise` commands.
+                Motion::FirstLine | Motion::LastLine => {
+                    let target = motion.target().expect("gg/G resolve to a BufferEdge");
+                    Some(vec![ReedlineOption::Edit(EditCommand::Cut {
+                        target,
+                        granularity: Granularity::LineWise,
                     })])
                 }
                 Motion::ReplayCharSearch => vi_state.last_char_search.map(|target| {
@@ -494,11 +494,13 @@ impl Command {
                 Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::CopyRight)]),
                 Motion::Up => None,
                 Motion::Down => None,
-                Motion::FirstLine => Some(vec![ReedlineOption::Edit(
-                    EditCommand::CopyFromStartLinewise,
-                )]),
-                Motion::LastLine => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyToEndLinewise)])
+                // `ygg`/`yG` — whole lines to the buffer edge, linewise.
+                Motion::FirstLine | Motion::LastLine => {
+                    let target = motion.target().expect("gg/G resolve to a BufferEdge");
+                    Some(vec![ReedlineOption::Edit(EditCommand::Copy {
+                        target,
+                        granularity: Granularity::LineWise,
+                    })])
                 }
                 Motion::ReplayCharSearch => vi_state.last_char_search.map(|target| {
                     vec![ReedlineOption::Edit(EditCommand::Copy {
