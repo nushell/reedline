@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, ops::ControlFlow, path::PathBuf};
 
 use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
@@ -920,80 +920,96 @@ impl Reedline {
                         events.push(crossterm::event::read()?);
                     }
                 }
-            }
-
-            // Convert `Event` into `ReedlineEvent`. Also, fuse consecutive
-            // `ReedlineEvent::EditCommand` into one. Also, if there're multiple
-            // `ReedlineEvent::Resize`, only keep the last one.
-            let mut reedline_events: Vec<ReedlineEvent> = vec![];
-            let mut edits = vec![];
-            let mut resize = None;
-            for event in events {
-                if let Ok(event) = ReedlineRawEvent::try_from(event) {
-                    match self.edit_mode.parse_event(event) {
-                        ReedlineEvent::Edit(edit) => edits.extend(edit),
-                        ReedlineEvent::Resize(x, y) => resize = Some((x, y)),
-                        event => {
-                            if !edits.is_empty() {
-                                reedline_events
-                                    .push(ReedlineEvent::Edit(std::mem::take(&mut edits)));
-                            }
-                            reedline_events.push(event);
-                        }
-                    }
+                if let ControlFlow::Break(signal) = self.process_input_batch(prompt, events)? {
+                    return Ok(signal);
                 }
-            }
-            if !edits.is_empty() {
-                reedline_events.push(ReedlineEvent::Edit(edits));
-            }
-            if let Some((x, y)) = resize {
-                reedline_events.push(ReedlineEvent::Resize(x, y));
-            }
-            if self.immediately_accept {
-                reedline_events.push(ReedlineEvent::Submit);
-            }
-
-            // The mode machine has parsed this batch, so the rest policy it
-            // declares is now final. Relay it to the editor before running the
-            // emitted commands so a command a mode transition issued (e.g. the
-            // Esc→normal grapheme step-back) resolves under the new policy. This
-            // does not commit the cursor — the commands settle it, and the
-            // pre-paint `set_edit_mode` below still clamps no-command switches.
-            self.editor.sync_edit_mode(self.edit_mode.edit_mode());
-
-            // Handle reedline events.
-            let mut need_repaint = false;
-            for event in reedline_events {
-                match self.handle_event(prompt, event)? {
-                    EventStatus::Exits(signal) => {
-                        // Check if we are merely suspended (to process an ExecuteHostCommand event)
-                        // or if we're about to quit the editor.
-                        if self.suspended_state.is_none() {
-                            // We are about to quit the editor, move the cursor below the input
-                            // area, for external commands or new read_line call
-                            self.painter.move_cursor_to_end()?;
-                        }
-                        return Ok(signal);
-                    }
-                    EventStatus::Handled => {
-                        need_repaint = true;
-                    }
-                    EventStatus::Inapplicable => {
-                        // Nothing changed, no need to repaint
-                    }
-                }
-            }
-            if need_repaint {
-                // Sync the editor's edit mode before painting so the cursor is
-                // normalized under the current rest policy. A mode change that
-                // bypasses the command path (e.g. Esc → Vi normal) otherwise
-                // wouldn't clamp until the next command, painting the cursor past
-                // the last grapheme for a frame.
-                let mode = self.edit_mode.edit_mode();
-                self.editor.set_edit_mode(mode);
-                self.repaint(prompt)?;
             }
         }
+    }
+
+    fn process_input_batch(
+        &mut self,
+        prompt: &dyn Prompt,
+        events: Vec<Event>,
+    ) -> Result<ControlFlow<Signal>> {
+        // Convert `Event` into `ReedlineEvent`. Also, fuse consecutive
+        // `ReedlineEvent::EditCommand` into one. Also, if there're multiple
+        // `ReedlineEvent::Resize`, only keep the last one.
+        let mut reedline_events: Vec<ReedlineEvent> = vec![];
+        let mut edits = vec![];
+        let mut resize = None;
+        for event in events {
+            if let Ok(event) = ReedlineRawEvent::try_from(event) {
+                match self.edit_mode.parse_event(event) {
+                    ReedlineEvent::Edit(edit) => edits.extend(edit),
+                    ReedlineEvent::Resize(x, y) => resize = Some((x, y)),
+                    event => {
+                        if !edits.is_empty() {
+                            reedline_events.push(ReedlineEvent::Edit(std::mem::take(&mut edits)));
+                        }
+                        reedline_events.push(event);
+                    }
+                }
+            }
+        }
+        if !edits.is_empty() {
+            reedline_events.push(ReedlineEvent::Edit(edits));
+        }
+        if let Some((x, y)) = resize {
+            reedline_events.push(ReedlineEvent::Resize(x, y));
+        }
+        if self.immediately_accept {
+            reedline_events.push(ReedlineEvent::Submit);
+        }
+
+        // The mode machine has parsed this batch, so the rest policy it
+        // declares is now final. Relay it to the editor before running the
+        // emitted commands so a command a mode transition issued (e.g. the
+        // Esc→normal grapheme step-back) resolves under the new policy. This
+        // does not commit the cursor — the commands settle it, and the
+        // pre-paint `set_edit_mode` below still clamps no-command switches.
+        self.editor.sync_edit_mode(self.edit_mode.edit_mode());
+
+        // Handle reedline events.
+        let mut need_repaint = false;
+        for event in reedline_events {
+            match self.handle_event(prompt, event)? {
+                EventStatus::Exits(signal) => {
+                    // Check if we are merely suspended (to process an ExecuteHostCommand event)
+                    // or if we're about to quit the editor.
+                    if self.suspended_state.is_none() {
+                        // We are about to quit the editor, move the cursor below the input
+                        // area, for external commands or new read_line call
+                        self.painter.move_cursor_to_end()?;
+                    }
+                    return Ok(ControlFlow::Break(signal));
+                }
+                EventStatus::Handled => {
+                    need_repaint = true;
+                }
+                EventStatus::Inapplicable => {
+                    // Nothing changed, no need to repaint
+                }
+            }
+        }
+        // A command-less mode transition adopts a new rest policy via
+        // `sync_edit_mode` but emits nothing to commit the cursor. Force the
+        // settle (and a repaint) so it doesn't stay unsettled until the next
+        // command.
+        if self.editor.policy_unsettled() {
+            need_repaint = true;
+        }
+        if need_repaint {
+            // Sync the editor's edit mode before painting so the cursor is
+            // normalized under the current rest policy. A mode change that
+            // bypasses the command path (e.g. Esc → Vi normal) otherwise
+            // wouldn't clamp until the next command, painting the cursor past
+            // the last grapheme for a frame.
+            let mode = self.edit_mode.edit_mode();
+            self.editor.set_edit_mode(mode);
+            self.repaint(prompt)?;
+        }
+        Ok(ControlFlow::Continue(()))
     }
 
     fn handle_event(&mut self, prompt: &dyn Prompt, event: ReedlineEvent) -> Result<EventStatus> {
@@ -2286,8 +2302,64 @@ impl Reedline {
 mod tests {
     use super::*;
     use crate::terminal_extensions::semantic_prompt::PromptKind;
-    use crate::{ColumnarMenu, DefaultPrompt, MenuBuilder};
+    use crate::{ColumnarMenu, DefaultPrompt, MenuBuilder, PromptViMode};
     use rstest::rstest;
+
+    fn seam_engine(edit_mode: Box<dyn EditMode>) -> Reedline {
+        let mut rl = Reedline::create().with_edit_mode(edit_mode);
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl
+    }
+
+    fn drive(rl: &mut Reedline, keys: &[KeyEvent]) {
+        let prompt = DefaultPrompt::default();
+        let events = keys.iter().copied().map(Event::Key).collect();
+        let _ = rl.process_input_batch(&prompt, events).expect("batch ok");
+    }
+
+    fn ch(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    struct FlipToNormal {
+        switched: bool,
+    }
+    impl EditMode for FlipToNormal {
+        fn parse_event(&mut self, _e: ReedlineRawEvent) -> ReedlineEvent {
+            self.switched = true;
+            ReedlineEvent::None
+        }
+        fn edit_mode(&self) -> PromptEditMode {
+            if self.switched {
+                PromptEditMode::Vi(PromptViMode::Normal)
+            }
+            // OnGrapheme
+            else {
+                PromptEditMode::Vi(PromptViMode::Insert)
+            }
+        }
+    }
+
+    #[test]
+    fn command_less_mode_transition_settles_cursor() {
+        let mut rl = seam_engine(Box::new(FlipToNormal { switched: false }));
+        rl.editor
+            .set_buffer("ab".into(), UndoBehavior::CreateUndoPoint);
+        rl.editor
+            .edit_buffer(|b| b.set_insertion_point(2), UndoBehavior::MoveCursor); // at len, legal under Between
+        drive(&mut rl, &[ch('x')]); // flipts to OnGrapheme, emits nothing
+        assert_eq!(rl.current_insertion_point(), 1);
+    }
+
+    #[test]
+    fn harness_drives_typed_chars_into_buffer() {
+        // Smoke test: proves the seam harness runs the real batch pipeline
+        // (parse_event -> handle_event -> repaint-to-sink) headlessly.
+        let mut rl = seam_engine(Box::<crate::Emacs>::default());
+        drive(&mut rl, &[ch('h'), ch('i')]);
+        assert_eq!(rl.editor.get_buffer(), "hi");
+        assert_eq!(rl.current_insertion_point(), 2);
+    }
 
     #[test]
     fn reedline_is_send() {

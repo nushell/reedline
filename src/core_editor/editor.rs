@@ -25,6 +25,11 @@ pub struct Editor {
     /// before the cut) can't change the operated range. `None` when no selection.
     selection_inclusive: Option<bool>,
     edit_mode: PromptEditMode,
+    /// Set when [`sync_edit_mode`](Self::sync_edit_mode) adopts a new rest
+    /// policy without committing the cursor; cleared at the commit boundary.
+    /// Lets the pre-paint sweep settle a command-less mode transition that
+    /// would otherwise never re-normalize under the new policy.
+    policy_unsettled: bool,
 }
 
 enum OperatorVerb {
@@ -48,6 +53,7 @@ impl Default for Editor {
             last_undo_behavior: UndoBehavior::CreateUndoPoint,
             selection_inclusive: None,
             edit_mode: PromptEditMode::Default,
+            policy_unsettled: false,
         }
     }
 }
@@ -340,9 +346,18 @@ impl Editor {
         // actually changes (e.g. Vi insert → normal tightens to `OnGrapheme`).
         let policy_changed = mode.rest_policy() != self.edit_mode.rest_policy();
         self.edit_mode = mode;
-        if policy_changed {
+        // `sync_edit_mode` may have already adopted this policy without
+        // committing (a command-less transition), so `policy_changed` can read
+        // false here even though the cursor still owes a settle.
+        if policy_changed || self.policy_unsettled {
             self.commit_cursor();
         }
+    }
+
+    /// Whether a rest-policy change is awaiting a commit (see
+    /// [`policy_unsettled`](Self::policy_unsettled) field).
+    pub(crate) fn policy_unsettled(&self) -> bool {
+        self.policy_unsettled
     }
 
     /// Adopt `mode`'s rest policy *without* committing the cursor.
@@ -355,6 +370,9 @@ impl Editor {
     /// settled by the pre-paint `set_edit_mode`. Committing here would pull a
     /// caret at the line end back a grapheme, double-stepping the Esc move.
     pub fn sync_edit_mode(&mut self, mode: PromptEditMode) {
+        if mode.rest_policy() != self.edit_mode.rest_policy() {
+            self.policy_unsettled = true;
+        }
         self.edit_mode = mode;
     }
 
@@ -368,6 +386,7 @@ impl Editor {
             self.edit_mode.rest_policy(),
         );
         self.line_buffer.set_cursor(committed);
+        self.policy_unsettled = false;
     }
 
     fn move_to_position(&mut self, position: usize, select: bool) {
