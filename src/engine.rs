@@ -2321,6 +2321,34 @@ mod tests {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
     }
 
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    /// Drive each key as its own input batch, so vi mode transitions settle
+    /// between presses the way real keystrokes arrive.
+    fn type_each(rl: &mut Reedline, keys: &[KeyEvent]) {
+        for k in keys {
+            drive(rl, &[*k]);
+        }
+    }
+
+    // FLIP SAFETY NET (Group C) — visual operability at the engine seam.
+    // RED until the cursor-as-truth flip: `v` emits Esc which clears the
+    // selection, so visual mode starts anchorless and `d` cuts nothing. The
+    // flip makes the cursor an always-present range, so `v` then `d` deletes
+    // the grapheme under the cursor. Valid under both models, so never wasted.
+    #[test]
+    #[ignore = "RED until the cursor-as-truth flip (#7): v-anchor dissolves there"]
+    fn v_then_d_deletes_cursor_grapheme() {
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        type_each(
+            &mut rl,
+            &[ch('a'), ch('b'), key(KeyCode::Esc), ch('v'), ch('d')],
+        );
+        assert_eq!(rl.editor.get_buffer(), "a");
+    }
+
     struct FlipToNormal {
         switched: bool,
     }

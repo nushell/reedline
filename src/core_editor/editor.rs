@@ -1414,6 +1414,72 @@ mod test {
         assert_eq!(editor.insertion_point(), "caf".len());
     }
 
+    // ======================================================================
+    // FLIP SAFETY NET — gates the cursor-as-truth flip (storage follows Helix)
+    //
+    // INVARIANT masters (`net_*`): pin `insertion_point()` / `get_selection()`
+    // values the storage swap must preserve byte-for-byte. These MUST stay
+    // green through the flip — they are the proof the swap was faithful.
+    // (#694/#893 and the inclusive-cut cases are already pinned by the tests
+    // above; these cover the gaps: Between-mode resting, no-anchor/backward
+    // selection, and the bare-block-vs-deliberate-selection distinction.)
+    // ======================================================================
+
+    #[rstest]
+    #[case(PromptViMode::Insert, "hello", 5)] // Between: caret may rest at len
+    #[case(PromptViMode::Normal, "hello", 4)] // OnGrapheme: onto the last grapheme
+    #[case(PromptViMode::Insert, "café", 5)] // multibyte, insert rests at len
+    #[case(PromptViMode::Normal, "café", 3)] // multibyte, normal on last grapheme
+    #[case(PromptViMode::Insert, "", 0)]
+    #[case(PromptViMode::Normal, "", 0)]
+    fn net_insertion_point_at_end(
+        #[case] mode: PromptViMode,
+        #[case] buf: &str,
+        #[case] expect: usize,
+    ) {
+        let mut editor = vi_editor(buf, mode);
+        editor.run_edit_command(&EditCommand::MoveToEnd { select: false });
+        assert_eq!(editor.insertion_point(), expect);
+    }
+
+    #[test]
+    fn net_insertion_point_emacs_rests_at_len() {
+        // Default/Emacs is `Between`: the caret may sit past the last grapheme.
+        let mut editor = editor_with("hello");
+        editor.run_edit_command(&EditCommand::MoveToEnd { select: false });
+        assert_eq!(editor.insertion_point(), 5);
+    }
+
+    #[test]
+    fn net_get_selection_none_without_anchor() {
+        // A bare cursor (no anchor planted) is not a selection.
+        let editor = vi_editor("hello", PromptViMode::Normal);
+        assert_eq!(editor.get_selection(), None);
+    }
+
+    #[test]
+    fn net_get_selection_backward_is_ordered() {
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.move_to_position(3, false);
+        editor.run_edit_command(&EditCommand::MoveLeft { select: true });
+        editor.run_edit_command(&EditCommand::MoveLeft { select: true });
+        // head left of anchor; get_selection returns an ordered (start, end).
+        assert_eq!(editor.get_selection(), Some((1, 4)));
+    }
+
+    // BEHAVIOR(E) master: a bare normal-mode block reports as "no selection",
+    // while a deliberate 1-grapheme shift-select does report a range. The flip
+    // dissolves the `anchored`/`selection_inclusive` machinery — this pins that
+    // the *distinction* survives (whatever represents it afterwards).
+    #[test]
+    fn net_bare_block_is_not_a_selection_but_shift_select_is() {
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.move_to_position(1, false);
+        assert_eq!(editor.get_selection(), None); // bare block
+        editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        assert_eq!(editor.get_selection(), Some((1, 3))); // deliberate selection
+    }
+
     // Esc-from-insert is lowered (in the Vi machine) to a backward grapheme
     // step, and the engine relays the new rest policy via `sync_edit_mode`
     // *before* that step runs. These replicate that seam sequence — insert
