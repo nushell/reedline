@@ -131,25 +131,31 @@ impl ParsedViSequence {
         }
     }
 
+    /// Record `events` as the repeatable previous action, unless there is
+    /// nothing to record or the command is itself a repeat: `.` replays the
+    /// last change and must never record itself, otherwise `previous` would
+    /// nest without bound. `RepeatLastAction` only reaches the no-motion arm,
+    /// but guarding here keeps the recording policy correct for either caller.
+    fn record_previous(vi_state: &mut Vi, command: &Command, events: &ReedlineEvent) {
+        match events {
+            ReedlineEvent::None => {}
+            _ if matches!(command, Command::RepeatLastAction) => {}
+            event => vi_state.previous = Some(event.clone()),
+        }
+    }
+
     pub fn to_reedline_event(&self, vi_state: &mut Vi) -> ReedlineEvent {
         match (&self.multiplier, &self.command, &self.count, &self.motion) {
             (_, Some(command), None, ParseResult::Incomplete) => {
                 let events = self.apply_multiplier(Some(command.to_reedline(vi_state)));
-                match &events {
-                    ReedlineEvent::None => {}
-                    _ if matches!(command, Command::RepeatLastAction) => {}
-                    event => vi_state.previous = Some(event.clone()),
-                }
+                Self::record_previous(vi_state, command, &events);
                 events
             }
             // This case handles all combinations of commands and motions that could exist
             (_, Some(command), _, ParseResult::Valid(motion)) => {
                 let events =
                     self.apply_multiplier(command.to_reedline_with_motion(motion, vi_state));
-                match &events {
-                    ReedlineEvent::None => {}
-                    event => vi_state.previous = Some(event.clone()),
-                }
+                Self::record_previous(vi_state, command, &events);
                 events
             }
             (_, None, _, ParseResult::Valid(motion)) => {
