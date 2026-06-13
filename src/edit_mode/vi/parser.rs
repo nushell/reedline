@@ -112,7 +112,12 @@ impl ParsedViSequence {
             (Some(Command::Change), ParseResult::Incomplete) if mode == ViMode::Visual => {
                 Some(ViMode::Insert)
             }
-            (Some(Command::Delete), ParseResult::Incomplete) if mode == ViMode::Visual => {
+            (Some(Command::Delete), ParseResult::Incomplete)
+            | (Some(Command::Lowercase), ParseResult::Incomplete)
+            | (Some(Command::Uppercase), ParseResult::Incomplete)
+            | (Some(Command::Switchcase), ParseResult::Incomplete)
+                if mode == ViMode::Visual =>
+            {
                 Some(ViMode::Normal)
             }
             (Some(Command::ChangeInsidePair { .. }), _) => Some(ViMode::Insert),

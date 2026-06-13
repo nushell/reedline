@@ -186,6 +186,9 @@ impl Editor {
             EditCommand::SelectAll => self.select_all(),
             EditCommand::CutSelection => self.cut_selection_to_cut_buffer(),
             EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
+            EditCommand::LowercaseSelection => self.lowercase_selection(),
+            EditCommand::UppercaseSelection => self.uppercase_selection(),
+            EditCommand::SwitchcaseSelection => self.switchcase_selection(),
             EditCommand::Paste => self.paste_cut_buffer(),
             EditCommand::CopyFromStart => self.copy_from_start(),
             EditCommand::CopyFromStartLinewise => self.copy_from_start_linewise(),
@@ -843,6 +846,37 @@ impl Editor {
         if let Some((start, end)) = self.get_selection() {
             let cut_slice = &self.line_buffer.get_buffer()[start..end];
             self.cut_buffer.set(cut_slice, Granularity::CharWise);
+        }
+    }
+
+    fn lowercase_selection(&mut self) {
+        if let Some((start, end)) = self.get_selection() {
+            let lowercase_slice = self.line_buffer.get_buffer()[start..end].to_ascii_lowercase();
+            self.line_buffer.replace_range(start..end, &lowercase_slice);
+        }
+    }
+
+    fn uppercase_selection(&mut self) {
+        if let Some((start, end)) = self.get_selection() {
+            let uppercase_slice = self.line_buffer.get_buffer()[start..end].to_ascii_uppercase();
+            self.line_buffer.replace_range(start..end, &uppercase_slice);
+        }
+    }
+
+    fn switchcase_selection(&mut self) {
+        if let Some((start, end)) = self.get_selection() {
+            let switchcase_slice = self.line_buffer.get_buffer()[start..end]
+                .chars()
+                .map(|ch| {
+                    if ch.is_ascii_lowercase() {
+                        ch.to_ascii_uppercase()
+                    } else {
+                        ch.to_ascii_lowercase()
+                    }
+                })
+                .collect::<String>();
+            self.line_buffer
+                .replace_range(start..end, &switchcase_slice);
         }
     }
 
@@ -2649,6 +2683,30 @@ mod test {
         assert_eq!(editor.get_buffer(), expected_buffer);
         assert_eq!(editor.insertion_point(), expected_cursor);
         assert_eq!(editor.cut_buffer.get().0, expected_cut);
+    }
+
+    #[rstest]
+    #[case("foo bar baz", 0, 3, EditCommand::LowercaseSelection, "foo bar baz")]
+    #[case("Foo Bar Baz", 0, 7, EditCommand::LowercaseSelection, "foo bar Baz")]
+    #[case("FOO BAR BAZ", 0, 12, EditCommand::LowercaseSelection, "foo bar baz")]
+    #[case("foo bar baz", 0, 3, EditCommand::UppercaseSelection, "FOO bar baz")]
+    #[case("Foo Bar Baz", 0, 7, EditCommand::UppercaseSelection, "FOO BAR Baz")]
+    #[case("FOO BAR BAZ", 0, 12, EditCommand::UppercaseSelection, "FOO BAR BAZ")]
+    #[case("foo bar baz", 0, 3, EditCommand::SwitchcaseSelection, "FOO bar baz")]
+    #[case("Foo Bar Baz", 0, 7, EditCommand::SwitchcaseSelection, "fOO bAR Baz")]
+    #[case("FOO BAR BAZ", 0, 12, EditCommand::SwitchcaseSelection, "foo bar baz")]
+    fn test_lower_upper_switchcase_selection(
+        #[case] input: &str,
+        #[case] selection_start: usize,
+        #[case] selection_end: usize,
+        #[case] command: EditCommand,
+        #[case] expected_buffer: &str,
+    ) {
+        let mut editor = editor_with(input);
+        editor.move_to_position(selection_start, false);
+        editor.move_to_position(selection_end, true);
+        editor.run_edit_command(&command);
+        assert_eq!(editor.get_buffer(), expected_buffer);
     }
 
     #[rstest]
