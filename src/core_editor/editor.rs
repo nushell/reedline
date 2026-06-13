@@ -20,10 +20,6 @@ pub struct Editor {
     system_clipboard: Box<dyn Clipboard>,
     edit_stack: EditStack<LineBuffer>,
     last_undo_behavior: UndoBehavior,
-    /// Whether the active selection is inclusive, captured when its anchor was
-    /// planted. Fixed at creation so a later mode switch (e.g. Vi `c` → insert
-    /// before the cut) can't change the operated range. `None` when no selection.
-    selection_inclusive: Option<bool>,
     edit_mode: PromptEditMode,
     /// Set when [`sync_edit_mode`](Self::sync_edit_mode) adopts a new rest
     /// policy without committing the cursor; cleared at the commit boundary.
@@ -51,7 +47,6 @@ impl Default for Editor {
             system_clipboard: get_system_clipboard(),
             edit_stack: EditStack::new(),
             last_undo_behavior: UndoBehavior::CreateUndoPoint,
-            selection_inclusive: None,
             edit_mode: PromptEditMode::Default,
             policy_unsettled: false,
         }
@@ -280,8 +275,13 @@ impl Editor {
     }
 
     pub(crate) fn clear_selection(&mut self) {
-        self.line_buffer.clear_selection();
-        self.selection_inclusive = None;
+        // Collapse to the caret (the visible position), not merely drop the
+        // anchor: under `Block` the stored head sits on the far edge, so dropping
+        // the anchor alone would strand the cursor one grapheme past where it
+        // shows. Collapsing to `point(caret)` keeps it put; the commit boundary
+        // re-widens it under the active policy.
+        let caret = self.line_buffer.insertion_point();
+        self.line_buffer.set_cursor(Cursor::point(caret));
     }
 
     fn operate(&mut self, selection: Cursor, verb: OperatorVerb, granularity: Granularity) {
@@ -317,17 +317,7 @@ impl Editor {
         }
     }
 
-    /// When a fresh anchor is about to be planted, capture whether the selection
-    /// is inclusive under the current rest policy. No-op when an anchor already
-    /// exists or `select` is false.
-    fn note_selection_inclusivity_if_planting(&mut self, select: bool) {
-        if select && self.line_buffer.selection_anchor().is_none() {
-            self.selection_inclusive = Some(self.edit_mode.rest_policy() == RestPolicy::OnGrapheme);
-        }
-    }
-
     fn update_selection_anchor(&mut self, select: bool) {
-        self.note_selection_inclusivity_if_planting(select);
         if select {
             if self.line_buffer.selection_anchor().is_none() {
                 self.line_buffer
@@ -390,13 +380,19 @@ impl Editor {
     }
 
     fn move_to_position(&mut self, position: usize, select: bool) {
-        self.note_selection_inclusivity_if_planting(select);
         self.line_buffer.move_head(position, select);
     }
 
-    /// Resolve a motion target to the head position the cursor would land on.
+    /// Resolve a motion target to the byte the caret should land on.
+    ///
+    /// The origin is always the visible caret (Helix `move_horizontally` does the
+    /// same: `range.cursor()` is the origin for both Move and Extend). The
+    /// returned target is fed to [`Cursor::put_cursor`], which places the head and
+    /// flips the anchor as needed — so there is no head-vs-caret origin split.
     fn resolve_head(&self, target: MotionTarget) -> usize {
         let buf = self.line_buffer.get_buffer();
+        // Origin is the visible cursor position — `insertion_point()` already
+        // resolves that per policy (head for Between, caret for Block).
         let origin = self.insertion_point();
         let head = resolve_motion(buf, origin, target).head;
         // A grapheme step lands on the adjacent rest the caret may take. Under a
@@ -419,25 +415,22 @@ impl Editor {
     /// keeps the anchor — then normalize at the commit boundary (RestPolicy snap
     /// and selection bookkeeping). The single sink every motion funnels through,
     /// after its target has been resolved via [`resolve_motion`].
-    fn move_head_to(&mut self, head: usize, select: bool) {
-        let was_empty = self.line_buffer.selection_anchor().is_none();
-        let cursor = self.line_buffer.cursor();
-        let next = if select {
-            cursor.move_head(head)
-        } else {
-            cursor.collapse_to(head)
-        };
+    /// The single motion sink: place the caret on the grapheme at `target` via
+    /// [`Cursor::put_cursor`] (Helix's central op), then normalize at the commit
+    /// boundary. `select` keeps the anchor (Extend) or collapses (Move); the
+    /// per-mode selection geometry (inclusive block vs exclusive bar) is the
+    /// `inclusive` argument, so inclusivity is now carried by the range itself —
+    /// there is no `selection_inclusive` side-channel to maintain.
+    fn move_head_to(&mut self, target: usize, select: bool) {
+        let inclusive = self.edit_mode.rest_policy() != RestPolicy::Between;
+        let next = self.line_buffer.cursor().put_cursor(
+            self.line_buffer.get_buffer(),
+            target,
+            select,
+            inclusive,
+        );
         self.line_buffer.set_cursor(next);
         self.commit_cursor();
-
-        match (was_empty, self.line_buffer.selection_anchor().is_some()) {
-            (true, true) => {
-                self.selection_inclusive =
-                    Some(self.edit_mode.rest_policy() == RestPolicy::OnGrapheme)
-            }
-            (_, false) => self.selection_inclusive = None,
-            _ => {}
-        }
     }
 
     pub(crate) fn move_line_up(&mut self, select: bool) {
@@ -477,7 +470,16 @@ impl Editor {
     }
 
     pub(crate) fn insertion_point(&self) -> usize {
-        self.line_buffer.insertion_point()
+        // The visible / edit position is policy-dependent: a `Between` (bar)
+        // cursor sits at the head; a `Block` cursor sits at the caret (its left
+        // edge). This is the one place that distinction lives — motions, edits
+        // and callers all read it from here.
+        let cursor = self.line_buffer.cursor();
+        if self.edit_mode.rest_policy() == RestPolicy::Between {
+            cursor.head()
+        } else {
+            cursor.caret(self.line_buffer.get_buffer())
+        }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -828,9 +830,6 @@ impl Editor {
     fn select_all(&mut self) {
         let end = self.line_buffer.len();
         self.line_buffer.set_cursor(Cursor::new(0, end));
-        // Capture inclusivity exactly like an anchor planted on the motion
-        // path, so a later mode switch can't change the selected span.
-        self.selection_inclusive = Some(self.edit_mode.rest_policy() == RestPolicy::OnGrapheme);
     }
 
     #[cfg(feature = "system_clipboard")]
@@ -873,26 +872,10 @@ impl Editor {
         self.line_buffer.selection_anchor()?;
         let cursor = self.line_buffer.cursor();
 
-        // Inclusivity was captured (via the rest policy) when the selection was
-        // created, so a later mode switch doesn't change the operated range. The
-        // fallback to the current policy covers anchors that bypassed every
-        // planting path (e.g. a selection restored by undo/redo).
-        let inclusive = self
-            .selection_inclusive
-            .unwrap_or_else(|| self.edit_mode.rest_policy() == RestPolicy::OnGrapheme);
-
-        // The range is `[start, end)`. In inclusive (Vi normal) mode the
-        // grapheme under the high end is part of the selection, so the end
-        // extends one grapheme past it — direction-independent, since the
-        // cursor already normalizes anchor/head ordering.
-        let start_pos = cursor.start();
-        let end_pos = if inclusive {
-            self.line_buffer.grapheme_right_index_from_pos(cursor.end())
-        } else {
-            cursor.end()
-        };
-
-        Some((start_pos, end_pos.min(self.line_buffer.len())))
+        // Inclusivity is carried by the range geometry now: `put_cursor` widens
+        // the head for block / Vi-normal selections, so the selected span is just
+        // the cursor's range — no captured-inclusivity `+1`.
+        Some((cursor.start(), cursor.end().min(self.line_buffer.len())))
     }
 
     fn delete_selection(&mut self) {
@@ -1467,17 +1450,22 @@ mod test {
         assert_eq!(editor.get_selection(), Some((1, 4)));
     }
 
-    // BEHAVIOR(E) master: a bare normal-mode block reports as "no selection",
-    // while a deliberate 1-grapheme shift-select does report a range. The flip
-    // dissolves the `anchored`/`selection_inclusive` machinery — this pins that
-    // the *distinction* survives (whatever represents it afterwards).
+    // BEHAVIOR(E): we follow helix — a bare cursor and a 1-grapheme selection
+    // render the SAME (the 1-wide block IS the cursor), so we deliberately do
+    // NOT distinguish them. The editor-level invariant kept here is only that a
+    // deliberate selection reports a range. "A bare cursor is not highlighted"
+    // is a *painter* invariant (helix rule: highlight = range minus the 1-wide
+    // cursor cell), pinned when we touch the render side of the flip.
+    //
+    // NOTE: the exact range value is BEHAVIOR the flip may shift — the inclusive
+    // `+1` goes away with `selection_inclusive`. The stable selection invariants
+    // are the cut-result tests above (buffer + cut content), not raw ranges.
     #[test]
-    fn net_bare_block_is_not_a_selection_but_shift_select_is() {
+    fn net_deliberate_selection_reports_a_range() {
         let mut editor = vi_editor("hello", PromptViMode::Normal);
         editor.move_to_position(1, false);
-        assert_eq!(editor.get_selection(), None); // bare block
         editor.run_edit_command(&EditCommand::MoveRight { select: true });
-        assert_eq!(editor.get_selection(), Some((1, 3))); // deliberate selection
+        assert_eq!(editor.get_selection(), Some((1, 3)));
     }
 
     // Esc-from-insert is lowered (in the Vi machine) to a backward grapheme
@@ -2214,7 +2202,10 @@ mod test {
         for _ in 0..3 {
             editor.run_edit_command(&EditCommand::MoveLeft { select: true });
         }
-        assert_eq!(editor.line_buffer().selection_anchor(), Some(4));
+        // Inclusivity is geometric now: the anchor flips onto the far edge of
+        // its grapheme (4 → 5) so the char at 4 stays covered, instead of an
+        // anchor-stays-at-4 + query-time `+1`. The selected span is unchanged.
+        assert_eq!(editor.line_buffer().selection_anchor(), Some(5));
         assert_eq!(editor.insertion_point(), 1); // cursor at position 1 ('h')
                                                  // In Vi normal mode, selection should be inclusive from cursor to anchor+1
                                                  // So it should select from position 1 to 5 (inclusive of char at position 4)

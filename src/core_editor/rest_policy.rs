@@ -76,13 +76,12 @@ pub(crate) fn commit(buf: &str, c: Cursor, policy: RestPolicy) -> Cursor {
     match policy {
         RestPolicy::Between => c,
         RestPolicy::OnGrapheme => {
-            if c.head() == len && len > 0 && !buf.ends_with('\n') {
-                let prev = prev_grapheme_boundary(buf, c.head());
-                if c.is_empty() {
-                    Cursor::point(prev)
-                } else {
-                    c.move_head(prev)
-                }
+            // Pull a *bare* cursor (an empty point) back off the end onto the last
+            // grapheme. A selection may legitimately cover the final grapheme
+            // (head at `len`, caret one grapheme inward), so its head is left
+            // alone — inclusivity is geometric now, not a query-time `+1`.
+            if c.is_empty() && c.head() == len && len > 0 && !buf.ends_with('\n') {
+                Cursor::point(prev_grapheme_boundary(buf, c.head()))
             } else {
                 c
             }
@@ -93,15 +92,16 @@ pub(crate) fn commit(buf: &str, c: Cursor, policy: RestPolicy) -> Cursor {
             if c.is_empty() {
                 let head = c.head();
                 let next = next_grapheme_boundary(buf, head);
-                if next > head {
+                if next > head && !buf[head..].starts_with('\n') {
                     // widen forward onto the grapheme to the right: [head, next)
                     c.move_head(next)
-                } else if head > 0 {
+                } else if head > 0 && !buf[..head].ends_with('\n') {
                     // at the buffer end there's nothing to the right, so cover the
                     // last grapheme instead: [prev, head)
                     Cursor::new(prev_grapheme_boundary(buf, head), head)
                 } else {
-                    // empty buffer: nothing to cover
+                    // empty buffer, or an empty line (no grapheme to cover without
+                    // crossing the newline): stay a zero-width point
                     c
                 }
             } else {
@@ -230,11 +230,13 @@ mod tests {
     }
 
     #[test]
-    fn on_grapheme_pulls_only_head_of_selection() {
-        // head at end pulls back to 4; anchor stays put
+    fn on_grapheme_leaves_selection_head_at_end() {
+        // A selection may cover the final grapheme: its head at `len` is left
+        // alone (inclusivity is geometric now). Only a bare *point* is pulled
+        // back off the end — see `on_grapheme_pulls_back_from_end`.
         assert_eq!(
             commit("hello", Cursor::new(0, 5), RestPolicy::OnGrapheme),
-            Cursor::new(0, 4)
+            Cursor::new(0, 5)
         );
     }
 

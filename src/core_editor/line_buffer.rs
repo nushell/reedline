@@ -66,9 +66,11 @@ impl LineBuffer {
         );
     }
 
-    /// Gets the current edit position (head of the cursor).
+    /// Gets the current edit position — the caret, i.e. the left edge of the
+    /// grapheme the cursor covers. For a point (Between) this equals the head;
+    /// for a forward block/selection it is one grapheme inward from the head.
     pub fn insertion_point(&self) -> usize {
-        self.insertion_point
+        self.cursor().caret(&self.lines)
     }
 
     /// Sets the current edit position. Does not touch the selection anchor —
