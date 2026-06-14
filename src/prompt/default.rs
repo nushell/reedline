@@ -6,9 +6,9 @@ use {
 };
 
 /// The default prompt indicator
-pub static DEFAULT_PROMPT_INDICATOR: &str = "〉";
+pub static DEFAULT_PROMPT_INDICATOR: &str = "> ";
 pub static DEFAULT_VI_INSERT_PROMPT_INDICATOR: &str = ": ";
-pub static DEFAULT_VI_NORMAL_PROMPT_INDICATOR: &str = "〉";
+pub static DEFAULT_VI_NORMAL_PROMPT_INDICATOR: &str = "> ";
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 
 /// Simple [`Prompt`] displaying a configurable left and a right prompt.
@@ -116,24 +116,102 @@ impl DefaultPrompt {
 }
 
 fn get_working_dir() -> Result<String, std::io::Error> {
-    let path = env::current_dir()?;
-    let path_str = path.display().to_string();
-    let homedir: String = match env::var("USERPROFILE") {
-        Ok(win_home) => win_home,
-        Err(_) => match env::var("HOME") {
-            Ok(maclin_home) => maclin_home,
-            Err(_) => path_str.clone(),
-        },
-    };
-    let new_path = if path_str != homedir {
-        path_str.replace(&homedir, "~")
-    } else {
-        path_str
-    };
-    Ok(new_path)
+    let cwd = env::current_dir()?;
+    // `USERPROFILE` on Windows, `HOME` elsewhere. Avoids `env::home_dir()`,
+    // which is buggy on Windows before 1.85 (above our 1.63 MSRV).
+    let home = env::var_os("USERPROFILE")
+        .or_else(|| env::var_os("HOME"))
+        .map(std::path::PathBuf::from);
+    Ok(format_working_dir(&cwd, home.as_deref()))
+}
+
+/// Render `cwd` for the prompt, collapsing `home` to `~` when it is a prefix.
+fn format_working_dir(cwd: &std::path::Path, home: Option<&std::path::Path>) -> String {
+    if let Some(home) = home {
+        if let Ok(suffix) = cwd.strip_prefix(home) {
+            let mut path = std::path::PathBuf::from("~");
+            if !suffix.as_os_str().is_empty() {
+                path = path.join(suffix);
+            }
+            return path.display().to_string();
+        }
+    }
+    cwd.display().to_string()
 }
 
 fn get_now() -> String {
     let now = Local::now();
     format!("{:>}", now.format("%m/%d/%Y %I:%M:%S %p"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_working_dir;
+    use std::path::{Path, PathBuf};
+
+    #[cfg(unix)]
+    #[test]
+    fn home_is_collapsed_to_tilde() {
+        let home = Path::new("/home/alice");
+        let cwd = PathBuf::from("/home/alice/projects");
+        assert_eq!(format_working_dir(&cwd, Some(home)), "~/projects");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cwd_equal_to_home_is_just_tilde() {
+        // Regression: `cd ~` rendered the absolute path, not `~`.
+        let home = Path::new("/home/alice");
+        let cwd = PathBuf::from("/home/alice");
+        assert_eq!(format_working_dir(&cwd, Some(home)), "~");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_prefix_is_not_collapsed() {
+        // Regression: String::replace turned `/home/alicebob` into `~bob`.
+        let home = Path::new("/home/alice");
+        let cwd = PathBuf::from("/home/alicebob/x");
+        assert_eq!(format_working_dir(&cwd, Some(home)), "/home/alicebob/x");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_home_leaves_path_untouched() {
+        let cwd = PathBuf::from("/var/log");
+        assert_eq!(format_working_dir(&cwd, None), "/var/log");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn home_is_collapsed_to_tilde() {
+        let home = Path::new(r"C:\Users\alice");
+        let cwd = PathBuf::from(r"C:\Users\alice\projects");
+        assert_eq!(format_working_dir(&cwd, Some(home)), r"~\projects");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cwd_equal_to_home_is_just_tilde() {
+        // Regression: `cd ~` previously rendered the absolute path instead of `~`.
+        let home = Path::new(r"C:\Users\alice");
+        let cwd = PathBuf::from(r"C:\Users\alice");
+        assert_eq!(format_working_dir(&cwd, Some(home)), "~");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shared_prefix_is_not_collapsed() {
+        // Regression: String::replace turned `C:\Users\alice` into `~bob`.
+        let home = Path::new(r"C:\Users\alice");
+        let cwd = PathBuf::from(r"C:\Users\alicebob\x");
+        assert_eq!(format_working_dir(&cwd, Some(home)), r"C:\Users\alicebob\x");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_home_leaves_path_untouched() {
+        let cwd = PathBuf::from(r"C:\Windows\System32");
+        assert_eq!(format_working_dir(&cwd, None), r"C:\Windows\System32");
+    }
 }

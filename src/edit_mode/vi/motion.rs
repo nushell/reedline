@@ -1,6 +1,9 @@
 use std::iter::Peekable;
 
-use crate::{edit_mode::vi::ViMode, EditCommand, ReedlineEvent, Vi};
+use crate::{
+    edit_mode::vi::ViMode, Direction, EditCommand, MotionTarget, ReedlineEvent, Vi, WordEdge,
+    WordKind,
+};
 
 use super::parser::{ParseResult, ReedlineOption};
 
@@ -163,6 +166,80 @@ pub enum Motion {
 }
 
 impl Motion {
+    /// The [`MotionTarget`] this motion resolves to, for motions with a static
+    /// target.
+    ///
+    /// `None` for motions that have no fixed mapping: `h`/`l`, `^`, the
+    /// doubled-operator `Line` (`dd`/`cc`/`yy`), and the `;`/`,` replays (whose
+    /// target is the dynamic `last_char_search`). Those keep their own lowering.
+    /// Every motion with a static target reads this one map on both the
+    /// bare-motion path (`Move`/`Extend`) and the operator path (`Cut`/`Copy`),
+    /// so its semantics live in a single place.
+    ///
+    /// `j`/`k` map to [`MotionTarget::Line`] for the *operator* path
+    /// (`dj`/`cj`/`yj` snap linewise); their bare-motion arms in
+    /// [`Motion::to_reedline`] never consult this map, because a bare `j`/`k`
+    /// is not a buffer motion at all — it lowers to menu/history events.
+    pub(super) fn target(&self) -> Option<MotionTarget> {
+        // A word target, spelled compactly.
+        let word = |kind: WordKind, edge: WordEdge, direction: Direction| MotionTarget::Word {
+            kind,
+            edge,
+            direction,
+        };
+
+        match self {
+            // `w` / `W` — start of the next word, forward.
+            Motion::NextWord => Some(word(WordKind::Small, WordEdge::Start, Direction::Forward)),
+            Motion::NextBigWord => Some(word(WordKind::Big, WordEdge::Start, Direction::Forward)),
+            // `e` / `E` — end of the next word, forward.
+            Motion::NextWordEnd => Some(word(WordKind::Small, WordEdge::End, Direction::Forward)),
+            Motion::NextBigWordEnd => Some(word(WordKind::Big, WordEdge::End, Direction::Forward)),
+            // `b` / `B` — start of the previous word, backward.
+            Motion::PreviousWord => {
+                Some(word(WordKind::Small, WordEdge::Start, Direction::Backward))
+            }
+            Motion::PreviousBigWord => {
+                Some(word(WordKind::Big, WordEdge::Start, Direction::Backward))
+            }
+
+            // `0` / `$` — start / end of the current line.
+            Motion::Start => Some(MotionTarget::LineEdge(Direction::Backward)),
+            Motion::End => Some(MotionTarget::LineEdge(Direction::Forward)),
+
+            Motion::RightUntil(c) => Some(MotionTarget::Find {
+                ch: *c,
+                direction: Direction::Forward,
+                stop: crate::FindStop::On,
+            }),
+            Motion::RightBefore(c) => Some(MotionTarget::Find {
+                ch: *c,
+                direction: Direction::Forward,
+                stop: crate::FindStop::Before,
+            }),
+            Motion::LeftUntil(c) => Some(MotionTarget::Find {
+                ch: *c,
+                direction: Direction::Backward,
+                stop: crate::FindStop::On,
+            }),
+            Motion::LeftBefore(c) => Some(MotionTarget::Find {
+                ch: *c,
+                direction: Direction::Backward,
+                stop: crate::FindStop::Before,
+            }),
+            Motion::FirstLine => Some(MotionTarget::BufferEdge(Direction::Backward)),
+            Motion::LastLine => Some(MotionTarget::BufferEdge(Direction::Forward)),
+
+            // `j`/`k` — the adjacent line, for the operator path only (see the
+            // method docs; the bare-motion arms lower to events instead).
+            Motion::Down => Some(MotionTarget::Line(Direction::Forward)),
+            Motion::Up => Some(MotionTarget::Line(Direction::Backward)),
+
+            // Not yet lowered — keep the existing per-variant EditCommand path.
+            _ => None,
+        }
+    }
+
     pub fn to_reedline(&self, vi_state: &mut Vi) -> Vec<ReedlineOption> {
         let select_mode = vi_state.mode == ViMode::Visual;
         match self {
@@ -195,156 +272,74 @@ impl Motion {
                     ReedlineEvent::Down,
                 ]))
             }],
-            Motion::NextWord => vec![ReedlineOption::Edit(EditCommand::MoveWordRightStart {
-                select: select_mode,
-            })],
-            Motion::NextBigWord => vec![ReedlineOption::Edit(EditCommand::MoveBigWordRightStart {
-                select: select_mode,
-            })],
-            Motion::NextWordEnd => vec![ReedlineOption::Edit(EditCommand::MoveWordRightEnd {
-                select: select_mode,
-            })],
-            Motion::NextBigWordEnd => {
-                vec![ReedlineOption::Edit(EditCommand::MoveBigWordRightEnd {
-                    select: select_mode,
-                })]
+            // Motions with a `MotionTarget` collapse to one dispatch: resolve the
+            // target (see `Motion::target`), then move or extend by visual mode.
+            Motion::NextWord
+            | Motion::NextBigWord
+            | Motion::NextWordEnd
+            | Motion::NextBigWordEnd
+            | Motion::PreviousWord
+            | Motion::PreviousBigWord
+            | Motion::FirstLine
+            | Motion::LastLine
+            | Motion::Start
+            | Motion::End => {
+                // These arms cover exactly the variants `target()` resolves, so
+                // `None` is unreachable; degrade to a no-op rather than panic if
+                // that ever drifts.
+                let Some(target) = self.target() else {
+                    return vec![];
+                };
+                let edit = if select_mode {
+                    EditCommand::Extend(target)
+                } else {
+                    EditCommand::Move(target)
+                };
+                vec![ReedlineOption::Edit(edit)]
             }
-            Motion::PreviousWord => vec![ReedlineOption::Edit(EditCommand::MoveWordLeft {
-                select: select_mode,
-            })],
-            Motion::PreviousBigWord => vec![ReedlineOption::Edit(EditCommand::MoveBigWordLeft {
-                select: select_mode,
-            })],
             Motion::Line => vec![], // Placeholder as unusable standalone motion
-            Motion::Start => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart {
-                select: select_mode,
-            })],
             Motion::NonBlankStart => {
                 vec![ReedlineOption::Edit(EditCommand::MoveToLineNonBlankStart {
                     select: select_mode,
                 })]
             }
-            Motion::End => vec![ReedlineOption::Edit(EditCommand::MoveToLineEnd {
-                select: select_mode,
-            })],
-            Motion::FirstLine => vec![if select_mode {
-                ReedlineOption::Edit(EditCommand::MoveToStart { select: true })
-            } else {
-                ReedlineOption::Event(ReedlineEvent::ToStart)
-            }],
-            Motion::LastLine => vec![if select_mode {
-                ReedlineOption::Edit(EditCommand::MoveToEnd { select: true })
-            } else {
-                ReedlineOption::Event(ReedlineEvent::ToEnd)
-            }],
-            Motion::RightUntil(ch) => {
-                vi_state.last_char_search = Some(ViCharSearch::ToRight(*ch));
-                vec![ReedlineOption::Edit(EditCommand::MoveRightUntil {
-                    c: *ch,
-                    select: select_mode,
-                })]
-            }
-            Motion::RightBefore(ch) => {
-                vi_state.last_char_search = Some(ViCharSearch::TillRight(*ch));
-                vec![ReedlineOption::Edit(EditCommand::MoveRightBefore {
-                    c: *ch,
-                    select: select_mode,
-                })]
-            }
-            Motion::LeftUntil(ch) => {
-                vi_state.last_char_search = Some(ViCharSearch::ToLeft(*ch));
-                vec![ReedlineOption::Edit(EditCommand::MoveLeftUntil {
-                    c: *ch,
-                    select: select_mode,
-                })]
-            }
-            Motion::LeftBefore(ch) => {
-                vi_state.last_char_search = Some(ViCharSearch::TillLeft(*ch));
-                vec![ReedlineOption::Edit(EditCommand::MoveLeftBefore {
-                    c: *ch,
-                    select: select_mode,
-                })]
-            }
-            Motion::ReplayCharSearch => {
-                if let Some(char_search) = vi_state.last_char_search.as_ref() {
-                    vec![ReedlineOption::Edit(char_search.to_move(select_mode))]
+            Motion::RightUntil(_)
+            | Motion::RightBefore(_)
+            | Motion::LeftUntil(_)
+            | Motion::LeftBefore(_) => {
+                let Some(target) = self.target() else {
+                    return vec![];
+                };
+                vi_state.last_char_search = Some(target);
+                let edit = if select_mode {
+                    EditCommand::Extend(target)
                 } else {
-                    vec![]
-                }
+                    EditCommand::Move(target)
+                };
+                vec![ReedlineOption::Edit(edit)]
             }
-            Motion::ReverseCharSearch => {
-                if let Some(char_search) = vi_state.last_char_search.as_ref() {
-                    vec![ReedlineOption::Edit(
-                        char_search.reverse().to_move(select_mode),
-                    )]
-                } else {
-                    vec![]
-                }
-            }
-        }
-    }
-}
-
-/// Vi left-right motions to or till a character.
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum ViCharSearch {
-    /// f
-    ToRight(char),
-    /// F
-    ToLeft(char),
-    /// t
-    TillRight(char),
-    /// T
-    TillLeft(char),
-}
-
-impl ViCharSearch {
-    /// Swap the direction of the to or till for ','
-    pub fn reverse(&self) -> Self {
-        match self {
-            ViCharSearch::ToRight(c) => ViCharSearch::ToLeft(*c),
-            ViCharSearch::ToLeft(c) => ViCharSearch::ToRight(*c),
-            ViCharSearch::TillRight(c) => ViCharSearch::TillLeft(*c),
-            ViCharSearch::TillLeft(c) => ViCharSearch::TillRight(*c),
-        }
-    }
-
-    pub fn to_move(&self, select_mode: bool) -> EditCommand {
-        match self {
-            ViCharSearch::ToRight(c) => EditCommand::MoveRightUntil {
-                c: *c,
-                select: select_mode,
-            },
-            ViCharSearch::ToLeft(c) => EditCommand::MoveLeftUntil {
-                c: *c,
-                select: select_mode,
-            },
-            ViCharSearch::TillRight(c) => EditCommand::MoveRightBefore {
-                c: *c,
-                select: select_mode,
-            },
-            ViCharSearch::TillLeft(c) => EditCommand::MoveLeftBefore {
-                c: *c,
-                select: select_mode,
-            },
-        }
-    }
-
-    pub fn to_cut(&self) -> EditCommand {
-        match self {
-            ViCharSearch::ToRight(c) => EditCommand::CutRightUntil(*c),
-            ViCharSearch::ToLeft(c) => EditCommand::CutLeftUntil(*c),
-            ViCharSearch::TillRight(c) => EditCommand::CutRightBefore(*c),
-            ViCharSearch::TillLeft(c) => EditCommand::CutLeftBefore(*c),
-        }
-    }
-
-    pub fn to_copy(&self) -> EditCommand {
-        match self {
-            ViCharSearch::ToRight(c) => EditCommand::CopyRightUntil(*c),
-            ViCharSearch::TillRight(c) => EditCommand::CopyRightBefore(*c),
-            ViCharSearch::ToLeft(c) => EditCommand::CopyLeftUntil(*c),
-            ViCharSearch::TillLeft(c) => EditCommand::CopyLeftBefore(*c),
+            Motion::ReplayCharSearch => vi_state
+                .last_char_search
+                .map(|target| {
+                    let edit = if select_mode {
+                        EditCommand::Extend(target)
+                    } else {
+                        EditCommand::Move(target)
+                    };
+                    vec![ReedlineOption::Edit(edit)]
+                })
+                .unwrap_or_default(),
+            Motion::ReverseCharSearch => vi_state
+                .last_char_search
+                .map(|target| {
+                    let edit = if select_mode {
+                        EditCommand::Extend(target.reversed())
+                    } else {
+                        EditCommand::Move(target.reversed())
+                    };
+                    vec![ReedlineOption::Edit(edit)]
+                })
+                .unwrap_or_default(),
         }
     }
 }

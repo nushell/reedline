@@ -27,7 +27,7 @@ use {
             FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
             HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
-        painting::{Painter, PainterSuspendedState, PromptLines, RenderSnapshot},
+        painting::{Painter, PainterSuspendedState, PromptLines, RenderSnapshot, W},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
         terminal_extensions::{
@@ -36,9 +36,9 @@ use {
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
         },
         utils::text_manipulation,
-        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton,
-        Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult,
-        Validator,
+        AbbrExpandContext, EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu,
+        MenuEvent, MouseButton, Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior,
+        ValidationResult, Validator,
     },
     crossterm::{
         cursor::{SetCursorStyle, Show},
@@ -160,7 +160,7 @@ pub struct Reedline {
     edit_mode: Box<dyn EditMode>,
 
     // Provides the tab completions
-    completer: Box<dyn Completer>,
+    completer: Box<dyn Completer + Send>,
     quick_completions: bool,
     partial_completions: bool,
 
@@ -250,7 +250,10 @@ impl Reedline {
     #[must_use]
     pub fn create() -> Self {
         let history = Box::<FileBackedHistory>::default();
-        let painter = Painter::new(std::io::BufWriter::new(std::io::stderr()));
+        #[cfg(not(test))]
+        let painter = Painter::new(W::terminal());
+        #[cfg(test)]
+        let painter = Painter::new(W::sink());
         let buffer_highlighter = Box::<ExampleHighlighter>::default();
         let visual_selection_style = Style::new().on(Color::LightGray);
         let completer = Box::<DefaultCompleter>::default();
@@ -401,7 +404,7 @@ impl Reedline {
     /// let mut line_editor = Reedline::create().with_completer(completer);
     /// ```
     #[must_use]
-    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
+    pub fn with_completer(mut self, completer: Box<dyn Completer + Send>) -> Self {
         self.completer = completer;
         self
     }
@@ -436,7 +439,7 @@ impl Reedline {
     /// emits OSC 133 markers. Use [`MouseClickMode::EnabledWithOsc133`] to have
     /// Reedline emit OSC 133 markers with `click_events=1` so supporting terminals
     /// can send click events.
-    /// See: https://sw.kovidgoyal.net/kitty/shell-integration/#notes-for-shell-developers
+    /// See: <https://sw.kovidgoyal.net/kitty/shell-integration/#notes-for-shell-developers>
     #[must_use]
     pub fn with_mouse_click(mut self, mode: MouseClickMode) -> Self {
         self.mouse_click_mode = mode;
@@ -625,6 +628,9 @@ impl Reedline {
     /// A builder that adds abbreviations to the Reedline engine
     ///
     /// Overwrites any existing abbreviations with the same key.
+    ///
+    /// Note, by default abbreviations are expanded everywhere. To suppress expansion in certain
+    /// syntactic positions (e.g. string literals), override [`Highlighter::should_expand_abbr`].
     pub fn with_abbreviations(mut self, abbreviations: HashMap<String, String>) -> Self {
         self.abbreviations.extend(abbreviations);
         self
@@ -821,6 +827,10 @@ impl Reedline {
             #[cfg(feature = "idle_callback")]
             if let Some(ref mut callback) = self.idle_callback {
                 callback();
+                // The callback owns stdout while it runs and may have
+                // written or moved the cursor. Re-verify the anchor on
+                // the next paint.
+                self.painter.invalidate_prompt_start_row();
             }
 
             if let Some(ref signal) = self.break_signal {
@@ -943,6 +953,14 @@ impl Reedline {
                 reedline_events.push(ReedlineEvent::Submit);
             }
 
+            // The mode machine has parsed this batch, so the rest policy it
+            // declares is now final. Relay it to the editor before running the
+            // emitted commands so a command a mode transition issued (e.g. the
+            // Esc→normal grapheme step-back) resolves under the new policy. This
+            // does not commit the cursor — the commands settle it, and the
+            // pre-paint `set_edit_mode` below still clamps no-command switches.
+            self.editor.sync_edit_mode(self.edit_mode.edit_mode());
+
             // Handle reedline events.
             let mut need_repaint = false;
             for event in reedline_events {
@@ -966,6 +984,13 @@ impl Reedline {
                 }
             }
             if need_repaint {
+                // Sync the editor's edit mode before painting so the cursor is
+                // normalized under the current rest policy. A mode change that
+                // bypasses the command path (e.g. Esc → Vi normal) otherwise
+                // wouldn't clamp until the next command, painting the cursor past
+                // the last grapheme for a frame.
+                let mode = self.edit_mode.edit_mode();
+                self.editor.set_edit_mode(mode);
                 self.repaint(prompt)?;
             }
         }
@@ -1253,13 +1278,9 @@ impl Reedline {
             }
             ReedlineEvent::CtrlC => {
                 self.deactivate_menus();
+                self.run_edit_commands(&[EditCommand::Clear]);
                 self.editor.reset_undo_stack();
-                if self.editor.is_empty() {
-                    Ok(EventStatus::Exits(Signal::CtrlC))
-                } else {
-                    self.run_edit_commands(&[EditCommand::Clear]);
-                    Ok(EventStatus::Handled)
-                }
+                Ok(EventStatus::Exits(Signal::CtrlC))
             }
             ReedlineEvent::ClearScreen => {
                 self.deactivate_menus();
@@ -1290,7 +1311,7 @@ impl Reedline {
                     return self.handle_editor_event(prompt, event);
                 }
                 if let Some(event) = self.try_expand_abbreviation_at_cursor(true) {
-                    return self.handle_editor_event(prompt, event);
+                    self.handle_editor_event(prompt, event)?;
                 }
 
                 let buffer = self.editor.get_buffer().to_string();
@@ -1309,7 +1330,7 @@ impl Reedline {
                     return self.handle_editor_event(prompt, event);
                 }
                 if let Some(event) = self.try_expand_abbreviation_at_cursor(true) {
-                    return self.handle_editor_event(prompt, event);
+                    self.handle_editor_event(prompt, event)?;
                 }
 
                 Ok(self.submit_buffer(prompt)?)
@@ -1320,7 +1341,7 @@ impl Reedline {
                     return self.handle_editor_event(prompt, event);
                 }
                 if let Some(event) = self.try_expand_abbreviation_at_cursor(true) {
-                    return self.handle_editor_event(prompt, event);
+                    self.handle_editor_event(prompt, event)?;
                 }
 
                 let cursor_position_in_buffer = self.editor.insertion_point();
@@ -1745,7 +1766,8 @@ impl Reedline {
 
     /// Expands an abbreviation at the word before the cursor, if any exists
     ///
-    /// Note, expansion does not occur when inside a string.
+    /// Calls [`Highlighter::should_expand_abbr`] with [`AbbrExpandContext::WordAbbreviation`]
+    /// to decide whether expansion is permitted at the cursor position
     fn try_expand_abbreviation_at_cursor(&mut self, submitted: bool) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
         let cursor_position_in_buffer = self.editor.insertion_point();
@@ -1771,7 +1793,11 @@ impl Reedline {
             // The first char in the buffer is a space or there are consecutive spaces
             return None;
         }
-        if self.editor.is_inside_string_literal(word_start) {
+        if !self.highlighter.should_expand_abbr(
+            buffer,
+            word_start,
+            AbbrExpandContext::WordAbbreviation,
+        ) {
             return None;
         }
 
@@ -1807,7 +1833,11 @@ impl Reedline {
             }
         }
 
-        if self.editor.is_inside_string_literal(parsed.remainder.len()) {
+        if !self.highlighter.should_expand_abbr(
+            buffer,
+            parsed.remainder.len(),
+            AbbrExpandContext::BangExpansion,
+        ) {
             return None;
         }
 
@@ -1957,8 +1987,20 @@ impl Reedline {
                 }
                 {
                     let mut child = command.spawn()?;
+                    // The child owns the tty now; invalidate eagerly so
+                    // any `?` early-return below still leaves the
+                    // painter in a safe state.
+                    self.painter.invalidate_prompt_start_row();
                     child.wait()?;
                 }
+
+                // On the success path, re-initialize position and size
+                // from scratch (covers a resize-during-editor with no
+                // SIGWINCH). On query failure, the eager invalidate
+                // above is our floor — losing the size refresh is
+                // acceptable; losing the user's edited buffer below
+                // is not.
+                let _ = self.painter.initialize_prompt_position(None);
 
                 let res = std::fs::read_to_string(temp_file)?;
                 let res = res.trim_end().to_string();
@@ -2242,11 +2284,20 @@ impl Reedline {
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
     use super::*;
     use crate::terminal_extensions::semantic_prompt::PromptKind;
     use crate::{ColumnarMenu, DefaultPrompt, MenuBuilder};
+    use rstest::rstest;
+
+    #[test]
+    fn reedline_is_send() {
+        // `Reedline` must stay `Send` so it can be moved across threads.
+        // The `Send` bound lives on the stored `Box<dyn Completer + Send>`
+        // (engine + `ReedlineMenu`), not on the `Completer`/`Menu` traits
+        // themselves, so this guards against that bound being dropped.
+        fn assert_send<T: Send>() {}
+        assert_send::<Reedline>();
+    }
 
     #[test]
     fn test_cursor_position_after_multiline_history_navigation() {
@@ -2429,12 +2480,24 @@ mod tests {
         }
     }
 
-    fn reedline_with_abbrevs(abbrevs: &[(&str, &str)]) -> Reedline {
+    fn reedline_with_abbrevs_and_string_lit_override(abbrevs: &[(&str, &str)]) -> Reedline {
         let map = abbrevs
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
-        Reedline::create().with_abbreviations(map)
+        Reedline::create()
+            .with_highlighter(Box::new(ExampleHighlighter::default()))
+            .with_abbreviations(map)
+    }
+
+    fn reedline_with_abbrevs_and_default_string_lit_check(abbrevs: &[(&str, &str)]) -> Reedline {
+        let map = abbrevs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        Reedline::create()
+            .with_highlighter(Box::new(SimpleMatchHighlighter::default()))
+            .with_abbreviations(map)
     }
 
     fn set_buffer_at_end(reedline: &mut Reedline, text: &str) {
@@ -2446,7 +2509,8 @@ mod tests {
 
     #[test]
     fn abbreviation_expands_on_submit() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
         set_buffer_at_end(&mut reedline, "gc");
         let event = reedline.try_expand_abbreviation_at_cursor(true);
         assert!(event.is_some(), "expected expansion on submit");
@@ -2459,20 +2523,23 @@ mod tests {
 
     #[test]
     fn abbreviation_no_match_returns_none() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
         set_buffer_at_end(&mut reedline, "gx");
         assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
     }
 
     #[test]
     fn abbreviation_empty_buffer_returns_none() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
         assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
     }
 
     #[test]
     fn abbreviation_expands_last_word_only() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
         set_buffer_at_end(&mut reedline, "sudo gc");
         let event = reedline.try_expand_abbreviation_at_cursor(true);
         assert!(event.is_some());
@@ -2483,29 +2550,48 @@ mod tests {
         assert_eq!(reedline.current_buffer_contents(), "sudo git commit");
     }
 
-    #[test]
-    fn abbreviation_no_expansion_inside_double_quoted_string() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
-        set_buffer_at_end(&mut reedline, "\"gc");
-        assert!(
-            reedline.try_expand_abbreviation_at_cursor(true).is_none(),
-            "must not expand inside an unclosed double-quoted string"
+    #[rstest]
+    #[case("\"hello gc", false)]
+    #[case("'hello gc", false)]
+    #[case("\"hello\" gc", true)]
+    #[case("'Сегодня хороший gc", false)]
+    #[case("'Сегодня' gc", true)]
+    #[case("'今日はいい日だ gc", false)]
+    #[case("'🔥🎉 gc", false)]
+    fn abbreviation_string_detection_with_override(
+        #[case] buffer: &str,
+        #[case] should_expand: bool,
+    ) {
+        let mut reedline = reedline_with_abbrevs_and_string_lit_override(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, buffer);
+        assert_eq!(
+            reedline.try_expand_abbreviation_at_cursor(true).is_some(),
+            should_expand
         );
     }
 
-    #[test]
-    fn abbreviation_no_expansion_inside_single_quoted_string() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
-        set_buffer_at_end(&mut reedline, "'gc");
+    #[rstest]
+    #[case("\"hello gc")]
+    #[case("'hello gc")]
+    #[case("\"hello\" gc")]
+    #[case("'Сегодня хороший gc")]
+    #[case("'Сегодня' gc")]
+    #[case("'今日はいい日だ gc")]
+    #[case("'🔥🎉 gc")]
+    fn abbreviation_string_detection_default(#[case] buffer: &str) {
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, buffer);
         assert!(
-            reedline.try_expand_abbreviation_at_cursor(true).is_none(),
-            "must not expand inside an unclosed single-quoted string"
+            reedline.try_expand_abbreviation_at_cursor(true).is_some(),
+            "must expand when highlighter does not override should_expand_abbr"
         );
     }
 
     #[test]
     fn abbreviation_non_ascii_key_and_expansion() {
-        let mut reedline = reedline_with_abbrevs(&[("café", "coffee shop")]);
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("café", "coffee shop")]);
         set_buffer_at_end(&mut reedline, "café");
         let event = reedline.try_expand_abbreviation_at_cursor(true);
         assert!(event.is_some(), "expected expansion for non-ASCII key");
@@ -2518,14 +2604,16 @@ mod tests {
 
     #[test]
     fn abbreviation_leading_spaces_returns_none() {
-        let mut reedline = reedline_with_abbrevs(&[("gc", "git commit")]);
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
         set_buffer_at_end(&mut reedline, "   ");
         assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
     }
 
     #[cfg(feature = "bashisms")]
-    fn reedline_with_history(entries: &[&str]) -> Reedline {
-        let mut reedline = Reedline::create();
+    fn reedline_with_history_and_string_lit_check(entries: &[&str]) -> Reedline {
+        let mut reedline =
+            Reedline::create().with_highlighter(Box::new(ExampleHighlighter::default()));
         for entry in entries {
             reedline
                 .history
@@ -2535,58 +2623,52 @@ mod tests {
         reedline
     }
 
-    #[test]
     #[cfg(feature = "bashisms")]
-    fn bang_command_expands_outside_quotes() {
-        let mut reedline = reedline_with_history(&["git status"]);
-        set_buffer_at_end(&mut reedline, "!!");
+    fn reedline_with_history_default(entries: &[&str]) -> Reedline {
+        let mut reedline =
+            Reedline::create().with_highlighter(Box::new(SimpleMatchHighlighter::default()));
+        for entry in entries {
+            reedline
+                .history
+                .save(HistoryItem::from_command_line(*entry))
+                .expect("failed to save history");
+        }
+        reedline
+    }
+
+    #[rstest]
+    #[case("!!", true)]
+    #[case("\"echo !!", false)]
+    #[case("'echo !!", false)]
+    #[case("'echo' !!", true)]
+    #[case("\"echo !git", false)]
+    #[case("'echo !git", false)]
+    #[case("'Сегодня !!", false)]
+    #[case("'今日は !!", false)]
+    #[case("'🔥 !!", false)]
+    #[cfg(feature = "bashisms")]
+    fn bang_string_detection_with_override(#[case] buffer: &str, #[case] should_expand: bool) {
+        let mut reedline = reedline_with_history_and_string_lit_check(&["git status"]);
+        set_buffer_at_end(&mut reedline, buffer);
+        assert_eq!(reedline.parse_bang_command().is_some(), should_expand);
+    }
+
+    #[rstest]
+    #[case("\"echo !!")]
+    #[case("'echo !!")]
+    #[case("'echo' !!")]
+    #[case("\"echo !git")]
+    #[case("'echo !git")]
+    #[case("'Сегодня !!")]
+    #[case("'今日は !!")]
+    #[case("'🔥 !!")]
+    #[cfg(feature = "bashisms")]
+    fn bang_always_expands_without_override(#[case] buffer: &str) {
+        let mut reedline = reedline_with_history_default(&["git status"]);
+        set_buffer_at_end(&mut reedline, buffer);
         assert!(
             reedline.parse_bang_command().is_some(),
-            "!! must expand when not inside a quoted string"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "bashisms")]
-    fn bang_command_no_expansion_inside_unclosed_double_quote() {
-        let mut reedline = reedline_with_history(&["git status"]);
-        set_buffer_at_end(&mut reedline, "\"echo !!");
-        assert!(
-            reedline.parse_bang_command().is_none(),
-            "must not expand !! inside an unclosed double-quoted string"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "bashisms")]
-    fn bang_command_no_expansion_inside_unclosed_single_quote() {
-        let mut reedline = reedline_with_history(&["git status"]);
-        set_buffer_at_end(&mut reedline, "'echo !!");
-        assert!(
-            reedline.parse_bang_command().is_none(),
-            "must not expand !! inside an unclosed single-quoted string"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "bashisms")]
-    fn bang_prefix_no_expansion_inside_unclosed_double_quote() {
-        let mut reedline = reedline_with_history(&["git status"]);
-        set_buffer_at_end(&mut reedline, "\"echo !git");
-        assert!(
-            reedline.parse_bang_command().is_none(),
-            "must not expand !prefix inside an unclosed double-quoted string"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "bashisms")]
-    fn bang_prefix_no_expansion_inside_unclosed_single_quote() {
-        let mut reedline = reedline_with_history(&["git status"]);
-        set_buffer_at_end(&mut reedline, "'echo !git");
-        assert!(
-            reedline.parse_bang_command().is_none(),
-            "must not expand !prefix inside an unclosed single-quoted string"
+            "must expand when highlighter does not override should_expand_abbr"
         );
     }
 

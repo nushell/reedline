@@ -219,12 +219,6 @@
 //!
 //! For more ideas check out the [feature discussion](https://github.com/nushell/reedline/issues/63) or hop on the `#reedline` channel of the [nushell discord](https://discordapp.com/invite/NtAbbGn).
 //!
-//! ### Development history
-//!
-//! If you want to follow along with the history how reedline got started, you can watch the [recordings](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv) of [JT](https://github.com/jntrnr)'s [live-coding streams](https://www.twitch.tv/jntrnr).
-//!
-//! [Playlist: Creating a line editor in Rust](https://youtube.com/playlist?list=PLP2yfE2-FXdQw0I6O4YdIX_mzBeF5TDdv)
-//!
 //! ### Alternatives
 //!
 //! For currently more mature Rust line editing check out:
@@ -235,13 +229,13 @@
 #![warn(missing_docs)]
 // #![deny(warnings)]
 mod core_editor;
-pub use core_editor::Editor;
-pub use core_editor::LineBuffer;
+pub use core_editor::{Editor, LineBuffer};
 
 mod enums;
 pub use enums::{
-    EditCommand, EditCommandDiscriminants, MouseButton, ReedlineEvent, ReedlineEventDiscriminants,
-    ReedlineRawEvent, Signal, TextObject, TextObjectScope, TextObjectType, UndoBehavior,
+    Direction, EditCommand, EditCommandDiscriminants, FindStop, Granularity, MotionTarget,
+    MouseButton, ReedlineEvent, ReedlineEventDiscriminants, ReedlineRawEvent, Signal, TextObject,
+    TextObjectScope, TextObjectType, UndoBehavior, WordEdge, WordKind,
 };
 
 mod painting;
@@ -277,7 +271,7 @@ pub use edit_mode::{
 };
 
 mod highlighter;
-pub use highlighter::{ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
+pub use highlighter::{AbbrExpandContext, ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
 
 mod completion;
 pub use completion::{Completer, DefaultCompleter, Span, Suggestion};
@@ -291,8 +285,9 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 
 mod menu;
 pub use menu::{
-    menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, IdeMenu, ListMenu, Menu,
-    MenuBuilder, MenuEvent, MenuSettings, MenuTextStyle, ReedlineMenu, TraversalDirection,
+    menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, DescriptionPosition, IdeMenu,
+    InputMode, ListMenu, Menu, MenuBuilder, MenuEvent, MenuTextStyle, OutputMode, ReedlineMenu,
+    TraversalDirection,
 };
 
 mod terminal_extensions;
@@ -306,11 +301,6 @@ mod utils;
 mod external_printer;
 pub use utils::{
     get_reedline_default_keybindings, get_reedline_keybinding_modifiers, get_reedline_keycodes,
-};
-
-#[expect(deprecated)]
-pub use utils::{
-    get_reedline_edit_commands, get_reedline_prompt_edit_modes, get_reedline_reedline_events,
 };
 
 // Reexport the key types to be independent from an explicit crossterm dependency.

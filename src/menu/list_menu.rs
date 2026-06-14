@@ -2,7 +2,7 @@ use {
     super::{menu_functions::parse_selection_char, Menu, MenuBuilder, MenuEvent, MenuSettings},
     crate::{
         core_editor::Editor,
-        menu_functions::{completer_input, replace_in_buffer},
+        menu_functions::{replace_in_buffer, resolve_completer_input},
         painting::{estimate_single_line_wraps, Painter},
         Completer, Suggestion,
     },
@@ -12,6 +12,19 @@ use {
 };
 
 const SELECTION_CHAR: char = '!';
+
+/// Controls where the description is rendered relative to the completion value
+/// in a [`ListMenu`] row.
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+pub enum DescriptionPosition {
+    /// Description is shown **before** the value, wrapped in parentheses:
+    /// `(description) value`  — the original behaviour.
+    #[default]
+    Before,
+    /// Description is shown **after** the value with a leading space:
+    /// `value description`
+    After,
+}
 
 struct Page {
     size: usize,
@@ -67,6 +80,8 @@ pub struct ListMenu {
     event: Option<MenuEvent>,
     /// String collected after the menu is activated
     input: Option<String>,
+    /// Controls where the description is rendered relative to the completion value
+    description_position: DescriptionPosition,
 }
 
 impl Default for ListMenu {
@@ -87,6 +102,7 @@ impl Default for ListMenu {
             pages: Vec::new(),
             event: None,
             input: None,
+            description_position: DescriptionPosition::default(),
         }
     }
 }
@@ -111,6 +127,15 @@ impl ListMenu {
     #[must_use]
     pub fn with_max_entry_lines(mut self, max_lines: u16) -> Self {
         self.max_lines = max_lines;
+        self
+    }
+
+    /// Menu builder to set where descriptions are rendered relative to the
+    /// completion value. Defaults to [`DescriptionPosition::Before`] for
+    /// backwards compatibility.
+    #[must_use]
+    pub fn with_description_position(mut self, position: DescriptionPosition) -> Self {
+        self.description_position = position;
         self
     }
 }
@@ -256,6 +281,37 @@ impl ListMenu {
         }
     }
 
+    fn description_text(&self, description: Option<&str>, use_ansi_coloring: bool) -> String {
+        description.map_or_else(String::new, |desc| match self.description_position {
+            DescriptionPosition::Before => {
+                // Before keeps the historical `(description) value` shape; After intentionally
+                // leaves the description unwrapped as `value description`.
+                if use_ansi_coloring {
+                    format!(
+                        "{}({}){} ",
+                        self.settings.color.description_style.prefix(),
+                        desc,
+                        RESET,
+                    )
+                } else {
+                    format!("({desc}) ")
+                }
+            }
+            DescriptionPosition::After => {
+                if use_ansi_coloring {
+                    format!(
+                        " {}{}{}",
+                        self.settings.color.description_style.prefix(),
+                        desc,
+                        RESET
+                    )
+                } else {
+                    format!(" {desc}")
+                }
+            }
+        })
+    }
+
     /// Creates default string that represents one line from a menu
     fn create_string(
         &self,
@@ -265,41 +321,20 @@ impl ListMenu {
         row_number: &str,
         use_ansi_coloring: bool,
     ) -> String {
-        let description = description.map_or("".to_string(), |desc| {
-            if use_ansi_coloring {
-                format!(
-                    "{}({}) {}",
-                    self.settings.color.description_style.prefix(),
-                    desc,
-                    RESET
-                )
-            } else {
-                format!("({desc}) ")
-            }
-        });
-
-        if use_ansi_coloring {
-            format!(
-                "{}{}{}{}{}{}",
-                row_number,
-                description,
-                self.text_style(index),
-                &line,
-                RESET,
-                Self::end_of_line(),
-            )
+        let description = self.description_text(description, use_ansi_coloring);
+        let value = if use_ansi_coloring {
+            format!("{}{}{}", self.text_style(index), line, RESET)
+        } else if index == self.index() {
+            format!(">{}", line.to_uppercase())
         } else {
-            // If no ansi coloring is found, then the selection word is
-            // the line in uppercase
-            let line_str = if index == self.index() {
-                format!("{}{}>{}", row_number, description, line.to_uppercase())
-            } else {
-                format!("{row_number}{description}{line}")
-            };
+            line.to_string()
+        };
+        let line = match self.description_position {
+            DescriptionPosition::Before => format!("{description}{value}"),
+            DescriptionPosition::After => format!("{value}{description}"),
+        };
 
-            // Final string with formatting
-            format!("{}{}", line_str, Self::end_of_line())
-        }
+        format!("{}{}{}", row_number, line, Self::end_of_line())
     }
 }
 
@@ -346,16 +381,7 @@ impl Menu for ListMenu {
 
     /// Collecting the value from the completer to be shown in the menu
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
-        if self.settings.only_buffer_difference && self.input.is_none() {
-            self.input = Some(editor.get_buffer().to_string());
-        }
-
-        let (input, pos) = completer_input(
-            editor.get_buffer(),
-            editor.insertion_point(),
-            self.input.as_deref(),
-            self.settings.only_buffer_difference,
-        );
+        let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
 
         let parsed = parse_selection_char(&input, SELECTION_CHAR);
         self.update_row_pos(parsed.index);
@@ -412,7 +438,7 @@ impl Menu for ListMenu {
 
     /// The buffer gets cleared with the actual value
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        replace_in_buffer(self.get_value(), editor);
+        replace_in_buffer(self.get_value(), editor, self.settings.output_mode);
     }
 
     fn update_working_details(
@@ -658,5 +684,57 @@ mod tests {
 
         // There is an extra line showing ...
         assert_eq!(res, 4);
+    }
+
+    #[test]
+    fn description_before_resets_style_before_value() {
+        let menu = ListMenu::default();
+
+        assert_eq!(
+            menu.create_string("value", Some("desc"), 1, "", true),
+            format!(
+                "{}(desc){} {}value{}\r\n",
+                menu.settings.color.description_style.prefix(),
+                RESET,
+                menu.text_style(1),
+                RESET,
+            )
+        );
+    }
+
+    #[test]
+    fn description_after_resets_style_after_value() {
+        let menu = ListMenu::default().with_description_position(DescriptionPosition::After);
+
+        assert_eq!(
+            menu.create_string("value", Some("desc"), 1, "", true),
+            format!(
+                "{}value{} {}desc{}\r\n",
+                menu.text_style(1),
+                RESET,
+                menu.settings.color.description_style.prefix(),
+                RESET,
+            )
+        );
+    }
+
+    #[test]
+    fn description_before_formats_without_ansi() {
+        let menu = ListMenu::default();
+
+        assert_eq!(
+            menu.create_string("value", Some("desc"), 0, "", false),
+            "(desc) >VALUE\r\n"
+        );
+    }
+
+    #[test]
+    fn description_after_formats_without_ansi() {
+        let menu = ListMenu::default().with_description_position(DescriptionPosition::After);
+
+        assert_eq!(
+            menu.create_string("value", Some("desc"), 0, "", false),
+            ">VALUE desc\r\n"
+        );
     }
 }

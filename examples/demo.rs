@@ -16,7 +16,7 @@ use {
 
 #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
 use reedline::FileBackedHistory;
-use reedline::{CursorConfig, MenuBuilder};
+use reedline::{CursorConfig, MenuBuilder, OutputMode};
 
 fn main() -> reedline::Result<()> {
     println!("Ctrl-D to quit");
@@ -102,7 +102,9 @@ fn main() -> reedline::Result<()> {
             ColumnarMenu::default().with_name("completion_menu"),
         )))
         .with_menu(ReedlineMenu::HistoryMenu(Box::new(
-            ListMenu::default().with_name("history_menu"),
+            ListMenu::default()
+                .with_name("history_menu")
+                .with_output_mode(OutputMode::FullBuffer),
         )));
 
     let edit_mode: Box<dyn EditMode> = if vi_mode {
