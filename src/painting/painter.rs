@@ -580,9 +580,18 @@ impl Painter {
         // Moving the cursor to the start of the prompt
         // from this position everything will be printed
         let anchor_row = self.prompt_start_row.last_known_row();
-        self.stdout
-            .queue(cursor::MoveTo(0, anchor_row))?
-            .queue(Clear(ClearType::FromCursorDown))?;
+
+        // HACK: Clearing from (0, 0) may lead to duplicated scrolling histories in tmux, #1062
+        if anchor_row == 0 {
+            self.stdout
+                .queue(cursor::MoveTo(1, anchor_row))?
+                .queue(Clear(ClearType::FromCursorDown))?
+                .queue(cursor::MoveTo(0, anchor_row))?;
+        } else {
+            self.stdout
+                .queue(cursor::MoveTo(0, anchor_row))?
+                .queue(Clear(ClearType::FromCursorDown))?;
+        }
 
         let layout = self.compute_layout(lines, menu);
 
