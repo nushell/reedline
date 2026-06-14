@@ -113,10 +113,14 @@ impl Direction {
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum WordKind {
     /// `w`/`b`/`e` — a boundary at any character-class change.
-    Small,
+    Word,
     /// `W`/`B`/`E` — a boundary only at whitespace/line-ending, so a run like
     /// `foo.bar` is one WORD.
-    Big,
+    LongWord,
+    /// Emacs `M-f`/`M-b` — Unicode (UAX-29) word segmentation, so e.g. `can't`
+    /// and `3.14` stay single words. The one flavor that isn't a thin char-class
+    /// predicate; see `locate_word`. (Follow-up: collapse onto a class predicate.)
+    Unicode,
 }
 
 /// Which edge of a word a motion lands on.

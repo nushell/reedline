@@ -2979,7 +2979,7 @@ mod test {
     /// `w` as a target: small-word start, forward.
     fn word_start_fwd() -> MotionTarget {
         MotionTarget::Word {
-            kind: WordKind::Small,
+            kind: WordKind::Word,
             edge: WordEdge::Start,
             direction: Direction::Forward,
         }
@@ -3032,7 +3032,7 @@ mod test {
         editor.move_to_position(7, false); // end of buffer
         editor.run_edit_command(&EditCommand::Cut {
             target: MotionTarget::Word {
-                kind: WordKind::Small,
+                kind: WordKind::Word,
                 edge: WordEdge::Start,
                 direction: Direction::Backward,
             },
@@ -3098,7 +3098,7 @@ mod test {
     /// `e` as a target: small-word end, forward.
     fn word_end_fwd() -> MotionTarget {
         MotionTarget::Word {
-            kind: WordKind::Small,
+            kind: WordKind::Word,
             edge: WordEdge::End,
             direction: Direction::Forward,
         }

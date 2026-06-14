@@ -1971,7 +1971,7 @@ mod test {
     #[case("abc-def ghi", 0)]
     fn locate_word_matches_word_right_start(#[case] s: &str, #[case] p: usize) {
         assert_eq!(
-            locate_word(s, p, WordKind::Small, WordEdge::Start, true),
+            locate_word(s, p, WordKind::Word, WordEdge::Start, true),
             at(s, p).word_right_start_index()
         );
     }
@@ -1985,12 +1985,12 @@ mod test {
     fn locate_word_vi_breaks_on_punctuation() {
         // `w` from start of "abc.def ghi" stops on the `.` (byte 3), not "ghi" (8)
         assert_eq!(
-            locate_word("abc.def ghi", 0, WordKind::Small, WordEdge::Start, true),
+            locate_word("abc.def ghi", 0, WordKind::Word, WordEdge::Start, true),
             3
         );
         // `b` from "abc def.ghi" end lands on "ghi"'s start (byte 8), not "def" (4)
         assert_eq!(
-            locate_word("abc def.ghi", 10, WordKind::Small, WordEdge::Start, false),
+            locate_word("abc def.ghi", 10, WordKind::Word, WordEdge::Start, false),
             8
         );
     }
@@ -2000,7 +2000,7 @@ mod test {
     #[case("abc def ghi", 0)]
     fn locate_word_matches_big_word_right_start(#[case] s: &str, #[case] p: usize) {
         assert_eq!(
-            locate_word(s, p, WordKind::Big, WordEdge::Start, true),
+            locate_word(s, p, WordKind::LongWord, WordEdge::Start, true),
             at(s, p).big_word_right_start_index()
         );
     }
@@ -2011,7 +2011,7 @@ mod test {
     #[case("abc", 1)]
     fn locate_word_matches_word_right_end(#[case] s: &str, #[case] p: usize) {
         assert_eq!(
-            locate_word(s, p, WordKind::Small, WordEdge::End, true),
+            locate_word(s, p, WordKind::Word, WordEdge::End, true),
             at(s, p).word_right_end_index()
         );
     }
@@ -2021,8 +2021,43 @@ mod test {
     #[case("abc-def ghi", 0)]
     fn locate_word_matches_big_word_right_end(#[case] s: &str, #[case] p: usize) {
         assert_eq!(
-            locate_word(s, p, WordKind::Big, WordEdge::End, true),
+            locate_word(s, p, WordKind::LongWord, WordEdge::End, true),
             at(s, p).big_word_right_end_index()
+        );
+    }
+
+    // `Unicode` (emacs `M-f`/`M-b`) must reproduce the legacy unicode-seg
+    // `*_index` *exactly* — including the punctuation/contraction cases where
+    // vi-`Word` deliberately diverges. This is the equivalence that lets the
+    // emacs `MoveWord*` bindings later lower onto `locate_word` unchanged.
+    #[rstest]
+    #[case("abc def ghi", 0)]
+    #[case("abc.def ghi", 0)] // `.` kept inside the word (UAX-29) — unlike vi-`Word`
+    #[case("can't stop", 0)] // contraction stays one word
+    fn unicode_matches_word_right_start(#[case] s: &str, #[case] p: usize) {
+        assert_eq!(
+            locate_word(s, p, WordKind::Unicode, WordEdge::Start, true),
+            at(s, p).word_right_start_index()
+        );
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0)]
+    #[case("abc.def ghi", 0)]
+    fn unicode_matches_word_right_end(#[case] s: &str, #[case] p: usize) {
+        assert_eq!(
+            locate_word(s, p, WordKind::Unicode, WordEdge::End, true),
+            at(s, p).word_right_end_index()
+        );
+    }
+
+    #[rstest]
+    #[case("abc def.ghi", 10)]
+    #[case("abc def ghi", 7)]
+    fn unicode_matches_word_left(#[case] s: &str, #[case] p: usize) {
+        assert_eq!(
+            locate_word(s, p, WordKind::Unicode, WordEdge::Start, false),
+            at(s, p).word_left_index()
         );
     }
 
@@ -2030,7 +2065,7 @@ mod test {
     #[case("abc def ghi", 10)]
     fn locate_word_matches_word_left(#[case] s: &str, #[case] p: usize) {
         assert_eq!(
-            locate_word(s, p, WordKind::Small, WordEdge::Start, false),
+            locate_word(s, p, WordKind::Word, WordEdge::Start, false),
             at(s, p).word_left_index()
         );
     }
@@ -2040,7 +2075,7 @@ mod test {
     #[case("abc def-ghi", 10)]
     fn locate_word_matches_big_word_left(#[case] s: &str, #[case] p: usize) {
         assert_eq!(
-            locate_word(s, p, WordKind::Big, WordEdge::Start, false),
+            locate_word(s, p, WordKind::LongWord, WordEdge::Start, false),
             at(s, p).big_word_left_index()
         );
     }

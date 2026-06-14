@@ -13,6 +13,8 @@
 //! — means vi-word, vi-WORD, emacs-word, and helix-word are thin variations over
 //! one definition rather than eight ad-hoc functions.
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::core_editor::graphemes::prev_grapheme_boundary;
 use crate::enums::{WordEdge, WordKind};
 
@@ -74,10 +76,17 @@ pub(crate) fn locate_word(
     edge: WordEdge,
     forward: bool,
 ) -> usize {
-    // The only thing `kind` changes is which transitions count as a boundary.
+    // `Unicode` (emacs) is the one flavor not expressible as a char-class
+    // boundary predicate — it uses UAX-29 segmentation, with its own scan.
+    if kind == WordKind::Unicode {
+        return locate_unicode_word(buf, origin, edge, forward);
+    }
+
+    // Every other flavor only changes which transitions count as a boundary.
     let is_boundary: fn(char, char) -> bool = match kind {
-        WordKind::Small => is_word_boundary,
-        WordKind::Big => is_long_word_boundary,
+        WordKind::Word => is_word_boundary,
+        WordKind::LongWord => is_long_word_boundary,
+        WordKind::Unicode => unreachable!("handled above"),
     };
 
     // Is `ch` (with neighbors `before`/`after`, `None` at the buffer edges) the
@@ -135,6 +144,44 @@ pub(crate) fn locate_word(
     }
 }
 
+/// `Unicode` (emacs) word location via UAX-29 segmentation. Reproduces the legacy
+/// `LineBuffer::*_index` motions: skip whitespace segments from
+/// `split_word_bound_indices`, land on the requested edge. Kept exact so the
+/// emacs `M-f`/`M-b` bindings can lower onto the one resolver unchanged.
+fn locate_unicode_word(buf: &str, origin: usize, edge: WordEdge, forward: bool) -> usize {
+    let is_ws = |w: &str| w.chars().all(char::is_whitespace);
+    match (forward, edge) {
+        // `w` — start of the next word (skip the cursor's own segment + whitespace).
+        (true, WordEdge::Start) => buf[origin..]
+            .split_word_bound_indices()
+            .find(|(i, w)| *i != 0 && !is_ws(w))
+            .map_or(buf.len(), |(i, _)| origin + i),
+        // `e` — last grapheme of the next word (inclusive), skipping whitespace.
+        (true, WordEdge::End) => buf[origin..]
+            .split_word_bound_indices()
+            .find_map(|(i, w)| {
+                w.grapheme_indices(true)
+                    .next_back()
+                    .map(|(gi, _)| origin + i + gi)
+                    .filter(|x| !is_ws(w) && *x != origin)
+            })
+            .unwrap_or_else(|| prev_grapheme_boundary(buf, buf.len())),
+        // `b` — start of the previous word.
+        (false, WordEdge::Start) => buf[..origin]
+            .split_word_bound_indices()
+            .rfind(|(_, w)| !is_ws(w))
+            .map_or(0, |(i, _)| i),
+        // `ge` — last grapheme of the previous word. No legacy reference (vi `ge`
+        // uses a class flavor); defined here only to keep the resolver total.
+        (false, WordEdge::End) => buf[..origin]
+            .split_word_bound_indices()
+            .rev()
+            .find(|(_, w)| !is_ws(w))
+            .and_then(|(i, w)| w.grapheme_indices(true).next_back().map(|(gi, _)| i + gi))
+            .unwrap_or(0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,7 +207,7 @@ mod tests {
         // forward word-end from "ab" would park on the `\r` (byte 2) instead of
         // skipping the line ending to the 'd' of "cd" (byte 5). "ab\r\ncd" is
         // bytes a=0 b=1 \r=2 \n=3 c=4 d=5.
-        let end = locate_word("ab\r\ncd", 1, WordKind::Small, WordEdge::End, true);
+        let end = locate_word("ab\r\ncd", 1, WordKind::Word, WordEdge::End, true);
         assert_eq!(end, 5);
     }
 

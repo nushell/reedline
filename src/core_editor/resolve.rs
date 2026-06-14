@@ -130,7 +130,7 @@ mod tests {
 
     fn word(edge: WordEdge, direction: Direction) -> MotionTarget {
         MotionTarget::Word {
-            kind: WordKind::Small,
+            kind: WordKind::Word,
             edge,
             direction,
         }
