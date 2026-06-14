@@ -581,8 +581,9 @@ impl Painter {
         // from this position everything will be printed
         let anchor_row = self.prompt_start_row.last_known_row();
         self.stdout
-            .queue(cursor::MoveTo(0, anchor_row))?
-            .queue(Clear(ClearType::FromCursorDown))?;
+            .queue(cursor::MoveTo(1, anchor_row))?
+            .queue(Clear(ClearType::FromCursorDown))?
+            .queue(cursor::MoveTo(0, anchor_row))?;
 
         let layout = self.compute_layout(lines, menu);
 
