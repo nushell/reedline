@@ -2680,104 +2680,128 @@ mod tests {
     )]
     fn test_move_to_line_start(#[case] input: &str) {
         let mut reedline = Reedline::create();
-        let prompt = DefaultPrompt::default();
-
-        let insert_input_event =
-            ReedlineEvent::Edit(vec![EditCommand::InsertString(input.to_string())]);
-        let move_to_line_start_event =
-            ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: false }]);
-
-        // Have to resize, or painting.utils.estimate_single_line_wraps panics with divide-by-zero.
-        reedline
-            .handle_event(&prompt, ReedlineEvent::Resize(u16::MAX, u16::MAX))
-            .unwrap();
 
         // Write the string, and then move to the start of the line.
-        reedline.handle_event(&prompt, insert_input_event).unwrap();
-        reedline
-            .handle_event(&prompt, move_to_line_start_event.clone())
-            .unwrap();
-        assert_eq!(reedline.editor.line_buffer().insertion_point(), 0);
+        let insertion = EditCommand::InsertString(String::from(input));
+        reedline.run_edit_commands(&[insertion]);
 
-        // Enter the string into history, then scroll back up and move to the start of the line.
-        reedline
-            .handle_event(&prompt, ReedlineEvent::Enter)
-            .unwrap();
-        reedline.handle_event(&prompt, ReedlineEvent::Up).unwrap();
-        reedline
-            .handle_event(&prompt, move_to_line_start_event)
-            .unwrap();
+        let move_to_start = EditCommand::MoveToLineStart { select: false };
+        reedline.run_edit_commands(&[move_to_start]);
+
         assert_eq!(reedline.editor.line_buffer().insertion_point(), 0);
     }
 
     #[rstest]
-    #[case("a\nb", 2, 2)]
-    #[case("123456789\n123456789\n123456789", 10, 20)]
-    #[case("0\n1\n2\n3\n4\n5\n6\n7\n8\n9", 2, 18)]
-    fn test_move_to_line_start_multiline(
-        #[case] input: &str,
-        #[case] second_line_start: usize,
-        #[case] last_line_start: usize,
-    ) {
+    #[case("")]
+    #[case("line of text")]
+    #[case(
+        "longgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line of text"
+    )]
+    fn test_move_to_line_start_history(#[case] input: &str) {
         let mut reedline = Reedline::create();
-        let prompt = DefaultPrompt::default();
 
-        let insert_input_event =
-            ReedlineEvent::Edit(vec![EditCommand::InsertString(input.to_string())]);
-        let move_to_line_start_event =
-            ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: false }]);
-        let move_to_end_event = ReedlineEvent::Edit(vec![EditCommand::MoveToEnd { select: false }]);
+        // Enter the string into history, then scroll back up and move to the start of the line.
+        let history = HistoryItem::from_command_line(input);
+        reedline.history.save(history).unwrap();
 
-        // Have to resize, or painting.utils.estimate_single_line_wraps panics with divide-by-zero.
-        reedline
-            .handle_event(&prompt, ReedlineEvent::Resize(u16::MAX, u16::MAX))
-            .unwrap();
+        reedline.previous_history();
+
+        let move_to_start = EditCommand::MoveToLineStart { select: false };
+        reedline.run_edit_commands(&[move_to_start]);
+
+        assert_eq!(reedline.editor.line_buffer().insertion_point(), 0);
+    }
+
+    #[rstest]
+    #[case("a\nb", 2)]
+    #[case("123456789\n123456789\n123456789", 20)]
+    #[case("0\n1\n2\n3\n4\n5\n6\n7\n8\n9", 18)]
+    fn test_move_to_line_start_multiline(#[case] input: &str, #[case] last_line_start: usize) {
+        let mut reedline = Reedline::create();
 
         // Write the string, and then move to the start of the last line.
-        reedline.handle_event(&prompt, insert_input_event).unwrap();
-        reedline
-            .handle_event(&prompt, move_to_line_start_event.clone())
-            .unwrap();
+        let insertion = EditCommand::InsertString(String::from(input));
+        reedline.run_edit_commands(&[insertion]);
+
+        let move_to_start = EditCommand::MoveToLineStart { select: false };
+        reedline.run_edit_commands(&[move_to_start]);
+
         assert_eq!(
             reedline.editor.line_buffer().insertion_point(),
             last_line_start
         );
+    }
 
-        // Enter the string into history, then scroll back up and move to the start of the first line.
-        reedline
-            .handle_event(&prompt, ReedlineEvent::Enter)
-            .unwrap();
-        reedline.handle_event(&prompt, ReedlineEvent::Up).unwrap();
-        reedline
-            .handle_event(&prompt, move_to_line_start_event.clone())
-            .unwrap();
+    #[rstest]
+    #[case("a\nb")]
+    #[case("123456789\n123456789\n123456789")]
+    #[case("0\n1\n2\n3\n4\n5\n6\n7\n8\n9")]
+    fn test_move_to_line_start_multiline_history_up_start(#[case] input: &str) {
+        let mut reedline = Reedline::create();
+
+        // Enter the string into history, then scroll back up and move to the start of the line.
+        let history = HistoryItem::from_command_line(input);
+        reedline.history.save(history).unwrap();
+
+        reedline.previous_history();
+
+        let move_to_start = EditCommand::MoveToLineStart { select: false };
+        reedline.run_edit_commands(&[move_to_start]);
+
         assert_eq!(reedline.editor.line_buffer().insertion_point(), 0);
+    }
+
+    #[rstest]
+    #[case("a\nb", 2)]
+    #[case("123456789\n123456789\n123456789", 10)]
+    #[case("0\n1\n2\n3\n4\n5\n6\n7\n8\n9", 2)]
+    fn test_move_to_line_start_multiline_history_up_down_start(
+        #[case] input: &str,
+        #[case] second_line_start: usize,
+    ) {
+        let mut reedline = Reedline::create();
 
         // Enter the string again, then scroll up in history, move down one line,
         // and move to the start of the second line.
-        reedline
-            .handle_event(&prompt, ReedlineEvent::Enter)
-            .unwrap();
-        reedline.handle_event(&prompt, ReedlineEvent::Up).unwrap();
-        reedline.handle_event(&prompt, ReedlineEvent::Down).unwrap();
-        reedline
-            .handle_event(&prompt, move_to_line_start_event.clone())
-            .unwrap();
+        let history = HistoryItem::from_command_line(input);
+        reedline.history.save(history).unwrap();
+
+        reedline.previous_history();
+
+        reedline.down_command();
+
+        let move_to_start = EditCommand::MoveToLineStart { select: false };
+        reedline.run_edit_commands(&[move_to_start]);
+
         assert_eq!(
             reedline.editor.line_buffer().insertion_point(),
             second_line_start
         );
+    }
+
+    #[rstest]
+    #[case("a\nb", 2)]
+    #[case("123456789\n123456789\n123456789", 20)]
+    #[case("0\n1\n2\n3\n4\n5\n6\n7\n8\n9", 18)]
+    fn test_move_to_line_start_multiline_history_up_end_start(
+        #[case] input: &str,
+        #[case] last_line_start: usize,
+    ) {
+        let mut reedline = Reedline::create();
 
         // Enter the string again, then scroll up in history, move to the end of the text,
         // and move to the start of the last line.
-        reedline
-            .handle_event(&prompt, ReedlineEvent::Enter)
-            .unwrap();
-        reedline.handle_event(&prompt, ReedlineEvent::Up).unwrap();
-        reedline.handle_event(&prompt, move_to_end_event).unwrap();
-        reedline
-            .handle_event(&prompt, move_to_line_start_event)
-            .unwrap();
+        let history = HistoryItem::from_command_line(input);
+        reedline.history.save(history).unwrap();
+
+        reedline.previous_history();
+
+        let move_to_end = EditCommand::MoveToEnd { select: false };
+        reedline.run_edit_commands(&[move_to_end]);
+
+        let move_to_start = EditCommand::MoveToLineStart { select: false };
+        reedline.run_edit_commands(&[move_to_start]);
+
         assert_eq!(
             reedline.editor.line_buffer().insertion_point(),
             last_line_start
@@ -2786,36 +2810,30 @@ mod tests {
 
     #[test]
     fn test_complete_line_from_history() {
-        let history = Box::new(FileBackedHistory::new(1).unwrap());
-        let completer = Box::new(DefaultCompleter::new(vec!["67".into()]));
+        let completer = Box::new(DefaultCompleter::new(Vec::from([String::from("67")])));
         let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
             ColumnarMenu::default().with_name("completion_menu"),
         ));
-
-        let prompt = DefaultPrompt::default();
         let mut reedline = Reedline::create()
             .with_quick_completions(true)
-            .with_history(history)
             .with_completer(completer)
             .with_menu(completion_menu);
 
-        let insert_6 = ReedlineEvent::Edit(vec![EditCommand::InsertString("6".into())]);
-        let submit = ReedlineEvent::Submit;
-        let up = ReedlineEvent::Up;
-        let tab = ReedlineEvent::Menu("completion_menu".into());
-        let insert_x = ReedlineEvent::Edit(vec![EditCommand::InsertString("x".into())]);
+        // Save "6" to the history and scroll back to it
+        let history = HistoryItem::from_command_line("6");
+        reedline.history.save(history).unwrap();
+        reedline.previous_history();
+        assert_eq!(reedline.current_buffer_contents(), "6");
 
-        // Insert 6, press enter, then re-select it from history.
-        // Press tab to automatically complete 67 using quick completion without actually showing the menu.
-        // Anything typed after this should be appended to the end of the string rather than replacing the completion.
-        // 67 + x should be 67x and not 6x
+        // Perform quick completion
+        let prompt = DefaultPrompt::default();
+        let completion = ReedlineEvent::Menu(String::from("completion_menu"));
+        reedline.handle_event(&prompt, completion).unwrap();
+        assert_eq!(reedline.current_buffer_contents(), "67");
 
-        reedline.handle_event(&prompt, insert_6).unwrap();
-        reedline.handle_event(&prompt, submit).unwrap();
-        reedline.handle_event(&prompt, up).unwrap();
-        reedline.handle_event(&prompt, tab).unwrap();
-        reedline.handle_event(&prompt, insert_x).unwrap();
-
-        assert_eq!(reedline.editor.get_buffer(), "67x");
+        // Insert the "x" to the prompt
+        let insertion = EditCommand::InsertString(String::from("x"));
+        reedline.run_edit_commands(&[insertion]);
+        assert_eq!(reedline.current_buffer_contents(), "67x");
     }
 }
