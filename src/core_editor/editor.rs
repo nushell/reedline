@@ -5,7 +5,7 @@ use crate::core_editor::{commit, line, operator_span, resolve_motion, RestPolicy
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
 use crate::prompt::PromptEditMode;
 use crate::{core_editor::get_local_clipboard, EditCommand};
-use crate::{Direction, Granularity, MotionTarget};
+use crate::{Direction, Granularity, MotionTarget, WordEdge, WordKind};
 use std::cmp::{max, min};
 use std::ops::{DerefMut, Range};
 
@@ -36,6 +36,18 @@ enum OperatorVerb {
     /// for `CharWise` spans.
     Change,
     Erase,
+}
+
+/// Build a word [`MotionTarget`] — the shared shape the legacy `*Word*` command
+/// sugar lowers to. The emacs-flavored bindings pass [`WordKind::Unicode`]
+/// (UAX-29, proven equivalent to the old `*_index` scans); the big-WORD sugar
+/// passes [`WordKind::LongWord`].
+fn word_target(kind: WordKind, edge: WordEdge, direction: Direction) -> MotionTarget {
+    MotionTarget::Word {
+        kind,
+        edge,
+        direction,
+    }
 }
 
 impl Default for Editor {
@@ -433,6 +445,26 @@ impl Editor {
         self.commit_cursor();
     }
 
+    /// Lower a [`MotionTarget`] onto the cursor (the `Move`/`Extend` path):
+    /// resolve the head per the active policy, then place it — collapsing the
+    /// selection unless `select` keeps the anchor. The shared sink the legacy
+    /// `MoveWord*` sugar funnels through, so they behave identically to an
+    /// equivalent `Move`/`Extend` command.
+    fn apply_move(&mut self, target: MotionTarget, select: bool) {
+        let head = self.resolve_head(target);
+        self.move_head_to(head, select);
+    }
+
+    /// Lower an operator over a [`MotionTarget`] onto the buffer (the
+    /// `Cut`/`Copy` path) at char-wise granularity. The shared sink the legacy
+    /// `CutWord*`/`CopyWord*` sugar funnels through: `operator_span`'s `op_end`
+    /// already encodes inclusivity, so the consumed range matches the old
+    /// hand-built `insertion_point..*_index` ranges.
+    fn apply_operator(&mut self, target: MotionTarget, verb: OperatorVerb) {
+        let sel = operator_span(self.get_buffer(), self.insertion_point(), target);
+        self.operate(sel, verb, Granularity::CharWise);
+    }
+
     pub(crate) fn move_line_up(&mut self, select: bool) {
         self.update_selection_anchor(select);
         self.line_buffer.move_line_up();
@@ -661,39 +693,45 @@ impl Editor {
     }
 
     fn cut_word_left(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let word_start = self.line_buffer.word_left_index();
-        self.cut_range(word_start..insertion_offset);
+        self.apply_operator(
+            word_target(WordKind::Unicode, WordEdge::Start, Direction::Backward),
+            OperatorVerb::Cut,
+        );
     }
 
     fn cut_big_word_left(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let big_word_start = self.line_buffer.big_word_left_index();
-        self.cut_range(big_word_start..insertion_offset);
+        self.apply_operator(
+            word_target(WordKind::LongWord, WordEdge::Start, Direction::Backward),
+            OperatorVerb::Cut,
+        );
     }
 
     fn cut_word_right(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let word_end = self.line_buffer.word_right_index();
-        self.cut_range(insertion_offset..word_end);
+        self.apply_operator(
+            word_target(WordKind::Unicode, WordEdge::End, Direction::Forward),
+            OperatorVerb::Cut,
+        );
     }
 
     fn cut_big_word_right(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let big_word_end = self.line_buffer.next_whitespace();
-        self.cut_range(insertion_offset..big_word_end);
+        self.apply_operator(
+            word_target(WordKind::LongWord, WordEdge::End, Direction::Forward),
+            OperatorVerb::Cut,
+        );
     }
 
     fn cut_word_right_to_next(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let next_word_start = self.line_buffer.word_right_start_index();
-        self.cut_range(insertion_offset..next_word_start);
+        self.apply_operator(
+            word_target(WordKind::Unicode, WordEdge::Start, Direction::Forward),
+            OperatorVerb::Cut,
+        );
     }
 
     fn cut_big_word_right_to_next(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let next_big_word_start = self.line_buffer.big_word_right_start_index();
-        self.cut_range(insertion_offset..next_big_word_start);
+        self.apply_operator(
+            word_target(WordKind::LongWord, WordEdge::Start, Direction::Forward),
+            OperatorVerb::Cut,
+        );
     }
 
     fn cut_char(&mut self) {
@@ -902,31 +940,55 @@ impl Editor {
     }
 
     fn move_word_left(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.word_left_index(), select);
+        self.apply_move(
+            word_target(WordKind::Unicode, WordEdge::Start, Direction::Backward),
+            select,
+        );
     }
 
     fn move_big_word_left(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.big_word_left_index(), select);
+        self.apply_move(
+            word_target(WordKind::LongWord, WordEdge::Start, Direction::Backward),
+            select,
+        );
     }
 
     fn move_word_right(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.word_right_index(), select);
+        // emacs `M-f`: the bar rests *after* the word — the operator end of the
+        // forward word-end motion, not the on-char head a bare Move takes (vi
+        // `e`). In a `Between` (bar) mode that trailing boundary is where the
+        // caret sits; `operator_span(..).end()` is exactly that position.
+        let target = word_target(WordKind::Unicode, WordEdge::End, Direction::Forward);
+        let head = operator_span(self.get_buffer(), self.insertion_point(), target).end();
+        self.move_head_to(head, select);
     }
 
     fn move_word_right_start(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.word_right_start_index(), select);
+        self.apply_move(
+            word_target(WordKind::Unicode, WordEdge::Start, Direction::Forward),
+            select,
+        );
     }
 
     fn move_big_word_right_start(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.big_word_right_start_index(), select);
+        self.apply_move(
+            word_target(WordKind::LongWord, WordEdge::Start, Direction::Forward),
+            select,
+        );
     }
 
     fn move_word_right_end(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.word_right_end_index(), select);
+        self.apply_move(
+            word_target(WordKind::Unicode, WordEdge::End, Direction::Forward),
+            select,
+        );
     }
 
     fn move_big_word_right_end(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.big_word_right_end_index(), select);
+        self.apply_move(
+            word_target(WordKind::LongWord, WordEdge::End, Direction::Forward),
+            select,
+        );
     }
 
     fn insert_char(&mut self, c: char) {
@@ -1201,39 +1263,45 @@ impl Editor {
     }
 
     pub(crate) fn copy_word_left(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let word_start = self.line_buffer.word_left_index();
-        self.copy_range(word_start..insertion_offset);
+        self.apply_operator(
+            word_target(WordKind::Unicode, WordEdge::Start, Direction::Backward),
+            OperatorVerb::Copy,
+        );
     }
 
     pub(crate) fn copy_big_word_left(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let big_word_start = self.line_buffer.big_word_left_index();
-        self.copy_range(big_word_start..insertion_offset);
+        self.apply_operator(
+            word_target(WordKind::LongWord, WordEdge::Start, Direction::Backward),
+            OperatorVerb::Copy,
+        );
     }
 
     pub(crate) fn copy_word_right(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let word_end = self.line_buffer.word_right_index();
-        self.copy_range(insertion_offset..word_end);
+        self.apply_operator(
+            word_target(WordKind::Unicode, WordEdge::End, Direction::Forward),
+            OperatorVerb::Copy,
+        );
     }
 
     pub(crate) fn copy_big_word_right(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let big_word_end = self.line_buffer.next_whitespace();
-        self.copy_range(insertion_offset..big_word_end);
+        self.apply_operator(
+            word_target(WordKind::LongWord, WordEdge::End, Direction::Forward),
+            OperatorVerb::Copy,
+        );
     }
 
     pub(crate) fn copy_word_right_to_next(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let next_word_start = self.line_buffer.word_right_start_index();
-        self.copy_range(insertion_offset..next_word_start);
+        self.apply_operator(
+            word_target(WordKind::Unicode, WordEdge::Start, Direction::Forward),
+            OperatorVerb::Copy,
+        );
     }
 
     pub(crate) fn copy_big_word_right_to_next(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let next_big_word_start = self.line_buffer.big_word_right_start_index();
-        self.copy_range(insertion_offset..next_big_word_start);
+        self.apply_operator(
+            word_target(WordKind::LongWord, WordEdge::Start, Direction::Forward),
+            OperatorVerb::Copy,
+        );
     }
 
     pub(crate) fn copy_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
@@ -3125,6 +3193,56 @@ mod test {
         });
         assert_eq!(editor.get_buffer(), " bar");
         assert_eq!(editor.cut_buffer.get().0, "foo");
+    }
+
+    // --- emacs word-command lowering (legacy `*Word*` sugar) -------------
+    //
+    // The `MoveWord*`/`CutWord*`/`CopyWord*` commands now lower onto the
+    // `MotionTarget` verb path with `WordKind::Unicode`. These pin the two
+    // properties that lowering could silently break: the emacs `M-f` "rest
+    // after the word" fork, and that emacs words stay UAX-29 (contractions /
+    // punctuation kept whole) rather than drifting to the vi class-word rule.
+
+    #[test]
+    fn move_word_right_rests_after_word_like_emacs_meta_f() {
+        // emacs `M-f`: the bar lands *after* "foo" (byte 3), not *on* its last
+        // char (byte 2, where a bare `e`/`Move(End)` would stop).
+        let mut editor = editor_with("foo bar");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::MoveWordRight { select: false });
+        assert_eq!(editor.insertion_point(), 3);
+    }
+
+    #[test]
+    fn move_word_right_keeps_contraction_whole() {
+        // UAX-29 keeps "can't" one word, so `M-f` skips past the apostrophe to
+        // byte 5; a vi class-word would have stopped on the `'` at byte 3.
+        let mut editor = editor_with("can't stop");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::MoveWordRight { select: false });
+        assert_eq!(editor.insertion_point(), 5);
+    }
+
+    #[test]
+    fn cut_word_right_consumes_whole_contraction() {
+        // emacs `M-d` over "can't" removes the whole contraction (bytes 0..5),
+        // leaving " stop" — a class-word `dw` would cut only "can" (0..3).
+        let mut editor = editor_with("can't stop");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::CutWordRight);
+        assert_eq!(editor.get_buffer(), " stop");
+        assert_eq!(editor.cut_buffer.get().0, "can't");
+    }
+
+    #[test]
+    fn move_word_right_with_select_extends_anchor() {
+        // The `select` flag maps to Extend: anchor stays at the origin while the
+        // head travels to the after-word rest position.
+        let mut editor = editor_with("foo bar");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::MoveWordRight { select: true });
+        assert_eq!(editor.insertion_point(), 3);
+        assert_eq!(editor.get_selection(), Some((0, 3)));
     }
 
     // --- migration characterization -------------------------------------
