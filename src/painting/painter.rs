@@ -90,6 +90,11 @@ pub enum W {
     /// Discards all output, used in tests.
     #[cfg(test)]
     Sink(std::io::Sink),
+    /// Captures all output into a buffer so tests can assert on the exact
+    /// escape-byte stream the painter emits (not tmux-specific — any
+    /// output-level invariant).
+    #[cfg(test)]
+    Capture(Vec<u8>),
 }
 
 impl W {
@@ -105,6 +110,22 @@ impl W {
     pub(crate) fn sink() -> Self {
         W::Sink(std::io::sink())
     }
+
+    /// Writer that buffers everything written to it, so a test can inspect the
+    /// emitted bytes after painting.
+    #[cfg(test)]
+    pub(crate) fn capture() -> Self {
+        W::Capture(Vec::new())
+    }
+
+    /// Bytes captured so far. Panics unless this is a [`W::capture`] writer.
+    #[cfg(test)]
+    pub(crate) fn captured(&self) -> &[u8] {
+        match self {
+            W::Capture(buf) => buf,
+            _ => panic!("captured() called on a non-capturing writer"),
+        }
+    }
 }
 
 impl Write for W {
@@ -113,6 +134,8 @@ impl Write for W {
             W::Terminal(w) => w.write(buf),
             #[cfg(test)]
             W::Sink(w) => w.write(buf),
+            #[cfg(test)]
+            W::Capture(w) => w.write(buf),
         }
     }
 
@@ -121,6 +144,8 @@ impl Write for W {
             W::Terminal(w) => w.flush(),
             #[cfg(test)]
             W::Sink(w) => w.flush(),
+            #[cfg(test)]
+            W::Capture(w) => w.flush(),
         }
     }
 }
@@ -580,9 +605,7 @@ impl Painter {
         // Moving the cursor to the start of the prompt
         // from this position everything will be printed
         let anchor_row = self.prompt_start_row.last_known_row();
-        self.stdout
-            .queue(cursor::MoveTo(0, anchor_row))?
-            .queue(Clear(ClearType::FromCursorDown))?;
+        self.clear_from_anchor(anchor_row)?;
 
         let layout = self.compute_layout(lines, menu);
 
@@ -836,6 +859,28 @@ impl Painter {
         Ok(())
     }
 
+    /// Move to `row` and erase everything below it.
+    ///
+    /// Clearing while the cursor is on the home cell (0,0) makes tmux's
+    /// `scroll-on-clear` (default on) snapshot the whole screen into scrollback
+    /// on every repaint, so the prompt/menu piles up in tmux history (#1062).
+    /// At row 0 we therefore erase from column 1 to dodge tmux's `cx == 0`
+    /// guard, then step back to column 0; the one skipped cell is overwritten by
+    /// whatever is printed next. Every other row takes the plain path.
+    fn clear_from_anchor(&mut self, row: u16) -> Result<()> {
+        if row == 0 {
+            self.stdout
+                .queue(cursor::MoveTo(1, row))?
+                .queue(Clear(ClearType::FromCursorDown))?
+                .queue(cursor::MoveTo(0, row))?;
+        } else {
+            self.stdout
+                .queue(cursor::MoveTo(0, row))?
+                .queue(Clear(ClearType::FromCursorDown))?;
+        }
+        Ok(())
+    }
+
     fn print_menu(
         &mut self,
         menu: &dyn Menu,
@@ -845,9 +890,8 @@ impl Painter {
         let starting_row = layout.menu_start_row.unwrap_or(0);
         let remaining_lines = self.screen_height().saturating_sub(starting_row);
         let menu_string = menu.menu_string(remaining_lines, use_ansi_coloring);
+        self.clear_from_anchor(starting_row)?;
         self.stdout
-            .queue(cursor::MoveTo(0, starting_row))?
-            .queue(Clear(ClearType::FromCursorDown))?
             .queue(Print(menu_string.trim_end_matches('\n')))?;
 
         Ok(())
@@ -1171,7 +1215,8 @@ impl Painter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PromptHistorySearch;
+    use crate::menu::MenuEvent;
+    use crate::{Completer, Editor, PromptHistorySearch, Suggestion};
     use pretty_assertions::assert_eq;
     use std::borrow::Cow;
     use std::sync::{Arc, Mutex};
@@ -1433,6 +1478,139 @@ mod tests {
             hint: Cow::Borrowed(""),
             right_prompt_on_last_line: false,
         }
+    }
+
+    /// Paint once into a capture buffer and return the exact bytes emitted.
+    /// `anchor_row` is the cached prompt-start row; it is marked verified so the
+    /// painter takes the no-drift path and never queries the real terminal.
+    fn capture_repaint(prompt: &dyn Prompt, lines: &PromptLines, anchor_row: u16) -> String {
+        let mut p = Painter::new(W::capture());
+        p.terminal_size = (20, 10);
+        p.prompt_start_row.mark_verified(anchor_row);
+        p.prompt_height = 1;
+        p.repaint_buffer(prompt, lines, PromptEditMode::Default, None, false, &None)
+            .expect("repaint_buffer failed");
+        String::from_utf8_lossy(p.stdout.captured()).into_owned()
+    }
+
+    #[test]
+    fn repaint_at_row_0_does_not_erase_from_home_cell() {
+        // tmux `scroll-on-clear` (default on) copies the whole screen into
+        // scrollback when an erase-below is issued at the home cell (0,0).
+        // crossterm encodes MoveTo(0,0) as "\x1b[1;1H" and Clear(FromCursorDown)
+        // as "\x1b[J", so that contiguous pair is exactly the bug (#1062).
+        // Deliberately coupled to crossterm's escape encoding — it's the
+        // byte-level contract we care about.
+        let out = capture_repaint(&TestPrompt, &make_lines("> ", "", "RP", "hello", ""), 0);
+        assert!(
+            !out.contains("\x1b[1;1H\x1b[J"),
+            "erase-below at home cell (0,0) would make tmux snapshot the prompt to history; emitted: {out:?}"
+        );
+    }
+
+    #[test]
+    fn repaint_below_row_0_still_clears_from_anchor() {
+        // Sanity: away from the home cell the plain MoveTo + erase-below is
+        // correct (tmux is not triggered), so the workaround must not apply
+        // there. MoveTo(0,3) == "\x1b[4;1H".
+        let out = capture_repaint(&TestPrompt, &make_lines("> ", "", "RP", "hello", ""), 3);
+        assert!(
+            out.contains("\x1b[4;1H\x1b[J"),
+            "expected an erase-below from the anchor row; emitted: {out:?}"
+        );
+    }
+
+    /// Minimal `Menu` whose only real method is `menu_string` — the sole method
+    /// `print_menu` exercises. Everything else is unreachable in these tests.
+    struct TestMenu(String);
+
+    impl Menu for TestMenu {
+        fn menu_string(&self, _available_lines: u16, _use_ansi_coloring: bool) -> String {
+            self.0.clone()
+        }
+        fn is_active(&self) -> bool {
+            true
+        }
+        fn menu_event(&mut self, _event: MenuEvent) {
+            unimplemented!()
+        }
+        fn can_quick_complete(&self) -> bool {
+            unimplemented!()
+        }
+        fn can_partially_complete(
+            &mut self,
+            _values_updated: bool,
+            _editor: &mut Editor,
+            _completer: &mut dyn Completer,
+        ) -> bool {
+            unimplemented!()
+        }
+        fn update_values(&mut self, _editor: &mut Editor, _completer: &mut dyn Completer) {
+            unimplemented!()
+        }
+        fn update_working_details(
+            &mut self,
+            _editor: &mut Editor,
+            _completer: &mut dyn Completer,
+            _painter: &Painter,
+        ) {
+            unimplemented!()
+        }
+        fn replace_in_buffer(&self, _editor: &mut Editor) {
+            unimplemented!()
+        }
+        fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
+            unimplemented!()
+        }
+        fn min_rows(&self) -> u16 {
+            unimplemented!()
+        }
+        fn get_values(&self) -> &[Suggestion] {
+            unimplemented!()
+        }
+    }
+
+    /// Paint a menu into a capture buffer and return the emitted bytes, with the
+    /// menu starting at `menu_start_row` (None exercises the `unwrap_or(0)`).
+    fn capture_print_menu(menu: &dyn Menu, menu_start_row: Option<u16>) -> String {
+        let mut p = Painter::new(W::capture());
+        p.terminal_size = (20, 10);
+        let layout = PromptLayout {
+            extra_rows: 0,
+            extra_rows_after_prompt: 0,
+            large_buffer_offset: None,
+            right_prompt: None,
+            menu_start_row,
+            first_buffer_col: 0,
+        };
+        p.print_menu(menu, false, &layout)
+            .expect("print_menu failed");
+        String::from_utf8_lossy(p.stdout.captured()).into_owned()
+    }
+
+    #[test]
+    fn print_menu_at_row_0_does_not_erase_from_home_cell() {
+        // Same tmux trigger as the prompt path, latent in print_menu via
+        // `menu_start_row.unwrap_or(0)`: a menu drawn at row 0 must not emit the
+        // home-cell erase-below (#1062).
+        let menu = TestMenu("item1\nitem2".to_string());
+        let out = capture_print_menu(&menu, Some(0));
+        assert!(
+            !out.contains("\x1b[1;1H\x1b[J"),
+            "erase-below at home cell (0,0) would make tmux snapshot to history; emitted: {out:?}"
+        );
+    }
+
+    #[test]
+    fn print_menu_none_start_row_treated_as_row_0() {
+        // `unwrap_or(0)` makes a None start row clear from row 0, so it must
+        // honour the same guard.
+        let menu = TestMenu("item1".to_string());
+        let out = capture_print_menu(&menu, None);
+        assert!(
+            !out.contains("\x1b[1;1H\x1b[J"),
+            "None start row falls back to row 0 and must not erase from home cell; emitted: {out:?}"
+        );
     }
 
     #[test]
