@@ -1,7 +1,7 @@
 use super::{edit_stack::EditStack, Clipboard, Cursor, LineBuffer};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
-use crate::core_editor::{commit, line, operator_span, resolve_motion, word, RestPolicy};
+use crate::core_editor::{commit, line, operator_span, resolve_motion, RestPolicy};
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
 use crate::prompt::PromptEditMode;
 use crate::{core_editor::get_local_clipboard, EditCommand};
@@ -1030,16 +1030,12 @@ impl Editor {
 
     /// Forward word-end resolved with block (on-grapheme) geometry, whatever the
     /// active caret. Backs the vi-`e`/`E`-style `*RightEnd` commands, whose
-    /// landing is the word's last grapheme rather than its trailing boundary.
+    /// landing is the word's last grapheme rather than its trailing boundary —
+    /// so it asks the motion resolver for the block reading (`block = true`)
+    /// directly instead of the mode's geometry.
     fn word_end_on_grapheme(&self, kind: WordKind) -> usize {
-        word::locate_word(
-            self.get_buffer(),
-            self.insertion_point(),
-            kind,
-            WordEdge::End,
-            true,
-            true,
-        )
+        let target = word_target(kind, WordEdge::End, Direction::Forward);
+        resolve_motion(self.get_buffer(), self.insertion_point(), target, true).head
     }
 
     fn insert_char(&mut self, c: char) {
@@ -3292,9 +3288,22 @@ mod test {
                     kind: WordKind,
                     edge: WordEdge,
                     fwd: bool,
-                    incl: bool,
+                    block: bool,
                 ) -> usize {
-                    word::locate_word(lb.get_buffer(), lb.insertion_point(), kind, edge, fwd, incl)
+                    let buf = lb.get_buffer();
+                    let origin = lb.insertion_point();
+                    // Mirror resolve_motion's block word-end identity independently
+                    // (the bar boundary one cell over, rendered one cell back).
+                    use crate::core_editor::graphemes::{
+                        next_grapheme_boundary, prev_grapheme_boundary,
+                    };
+                    use crate::core_editor::word;
+                    if block && fwd && edge == WordEdge::End {
+                        let probe = next_grapheme_boundary(buf, origin);
+                        prev_grapheme_boundary(buf, word::locate_word(buf, probe, kind, edge, fwd))
+                    } else {
+                        word::locate_word(buf, origin, kind, edge, fwd)
+                    }
                 }
                 #[allow(clippy::type_complexity)]
                 let moves: &[(EditCommand, fn(&LineBuffer) -> usize)] = &[

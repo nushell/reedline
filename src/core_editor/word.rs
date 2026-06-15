@@ -15,7 +15,7 @@
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::core_editor::graphemes::{next_grapheme_boundary, prev_grapheme_boundary};
+use crate::core_editor::graphemes::next_grapheme_boundary;
 use crate::enums::{WordEdge, WordKind};
 
 /// Classification of a character for word-boundary detection.
@@ -61,43 +61,27 @@ pub(crate) fn is_long_word_boundary(a: char, b: char) -> bool {
     }
 }
 
-/// Byte offset of the word boundary reached from `origin`, scanning `forward`
-/// (or backward), using `kind`'s boundary predicate and landing on `edge`.
+/// Byte offset of the *bar* word boundary reached from `origin`, scanning
+/// `forward` (or backward), using `kind`'s boundary predicate and landing on
+/// `edge`. A boundary is a gap between graphemes — a `Start` is a word's first
+/// grapheme, an `End` is the gap *after* its last grapheme.
 ///
 /// This is the single resolver the 8 ad-hoc `LineBuffer::*_index` functions
-/// collapse into. The `(forward, edge)` pairs map to vi motions:
+/// collapse into. The `(forward, edge)` pairs map to motions:
 /// - `(true,  Start)` → `w` / `W`   (next word's first char)
-/// - `(true,  End)`   → `e` / `E`   (next word's last char, inclusive)
+/// - `(true,  End)`   → `M-f` / `E` (word's trailing boundary)
 /// - `(false, Start)` → `b` / `B`   (previous word's first char)
 ///
-/// `inclusive` is the cursor geometry, and it matters for exactly one case: a
-/// forward word-*end*. A block caret (vi normal / `inclusive = true`) lands
-/// *on* the word's last grapheme and so skips to the next word when it already
-/// sits there (vi `e`). A bar caret (emacs / `inclusive = false`) lands on the
-/// word's *trailing boundary* — one grapheme further right — and so completes
-/// the word it is currently inside instead of skipping (emacs `M-f`). The skip
-/// is the same `> origin` test measured at whichever of the two landings the
-/// mode uses, so the two motions are one resolver, not two.
+/// Pure word *structure* — caret geometry (block vs bar) lives one layer up in
+/// [`resolve_motion`](super::resolve_motion), which turns a forward word-end
+/// into the on-grapheme vi-`e` landing when the mode is block-cellular.
 pub(crate) fn locate_word(
     buf: &str,
     origin: usize,
     kind: WordKind,
     edge: WordEdge,
     forward: bool,
-    inclusive: bool,
 ) -> usize {
-    // The scans below find *bar* boundaries — the gaps a word starts and ends
-    // at. A block caret's forward word-*end* (vi `e`, which rests *on* the last
-    // grapheme and so skips to the next word when already there) is the same
-    // boundary viewed from one cell over: probe from the gap after the caret's
-    // grapheme, then render on the grapheme before the boundary. Stating that
-    // identity here keeps the scans pure word-structure (no caret geometry) and
-    // unduplicated across the class and Unicode paths.
-    if inclusive && forward && edge == WordEdge::End {
-        let probe = next_grapheme_boundary(buf, origin);
-        return prev_grapheme_boundary(buf, locate_word(buf, probe, kind, edge, true, false));
-    }
-
     // `Unicode` (emacs) is the one flavor not expressible as a char-class
     // boundary predicate — it uses UAX-29 segmentation, with its own scan.
     if kind == WordKind::Unicode {
@@ -228,27 +212,20 @@ mod tests {
 
     #[test]
     fn carriage_return_is_eol_not_a_word() {
-        // A `\r\n` terminator must not read as a punctuation "word"; otherwise a
-        // forward word-end from "ab" would park on the `\r` (byte 2) instead of
-        // skipping the line ending to the 'd' of "cd" (byte 5). "ab\r\ncd" is
-        // bytes a=0 b=1 \r=2 \n=3 c=4 d=5.
-        let end = locate_word("ab\r\ncd", 1, WordKind::Word, WordEdge::End, true, true);
-        assert_eq!(end, 5);
-    }
-
-    #[test]
-    fn forward_word_end_inclusive_vs_exclusive() {
-        // "foo bar": f0 o1 o2 sp3 b4 a5 r6. Cursor at byte 2 — block (vi `e`)
-        // already sits on foo's last grapheme, so it skips to bar's last char
-        // (6); bar (emacs `M-f`) completes foo at its trailing boundary (3).
-        let blk = |k| locate_word("foo bar", 2, k, WordEdge::End, true, true);
-        let bar = |k| locate_word("foo bar", 2, k, WordEdge::End, true, false);
-        assert_eq!(blk(WordKind::Word), 6);
-        assert_eq!(bar(WordKind::Word), 3);
-        assert_eq!(blk(WordKind::Unicode), 6);
-        assert_eq!(bar(WordKind::Unicode), 3);
-        assert_eq!(blk(WordKind::LongWord), 6);
-        assert_eq!(bar(WordKind::LongWord), 3);
+        // `\r` and `\n` are line endings, not word chars. "ab\r\ncd" is bytes
+        // a=0 b=1 \r=2 \n=3 c=4 d=5. A forward word-end stops at "ab"'s trailing
+        // boundary (byte 2, the gap before `\r`) — `\r` is not fused into the
+        // word...
+        assert_eq!(
+            locate_word("ab\r\ncd", 0, WordKind::Word, WordEdge::End, true),
+            2
+        );
+        // ...and from the line ending it crosses `\r\n` to finish "cd" at the
+        // buffer end (byte 6), never parking on `\r` as a word of its own.
+        assert_eq!(
+            locate_word("ab\r\ncd", 2, WordKind::Word, WordEdge::End, true),
+            6
+        );
     }
 
     #[test]

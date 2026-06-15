@@ -69,13 +69,22 @@ pub(crate) fn resolve_motion(
             direction,
         } => {
             let forward = direction == Direction::Forward;
-            let head = word::locate_word(buf, origin, kind, edge, forward, block);
-            // Only a forward word-end is operator-inclusive, and only in block
-            // mode: there the head sits *on* the last grapheme, so the operator
-            // reaches one past it. In bar mode the head is already the trailing
-            // boundary (`locate_word` placed it there), so `op_end == head`.
-            let inclusive = edge == WordEdge::End && forward && block;
-            span(head, inclusive)
+            // `locate_word` gives the bar boundary. A block caret's forward
+            // word-end (vi `e`) instead rests *on* the last grapheme — the same
+            // boundary probed one cell ahead and rendered one cell back, so a
+            // caret already on a word-end advances. This is where the caret
+            // geometry axis lives; the word resolver stays purely structural.
+            let on_grapheme = block && forward && edge == WordEdge::End;
+            let head = if on_grapheme {
+                let probe = next_grapheme_boundary(buf, origin);
+                prev_grapheme_boundary(buf, word::locate_word(buf, probe, kind, edge, forward))
+            } else {
+                word::locate_word(buf, origin, kind, edge, forward)
+            };
+            // A forward word-end is operator-inclusive only in block mode: the
+            // head sits on the last grapheme, so the operator reaches one past
+            // it. In bar mode the head is already the trailing boundary.
+            span(head, on_grapheme)
         }
         MotionTarget::Offset(n) => span(n.min(buf.len()), false),
         MotionTarget::BufferEdge(Direction::Backward) => span(0, false),
@@ -144,6 +153,7 @@ fn find_char(
 mod tests {
     use super::*;
     use crate::WordKind;
+    use rstest::rstest;
 
     fn word(edge: WordEdge, direction: Direction) -> MotionTarget {
         MotionTarget::Word {
@@ -457,5 +467,99 @@ mod tests {
             resolve_motion(buf, 1, MotionTarget::Line(Direction::Backward), true).head,
             1
         );
+    }
+
+    // The vi-`e` on-grapheme word-end (block geometry) — formerly tested directly
+    // against `locate_word` with `inclusive=true`, now a `resolve_motion` concern.
+    #[rstest]
+    #[case("abc def ghi", 0, 2)]
+    #[case("abc-def ghi", 0, 2)]
+    #[case("abc.def ghi", 0, 6)]
+    #[case("abc", 1, 2)]
+    #[case("abc", 2, 2)]
+    #[case("abc def", 2, 6)]
+    fn locate_unicode_word_right_end(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let head = resolve_motion(
+            input,
+            position,
+            MotionTarget::Word {
+                kind: WordKind::Unicode,
+                edge: WordEdge::End,
+                direction: Direction::Forward,
+            },
+            true,
+        )
+        .head;
+        assert_eq!(head, expected);
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0, 2)]
+    #[case("abc-def ghi", 0, 6)]
+    #[case("abc-def ghi", 5, 6)]
+    #[case("abc-def ghi", 6, 10)]
+    #[case("abc.def ghi", 0, 6)]
+    #[case("abc", 1, 2)]
+    #[case("abc", 2, 2)]
+    #[case("abc def", 2, 6)]
+    #[case("abc-def", 6, 6)]
+    fn locate_long_word_right_end(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let head = resolve_motion(
+            input,
+            position,
+            MotionTarget::Word {
+                kind: WordKind::LongWord,
+                edge: WordEdge::End,
+                direction: Direction::Forward,
+            },
+            true,
+        )
+        .head;
+        assert_eq!(head, expected);
+    }
+
+    #[rstest]
+    #[case("", 0, 0)] // Basecase
+    #[case("word", 0, 3)] // Cursor on top of the last grapheme of the word
+    #[case("word and another one", 0, 3)]
+    #[case("word and another one", 3, 7)] // repeat calling will move
+    #[case("word and another one", 4, 7)] // Starting from whitespace works
+    #[case("word\nline two", 0, 3)] // Multiline...
+    #[case("word\nline two", 3, 8)] // ... continues to next word end
+    #[case("weirdö characters", 0, 5)] // Multibyte unicode at the word end (latin UTF-8 should be two bytes long)
+    #[case("weirdö characters", 5, 17)] // continue with unicode (latin UTF-8 should be two bytes long)
+    #[case("weirdö", 0, 5)] // Multibyte unicode at the buffer end is fine as well
+    #[case("weirdö", 5, 5)] // Multibyte unicode at the buffer end is fine as well
+    #[case("word😇 with emoji", 0, 3)] // (Emojis are a separate word)
+    #[case("word😇 with emoji", 3, 4)] // Moves to end of "emoji word" as it is one grapheme, on top of the first byte
+    #[case("😇", 0, 0)] // More UTF-8 shenanigans
+    fn locate_unicode_word_right_end_multibyte(
+        #[case] input: &str,
+        #[case] in_location: usize,
+        #[case] expected: usize,
+    ) {
+        // vi-`e` on-char word-end (the old `move_word_right_end`), now resolved
+        // through `resolve_motion` with block geometry — exercising multibyte,
+        // multiline, and emoji boundaries.
+        let head = resolve_motion(
+            input,
+            in_location,
+            MotionTarget::Word {
+                kind: WordKind::Unicode,
+                edge: WordEdge::End,
+                direction: Direction::Forward,
+            },
+            true,
+        )
+        .head;
+        assert_eq!(head, expected);
     }
 }
