@@ -728,10 +728,12 @@ impl Editor {
     }
 
     fn cut_big_word_right_to_next(&mut self) {
-        self.apply_operator(
-            word_target(WordKind::LongWord, WordEdge::Start, Direction::Forward),
-            OperatorVerb::Cut,
-        );
+        // `big_word_right_start_index` skips a word when the cursor starts on
+        // whitespace — a quirk the `Word{Start}` verb path doesn't share. Keep
+        // the legacy index so this stays byte-for-byte behavior-preserving.
+        let insertion_offset = self.line_buffer.insertion_point();
+        let next_big_word_start = self.line_buffer.big_word_right_start_index();
+        self.cut_range(insertion_offset..next_big_word_start);
     }
 
     fn cut_char(&mut self) {
@@ -969,10 +971,9 @@ impl Editor {
     }
 
     fn move_big_word_right_start(&mut self, select: bool) {
-        self.apply_move(
-            word_target(WordKind::LongWord, WordEdge::Start, Direction::Forward),
-            select,
-        );
+        // `big_word_right_start_index` skips a word from whitespace (see
+        // `cut_big_word_right_to_next`); keep it to stay behavior-preserving.
+        self.move_to_position(self.line_buffer.big_word_right_start_index(), select);
     }
 
     fn move_word_right_end(&mut self, select: bool) {
@@ -1295,10 +1296,10 @@ impl Editor {
     }
 
     pub(crate) fn copy_big_word_right_to_next(&mut self) {
-        self.apply_operator(
-            word_target(WordKind::LongWord, WordEdge::Start, Direction::Forward),
-            OperatorVerb::Copy,
-        );
+        // Legacy `big_word_right_start_index` quirk — mirrors `cut_big_word_right_to_next`.
+        let insertion_offset = self.line_buffer.insertion_point();
+        let next_big_word_start = self.line_buffer.big_word_right_start_index();
+        self.copy_range(insertion_offset..next_big_word_start);
     }
 
     pub(crate) fn copy_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
@@ -3199,6 +3200,141 @@ mod test {
     // properties that lowering could silently break: the emacs `M-f` "rest
     // after the word" fork, and that emacs words stay UAX-29 (contractions /
     // punctuation kept whole) rather than drifting to the vi class-word rule.
+
+    /// Differential guard: every word command must, at *every* cursor position,
+    /// produce exactly what the legacy `LineBuffer::*_index` spec produces. The
+    /// `*_index` methods are still present (deleted only in a later step), so
+    /// this compares the live command against the pre-migration definition
+    /// across a sweep of positions — catching the position-dependent skips that
+    /// the hand-picked single-position tests above missed.
+    #[test]
+    fn word_commands_match_legacy_spec_at_every_position() {
+        let buffers = [
+            "foo bar baz",
+            "foo.bar baz",    // punctuation kept whole by UAX-29
+            "can't stop now", // contraction
+            "café résumé",    // multibyte graphemes
+            "  lead trail  ", // leading / trailing whitespace
+            "a",
+            "",
+        ];
+        for buf in buffers {
+            for pos in (0..=buf.len()).filter(|p| buf.is_char_boundary(*p)) {
+                // Each entry: the command under test, and the legacy index it
+                // must agree with. Move commands compare the landing position;
+                // cut/copy compare the resulting (buffer, register).
+                let moves: &[(EditCommand, fn(&LineBuffer) -> usize)] = &[
+                    (
+                        EditCommand::MoveWordLeft { select: false },
+                        LineBuffer::word_left_index,
+                    ),
+                    (
+                        EditCommand::MoveBigWordLeft { select: false },
+                        LineBuffer::big_word_left_index,
+                    ),
+                    (
+                        EditCommand::MoveWordRight { select: false },
+                        LineBuffer::word_right_index,
+                    ),
+                    (
+                        EditCommand::MoveWordRightStart { select: false },
+                        LineBuffer::word_right_start_index,
+                    ),
+                    (
+                        EditCommand::MoveBigWordRightStart { select: false },
+                        LineBuffer::big_word_right_start_index,
+                    ),
+                    (
+                        EditCommand::MoveWordRightEnd { select: false },
+                        LineBuffer::word_right_end_index,
+                    ),
+                    (
+                        EditCommand::MoveBigWordRightEnd { select: false },
+                        LineBuffer::big_word_right_end_index,
+                    ),
+                ];
+                for (cmd, legacy) in moves {
+                    let mut got = editor_with(buf);
+                    got.move_to_position(pos, false);
+                    got.run_edit_command(cmd);
+                    let mut spec = editor_with(buf);
+                    spec.move_to_position(pos, false);
+                    let target = legacy(&spec.line_buffer);
+                    assert_eq!(
+                        got.insertion_point(),
+                        target,
+                        "{cmd:?} at pos {pos} of {buf:?}"
+                    );
+                }
+
+                // Cut/Copy commands: legacy consumed `lo..hi`. Cut compares the
+                // resulting (buffer, register); Copy leaves the buffer and only
+                // fills the register.
+                #[allow(clippy::type_complexity)]
+                let ops: &[(
+                    EditCommand,
+                    EditCommand,
+                    fn(&LineBuffer, usize) -> (usize, usize),
+                )] = &[
+                    (
+                        EditCommand::CutWordLeft,
+                        EditCommand::CopyWordLeft,
+                        |lb, ip| (lb.word_left_index(), ip),
+                    ),
+                    (
+                        EditCommand::CutBigWordLeft,
+                        EditCommand::CopyBigWordLeft,
+                        |lb, ip| (lb.big_word_left_index(), ip),
+                    ),
+                    (
+                        EditCommand::CutWordRight,
+                        EditCommand::CopyWordRight,
+                        |lb, ip| (ip, lb.word_right_index()),
+                    ),
+                    (
+                        EditCommand::CutBigWordRight,
+                        EditCommand::CopyBigWordRight,
+                        |lb, ip| (ip, lb.next_whitespace()),
+                    ),
+                    (
+                        EditCommand::CutWordRightToNext,
+                        EditCommand::CopyWordRightToNext,
+                        |lb, ip| (ip, lb.word_right_start_index()),
+                    ),
+                    (
+                        EditCommand::CutBigWordRightToNext,
+                        EditCommand::CopyBigWordRightToNext,
+                        |lb, ip| (ip, lb.big_word_right_start_index()),
+                    ),
+                ];
+                for (cut_cmd, copy_cmd, legacy) in ops {
+                    // Cut
+                    let mut got = editor_with(buf);
+                    got.move_to_position(pos, false);
+                    got.run_edit_command(cut_cmd);
+                    let mut spec = editor_with(buf);
+                    spec.move_to_position(pos, false);
+                    let (lo, hi) = legacy(&spec.line_buffer, pos);
+                    spec.cut_range(lo..hi);
+                    let got_pair = (got.get_buffer().to_string(), got.cut_buffer.get().0);
+                    let spec_pair = (spec.get_buffer().to_string(), spec.cut_buffer.get().0);
+                    assert_eq!(got_pair, spec_pair, "{cut_cmd:?} at pos {pos} of {buf:?}");
+
+                    // Copy: buffer untouched, register == legacy slice.
+                    let mut got = editor_with(buf);
+                    got.move_to_position(pos, false);
+                    got.run_edit_command(copy_cmd);
+                    assert_eq!(got.get_buffer(), buf, "{copy_cmd:?} touched buffer");
+                    let expect = buf.get(lo..hi).unwrap_or("");
+                    assert_eq!(
+                        got.cut_buffer.get().0,
+                        expect,
+                        "{copy_cmd:?} at pos {pos} of {buf:?}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn move_word_right_rests_after_word_like_emacs_meta_f() {
