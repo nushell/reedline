@@ -84,12 +84,16 @@ impl EditMode for Vi {
                 (ViMode::Normal | ViMode::Visual, modifier, KeyCode::Char(c)) => {
                     let c = c.to_ascii_lowercase();
 
-                    if let Some(event) = self
+                    let binding = self
                         .normal_keybindings
-                        .find_binding(modifiers, KeyCode::Char(c))
-                    {
-                        event
-                    } else if modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT {
+                        .find_binding(modifiers, KeyCode::Char(c));
+                    let is_typeable =
+                        modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT;
+
+                    // A pending multi-key motion (e.g. `f<char>`) must be completed
+                    // before a custom keybinding can claim the next key; otherwise a
+                    // binding on that second key would hijack the sequence.
+                    if !self.cache.is_empty() || (binding.is_none() && is_typeable) {
                         self.cache.push(if modifier == KeyModifiers::SHIFT {
                             c.to_ascii_uppercase()
                         } else {
@@ -111,6 +115,8 @@ impl EditMode for Vi {
                         } else {
                             ReedlineEvent::None
                         }
+                    } else if let Some(event) = binding {
+                        event
                     } else {
                         ReedlineEvent::None
                     }
@@ -331,6 +337,73 @@ mod test {
         let result = vi.parse_event(esc);
 
         assert_eq!(result, ReedlineEvent::CtrlD);
+    }
+
+    #[test]
+    fn pending_motion_beats_custom_keybinding() {
+        // A custom binding on `B` must not hijack the second key of an
+        // in-progress `f<char>` motion: `fB` should find `B`, not fire the
+        // binding. Regression test for nushell/reedline#693.
+        let mut keybindings = default_vi_normal_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::SHIFT,
+            KeyCode::Char('b'),
+            ReedlineEvent::ClearScreen,
+        );
+
+        let mut vi = Vi {
+            normal_keybindings: keybindings,
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        // `f` opens a pending find-motion...
+        let pending = vi.parse_event(key(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert_eq!(pending, ReedlineEvent::None);
+
+        // ...so `B` completes `fB` instead of triggering the custom binding.
+        let res = vi.parse_event(key(KeyCode::Char('b'), KeyModifiers::SHIFT));
+
+        assert_eq!(
+            res,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Move(
+                MotionTarget::Find {
+                    ch: 'B',
+                    direction: Direction::Forward,
+                    stop: crate::FindStop::On,
+                }
+            )])])
+        );
+    }
+
+    #[test]
+    fn binding_fires_right_after_aborted_find() {
+        // A custom binding on `B` must not hijack the second key of an
+        // in-progress `f<char>` motion: `fB` should find `B`, not fire the
+        // binding. Regression test for nushell/reedline#693.
+        let mut keybindings = default_vi_normal_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::SHIFT,
+            KeyCode::Char('z'),
+            ReedlineEvent::ClearScreen,
+        );
+
+        let mut vi = Vi {
+            normal_keybindings: keybindings,
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        // `f` opens a pending find-motion
+        let pending = vi.parse_event(key(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert_eq!(pending, ReedlineEvent::None);
+
+        // `ESC` aborts the pending find-motion
+        vi.parse_event(key(KeyCode::Esc, KeyModifiers::NONE));
+
+        let res = vi.parse_event(key(KeyCode::Char('z'), KeyModifiers::SHIFT));
+
+        assert_eq!(res, ReedlineEvent::ClearScreen);
     }
 
     #[test]
