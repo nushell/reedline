@@ -81,8 +81,8 @@ impl EditMode for Vi {
                     self.mode = ViMode::Visual;
                     // Entering Visual switches the rest policy to `Block`; the
                     // pre-paint commit then widens the cursor into its min-width-1
-                    // selection. (Previously this emitted `Esc`, which *cleared*
-                    // the selection — the opposite of starting one.)
+                    // selection. Just repaint — do *not* clear the selection here
+                    // (e.g. by emitting `Esc`), which would defeat starting one.
                     ReedlineEvent::Repaint
                 }
                 (ViMode::Normal | ViMode::Visual, modifier, KeyCode::Char(c)) => {
