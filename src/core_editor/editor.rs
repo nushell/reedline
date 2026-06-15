@@ -115,25 +115,45 @@ impl Editor {
                 target,
                 granularity,
             } => {
-                let sel = operator_span(self.get_buffer(), self.insertion_point(), *target);
+                let sel = operator_span(
+                    self.get_buffer(),
+                    self.insertion_point(),
+                    *target,
+                    self.block_caret(),
+                );
                 self.operate(sel, OperatorVerb::Cut, *granularity);
             }
             EditCommand::Copy {
                 target,
                 granularity,
             } => {
-                let sel = operator_span(self.get_buffer(), self.insertion_point(), *target);
+                let sel = operator_span(
+                    self.get_buffer(),
+                    self.insertion_point(),
+                    *target,
+                    self.block_caret(),
+                );
                 self.operate(sel, OperatorVerb::Copy, *granularity);
             }
             EditCommand::Change {
                 target,
                 granularity,
             } => {
-                let sel = operator_span(self.get_buffer(), self.insertion_point(), *target);
+                let sel = operator_span(
+                    self.get_buffer(),
+                    self.insertion_point(),
+                    *target,
+                    self.block_caret(),
+                );
                 self.operate(sel, OperatorVerb::Change, *granularity);
             }
             EditCommand::Erase(t) => {
-                let sel = operator_span(self.get_buffer(), self.insertion_point(), *t);
+                let sel = operator_span(
+                    self.get_buffer(),
+                    self.insertion_point(),
+                    *t,
+                    self.block_caret(),
+                );
                 self.operate(sel, OperatorVerb::Erase, Granularity::CharWise);
             }
             EditCommand::InsertChar(c) => self.insert_char(*c),
@@ -406,14 +426,14 @@ impl Editor {
         // Origin is the visible cursor position — `insertion_point()` already
         // resolves that per policy (head for Between, caret for Block).
         let origin = self.insertion_point();
-        let head = resolve_motion(buf, origin, target).head;
+        let head = resolve_motion(buf, origin, target, self.block_caret()).head;
         // A grapheme step lands on the adjacent rest the caret may take. Under a
         // cell-caret policy (vi normal/visual) it can't cross the line
         // terminator; under `Between` (emacs, vi insert) it moves freely. The
         // other targets aim at buffer landmarks whose line-crossing is fixed,
         // so only `Grapheme` consults the policy.
         if let MotionTarget::Grapheme(direction) = target {
-            if self.edit_mode.rest_policy() != RestPolicy::Between {
+            if self.block_caret() {
                 return match direction {
                     Direction::Backward => head.max(line::start_of_line(buf, origin)),
                     Direction::Forward => head.min(line::end_of_line(buf, origin)),
@@ -421,6 +441,15 @@ impl Editor {
             }
         }
         head
+    }
+
+    /// Caret geometry of the active mode: `true` for a block caret (vi normal /
+    /// visual, where an inclusive motion lands *on* a grapheme and the operator
+    /// eats it), `false` for a bar caret (emacs / vi insert `Between`, which
+    /// rests on the trailing boundary instead). Drives the forward word-end
+    /// landing and operator inclusivity in [`resolve_motion`].
+    fn block_caret(&self) -> bool {
+        self.edit_mode.rest_policy() != RestPolicy::Between
     }
 
     /// Move the cursor head to `head` — collapsing the selection unless `select`
@@ -434,7 +463,7 @@ impl Editor {
     /// `inclusive` argument, so inclusivity is now carried by the range itself —
     /// there is no `selection_inclusive` side-channel to maintain.
     fn move_head_to(&mut self, target: usize, select: bool) {
-        let inclusive = self.edit_mode.rest_policy() != RestPolicy::Between;
+        let inclusive = self.block_caret();
         let next = self.line_buffer.cursor().put_cursor(
             self.line_buffer.get_buffer(),
             target,
@@ -461,7 +490,12 @@ impl Editor {
     /// already encodes inclusivity, so the consumed range matches the old
     /// hand-built `insertion_point..*_index` ranges.
     fn apply_operator(&mut self, target: MotionTarget, verb: OperatorVerb) {
-        let sel = operator_span(self.get_buffer(), self.insertion_point(), target);
+        let sel = operator_span(
+            self.get_buffer(),
+            self.insertion_point(),
+            target,
+            self.block_caret(),
+        );
         self.operate(sel, verb, Granularity::CharWise);
     }
 
@@ -707,17 +741,20 @@ impl Editor {
     }
 
     fn cut_word_right(&mut self) {
-        // emacs `M-d`: end of the current word (no skip) — see `move_word_right`.
-        // The vi-`e` verb path would over-consume when the cursor sits mid-word.
-        let insertion_offset = self.line_buffer.insertion_point();
-        let word_end = self.line_buffer.word_right_index();
-        self.cut_range(insertion_offset..word_end);
+        // emacs `M-d`: consume to the current word's trailing boundary (no skip).
+        // Under a bar caret the operator span runs `origin..trailing`, matching
+        // the old `insertion_point..word_right_index`.
+        self.apply_operator(
+            word_target(WordKind::Unicode, WordEdge::End, Direction::Forward),
+            OperatorVerb::Cut,
+        );
     }
 
     fn cut_big_word_right(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let big_word_end = self.line_buffer.next_whitespace();
-        self.cut_range(insertion_offset..big_word_end);
+        self.apply_operator(
+            word_target(WordKind::LongWord, WordEdge::End, Direction::Forward),
+            OperatorVerb::Cut,
+        );
     }
 
     fn cut_word_right_to_next(&mut self) {
@@ -956,11 +993,13 @@ impl Editor {
     }
 
     fn move_word_right(&mut self, select: bool) {
-        // emacs `M-f` is *not* the vi-`e` verb-path target: it moves to the end
-        // of the word the cursor is currently inside (no skip), whereas
-        // `Word{End}` skips to the next word-end when already on one. They agree
-        // only at a word boundary, so this keeps the dedicated `word_right_index`.
-        self.move_to_position(self.line_buffer.word_right_index(), select);
+        // emacs `M-f`: end of the word the cursor is inside (no skip). Under a bar
+        // caret `Word{End}` resolves to the word's *trailing boundary*, which is
+        // exactly `word_right_index` — so the verb path now expresses it directly.
+        self.apply_move(
+            word_target(WordKind::Unicode, WordEdge::End, Direction::Forward),
+            select,
+        );
     }
 
     fn move_word_right_start(&mut self, select: bool) {
@@ -977,17 +1016,15 @@ impl Editor {
     }
 
     fn move_word_right_end(&mut self, select: bool) {
-        self.apply_move(
-            word_target(WordKind::Unicode, WordEdge::End, Direction::Forward),
-            select,
-        );
+        // vi-`e` "land on the word's last grapheme" — a block notion the bar verb
+        // path can't reproduce (it rests on the trailing boundary instead), so
+        // keep the legacy on-char index. (Unbound; distinct from emacs `M-f`.)
+        self.move_to_position(self.line_buffer.word_right_end_index(), select);
     }
 
     fn move_big_word_right_end(&mut self, select: bool) {
-        self.apply_move(
-            word_target(WordKind::LongWord, WordEdge::End, Direction::Forward),
-            select,
-        );
+        // vi-`E` on-char — see `move_word_right_end`.
+        self.move_to_position(self.line_buffer.big_word_right_end_index(), select);
     }
 
     fn insert_char(&mut self, c: char) {
@@ -1277,15 +1314,17 @@ impl Editor {
 
     pub(crate) fn copy_word_right(&mut self) {
         // emacs forward-word end (no skip) — mirrors `cut_word_right`.
-        let insertion_offset = self.line_buffer.insertion_point();
-        let word_end = self.line_buffer.word_right_index();
-        self.copy_range(insertion_offset..word_end);
+        self.apply_operator(
+            word_target(WordKind::Unicode, WordEdge::End, Direction::Forward),
+            OperatorVerb::Copy,
+        );
     }
 
     pub(crate) fn copy_big_word_right(&mut self) {
-        let insertion_offset = self.line_buffer.insertion_point();
-        let big_word_end = self.line_buffer.next_whitespace();
-        self.copy_range(insertion_offset..big_word_end);
+        self.apply_operator(
+            word_target(WordKind::LongWord, WordEdge::End, Direction::Forward),
+            OperatorVerb::Copy,
+        );
     }
 
     pub(crate) fn copy_word_right_to_next(&mut self) {
@@ -3171,12 +3210,19 @@ mod test {
     }
 
     #[test]
-    fn move_word_end_lands_on_last_char_exclusive() {
-        // The bare `e` motion lands the cursor *on* the word's last char.
-        let mut editor = editor_with("foo bar");
-        editor.move_to_position(0, false);
-        editor.run_edit_command(&EditCommand::Move(word_end_fwd()));
-        assert_eq!(editor.insertion_point(), 2); // on the second 'o', not past it
+    fn move_word_end_landing_follows_caret_geometry() {
+        // The same `Word{End}` target lands differently by caret geometry: a
+        // block caret (vi normal) rests *on* the last grapheme; a bar caret
+        // (emacs / default) rests on the word's trailing boundary one past it.
+        let mut block = vi_editor("foo bar", PromptViMode::Normal);
+        block.move_to_position(0, false);
+        block.run_edit_command(&EditCommand::Move(word_end_fwd()));
+        assert_eq!(block.insertion_point(), 2); // on the second 'o'
+
+        let mut bar = editor_with("foo bar"); // default = emacs, Between
+        bar.move_to_position(0, false);
+        bar.run_edit_command(&EditCommand::Move(word_end_fwd()));
+        assert_eq!(bar.insertion_point(), 3); // trailing boundary, past the 'o'
     }
 
     #[test]

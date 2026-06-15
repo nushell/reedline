@@ -15,7 +15,7 @@
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::core_editor::graphemes::prev_grapheme_boundary;
+use crate::core_editor::graphemes::{next_grapheme_boundary, prev_grapheme_boundary};
 use crate::enums::{WordEdge, WordKind};
 
 /// Classification of a character for word-boundary detection.
@@ -69,13 +69,35 @@ pub(crate) fn is_long_word_boundary(a: char, b: char) -> bool {
 /// - `(true,  Start)` → `w` / `W`   (next word's first char)
 /// - `(true,  End)`   → `e` / `E`   (next word's last char, inclusive)
 /// - `(false, Start)` → `b` / `B`   (previous word's first char)
+///
+/// `inclusive` is the cursor geometry, and it matters for exactly one case: a
+/// forward word-*end*. A block caret (vi normal / `inclusive = true`) lands
+/// *on* the word's last grapheme and so skips to the next word when it already
+/// sits there (vi `e`). A bar caret (emacs / `inclusive = false`) lands on the
+/// word's *trailing boundary* — one grapheme further right — and so completes
+/// the word it is currently inside instead of skipping (emacs `M-f`). The skip
+/// is the same `> origin` test measured at whichever of the two landings the
+/// mode uses, so the two motions are one resolver, not two.
 pub(crate) fn locate_word(
     buf: &str,
     origin: usize,
     kind: WordKind,
     edge: WordEdge,
     forward: bool,
+    inclusive: bool,
 ) -> usize {
+    // The scans below find *bar* boundaries — the gaps a word starts and ends
+    // at. A block caret's forward word-*end* (vi `e`, which rests *on* the last
+    // grapheme and so skips to the next word when already there) is the same
+    // boundary viewed from one cell over: probe from the gap after the caret's
+    // grapheme, then render on the grapheme before the boundary. Stating that
+    // identity here keeps the scans pure word-structure (no caret geometry) and
+    // unduplicated across the class and Unicode paths.
+    if inclusive && forward && edge == WordEdge::End {
+        let probe = next_grapheme_boundary(buf, origin);
+        return prev_grapheme_boundary(buf, locate_word(buf, probe, kind, edge, true, false));
+    }
+
     // `Unicode` (emacs) is the one flavor not expressible as a char-class
     // boundary predicate — it uses UAX-29 segmentation, with its own scan.
     if kind == WordKind::Unicode {
@@ -119,16 +141,22 @@ pub(crate) fn locate_word(
             .peekable();
         while let Some((byte, ch)) = iter.next() {
             let after = iter.peek().map(|&(_, c)| c);
-            if byte > origin && is_target(before, ch, after) {
-                return byte;
+            if is_target(before, ch, after) {
+                // Bar boundary: a `Start` is the first grapheme of the word; an
+                // `End` is the gap *after* its last grapheme. (The block-caret
+                // `e` rendering is applied by the identity at the top.)
+                let boundary = match edge {
+                    WordEdge::Start => byte,
+                    WordEdge::End => next_grapheme_boundary(buf, byte),
+                };
+                if boundary > origin {
+                    return boundary;
+                }
             }
             before = Some(ch);
         }
-        // none: `w` runs to the buffer end; `e` rests on the last grapheme
-        match edge {
-            WordEdge::Start => buf.len(),
-            WordEdge::End => prev_grapheme_boundary(buf, buf.len()),
-        }
+        // none found: both `w` and the trailing-boundary `e` run to the end.
+        buf.len()
     } else {
         // nearest target strictly before origin
         let mut after = buf[origin..].chars().next();
@@ -144,10 +172,10 @@ pub(crate) fn locate_word(
     }
 }
 
-/// `Unicode` (emacs) word location via UAX-29 segmentation. Reproduces the legacy
-/// `LineBuffer::*_index` motions: skip whitespace segments from
-/// `split_word_bound_indices`, land on the requested edge. Kept exact so the
-/// emacs `M-f`/`M-b` bindings can lower onto the one resolver unchanged.
+/// `Unicode` (emacs) word location via UAX-29 segmentation: skip whitespace
+/// segments from `split_word_bound_indices`, land on the requested *bar*
+/// boundary. The block-caret `e` rendering is applied by the identity at the top
+/// of [`locate_word`], so this only ever computes exclusive boundaries.
 fn locate_unicode_word(buf: &str, origin: usize, edge: WordEdge, forward: bool) -> usize {
     let is_ws = |w: &str| w.chars().all(char::is_whitespace);
     match (forward, edge) {
@@ -156,16 +184,13 @@ fn locate_unicode_word(buf: &str, origin: usize, edge: WordEdge, forward: bool) 
             .split_word_bound_indices()
             .find(|(i, w)| *i != 0 && !is_ws(w))
             .map_or(buf.len(), |(i, _)| origin + i),
-        // `e` — last grapheme of the next word (inclusive), skipping whitespace.
+        // `M-f` — the trailing boundary of the next word (the gap after its last
+        // grapheme), strictly past origin so a caret mid-word completes it.
         (true, WordEdge::End) => buf[origin..]
             .split_word_bound_indices()
-            .find_map(|(i, w)| {
-                w.grapheme_indices(true)
-                    .next_back()
-                    .map(|(gi, _)| origin + i + gi)
-                    .filter(|x| !is_ws(w) && *x != origin)
-            })
-            .unwrap_or_else(|| prev_grapheme_boundary(buf, buf.len())),
+            .filter(|(_, w)| !is_ws(w))
+            .find_map(|(i, w)| (origin + i + w.len() > origin).then_some(origin + i + w.len()))
+            .unwrap_or(buf.len()),
         // `b` — start of the previous word.
         (false, WordEdge::Start) => buf[..origin]
             .split_word_bound_indices()
@@ -207,8 +232,23 @@ mod tests {
         // forward word-end from "ab" would park on the `\r` (byte 2) instead of
         // skipping the line ending to the 'd' of "cd" (byte 5). "ab\r\ncd" is
         // bytes a=0 b=1 \r=2 \n=3 c=4 d=5.
-        let end = locate_word("ab\r\ncd", 1, WordKind::Word, WordEdge::End, true);
+        let end = locate_word("ab\r\ncd", 1, WordKind::Word, WordEdge::End, true, true);
         assert_eq!(end, 5);
+    }
+
+    #[test]
+    fn forward_word_end_inclusive_vs_exclusive() {
+        // "foo bar": f0 o1 o2 sp3 b4 a5 r6. Cursor at byte 2 — block (vi `e`)
+        // already sits on foo's last grapheme, so it skips to bar's last char
+        // (6); bar (emacs `M-f`) completes foo at its trailing boundary (3).
+        let blk = |k| locate_word("foo bar", 2, k, WordEdge::End, true, true);
+        let bar = |k| locate_word("foo bar", 2, k, WordEdge::End, true, false);
+        assert_eq!(blk(WordKind::Word), 6);
+        assert_eq!(bar(WordKind::Word), 3);
+        assert_eq!(blk(WordKind::Unicode), 6);
+        assert_eq!(bar(WordKind::Unicode), 3);
+        assert_eq!(blk(WordKind::LongWord), 6);
+        assert_eq!(bar(WordKind::LongWord), 3);
     }
 
     #[test]

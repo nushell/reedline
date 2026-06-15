@@ -24,8 +24,8 @@ pub(crate) struct Movement {
 /// `origin` to the motion's `op_end`. `start()..end()` is the byte range to
 /// consume — inclusivity and direction are already baked into `op_end`, so the
 /// operator never has to reconsider them.
-pub(crate) fn operator_span(buf: &str, origin: usize, target: MotionTarget) -> Cursor {
-    Cursor::new(origin, resolve_motion(buf, origin, target).op_end)
+pub(crate) fn operator_span(buf: &str, origin: usize, target: MotionTarget, block: bool) -> Cursor {
+    Cursor::new(origin, resolve_motion(buf, origin, target, block).op_end)
 }
 
 /// Resolve a public [`MotionTarget`] against `buf`, relative to `origin`.
@@ -35,7 +35,19 @@ pub(crate) fn operator_span(buf: &str, origin: usize, target: MotionTarget) -> C
 /// than panicking, so a target constructed from config or another mode can never
 /// crash the editor. Context-aware (takes `buf`), so line/buffer edges resolve
 /// correctly where a context-free conversion couldn't.
-pub(crate) fn resolve_motion(buf: &str, origin: usize, target: MotionTarget) -> Movement {
+///
+/// `block` is the caret geometry of the active mode (vi normal = `true`, emacs /
+/// vi insert `Between` = `false`). It selects the forward word-end landing (see
+/// [`word::locate_word`]) and, for inclusive motions, whether the operator eats
+/// the grapheme the caret lands on: a block caret sits *on* the last grapheme so
+/// the operator reaches one past it, while a bar caret already rests on the
+/// trailing boundary, so `op_end` is the head itself.
+pub(crate) fn resolve_motion(
+    buf: &str,
+    origin: usize,
+    target: MotionTarget,
+    block: bool,
+) -> Movement {
     let span = |head: usize, inclusive: bool| Movement {
         head,
         op_end: if inclusive {
@@ -56,8 +68,13 @@ pub(crate) fn resolve_motion(buf: &str, origin: usize, target: MotionTarget) -> 
             edge,
             direction,
         } => {
-            let head = word::locate_word(buf, origin, kind, edge, direction == Direction::Forward);
-            let inclusive = edge == WordEdge::End && direction == Direction::Forward;
+            let forward = direction == Direction::Forward;
+            let head = word::locate_word(buf, origin, kind, edge, forward, block);
+            // Only a forward word-end is operator-inclusive, and only in block
+            // mode: there the head sits *on* the last grapheme, so the operator
+            // reaches one past it. In bar mode the head is already the trailing
+            // boundary (`locate_word` placed it there), so `op_end == head`.
+            let inclusive = edge == WordEdge::End && forward && block;
             span(head, inclusive)
         }
         MotionTarget::Offset(n) => span(n.min(buf.len()), false),
@@ -140,12 +157,17 @@ mod tests {
     fn resolve_motion_marks_forward_word_end_inclusive() {
         // Only a forward word *end* is inclusive; starts and backward motions are not.
         // forward word-end is inclusive: lands on the last 'o' (2), op_end one past (3)
-        let m = resolve_motion("foo bar", 0, word(WordEdge::End, Direction::Forward));
+        let m = resolve_motion("foo bar", 0, word(WordEdge::End, Direction::Forward), true);
         assert_eq!(m, Movement { head: 2, op_end: 3 });
         // starts and backward motions are exclusive: op_end == head
-        let m = resolve_motion("foo bar", 0, word(WordEdge::Start, Direction::Forward));
+        let m = resolve_motion(
+            "foo bar",
+            0,
+            word(WordEdge::Start, Direction::Forward),
+            true,
+        );
         assert_eq!(m.op_end, m.head);
-        let m = resolve_motion("foo bar", 7, word(WordEdge::End, Direction::Backward));
+        let m = resolve_motion("foo bar", 7, word(WordEdge::End, Direction::Backward), true);
         assert_eq!(m.op_end, m.head);
     }
 
@@ -154,19 +176,19 @@ mod tests {
         let buf = "ab\ncd\nef";
         // line edges resolve against the *current* line (context-aware)
         assert_eq!(
-            resolve_motion(buf, 4, MotionTarget::LineEdge(Direction::Backward)).head,
+            resolve_motion(buf, 4, MotionTarget::LineEdge(Direction::Backward), true).head,
             3
         );
         assert_eq!(
-            resolve_motion(buf, 4, MotionTarget::LineEdge(Direction::Forward)).head,
+            resolve_motion(buf, 4, MotionTarget::LineEdge(Direction::Forward), true).head,
             5
         );
         assert_eq!(
-            resolve_motion(buf, 4, MotionTarget::BufferEdge(Direction::Backward)).head,
+            resolve_motion(buf, 4, MotionTarget::BufferEdge(Direction::Backward), true).head,
             0
         );
         assert_eq!(
-            resolve_motion(buf, 4, MotionTarget::BufferEdge(Direction::Forward)).head,
+            resolve_motion(buf, 4, MotionTarget::BufferEdge(Direction::Forward), true).head,
             8
         );
     }
@@ -188,7 +210,12 @@ mod tests {
         // `f b` — land *on* the next `b` after origin.
         // Forward find is an inclusive motion (vim `f`/`t`).
         assert_eq!(
-            resolve_motion("foo bar", 0, find('b', Direction::Forward, FindStop::On)),
+            resolve_motion(
+                "foo bar",
+                0,
+                find('b', Direction::Forward, FindStop::On),
+                true
+            ),
             Movement { head: 4, op_end: 5 } // inclusive: op_end one past 'b'
         );
     }
@@ -200,7 +227,8 @@ mod tests {
             resolve_motion(
                 "foo bar",
                 0,
-                find('b', Direction::Forward, FindStop::Before)
+                find('b', Direction::Forward, FindStop::Before),
+                true
             ),
             Movement { head: 3, op_end: 4 } // inclusive: op_end one past byte 3
         );
@@ -211,7 +239,12 @@ mod tests {
         // `F f` from `r` (origin 6) — land *on* the previous `f` (byte 0).
         // Backward find is an exclusive motion (vim `F`/`T`).
         assert_eq!(
-            resolve_motion("foo bar", 6, find('f', Direction::Backward, FindStop::On)),
+            resolve_motion(
+                "foo bar",
+                6,
+                find('f', Direction::Backward, FindStop::On),
+                true
+            ),
             Movement { head: 0, op_end: 0 } // backward is exclusive
         );
     }
@@ -224,7 +257,8 @@ mod tests {
             resolve_motion(
                 "foo bar",
                 6,
-                find('f', Direction::Backward, FindStop::Before)
+                find('f', Direction::Backward, FindStop::Before),
+                true
             ),
             Movement { head: 1, op_end: 1 } // backward is exclusive
         );
@@ -236,7 +270,13 @@ mod tests {
         // `locate_word`. Origin 4 is `b`; forward-find `b` skips it and,
         // finding no other, stays put.
         assert_eq!(
-            resolve_motion("foo bar", 4, find('b', Direction::Forward, FindStop::On)).head,
+            resolve_motion(
+                "foo bar",
+                4,
+                find('b', Direction::Forward, FindStop::On),
+                true
+            )
+            .head,
             4
         );
     }
@@ -251,16 +291,21 @@ mod tests {
         // any future change to it is deliberate.
         let t = find('x', Direction::Forward, FindStop::Before);
         // "axbxc": x@1, x@3. From 0 (adjacent to x@1): stays at 0.
-        assert_eq!(resolve_motion("axbxc", 0, t).head, 0);
+        assert_eq!(resolve_motion("axbxc", 0, t, true).head, 0);
         // From 2 (adjacent to x@3): stays at 2.
-        assert_eq!(resolve_motion("axbxc", 2, t).head, 2);
+        assert_eq!(resolve_motion("axbxc", 2, t, true).head, 2);
     }
 
     #[test]
     fn resolve_motion_find_absent_char_stays_put() {
         // Totality: an unfindable char is a no-op, never a panic.
         assert_eq!(
-            resolve_motion("foo bar", 3, find('z', Direction::Forward, FindStop::On)),
+            resolve_motion(
+                "foo bar",
+                3,
+                find('z', Direction::Forward, FindStop::On),
+                true
+            ),
             Movement { head: 3, op_end: 3 } // miss: no-op at origin
         );
     }
@@ -271,13 +316,25 @@ mod tests {
         // *start* of `→` (byte 1), not byte 3 — proof the impl steps a
         // grapheme, not a single byte.
         assert_eq!(
-            resolve_motion("a→b", 0, find('b', Direction::Forward, FindStop::Before)).head,
+            resolve_motion(
+                "a→b",
+                0,
+                find('b', Direction::Forward, FindStop::Before),
+                true
+            )
+            .head,
             1
         );
         // backward `T a` from `b` (origin 4): one grapheme *after* `a` is
         // also the start of `→` (byte 1).
         assert_eq!(
-            resolve_motion("a→b", 4, find('a', Direction::Backward, FindStop::Before)).head,
+            resolve_motion(
+                "a→b",
+                4,
+                find('a', Direction::Backward, FindStop::Before),
+                true
+            )
+            .head,
             1
         );
     }
@@ -288,7 +345,7 @@ mod tests {
         // *immediately* left of the cursor (byte 1) — the backward search
         // looks at the char right before origin, it does not skip a grapheme.
         assert_eq!(
-            resolve_motion("fab", 2, find('a', Direction::Backward, FindStop::On)).head,
+            resolve_motion("fab", 2, find('a', Direction::Backward, FindStop::On), true).head,
             1
         );
     }
@@ -298,7 +355,7 @@ mod tests {
         // Mirror of the forward case: the char *at* origin is excluded. Origin
         // 0 is `b`; backward-find `b` has nothing before it and stays put.
         assert_eq!(
-            resolve_motion("bab", 0, find('b', Direction::Backward, FindStop::On)).head,
+            resolve_motion("bab", 0, find('b', Direction::Backward, FindStop::On), true).head,
             0
         );
     }
@@ -313,7 +370,12 @@ mod tests {
     fn resolve_motion_line_edge_forward_stops_at_newline() {
         // `$` from inside the first line lands *at* the `\n`, not the buffer end.
         assert_eq!(
-            resolve_motion("ab\ncd", 0, MotionTarget::LineEdge(Direction::Forward)),
+            resolve_motion(
+                "ab\ncd",
+                0,
+                MotionTarget::LineEdge(Direction::Forward),
+                true
+            ),
             Movement { head: 2, op_end: 2 } // line edge is exclusive
         );
     }
@@ -323,7 +385,13 @@ mod tests {
         // On a CRLF-terminated line `$` lands before the `\r`, matching
         // `LineBuffer::find_current_line_end` — both delegate to `end_of_line`.
         assert_eq!(
-            resolve_motion("ab\r\ncd", 0, MotionTarget::LineEdge(Direction::Forward)).head,
+            resolve_motion(
+                "ab\r\ncd",
+                0,
+                MotionTarget::LineEdge(Direction::Forward),
+                true
+            )
+            .head,
             2
         );
     }
@@ -332,7 +400,13 @@ mod tests {
     fn resolve_motion_line_edge_backward_stops_at_line_start() {
         // `0` from the second line lands at that line's start (byte 3), not 0.
         assert_eq!(
-            resolve_motion("ab\ncd", 4, MotionTarget::LineEdge(Direction::Backward)).head,
+            resolve_motion(
+                "ab\ncd",
+                4,
+                MotionTarget::LineEdge(Direction::Backward),
+                true
+            )
+            .head,
             3
         );
     }
@@ -341,11 +415,23 @@ mod tests {
     fn resolve_motion_buffer_edge_spans_whole_buffer() {
         // `G` / `gg` ignore line breaks — start is 0, end is the buffer length.
         assert_eq!(
-            resolve_motion("ab\ncd", 0, MotionTarget::BufferEdge(Direction::Forward)).head,
+            resolve_motion(
+                "ab\ncd",
+                0,
+                MotionTarget::BufferEdge(Direction::Forward),
+                true
+            )
+            .head,
             5
         );
         assert_eq!(
-            resolve_motion("ab\ncd", 4, MotionTarget::BufferEdge(Direction::Backward)).head,
+            resolve_motion(
+                "ab\ncd",
+                4,
+                MotionTarget::BufferEdge(Direction::Backward),
+                true
+            )
+            .head,
             0
         );
     }
@@ -355,20 +441,20 @@ mod tests {
         let buf = "ab\ncd\nef"; // ab@0-1 \n@2 cd@3-4 \n@5 ef@6-7
                                 // from "cd" (origin 4): down → start of "ef", up → start of "ab"
         assert_eq!(
-            resolve_motion(buf, 4, MotionTarget::Line(Direction::Forward)).head,
+            resolve_motion(buf, 4, MotionTarget::Line(Direction::Forward), true).head,
             6
         );
         assert_eq!(
-            resolve_motion(buf, 4, MotionTarget::Line(Direction::Backward)).head,
+            resolve_motion(buf, 4, MotionTarget::Line(Direction::Backward), true).head,
             0
         );
         // no adjacent line → stay put (last line down, first line up)
         assert_eq!(
-            resolve_motion(buf, 7, MotionTarget::Line(Direction::Forward)).head,
+            resolve_motion(buf, 7, MotionTarget::Line(Direction::Forward), true).head,
             7
         );
         assert_eq!(
-            resolve_motion(buf, 1, MotionTarget::Line(Direction::Backward)).head,
+            resolve_motion(buf, 1, MotionTarget::Line(Direction::Backward), true).head,
             1
         );
     }
