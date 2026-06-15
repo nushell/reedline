@@ -71,6 +71,27 @@ pub trait Completer {
     fn total_completions(&mut self, line: &str, pos: usize) -> usize {
         self.complete(line, pos).len()
     }
+
+    /// Returns `true` while completions are being computed in the background.
+    ///
+    /// When this returns `true` the engine switches to polling mode so it can
+    /// call [`check_pending`](Self::check_pending) periodically without
+    /// stopping on keyboard input.  The default implementation always returns
+    /// `false` (sync completer).
+    fn has_pending(&mut self) -> bool {
+        false
+    }
+
+    /// Checks whether a background completion has finished.
+    ///
+    /// Returns `true` once the results have been stored in the completer's
+    /// internal cache so that the next call to [`complete`](Self::complete)
+    /// will return them immediately.  The engine calls this while a menu is
+    /// active and [`has_pending`](Self::has_pending) has returned `true`.
+    /// The default implementation always returns `false`.
+    fn check_pending(&mut self) -> bool {
+        false
+    }
 }
 
 /// Suggestion returned by the Completer
