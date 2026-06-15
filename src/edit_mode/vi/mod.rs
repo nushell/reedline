@@ -79,7 +79,11 @@ impl EditMode for Vi {
                 (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v')) => {
                     self.cache.clear();
                     self.mode = ViMode::Visual;
-                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+                    // Entering Visual switches the rest policy to `Block`; the
+                    // pre-paint commit then widens the cursor into its min-width-1
+                    // selection. (Previously this emitted `Esc`, which *cleared*
+                    // the selection — the opposite of starting one.)
+                    ReedlineEvent::Repaint
                 }
                 (ViMode::Normal | ViMode::Visual, modifier, KeyCode::Char(c)) => {
                     let c = c.to_ascii_lowercase();
@@ -218,7 +222,10 @@ impl EditMode for Vi {
 
     fn edit_mode(&self) -> PromptEditMode {
         match self.mode {
-            ViMode::Normal | ViMode::Visual => PromptEditMode::Vi(PromptViMode::Normal),
+            ViMode::Normal => PromptEditMode::Vi(PromptViMode::Normal),
+            // Visual maps to its own policy (min-width-1 `Block`) so the commit
+            // boundary widens the cursor into a selection on entry.
+            ViMode::Visual => PromptEditMode::Vi(PromptViMode::Visual),
             ViMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
         }
     }
@@ -461,10 +468,9 @@ mod test {
         let result = vi.parse_event(key(KeyCode::Char('v'), KeyModifiers::NONE));
 
         assert!(matches!(vi.mode, ViMode::Visual));
-        assert_eq!(
-            result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
-        );
+        // `v` only enters Visual + repaints; it must NOT emit `Esc` (which would
+        // clear the selection). The `Block` rest policy materializes the block.
+        assert_eq!(result, ReedlineEvent::Repaint);
     }
 
     #[test]

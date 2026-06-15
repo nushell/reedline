@@ -1736,8 +1736,14 @@ impl Reedline {
             self.input_mode = InputMode::Regular;
         }
 
-        // Update editor with current edit mode for mode-aware selection behavior
-        self.editor.set_edit_mode(self.edit_mode.edit_mode());
+        // Adopt the current edit mode's rest policy so these commands resolve
+        // under it (e.g. block-caret selection geometry) — but *without*
+        // committing the cursor first. A commit here would apply the policy's
+        // resting rule (e.g. `OnGrapheme` pulling an at-end point back) before
+        // the commands run, double-stepping a mode-transition backstep like the
+        // vi `Esc`→normal `MoveLeft`. The commands settle the cursor themselves,
+        // and the pre-paint `set_edit_mode` makes the final commit.
+        self.editor.sync_edit_mode(self.edit_mode.edit_mode());
 
         // Run the commands over the edit buffer
         for command in commands {
@@ -2339,12 +2345,32 @@ mod tests {
     // flip makes the cursor an always-present range, so `v` then `d` deletes
     // the grapheme under the cursor. Valid under both models, so never wasted.
     #[test]
-    #[ignore = "RED until the cursor-as-truth flip (#7): v-anchor dissolves there"]
     fn v_then_d_deletes_cursor_grapheme() {
         let mut rl = seam_engine(Box::<crate::Vi>::default());
         type_each(
             &mut rl,
             &[ch('a'), ch('b'), key(KeyCode::Esc), ch('v'), ch('d')],
+        );
+        assert_eq!(rl.editor.get_buffer(), "a");
+    }
+
+    #[test]
+    fn v_extend_left_then_d_deletes_selection() {
+        // Visual mode is min-width-1 and motions extend it: from "abc" the cursor
+        // rests on 'c'; `v` selects it, `h` grows the selection left over 'b',
+        // and `d` deletes both — leaving "a".
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        type_each(
+            &mut rl,
+            &[
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                key(KeyCode::Esc),
+                ch('v'),
+                ch('h'),
+                ch('d'),
+            ],
         );
         assert_eq!(rl.editor.get_buffer(), "a");
     }

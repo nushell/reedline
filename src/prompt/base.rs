@@ -64,6 +64,9 @@ impl PromptEditMode {
     pub(crate) fn rest_policy(&self) -> RestPolicy {
         match self {
             PromptEditMode::Vi(PromptViMode::Normal) => RestPolicy::OnGrapheme,
+            // Visual selections are min-width-1: the cursor always covers at
+            // least the grapheme it sits on, so an empty point widens to a block.
+            PromptEditMode::Vi(PromptViMode::Visual) => RestPolicy::Block,
             PromptEditMode::Vi(PromptViMode::Insert)
             | PromptEditMode::Default
             | PromptEditMode::Emacs => RestPolicy::Between,
@@ -85,6 +88,10 @@ pub enum PromptViMode {
 
     /// Insertion mode
     Insert,
+
+    /// Visual (selection) mode — like normal, but the cursor carries a
+    /// min-width-1 selection that motions extend.
+    Visual,
 }
 
 /// This is the discriminant type for [`PromptEditMode`]
@@ -124,6 +131,7 @@ impl Display for PromptEditMode {
             Self::Emacs => write!(f, "Emacs"),
             Self::Vi(Vi::Normal) => write!(f, "Vi_Normal"),
             Self::Vi(Vi::Insert) => write!(f, "Vi_Insert"),
+            Self::Vi(Vi::Visual) => write!(f, "Vi_Visual"),
             Self::Custom(s) => write!(f, "Custom_{s}"),
         }
     }
@@ -137,7 +145,9 @@ impl IntoDiscriminant for PromptEditMode {
         match self {
             Self::Default => Self::Discriminant::Default,
             Self::Emacs => Self::Discriminant::Emacs,
-            Self::Vi(Vi::Normal) => Self::Discriminant::ViNormal,
+            // Visual shares Normal's discriminant: it uses the normal-mode
+            // keybindings, differing only in selection geometry.
+            Self::Vi(Vi::Normal | Vi::Visual) => Self::Discriminant::ViNormal,
             Self::Vi(Vi::Insert) => Self::Discriminant::ViInsert,
             Self::Custom(_) => Self::Discriminant::Custom,
         }

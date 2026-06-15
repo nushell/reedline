@@ -632,7 +632,7 @@ impl Painter {
             let shape = match &prompt_mode {
                 PromptEditMode::Emacs => shapes.emacs,
                 PromptEditMode::Vi(PromptViMode::Insert) => shapes.vi_insert,
-                PromptEditMode::Vi(PromptViMode::Normal) => shapes.vi_normal,
+                PromptEditMode::Vi(PromptViMode::Normal | PromptViMode::Visual) => shapes.vi_normal,
                 _ => None,
             };
             if let Some(shape) = shape {
