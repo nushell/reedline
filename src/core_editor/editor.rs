@@ -1,4 +1,4 @@
-use super::{edit_stack::EditStack, Clipboard, Cursor, LineBuffer};
+use super::{edit_stack::EditStack, Clipboard, Cursor, LineBuffer, Movement};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
 use crate::core_editor::{commit, line, operator_span, resolve_motion, RestPolicy};
@@ -467,7 +467,7 @@ impl Editor {
         let next = self.line_buffer.cursor().put_cursor(
             self.line_buffer.get_buffer(),
             target,
-            select,
+            Movement::select(select),
             inclusive,
         );
         self.line_buffer.set_cursor(next);

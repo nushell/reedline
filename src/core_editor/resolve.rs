@@ -15,7 +15,7 @@ use crate::{
 /// (`f`/`t`) lands the cursor *on* a grapheme, but an operator eats it — so
 /// `op_end` is one grapheme past `head`. For exclusive motions `op_end == head`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Movement {
+pub(crate) struct ResolvedMotion {
     pub(crate) head: usize,
     pub(crate) op_end: usize,
 }
@@ -47,8 +47,8 @@ pub(crate) fn resolve_motion(
     origin: usize,
     target: MotionTarget,
     block: bool,
-) -> Movement {
-    let span = |head: usize, inclusive: bool| Movement {
+) -> ResolvedMotion {
+    let span = |head: usize, inclusive: bool| ResolvedMotion {
         head,
         op_end: if inclusive {
             next_grapheme_boundary(buf, head)
@@ -168,7 +168,7 @@ mod tests {
         // Only a forward word *end* is inclusive; starts and backward motions are not.
         // forward word-end is inclusive: lands on the last 'o' (2), op_end one past (3)
         let m = resolve_motion("foo bar", 0, word(WordEdge::End, Direction::Forward), true);
-        assert_eq!(m, Movement { head: 2, op_end: 3 });
+        assert_eq!(m, ResolvedMotion { head: 2, op_end: 3 });
         // starts and backward motions are exclusive: op_end == head
         let m = resolve_motion(
             "foo bar",
@@ -226,7 +226,7 @@ mod tests {
                 find('b', Direction::Forward, FindStop::On),
                 true
             ),
-            Movement { head: 4, op_end: 5 } // inclusive: op_end one past 'b'
+            ResolvedMotion { head: 4, op_end: 5 } // inclusive: op_end one past 'b'
         );
     }
 
@@ -240,7 +240,7 @@ mod tests {
                 find('b', Direction::Forward, FindStop::Before),
                 true
             ),
-            Movement { head: 3, op_end: 4 } // inclusive: op_end one past byte 3
+            ResolvedMotion { head: 3, op_end: 4 } // inclusive: op_end one past byte 3
         );
     }
 
@@ -255,7 +255,7 @@ mod tests {
                 find('f', Direction::Backward, FindStop::On),
                 true
             ),
-            Movement { head: 0, op_end: 0 } // backward is exclusive
+            ResolvedMotion { head: 0, op_end: 0 } // backward is exclusive
         );
     }
 
@@ -270,7 +270,7 @@ mod tests {
                 find('f', Direction::Backward, FindStop::Before),
                 true
             ),
-            Movement { head: 1, op_end: 1 } // backward is exclusive
+            ResolvedMotion { head: 1, op_end: 1 } // backward is exclusive
         );
     }
 
@@ -316,7 +316,7 @@ mod tests {
                 find('z', Direction::Forward, FindStop::On),
                 true
             ),
-            Movement { head: 3, op_end: 3 } // miss: no-op at origin
+            ResolvedMotion { head: 3, op_end: 3 } // miss: no-op at origin
         );
     }
 
@@ -386,7 +386,7 @@ mod tests {
                 MotionTarget::LineEdge(Direction::Forward),
                 true
             ),
-            Movement { head: 2, op_end: 2 } // line edge is exclusive
+            ResolvedMotion { head: 2, op_end: 2 } // line edge is exclusive
         );
     }
 

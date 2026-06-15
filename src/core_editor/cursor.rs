@@ -15,6 +15,29 @@ pub enum Direction {
     Backward,
 }
 
+/// Selection intent of a motion — whether it carries the anchor along or drops
+/// it. Mirrors Helix's `Movement`; the readable face of `put_cursor`'s old
+/// `extend: bool`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Movement {
+    /// Collapse to a point at the target — an ordinary (non-selecting) motion.
+    Move,
+    /// Keep the anchor fixed and move only the head — extend the selection.
+    Extend,
+}
+
+impl Movement {
+    /// `Extend` when selecting, `Move` otherwise — the bridge from the boolean
+    /// `select` flag the edit commands still carry.
+    pub(crate) fn select(select: bool) -> Self {
+        if select {
+            Movement::Extend
+        } else {
+            Movement::Move
+        }
+    }
+}
+
 /// A cursor as a (possibly empty) range over a buffer.
 ///
 /// Uses gap indexing — `anchor` and `head` represent positions *between* bytes,
@@ -164,8 +187,8 @@ impl Cursor {
     /// Move the caret to land on the grapheme at byte `target`, returning the new
     /// cursor. Mirrors Helix's `Range::put_cursor`.
     ///
-    /// `extend = false` collapses to a point at `target` (the commit boundary's
-    /// `Block` policy then widens it to a 1-grapheme block). `extend = true`
+    /// [`Movement::Move`] collapses to a point at `target` (the commit boundary's
+    /// `Block` policy then widens it to a 1-grapheme block). [`Movement::Extend`]
     /// keeps the anchor side — but **flips the anchor onto the other edge of its
     /// grapheme when the selection changes direction**, so the grapheme the
     /// selection started on stays covered (see the type docs / convergence note).
@@ -176,8 +199,8 @@ impl Cursor {
     /// cursor places the head exactly on `target` (the bar caret). It only
     /// affects the forward head — a backward range already covers `target` at its
     /// low end, and a collapse ignores it.
-    pub fn put_cursor(self, buf: &str, target: usize, extend: bool, inclusive: bool) -> Self {
-        if !extend {
+    pub fn put_cursor(self, buf: &str, target: usize, movement: Movement, inclusive: bool) -> Self {
+        if movement == Movement::Move {
             return Self::point(target);
         }
 
@@ -526,7 +549,7 @@ mod tests {
     #[test]
     fn put_cursor_non_extend_collapses_to_point() {
         assert_eq!(
-            Cursor::new(2, 4).put_cursor("hello", 3, false, true),
+            Cursor::new(2, 4).put_cursor("hello", 3, Movement::Move, true),
             Cursor::point(3)
         );
     }
@@ -534,7 +557,7 @@ mod tests {
     #[test]
     fn put_cursor_extend_forward_places_head_on_far_edge() {
         // [0,1) extend to byte 2 → [0,3); caret retreats to 2 (the 'l')
-        let c = Cursor::new(0, 1).put_cursor("hello", 2, true, true);
+        let c = Cursor::new(0, 1).put_cursor("hello", 2, Movement::Extend, true);
         assert_eq!(c, Cursor::new(0, 3));
         assert_eq!(c.caret("hello"), 2);
     }
@@ -542,7 +565,7 @@ mod tests {
     #[test]
     fn put_cursor_extend_no_flip_stays_backward() {
         // backward [4,2) extend further left to 1, no crossing → [4,1)
-        let c = Cursor::new(4, 2).put_cursor("hello", 1, true, true);
+        let c = Cursor::new(4, 2).put_cursor("hello", 1, Movement::Extend, true);
         assert_eq!(c, Cursor::new(4, 1));
         assert_eq!(c.caret("hello"), 1);
     }
@@ -551,7 +574,7 @@ mod tests {
     fn put_cursor_extend_flip_forward_to_backward_keeps_anchor_grapheme() {
         // the worked example: [2,4) drag caret to 0 → anchor hops 2→3 → [3,0),
         // so the 'l' at byte 2 (the start grapheme) stays covered.
-        let c = Cursor::new(2, 4).put_cursor("hello", 0, true, true);
+        let c = Cursor::new(2, 4).put_cursor("hello", 0, Movement::Extend, true);
         assert_eq!(c, Cursor::new(3, 0));
         assert_eq!(c.caret("hello"), 0);
         assert!(c.contains(2)); // start grapheme survived the turn
@@ -560,7 +583,7 @@ mod tests {
     #[test]
     fn put_cursor_extend_flip_backward_to_forward_keeps_anchor_grapheme() {
         // backward [4,2) drag caret right to 5 → anchor hops 4→3 → [3,5)
-        let c = Cursor::new(4, 2).put_cursor("hello", 5, true, true);
+        let c = Cursor::new(4, 2).put_cursor("hello", 5, Movement::Extend, true);
         assert_eq!(c, Cursor::new(3, 5));
         assert_eq!(c.caret("hello"), 4);
         assert!(c.contains(3)); // the 'l' at 3 (start grapheme) survived
@@ -570,7 +593,7 @@ mod tests {
     fn put_cursor_extend_flip_across_multibyte_anchor() {
         // "café": é is [3,5). forward [3,5) (on é) drag caret to 0 → anchor hops
         // 3→5 (far edge of é) → [5,0); the whole é stays covered.
-        let c = Cursor::new(3, 5).put_cursor("café", 0, true, true);
+        let c = Cursor::new(3, 5).put_cursor("café", 0, Movement::Extend, true);
         assert_eq!(c, Cursor::new(5, 0));
         assert!(c.contains(3) && c.contains(4)); // both bytes of é covered
     }
