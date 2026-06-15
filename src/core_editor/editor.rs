@@ -707,17 +707,17 @@ impl Editor {
     }
 
     fn cut_word_right(&mut self) {
-        self.apply_operator(
-            word_target(WordKind::Unicode, WordEdge::End, Direction::Forward),
-            OperatorVerb::Cut,
-        );
+        // emacs `M-d`: end of the current word (no skip) — see `move_word_right`.
+        // The vi-`e` verb path would over-consume when the cursor sits mid-word.
+        let insertion_offset = self.line_buffer.insertion_point();
+        let word_end = self.line_buffer.word_right_index();
+        self.cut_range(insertion_offset..word_end);
     }
 
     fn cut_big_word_right(&mut self) {
-        self.apply_operator(
-            word_target(WordKind::LongWord, WordEdge::End, Direction::Forward),
-            OperatorVerb::Cut,
-        );
+        let insertion_offset = self.line_buffer.insertion_point();
+        let big_word_end = self.line_buffer.next_whitespace();
+        self.cut_range(insertion_offset..big_word_end);
     }
 
     fn cut_word_right_to_next(&mut self) {
@@ -954,13 +954,11 @@ impl Editor {
     }
 
     fn move_word_right(&mut self, select: bool) {
-        // emacs `M-f`: the bar rests *after* the word — the operator end of the
-        // forward word-end motion, not the on-char head a bare Move takes (vi
-        // `e`). In a `Between` (bar) mode that trailing boundary is where the
-        // caret sits; `operator_span(..).end()` is exactly that position.
-        let target = word_target(WordKind::Unicode, WordEdge::End, Direction::Forward);
-        let head = operator_span(self.get_buffer(), self.insertion_point(), target).end();
-        self.move_head_to(head, select);
+        // emacs `M-f` is *not* the vi-`e` verb-path target: it moves to the end
+        // of the word the cursor is currently inside (no skip), whereas
+        // `Word{End}` skips to the next word-end when already on one. They agree
+        // only at a word boundary, so this keeps the dedicated `word_right_index`.
+        self.move_to_position(self.line_buffer.word_right_index(), select);
     }
 
     fn move_word_right_start(&mut self, select: bool) {
@@ -1277,17 +1275,16 @@ impl Editor {
     }
 
     pub(crate) fn copy_word_right(&mut self) {
-        self.apply_operator(
-            word_target(WordKind::Unicode, WordEdge::End, Direction::Forward),
-            OperatorVerb::Copy,
-        );
+        // emacs forward-word end (no skip) — mirrors `cut_word_right`.
+        let insertion_offset = self.line_buffer.insertion_point();
+        let word_end = self.line_buffer.word_right_index();
+        self.copy_range(insertion_offset..word_end);
     }
 
     pub(crate) fn copy_big_word_right(&mut self) {
-        self.apply_operator(
-            word_target(WordKind::LongWord, WordEdge::End, Direction::Forward),
-            OperatorVerb::Copy,
-        );
+        let insertion_offset = self.line_buffer.insertion_point();
+        let big_word_end = self.line_buffer.next_whitespace();
+        self.copy_range(insertion_offset..big_word_end);
     }
 
     pub(crate) fn copy_word_right_to_next(&mut self) {
@@ -3243,6 +3240,40 @@ mod test {
         editor.run_edit_command(&EditCommand::MoveWordRight { select: true });
         assert_eq!(editor.insertion_point(), 3);
         assert_eq!(editor.get_selection(), Some((0, 3)));
+    }
+
+    // emacs forward-word completes the *current* word with no skip — the case a
+    // vi-`e` verb path gets wrong. Pin the cursor-inside-word positions that the
+    // word-start-only tests above can't see.
+
+    #[test]
+    fn move_word_right_from_midword_completes_current_word() {
+        // `M-f` from byte 2 (between the o's of "foo") rests at 3 (after "foo"),
+        // NOT 7 (which is where the vi-`e` skip would land).
+        let mut editor = editor_with("foo bar");
+        editor.move_to_position(2, false);
+        editor.run_edit_command(&EditCommand::MoveWordRight { select: false });
+        assert_eq!(editor.insertion_point(), 3);
+    }
+
+    #[test]
+    fn cut_word_right_from_midword_consumes_rest_of_word() {
+        // `M-d` from byte 2 in "foo bar" kills only "o" (the rest of "foo"),
+        // leaving "fo bar" — a vi-`e` skip would have eaten "o bar".
+        let mut editor = editor_with("foo bar");
+        editor.move_to_position(2, false);
+        editor.run_edit_command(&EditCommand::CutWordRight);
+        assert_eq!(editor.get_buffer(), "fo bar");
+        assert_eq!(editor.cut_buffer.get().0, "o");
+    }
+
+    #[test]
+    fn cut_big_word_right_from_midword_consumes_rest_of_word() {
+        let mut editor = editor_with("foo.bar baz");
+        editor.move_to_position(2, false); // inside "foo.bar" (one big WORD)
+        editor.run_edit_command(&EditCommand::CutBigWordRight);
+        assert_eq!(editor.get_buffer(), "fo baz");
+        assert_eq!(editor.cut_buffer.get().0, "o.bar");
     }
 
     // --- migration characterization -------------------------------------
