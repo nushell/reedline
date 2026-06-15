@@ -1,10 +1,12 @@
 use {
-    crate::core_editor::{
-        cursor::Cursor,
-        graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
-        line,
+    crate::{
+        core_editor::{
+            cursor::Cursor,
+            graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
+            line, word,
+        },
+        enums::{WordEdge, WordKind},
     },
-    itertools::Itertools,
     std::{convert::From, ops::Range},
     unicode_segmentation::UnicodeSegmentation,
 };
@@ -247,71 +249,33 @@ impl LineBuffer {
         prev_grapheme_boundary(&self.lines, pos)
     }
 
-    /// Cursor position *behind* the next word to the right
-    pub fn word_right_index(&self) -> usize {
-        self.lines[self.insertion_point..]
-            .split_word_bound_indices()
-            .find(|(_, word)| !is_whitespace_str(word))
-            .map(|(i, word)| self.insertion_point + i + word.len())
-            .unwrap_or_else(|| self.lines.len())
+    /// Resolve a word boundary from the cursor through the shared
+    /// [`word::locate_word`] resolver — the single definition the old per-flavor
+    /// `*_index` scans collapsed into. `inclusive` is the caret geometry (block
+    /// vs bar), which only affects a forward word-*end* (see `locate_word`).
+    fn word_boundary(
+        &self,
+        kind: WordKind,
+        edge: WordEdge,
+        forward: bool,
+        inclusive: bool,
+    ) -> usize {
+        word::locate_word(
+            &self.lines,
+            self.insertion_point,
+            kind,
+            edge,
+            forward,
+            inclusive,
+        )
     }
 
-    /// Cursor position *behind* the next WORD to the right
-    pub fn big_word_right_index(&self) -> usize {
-        let mut found_ws = false;
-
-        self.lines[self.insertion_point..]
-            .split_word_bound_indices()
-            .find(|(_, word)| {
-                found_ws = found_ws || is_whitespace_str(word);
-                found_ws && !is_whitespace_str(word)
-            })
-            .map(|(i, word)| self.insertion_point + i + word.len())
-            .unwrap_or_else(|| self.lines.len())
-    }
-
-    /// Cursor position *at end of* the next word to the right
-    pub fn word_right_end_index(&self) -> usize {
-        self.lines[self.insertion_point..]
-            .split_word_bound_indices()
-            .find_map(|(i, word)| {
-                word.grapheme_indices(true)
-                    .next_back()
-                    .map(|x| self.insertion_point + x.0 + i)
-                    .filter(|x| !is_whitespace_str(word) && *x != self.insertion_point)
-            })
-            .unwrap_or_else(|| prev_grapheme_boundary(&self.lines, self.lines.len()))
-    }
-
-    /// Cursor position *at end of* the next WORD to the right
-    pub fn big_word_right_end_index(&self) -> usize {
-        self.lines[self.insertion_point..]
-            .split_word_bound_indices()
-            .tuple_windows()
-            .find_map(|((prev_i, prev_word), (_, word))| {
-                if is_whitespace_str(word) {
-                    prev_word
-                        .grapheme_indices(true)
-                        .next_back()
-                        .map(|x| self.insertion_point + x.0 + prev_i)
-                        .filter(|x| *x != self.insertion_point)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| prev_grapheme_boundary(&self.lines, self.lines.len()))
-    }
-
-    /// Cursor position *in front of* the next word to the right
-    pub fn word_right_start_index(&self) -> usize {
-        self.lines[self.insertion_point..]
-            .split_word_bound_indices()
-            .find(|(i, word)| *i != 0 && !is_whitespace_str(word))
-            .map(|(i, _)| self.insertion_point + i)
-            .unwrap_or_else(|| self.lines.len())
-    }
-
-    /// Cursor position *in front of* the next WORD to the right
+    /// Cursor position *in front of* the next WORD to the right.
+    ///
+    /// Kept as a dedicated scan rather than lowered onto [`word::locate_word`]:
+    /// unlike every other word motion it skips a whole WORD when the cursor
+    /// starts on whitespace, and the boundary resolver (which never skips a
+    /// word) cannot express that.
     pub fn big_word_right_start_index(&self) -> usize {
         let mut found_ws = false;
 
@@ -321,45 +285,6 @@ impl LineBuffer {
                 found_ws = found_ws || *i != 0 && is_whitespace_str(word);
                 found_ws && *i != 0 && !is_whitespace_str(word)
             })
-            .map(|(i, _)| self.insertion_point + i)
-            .unwrap_or_else(|| self.lines.len())
-    }
-
-    /// Cursor position *in front of* the next word to the left
-    pub fn word_left_index(&self) -> usize {
-        self.lines[..self.insertion_point]
-            .split_word_bound_indices()
-            .rfind(|(_, word)| !is_whitespace_str(word))
-            .map(|(i, _)| i)
-            .unwrap_or(0)
-    }
-
-    /// Cursor position *in front of* the next WORD to the left
-    pub fn big_word_left_index(&self) -> usize {
-        self.lines[..self.insertion_point]
-            .split_word_bound_indices()
-            .fold(None, |last_word_index, (i, word)| {
-                match (last_word_index, is_whitespace_str(word)) {
-                    (None, true) => None,
-                    (None, false) => Some(i),
-                    (Some(v), true) => {
-                        if is_whitespace_str(&self.lines[i..self.insertion_point]) {
-                            Some(v)
-                        } else {
-                            None
-                        }
-                    }
-                    (Some(v), false) => Some(v),
-                }
-            })
-            .unwrap_or(0)
-    }
-
-    /// Cursor position on the next whitespace
-    pub fn next_whitespace(&self) -> usize {
-        self.lines[self.insertion_point..]
-            .split_word_bound_indices()
-            .find(|(i, word)| *i != 0 && is_whitespace_str(word))
             .map(|(i, _)| self.insertion_point + i)
             .unwrap_or_else(|| self.lines.len())
     }
@@ -413,41 +338,6 @@ impl LineBuffer {
     /// Move cursor position *in front of* the next unicode grapheme to the left
     pub fn move_left(&mut self) {
         self.insertion_point = self.grapheme_left_index();
-    }
-
-    /// Move cursor position *in front of* the next word to the left
-    pub fn move_word_left(&mut self) {
-        self.insertion_point = self.word_left_index();
-    }
-
-    /// Move cursor position *in front of* the next WORD to the left
-    pub fn move_big_word_left(&mut self) {
-        self.insertion_point = self.big_word_left_index();
-    }
-
-    /// Move cursor position *behind* the next word to the right
-    pub fn move_word_right(&mut self) {
-        self.insertion_point = self.word_right_index();
-    }
-
-    /// Move cursor position to the start of the next word
-    pub fn move_word_right_start(&mut self) {
-        self.insertion_point = self.word_right_start_index();
-    }
-
-    /// Move cursor position to the start of the next WORD
-    pub fn move_big_word_right_start(&mut self) {
-        self.insertion_point = self.big_word_right_start_index();
-    }
-
-    /// Move cursor position to the end of the next word
-    pub fn move_word_right_end(&mut self) {
-        self.insertion_point = self.word_right_end_index();
-    }
-
-    /// Move cursor position to the end of the next WORD
-    pub fn move_big_word_right_end(&mut self) {
-        self.insertion_point = self.big_word_right_end_index();
     }
 
     ///Insert a single character at the insertion point and move right
@@ -564,7 +454,8 @@ impl LineBuffer {
 
     /// Gets the range of the word the current edit position is pointing to
     pub fn current_word_range(&self) -> Range<usize> {
-        let right_index = self.word_right_index();
+        // Trailing boundary of the word under/after the cursor (bar geometry).
+        let right_index = self.word_boundary(WordKind::Unicode, WordEdge::End, true, false);
         let left_index = self.lines[..right_index]
             .split_word_bound_indices()
             .rfind(|(_, word)| !is_whitespace_str(word))
@@ -595,7 +486,7 @@ impl LineBuffer {
         let change_range = self.current_word_range();
         let uppercased = self.get_buffer()[change_range.clone()].to_uppercase();
         self.replace_range(change_range, &uppercased);
-        self.move_word_right();
+        self.insertion_point = self.word_boundary(WordKind::Unicode, WordEdge::End, true, false);
     }
 
     /// Lowercases the current word
@@ -603,7 +494,7 @@ impl LineBuffer {
         let change_range = self.current_word_range();
         let uppercased = self.get_buffer()[change_range.clone()].to_lowercase();
         self.replace_range(change_range, &uppercased);
-        self.move_word_right();
+        self.insertion_point = self.word_boundary(WordKind::Unicode, WordEdge::End, true, false);
     }
 
     /// Switches the ASCII case of the current char
@@ -633,8 +524,10 @@ impl LineBuffer {
     /// point right one grapheme.
     pub fn capitalize_char(&mut self) {
         if self.on_whitespace() {
-            self.move_word_right();
-            self.move_word_left();
+            self.insertion_point =
+                self.word_boundary(WordKind::Unicode, WordEdge::End, true, false);
+            self.insertion_point =
+                self.word_boundary(WordKind::Unicode, WordEdge::Start, false, false);
         }
         let insertion_offset = self.insertion_point();
         let right_index = self.grapheme_right_index();
@@ -668,25 +561,26 @@ impl LineBuffer {
 
     /// Deletes one word to the left
     pub fn delete_word_left(&mut self) {
-        let left_word_index = self.word_left_index();
+        let left_word_index = self.word_boundary(WordKind::Unicode, WordEdge::Start, false, false);
         self.clear_range(left_word_index..self.insertion_point());
         self.insertion_point = left_word_index;
     }
 
     /// Deletes one word to the right
     pub fn delete_word_right(&mut self) {
-        let right_word_index = self.word_right_index();
+        let right_word_index = self.word_boundary(WordKind::Unicode, WordEdge::End, true, false);
         self.clear_range(self.insertion_point()..right_word_index);
     }
 
     /// Swaps current word with word on right
     pub fn swap_words(&mut self) {
         let word_1_range = self.current_word_range();
-        self.move_word_right();
+        self.insertion_point = self.word_boundary(WordKind::Unicode, WordEdge::End, true, false);
         let word_2_range = self.current_word_range();
 
         if word_1_range != word_2_range {
-            self.move_word_left();
+            self.insertion_point =
+                self.word_boundary(WordKind::Unicode, WordEdge::Start, false, false);
             let insertion_line = self.get_buffer();
             let word_1 = insertion_line[word_1_range.clone()].to_string();
             let word_2 = insertion_line[word_2_range.clone()].to_string();
@@ -1068,16 +962,18 @@ impl LineBuffer {
 
     /// Get the range of the current big word (WORD) at cursor position
     pub(crate) fn current_big_word_range(&self) -> Range<usize> {
-        let right_index = self.big_word_right_end_index();
+        // Trailing boundary of the big WORD under/after the cursor (grapheme-safe
+        // end, unlike the old `*_end_index + 1` which stepped one *byte*).
+        let end = self.word_boundary(WordKind::LongWord, WordEdge::End, true, false);
 
         let mut left_index = 0;
-        for (i, char) in self.lines[..right_index].char_indices().rev() {
+        for (i, char) in self.lines[..end].char_indices().rev() {
             if char.is_whitespace() {
                 left_index = i + char.len_utf8();
                 break;
             }
         }
-        left_index..(right_index + 1)
+        left_index..end
     }
 
     /// Return range of `range` expanded with neighbouring whitespace for "around" operations
@@ -1118,6 +1014,7 @@ fn is_whitespace_str(s: &str) -> bool {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::core_editor::word::locate_word;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -1259,7 +1156,7 @@ mod test {
     #[test]
     fn delete_word_right_works() {
         let mut line_buffer = buffer_with("This is a test");
-        line_buffer.move_word_left();
+        line_buffer.set_insertion_point(10); // start of "test"
         line_buffer.delete_word_right();
 
         let expected_line_buffer = buffer_with("This is a ");
@@ -1283,18 +1180,23 @@ mod test {
     #[case("word😇 with emoji", 0, 3)] // (Emojis are a separate word)
     #[case("word😇 with emoji", 3, 4)] // Moves to end of "emoji word" as it is one grapheme, on top of the first byte
     #[case("😇", 0, 0)] // More UTF-8 shenanigans
-    fn test_move_word_right_end(
+    fn locate_unicode_word_right_end_multibyte(
         #[case] input: &str,
         #[case] in_location: usize,
         #[case] expected: usize,
     ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(in_location);
-
-        line_buffer.move_word_right_end();
-
-        assert_eq!(line_buffer.insertion_point(), expected);
-        line_buffer.assert_valid();
+        // vi-`e` on-char word-end (the old `move_word_right_end`), now resolved
+        // through `locate_word` with block geometry — exercising multibyte,
+        // multiline, and emoji boundaries.
+        let i = locate_word(
+            input,
+            in_location,
+            WordKind::Unicode,
+            WordEdge::End,
+            true,
+            true,
+        );
+        assert_eq!(i, expected);
     }
 
     #[rstest]
@@ -1844,17 +1746,28 @@ mod test {
         line_buffer.assert_valid();
     }
 
+    // The `*_index` scans were deleted in favor of `word::locate_word`; these
+    // keep their position pins, now asserted directly against the resolver with
+    // the matching flavor / edge / direction. (`inclusive` is the caret
+    // geometry; the on-char `End` cases pin the block / vi-`e` reading.)
     #[rstest]
     #[case("abc def ghi", 10, 8)]
     #[case("abc def-ghi", 10, 8)]
     #[case("abc def.ghi", 10, 4)]
-    fn test_word_left_index(#[case] input: &str, #[case] position: usize, #[case] expected: usize) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
-
-        let index = line_buffer.word_left_index();
-
-        assert_eq!(index, expected);
+    fn locate_unicode_word_left(
+        #[case] input: &str,
+        #[case] position: usize,
+        #[case] expected: usize,
+    ) {
+        let i = locate_word(
+            input,
+            position,
+            WordKind::Unicode,
+            WordEdge::Start,
+            false,
+            false,
+        );
+        assert_eq!(i, expected);
     }
 
     #[rstest]
@@ -1862,36 +1775,44 @@ mod test {
     #[case("abc def-ghi", 10, 4)]
     #[case("abc def.ghi", 10, 4)]
     #[case("abc def   i", 10, 4)]
-    fn test_big_word_left_index(
+    fn locate_long_word_left(
         #[case] input: &str,
         #[case] position: usize,
         #[case] expected: usize,
     ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
-
-        let index = line_buffer.big_word_left_index();
-
-        assert_eq!(index, expected,);
+        let i = locate_word(
+            input,
+            position,
+            WordKind::LongWord,
+            WordEdge::Start,
+            false,
+            false,
+        );
+        assert_eq!(i, expected);
     }
 
     #[rstest]
     #[case("abc def ghi", 0, 4)]
     #[case("abc-def ghi", 0, 3)]
     #[case("abc.def ghi", 0, 8)]
-    fn test_word_right_start_index(
+    fn locate_unicode_word_right_start(
         #[case] input: &str,
         #[case] position: usize,
         #[case] expected: usize,
     ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
-
-        let index = line_buffer.word_right_start_index();
-
-        assert_eq!(index, expected);
+        let i = locate_word(
+            input,
+            position,
+            WordKind::Unicode,
+            WordEdge::Start,
+            true,
+            false,
+        );
+        assert_eq!(i, expected);
     }
 
+    // `big_word_right_start_index` is the one motion `locate_word` can't express
+    // (it skips a WORD from whitespace), so it survives as a dedicated scan.
     #[rstest]
     #[case("abc def ghi", 0, 4)]
     #[case("abc-def ghi", 0, 8)]
@@ -1916,17 +1837,20 @@ mod test {
     #[case("abc", 1, 2)]
     #[case("abc", 2, 2)]
     #[case("abc def", 2, 6)]
-    fn test_word_right_end_index(
+    fn locate_unicode_word_right_end(
         #[case] input: &str,
         #[case] position: usize,
         #[case] expected: usize,
     ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
-
-        let index = line_buffer.word_right_end_index();
-
-        assert_eq!(index, expected);
+        let i = locate_word(
+            input,
+            position,
+            WordKind::Unicode,
+            WordEdge::End,
+            true,
+            true,
+        );
+        assert_eq!(i, expected);
     }
 
     #[rstest]
@@ -1939,158 +1863,52 @@ mod test {
     #[case("abc", 2, 2)]
     #[case("abc def", 2, 6)]
     #[case("abc-def", 6, 6)]
-    fn test_big_word_right_end_index(
+    fn locate_long_word_right_end(
         #[case] input: &str,
         #[case] position: usize,
         #[case] expected: usize,
     ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
-
-        let index = line_buffer.big_word_right_end_index();
-
-        assert_eq!(index, expected);
-    }
-
-    // --- diff-harness: `word::locate_word` vs the legacy `*_index` functions ---
-    // The target for the `locate_word` scaffold. These panic on `todo!()` until
-    // the scan is written, then pin that the one resolver reproduces all six
-    // ad-hoc functions. (Where vi-correct rules *should* differ from a legacy
-    // function, change that case here and note it — a deliberate fix, not a match.)
-    use crate::core_editor::word::locate_word;
-    use crate::enums::{WordEdge, WordKind};
-
-    fn at(input: &str, pos: usize) -> LineBuffer {
-        let mut lb = buffer_with(input);
-        lb.set_insertion_point(pos);
-        lb
-    }
-
-    #[rstest]
-    #[case("abc def ghi", 0)]
-    #[case("abc-def ghi", 0)]
-    fn locate_word_matches_word_right_start(#[case] s: &str, #[case] p: usize) {
-        assert_eq!(
-            locate_word(s, p, WordKind::Word, WordEdge::Start, true),
-            at(s, p).word_right_start_index()
+        let i = locate_word(
+            input,
+            position,
+            WordKind::LongWord,
+            WordEdge::End,
+            true,
+            true,
         );
+        assert_eq!(i, expected);
     }
 
-    // vi-correct divergences from the legacy unicode-word functions: vi treats
-    // all punctuation as a word break, but `split_word_bound_indices` keeps
-    // `abc.def` as one word (a `.` between letters is unicode "MidNumLet"). These
-    // are the deliberate fixes the classifier brings — assert the vi value, not
-    // the legacy function's.
+    // vi-correct divergence from the legacy unicode-word scans: vi treats all
+    // punctuation as a word break, but `split_word_bound_indices` keeps
+    // `abc.def` as one word (a `.` between letters is unicode "MidNumLet"). This
+    // is the deliberate fix the classifier brings — pin the vi value.
     #[test]
     fn locate_word_vi_breaks_on_punctuation() {
         // `w` from start of "abc.def ghi" stops on the `.` (byte 3), not "ghi" (8)
         assert_eq!(
-            locate_word("abc.def ghi", 0, WordKind::Word, WordEdge::Start, true),
+            locate_word(
+                "abc.def ghi",
+                0,
+                WordKind::Word,
+                WordEdge::Start,
+                true,
+                false
+            ),
             3
         );
         // `b` from "abc def.ghi" end lands on "ghi"'s start (byte 8), not "def" (4)
         assert_eq!(
-            locate_word("abc def.ghi", 10, WordKind::Word, WordEdge::Start, false),
+            locate_word(
+                "abc def.ghi",
+                10,
+                WordKind::Word,
+                WordEdge::Start,
+                false,
+                false
+            ),
             8
         );
-    }
-
-    #[rstest]
-    #[case("abc-def ghi", 0)]
-    #[case("abc def ghi", 0)]
-    fn locate_word_matches_big_word_right_start(#[case] s: &str, #[case] p: usize) {
-        assert_eq!(
-            locate_word(s, p, WordKind::LongWord, WordEdge::Start, true),
-            at(s, p).big_word_right_start_index()
-        );
-    }
-
-    #[rstest]
-    #[case("abc def ghi", 0)]
-    #[case("abc-def ghi", 0)]
-    #[case("abc", 1)]
-    fn locate_word_matches_word_right_end(#[case] s: &str, #[case] p: usize) {
-        assert_eq!(
-            locate_word(s, p, WordKind::Word, WordEdge::End, true),
-            at(s, p).word_right_end_index()
-        );
-    }
-
-    #[rstest]
-    #[case("abc def ghi", 0)]
-    #[case("abc-def ghi", 0)]
-    fn locate_word_matches_big_word_right_end(#[case] s: &str, #[case] p: usize) {
-        assert_eq!(
-            locate_word(s, p, WordKind::LongWord, WordEdge::End, true),
-            at(s, p).big_word_right_end_index()
-        );
-    }
-
-    // `Unicode` (emacs `M-f`/`M-b`) must reproduce the legacy unicode-seg
-    // `*_index` *exactly* — including the punctuation/contraction cases where
-    // vi-`Word` deliberately diverges. This is the equivalence that lets the
-    // emacs `MoveWord*` bindings later lower onto `locate_word` unchanged.
-    #[rstest]
-    #[case("abc def ghi", 0)]
-    #[case("abc.def ghi", 0)] // `.` kept inside the word (UAX-29) — unlike vi-`Word`
-    #[case("can't stop", 0)] // contraction stays one word
-    fn unicode_matches_word_right_start(#[case] s: &str, #[case] p: usize) {
-        assert_eq!(
-            locate_word(s, p, WordKind::Unicode, WordEdge::Start, true),
-            at(s, p).word_right_start_index()
-        );
-    }
-
-    #[rstest]
-    #[case("abc def ghi", 0)]
-    #[case("abc.def ghi", 0)]
-    fn unicode_matches_word_right_end(#[case] s: &str, #[case] p: usize) {
-        assert_eq!(
-            locate_word(s, p, WordKind::Unicode, WordEdge::End, true),
-            at(s, p).word_right_end_index()
-        );
-    }
-
-    #[rstest]
-    #[case("abc def.ghi", 10)]
-    #[case("abc def ghi", 7)]
-    fn unicode_matches_word_left(#[case] s: &str, #[case] p: usize) {
-        assert_eq!(
-            locate_word(s, p, WordKind::Unicode, WordEdge::Start, false),
-            at(s, p).word_left_index()
-        );
-    }
-
-    #[rstest]
-    #[case("abc def ghi", 10)]
-    fn locate_word_matches_word_left(#[case] s: &str, #[case] p: usize) {
-        assert_eq!(
-            locate_word(s, p, WordKind::Word, WordEdge::Start, false),
-            at(s, p).word_left_index()
-        );
-    }
-
-    #[rstest]
-    #[case("abc def ghi", 10)]
-    #[case("abc def-ghi", 10)]
-    fn locate_word_matches_big_word_left(#[case] s: &str, #[case] p: usize) {
-        assert_eq!(
-            locate_word(s, p, WordKind::LongWord, WordEdge::Start, false),
-            at(s, p).big_word_left_index()
-        );
-    }
-
-    #[rstest]
-    #[case("abc def", 0, 3)]
-    #[case("abc def ghi", 3, 7)]
-    #[case("abc", 1, 3)]
-    fn test_next_whitespace(#[case] input: &str, #[case] position: usize, #[case] expected: usize) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
-
-        let index = line_buffer.next_whitespace();
-
-        assert_eq!(index, expected);
     }
 
     #[rstest]
