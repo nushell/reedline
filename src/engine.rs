@@ -417,6 +417,18 @@ impl Reedline {
         self
     }
 
+    /// Control whether the cursor crosses line boundaries on left/right motions
+    /// in a block caret (vi normal/visual mode). When `true` (the default), `l`
+    /// at the end of a line moves to the next line's first character and `h` at
+    /// column 0 to the previous line's last; when `false`, both stop at the line
+    /// edge (vim's default `h`/`l`). Has no effect on emacs or vi insert mode,
+    /// whose bar caret always moves freely across lines.
+    #[must_use]
+    pub fn with_cross_line_cursor(mut self, cross_line_cursor: bool) -> Self {
+        self.editor.set_cross_line_cursor(cross_line_cursor);
+        self
+    }
+
     /// Turn on partial completions. These completions will fill the buffer with the
     /// smallest common string from all the options
     #[must_use]

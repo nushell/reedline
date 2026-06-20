@@ -1,6 +1,7 @@
 use super::{edit_stack::EditStack, Clipboard, Cursor, LineBuffer, Movement};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
+use crate::core_editor::graphemes::{next_grapheme_boundary, prev_grapheme_boundary};
 use crate::core_editor::{commit, line, operator_span, resolve_motion, RestPolicy};
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
 use crate::prompt::PromptEditMode;
@@ -26,6 +27,13 @@ pub struct Editor {
     /// Lets the pre-paint sweep settle a command-less mode transition that
     /// would otherwise never re-normalize under the new policy.
     policy_unsettled: bool,
+    /// When `true`, a grapheme left/right motion under a block caret (vi normal)
+    /// crosses line terminators — `l` at a line's end lands on the next line's
+    /// first grapheme, `h` at column 0 on the previous line's last. When `false`
+    /// the motion is clamped to the current line (vim's default `h`/`l`). Bar
+    /// carets (emacs, vi insert) always cross regardless, since a bar may rest in
+    /// the gap around a `\n`. Defaults to `true`.
+    cross_line_cursor: bool,
 }
 
 enum OperatorVerb {
@@ -61,6 +69,7 @@ impl Default for Editor {
             last_undo_behavior: UndoBehavior::CreateUndoPoint,
             edit_mode: PromptEditMode::Default,
             policy_unsettled: false,
+            cross_line_cursor: true,
         }
     }
 }
@@ -382,6 +391,12 @@ impl Editor {
         self.policy_unsettled
     }
 
+    /// Set whether a block-caret left/right motion crosses line terminators (see
+    /// the [`cross_line_cursor`](Self::cross_line_cursor) field).
+    pub(crate) fn set_cross_line_cursor(&mut self, cross: bool) {
+        self.cross_line_cursor = cross;
+    }
+
     /// Adopt `mode`'s rest policy *without* committing the cursor.
     ///
     /// Called at the parse seam, before the events a mode transition emitted
@@ -428,19 +443,51 @@ impl Editor {
         let origin = self.insertion_point();
         let head = resolve_motion(buf, origin, target, self.block_caret()).head;
         // A grapheme step lands on the adjacent rest the caret may take. Under a
-        // cell-caret policy (vi normal/visual) it can't cross the line
-        // terminator; under `Between` (emacs, vi insert) it moves freely. The
-        // other targets aim at buffer landmarks whose line-crossing is fixed,
-        // so only `Grapheme` consults the policy.
+        // cell-caret policy (vi normal/visual) the step needs help at a line
+        // terminator — either clamp to the line, or skip across the `\n`. Under
+        // `Between` (emacs, vi insert) the bar moves freely either way. The other
+        // targets aim at buffer landmarks whose line-crossing is fixed, so only
+        // `Grapheme` consults the policy.
         if let MotionTarget::Grapheme(direction) = target {
             if self.block_caret() {
-                return match direction {
-                    Direction::Backward => head.max(line::start_of_line(buf, origin)),
-                    Direction::Forward => head.min(line::end_of_line(buf, origin)),
+                return if self.cross_line_cursor {
+                    self.cross_line_grapheme(buf, head, direction)
+                } else {
+                    match direction {
+                        Direction::Backward => head.max(line::start_of_line(buf, origin)),
+                        Direction::Forward => head.min(line::end_of_line(buf, origin)),
+                    }
                 };
             }
         }
         head
+    }
+
+    /// Land a block-caret grapheme step on a real cell when it falls on a line
+    /// terminator, so `l`/`h` cross lines instead of resting on the `\n`. `head`
+    /// is the raw one-grapheme step from the origin.
+    ///
+    /// Forward: if the step lands on a terminator, skip across it onto the next
+    /// line's first grapheme. Backward: if it lands on a terminator, step once
+    /// more onto the previous line's last grapheme — unless the line before is
+    /// *also* a terminator (an empty line), where column 0 is the only cell, so
+    /// the caret rests there.
+    fn cross_line_grapheme(&self, buf: &str, head: usize, direction: Direction) -> usize {
+        let is_terminator = |pos: usize| buf[pos..].starts_with(['\r', '\n']);
+        if !is_terminator(head) {
+            return head;
+        }
+        match direction {
+            Direction::Forward => next_grapheme_boundary(buf, head),
+            Direction::Backward => {
+                let back = prev_grapheme_boundary(buf, head);
+                if is_terminator(back) {
+                    head // previous line is empty — rest on its column 0
+                } else {
+                    back
+                }
+            }
+        }
     }
 
     /// Caret geometry of the active mode: `true` for a block caret (vi normal /
@@ -561,7 +608,21 @@ impl Editor {
     }
 
     pub(crate) fn is_cursor_at_buffer_end(&self) -> bool {
-        self.line_buffer.insertion_point() == self.get_buffer().len()
+        let buf = self.get_buffer();
+        let cursor = self.line_buffer.cursor();
+        if self.block_caret() {
+            // Cell caret (vi normal): the resting cursor sits *on* the last
+            // grapheme, so its caret is one grapheme inward from `len`. "At the
+            // end" means that cell is the final one — nothing lies to its right.
+            // (A bare `caret() == len` check never holds here, which is why a
+            // history hint stopped completing in normal mode after the cursor
+            // became the single source of truth.)
+            next_grapheme_boundary(buf, cursor.caret(buf)) == buf.len()
+        } else {
+            // Bar caret (emacs / vi insert): at the end iff the head rests past
+            // the last grapheme.
+            cursor.head() == buf.len()
+        }
     }
 
     pub(crate) fn reset_undo_stack(&mut self) {
@@ -1593,8 +1654,14 @@ mod test {
 
     /// Helper: caret in insert at `at`, then the Esc seam (policy relayed
     /// without committing) followed by the backward grapheme step.
+    ///
+    /// Pins the line-clamped path (`cross_line_cursor = false`): these tests
+    /// observe the seam timing through the at-line-edge behavior, which is only
+    /// stable when the cell caret can't cross the newline. Cross-line wrapping
+    /// (now the default) is covered by its own tests.
     fn esc_back_from_insert(buffer: &str, at: usize) -> Editor {
         let mut editor = vi_editor(buffer, PromptViMode::Insert);
+        editor.set_cross_line_cursor(false);
         editor.line_buffer.set_insertion_point(at);
         editor.sync_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
         editor.run_edit_command(&EditCommand::Move(MotionTarget::Grapheme(
@@ -2290,6 +2357,65 @@ mod test {
         assert_eq!(editor.line_buffer().selection_anchor(), Some(0));
         assert_eq!(editor.insertion_point(), 3);
         assert_eq!(editor.get_selection(), Some((0, 3)));
+    }
+
+    /// Drive a single block-caret grapheme motion from `start` in vi normal mode
+    /// and return the resulting insertion point.
+    #[cfg(test)]
+    fn normal_mode_step(buf: &str, start: usize, cross: bool, cmd: &EditCommand) -> usize {
+        let mut e = editor_with(buf);
+        e.set_cross_line_cursor(cross);
+        e.line_buffer.set_insertion_point(start);
+        e.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        e.run_edit_command(cmd);
+        e.insertion_point()
+    }
+
+    #[test]
+    fn cross_line_cursor_on_crosses_newline() {
+        let r = &EditCommand::MoveRight { select: false };
+        let l = &EditCommand::MoveLeft { select: false };
+        // "ab\ncd": l at end of line 1 ('b'=1) lands on line 2's first char ('c'=3);
+        // h at line 2's start ('c'=3) lands on line 1's last char ('b'=1).
+        assert_eq!(normal_mode_step("ab\ncd", 1, true, r), 3);
+        assert_eq!(normal_mode_step("ab\ncd", 3, true, l), 1);
+        // `\r\n` is one grapheme: crossing skips the whole terminator.
+        // "ab\r\ncd": 'b'=1, 'c'=4.
+        assert_eq!(normal_mode_step("ab\r\ncd", 1, true, r), 4);
+        assert_eq!(normal_mode_step("ab\r\ncd", 4, true, l), 1);
+    }
+
+    #[test]
+    fn cross_line_cursor_off_clamps_to_line() {
+        let r = &EditCommand::MoveRight { select: false };
+        let l = &EditCommand::MoveLeft { select: false };
+        // Opt-out (vim default): the motion stops at the line edge instead of
+        // crossing — `l` from 'b' does not reach line 2's 'c' (3), `h` from 'c'
+        // does not reach line 1's 'b' (1).
+        assert_ne!(normal_mode_step("ab\ncd", 1, false, r), 3);
+        assert_ne!(normal_mode_step("ab\ncd", 3, false, l), 1);
+    }
+
+    #[test]
+    fn cursor_at_buffer_end_holds_on_last_grapheme_in_normal_mode() {
+        // Regression: in vi normal mode the resting cursor sits *on* the last
+        // grapheme (OnGrapheme pulls the head back), so `caret()` is one inward
+        // from `len`. "At buffer end" must still hold there, or a history hint
+        // never completes in normal mode (it did before the cursor refactor).
+        let mut editor = editor_with("abc");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.run_edit_command(&EditCommand::MoveToLineEnd { select: false });
+        assert!(editor.is_cursor_at_buffer_end());
+        // Multibyte: resting on `é` (a 2-byte grapheme) must report end too.
+        let mut editor = editor_with("caf\u{e9}");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.run_edit_command(&EditCommand::MoveToLineEnd { select: false });
+        assert!(editor.is_cursor_at_buffer_end());
+        // Not at the end: resting on the first char of a multi-char buffer.
+        let mut editor = editor_with("abc");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.run_edit_command(&EditCommand::MoveToLineStart { select: false });
+        assert!(!editor.is_cursor_at_buffer_end());
     }
 
     #[test]
