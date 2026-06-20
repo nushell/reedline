@@ -271,25 +271,6 @@ impl LineBuffer {
         word::locate_word(&self.lines, self.cursor.head(), kind, edge, forward)
     }
 
-    /// Cursor position *in front of* the next WORD to the right.
-    ///
-    /// Kept as a dedicated scan rather than lowered onto [`word::locate_word`]:
-    /// unlike every other word motion it skips a whole WORD when the cursor
-    /// starts on whitespace, and the boundary resolver (which never skips a
-    /// word) cannot express that.
-    pub fn big_word_right_start_index(&self) -> usize {
-        let mut found_ws = false;
-
-        self.lines[self.cursor.head()..]
-            .split_word_bound_indices()
-            .find(|(i, word)| {
-                found_ws = found_ws || *i != 0 && is_whitespace_str(word);
-                found_ws && *i != 0 && !is_whitespace_str(word)
-            })
-            .map(|(i, _)| self.cursor.head() + i)
-            .unwrap_or_else(|| self.lines.len())
-    }
-
     /// Returns true if cursor is at the end of the buffer with preceding whitespace.
     fn at_end_of_line_with_preceding_whitespace(&self) -> bool {
         !self.is_empty() // No point checking if empty
@@ -1007,7 +988,7 @@ impl LineBuffer {
 }
 
 /// Match any sequence of characters that are considered a word boundary
-fn is_whitespace_str(s: &str) -> bool {
+pub(crate) fn is_whitespace_str(s: &str) -> bool {
     s.chars().all(char::is_whitespace)
 }
 
@@ -1756,23 +1737,22 @@ mod test {
         assert_eq!(i, expected);
     }
 
-    // `big_word_right_start_index` is the one motion `locate_word` can't express
-    // (it skips a WORD from whitespace), so it survives as a dedicated scan.
+    // Big-WORD start, forward — vi `W`. Lowers onto `locate_word(LongWord, Start)`
+    // like every other word motion; punctuation fuses into one WORD, and from
+    // whitespace it lands on the *next* WORD with no skip (matching vi and the
+    // small-word `w`, not the old dedicated scan that jumped a word ahead).
     #[rstest]
     #[case("abc def ghi", 0, 4)]
-    #[case("abc-def ghi", 0, 8)]
+    #[case("abc-def ghi", 0, 8)] // punctuation kept whole by the big-WORD class
     #[case("abc.def ghi", 0, 8)]
-    fn test_big_word_right_start_index(
+    #[case("  lead trail", 0, 2)] // from whitespace: next WORD, not the one after
+    fn locate_big_word_right_start(
         #[case] input: &str,
         #[case] position: usize,
         #[case] expected: usize,
     ) {
-        let mut line_buffer = buffer_with(input);
-        line_buffer.set_insertion_point(position);
-
-        let index = line_buffer.big_word_right_start_index();
-
-        assert_eq!(index, expected);
+        let i = locate_word(input, position, WordKind::LongWord, WordEdge::Start, true);
+        assert_eq!(i, expected);
     }
 
     // vi-correct divergence from the legacy unicode-word scans: vi treats all

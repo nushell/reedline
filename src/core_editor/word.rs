@@ -16,6 +16,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::core_editor::graphemes::next_grapheme_boundary;
+use crate::core_editor::line_buffer::is_whitespace_str;
 use crate::enums::{WordEdge, WordKind};
 
 /// Classification of a character for word-boundary detection.
@@ -161,31 +162,30 @@ pub(crate) fn locate_word(
 /// boundary. The block-caret `e` rendering is applied by the identity at the top
 /// of [`locate_word`], so this only ever computes exclusive boundaries.
 fn locate_unicode_word(buf: &str, origin: usize, edge: WordEdge, forward: bool) -> usize {
-    let is_ws = |w: &str| w.chars().all(char::is_whitespace);
     match (forward, edge) {
         // `w` — start of the next word (skip the cursor's own segment + whitespace).
         (true, WordEdge::Start) => buf[origin..]
             .split_word_bound_indices()
-            .find(|(i, w)| *i != 0 && !is_ws(w))
+            .find(|(i, w)| *i != 0 && !is_whitespace_str(w))
             .map_or(buf.len(), |(i, _)| origin + i),
         // `M-f` — the trailing boundary of the next word (the gap after its last
         // grapheme), strictly past origin so a caret mid-word completes it.
         (true, WordEdge::End) => buf[origin..]
             .split_word_bound_indices()
-            .filter(|(_, w)| !is_ws(w))
+            .filter(|(_, w)| !is_whitespace_str(w))
             .find_map(|(i, w)| (origin + i + w.len() > origin).then_some(origin + i + w.len()))
             .unwrap_or(buf.len()),
         // `b` — start of the previous word.
         (false, WordEdge::Start) => buf[..origin]
             .split_word_bound_indices()
-            .rfind(|(_, w)| !is_ws(w))
+            .rfind(|(_, w)| !is_whitespace_str(w))
             .map_or(0, |(i, _)| i),
         // `ge` — last grapheme of the previous word. No legacy reference (vi `ge`
         // uses a class flavor); defined here only to keep the resolver total.
         (false, WordEdge::End) => buf[..origin]
             .split_word_bound_indices()
             .rev()
-            .find(|(_, w)| !is_ws(w))
+            .find(|(_, w)| !is_whitespace_str(w))
             .and_then(|(i, w)| w.grapheme_indices(true).next_back().map(|(gi, _)| i + gi))
             .unwrap_or(0),
     }

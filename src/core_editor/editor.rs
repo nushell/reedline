@@ -842,12 +842,10 @@ impl Editor {
     }
 
     fn cut_big_word_right_to_next(&mut self) {
-        // `big_word_right_start_index` skips a word when the cursor starts on
-        // whitespace — a quirk the `Word{Start}` verb path doesn't share. Keep
-        // the legacy index so this stays byte-for-byte behavior-preserving.
-        let insertion_offset = self.line_buffer.insertion_point();
-        let next_big_word_start = self.line_buffer.big_word_right_start_index();
-        self.cut_range(insertion_offset..next_big_word_start);
+        self.apply_operator(
+            word_target(WordKind::LongWord, WordEdge::Start, Direction::Forward),
+            OperatorVerb::Cut,
+        );
     }
 
     fn cut_char(&mut self) {
@@ -1087,9 +1085,10 @@ impl Editor {
     }
 
     fn move_big_word_right_start(&mut self, select: bool) {
-        // `big_word_right_start_index` skips a word from whitespace (see
-        // `cut_big_word_right_to_next`); keep it to stay behavior-preserving.
-        self.move_to_position(self.line_buffer.big_word_right_start_index(), select);
+        self.apply_move(
+            word_target(WordKind::LongWord, WordEdge::Start, Direction::Forward),
+            select,
+        );
     }
 
     fn move_word_right_end(&mut self, select: bool) {
@@ -1423,10 +1422,10 @@ impl Editor {
     }
 
     pub(crate) fn copy_big_word_right_to_next(&mut self) {
-        // Legacy `big_word_right_start_index` quirk — mirrors `cut_big_word_right_to_next`.
-        let insertion_offset = self.line_buffer.insertion_point();
-        let next_big_word_start = self.line_buffer.big_word_right_start_index();
-        self.copy_range(insertion_offset..next_big_word_start);
+        self.apply_operator(
+            word_target(WordKind::LongWord, WordEdge::Start, Direction::Forward),
+            OperatorVerb::Copy,
+        );
     }
 
     pub(crate) fn copy_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
@@ -3492,9 +3491,8 @@ mod test {
                     (EditCommand::MoveWordRightStart { select: false }, |lb| {
                         wb(lb, WordKind::Unicode, WordEdge::Start, true, false)
                     }),
-                    // the surviving dedicated scan (whitespace-skip quirk)
                     (EditCommand::MoveBigWordRightStart { select: false }, |lb| {
-                        lb.big_word_right_start_index()
+                        wb(lb, WordKind::LongWord, WordEdge::Start, true, false)
                     }),
                     // vi-`e` on-char reading, forced block geometry
                     (EditCommand::MoveWordRightEnd { select: false }, |lb| {
@@ -3560,7 +3558,7 @@ mod test {
                     (
                         EditCommand::CutBigWordRightToNext,
                         EditCommand::CopyBigWordRightToNext,
-                        |lb, ip| (ip, lb.big_word_right_start_index()),
+                        |lb, ip| (ip, wb(lb, WordKind::LongWord, WordEdge::Start, true, false)),
                     ),
                 ];
                 for (cut_cmd, copy_cmd, legacy) in ops {
