@@ -610,14 +610,21 @@ impl Editor {
     pub(crate) fn is_cursor_at_buffer_end(&self) -> bool {
         let buf = self.get_buffer();
         let cursor = self.line_buffer.cursor();
+        // An active selection is never a clean end-of-buffer point. Completing a
+        // history hint (or appending) here would run through `delete_selection`
+        // and clobber the selection — so report `false`, matching the old
+        // caret-based check, which a forward selection's caret (one inward from
+        // `len`) already failed.
+        if !cursor.is_empty() {
+            return false;
+        }
         if self.block_caret() {
-            // Cell caret (vi normal): the resting cursor sits *on* the last
-            // grapheme, so its caret is one grapheme inward from `len`. "At the
-            // end" means that cell is the final one — nothing lies to its right.
-            // (A bare `caret() == len` check never holds here, which is why a
-            // history hint stopped completing in normal mode after the cursor
-            // became the single source of truth.)
-            next_grapheme_boundary(buf, cursor.caret(buf)) == buf.len()
+            // Cell caret (vi normal): the resting point sits *on* the last
+            // grapheme, one inward from `len`. "At the end" means that cell is the
+            // final one — nothing lies to its right. (A bare `head == len` check
+            // never holds here, which is why a history hint stopped completing in
+            // normal mode after the cursor became the single source of truth.)
+            next_grapheme_boundary(buf, cursor.head()) == buf.len()
         } else {
             // Bar caret (emacs / vi insert): at the end iff the head rests past
             // the last grapheme.
@@ -635,6 +642,15 @@ impl Editor {
 
     pub(crate) fn move_to_end(&mut self, select: bool) {
         self.move_to_position(self.line_buffer.len(), select);
+    }
+
+    /// Place the edit point *past the last grapheme* (at `len`) so the next
+    /// insert appends rather than splitting. A block caret rests one grapheme
+    /// inward from the end, so a plain insert there lands *before* the final
+    /// character — accepting a trailing history hint must append instead. Does
+    /// not commit, so the following `InsertString` reads this position.
+    pub(crate) fn prepare_append_at_buffer_end(&mut self) {
+        self.line_buffer.set_insertion_point(self.line_buffer.len());
     }
 
     pub(crate) fn move_to_line_start(&mut self, select: bool) {
@@ -2397,6 +2413,26 @@ mod test {
     }
 
     #[test]
+    fn append_at_buffer_end_appends_past_block_caret() {
+        // Regression: accepting a history hint in vi normal mode must append
+        // *after* the last char. The block caret rests on the last grapheme, so
+        // a plain insert would split it ("abc" + "def" -> "abdefc").
+        let mut editor = editor_with("abc");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.run_edit_command(&EditCommand::MoveToLineEnd { select: false });
+        editor.prepare_append_at_buffer_end();
+        editor.run_edit_command(&EditCommand::InsertString("def".into()));
+        assert_eq!(editor.get_buffer(), "abcdef");
+        // Multibyte last grapheme must not be split either.
+        let mut editor = editor_with("caf\u{e9}");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.run_edit_command(&EditCommand::MoveToLineEnd { select: false });
+        editor.prepare_append_at_buffer_end();
+        editor.run_edit_command(&EditCommand::InsertString("X".into()));
+        assert_eq!(editor.get_buffer(), "caf\u{e9}X");
+    }
+
+    #[test]
     fn cursor_at_buffer_end_holds_on_last_grapheme_in_normal_mode() {
         // Regression: in vi normal mode the resting cursor sits *on* the last
         // grapheme (OnGrapheme pulls the head back), so `caret()` is one inward
@@ -2415,6 +2451,16 @@ mod test {
         let mut editor = editor_with("abc");
         editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
         editor.run_edit_command(&EditCommand::MoveToLineStart { select: false });
+        assert!(!editor.is_cursor_at_buffer_end());
+        // An active selection reaching the end is NOT a clean end point: a hint
+        // completing here would delete the selection. (vi visual extending to len.)
+        let mut editor = editor_with("abc");
+        editor.line_buffer.set_insertion_point(0);
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.update_selection_anchor(true);
+        for _ in 0..3 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
         assert!(!editor.is_cursor_at_buffer_end());
     }
 

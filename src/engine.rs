@@ -1270,6 +1270,9 @@ impl Reedline {
                         && !current_hint.is_empty()
                         && self.active_menu().is_none()
                     {
+                        // Append at the true end: a block caret (vi normal) rests
+                        // on the last grapheme, so a plain insert would split it.
+                        self.editor.prepare_append_at_buffer_end();
                         self.run_edit_commands(&[EditCommand::InsertString(current_hint)]);
                         return Ok(EventStatus::Handled);
                     }
@@ -1284,6 +1287,8 @@ impl Reedline {
                         && !current_hint_part.is_empty()
                         && self.active_menu().is_none()
                     {
+                        // Append at the true end (see `HistoryHintComplete`).
+                        self.editor.prepare_append_at_buffer_end();
                         self.run_edit_commands(&[EditCommand::InsertString(current_hint_part)]);
                         return Ok(EventStatus::Handled);
                     }
