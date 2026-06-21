@@ -88,6 +88,138 @@ impl Default for TextObject {
     }
 }
 
+/// Direction a cursor motion travels through the buffer.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum Direction {
+    /// Toward the end of the buffer (right / `w` / `$`).
+    Forward,
+    /// Toward the start of the buffer (left / `b` / `0`).
+    Backward,
+}
+
+impl Direction {
+    pub(crate) fn reversed(self) -> Self {
+        match self {
+            Direction::Forward => Direction::Backward,
+            Direction::Backward => Direction::Forward,
+        }
+    }
+}
+
+/// Which "word" notion a word motion uses.
+///
+/// The flavors differ only in which character-class transitions count as a
+/// boundary; see the classifier in `core_editor::word`.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum WordKind {
+    /// `w`/`b`/`e` — a boundary at any character-class change.
+    Small,
+    /// `W`/`B`/`E` — a boundary only at whitespace/line-ending, so a run like
+    /// `foo.bar` is one WORD.
+    Big,
+}
+
+/// Which edge of a word a motion lands on.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum WordEdge {
+    /// First character of the word — `w`/`W` (forward), `b`/`B` (backward).
+    Start,
+    /// Last character of the word, inclusive — `e`/`E`.
+    End,
+}
+
+/// Where a character-search motion stops relative to the found character.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum FindStop {
+    /// Land on the found character — vi `f`/`F`.
+    On,
+    /// Land just before it — vi `t`/`T`.
+    Before,
+}
+
+/// Granularity of an operator and of the register it fills: inline characters or
+/// whole lines.
+///
+/// `LineWise` (vi `dd`/`yy`/`V`) operates on complete lines and pastes on a new
+/// line below/above; `CharWise` is the default inline behavior. Carried on the
+/// operator and stored on the cut buffer, so paste knows which to do.
+///
+/// Non-exhaustive: granularities may be added (e.g. block-wise), so external
+/// matches need a wildcard arm.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Granularity {
+    /// Inline at the cursor — the default.
+    #[default]
+    CharWise,
+    /// Whole lines, pasted below/above.
+    LineWise,
+}
+
+/// A human-readable, parameterized motion target — the public vocabulary every
+/// cursor motion lowers from.
+///
+/// `Move`/`Extend`/`Cut`/`Copy`/`Erase` over a `MotionTarget` are the
+/// going-forward motion API. They resolve through the private `resolve_motion`
+/// and apply to the cursor, both free to change. Mode differences (vi vs emacs
+/// vs helix word rules) are carried as *data* here (e.g. [`WordKind`]) rather
+/// than as separate commands.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum MotionTarget {
+    /// One grapheme in `direction` — `MoveLeft`/`MoveRight`.
+    Grapheme(Direction),
+    /// A word edge — vi `w`/`W`/`e`/`E`/`b`/`B`.
+    Word {
+        /// Small word vs big WORD.
+        kind: WordKind,
+        /// First vs last character of the word.
+        edge: WordEdge,
+        /// Travel direction.
+        direction: Direction,
+    },
+    /// Logical line edge: `Backward` = line start (`0`), `Forward` = line end (`$`).
+    LineEdge(Direction),
+    /// Whole-buffer edge: `Backward` = start (`gg`), `Forward` = end (`G`).
+    BufferEdge(Direction),
+    /// The adjacent logical line: `Forward` = line below (`j`), `Backward` =
+    /// line above (`k`). Used by the linewise operators (`dj`/`dk`); the head
+    /// lands on the adjacent line so a `LineWise` span covers both lines.
+    Line(Direction),
+    /// Character search — vi `f`/`F`/`t`/`T`.
+    Find {
+        /// The character to search for.
+        ch: char,
+        /// Travel direction.
+        direction: Direction,
+        /// Land on the character vs just before it.
+        stop: FindStop,
+    },
+    /// Absolute byte offset (clamped into the buffer).
+    Offset(usize),
+}
+
+impl MotionTarget {
+    /// The `,`-style reverse: flip a [`Find`](MotionTarget::Find)'s direction.
+    ///
+    /// Only `Find` is reversible — every other target passes through unchanged,
+    /// because a reversed word/line edge is a *different* motion, not the same
+    /// motion the other way (e.g. backward word-end is `ge`, not `e` flipped).
+    pub(crate) fn reversed(self) -> Self {
+        match self {
+            MotionTarget::Find {
+                ch,
+                direction,
+                stop,
+            } => MotionTarget::Find {
+                ch,
+                direction: direction.reversed(),
+                stop,
+            },
+            other => other,
+        }
+    }
+}
+
 /// Editing actions which can be mapped to key bindings.
 ///
 /// Executed by `Reedline::run_edit_commands()`
@@ -201,6 +333,53 @@ pub enum EditCommand {
         select: bool,
     },
 
+    /// Move the cursor to a [`MotionTarget`], collapsing any selection.
+    ///
+    /// The parameterized, human-readable face of the selection primitive.
+    /// `Move`/`Extend`/`Cut`/`Copy`/`Change`/`Erase` over a [`MotionTarget`] are
+    /// the going-forward motion API; the older `MoveWord*`/`CutWord*` variants
+    /// are kept as sugar over them.
+    Move(MotionTarget),
+
+    /// Extend the selection to a [`MotionTarget`]: move the cursor head to the
+    /// target while keeping the anchor fixed.
+    Extend(MotionTarget),
+
+    /// Cut the text between the cursor and a [`MotionTarget`] into the cut buffer.
+    /// `granularity` decides whether the span is taken char-wise or snapped to
+    /// whole lines (and tags the register accordingly).
+    Cut {
+        /// Where the operator reaches to.
+        target: MotionTarget,
+        /// Char-wise span or whole lines.
+        granularity: Granularity,
+    },
+
+    /// Copy the text between the cursor and a [`MotionTarget`] into the cut
+    /// buffer, leaving the buffer and cursor unchanged.
+    Copy {
+        /// Where the operator reaches to.
+        target: MotionTarget,
+        /// Char-wise span or whole lines.
+        granularity: Granularity,
+    },
+
+    /// Cut like [`EditCommand::Cut`], except that a `LineWise` span keeps its
+    /// line terminators: only the lines' *content* is consumed, so one blank
+    /// line remains — the vi change operator's linewise semantics
+    /// (`cc`/`cj`/`cgg`), which re-enter insert mode on that blank line.
+    /// Identical to `Cut` for `CharWise` spans.
+    Change {
+        /// Where the operator reaches to.
+        target: MotionTarget,
+        /// Char-wise span or whole lines.
+        granularity: Granularity,
+    },
+
+    /// Erase the text between the cursor and a [`MotionTarget`] without touching
+    /// the cut buffer (no-register counterpart of [`EditCommand::Cut`]).
+    Erase(MotionTarget),
+
     /// Insert a character at the current insertion point
     InsertChar(char),
 
@@ -259,12 +438,20 @@ pub enum EditCommand {
     Complete,
 
     /// Cut the current line
+    ///
+    /// Legacy — prefer [`EditCommand::Cut`] with
+    /// [`MotionTarget::LineEdge`]`(Forward)` and [`Granularity::LineWise`],
+    /// which all builtin bindings lower through.
     CutCurrentLine,
 
     /// Cut from the start of the buffer to the insertion point
     CutFromStart,
 
     /// Cut from the start of the buffer to the line of insertion point
+    ///
+    /// Legacy — prefer [`EditCommand::Cut`] / [`EditCommand::Change`] (for
+    /// `leave_blank_line: true`) with [`MotionTarget::BufferEdge`]`(Backward)`
+    /// and [`Granularity::LineWise`], which all builtin bindings lower through.
     CutFromStartLinewise {
         /// When true, an empty line will remain after the operation
         leave_blank_line: bool,
@@ -280,6 +467,10 @@ pub enum EditCommand {
     CutToEnd,
 
     /// Cut from the line of insertion point to the end of the buffer
+    ///
+    /// Legacy — prefer [`EditCommand::Cut`] / [`EditCommand::Change`] (for
+    /// `leave_blank_line: true`) with [`MotionTarget::BufferEdge`]`(Forward)`
+    /// and [`Granularity::LineWise`], which all builtin bindings lower through.
     CutToEndLinewise {
         /// When true, an empty line will remain after the operation
         leave_blank_line: bool,
@@ -400,6 +591,9 @@ pub enum EditCommand {
     CopyFromStart,
 
     /// Copy from the start of the buffer to the line of insertion point
+    ///
+    /// Legacy — prefer [`EditCommand::Copy`] with
+    /// [`MotionTarget::BufferEdge`]`(Backward)` and [`Granularity::LineWise`].
     CopyFromStartLinewise,
 
     /// Copy from the start of the current line to the insertion point
@@ -412,6 +606,9 @@ pub enum EditCommand {
     CopyToEnd,
 
     /// Copy from the line of insertion point to the end of the buffer
+    ///
+    /// Legacy — prefer [`EditCommand::Copy`] with
+    /// [`MotionTarget::BufferEdge`]`(Forward)` and [`Granularity::LineWise`].
     CopyToEndLinewise,
 
     /// Copy from the insertion point to the end of the current line
@@ -623,6 +820,17 @@ impl EditCommand {
             | EditCommand::CopyInsidePair { .. }
             | EditCommand::CopyAroundPair { .. }
             | EditCommand::CopyTextObject { .. } => EditType::NoOp,
+
+            // The six MotionTarget verbs. `Move`/`Extend` carry the old `select`
+            // bool in the verb itself (Extend must be `select: true` so the editor
+            // does not clear the selection it is extending). `Cut`/`Change`/`Erase`
+            // mutate the buffer; `Copy` does not.
+            EditCommand::Move(_) => EditType::MoveCursor { select: false },
+            EditCommand::Extend(_) => EditType::MoveCursor { select: true },
+            EditCommand::Cut { .. } => EditType::EditText,
+            EditCommand::Copy { .. } => EditType::NoOp,
+            EditCommand::Change { .. } => EditType::EditText,
+            EditCommand::Erase(_) => EditType::EditText,
         }
     }
 }

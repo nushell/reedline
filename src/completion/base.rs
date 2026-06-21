@@ -29,7 +29,7 @@ impl Span {
 
 /// A trait that defines how to convert some text and a position to a list of potential completions in that position.
 /// The text could be a part of the whole line, and the position is the index of the end of the text in the original line.
-pub trait Completer: Send {
+pub trait Completer {
     /// the action that will take the line and position and convert it to a vector of completions, which include the
     /// span to replace and the contents of that replacement
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion>;
@@ -70,6 +70,27 @@ pub trait Completer: Send {
     /// number of available completions
     fn total_completions(&mut self, line: &str, pos: usize) -> usize {
         self.complete(line, pos).len()
+    }
+
+    /// Returns `true` while completions are being computed in the background.
+    ///
+    /// When this returns `true` the engine switches to polling mode so it can
+    /// call [`check_pending`](Self::check_pending) periodically without
+    /// stopping on keyboard input.  The default implementation always returns
+    /// `false` (sync completer).
+    fn has_pending(&mut self) -> bool {
+        false
+    }
+
+    /// Checks whether a background completion has finished.
+    ///
+    /// Returns `true` once the results have been stored in the completer's
+    /// internal cache so that the next call to [`complete`](Self::complete)
+    /// will return them immediately.  The engine calls this while a menu is
+    /// active and [`has_pending`](Self::has_pending) has returned `true`.
+    /// The default implementation always returns `false`.
+    fn check_pending(&mut self) -> bool {
+        false
     }
 }
 

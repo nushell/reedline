@@ -27,7 +27,7 @@ use {
             FileBackedHistory, History, HistoryCursor, HistoryItem, HistoryItemId,
             HistoryNavigationQuery, HistorySessionId, SearchDirection, SearchQuery,
         },
-        painting::{Painter, PainterSuspendedState, PromptLines, RenderSnapshot},
+        painting::{Painter, PainterSuspendedState, PromptLines, RenderSnapshot, W},
         prompt::{PromptEditMode, PromptHistorySearchStatus},
         result::{ReedlineError, ReedlineErrorVariants},
         terminal_extensions::{
@@ -36,9 +36,9 @@ use {
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
         },
         utils::text_manipulation,
-        EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton,
-        Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult,
-        Validator,
+        AbbrExpandContext, EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu,
+        MenuEvent, MouseButton, Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior,
+        ValidationResult, Validator,
     },
     crossterm::{
         cursor::{SetCursorStyle, Show},
@@ -160,7 +160,7 @@ pub struct Reedline {
     edit_mode: Box<dyn EditMode>,
 
     // Provides the tab completions
-    completer: Box<dyn Completer>,
+    completer: Box<dyn Completer + Send>,
     quick_completions: bool,
     partial_completions: bool,
 
@@ -250,7 +250,10 @@ impl Reedline {
     #[must_use]
     pub fn create() -> Self {
         let history = Box::<FileBackedHistory>::default();
-        let painter = Painter::new(std::io::BufWriter::new(std::io::stderr()));
+        #[cfg(not(test))]
+        let painter = Painter::new(W::terminal());
+        #[cfg(test)]
+        let painter = Painter::new(W::sink());
         let buffer_highlighter = Box::<ExampleHighlighter>::default();
         let visual_selection_style = Style::new().on(Color::LightGray);
         let completer = Box::<DefaultCompleter>::default();
@@ -401,7 +404,7 @@ impl Reedline {
     /// let mut line_editor = Reedline::create().with_completer(completer);
     /// ```
     #[must_use]
-    pub fn with_completer(mut self, completer: Box<dyn Completer>) -> Self {
+    pub fn with_completer(mut self, completer: Box<dyn Completer + Send>) -> Self {
         self.completer = completer;
         self
     }
@@ -626,8 +629,8 @@ impl Reedline {
     ///
     /// Overwrites any existing abbreviations with the same key.
     ///
-    /// Note, by default abbreviations are expanded within string literals. To change this behavior
-    /// override the `is_inside_string_literal` function defined by [`Highlighter`].
+    /// Note, by default abbreviations are expanded everywhere. To suppress expansion in certain
+    /// syntactic positions (e.g. string literals), override [`Highlighter::should_expand_abbr`].
     pub fn with_abbreviations(mut self, abbreviations: HashMap<String, String>) -> Self {
         self.abbreviations.extend(abbreviations);
         self
@@ -824,6 +827,10 @@ impl Reedline {
             #[cfg(feature = "idle_callback")]
             if let Some(ref mut callback) = self.idle_callback {
                 callback();
+                // The callback owns stdout while it runs and may have
+                // written or moved the cursor. Re-verify the anchor on
+                // the next paint.
+                self.painter.invalidate_prompt_start_row();
             }
 
             if let Some(ref signal) = self.break_signal {
@@ -852,6 +859,24 @@ impl Reedline {
                 }
             }
 
+            // Determine if we need to poll (non-blocking) or can block on input.
+            // We need polling if external_printer or idle_callback is configured,
+            // using the shared poll_interval for the timeout.
+            let completer_pending = self.completer.has_pending();
+
+            // When a background completion finishes, re-populate the active
+            // menu so results appear without waiting for another keypress.
+            if completer_pending && self.completer.check_pending() {
+                if let Some(menu) = self.menus.iter_mut().find(|m| m.is_active()) {
+                    menu.update_values(
+                        &mut self.editor,
+                        self.completer.as_mut(),
+                        self.history.as_ref(),
+                    );
+                    self.repaint(prompt)?;
+                }
+            }
+
             // Helper function that returns true if the input is complete and
             // can be sent to the hosting application.
             fn completed(events: &[Event]) -> bool {
@@ -872,12 +897,10 @@ impl Reedline {
             let mut events: Vec<Event> = vec![];
 
             if !self.immediately_accept {
-                // Determine if we need to poll (non-blocking) or can block on input.
-                // We need polling if external_printer or idle_callback is configured,
-                // using the shared poll_interval for the timeout.
                 let needs_polling = {
                     #[allow(unused_mut)]
                     let mut result = self.break_signal.is_some();
+                    result |= completer_pending;
                     #[cfg(feature = "external_printer")]
                     if self.external_printer.is_some() {
                         result = true;
@@ -946,6 +969,14 @@ impl Reedline {
                 reedline_events.push(ReedlineEvent::Submit);
             }
 
+            // The mode machine has parsed this batch, so the rest policy it
+            // declares is now final. Relay it to the editor before running the
+            // emitted commands so a command a mode transition issued (e.g. the
+            // Esc→normal grapheme step-back) resolves under the new policy. This
+            // does not commit the cursor — the commands settle it, and the
+            // pre-paint `set_edit_mode` below still clamps no-command switches.
+            self.editor.sync_edit_mode(self.edit_mode.edit_mode());
+
             // Handle reedline events.
             let mut need_repaint = false;
             for event in reedline_events {
@@ -969,6 +1000,13 @@ impl Reedline {
                 }
             }
             if need_repaint {
+                // Sync the editor's edit mode before painting so the cursor is
+                // normalized under the current rest policy. A mode change that
+                // bypasses the command path (e.g. Esc → Vi normal) otherwise
+                // wouldn't clamp until the next command, painting the cursor past
+                // the last grapheme for a frame.
+                let mode = self.edit_mode.edit_mode();
+                self.editor.set_edit_mode(mode);
                 self.repaint(prompt)?;
             }
         }
@@ -1695,20 +1733,6 @@ impl Reedline {
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
     pub fn run_edit_commands(&mut self, commands: &[EditCommand]) {
         if self.input_mode == InputMode::HistoryTraversal {
-            if matches!(
-                self.history_cursor.get_navigation(),
-                HistoryNavigationQuery::Normal(_)
-            ) {
-                if let Some(string) = self.history_cursor.string_at_cursor() {
-                    // NOTE: `set_buffer` resets the insertion point,
-                    // which we should avoid during history navigation through the same buffer
-                    // https://github.com/nushell/reedline/pull/899
-                    if string != self.editor.get_buffer() {
-                        self.editor
-                            .set_buffer(string, UndoBehavior::HistoryNavigation);
-                    }
-                }
-            }
             self.input_mode = InputMode::Regular;
         }
 
@@ -1758,10 +1782,8 @@ impl Reedline {
 
     /// Expands an abbreviation at the word before the cursor, if any exists
     ///
-    /// Note, this method uses the `is_inside_string_literal` function defined by [`Highlighter`]
-    /// to decide whether to expand an abbreviation when the cursor is inside a string literal.
-    /// Unless overridden, `is_inside_string_literal` returns `false`, resulting in abbreviations
-    /// being expanded even when inside a string literal.
+    /// Calls [`Highlighter::should_expand_abbr`] with [`AbbrExpandContext::WordAbbreviation`]
+    /// to decide whether expansion is permitted at the cursor position
     fn try_expand_abbreviation_at_cursor(&mut self, submitted: bool) -> Option<ReedlineEvent> {
         let buffer = self.editor.get_buffer();
         let cursor_position_in_buffer = self.editor.insertion_point();
@@ -1787,10 +1809,11 @@ impl Reedline {
             // The first char in the buffer is a space or there are consecutive spaces
             return None;
         }
-        if self
-            .highlighter
-            .is_inside_string_literal(buffer, word_start)
-        {
+        if !self.highlighter.should_expand_abbr(
+            buffer,
+            word_start,
+            AbbrExpandContext::WordAbbreviation,
+        ) {
             return None;
         }
 
@@ -1826,10 +1849,11 @@ impl Reedline {
             }
         }
 
-        if self
-            .highlighter
-            .is_inside_string_literal(buffer, parsed.remainder.len())
-        {
+        if !self.highlighter.should_expand_abbr(
+            buffer,
+            parsed.remainder.len(),
+            AbbrExpandContext::BangExpansion,
+        ) {
             return None;
         }
 
@@ -1979,8 +2003,20 @@ impl Reedline {
                 }
                 {
                     let mut child = command.spawn()?;
+                    // The child owns the tty now; invalidate eagerly so
+                    // any `?` early-return below still leaves the
+                    // painter in a safe state.
+                    self.painter.invalidate_prompt_start_row();
                     child.wait()?;
                 }
+
+                // On the success path, re-initialize position and size
+                // from scratch (covers a resize-during-editor with no
+                // SIGWINCH). On query failure, the eager invalidate
+                // above is our floor — losing the size refresh is
+                // acceptable; losing the user's edited buffer below
+                // is not.
+                let _ = self.painter.initialize_prompt_position(None);
 
                 let res = std::fs::read_to_string(temp_file)?;
                 let res = res.trim_end().to_string();
@@ -2266,8 +2302,18 @@ impl Reedline {
 mod tests {
     use super::*;
     use crate::terminal_extensions::semantic_prompt::PromptKind;
-    use crate::DefaultPrompt;
+    use crate::{ColumnarMenu, DefaultPrompt, MenuBuilder};
     use rstest::rstest;
+
+    #[test]
+    fn reedline_is_send() {
+        // `Reedline` must stay `Send` so it can be moved across threads.
+        // The `Send` bound lives on the stored `Box<dyn Completer + Send>`
+        // (engine + `ReedlineMenu`), not on the `Completer`/`Menu` traits
+        // themselves, so this guards against that bound being dropped.
+        fn assert_send<T: Send>() {}
+        assert_send::<Reedline>();
+    }
 
     #[test]
     fn test_cursor_position_after_multiline_history_navigation() {
@@ -2554,7 +2600,7 @@ mod tests {
         set_buffer_at_end(&mut reedline, buffer);
         assert!(
             reedline.try_expand_abbreviation_at_cursor(true).is_some(),
-            "must expand when highlighter does not override is_inside_string_literal"
+            "must expand when highlighter does not override should_expand_abbr"
         );
     }
 
@@ -2638,7 +2684,172 @@ mod tests {
         set_buffer_at_end(&mut reedline, buffer);
         assert!(
             reedline.parse_bang_command().is_some(),
-            "must expand when highlighter does not override is_inside_string_literal"
+            "must expand when highlighter does not override should_expand_abbr"
         );
+    }
+
+    #[rstest]
+    #[case("")]
+    #[case("line of text")]
+    #[case(
+        "longgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line of text"
+    )]
+    fn test_move_to_line_start(#[case] input: &str) {
+        let mut reedline = Reedline::create();
+
+        // Write the string, and then move to the start of the line.
+        let insertion = EditCommand::InsertString(String::from(input));
+        reedline.run_edit_commands(&[insertion]);
+
+        let move_to_start = EditCommand::MoveToLineStart { select: false };
+        reedline.run_edit_commands(&[move_to_start]);
+
+        assert_eq!(reedline.editor.line_buffer().insertion_point(), 0);
+    }
+
+    #[rstest]
+    #[case("")]
+    #[case("line of text")]
+    #[case(
+        "longgggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line of text"
+    )]
+    fn test_move_to_line_start_history(#[case] input: &str) {
+        let mut reedline = Reedline::create();
+
+        // Enter the string into history, then scroll back up and move to the start of the line.
+        let history = HistoryItem::from_command_line(input);
+        reedline.history.save(history).unwrap();
+
+        reedline.previous_history();
+
+        let move_to_start = EditCommand::MoveToLineStart { select: false };
+        reedline.run_edit_commands(&[move_to_start]);
+
+        assert_eq!(reedline.editor.line_buffer().insertion_point(), 0);
+    }
+
+    #[rstest]
+    #[case("a\nb", 2)]
+    #[case("123456789\n123456789\n123456789", 20)]
+    #[case("0\n1\n2\n3\n4\n5\n6\n7\n8\n9", 18)]
+    fn test_move_to_line_start_multiline(#[case] input: &str, #[case] last_line_start: usize) {
+        let mut reedline = Reedline::create();
+
+        // Write the string, and then move to the start of the last line.
+        let insertion = EditCommand::InsertString(String::from(input));
+        reedline.run_edit_commands(&[insertion]);
+
+        let move_to_start = EditCommand::MoveToLineStart { select: false };
+        reedline.run_edit_commands(&[move_to_start]);
+
+        assert_eq!(
+            reedline.editor.line_buffer().insertion_point(),
+            last_line_start
+        );
+    }
+
+    #[rstest]
+    #[case("a\nb")]
+    #[case("123456789\n123456789\n123456789")]
+    #[case("0\n1\n2\n3\n4\n5\n6\n7\n8\n9")]
+    fn test_move_to_line_start_multiline_history_up_start(#[case] input: &str) {
+        let mut reedline = Reedline::create();
+
+        // Enter the string into history, then scroll back up and move to the start of the line.
+        let history = HistoryItem::from_command_line(input);
+        reedline.history.save(history).unwrap();
+
+        reedline.previous_history();
+
+        let move_to_start = EditCommand::MoveToLineStart { select: false };
+        reedline.run_edit_commands(&[move_to_start]);
+
+        assert_eq!(reedline.editor.line_buffer().insertion_point(), 0);
+    }
+
+    #[rstest]
+    #[case("a\nb", 2)]
+    #[case("123456789\n123456789\n123456789", 10)]
+    #[case("0\n1\n2\n3\n4\n5\n6\n7\n8\n9", 2)]
+    fn test_move_to_line_start_multiline_history_up_down_start(
+        #[case] input: &str,
+        #[case] second_line_start: usize,
+    ) {
+        let mut reedline = Reedline::create();
+
+        // Enter the string again, then scroll up in history, move down one line,
+        // and move to the start of the second line.
+        let history = HistoryItem::from_command_line(input);
+        reedline.history.save(history).unwrap();
+
+        reedline.previous_history();
+
+        reedline.down_command();
+
+        let move_to_start = EditCommand::MoveToLineStart { select: false };
+        reedline.run_edit_commands(&[move_to_start]);
+
+        assert_eq!(
+            reedline.editor.line_buffer().insertion_point(),
+            second_line_start
+        );
+    }
+
+    #[rstest]
+    #[case("a\nb", 2)]
+    #[case("123456789\n123456789\n123456789", 20)]
+    #[case("0\n1\n2\n3\n4\n5\n6\n7\n8\n9", 18)]
+    fn test_move_to_line_start_multiline_history_up_end_start(
+        #[case] input: &str,
+        #[case] last_line_start: usize,
+    ) {
+        let mut reedline = Reedline::create();
+
+        // Enter the string again, then scroll up in history, move to the end of the text,
+        // and move to the start of the last line.
+        let history = HistoryItem::from_command_line(input);
+        reedline.history.save(history).unwrap();
+
+        reedline.previous_history();
+
+        let move_to_end = EditCommand::MoveToEnd { select: false };
+        reedline.run_edit_commands(&[move_to_end]);
+
+        let move_to_start = EditCommand::MoveToLineStart { select: false };
+        reedline.run_edit_commands(&[move_to_start]);
+
+        assert_eq!(
+            reedline.editor.line_buffer().insertion_point(),
+            last_line_start
+        );
+    }
+
+    #[test]
+    fn test_complete_line_from_history() {
+        let completer = Box::new(DefaultCompleter::new(Vec::from([String::from("67")])));
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name("completion_menu"),
+        ));
+        let mut reedline = Reedline::create()
+            .with_quick_completions(true)
+            .with_completer(completer)
+            .with_menu(completion_menu);
+
+        // Save "6" to the history and scroll back to it
+        let history = HistoryItem::from_command_line("6");
+        reedline.history.save(history).unwrap();
+        reedline.previous_history();
+        assert_eq!(reedline.current_buffer_contents(), "6");
+
+        // Perform quick completion
+        let prompt = DefaultPrompt::default();
+        let completion = ReedlineEvent::Menu(String::from("completion_menu"));
+        reedline.handle_event(&prompt, completion).unwrap();
+        assert_eq!(reedline.current_buffer_contents(), "67");
+
+        // Insert the "x" to the prompt
+        let insertion = EditCommand::InsertString(String::from("x"));
+        reedline.run_edit_commands(&[insertion]);
+        assert_eq!(reedline.current_buffer_contents(), "67x");
     }
 }

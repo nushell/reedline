@@ -1,6 +1,6 @@
-use super::{motion::Motion, motion::ViCharSearch, parser::ReedlineOption, ViMode};
+use super::{motion::Motion, parser::ReedlineOption, ViMode};
 use crate::enums::{TextObject, TextObjectScope, TextObjectType};
-use crate::{EditCommand, ReedlineEvent, Vi};
+use crate::{Direction, EditCommand, Granularity, MotionTarget, ReedlineEvent, Vi};
 use std::iter::Peekable;
 
 pub fn parse_command<'iter, I>(mode: ViMode, input: &mut Peekable<I>) -> Option<Command>
@@ -246,10 +246,15 @@ impl Command {
             Self::PrependToStart => vec![ReedlineOption::Edit(EditCommand::MoveToLineStart {
                 select: false,
             })],
-            Self::RewriteCurrentLine => vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)],
             Self::DeleteCharBackward => {
                 vec![ReedlineOption::Edit(EditCommand::CutCharLeft)]
             }
+            // `S` ≡ `cc` (vim): change the whole line, keeping the blank line
+            // for insert mode and filling the register linewise.
+            Self::RewriteCurrentLine => vec![ReedlineOption::Edit(EditCommand::Change {
+                target: MotionTarget::LineEdge(Direction::Forward),
+                granularity: Granularity::LineWise,
+            })],
             Self::DeleteChar => {
                 if vi_state.mode == ViMode::Visual {
                     vec![ReedlineOption::Edit(EditCommand::CutSelection)]
@@ -335,133 +340,136 @@ impl Command {
     ) -> Option<Vec<ReedlineOption>> {
         match self {
             Self::Delete => match motion {
-                Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)]),
-                Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::CutCurrentLine)]),
-                Motion::NextWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutWordRightToNext)])
-                }
-                Motion::NextBigWord => Some(vec![ReedlineOption::Edit(
-                    EditCommand::CutBigWordRightToNext,
-                )]),
-                Motion::NextWordEnd => Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)]),
-                Motion::NextBigWordEnd => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordRight)])
-                }
-                Motion::PreviousWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWordLeft)]),
-                Motion::PreviousBigWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordLeft)])
-                }
-                Motion::RightUntil(c) => {
-                    vi_state.last_char_search = Some(ViCharSearch::ToRight(*c));
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutRightUntil(*c))])
-                }
-                Motion::RightBefore(c) => {
-                    vi_state.last_char_search = Some(ViCharSearch::TillRight(*c));
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutRightBefore(*c))])
-                }
-                Motion::LeftUntil(c) => {
-                    vi_state.last_char_search = Some(ViCharSearch::ToLeft(*c));
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutLeftUntil(*c))])
-                }
-                Motion::LeftBefore(c) => {
-                    vi_state.last_char_search = Some(ViCharSearch::TillLeft(*c));
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutLeftBefore(*c))])
-                }
-                Motion::Start => Some(vec![ReedlineOption::Edit(EditCommand::CutFromLineStart)]),
+                // `dd` — the whole current line, linewise.
+                Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::Cut {
+                    target: MotionTarget::LineEdge(Direction::Forward),
+                    granularity: Granularity::LineWise,
+                })]),
+                // Word and line-edge motions lower through one parameterized verb:
+                // cut to the motion's target (`operator_span` makes `e`/`E` inclusive).
+                Motion::NextWord
+                | Motion::NextBigWord
+                | Motion::NextWordEnd
+                | Motion::NextBigWordEnd
+                | Motion::PreviousWord
+                | Motion::PreviousBigWord
+                | Motion::Start
+                | Motion::End => motion.target().map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Cut {
+                        target,
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
+                Motion::RightUntil(_)
+                | Motion::RightBefore(_)
+                | Motion::LeftUntil(_)
+                | Motion::LeftBefore(_) => motion.target().map(|target| {
+                    vi_state.last_char_search = Some(target);
+                    vec![ReedlineOption::Edit(EditCommand::Cut {
+                        target,
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
                 Motion::NonBlankStart => Some(vec![ReedlineOption::Edit(
                     EditCommand::CutFromLineNonBlankStart,
                 )]),
                 Motion::Left => Some(vec![ReedlineOption::Edit(EditCommand::Backspace)]),
                 Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
-                Motion::Up => None,
-                Motion::Down => None,
-                Motion::FirstLine => Some(vec![ReedlineOption::Edit(
-                    EditCommand::CutFromStartLinewise {
-                        leave_blank_line: false,
-                    },
-                )]),
-                Motion::LastLine => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CutToEndLinewise {
-                        leave_blank_line: false,
-                    })])
+                // `dj`/`dk`/`dgg`/`dG` — whole lines to the adjacent line or the
+                // buffer edge, linewise. The targets + the LineWise snap (incl.
+                // the buffer-end `\n` fixup) reproduce the dedicated commands.
+                Motion::Down | Motion::Up | Motion::FirstLine | Motion::LastLine => {
+                    motion.target().map(|target| {
+                        vec![ReedlineOption::Edit(EditCommand::Cut {
+                            target,
+                            granularity: Granularity::LineWise,
+                        })]
+                    })
                 }
-                Motion::ReplayCharSearch => vi_state
-                    .last_char_search
-                    .as_ref()
-                    .map(|char_search| vec![ReedlineOption::Edit(char_search.to_cut())]),
-                Motion::ReverseCharSearch => vi_state
-                    .last_char_search
-                    .as_ref()
-                    .map(|char_search| vec![ReedlineOption::Edit(char_search.reverse().to_cut())]),
+                Motion::ReplayCharSearch => vi_state.last_char_search.map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Cut {
+                        target,
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
+                Motion::ReverseCharSearch => vi_state.last_char_search.map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Cut {
+                        target: target.reversed(),
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
             },
             Self::Change => {
                 let op = match motion {
-                    Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CutToLineEnd)]),
-                    Motion::Line => Some(vec![
-                        ReedlineOption::Edit(EditCommand::MoveToLineStart { select: false }),
-                        ReedlineOption::Edit(EditCommand::CutToLineEnd),
-                    ]),
-                    Motion::NextWord => Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)]),
-                    Motion::NextBigWord => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordRight)])
+                    // `cc` — change the whole line: its content is cut (the
+                    // blank line remains for insert mode) and the register is
+                    // filled linewise, so `p` after `cc` pastes as a line.
+                    Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::Change {
+                        target: MotionTarget::LineEdge(Direction::Forward),
+                        granularity: Granularity::LineWise,
+                    })]),
+                    // `cw`/`cW` act like `ce`/`cE`: change to the word *end*, not the
+                    // next word's start. Other word and line-edge motions (`c$`/`c0`)
+                    // use their own target.
+                    Motion::NextWord
+                    | Motion::NextBigWord
+                    | Motion::NextWordEnd
+                    | Motion::NextBigWordEnd
+                    | Motion::PreviousWord
+                    | Motion::PreviousBigWord
+                    | Motion::Start
+                    | Motion::End => {
+                        let target = match motion {
+                            Motion::NextWord => Motion::NextWordEnd.target(),
+                            Motion::NextBigWord => Motion::NextBigWordEnd.target(),
+                            other => other.target(),
+                        };
+                        target.map(|target| {
+                            vec![ReedlineOption::Edit(EditCommand::Cut {
+                                target,
+                                granularity: Granularity::CharWise,
+                            })]
+                        })
                     }
-                    Motion::NextWordEnd => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutWordRight)])
-                    }
-                    Motion::NextBigWordEnd => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordRight)])
-                    }
-                    Motion::PreviousWord => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutWordLeft)])
-                    }
-                    Motion::PreviousBigWord => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutBigWordLeft)])
-                    }
-                    Motion::RightUntil(c) => {
-                        vi_state.last_char_search = Some(ViCharSearch::ToRight(*c));
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutRightUntil(*c))])
-                    }
-                    Motion::RightBefore(c) => {
-                        vi_state.last_char_search = Some(ViCharSearch::TillRight(*c));
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutRightBefore(*c))])
-                    }
-                    Motion::LeftUntil(c) => {
-                        vi_state.last_char_search = Some(ViCharSearch::ToLeft(*c));
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutLeftUntil(*c))])
-                    }
-                    Motion::LeftBefore(c) => {
-                        vi_state.last_char_search = Some(ViCharSearch::TillLeft(*c));
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutLeftBefore(*c))])
-                    }
-                    Motion::Start => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutFromLineStart)])
-                    }
+                    Motion::RightUntil(_)
+                    | Motion::RightBefore(_)
+                    | Motion::LeftUntil(_)
+                    | Motion::LeftBefore(_) => motion.target().map(|target| {
+                        vi_state.last_char_search = Some(target);
+                        vec![ReedlineOption::Edit(EditCommand::Cut {
+                            target,
+                            granularity: Granularity::CharWise,
+                        })]
+                    }),
                     Motion::NonBlankStart => Some(vec![ReedlineOption::Edit(
                         EditCommand::CutFromLineNonBlankStart,
                     )]),
                     Motion::Left => Some(vec![ReedlineOption::Edit(EditCommand::Backspace)]),
                     Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::Delete)]),
-                    Motion::Up => None,
-                    Motion::Down => None,
-                    Motion::FirstLine => Some(vec![ReedlineOption::Edit(
-                        EditCommand::CutFromStartLinewise {
-                            leave_blank_line: true,
-                        },
-                    )]),
-                    Motion::LastLine => {
-                        Some(vec![ReedlineOption::Edit(EditCommand::CutToEndLinewise {
-                            leave_blank_line: true,
-                        })])
-                    }
-                    Motion::ReplayCharSearch => vi_state
-                        .last_char_search
-                        .as_ref()
-                        .map(|char_search| vec![ReedlineOption::Edit(char_search.to_cut())]),
-                    Motion::ReverseCharSearch => {
-                        vi_state.last_char_search.as_ref().map(|char_search| {
-                            vec![ReedlineOption::Edit(char_search.reverse().to_cut())]
+                    // `cj`/`ck`/`cgg`/`cG` — linewise change: the spanned lines'
+                    // content is cut, one blank line remains, and insert mode
+                    // re-enters on it (`Change`'s LineWise snap keeps the
+                    // terminators where `Cut`'s consumes them).
+                    Motion::Down | Motion::Up | Motion::FirstLine | Motion::LastLine => {
+                        motion.target().map(|target| {
+                            vec![ReedlineOption::Edit(EditCommand::Change {
+                                target,
+                                granularity: Granularity::LineWise,
+                            })]
                         })
                     }
+                    Motion::ReplayCharSearch => vi_state.last_char_search.map(|target| {
+                        vec![ReedlineOption::Edit(EditCommand::Cut {
+                            target,
+                            granularity: Granularity::CharWise,
+                        })]
+                    }),
+                    Motion::ReverseCharSearch => vi_state.last_char_search.map(|target| {
+                        vec![ReedlineOption::Edit(EditCommand::Cut {
+                            target: target.reversed(),
+                            granularity: Granularity::CharWise,
+                        })]
+                    }),
                 };
                 // Semihack: Append `Repaint` to ensure the mode change gets displayed
                 op.map(|mut vec| {
@@ -470,60 +478,61 @@ impl Command {
                 })
             }
             Self::Yank => match motion {
-                Motion::End => Some(vec![ReedlineOption::Edit(EditCommand::CopyToLineEnd)]),
-                Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::CopyCurrentLine)]),
-                Motion::NextWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyWordRightToNext)])
-                }
-                Motion::NextBigWord => Some(vec![ReedlineOption::Edit(
-                    EditCommand::CopyBigWordRightToNext,
-                )]),
-                Motion::NextWordEnd => Some(vec![ReedlineOption::Edit(EditCommand::CopyWordRight)]),
-                Motion::NextBigWordEnd => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyBigWordRight)])
-                }
-                Motion::PreviousWord => Some(vec![ReedlineOption::Edit(EditCommand::CopyWordLeft)]),
-                Motion::PreviousBigWord => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyBigWordLeft)])
-                }
-                Motion::RightUntil(c) => {
-                    vi_state.last_char_search = Some(ViCharSearch::ToRight(*c));
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyRightUntil(*c))])
-                }
-                Motion::RightBefore(c) => {
-                    vi_state.last_char_search = Some(ViCharSearch::TillRight(*c));
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyRightBefore(*c))])
-                }
-                Motion::LeftUntil(c) => {
-                    vi_state.last_char_search = Some(ViCharSearch::ToLeft(*c));
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyLeftUntil(*c))])
-                }
-                Motion::LeftBefore(c) => {
-                    vi_state.last_char_search = Some(ViCharSearch::TillLeft(*c));
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyLeftBefore(*c))])
-                }
-                Motion::Start => Some(vec![ReedlineOption::Edit(EditCommand::CopyFromLineStart)]),
+                // `yy` — the whole current line, linewise.
+                Motion::Line => Some(vec![ReedlineOption::Edit(EditCommand::Copy {
+                    target: MotionTarget::LineEdge(Direction::Forward),
+                    granularity: Granularity::LineWise,
+                })]),
+                Motion::NextWord
+                | Motion::NextBigWord
+                | Motion::NextWordEnd
+                | Motion::NextBigWordEnd
+                | Motion::PreviousWord
+                | Motion::PreviousBigWord
+                | Motion::Start
+                | Motion::End => motion.target().map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Copy {
+                        target,
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
+                Motion::RightUntil(_)
+                | Motion::RightBefore(_)
+                | Motion::LeftUntil(_)
+                | Motion::LeftBefore(_) => motion.target().map(|target| {
+                    vi_state.last_char_search = Some(target);
+                    vec![ReedlineOption::Edit(EditCommand::Copy {
+                        target,
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
                 Motion::NonBlankStart => Some(vec![ReedlineOption::Edit(
                     EditCommand::CopyFromLineNonBlankStart,
                 )]),
                 Motion::Left => Some(vec![ReedlineOption::Edit(EditCommand::CopyLeft)]),
                 Motion::Right => Some(vec![ReedlineOption::Edit(EditCommand::CopyRight)]),
-                Motion::Up => None,
-                Motion::Down => None,
-                Motion::FirstLine => Some(vec![ReedlineOption::Edit(
-                    EditCommand::CopyFromStartLinewise,
-                )]),
-                Motion::LastLine => {
-                    Some(vec![ReedlineOption::Edit(EditCommand::CopyToEndLinewise)])
+                // `yj`/`yk`/`ygg`/`yG` — whole lines to the adjacent line or
+                // the buffer edge, linewise.
+                Motion::Down | Motion::Up | Motion::FirstLine | Motion::LastLine => {
+                    motion.target().map(|target| {
+                        vec![ReedlineOption::Edit(EditCommand::Copy {
+                            target,
+                            granularity: Granularity::LineWise,
+                        })]
+                    })
                 }
-                Motion::ReplayCharSearch => vi_state
-                    .last_char_search
-                    .as_ref()
-                    .map(|char_search| vec![ReedlineOption::Edit(char_search.to_copy())]),
-                Motion::ReverseCharSearch => vi_state
-                    .last_char_search
-                    .as_ref()
-                    .map(|char_search| vec![ReedlineOption::Edit(char_search.reverse().to_copy())]),
+                Motion::ReplayCharSearch => vi_state.last_char_search.map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Copy {
+                        target,
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
+                Motion::ReverseCharSearch => vi_state.last_char_search.map(|target| {
+                    vec![ReedlineOption::Edit(EditCommand::Copy {
+                        target: target.reversed(),
+                        granularity: Granularity::CharWise,
+                    })]
+                }),
             },
             _ => None,
         }

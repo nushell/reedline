@@ -1,5 +1,9 @@
 use {
-    crate::core_editor::graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
+    crate::core_editor::{
+        cursor::Cursor,
+        graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
+        line,
+    },
     itertools::Itertools,
     std::{convert::From, ops::Range},
     unicode_segmentation::UnicodeSegmentation,
@@ -10,6 +14,7 @@ use {
 pub struct LineBuffer {
     lines: String,
     insertion_point: usize,
+    selection_anchor: Option<usize>,
 }
 
 impl From<&str> for LineBuffer {
@@ -61,16 +66,74 @@ impl LineBuffer {
         );
     }
 
-    /// Gets the current edit position
+    /// Gets the current edit position (head of the cursor).
     pub fn insertion_point(&self) -> usize {
         self.insertion_point
     }
 
-    /// Sets the current edit position
+    /// Sets the current edit position. Does not touch the selection anchor —
+    /// use [`clear_selection`](Self::clear_selection) explicitly when needed.
+    ///
     /// ## Unicode safety:
     /// Not checked, improper use may cause panics in following operations
     pub fn set_insertion_point(&mut self, offset: usize) {
         self.insertion_point = offset;
+    }
+
+    /// Returns the cursor as a [`Cursor`] (anchor + head), reflecting any
+    /// active selection.
+    pub(crate) fn cursor(&self) -> Cursor {
+        match self.selection_anchor {
+            Some(anchor) => Cursor::new(anchor, self.insertion_point),
+            None => Cursor::point(self.insertion_point),
+        }
+    }
+
+    /// Sets the cursor to the given [`Cursor`]. An empty cursor (anchor == head)
+    /// clears any selection; a non-empty cursor sets both anchor and head.
+    ///
+    /// ## Unicode safety:
+    /// Not checked, improper use may cause panics in following operations
+    pub(crate) fn set_cursor(&mut self, cursor: Cursor) {
+        self.insertion_point = cursor.head();
+        self.selection_anchor = if cursor.is_empty() {
+            None
+        } else {
+            Some(cursor.anchor())
+        };
+    }
+
+    /// The current selection anchor, if any. `Some(pos)` while a selection is
+    /// active; `None` otherwise.
+    pub fn selection_anchor(&self) -> Option<usize> {
+        self.selection_anchor
+    }
+
+    /// Sets the selection anchor without moving the cursor head.
+    pub fn set_selection_anchor(&mut self, anchor: Option<usize>) {
+        self.selection_anchor = anchor;
+    }
+
+    /// Clears any active selection. The cursor head is unchanged.
+    pub fn clear_selection(&mut self) {
+        self.selection_anchor = None;
+    }
+
+    /// Moves the cursor head to `pos`. If `select` is true, preserves any
+    /// existing selection anchor (or plants one at the current head if none
+    /// exists). If `select` is false, clears the selection.
+    ///
+    /// ## Unicode safety:
+    /// Not checked, improper use may cause panics in following operations
+    pub fn move_head(&mut self, pos: usize, select: bool) {
+        if select {
+            if self.selection_anchor.is_none() {
+                self.selection_anchor = Some(self.insertion_point);
+            }
+        } else {
+            self.selection_anchor = None;
+        }
+        self.insertion_point = pos;
     }
 
     /// Output the current line in the multiline buffer
@@ -106,24 +169,33 @@ impl LineBuffer {
         self.insertion_point = 0;
     }
 
+    /// Byte offset of the first character on the line containing the cursor.
+    ///
+    /// Returns 0 for the first line. Pure accessor — does not mutate state.
+    pub fn line_start_index(&self) -> usize {
+        line::start_of_line(&self.lines, self.insertion_point)
+    }
+
     /// Move the cursor before the first character of the line
     pub fn move_to_line_start(&mut self) {
-        self.insertion_point = self.lines[..self.insertion_point]
-            .rfind('\n')
-            .map_or(0, |offset| offset + 1);
-        // str is guaranteed to be utf8, thus \n is safe to assume 1 byte long
+        self.insertion_point = self.line_start_index();
+    }
+
+    /// Byte offset of the first non-whitespace character on the line
+    /// containing the cursor. If the line is entirely blank, returns the
+    /// position of its terminating `\n`; if no further non-whitespace or
+    /// newline exists, returns the buffer length. Pure accessor — does not
+    /// mutate state.
+    pub fn line_non_blank_start_index(&self) -> usize {
+        let line_start = self.line_start_index();
+        self.lines[line_start..]
+            .find(|c: char| !c.is_whitespace() || c == '\n')
+            .map_or(self.lines.len(), |offset| line_start + offset)
     }
 
     /// Move the cursor before the first non whitespace character of the line
     pub fn move_to_line_non_blank_start(&mut self) {
-        let line_start = self.lines[..self.insertion_point]
-            .rfind('\n')
-            .map_or(0, |offset| offset + 1);
-        // str is guaranteed to be utf8, thus \n is safe to assume 1 byte long
-
-        self.insertion_point = self.lines[line_start..]
-            .find(|c: char| !c.is_whitespace() || c == '\n')
-            .map_or(self.lines.len(), |offset| line_start + offset);
+        self.insertion_point = self.line_non_blank_start_index();
     }
 
     /// Move cursor position to the end of the line
@@ -150,17 +222,7 @@ impl LineBuffer {
     /// - end of buffer (`len()`)
     /// - `\n` or `\r\n` (on the first byte)
     pub fn find_current_line_end(&self) -> usize {
-        self.lines[self.insertion_point..].find('\n').map_or_else(
-            || self.lines.len(),
-            |i| {
-                let absolute_index = i + self.insertion_point;
-                if absolute_index > 0 && self.lines.as_bytes()[absolute_index - 1] == b'\r' {
-                    absolute_index - 1
-                } else {
-                    absolute_index
-                }
-            },
-        )
+        line::end_of_line(&self.lines, self.insertion_point)
     }
 
     /// Cursor position *behind* the next unicode grapheme to the right
@@ -1891,6 +1953,99 @@ mod test {
         let index = line_buffer.big_word_right_end_index();
 
         assert_eq!(index, expected);
+    }
+
+    // --- diff-harness: `word::locate_word` vs the legacy `*_index` functions ---
+    // The target for the `locate_word` scaffold. These panic on `todo!()` until
+    // the scan is written, then pin that the one resolver reproduces all six
+    // ad-hoc functions. (Where vi-correct rules *should* differ from a legacy
+    // function, change that case here and note it — a deliberate fix, not a match.)
+    use crate::core_editor::word::locate_word;
+    use crate::enums::{WordEdge, WordKind};
+
+    fn at(input: &str, pos: usize) -> LineBuffer {
+        let mut lb = buffer_with(input);
+        lb.set_insertion_point(pos);
+        lb
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0)]
+    #[case("abc-def ghi", 0)]
+    fn locate_word_matches_word_right_start(#[case] s: &str, #[case] p: usize) {
+        assert_eq!(
+            locate_word(s, p, WordKind::Small, WordEdge::Start, true),
+            at(s, p).word_right_start_index()
+        );
+    }
+
+    // vi-correct divergences from the legacy unicode-word functions: vi treats
+    // all punctuation as a word break, but `split_word_bound_indices` keeps
+    // `abc.def` as one word (a `.` between letters is unicode "MidNumLet"). These
+    // are the deliberate fixes the classifier brings — assert the vi value, not
+    // the legacy function's.
+    #[test]
+    fn locate_word_vi_breaks_on_punctuation() {
+        // `w` from start of "abc.def ghi" stops on the `.` (byte 3), not "ghi" (8)
+        assert_eq!(
+            locate_word("abc.def ghi", 0, WordKind::Small, WordEdge::Start, true),
+            3
+        );
+        // `b` from "abc def.ghi" end lands on "ghi"'s start (byte 8), not "def" (4)
+        assert_eq!(
+            locate_word("abc def.ghi", 10, WordKind::Small, WordEdge::Start, false),
+            8
+        );
+    }
+
+    #[rstest]
+    #[case("abc-def ghi", 0)]
+    #[case("abc def ghi", 0)]
+    fn locate_word_matches_big_word_right_start(#[case] s: &str, #[case] p: usize) {
+        assert_eq!(
+            locate_word(s, p, WordKind::Big, WordEdge::Start, true),
+            at(s, p).big_word_right_start_index()
+        );
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0)]
+    #[case("abc-def ghi", 0)]
+    #[case("abc", 1)]
+    fn locate_word_matches_word_right_end(#[case] s: &str, #[case] p: usize) {
+        assert_eq!(
+            locate_word(s, p, WordKind::Small, WordEdge::End, true),
+            at(s, p).word_right_end_index()
+        );
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 0)]
+    #[case("abc-def ghi", 0)]
+    fn locate_word_matches_big_word_right_end(#[case] s: &str, #[case] p: usize) {
+        assert_eq!(
+            locate_word(s, p, WordKind::Big, WordEdge::End, true),
+            at(s, p).big_word_right_end_index()
+        );
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 10)]
+    fn locate_word_matches_word_left(#[case] s: &str, #[case] p: usize) {
+        assert_eq!(
+            locate_word(s, p, WordKind::Small, WordEdge::Start, false),
+            at(s, p).word_left_index()
+        );
+    }
+
+    #[rstest]
+    #[case("abc def ghi", 10)]
+    #[case("abc def-ghi", 10)]
+    fn locate_word_matches_big_word_left(#[case] s: &str, #[case] p: usize) {
+        assert_eq!(
+            locate_word(s, p, WordKind::Big, WordEdge::Start, false),
+            at(s, p).big_word_left_index()
+        );
     }
 
     #[rstest]

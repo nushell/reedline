@@ -12,6 +12,7 @@ pub use columnar_menu::TraversalDirection;
 pub use description_menu::DescriptionMenu;
 pub use ide_menu::DescriptionMode;
 pub use ide_menu::IdeMenu;
+pub use list_menu::DescriptionPosition;
 pub use list_menu::ListMenu;
 use nu_ansi_term::{Color, Style};
 
@@ -360,7 +361,7 @@ pub enum ReedlineMenu {
         /// Base menu
         menu: Box<dyn Menu>,
         /// External completer defined outside Reedline
-        completer: Box<dyn Completer>,
+        completer: Box<dyn Completer + Send>,
     },
 }
 

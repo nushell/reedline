@@ -8,13 +8,11 @@ use std::str::FromStr;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
-use self::motion::ViCharSearch;
-
 use super::EditMode;
 use crate::{
     edit_mode::{keybindings::Keybindings, vi::parser::parse},
     enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
-    PromptEditMode, PromptViMode,
+    Direction, MotionTarget, PromptEditMode, PromptViMode,
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -45,7 +43,7 @@ pub struct Vi {
     mode: ViMode,
     previous: Option<ReedlineEvent>,
     // last f, F, t, T motion for ; and ,
-    last_char_search: Option<ViCharSearch>,
+    last_char_search: Option<MotionTarget>,
 }
 
 impl Default for Vi {
@@ -86,12 +84,16 @@ impl EditMode for Vi {
                 (ViMode::Normal | ViMode::Visual, modifier, KeyCode::Char(c)) => {
                     let c = c.to_ascii_lowercase();
 
-                    if let Some(event) = self
+                    let binding = self
                         .normal_keybindings
-                        .find_binding(modifiers, KeyCode::Char(c))
-                    {
-                        event
-                    } else if modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT {
+                        .find_binding(modifiers, KeyCode::Char(c));
+                    let is_typeable =
+                        modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT;
+
+                    // A pending multi-key motion (e.g. `f<char>`) must be completed
+                    // before a custom keybinding can claim the next key; otherwise a
+                    // binding on that second key would hijack the sequence.
+                    if !self.cache.is_empty() || (binding.is_none() && is_typeable) {
                         self.cache.push(if modifier == KeyModifiers::SHIFT {
                             c.to_ascii_uppercase()
                         } else {
@@ -113,6 +115,8 @@ impl EditMode for Vi {
                         } else {
                             ReedlineEvent::None
                         }
+                    } else if let Some(event) = binding {
+                        event
                     } else {
                         ReedlineEvent::None
                     }
@@ -156,8 +160,16 @@ impl EditMode for Vi {
                 }
                 (_, KeyModifiers::NONE, KeyCode::Esc) => {
                     self.cache.clear();
+                    let leaving_insert = self.mode == ViMode::Insert;
                     self.mode = ViMode::Normal;
-                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+                    let mut events = vec![ReedlineEvent::Esc];
+                    if leaving_insert {
+                        events.push(ReedlineEvent::Edit(vec![EditCommand::Move(
+                            MotionTarget::Grapheme(Direction::Backward),
+                        )]));
+                    }
+                    events.push(ReedlineEvent::Repaint);
+                    ReedlineEvent::Multiple(events)
                 }
                 (ViMode::Normal | ViMode::Visual, _, _) => self
                     .normal_keybindings
@@ -228,6 +240,7 @@ impl EditMode for Vi {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::{Direction, Granularity, MotionTarget, WordEdge, WordKind};
     use pretty_assertions::assert_eq;
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
@@ -236,11 +249,36 @@ mod test {
 
     #[test]
     fn esc_leads_to_normal_mode_test() {
+        // `Vi::default()` starts in insert, so this also covers the
+        // leaving-insert cursor step-back.
         let mut vi = Vi::default();
         let esc =
             ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
                 .unwrap();
         let result = vi.parse_event(esc);
+
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Esc,
+                ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Grapheme(
+                    Direction::Backward
+                ))]),
+                ReedlineEvent::Repaint,
+            ])
+        );
+        assert!(matches!(vi.mode, ViMode::Normal));
+    }
+
+    #[test]
+    fn esc_from_normal_does_not_step_cursor() {
+        // Esc in normal mode only cancels a pending sequence; it must not
+        // walk the cursor left like leaving insert does.
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        let result = vi.parse_event(key(KeyCode::Esc, KeyModifiers::NONE));
 
         assert_eq!(
             result,
@@ -299,6 +337,73 @@ mod test {
         let result = vi.parse_event(esc);
 
         assert_eq!(result, ReedlineEvent::CtrlD);
+    }
+
+    #[test]
+    fn pending_motion_beats_custom_keybinding() {
+        // A custom binding on `B` must not hijack the second key of an
+        // in-progress `f<char>` motion: `fB` should find `B`, not fire the
+        // binding. Regression test for nushell/reedline#693.
+        let mut keybindings = default_vi_normal_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::SHIFT,
+            KeyCode::Char('b'),
+            ReedlineEvent::ClearScreen,
+        );
+
+        let mut vi = Vi {
+            normal_keybindings: keybindings,
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        // `f` opens a pending find-motion...
+        let pending = vi.parse_event(key(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert_eq!(pending, ReedlineEvent::None);
+
+        // ...so `B` completes `fB` instead of triggering the custom binding.
+        let res = vi.parse_event(key(KeyCode::Char('b'), KeyModifiers::SHIFT));
+
+        assert_eq!(
+            res,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Move(
+                MotionTarget::Find {
+                    ch: 'B',
+                    direction: Direction::Forward,
+                    stop: crate::FindStop::On,
+                }
+            )])])
+        );
+    }
+
+    #[test]
+    fn binding_fires_right_after_aborted_find() {
+        // A custom binding on `B` must not hijack the second key of an
+        // in-progress `f<char>` motion: `fB` should find `B`, not fire the
+        // binding. Regression test for nushell/reedline#693.
+        let mut keybindings = default_vi_normal_keybindings();
+        keybindings.add_binding(
+            KeyModifiers::SHIFT,
+            KeyCode::Char('z'),
+            ReedlineEvent::ClearScreen,
+        );
+
+        let mut vi = Vi {
+            normal_keybindings: keybindings,
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        // `f` opens a pending find-motion
+        let pending = vi.parse_event(key(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert_eq!(pending, ReedlineEvent::None);
+
+        // `ESC` aborts the pending find-motion
+        vi.parse_event(key(KeyCode::Esc, KeyModifiers::NONE));
+
+        let res = vi.parse_event(key(KeyCode::Char('z'), KeyModifiers::SHIFT));
+
+        assert_eq!(res, ReedlineEvent::ClearScreen);
     }
 
     #[test]
@@ -400,9 +505,14 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![
-                EditCommand::CutWordRightToNext,
-            ])]),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut {
+                target: MotionTarget::Word {
+                    kind: WordKind::Small,
+                    edge: WordEdge::Start,
+                    direction: Direction::Forward,
+                },
+                granularity: Granularity::CharWise
+            }])]),
         );
         assert!(
             vi.cache.is_empty(),
@@ -432,9 +542,13 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![
-                EditCommand::MoveBigWordRightStart { select: false },
-            ])]),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Move(
+                MotionTarget::Word {
+                    kind: WordKind::Big,
+                    edge: WordEdge::Start,
+                    direction: Direction::Forward,
+                }
+            )])]),
         );
     }
 
@@ -601,12 +715,17 @@ mod test {
         let _ = vi.parse_event(key(KeyCode::Char('d'), KeyModifiers::NONE));
         let result = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::NONE));
 
+        let cut_word = ReedlineEvent::Edit(vec![EditCommand::Cut {
+            target: MotionTarget::Word {
+                kind: WordKind::Small,
+                edge: WordEdge::Start,
+                direction: Direction::Forward,
+            },
+            granularity: Granularity::CharWise,
+        }]);
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext]),
-                ReedlineEvent::Edit(vec![EditCommand::CutWordRightToNext]),
-            ]),
+            ReedlineEvent::Multiple(vec![cut_word.clone(), cut_word]),
         );
         assert!(vi.cache.is_empty());
     }
@@ -620,7 +739,11 @@ mod test {
         let _ = vi.parse_event(key(KeyCode::Char('3'), KeyModifiers::NONE));
         let result = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::NONE));
 
-        let mv = ReedlineEvent::Edit(vec![EditCommand::MoveWordRightStart { select: false }]);
+        let mv = ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Word {
+            kind: WordKind::Small,
+            edge: WordEdge::Start,
+            direction: Direction::Forward,
+        })]);
         assert_eq!(
             result,
             ReedlineEvent::Multiple(vec![mv.clone(), mv.clone(), mv]),
@@ -659,7 +782,7 @@ mod test {
     }
 
     #[test]
-    fn linewise_dd_emits_cut_current_line() {
+    fn linewise_dd_emits_linewise_cut() {
         let mut vi = Vi {
             mode: ViMode::Normal,
             ..Default::default()
@@ -669,19 +792,17 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutCurrentLine])]),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut {
+                target: MotionTarget::LineEdge(Direction::Forward),
+                granularity: Granularity::LineWise,
+            }])]),
         );
         assert!(vi.cache.is_empty());
     }
 
     #[test]
-    fn repeated_dot_accumulates_nesting_in_previous() {
-        // Each `.` press wraps `previous` in an outer Multiple AND
-        // assigns the wrapped result back to `previous`. So every
-        // press deepens the nesting by one. Observationally fine
-        // (engine flattens via recursion), but `previous` grows
-        // unboundedly over a session. Worse with multipliers — `2.`
-        // doubles the inner Vec each call.
+    fn repeated_dot_doesnt_accumulates_nesting_in_previous() {
+        // `.` replays the last change; it must not record itself
         fn depth(ev: &ReedlineEvent) -> usize {
             match ev {
                 ReedlineEvent::Multiple(v) if v.len() == 1 => 1 + depth(&v[0]),
@@ -697,13 +818,13 @@ mod test {
         assert_eq!(depth(vi.previous.as_ref().unwrap()), 1);
 
         let _ = vi.parse_event(key(KeyCode::Char('.'), KeyModifiers::NONE));
-        assert_eq!(depth(vi.previous.as_ref().unwrap()), 2);
+        assert_eq!(depth(vi.previous.as_ref().unwrap()), 1);
 
         let _ = vi.parse_event(key(KeyCode::Char('.'), KeyModifiers::NONE));
-        assert_eq!(depth(vi.previous.as_ref().unwrap()), 3);
+        assert_eq!(depth(vi.previous.as_ref().unwrap()), 1);
 
         let _ = vi.parse_event(key(KeyCode::Char('.'), KeyModifiers::NONE));
-        assert_eq!(depth(vi.previous.as_ref().unwrap()), 4);
+        assert_eq!(depth(vi.previous.as_ref().unwrap()), 1);
     }
 
     #[test]
