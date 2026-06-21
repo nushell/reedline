@@ -442,37 +442,46 @@ impl Editor {
         // resolves that per policy (head for Between, caret for Block).
         let origin = self.insertion_point();
         let head = resolve_motion(buf, origin, target, self.block_caret()).head;
-        // A grapheme step lands on the adjacent rest the caret may take. Under a
-        // cell-caret policy (vi normal/visual) the step needs help at a line
-        // terminator — either clamp to the line, or skip across the `\n`. Under
-        // `Between` (emacs, vi insert) the bar moves freely either way. The other
-        // targets aim at buffer landmarks whose line-crossing is fixed, so only
-        // `Grapheme` consults the policy.
+        // Only a block-caret grapheme step needs a line policy at the edges; every
+        // other target's line-crossing is already fixed by `resolve_motion`, and a
+        // bar caret (`Between`) moves freely across the terminator either way.
         if let MotionTarget::Grapheme(direction) = target {
             if self.block_caret() {
-                return if self.cross_line_cursor {
-                    self.cross_line_grapheme(buf, head, direction)
-                } else {
-                    match direction {
-                        Direction::Backward => head.max(line::start_of_line(buf, origin)),
-                        Direction::Forward => head.min(line::end_of_line(buf, origin)),
-                    }
-                };
+                return self.grapheme_line_policy(buf, origin, head, direction);
             }
         }
         head
     }
 
-    /// Land a block-caret grapheme step on a real cell when it falls on a line
-    /// terminator, so `l`/`h` cross lines instead of resting on the `\n`. `head`
-    /// is the raw one-grapheme step from the origin.
+    /// The block-caret line policy for one grapheme step (`h`/`l` in vi
+    /// normal/visual): per [`cross_line_cursor`](Self::cross_line_cursor), either
+    /// clamp the landing to the current line, or cross the terminator onto a real
+    /// cell on the adjacent line. `origin` is the step's start, `head` its raw
+    /// one-grapheme landing.
     ///
-    /// Forward: if the step lands on a terminator, skip across it onto the next
-    /// line's first grapheme. Backward: if it lands on a terminator, step once
-    /// more onto the previous line's last grapheme — unless the line before is
-    /// *also* a terminator (an empty line), where column 0 is the only cell, so
-    /// the caret rests there.
-    fn cross_line_grapheme(&self, buf: &str, head: usize, direction: Direction) -> usize {
+    /// This is a *movement-landing* transform only. Operator spans (`d`/`c`/`y`)
+    /// deliberately bypass it — they resolve straight through `resolve_motion` and
+    /// delete the literal grapheme range, which must not skip the `\n` (e.g. `dl`
+    /// deletes the char under the caret, never the line break). So the flag steers
+    /// where the caret *rests*, not how far an operator reaches.
+    fn grapheme_line_policy(
+        &self,
+        buf: &str,
+        origin: usize,
+        head: usize,
+        direction: Direction,
+    ) -> usize {
+        if !self.cross_line_cursor {
+            // vim-strict: the caret may not leave the current line.
+            return match direction {
+                Direction::Backward => head.max(line::start_of_line(buf, origin)),
+                Direction::Forward => head.min(line::end_of_line(buf, origin)),
+            };
+        }
+        // Cross the terminator so the caret lands on a real cell, not the `\n`.
+        // Forward: skip onto the next line's first grapheme. Backward: step once
+        // more onto the previous line's last grapheme — unless that line is *also*
+        // a terminator (an empty line), where column 0 is the only cell.
         let is_terminator = |pos: usize| buf[pos..].starts_with(['\r', '\n']);
         if !is_terminator(head) {
             return head;

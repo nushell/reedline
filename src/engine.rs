@@ -423,6 +423,11 @@ impl Reedline {
     /// column 0 to the previous line's last; when `false`, both stop at the line
     /// edge (vim's default `h`/`l`). Has no effect on emacs or vi insert mode,
     /// whose bar caret always moves freely across lines.
+    ///
+    /// Scope: this steers where the **caret rests** on `h`/`l`, not how far an
+    /// operator reaches. Operator motions (`d`/`c`/`y`) delete the literal
+    /// grapheme span regardless of this flag, so e.g. `dl` always deletes the
+    /// char under the caret and never the line break.
     #[must_use]
     pub fn with_cross_line_cursor(mut self, cross_line_cursor: bool) -> Self {
         self.editor.set_cross_line_cursor(cross_line_cursor);
@@ -1263,37 +1268,12 @@ impl Reedline {
                     })
             }
             ReedlineEvent::HistoryHintComplete => {
-                if let Some(hinter) = self.hinter.as_mut() {
-                    let current_hint = hinter.complete_hint();
-                    if self.hints_active()
-                        && self.editor.is_cursor_at_buffer_end()
-                        && !current_hint.is_empty()
-                        && self.active_menu().is_none()
-                    {
-                        // Append at the true end: a block caret (vi normal) rests
-                        // on the last grapheme, so a plain insert would split it.
-                        self.editor.prepare_append_at_buffer_end();
-                        self.run_edit_commands(&[EditCommand::InsertString(current_hint)]);
-                        return Ok(EventStatus::Handled);
-                    }
-                }
-                Ok(EventStatus::Inapplicable)
+                let hint = self.hinter.as_mut().map(|h| h.complete_hint());
+                Ok(self.accept_history_hint(hint))
             }
             ReedlineEvent::HistoryHintWordComplete => {
-                if let Some(hinter) = self.hinter.as_mut() {
-                    let current_hint_part = hinter.next_hint_token();
-                    if self.hints_active()
-                        && self.editor.is_cursor_at_buffer_end()
-                        && !current_hint_part.is_empty()
-                        && self.active_menu().is_none()
-                    {
-                        // Append at the true end (see `HistoryHintComplete`).
-                        self.editor.prepare_append_at_buffer_end();
-                        self.run_edit_commands(&[EditCommand::InsertString(current_hint_part)]);
-                        return Ok(EventStatus::Handled);
-                    }
-                }
-                Ok(EventStatus::Inapplicable)
+                let hint = self.hinter.as_mut().map(|h| h.next_hint_token());
+                Ok(self.accept_history_hint(hint))
             }
             ReedlineEvent::Esc => {
                 self.deactivate_menus();
@@ -1791,6 +1771,28 @@ impl Reedline {
     /// Checks if hints should be displayed and are able to be completed
     fn hints_active(&self) -> bool {
         !self.hide_hints && matches!(self.input_mode, InputMode::Regular)
+    }
+
+    /// Accept a trailing history hint (full hint or next word) by appending it at
+    /// the buffer end. `Handled` only when a non-empty hint applies: hints active,
+    /// cursor at the buffer end, no menu open. Appending positions past the last
+    /// grapheme first — a block caret (vi normal) rests *on* it, so a plain insert
+    /// would split it.
+    fn accept_history_hint(&mut self, hint: Option<String>) -> EventStatus {
+        let Some(hint) = hint else {
+            return EventStatus::Inapplicable;
+        };
+        if self.hints_active()
+            && self.editor.is_cursor_at_buffer_end()
+            && !hint.is_empty()
+            && self.active_menu().is_none()
+        {
+            self.editor.prepare_append_at_buffer_end();
+            self.run_edit_commands(&[EditCommand::InsertString(hint)]);
+            EventStatus::Handled
+        } else {
+            EventStatus::Inapplicable
+        }
     }
 
     /// Repaint of either the buffer or the parts for reverse history search
