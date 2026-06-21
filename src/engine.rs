@@ -2981,4 +2981,74 @@ mod tests {
         reedline.run_edit_commands(&[insertion]);
         assert_eq!(reedline.current_buffer_contents(), "67x");
     }
+
+    /// A hinter that always offers a fixed suggestion, so the completion flow can
+    /// be driven without the paint cycle that normally refreshes the hint.
+    struct FixedHinter(&'static str);
+    impl Hinter for FixedHinter {
+        fn handle(&mut self, _: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
+            self.0.to_string()
+        }
+        fn complete_hint(&self) -> String {
+            self.0.to_string()
+        }
+        fn next_hint_token(&self) -> String {
+            self.0.to_string()
+        }
+    }
+
+    fn vi_with_hint(hint: &'static str) -> Reedline {
+        seam_engine(Box::<crate::Vi>::default()).with_hinter(Box::new(FixedHinter(hint)))
+    }
+
+    #[test]
+    fn vi_normal_history_hint_appends_at_buffer_end() {
+        // The reported bug: a block caret rests on the last grapheme, so the
+        // completion must append *after* it, not split it.
+        let mut rl = vi_with_hint("def");
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        drive(&mut rl, &[key(KeyCode::Esc)]); // vi normal, caret on 'c' at the end
+        rl.handle_event(&DefaultPrompt::default(), ReedlineEvent::HistoryHintComplete)
+            .unwrap();
+        assert_eq!(rl.editor.get_buffer(), "abcdef");
+    }
+
+    #[test]
+    fn vi_visual_selection_blocks_hint_completion() {
+        // A hint completing over a selection would run through `delete_selection`
+        // and clobber it — the empty-cursor guard must suppress it.
+        let mut rl = vi_with_hint("def");
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        drive(&mut rl, &[key(KeyCode::Esc), ch('v')]); // visual: selection covers 'c' to len
+        rl.handle_event(&DefaultPrompt::default(), ReedlineEvent::HistoryHintComplete)
+            .unwrap();
+        assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    #[test]
+    fn undo_removes_accepted_history_hint() {
+        let mut rl = vi_with_hint("def");
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        drive(&mut rl, &[key(KeyCode::Esc)]);
+        rl.handle_event(&DefaultPrompt::default(), ReedlineEvent::HistoryHintComplete)
+            .unwrap();
+        assert_eq!(rl.editor.get_buffer(), "abcdef");
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    #[test]
+    fn vi_hl_cross_newline_at_engine_seam() {
+        // `h`/`l` keys, driven through the vi parser, cross the line terminator
+        // under the default cross-line policy. Buffer "ab\ncd".
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        rl.run_edit_commands(&[EditCommand::InsertString("ab\ncd".into())]);
+        drive(&mut rl, &[key(KeyCode::Esc)]); // vi normal
+        rl.run_edit_commands(&[EditCommand::MoveToLineStart { select: false }]);
+        assert_eq!(rl.editor.insertion_point(), 3); // 'c', start of line 2
+        drive(&mut rl, &[ch('h')]); // crosses up to 'b' (end of line 1)
+        assert_eq!(rl.editor.insertion_point(), 1);
+        drive(&mut rl, &[ch('l')]); // crosses down to 'c' (start of line 2)
+        assert_eq!(rl.editor.insertion_point(), 3);
+    }
 }
