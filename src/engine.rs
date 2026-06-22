@@ -1986,10 +1986,10 @@ impl Reedline {
                     write!(file, "{}", self.editor.get_buffer())?;
                 }
                 // Capture the prompt's screen range so that an editor
-                // which leaves the cursor untouched (e.g. a GUI editor,
-                // or one that wrote nothing to the tty) re-uses the
-                // existing prompt rows instead of starting a new prompt
-                // a row below the old one.
+                // that leaves the cursor untouched (e.g. an editor that
+                // uses the alternate screen only) re-uses the existing
+                // prompt rows instead of starting a new prompt a row
+                // below the old one.
                 let suspended_state = self.painter.state_before_suspension();
                 {
                     let mut child = command.spawn()?;
