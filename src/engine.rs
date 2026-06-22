@@ -1478,10 +1478,14 @@ impl Reedline {
             }
             ReedlineEvent::ToStart => {
                 self.editor.move_to_start(false);
+                self.editor.commit_cursor();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::ToEnd => {
                 self.editor.move_to_end(false);
+                // Settle under the rest policy: `Alt+>` is bound in vi normal too,
+                // where the block caret must not rest past the last grapheme.
+                self.editor.commit_cursor();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::SearchHistory => {
@@ -3076,6 +3080,20 @@ mod tests {
         ]); // caret on 'c' (col 2 of line 1)
         rl.down_command();
         assert_eq!(rl.editor.insertion_point(), 4); // on 'd', not 5 (past it)
+    }
+
+    #[test]
+    fn vi_normal_to_end_rests_on_last_grapheme() {
+        // `Alt+>` (ToEnd) is bound in vi normal; it must land on the last char.
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        drive(&mut rl, &[key(KeyCode::Esc)]);
+        rl.run_edit_commands(&[EditCommand::MoveToStart { select: false }]); // 'a'
+        drive(
+            &mut rl,
+            &[KeyEvent::new(KeyCode::Char('>'), KeyModifiers::ALT)],
+        );
+        assert_eq!(rl.editor.insertion_point(), 2); // 'c', not 3 (past it)
     }
 
     #[test]
