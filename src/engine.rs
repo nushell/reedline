@@ -1590,6 +1590,9 @@ impl Reedline {
         self.update_buffer_from_history();
         self.editor.move_to_start(false);
         self.editor.move_to_line_end(false);
+        // History navigation positions the cursor outside the command path, so
+        // settle it under the rest policy (vi-normal must not rest past the line).
+        self.editor.commit_cursor();
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
     }
@@ -1624,6 +1627,8 @@ impl Reedline {
         }
         self.update_buffer_from_history();
         self.editor.move_to_end(false);
+        // See `previous_history`: settle the out-of-band cursor under the policy.
+        self.editor.commit_cursor();
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation)
     }
@@ -3071,6 +3076,18 @@ mod tests {
         ]); // caret on 'c' (col 2 of line 1)
         rl.down_command();
         assert_eq!(rl.editor.insertion_point(), 4); // on 'd', not 5 (past it)
+    }
+
+    #[test]
+    fn vi_normal_single_line_down_rests_on_last_grapheme() {
+        // Single-line buffer: `down` hits the last line and routes to history nav,
+        // which positions the cursor outside the command path. It must still
+        // settle on the last grapheme, not the gap past it.
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        drive(&mut rl, &[key(KeyCode::Esc)]); // vi normal, on 'c'
+        rl.down_command(); // last line -> next_history (no forward entry -> draft)
+        assert_eq!(rl.editor.insertion_point(), 2); // 'c', not 3 (past it)
     }
 
     #[test]

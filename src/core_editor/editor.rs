@@ -415,8 +415,10 @@ impl Editor {
 
     /// Normalize the cursor at the single commit boundary: clamp + grapheme-snap
     /// (universal), then apply the active mode's [`RestPolicy`]. Total and
-    /// idempotent, so it is safe to call after any state change.
-    fn commit_cursor(&mut self) {
+    /// idempotent, so it is safe to call after any state change — including ones
+    /// that move the cursor outside the command path (e.g. history navigation),
+    /// which must still settle a vi-normal caret off the line end.
+    pub(crate) fn commit_cursor(&mut self) {
         let committed = commit(
             self.line_buffer.get_buffer(),
             self.line_buffer.cursor(),
