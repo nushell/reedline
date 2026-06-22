@@ -76,12 +76,19 @@ pub(crate) fn commit(buf: &str, c: Cursor, policy: RestPolicy) -> Cursor {
     match policy {
         RestPolicy::Between => c,
         RestPolicy::OnGrapheme => {
-            // Pull a *bare* cursor (an empty point) back off the end onto the last
-            // grapheme. A selection may legitimately cover the final grapheme
-            // (head at `len`, caret one grapheme inward), so its head is left
-            // alone — inclusivity is geometric now, not a query-time `+1`.
-            if c.is_empty() && c.head() == len && len > 0 && !buf.ends_with('\n') {
-                Cursor::point(prev_grapheme_boundary(buf, c.head()))
+            // A *bare* cursor (an empty point) may not rest past the last grapheme
+            // of its line: pull it back off the line terminator (or the buffer end)
+            // onto that grapheme. Skip when the line is empty — the char before is
+            // itself a terminator (or the buffer start), so column 0 is the only
+            // cell and pulling back would cross into the previous line. A selection
+            // may legitimately cover the final grapheme (head at the boundary,
+            // caret one grapheme inward), so its head is left alone — inclusivity
+            // is geometric now, not a query-time `+1`.
+            let head = c.head();
+            let past_last_grapheme = head == len || buf[head..].starts_with(['\n', '\r']);
+            let line_has_grapheme = head > 0 && !buf[..head].ends_with(['\n', '\r']);
+            if c.is_empty() && past_last_grapheme && line_has_grapheme {
+                Cursor::point(prev_grapheme_boundary(buf, head))
             } else {
                 c
             }
@@ -218,6 +225,32 @@ mod tests {
         assert_eq!(
             commit("hello\n", Cursor::point(6), RestPolicy::OnGrapheme),
             Cursor::point(6)
+        );
+    }
+
+    #[test]
+    fn on_grapheme_pulls_back_from_interior_line_end() {
+        // A point past the last grapheme of an *interior* line (the gap before the
+        // `\n`) is pulled back onto that grapheme, like at the buffer end — vi
+        // normal's caret never sits on the terminator. "abc\ndef": gap 3 -> 'c' (2).
+        assert_eq!(
+            commit("abc\ndef", Cursor::point(3), RestPolicy::OnGrapheme),
+            Cursor::point(2)
+        );
+        // `\r\n` terminator: pull back over the whole grapheme. "ab\r\ncd": gap 2 -> 'b' (1).
+        assert_eq!(
+            commit("ab\r\ncd", Cursor::point(2), RestPolicy::OnGrapheme),
+            Cursor::point(1)
+        );
+    }
+
+    #[test]
+    fn on_grapheme_rests_on_interior_empty_line() {
+        // An empty interior line ("abc\n\ndef": the byte-4 newline is that line's
+        // column 0) keeps the point — pulling back would cross up a line.
+        assert_eq!(
+            commit("abc\n\ndef", Cursor::point(4), RestPolicy::OnGrapheme),
+            Cursor::point(4)
         );
     }
 

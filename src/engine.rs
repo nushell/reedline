@@ -1770,7 +1770,10 @@ impl Reedline {
             // If we're at the top, move to previous history
             self.previous_history();
         } else {
-            self.editor.move_line_up(false);
+            // Through `run_edit_commands` so the cursor settles under the mode's
+            // rest policy — a bare `editor.move_line_up` skips the commit boundary,
+            // leaving a vi-normal caret past the last grapheme on a short line.
+            self.run_edit_commands(&[EditCommand::MoveLineUp { select: false }]);
         }
     }
 
@@ -1780,7 +1783,8 @@ impl Reedline {
             // If we're at the top, move to previous history
             self.next_history();
         } else {
-            self.editor.move_line_down(false);
+            // See `up_command`: settle under the rest policy via the commit boundary.
+            self.run_edit_commands(&[EditCommand::MoveLineDown { select: false }]);
         }
     }
 
@@ -3051,6 +3055,35 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "abcdef");
         rl.run_edit_commands(&[EditCommand::Undo]);
         assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    #[test]
+    fn vi_normal_down_rests_on_last_grapheme() {
+        // Down onto a shorter last line must rest *on* the last grapheme, not the
+        // gap past it: `down_command` has to settle under the `OnGrapheme` policy.
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        rl.run_edit_commands(&[EditCommand::InsertString("abc\nd".into())]); // a0 b1 c2 \n3 d4
+        drive(&mut rl, &[key(KeyCode::Esc)]); // vi normal
+        rl.run_edit_commands(&[
+            EditCommand::MoveToStart { select: false },
+            EditCommand::MoveRight { select: false },
+            EditCommand::MoveRight { select: false },
+        ]); // caret on 'c' (col 2 of line 1)
+        rl.down_command();
+        assert_eq!(rl.editor.insertion_point(), 4); // on 'd', not 5 (past it)
+    }
+
+    #[test]
+    fn vi_normal_end_of_line_rests_on_last_grapheme() {
+        // `$` on an interior line lands ON the last char, not the gap before `\n`.
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        rl.run_edit_commands(&[EditCommand::InsertString("abc\ndef".into())]); // a0 b1 c2 \n3
+        drive(&mut rl, &[key(KeyCode::Esc)]);
+        rl.run_edit_commands(&[
+            EditCommand::MoveToStart { select: false },
+            EditCommand::MoveToLineEnd { select: false },
+        ]);
+        assert_eq!(rl.editor.insertion_point(), 2); // 'c', not 3 (the newline gap)
     }
 
     #[test]
