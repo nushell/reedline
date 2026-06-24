@@ -2453,7 +2453,7 @@ mod test {
             c: 's',
             select: true,
         });
-        // 's' is byte 3; a bar selection is exclusive → [0, 3) = "Thi".
+        // 's' is byte 3; a bar selection is exclusive, covering bytes [0, 3).
         assert_eq!(editor.get_selection(), Some((0, 3)));
 
         // The backward form likewise opens a selection.
