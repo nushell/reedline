@@ -372,6 +372,11 @@ impl Editor {
         }
     }
 
+    /// Plant or clear a selection anchor explicitly — retained only for test
+    /// setup. Production selections open through [`move_head_to`](Self::move_head_to)
+    /// (`put_cursor`) or the `Block` min-width-1 commit, neither of which needs
+    /// this.
+    #[cfg(test)]
     fn update_selection_anchor(&mut self, select: bool) {
         if select {
             if self.line_buffer.selection_anchor().is_none() {
@@ -931,12 +936,22 @@ impl Editor {
         current_line: bool,
         select: bool,
     ) {
-        self.update_selection_anchor(select);
-        if before_char {
-            self.line_buffer.move_right_before(c, current_line);
+        // Route through `move_head_to` so a selecting search opens the selection
+        // via `put_cursor`; the old `update_selection_anchor` + raw `set_head`
+        // path dropped the anchor when starting a selection from a point.
+        let Some(found) = self.line_buffer.find_char_right(c, current_line) else {
+            // Miss: no movement; only settle the selection per `select`.
+            if !select {
+                self.clear_selection();
+            }
+            return;
+        };
+        let target = if before_char {
+            self.line_buffer.grapheme_left_index_from_pos(found)
         } else {
-            self.line_buffer.move_right_until(c, current_line);
-        }
+            found
+        };
+        self.move_head_to(target, select);
     }
 
     fn move_left_until_char(
@@ -946,12 +961,19 @@ impl Editor {
         current_line: bool,
         select: bool,
     ) {
-        self.update_selection_anchor(select);
-        if before_char {
-            self.line_buffer.move_left_before(c, current_line);
+        // See `move_right_until_char`.
+        let Some(found) = self.line_buffer.find_char_left(c, current_line) else {
+            if !select {
+                self.clear_selection();
+            }
+            return;
+        };
+        let target = if before_char {
+            found + c.len_utf8()
         } else {
-            self.line_buffer.move_left_until(c, current_line);
-        }
+            found
+        };
+        self.move_head_to(target, select);
     }
 
     fn cut_right_until_char(&mut self, c: char, before_char: bool, current_line: bool) {
@@ -2417,6 +2439,33 @@ mod test {
                 "caret drifted off 'b' after a j/k round-trip"
             );
         }
+    }
+
+    #[test]
+    fn select_until_char_in_bar_mode_opens_selection() {
+        // Regression: `MoveRightUntil { select: true }` from a point in a
+        // bar-caret mode (emacs / vi-insert) must open a selection. The old
+        // `update_selection_anchor` + raw `set_head` path anchored on a point
+        // (empty cursor) and the move then collapsed it, dropping the anchor.
+        let mut editor = editor_with("This is a test!"); // default = Between (bar)
+        editor.line_buffer.set_insertion_point(0);
+        editor.run_edit_command(&EditCommand::MoveRightUntil {
+            c: 's',
+            select: true,
+        });
+        // 's' is byte 3; a bar selection is exclusive → [0, 3) = "Thi".
+        assert_eq!(editor.get_selection(), Some((0, 3)));
+
+        // The backward form likewise opens a selection.
+        let mut editor = editor_with("This is a test!");
+        editor
+            .line_buffer
+            .set_insertion_point(editor.line_buffer.len());
+        editor.run_edit_command(&EditCommand::MoveLeftUntil {
+            c: 'T',
+            select: true,
+        });
+        assert!(editor.get_selection().is_some());
     }
 
     fn str_to_edit_commands(s: &str) -> Vec<EditCommand> {
@@ -4181,6 +4230,3 @@ mod test {
         );
     }
 }
-
-
-
