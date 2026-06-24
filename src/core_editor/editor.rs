@@ -965,6 +965,10 @@ impl Editor {
     }
 
     fn replace_char(&mut self, character: char) {
+        // Anchor the in-place replace on the caret: under a Block/visual cursor
+        // head is one grapheme past the caret, so deleting+inserting without
+        // collapsing first would clear two graphemes and corrupt the buffer.
+        self.line_buffer.collapse_to_caret();
         let insertion_point = self.line_buffer.insertion_point();
         self.line_buffer.delete_right_grapheme();
 
@@ -973,6 +977,9 @@ impl Editor {
     }
 
     fn replace_chars(&mut self, n_chars: usize, string: &str) {
+        // See `replace_char`: collapse the selection so the deletes start at the
+        // caret rather than overshooting from the head.
+        self.line_buffer.collapse_to_caret();
         for _ in 0..n_chars {
             self.line_buffer.delete_right_grapheme();
         }
@@ -2238,6 +2245,33 @@ mod test {
         editor.replace_char(replacement);
 
         assert_eq!(editor.get_buffer(), expected);
+    }
+
+    #[test]
+    fn visual_replace_char_replaces_only_the_caret_grapheme() {
+        // Regression: under a Block/visual cursor head sits one grapheme past
+        // the caret. `replace_char` paired the caret-based insertion point with
+        // a head-based delete, clearing two graphemes ("hello" -> "lxlo").
+        // Collapsing to the caret first keeps it a single-grapheme replace.
+        let mut editor = vi_editor("hello", PromptViMode::Visual);
+        editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+        editor.update_selection_anchor(true); // Block covers 'h': caret 0, head 1
+        editor.replace_char('x');
+        assert_eq!(editor.get_buffer(), "xello");
+    }
+
+    #[test]
+    fn visual_move_line_does_not_panic_across_line_boundary() {
+        // Regression: `move_line_*` measured the grapheme column from the caret
+        // while `current_line_range` used the head; a selection straddling a
+        // line boundary made `range.start > caret` and panicked on the slice.
+        let mut editor = vi_editor("a\nbc", PromptViMode::Visual);
+        editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+        editor.update_selection_anchor(true);
+        // Drive vertical moves with the selection active — must not panic.
+        editor.run_edit_command(&EditCommand::MoveLineDown { select: true });
+        editor.run_edit_command(&EditCommand::MoveLineDown { select: true });
+        editor.run_edit_command(&EditCommand::MoveLineUp { select: true });
     }
 
     fn str_to_edit_commands(s: &str) -> Vec<EditCommand> {

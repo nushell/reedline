@@ -953,9 +953,14 @@ impl Reedline {
                         events.push(crossterm::event::read()?);
                     }
                 }
-                if let ControlFlow::Break(signal) = self.process_input_batch(prompt, events)? {
-                    return Ok(signal);
-                }
+            }
+
+            // Process the batch unconditionally: in `immediately_accept` mode
+            // `events` stays empty, but `process_input_batch` still pushes the
+            // synthetic `Submit` and returns the buffer. Gating this call behind
+            // `!immediately_accept` would spin the loop forever.
+            if let ControlFlow::Break(signal) = self.process_input_batch(prompt, events)? {
+                return Ok(signal);
             }
         }
     }
@@ -2461,6 +2466,22 @@ mod tests {
         drive(&mut rl, &[ch('h'), ch('i')]);
         assert_eq!(rl.editor.get_buffer(), "hi");
         assert_eq!(rl.current_insertion_point(), 2);
+    }
+
+    #[test]
+    fn immediately_accept_submits_without_hanging() {
+        // Regression: the batch-processing call (which pushes the synthetic
+        // Submit and returns the buffer) must run even in immediately_accept
+        // mode. When it was gated behind `!immediately_accept`, read_line spun
+        // forever instead of submitting.
+        let mut rl = seam_engine(Box::<crate::Emacs>::default());
+        rl.immediately_accept = true;
+        rl.run_edit_commands(&[EditCommand::InsertString("hi".into())]);
+        let prompt = DefaultPrompt::default();
+        match rl.process_input_batch(&prompt, vec![]).expect("batch ok") {
+            ControlFlow::Break(Signal::Success(buf)) => assert_eq!(buf, "hi"),
+            other => panic!("expected immediate submit, got {other:?}"),
+        }
     }
 
     #[test]

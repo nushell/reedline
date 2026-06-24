@@ -137,6 +137,19 @@ impl LineBuffer {
         self.cursor = Cursor::point(self.cursor.head());
     }
 
+    /// Collapse any selection to a zero-width point at the **caret** — the
+    /// visible edit position (left edge of the covered grapheme), not the head.
+    ///
+    /// Editing primitives (`delete_right_grapheme`, `insert_char`, …) anchor on
+    /// the caret via [`insertion_point`](Self::insertion_point) but derive their
+    /// other end from `head`; those agree only for a point cursor. Collapsing
+    /// here before an in-place edit makes `head == caret` so the edit acts on the
+    /// grapheme under the caret instead of overshooting into the selection. A
+    /// no-op when the cursor is already a point.
+    pub(crate) fn collapse_to_caret(&mut self) {
+        self.cursor = Cursor::point(self.insertion_point());
+    }
+
     /// Moves the cursor head to `pos`. If `select` is true, preserves any
     /// existing selection anchor (or plants one at the current head if none
     /// exists). If `select` is false, clears the selection.
@@ -358,13 +371,19 @@ impl LineBuffer {
     /// Clear everything beginning at the cursor to the right/end.
     /// Keeps the cursor at the end.
     pub fn clear_to_end(&mut self) {
-        self.lines.truncate(self.cursor.head());
+        // Truncate at the caret (the visible edit position), not the head: the
+        // callers (`cut_from_end`) copy the slice from `insertion_point()`, so a
+        // Block/selection cursor (head past the caret) would otherwise leave the
+        // covered grapheme behind while reporting it as cut.
+        self.lines.truncate(self.insertion_point());
     }
 
     /// Clear beginning at the cursor up to the end of the line.
     /// Newline character at the end remains.
     pub fn clear_to_line_end(&mut self) {
-        self.clear_range(self.cursor.head()..self.find_current_line_end());
+        // Caret-anchored to match the slice `cut_to_line_end` copies; see
+        // `clear_to_end`.
+        self.clear_range(self.insertion_point()..self.find_current_line_end());
     }
 
     /// Clear from the start of the buffer to the cursor.
@@ -598,7 +617,11 @@ impl LineBuffer {
         if !self.is_cursor_at_first_line() {
             let old_range = self.current_line_range();
 
-            let grapheme_col = self.lines[old_range.start..self.insertion_point()]
+            // Vertical movement is head-anchored, like `current_line_range`.
+            // Using the caret (`insertion_point`) here instead would, under a
+            // selection where head and caret straddle a line boundary, make
+            // `old_range.start > caret` and panic on the reversed slice.
+            let grapheme_col = self.lines[old_range.start..self.cursor.head()]
                 .graphemes(true)
                 .count();
 
@@ -625,7 +648,8 @@ impl LineBuffer {
         if !self.is_cursor_at_last_line() {
             let old_range = self.current_line_range();
 
-            let grapheme_col = self.lines[old_range.start..self.insertion_point()]
+            // Head-anchored to match `current_line_range`; see `move_line_up`.
+            let grapheme_col = self.lines[old_range.start..self.cursor.head()]
                 .graphemes(true)
                 .count();
 
