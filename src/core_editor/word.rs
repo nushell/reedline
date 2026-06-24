@@ -17,7 +17,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::core_editor::graphemes::next_grapheme_boundary;
 use crate::core_editor::line_buffer::is_whitespace_str;
-use crate::enums::{WordEdge, WordKind};
+use crate::enums::{Direction, WordEdge, WordKind};
 
 /// Classification of a character for word-boundary detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,13 +81,14 @@ pub(crate) fn locate_word(
     origin: usize,
     kind: WordKind,
     edge: WordEdge,
-    forward: bool,
+    direction: Direction,
 ) -> usize {
     // `Unicode` (emacs) is the one flavor not expressible as a char-class
     // boundary predicate — it uses UAX-29 segmentation, with its own scan.
     if kind == WordKind::Unicode {
-        return locate_unicode_word(buf, origin, edge, forward);
+        return locate_unicode_word(buf, origin, edge, direction);
     }
+    let forward = direction == Direction::Forward;
 
     // Every other flavor only changes which transitions count as a boundary.
     let is_boundary: fn(char, char) -> bool = match kind {
@@ -161,7 +162,8 @@ pub(crate) fn locate_word(
 /// segments from `split_word_bound_indices`, land on the requested *bar*
 /// boundary. The block-caret `e` rendering is applied by the identity at the top
 /// of [`locate_word`], so this only ever computes exclusive boundaries.
-fn locate_unicode_word(buf: &str, origin: usize, edge: WordEdge, forward: bool) -> usize {
+fn locate_unicode_word(buf: &str, origin: usize, edge: WordEdge, direction: Direction) -> usize {
+    let forward = direction == Direction::Forward;
     match (forward, edge) {
         // `w` — start of the next word (skip the cursor's own segment + whitespace).
         (true, WordEdge::Start) => buf[origin..]
@@ -217,13 +219,25 @@ mod tests {
         // boundary (byte 2, the gap before `\r`) — `\r` is not fused into the
         // word...
         assert_eq!(
-            locate_word("ab\r\ncd", 0, WordKind::Word, WordEdge::End, true),
+            locate_word(
+                "ab\r\ncd",
+                0,
+                WordKind::Word,
+                WordEdge::End,
+                Direction::Forward
+            ),
             2
         );
         // ...and from the line ending it crosses `\r\n` to finish "cd" at the
         // buffer end (byte 6), never parking on `\r` as a word of its own.
         assert_eq!(
-            locate_word("ab\r\ncd", 2, WordKind::Word, WordEdge::End, true),
+            locate_word(
+                "ab\r\ncd",
+                2,
+                WordKind::Word,
+                WordEdge::End,
+                Direction::Forward
+            ),
             6
         );
     }

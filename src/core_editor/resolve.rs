@@ -1,7 +1,7 @@
 use crate::{
     core_editor::{
         graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
-        line, word, Cursor,
+        line, word, CaretGeometry, Cursor,
     },
     enums::{Direction, MotionTarget, WordEdge},
     FindStop,
@@ -24,8 +24,13 @@ pub(crate) struct ResolvedMotion {
 /// `origin` to the motion's `op_end`. `start()..end()` is the byte range to
 /// consume — inclusivity and direction are already baked into `op_end`, so the
 /// operator never has to reconsider them.
-pub(crate) fn operator_span(buf: &str, origin: usize, target: MotionTarget, block: bool) -> Cursor {
-    Cursor::new(origin, resolve_motion(buf, origin, target, block).op_end)
+pub(crate) fn operator_span(
+    buf: &str,
+    origin: usize,
+    target: MotionTarget,
+    geometry: CaretGeometry,
+) -> Cursor {
+    Cursor::new(origin, resolve_motion(buf, origin, target, geometry).op_end)
 }
 
 /// Resolve a public [`MotionTarget`] against `buf`, relative to `origin`.
@@ -36,18 +41,19 @@ pub(crate) fn operator_span(buf: &str, origin: usize, target: MotionTarget, bloc
 /// crash the editor. Context-aware (takes `buf`), so line/buffer edges resolve
 /// correctly where a context-free conversion couldn't.
 ///
-/// `block` is the caret geometry of the active mode (vi normal = `true`, emacs /
-/// vi insert `Between` = `false`). It selects the forward word-end landing (see
-/// [`word::locate_word`]) and, for inclusive motions, whether the operator eats
-/// the grapheme the caret lands on: a block caret sits *on* the last grapheme so
-/// the operator reaches one past it, while a bar caret already rests on the
-/// trailing boundary, so `op_end` is the head itself.
+/// `geometry` is the caret geometry of the active mode ([`CaretGeometry::Block`]
+/// for vi normal, [`CaretGeometry::Bar`] for emacs / vi insert). It selects the
+/// forward word-end landing (see [`word::locate_word`]) and, for inclusive
+/// motions, whether the operator eats the grapheme the caret lands on: a block
+/// caret sits *on* the last grapheme so the operator reaches one past it, while a
+/// bar caret already rests on the trailing boundary, so `op_end` is the head itself.
 pub(crate) fn resolve_motion(
     buf: &str,
     origin: usize,
     target: MotionTarget,
-    block: bool,
+    geometry: CaretGeometry,
 ) -> ResolvedMotion {
+    let block = geometry.is_inclusive();
     let span = |head: usize, inclusive: bool| ResolvedMotion {
         head,
         op_end: if inclusive {
@@ -77,9 +83,9 @@ pub(crate) fn resolve_motion(
             let on_grapheme = block && forward && edge == WordEdge::End;
             let head = if on_grapheme {
                 let probe = next_grapheme_boundary(buf, origin);
-                prev_grapheme_boundary(buf, word::locate_word(buf, probe, kind, edge, forward))
+                prev_grapheme_boundary(buf, word::locate_word(buf, probe, kind, edge, direction))
             } else {
-                word::locate_word(buf, origin, kind, edge, forward)
+                word::locate_word(buf, origin, kind, edge, direction)
             };
             // A forward word-end is operator-inclusive only in block mode: the
             // head sits on the last grapheme, so the operator reaches one past
@@ -126,7 +132,8 @@ pub(crate) fn resolve_motion(
     }
 }
 
-// we either find it or not.
+/// Byte offset for a `f`/`t`/`F`/`T` search, or `None` if `ch` isn't found in
+/// the search direction. `FindStop::Before` (`t`/`T`) backs off one grapheme.
 fn find_char(
     buf: &str,
     origin: usize,
@@ -167,17 +174,27 @@ mod tests {
     fn resolve_motion_marks_forward_word_end_inclusive() {
         // Only a forward word *end* is inclusive; starts and backward motions are not.
         // forward word-end is inclusive: lands on the last 'o' (2), op_end one past (3)
-        let m = resolve_motion("foo bar", 0, word(WordEdge::End, Direction::Forward), true);
+        let m = resolve_motion(
+            "foo bar",
+            0,
+            word(WordEdge::End, Direction::Forward),
+            CaretGeometry::Block,
+        );
         assert_eq!(m, ResolvedMotion { head: 2, op_end: 3 });
         // starts and backward motions are exclusive: op_end == head
         let m = resolve_motion(
             "foo bar",
             0,
             word(WordEdge::Start, Direction::Forward),
-            true,
+            CaretGeometry::Block,
         );
         assert_eq!(m.op_end, m.head);
-        let m = resolve_motion("foo bar", 7, word(WordEdge::End, Direction::Backward), true);
+        let m = resolve_motion(
+            "foo bar",
+            7,
+            word(WordEdge::End, Direction::Backward),
+            CaretGeometry::Block,
+        );
         assert_eq!(m.op_end, m.head);
     }
 
@@ -186,19 +203,43 @@ mod tests {
         let buf = "ab\ncd\nef";
         // line edges resolve against the *current* line (context-aware)
         assert_eq!(
-            resolve_motion(buf, 4, MotionTarget::LineEdge(Direction::Backward), true).head,
+            resolve_motion(
+                buf,
+                4,
+                MotionTarget::LineEdge(Direction::Backward),
+                CaretGeometry::Block
+            )
+            .head,
             3
         );
         assert_eq!(
-            resolve_motion(buf, 4, MotionTarget::LineEdge(Direction::Forward), true).head,
+            resolve_motion(
+                buf,
+                4,
+                MotionTarget::LineEdge(Direction::Forward),
+                CaretGeometry::Block
+            )
+            .head,
             5
         );
         assert_eq!(
-            resolve_motion(buf, 4, MotionTarget::BufferEdge(Direction::Backward), true).head,
+            resolve_motion(
+                buf,
+                4,
+                MotionTarget::BufferEdge(Direction::Backward),
+                CaretGeometry::Block
+            )
+            .head,
             0
         );
         assert_eq!(
-            resolve_motion(buf, 4, MotionTarget::BufferEdge(Direction::Forward), true).head,
+            resolve_motion(
+                buf,
+                4,
+                MotionTarget::BufferEdge(Direction::Forward),
+                CaretGeometry::Block
+            )
+            .head,
             8
         );
     }
@@ -224,7 +265,7 @@ mod tests {
                 "foo bar",
                 0,
                 find('b', Direction::Forward, FindStop::On),
-                true
+                CaretGeometry::Block
             ),
             ResolvedMotion { head: 4, op_end: 5 } // inclusive: op_end one past 'b'
         );
@@ -238,7 +279,7 @@ mod tests {
                 "foo bar",
                 0,
                 find('b', Direction::Forward, FindStop::Before),
-                true
+                CaretGeometry::Block
             ),
             ResolvedMotion { head: 3, op_end: 4 } // inclusive: op_end one past byte 3
         );
@@ -253,7 +294,7 @@ mod tests {
                 "foo bar",
                 6,
                 find('f', Direction::Backward, FindStop::On),
-                true
+                CaretGeometry::Block
             ),
             ResolvedMotion { head: 0, op_end: 0 } // backward is exclusive
         );
@@ -268,7 +309,7 @@ mod tests {
                 "foo bar",
                 6,
                 find('f', Direction::Backward, FindStop::Before),
-                true
+                CaretGeometry::Block
             ),
             ResolvedMotion { head: 1, op_end: 1 } // backward is exclusive
         );
@@ -284,7 +325,7 @@ mod tests {
                 "foo bar",
                 4,
                 find('b', Direction::Forward, FindStop::On),
-                true
+                CaretGeometry::Block
             )
             .head,
             4
@@ -301,9 +342,9 @@ mod tests {
         // any future change to it is deliberate.
         let t = find('x', Direction::Forward, FindStop::Before);
         // "axbxc": x@1, x@3. From 0 (adjacent to x@1): stays at 0.
-        assert_eq!(resolve_motion("axbxc", 0, t, true).head, 0);
+        assert_eq!(resolve_motion("axbxc", 0, t, CaretGeometry::Block).head, 0);
         // From 2 (adjacent to x@3): stays at 2.
-        assert_eq!(resolve_motion("axbxc", 2, t, true).head, 2);
+        assert_eq!(resolve_motion("axbxc", 2, t, CaretGeometry::Block).head, 2);
     }
 
     #[test]
@@ -314,7 +355,7 @@ mod tests {
                 "foo bar",
                 3,
                 find('z', Direction::Forward, FindStop::On),
-                true
+                CaretGeometry::Block
             ),
             ResolvedMotion { head: 3, op_end: 3 } // miss: no-op at origin
         );
@@ -330,7 +371,7 @@ mod tests {
                 "a→b",
                 0,
                 find('b', Direction::Forward, FindStop::Before),
-                true
+                CaretGeometry::Block
             )
             .head,
             1
@@ -342,7 +383,7 @@ mod tests {
                 "a→b",
                 4,
                 find('a', Direction::Backward, FindStop::Before),
-                true
+                CaretGeometry::Block
             )
             .head,
             1
@@ -355,7 +396,13 @@ mod tests {
         // *immediately* left of the cursor (byte 1) — the backward search
         // looks at the char right before origin, it does not skip a grapheme.
         assert_eq!(
-            resolve_motion("fab", 2, find('a', Direction::Backward, FindStop::On), true).head,
+            resolve_motion(
+                "fab",
+                2,
+                find('a', Direction::Backward, FindStop::On),
+                CaretGeometry::Block
+            )
+            .head,
             1
         );
     }
@@ -365,7 +412,13 @@ mod tests {
         // Mirror of the forward case: the char *at* origin is excluded. Origin
         // 0 is `b`; backward-find `b` has nothing before it and stays put.
         assert_eq!(
-            resolve_motion("bab", 0, find('b', Direction::Backward, FindStop::On), true).head,
+            resolve_motion(
+                "bab",
+                0,
+                find('b', Direction::Backward, FindStop::On),
+                CaretGeometry::Block
+            )
+            .head,
             0
         );
     }
@@ -384,7 +437,7 @@ mod tests {
                 "ab\ncd",
                 0,
                 MotionTarget::LineEdge(Direction::Forward),
-                true
+                CaretGeometry::Block
             ),
             ResolvedMotion { head: 2, op_end: 2 } // line edge is exclusive
         );
@@ -399,7 +452,7 @@ mod tests {
                 "ab\r\ncd",
                 0,
                 MotionTarget::LineEdge(Direction::Forward),
-                true
+                CaretGeometry::Block
             )
             .head,
             2
@@ -414,7 +467,7 @@ mod tests {
                 "ab\ncd",
                 4,
                 MotionTarget::LineEdge(Direction::Backward),
-                true
+                CaretGeometry::Block
             )
             .head,
             3
@@ -429,7 +482,7 @@ mod tests {
                 "ab\ncd",
                 0,
                 MotionTarget::BufferEdge(Direction::Forward),
-                true
+                CaretGeometry::Block
             )
             .head,
             5
@@ -439,7 +492,7 @@ mod tests {
                 "ab\ncd",
                 4,
                 MotionTarget::BufferEdge(Direction::Backward),
-                true
+                CaretGeometry::Block
             )
             .head,
             0
@@ -451,20 +504,44 @@ mod tests {
         let buf = "ab\ncd\nef"; // ab@0-1 \n@2 cd@3-4 \n@5 ef@6-7
                                 // from "cd" (origin 4): down → start of "ef", up → start of "ab"
         assert_eq!(
-            resolve_motion(buf, 4, MotionTarget::Line(Direction::Forward), true).head,
+            resolve_motion(
+                buf,
+                4,
+                MotionTarget::Line(Direction::Forward),
+                CaretGeometry::Block
+            )
+            .head,
             6
         );
         assert_eq!(
-            resolve_motion(buf, 4, MotionTarget::Line(Direction::Backward), true).head,
+            resolve_motion(
+                buf,
+                4,
+                MotionTarget::Line(Direction::Backward),
+                CaretGeometry::Block
+            )
+            .head,
             0
         );
         // no adjacent line → stay put (last line down, first line up)
         assert_eq!(
-            resolve_motion(buf, 7, MotionTarget::Line(Direction::Forward), true).head,
+            resolve_motion(
+                buf,
+                7,
+                MotionTarget::Line(Direction::Forward),
+                CaretGeometry::Block
+            )
+            .head,
             7
         );
         assert_eq!(
-            resolve_motion(buf, 1, MotionTarget::Line(Direction::Backward), true).head,
+            resolve_motion(
+                buf,
+                1,
+                MotionTarget::Line(Direction::Backward),
+                CaretGeometry::Block
+            )
+            .head,
             1
         );
     }
@@ -491,7 +568,7 @@ mod tests {
                 edge: WordEdge::End,
                 direction: Direction::Forward,
             },
-            true,
+            CaretGeometry::Block,
         )
         .head;
         assert_eq!(head, expected);
@@ -520,7 +597,7 @@ mod tests {
                 edge: WordEdge::End,
                 direction: Direction::Forward,
             },
-            true,
+            CaretGeometry::Block,
         )
         .head;
         assert_eq!(head, expected);
@@ -557,7 +634,7 @@ mod tests {
                 edge: WordEdge::End,
                 direction: Direction::Forward,
             },
-            true,
+            CaretGeometry::Block,
         )
         .head;
         assert_eq!(head, expected);

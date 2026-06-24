@@ -1,4 +1,4 @@
-use super::{edit_stack::EditStack, Clipboard, Cursor, LineBuffer, Movement};
+use super::{edit_stack::EditStack, CaretGeometry, Clipboard, Cursor, LineBuffer, Movement};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
 use crate::core_editor::graphemes::{next_grapheme_boundary, prev_grapheme_boundary};
@@ -128,7 +128,7 @@ impl Editor {
                     self.get_buffer(),
                     self.insertion_point(),
                     *target,
-                    self.block_caret(),
+                    self.caret_geometry(),
                 );
                 self.operate(sel, OperatorVerb::Cut, *granularity);
             }
@@ -140,7 +140,7 @@ impl Editor {
                     self.get_buffer(),
                     self.insertion_point(),
                     *target,
-                    self.block_caret(),
+                    self.caret_geometry(),
                 );
                 self.operate(sel, OperatorVerb::Copy, *granularity);
             }
@@ -152,7 +152,7 @@ impl Editor {
                     self.get_buffer(),
                     self.insertion_point(),
                     *target,
-                    self.block_caret(),
+                    self.caret_geometry(),
                 );
                 self.operate(sel, OperatorVerb::Change, *granularity);
             }
@@ -161,7 +161,7 @@ impl Editor {
                     self.get_buffer(),
                     self.insertion_point(),
                     *t,
-                    self.block_caret(),
+                    self.caret_geometry(),
                 );
                 self.operate(sel, OperatorVerb::Erase, Granularity::CharWise);
             }
@@ -461,12 +461,12 @@ impl Editor {
         // Origin is the visible cursor position — `insertion_point()` already
         // resolves that per policy (head for Between, caret for Block).
         let origin = self.insertion_point();
-        let head = resolve_motion(buf, origin, target, self.block_caret()).head;
+        let head = resolve_motion(buf, origin, target, self.caret_geometry()).head;
         // Only a block-caret grapheme step needs a line policy at the edges; every
         // other target's line-crossing is already fixed by `resolve_motion`, and a
         // bar caret (`Between`) moves freely across the terminator either way.
         if let MotionTarget::Grapheme(direction) = target {
-            if self.block_caret() {
+            if self.caret_geometry() == CaretGeometry::Block {
                 return self.grapheme_line_policy(buf, origin, head, direction);
             }
         }
@@ -519,13 +519,18 @@ impl Editor {
         }
     }
 
-    /// Caret geometry of the active mode: `true` for a block caret (vi normal /
-    /// visual, where an inclusive motion lands *on* a grapheme and the operator
-    /// eats it), `false` for a bar caret (emacs / vi insert `Between`, which
-    /// rests on the trailing boundary instead). Drives the forward word-end
-    /// landing and operator inclusivity in [`resolve_motion`].
-    fn block_caret(&self) -> bool {
-        self.edit_mode.rest_policy() != RestPolicy::Between
+    /// Caret geometry of the active mode: [`CaretGeometry::Block`] for vi normal
+    /// / visual (an inclusive motion lands *on* a grapheme and the operator eats
+    /// it), [`CaretGeometry::Bar`] for emacs / vi insert (`Between`, resting on
+    /// the trailing boundary). Drives the forward word-end landing and operator
+    /// inclusivity in [`resolve_motion`] and the selection extension in
+    /// [`Cursor::put_cursor`].
+    fn caret_geometry(&self) -> CaretGeometry {
+        if self.edit_mode.rest_policy() == RestPolicy::Between {
+            CaretGeometry::Bar
+        } else {
+            CaretGeometry::Block
+        }
     }
 
     /// Move the cursor head to `head` — collapsing the selection unless `select`
@@ -539,12 +544,11 @@ impl Editor {
     /// `inclusive` argument, so inclusivity is now carried by the range itself —
     /// there is no `selection_inclusive` side-channel to maintain.
     fn move_head_to(&mut self, target: usize, select: bool) {
-        let inclusive = self.block_caret();
         let next = self.line_buffer.cursor().put_cursor(
             self.line_buffer.get_buffer(),
             target,
             Movement::select(select),
-            inclusive,
+            self.caret_geometry(),
         );
         self.line_buffer.set_cursor(next);
         self.commit_cursor();
@@ -570,7 +574,7 @@ impl Editor {
             self.get_buffer(),
             self.insertion_point(),
             target,
-            self.block_caret(),
+            self.caret_geometry(),
         );
         self.operate(sel, verb, Granularity::CharWise);
     }
@@ -649,7 +653,7 @@ impl Editor {
         if !cursor.is_empty() {
             return false;
         }
-        if self.block_caret() {
+        if self.caret_geometry() == CaretGeometry::Block {
             // Cell caret (vi normal): the resting point sits *on* the last
             // grapheme, one inward from `len`. "At the end" means that cell is the
             // final one — nothing lies to its right. (A bare `head == len` check
@@ -1155,7 +1159,13 @@ impl Editor {
     /// directly instead of the mode's geometry.
     fn word_end_on_grapheme(&self, kind: WordKind) -> usize {
         let target = word_target(kind, WordEdge::End, Direction::Forward);
-        resolve_motion(self.get_buffer(), self.insertion_point(), target, true).head
+        resolve_motion(
+            self.get_buffer(),
+            self.insertion_point(),
+            target,
+            CaretGeometry::Block,
+        )
+        .head
     }
 
     fn insert_char(&mut self, c: char) {
@@ -3649,11 +3659,16 @@ mod test {
                         next_grapheme_boundary, prev_grapheme_boundary,
                     };
                     use crate::core_editor::word;
+                    let dir = if fwd {
+                        Direction::Forward
+                    } else {
+                        Direction::Backward
+                    };
                     if block && fwd && edge == WordEdge::End {
                         let probe = next_grapheme_boundary(buf, origin);
-                        prev_grapheme_boundary(buf, word::locate_word(buf, probe, kind, edge, fwd))
+                        prev_grapheme_boundary(buf, word::locate_word(buf, probe, kind, edge, dir))
                     } else {
-                        word::locate_word(buf, origin, kind, edge, fwd)
+                        word::locate_word(buf, origin, kind, edge, dir)
                     }
                 }
                 #[allow(clippy::type_complexity)]

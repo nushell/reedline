@@ -5,7 +5,7 @@ use {
             graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
             line, word,
         },
-        enums::{WordEdge, WordKind},
+        enums::{Direction, WordEdge, WordKind},
     },
     std::{convert::From, ops::Range},
     unicode_segmentation::UnicodeSegmentation,
@@ -291,8 +291,8 @@ impl LineBuffer {
     /// [`word::locate_word`] resolver — the single definition the old per-flavor
     /// `*_index` scans collapsed into. Returns the bar boundary; these buffer
     /// edits work in gap (bar) terms, so caret geometry doesn't apply.
-    fn word_boundary(&self, kind: WordKind, edge: WordEdge, forward: bool) -> usize {
-        word::locate_word(&self.lines, self.cursor.head(), kind, edge, forward)
+    fn word_boundary(&self, kind: WordKind, edge: WordEdge, direction: Direction) -> usize {
+        word::locate_word(&self.lines, self.cursor.head(), kind, edge, direction)
     }
 
     /// Returns true if cursor is at the end of the buffer with preceding whitespace.
@@ -467,7 +467,7 @@ impl LineBuffer {
     /// Gets the range of the word the current edit position is pointing to
     pub fn current_word_range(&self) -> Range<usize> {
         // Trailing boundary of the word under/after the cursor (bar geometry).
-        let right_index = self.word_boundary(WordKind::Unicode, WordEdge::End, true);
+        let right_index = self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward);
         let left_index = self.lines[..right_index]
             .split_word_bound_indices()
             .rfind(|(_, word)| !is_whitespace_str(word))
@@ -501,7 +501,7 @@ impl LineBuffer {
         let change_range = self.current_word_range();
         let uppercased = self.get_buffer()[change_range.clone()].to_uppercase();
         self.replace_range(change_range, &uppercased);
-        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, true));
+        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
     }
 
     /// Lowercases the current word
@@ -509,7 +509,7 @@ impl LineBuffer {
         let change_range = self.current_word_range();
         let uppercased = self.get_buffer()[change_range.clone()].to_lowercase();
         self.replace_range(change_range, &uppercased);
-        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, true));
+        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
     }
 
     /// Switches the ASCII case of the current char
@@ -539,8 +539,12 @@ impl LineBuffer {
     /// point right one grapheme.
     pub fn capitalize_char(&mut self) {
         if self.on_whitespace() {
-            self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, true));
-            self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::Start, false));
+            self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
+            self.set_head(self.word_boundary(
+                WordKind::Unicode,
+                WordEdge::Start,
+                Direction::Backward,
+            ));
         }
         let insertion_offset = self.insertion_point();
         let right_index = self.grapheme_right_index();
@@ -574,25 +578,31 @@ impl LineBuffer {
 
     /// Deletes one word to the left
     pub fn delete_word_left(&mut self) {
-        let left_word_index = self.word_boundary(WordKind::Unicode, WordEdge::Start, false);
+        let left_word_index =
+            self.word_boundary(WordKind::Unicode, WordEdge::Start, Direction::Backward);
         self.clear_range(left_word_index..self.insertion_point());
         self.set_head(left_word_index);
     }
 
     /// Deletes one word to the right
     pub fn delete_word_right(&mut self) {
-        let right_word_index = self.word_boundary(WordKind::Unicode, WordEdge::End, true);
+        let right_word_index =
+            self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward);
         self.clear_range(self.insertion_point()..right_word_index);
     }
 
     /// Swaps current word with word on right
     pub fn swap_words(&mut self) {
         let word_1_range = self.current_word_range();
-        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, true));
+        self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::End, Direction::Forward));
         let word_2_range = self.current_word_range();
 
         if word_1_range != word_2_range {
-            self.set_head(self.word_boundary(WordKind::Unicode, WordEdge::Start, false));
+            self.set_head(self.word_boundary(
+                WordKind::Unicode,
+                WordEdge::Start,
+                Direction::Backward,
+            ));
             let insertion_line = self.get_buffer();
             let word_1 = insertion_line[word_1_range.clone()].to_string();
             let word_2 = insertion_line[word_2_range.clone()].to_string();
@@ -983,7 +993,7 @@ impl LineBuffer {
     pub(crate) fn current_big_word_range(&self) -> Range<usize> {
         // Trailing boundary of the big WORD under/after the cursor (grapheme-safe
         // end, unlike the old `*_end_index + 1` which stepped one *byte*).
-        let end = self.word_boundary(WordKind::LongWord, WordEdge::End, true);
+        let end = self.word_boundary(WordKind::LongWord, WordEdge::End, Direction::Forward);
 
         let mut left_index = 0;
         for (i, char) in self.lines[..end].char_indices().rev() {
@@ -1744,7 +1754,13 @@ mod test {
         #[case] position: usize,
         #[case] expected: usize,
     ) {
-        let i = locate_word(input, position, WordKind::Unicode, WordEdge::Start, false);
+        let i = locate_word(
+            input,
+            position,
+            WordKind::Unicode,
+            WordEdge::Start,
+            Direction::Backward,
+        );
         assert_eq!(i, expected);
     }
 
@@ -1758,7 +1774,13 @@ mod test {
         #[case] position: usize,
         #[case] expected: usize,
     ) {
-        let i = locate_word(input, position, WordKind::LongWord, WordEdge::Start, false);
+        let i = locate_word(
+            input,
+            position,
+            WordKind::LongWord,
+            WordEdge::Start,
+            Direction::Backward,
+        );
         assert_eq!(i, expected);
     }
 
@@ -1771,7 +1793,13 @@ mod test {
         #[case] position: usize,
         #[case] expected: usize,
     ) {
-        let i = locate_word(input, position, WordKind::Unicode, WordEdge::Start, true);
+        let i = locate_word(
+            input,
+            position,
+            WordKind::Unicode,
+            WordEdge::Start,
+            Direction::Forward,
+        );
         assert_eq!(i, expected);
     }
 
@@ -1789,7 +1817,13 @@ mod test {
         #[case] position: usize,
         #[case] expected: usize,
     ) {
-        let i = locate_word(input, position, WordKind::LongWord, WordEdge::Start, true);
+        let i = locate_word(
+            input,
+            position,
+            WordKind::LongWord,
+            WordEdge::Start,
+            Direction::Forward,
+        );
         assert_eq!(i, expected);
     }
 
@@ -1801,12 +1835,24 @@ mod test {
     fn locate_word_vi_breaks_on_punctuation() {
         // `w` from start of "abc.def ghi" stops on the `.` (byte 3), not "ghi" (8)
         assert_eq!(
-            locate_word("abc.def ghi", 0, WordKind::Word, WordEdge::Start, true),
+            locate_word(
+                "abc.def ghi",
+                0,
+                WordKind::Word,
+                WordEdge::Start,
+                Direction::Forward
+            ),
             3
         );
         // `b` from "abc def.ghi" end lands on "ghi"'s start (byte 8), not "def" (4)
         assert_eq!(
-            locate_word("abc def.ghi", 10, WordKind::Word, WordEdge::Start, false),
+            locate_word(
+                "abc def.ghi",
+                10,
+                WordKind::Word,
+                WordEdge::Start,
+                Direction::Backward
+            ),
             8
         );
     }
