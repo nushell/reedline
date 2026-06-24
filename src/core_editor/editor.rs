@@ -2770,10 +2770,14 @@ mod test {
         #[test]
         fn test_cut_selection_system() {
             let mut editor = editor_with("This is a test!");
+            // Build the whole-buffer selection head-first: under the unified
+            // Cursor model, anchoring where the head already sits makes an empty
+            // cursor that the next head move would collapse, so move the head to
+            // the start first, then drop the anchor at the end.
+            editor.line_buffer.set_insertion_point(0);
             editor
                 .line_buffer
                 .set_selection_anchor(Some(editor.line_buffer.len()));
-            editor.line_buffer.set_insertion_point(0);
             editor.run_edit_command(&EditCommand::CutSelectionSystem);
             assert!(editor.line_buffer.get_buffer().is_empty());
         }
@@ -2781,10 +2785,11 @@ mod test {
         fn test_copypaste_selection_system() {
             let s = "This is a test!";
             let mut editor = editor_with(s);
+            // Head-first selection build; see `test_cut_selection_system`.
+            editor.line_buffer.set_insertion_point(0);
             editor
                 .line_buffer
                 .set_selection_anchor(Some(editor.line_buffer.len()));
-            editor.line_buffer.set_insertion_point(0);
             editor.run_edit_command(&EditCommand::CopySelectionSystem);
             editor.run_edit_command(&EditCommand::PasteSystem);
             pretty_assertions::assert_eq!(editor.line_buffer.len(), s.len() * 2);
@@ -4176,3 +4181,6 @@ mod test {
         );
     }
 }
+
+
+
