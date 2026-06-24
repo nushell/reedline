@@ -97,7 +97,7 @@ impl Editor {
             EditCommand::MoveToEnd { select } => self.move_to_end(*select),
             EditCommand::MoveToLineEnd { select } => self.move_to_line_end(*select),
             EditCommand::MoveToPosition { position, select } => {
-                self.move_to_position(*position, *select)
+                self.move_head_to(*position, *select)
             }
             EditCommand::MoveLineUp { select } => self.move_line_up(*select),
             EditCommand::MoveLineDown { select } => self.move_line_down(*select),
@@ -442,6 +442,10 @@ impl Editor {
         self.policy_unsettled = false;
     }
 
+    /// Plain head move with no `put_cursor` geometry — retained only for test
+    /// setup. Production motions route through [`move_head_to`](Self::move_head_to)
+    /// so selections get the inclusive anchor-flip.
+    #[cfg(test)]
     fn move_to_position(&mut self, position: usize, select: bool) {
         self.line_buffer.move_head(position, select);
     }
@@ -572,15 +576,29 @@ impl Editor {
     }
 
     pub(crate) fn move_line_up(&mut self, select: bool) {
-        self.update_selection_anchor(select);
-        self.line_buffer.move_line_up();
+        let target = self.line_target(LineBuffer::move_line_up);
+        self.move_head_to(target, select);
         self.update_undo_state(UndoBehavior::MoveCursor);
     }
 
     pub(crate) fn move_line_down(&mut self, select: bool) {
-        self.update_selection_anchor(select);
-        self.line_buffer.move_line_down();
+        let target = self.line_target(LineBuffer::move_line_down);
+        self.move_head_to(target, select);
         self.update_undo_state(UndoBehavior::MoveCursor);
+    }
+
+    /// Resolve the column-preserving head for a vertical move by running the
+    /// line_buffer's own `move_line_*` logic on a throwaway cursor, then restore.
+    /// Routing the result through [`move_head_to`](Self::move_head_to) gives a
+    /// visual selection the put_cursor inclusive anchor-flip on reversal — raw
+    /// `set_head` (the old path) kept the anchor fixed and dropped the anchored
+    /// grapheme when `j`/`k` reverses direction.
+    fn line_target(&mut self, step: fn(&mut LineBuffer)) -> usize {
+        let saved = self.line_buffer.cursor();
+        step(&mut self.line_buffer);
+        let target = self.line_buffer.cursor().head();
+        self.line_buffer.set_cursor(saved);
+        target
     }
 
     /// Get the text of the current [`LineBuffer`]
@@ -662,11 +680,11 @@ impl Editor {
     }
 
     pub(crate) fn move_to_start(&mut self, select: bool) {
-        self.move_to_position(0, select);
+        self.move_head_to(0, select);
     }
 
     pub(crate) fn move_to_end(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.len(), select);
+        self.move_head_to(self.line_buffer.len(), select);
     }
 
     /// Place the edit point *past the last grapheme* (at `len`) so the next
@@ -679,15 +697,15 @@ impl Editor {
     }
 
     pub(crate) fn move_to_line_start(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.line_start_index(), select);
+        self.move_head_to(self.line_buffer.line_start_index(), select);
     }
 
     pub(crate) fn move_to_line_non_blank_start(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.line_non_blank_start_index(), select);
+        self.move_head_to(self.line_buffer.line_non_blank_start_index(), select);
     }
 
     pub(crate) fn move_to_line_end(&mut self, select: bool) {
-        self.move_to_position(self.line_buffer.find_current_line_end(), select);
+        self.move_head_to(self.line_buffer.find_current_line_end(), select);
     }
 
     fn undo(&mut self) {
@@ -1134,12 +1152,12 @@ impl Editor {
         // caret, so it resolves the word-end with `inclusive = true` (block
         // reading) rather than the mode's geometry — distinct from emacs `M-f`,
         // which rests on the trailing boundary. (Unbound.)
-        self.move_to_position(self.word_end_on_grapheme(WordKind::Unicode), select);
+        self.move_head_to(self.word_end_on_grapheme(WordKind::Unicode), select);
     }
 
     fn move_big_word_right_end(&mut self, select: bool) {
         // vi-`E` on-char — see `move_word_right_end`.
-        self.move_to_position(self.word_end_on_grapheme(WordKind::LongWord), select);
+        self.move_head_to(self.word_end_on_grapheme(WordKind::LongWord), select);
     }
 
     /// Forward word-end resolved with block (on-grapheme) geometry, whatever the
@@ -2323,6 +2341,60 @@ mod test {
         editor.cut_from_end_linewise(false);
         assert_eq!(editor.get_buffer(), "x");
         assert!(!editor.get_buffer().contains('\r'));
+    }
+
+    fn selected_text(editor: &Editor) -> String {
+        let c = editor.line_buffer().cursor();
+        editor.get_buffer()[c.start()..c.end()].to_string()
+    }
+
+    #[test]
+    fn visual_move_word_right_end_select_covers_last_grapheme() {
+        // #9: a selecting word-end motion must cover the word's last grapheme
+        // (inclusive block geometry), not stop one grapheme short.
+        let mut editor = vi_editor("foo bar", PromptViMode::Visual);
+        editor.run_edit_command(&EditCommand::MoveToStart { select: false });
+        editor.run_edit_command(&EditCommand::MoveWordRightEnd { select: true });
+        assert_eq!(selected_text(&editor), "foo");
+    }
+
+    #[test]
+    fn visual_move_to_line_start_after_end_keeps_anchor_grapheme() {
+        // #12: extend from 'd' to the line end, then back to the line start. The
+        // grapheme the selection started on ('d') must stay covered on reversal
+        // (vim keeps "abc d"), which needs the put_cursor anchor-flip.
+        let mut editor = vi_editor("abc def", PromptViMode::Visual);
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 4, // on 'd'
+            select: false,
+        });
+        editor.run_edit_command(&EditCommand::MoveToLineEnd { select: true });
+        editor.run_edit_command(&EditCommand::MoveToLineStart { select: true });
+        assert_eq!(selected_text(&editor), "abc d");
+    }
+
+    #[test]
+    fn visual_line_jk_keeps_anchor_grapheme_covered() {
+        // #13: vertical visual motion must keep the grapheme the selection
+        // started on covered, even across a direction reversal. "x\ny\nz",
+        // select 'y' (byte 2), then j/k/k. The old raw `set_head` path dropped
+        // the anchor; routing through put_cursor keeps it.
+        let mut editor = vi_editor("x\ny\nz", PromptViMode::Visual);
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 2, // 'y'
+            select: false,
+        });
+        editor.update_selection_anchor(true);
+        editor.run_edit_command(&EditCommand::MoveLineDown { select: true });
+        editor.run_edit_command(&EditCommand::MoveLineUp { select: true });
+        editor.run_edit_command(&EditCommand::MoveLineUp { select: true });
+
+        let c = editor.line_buffer().cursor();
+        assert!(
+            c.start() <= 2 && 2 < c.end(),
+            "byte 2 ('y', the anchor) must stay covered; selection was {:?}",
+            c.start()..c.end()
+        );
     }
 
     fn str_to_edit_commands(s: &str) -> Vec<EditCommand> {
