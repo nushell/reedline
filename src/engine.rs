@@ -3037,8 +3037,11 @@ mod tests {
         let mut rl = vi_with_hint("def");
         rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
         drive(&mut rl, &[key(KeyCode::Esc)]); // vi normal, caret on 'c' at the end
-        rl.handle_event(&DefaultPrompt::default(), ReedlineEvent::HistoryHintComplete)
-            .unwrap();
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
         assert_eq!(rl.editor.get_buffer(), "abcdef");
     }
 
@@ -3049,8 +3052,11 @@ mod tests {
         let mut rl = vi_with_hint("def");
         rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
         drive(&mut rl, &[key(KeyCode::Esc), ch('v')]); // visual: selection covers 'c' to len
-        rl.handle_event(&DefaultPrompt::default(), ReedlineEvent::HistoryHintComplete)
-            .unwrap();
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
         assert_eq!(rl.editor.get_buffer(), "abc");
     }
 
@@ -3059,8 +3065,11 @@ mod tests {
         let mut rl = vi_with_hint("def");
         rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
         drive(&mut rl, &[key(KeyCode::Esc)]);
-        rl.handle_event(&DefaultPrompt::default(), ReedlineEvent::HistoryHintComplete)
-            .unwrap();
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
         assert_eq!(rl.editor.get_buffer(), "abcdef");
         rl.run_edit_commands(&[EditCommand::Undo]);
         assert_eq!(rl.editor.get_buffer(), "abc");
@@ -3119,6 +3128,55 @@ mod tests {
             EditCommand::MoveToLineEnd { select: false },
         ]);
         assert_eq!(rl.editor.insertion_point(), 2); // 'c', not 3 (the newline gap)
+    }
+
+    #[test]
+    fn vi_normal_k_uses_prefix_search() {
+        // `j`/`k` in vi normal mode should use prefix search instead of plain
+        // history traversal
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+
+        let success_cond = "ls /tmp";
+
+        rl.history
+            .save(HistoryItem::from_command_line("ls -la"))
+            .unwrap();
+        rl.history
+            .save(HistoryItem::from_command_line(success_cond))
+            .unwrap();
+        rl.history
+            .save(HistoryItem::from_command_line("echo hi"))
+            .unwrap();
+
+        type_each(&mut rl, &[ch('l'), ch('s'), key(KeyCode::Esc)]);
+        drive(&mut rl, &[ch('k')]);
+
+        assert_eq!(rl.editor.get_buffer(), success_cond);
+    }
+
+    #[test]
+    fn vi_normal_k_off_end_uses_plain_walk() {
+        // The complement of the prefix case: once the caret leaves the buffer
+        // end (here `h` steps it onto 'l'), history nav falls back to plain
+        // bash-style traversal and returns the most recent entry overall, not a
+        // prefix match.
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+
+        rl.history
+            .save(HistoryItem::from_command_line("ls -la"))
+            .unwrap();
+        rl.history
+            .save(HistoryItem::from_command_line("ls /tmp"))
+            .unwrap();
+        rl.history
+            .save(HistoryItem::from_command_line("echo hi"))
+            .unwrap();
+
+        type_each(&mut rl, &[ch('l'), ch('s'), key(KeyCode::Esc)]);
+        drive(&mut rl, &[ch('h')]); // caret off the end, onto 'l'
+        drive(&mut rl, &[ch('k')]);
+
+        assert_eq!(rl.editor.get_buffer(), "echo hi");
     }
 
     #[test]
