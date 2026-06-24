@@ -16,7 +16,10 @@ impl From<PromptViMode> for HelixMode {
     fn from(mode: PromptViMode) -> Self {
         match mode {
             PromptViMode::Insert => HelixMode::Insert,
-            PromptViMode::Normal => HelixMode::Normal,
+            // Visual is normal-with-a-selection; this minimal machine doesn't
+            // model selection yet, so it maps to Normal (Helix's select mode is
+            // likewise normal-mode keybindings over a live selection).
+            PromptViMode::Normal | PromptViMode::Visual => HelixMode::Normal,
         }
     }
 }
