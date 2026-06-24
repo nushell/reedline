@@ -477,20 +477,23 @@ impl LineBuffer {
         left_index..right_index
     }
 
-    /// Range over the current line
+    /// Range over the line containing byte `pos`.
     ///
-    /// Starts on the first non-newline character and is an exclusive range
-    /// extending beyond the potential carriage return and line feed characters
-    /// terminating the line
-    pub fn current_line_range(&self) -> Range<usize> {
-        let left_index = self.lines[..self.cursor.head()]
-            .rfind('\n')
-            .map_or(0, |offset| offset + 1);
-        let right_index = self.lines[self.cursor.head()..]
+    /// Starts on the first character after the previous line feed and is an
+    /// exclusive range extending beyond the carriage return and line feed
+    /// characters terminating the line.
+    fn line_range_at(&self, pos: usize) -> Range<usize> {
+        let start = self.lines[..pos].rfind('\n').map_or(0, |offset| offset + 1);
+        let end = self.lines[pos..]
             .find('\n')
-            .map_or_else(|| self.lines.len(), |i| i + self.cursor.head() + 1);
+            .map_or_else(|| self.lines.len(), |i| i + pos + 1);
+        start..end
+    }
 
-        left_index..right_index
+    /// Range over the current line (the one the cursor head is on). See
+    /// [`line_range_at`](Self::line_range_at).
+    pub fn current_line_range(&self) -> Range<usize> {
+        self.line_range_at(self.cursor.head())
     }
 
     /// Uppercases the current word
@@ -623,64 +626,64 @@ impl LineBuffer {
         }
     }
 
-    /// Moves one line up
-    pub fn move_line_up(&mut self) {
-        if !self.is_cursor_at_first_line() {
-            let old_range = self.current_line_range();
+    /// Visual column of the caret — graphemes from its line start to the caret.
+    fn caret_column(&self) -> (Range<usize>, usize) {
+        let caret = self.insertion_point();
+        let line = self.line_range_at(caret);
+        let col = self.lines[line.start..caret].graphemes(true).count();
+        (line, col)
+    }
 
-            // Vertical movement is head-anchored, like `current_line_range`.
-            // Using the caret (`insertion_point`) here instead would, under a
-            // selection where head and caret straddle a line boundary, make
-            // `old_range.start > caret` and panic on the reversed slice.
-            let grapheme_col = self.lines[old_range.start..self.cursor.head()]
-                .graphemes(true)
-                .count();
-
-            // Platform independent way to jump to the previous line.
-            // Doesn't matter if `\n` or `\r\n` terminated line.
-            // Maybe replace with more explicit implementation.
-            self.set_insertion_point(old_range.start);
-            self.move_left();
-
-            let new_range = self.current_line_range();
-            let new_line = &self.lines[new_range.clone()];
-
-            let new_head = new_line
-                .grapheme_indices(true)
-                .take(grapheme_col + 1)
+    /// Byte offset one line up at the caret's column, or `None` on the first
+    /// line. Pure: vertical motion preserves the *caret*'s visual column, so the
+    /// column is measured from the caret and the previous line is found by
+    /// arithmetic — no cursor mutation, and no head-vs-caret straddle to panic on.
+    pub(crate) fn line_up_target(&self) -> Option<usize> {
+        if self.is_cursor_at_first_line() {
+            return None;
+        }
+        let (cur, col) = self.caret_column();
+        // The previous line is the one ending at this line's start; step back
+        // over the `\n` (or `\r\n`) to land in it.
+        let prev = self.line_range_at(prev_grapheme_boundary(&self.lines, cur.start));
+        let line = &self.lines[prev.clone()];
+        // Clamp to the line's last grapheme when it is shorter than the column.
+        Some(
+            line.grapheme_indices(true)
+                .take(col + 1)
                 .last()
-                .map_or(new_range.start, |(i, _)| i + new_range.start);
-            self.set_head(new_head);
+                .map_or(prev.start, |(i, _)| i + prev.start),
+        )
+    }
+
+    /// Byte offset one line down at the caret's column, or `None` on the last
+    /// line. See [`line_up_target`](Self::line_up_target).
+    pub(crate) fn line_down_target(&self) -> Option<usize> {
+        if self.is_cursor_at_last_line() {
+            return None;
+        }
+        let (cur, col) = self.caret_column();
+        // The current line's exclusive range already starts the next line.
+        let next = self.line_range_at(cur.end);
+        let line = &self.lines[next.clone()];
+        // A short last line (no trailing `\n`) falls back to its content end.
+        Some(line.grapheme_indices(true).nth(col).map_or_else(
+            || line::end_of_line(&self.lines, next.start),
+            |(i, _)| i + next.start,
+        ))
+    }
+
+    /// Moves one line up, preserving the caret's column.
+    pub fn move_line_up(&mut self) {
+        if let Some(target) = self.line_up_target() {
+            self.set_head(target);
         }
     }
 
-    /// Moves one line down
+    /// Moves one line down, preserving the caret's column.
     pub fn move_line_down(&mut self) {
-        if !self.is_cursor_at_last_line() {
-            let old_range = self.current_line_range();
-
-            // Head-anchored to match `current_line_range`; see `move_line_up`.
-            let grapheme_col = self.lines[old_range.start..self.cursor.head()]
-                .graphemes(true)
-                .count();
-
-            // Exclusive range, thus guaranteed to be in the next line
-            self.set_insertion_point(old_range.end);
-
-            let new_range = self.current_line_range();
-            let new_line = &self.lines[new_range.clone()];
-
-            // Slightly different to move_line_up to account for the special
-            // case of the last line without newline char at the end.
-            // -> use `self.find_current_line_end()`
-            let new_head = new_line
-                .grapheme_indices(true)
-                .nth(grapheme_col)
-                .map_or_else(
-                    || self.find_current_line_end(),
-                    |(i, _)| i + new_range.start,
-                );
-            self.set_head(new_head);
+        if let Some(target) = self.line_down_target() {
+            self.set_head(target);
         }
     }
 

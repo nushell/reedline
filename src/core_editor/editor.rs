@@ -576,38 +576,17 @@ impl Editor {
     }
 
     pub(crate) fn move_line_up(&mut self, select: bool) {
-        let target = self.line_target(LineBuffer::move_line_up);
-        self.move_head_to(target, select);
+        if let Some(target) = self.line_buffer.line_up_target() {
+            self.move_head_to(target, select);
+        }
         self.update_undo_state(UndoBehavior::MoveCursor);
     }
 
     pub(crate) fn move_line_down(&mut self, select: bool) {
-        let target = self.line_target(LineBuffer::move_line_down);
-        self.move_head_to(target, select);
+        if let Some(target) = self.line_buffer.line_down_target() {
+            self.move_head_to(target, select);
+        }
         self.update_undo_state(UndoBehavior::MoveCursor);
-    }
-
-    /// Resolve the column-preserving head for a vertical move by running the
-    /// line_buffer's own `move_line_*` logic on a throwaway cursor, then restore.
-    /// Routing the result through [`move_head_to`](Self::move_head_to) gives a
-    /// visual selection the put_cursor inclusive anchor-flip on reversal — raw
-    /// `set_head` (the old path) kept the anchor fixed and dropped the anchored
-    /// grapheme when `j`/`k` reverses direction.
-    fn line_target(&mut self, step: fn(&mut LineBuffer)) -> usize {
-        let saved = self.line_buffer.cursor();
-        // Measure the column from the *caret* (the visible position), not the
-        // head: under a Block/visual cursor head sits one grapheme past the
-        // caret (often onto the trailing space of a word), so running the step
-        // on the raw cursor preserves the head's column and drifts the selection
-        // by a grapheme on every vertical move. Collapse to a point at the caret
-        // first so the column is the caret's; the saved selection is restored
-        // before `move_head_to` re-extends it.
-        let caret = self.line_buffer.insertion_point();
-        self.line_buffer.set_cursor(Cursor::point(caret));
-        step(&mut self.line_buffer);
-        let target = self.line_buffer.cursor().head();
-        self.line_buffer.set_cursor(saved);
-        target
     }
 
     /// Get the text of the current [`LineBuffer`]
