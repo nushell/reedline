@@ -12,6 +12,17 @@ use {
 };
 
 /// In memory representation of the entered line(s) including a cursor position to facilitate cursor based editing.
+///
+/// ## Line-ending contract
+///
+/// The buffer may contain `\r` — it is **not** guaranteed LF-only. Typing emits
+/// `\n`, and the paste and history-recall boundaries normalize CRLF→LF, but
+/// other entry points do not: the public `EditCommand::InsertString`, the
+/// external-editor (`edit-command-line`) round-trip, and completer-supplied text
+/// can all introduce `\r` (e.g. a `\r\n` from a Windows editor). Line, word, and
+/// cursor logic therefore treats `\r`/`\r\n` as a terminator throughout (see
+/// [`core_editor::line`], [`word`], and the rest policies). Do not drop those
+/// guards on the assumption that the buffer is CR-free.
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct LineBuffer {
     lines: String,

@@ -341,7 +341,21 @@ impl Editor {
                     // *preceding* one instead so no stray blank line is left.
                     _ => {
                         let e = line::start_of_next_line(buf, selection.end()).unwrap_or(buf.len());
-                        let s = if e == buf.len() && s > 0 { s - 1 } else { s };
+                        // On the last line, eat the whole *preceding* terminator,
+                        // not just one byte: `s` is a line start, so `buf[s-1]` is
+                        // a `\n` that may be the LF half of a `\r\n`. Stepping back
+                        // a single byte would orphan the `\r` (e.g. a CRLF history
+                        // entry: "ab\r\ncd" + `dd` → "ab\r"). The buffer can carry
+                        // CR — see `LineBuffer`'s line-ending contract.
+                        let s = if e == buf.len() && s > 0 {
+                            if buf[..s].ends_with("\r\n") {
+                                s - 2
+                            } else {
+                                s - 1
+                            }
+                        } else {
+                            s
+                        };
                         s..e
                     }
                 }
@@ -777,13 +791,19 @@ impl Editor {
     }
 
     fn cut_from_end_linewise(&mut self, leave_blank_line: bool) {
-        let start_offset = self.line_buffer.get_buffer()[..self.line_buffer.insertion_point()]
+        let buf = self.line_buffer.get_buffer();
+        let start_offset = buf[..self.line_buffer.insertion_point()]
             .rfind('\n')
             .map_or(0, |offset| {
                 // When leave_blank_line is true, we add 1 to the offset
                 // So the \n character is not truncated
                 if leave_blank_line {
                     offset + 1
+                } else if buf[..offset].ends_with('\r') {
+                    // eat the whole `\r\n` terminator, not just the `\n`, so a
+                    // CRLF buffer leaves no stray `\r` (see LineBuffer's
+                    // line-ending contract)
+                    offset - 1
                 } else {
                     offset
                 }
@@ -2272,6 +2292,37 @@ mod test {
         editor.run_edit_command(&EditCommand::MoveLineDown { select: true });
         editor.run_edit_command(&EditCommand::MoveLineDown { select: true });
         editor.run_edit_command(&EditCommand::MoveLineUp { select: true });
+    }
+
+    #[test]
+    fn linewise_cut_last_line_eats_whole_crlf_terminator() {
+        // Regression (#10): cutting the last line must consume the whole
+        // *preceding* terminator. On a CRLF buffer — reachable via a recalled
+        // Windows history entry or `EditCommand::InsertString` — stepping back a
+        // single byte left an orphan `\r` ("ab\r\ncd" + linewise cut → "ab\r").
+        let mut editor = editor_with("ab\r\ncd");
+        editor.operate(
+            Cursor::point(5), // on 'd', the last line
+            OperatorVerb::Cut,
+            Granularity::LineWise,
+        );
+        assert_eq!(editor.get_buffer(), "ab");
+
+        // The lone-LF case is unchanged.
+        let mut editor = editor_with("ab\ncd");
+        editor.operate(Cursor::point(4), OperatorVerb::Cut, Granularity::LineWise);
+        assert_eq!(editor.get_buffer(), "ab");
+    }
+
+    #[test]
+    fn cut_to_end_linewise_eats_whole_crlf_terminator() {
+        // Sibling of #10 on the CutToEndLinewise path (a public EditCommand):
+        // stepping back to the `\n` would orphan the `\r` of a CRLF terminator.
+        let mut editor = editor_with("x\r\ncd");
+        editor.line_buffer.set_insertion_point(3); // on 'c', the second line
+        editor.cut_from_end_linewise(false);
+        assert_eq!(editor.get_buffer(), "x");
+        assert!(!editor.get_buffer().contains('\r'));
     }
 
     fn str_to_edit_commands(s: &str) -> Vec<EditCommand> {
