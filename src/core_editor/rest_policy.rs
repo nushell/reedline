@@ -25,9 +25,8 @@ pub(crate) enum RestPolicy {
     /// The resting cursor always covers exactly one grapheme: a point is widened
     /// onto the grapheme to its right, or — at the buffer end, where there is
     /// none — onto the grapheme to its left. Mirrors Helix's `Range::min_width_1`.
-    /// Vi normal / Helix. No producer until those modes are wired, so it is
-    /// intentionally unconstructed for now.
-    #[allow(dead_code)]
+    /// The policy for Vi visual mode, whose selection is always at least the
+    /// grapheme it sits on.
     Block,
 }
 
@@ -99,10 +98,10 @@ pub(crate) fn commit(buf: &str, c: Cursor, policy: RestPolicy) -> Cursor {
             if c.is_empty() {
                 let head = c.head();
                 let next = next_grapheme_boundary(buf, head);
-                if next > head && !buf[head..].starts_with('\n') {
+                if next > head && !buf[head..].starts_with(['\n', '\r']) {
                     // widen forward onto the grapheme to the right: [head, next)
                     c.move_head(next)
-                } else if head > 0 && !buf[..head].ends_with('\n') {
+                } else if head > 0 && !buf[..head].ends_with(['\n', '\r']) {
                     // at the buffer end there's nothing to the right, so cover the
                     // last grapheme instead: [prev, head)
                     Cursor::new(prev_grapheme_boundary(buf, head), head)
@@ -316,6 +315,18 @@ mod tests {
         assert_eq!(
             commit("", Cursor::point(0), RestPolicy::Block),
             Cursor::point(0)
+        );
+    }
+
+    #[test]
+    fn block_does_not_rest_on_crlf_terminator() {
+        // A point on the `\r` of a CRLF terminator must not widen forward over
+        // the line break; it covers the last real grapheme of the line instead.
+        // Mirrors the `['\n','\r']` guard OnGrapheme already uses. "ab\r\ncd":
+        // point at byte 2 (the `\r`) → block over 'b' at [1,2), not [2,4).
+        assert_eq!(
+            commit("ab\r\ncd", Cursor::point(2), RestPolicy::Block),
+            Cursor::new(1, 2)
         );
     }
 
