@@ -595,6 +595,15 @@ impl Editor {
     /// grapheme when `j`/`k` reverses direction.
     fn line_target(&mut self, step: fn(&mut LineBuffer)) -> usize {
         let saved = self.line_buffer.cursor();
+        // Measure the column from the *caret* (the visible position), not the
+        // head: under a Block/visual cursor head sits one grapheme past the
+        // caret (often onto the trailing space of a word), so running the step
+        // on the raw cursor preserves the head's column and drifts the selection
+        // by a grapheme on every vertical move. Collapse to a point at the caret
+        // first so the column is the caret's; the saved selection is restored
+        // before `move_head_to` re-extends it.
+        let caret = self.line_buffer.insertion_point();
+        self.line_buffer.set_cursor(Cursor::point(caret));
         step(&mut self.line_buffer);
         let target = self.line_buffer.cursor().head();
         self.line_buffer.set_cursor(saved);
@@ -2395,6 +2404,30 @@ mod test {
             "byte 2 ('y', the anchor) must stay covered; selection was {:?}",
             c.start()..c.end()
         );
+    }
+
+    #[test]
+    fn visual_line_jk_preserves_caret_column() {
+        // Starting visual at a word end (caret one grapheme before the trailing
+        // space), j then k must return the caret to its column — the column is
+        // the caret's, not the head's, which under a Block cursor sits one
+        // grapheme further on (onto the space) and drifts the selection by a
+        // grapheme on every vertical move. "ab cd\nef gh": 'b' is byte 1.
+        let mut editor = vi_editor("ab cd\nef gh", PromptViMode::Visual);
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 1, // 'b', the end of "ab"
+            select: false,
+        });
+        editor.update_selection_anchor(true);
+        for _ in 0..2 {
+            editor.run_edit_command(&EditCommand::MoveLineDown { select: true });
+            editor.run_edit_command(&EditCommand::MoveLineUp { select: true });
+            assert_eq!(
+                editor.insertion_point(),
+                1,
+                "caret drifted off 'b' after a j/k round-trip"
+            );
+        }
     }
 
     fn str_to_edit_commands(s: &str) -> Vec<EditCommand> {
