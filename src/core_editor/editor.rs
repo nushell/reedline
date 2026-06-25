@@ -2089,7 +2089,9 @@ mod test {
         for _ in 0..2 {
             editor.run_edit_command(&EditCommand::MoveRight { select: true });
         }
-        editor.run_edit_command(&EditCommand::CutSelection { granularity: Granularity::LineWise });
+        editor.run_edit_command(&EditCommand::CutSelection {
+            granularity: Granularity::LineWise,
+        });
         // X in visual mode should cut the entire line
         assert_eq!(editor.get_buffer(), "");
     }
@@ -2104,7 +2106,9 @@ mod test {
         for _ in 0..2 {
             editor.run_edit_command(&EditCommand::MoveRight { select: true });
         }
-        editor.run_edit_command(&EditCommand::CutSelection { granularity: Granularity::LineWise });
+        editor.run_edit_command(&EditCommand::CutSelection {
+            granularity: Granularity::LineWise,
+        });
         // X in visual mode should cut the entire line(s) covered by the selection
         assert_eq!(editor.get_buffer(), "first\nthird");
     }
@@ -2119,7 +2123,9 @@ mod test {
         for _ in 0..6 {
             editor.run_edit_command(&EditCommand::MoveRight { select: true });
         }
-        editor.run_edit_command(&EditCommand::CutSelection { granularity: Granularity::LineWise });
+        editor.run_edit_command(&EditCommand::CutSelection {
+            granularity: Granularity::LineWise,
+        });
         // Should cut both "first\n" and "second\n"
         assert_eq!(editor.get_buffer(), "third");
     }
