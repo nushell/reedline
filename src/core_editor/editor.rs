@@ -2080,7 +2080,7 @@ mod test {
     }
 
     #[test]
-    fn test_cut_char_left_visual_single_line() {
+    fn test_cut_selection_linewise_single_line() {
         let mut editor = editor_with("hello world");
         editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
         editor.line_buffer.set_insertion_point(2);
@@ -2089,13 +2089,13 @@ mod test {
         for _ in 0..2 {
             editor.run_edit_command(&EditCommand::MoveRight { select: true });
         }
-        editor.run_edit_command(&EditCommand::CutCharLeft);
+        editor.run_edit_command(&EditCommand::CutSelection { granularity: Granularity::LineWise });
         // X in visual mode should cut the entire line
         assert_eq!(editor.get_buffer(), "");
     }
 
     #[test]
-    fn test_cut_char_left_visual_multi_line() {
+    fn test_cut_selection_linewise_multi_line() {
         let mut editor = editor_with("first\nsecond\nthird");
         editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
         // Place cursor in "second", select a portion
@@ -2104,13 +2104,13 @@ mod test {
         for _ in 0..2 {
             editor.run_edit_command(&EditCommand::MoveRight { select: true });
         }
-        editor.run_edit_command(&EditCommand::CutCharLeft);
+        editor.run_edit_command(&EditCommand::CutSelection { granularity: Granularity::LineWise });
         // X in visual mode should cut the entire line(s) covered by the selection
         assert_eq!(editor.get_buffer(), "first\nthird");
     }
 
     #[test]
-    fn test_cut_char_left_visual_spanning_two_lines() {
+    fn test_cut_selection_linewise_spanning_two_lines() {
         let mut editor = editor_with("first\nsecond\nthird");
         editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
         // Select from end of "first" to beginning of "second"
@@ -2119,7 +2119,7 @@ mod test {
         for _ in 0..6 {
             editor.run_edit_command(&EditCommand::MoveRight { select: true });
         }
-        editor.run_edit_command(&EditCommand::CutCharLeft);
+        editor.run_edit_command(&EditCommand::CutSelection { granularity: Granularity::LineWise });
         // Should cut both "first\n" and "second\n"
         assert_eq!(editor.get_buffer(), "third");
     }
