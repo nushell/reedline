@@ -1825,7 +1825,10 @@ impl Reedline {
                     select: false,
                 },
                 EditCommand::MoveToPosition {
-                    position: word_end,
+                    // Select through the cursor, not just the end of the word, so
+                    // the triggering space (already inserted on a <space> expansion)
+                    // is replaced rather than left beside the inserted suffix.
+                    position: cursor_position_in_buffer,
                     select: true,
                 },
                 EditCommand::InsertString(format!("{}{}", expansion, suffix)),
@@ -2544,6 +2547,24 @@ mod tests {
             _ => panic!("expected Edit event"),
         });
         assert_eq!(reedline.current_buffer_contents(), "git commit");
+    }
+
+    #[test]
+    fn abbreviation_expands_on_space_without_double_space() {
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+        // When expansion is triggered by <space>, the triggering space has
+        // already been inserted into the buffer before the expansion runs.
+        set_buffer_at_end(&mut reedline, "gc ");
+        let event = reedline.try_expand_abbreviation_at_cursor(false);
+        assert!(event.is_some(), "expected expansion on space");
+        reedline.run_edit_commands(&match event.unwrap() {
+            ReedlineEvent::Edit(cmds) => cmds,
+            _ => panic!("expected Edit event"),
+        });
+        // Exactly one trailing space: the triggering space must be replaced,
+        // not left in place alongside the inserted suffix space.
+        assert_eq!(reedline.current_buffer_contents(), "git commit ");
     }
 
     #[test]
