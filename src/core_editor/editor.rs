@@ -185,7 +185,9 @@ impl Editor {
                 self.move_left_until_char(*c, true, true, *select)
             }
             EditCommand::SelectAll => self.select_all(),
-            EditCommand::CutSelection => self.cut_selection_to_cut_buffer(),
+            EditCommand::CutSelection { granularity } => {
+                self.cut_selection_to_cut_buffer(*granularity)
+            }
             EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
             EditCommand::Paste => self.paste_cut_buffer(),
             EditCommand::CopyFromStart => self.copy_from_start(),
@@ -678,7 +680,7 @@ impl Editor {
 
     fn cut_char(&mut self) {
         if self.line_buffer.selection_anchor().is_some() {
-            self.cut_selection_to_cut_buffer();
+            self.cut_selection_to_cut_buffer(Granularity::CharWise);
         } else {
             let insertion_offset = self.line_buffer.insertion_point();
             let next_char = self.line_buffer.grapheme_right_index();
@@ -825,9 +827,10 @@ impl Editor {
         }
     }
 
-    fn cut_selection_to_cut_buffer(&mut self) {
+    fn cut_selection_to_cut_buffer(&mut self, granularity: Granularity) {
         if let Some((start, end)) = self.get_selection() {
-            self.cut_range(start..end);
+            let sel = Cursor::new(start, end);
+            self.operate(sel, OperatorVerb::Cut, granularity);
             self.clear_selection();
         }
     }
@@ -893,17 +896,10 @@ impl Editor {
     }
 
     fn cut_char_left(&mut self) {
-        if let Some((start, end)) = self.get_selection() {
-            let line_start = self.line_buffer.line_range_for(start).start;
-            let line_end = self.line_buffer.line_range_for(end).end;
-            self.cut_range(line_start..line_end);
-            self.clear_selection();
-        } else {
-            let cur_pos = self.line_buffer.insertion_point();
-            let left_index = self.line_buffer.grapheme_left_index();
-            if left_index < cur_pos && left_index >= self.line_buffer.current_line_range().start {
-                self.cut_range(left_index..cur_pos);
-            }
+        let cur_pos = self.line_buffer.insertion_point();
+        let left_index = self.line_buffer.grapheme_left_index();
+        if left_index < cur_pos && left_index >= self.line_buffer.current_line_range().start {
+            self.cut_range(left_index..cur_pos);
         }
     }
 
@@ -1516,7 +1512,9 @@ mod test {
         }
         // head on 'l' (byte 2); Vi-normal selection is inclusive → covers [0,3)
         assert_eq!(editor.get_selection(), Some((0, 3)));
-        editor.run_edit_command(&EditCommand::CutSelection);
+        editor.run_edit_command(&EditCommand::CutSelection {
+            granularity: Granularity::CharWise,
+        });
         assert_eq!(editor.get_buffer(), "lo");
         assert_eq!(editor.cut_buffer.get().0, "hel");
     }
@@ -1533,7 +1531,9 @@ mod test {
         }
         // head on 'é' (byte 3); inclusive end extends over both bytes of é → 5
         assert_eq!(editor.get_selection(), Some((0, 5)));
-        editor.run_edit_command(&EditCommand::CutSelection);
+        editor.run_edit_command(&EditCommand::CutSelection {
+            granularity: Granularity::CharWise,
+        });
         assert_eq!(editor.get_buffer(), "x");
         assert_eq!(editor.cut_buffer.get().0, "café");
     }
@@ -2230,7 +2230,9 @@ mod test {
         // Should select "his " (from position 1 to 5, inclusive of char at position 4)
         assert_eq!(editor.get_selection(), Some((1, 5)));
 
-        editor.run_edit_command(&EditCommand::CutSelection);
+        editor.run_edit_command(&EditCommand::CutSelection {
+            granularity: Granularity::CharWise,
+        });
 
         // After cutting, should have "Tis some test content" (removed "his ")
         assert_eq!(editor.get_buffer(), "Tis some test content");
@@ -2257,7 +2259,9 @@ mod test {
         assert_eq!(editor.get_selection(), Some((0, 5))); // should include character at position 4
 
         // Now simulate pressing 'c' - this should cut the selection
-        editor.run_edit_command(&EditCommand::CutSelection);
+        editor.run_edit_command(&EditCommand::CutSelection {
+            granularity: Granularity::CharWise,
+        });
 
         // Should have " world" left (removed "hello")
         assert_eq!(editor.get_buffer(), " world");
@@ -2283,7 +2287,9 @@ mod test {
         assert_eq!(editor.get_selection(), Some((0, 5))); // inclusive selection
 
         // Now simulate pressing 'c' - this should cut the selection
-        editor.run_edit_command(&EditCommand::CutSelection);
+        editor.run_edit_command(&EditCommand::CutSelection {
+            granularity: Granularity::CharWise,
+        });
 
         // Should have " world" left (removed "hello" including the 'o')
         assert_eq!(editor.get_buffer(), " world");
@@ -2514,7 +2520,9 @@ mod test {
         assert_eq!(editor.line_buffer().selection_anchor(), Some(0));
         assert_eq!(editor.get_selection(), Some((0, 5))); // inclusive selection
 
-        editor.run_edit_command(&EditCommand::CutSelection);
+        editor.run_edit_command(&EditCommand::CutSelection {
+            granularity: Granularity::CharWise,
+        });
 
         assert_eq!(editor.get_buffer(), " world");
         assert_eq!(editor.insertion_point(), 0);
@@ -2558,7 +2566,9 @@ mod test {
 
         // Simulate vi 'c' command: mode switches to insert then cuts selection
         editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Insert));
-        editor.run_edit_command(&EditCommand::CutSelection);
+        editor.run_edit_command(&EditCommand::CutSelection {
+            granularity: Granularity::CharWise,
+        });
 
         assert_eq!(editor.get_buffer(), " world");
         assert_eq!(editor.insertion_point(), 0);

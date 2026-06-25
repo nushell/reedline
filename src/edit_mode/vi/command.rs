@@ -247,7 +247,13 @@ impl Command {
                 select: false,
             })],
             Self::DeleteCharBackward => {
-                vec![ReedlineOption::Edit(EditCommand::CutCharLeft)]
+                if vi_state.mode == ViMode::Visual {
+                    vec![ReedlineOption::Edit(EditCommand::CutSelection {
+                        granularity: Granularity::LineWise,
+                    })]
+                } else {
+                    vec![ReedlineOption::Edit(EditCommand::CutCharLeft)]
+                }
             }
             // `S` ≡ `cc` (vim): change the whole line, keeping the blank line
             // for insert mode and filling the register linewise.
@@ -257,7 +263,9 @@ impl Command {
             })],
             Self::DeleteChar => {
                 if vi_state.mode == ViMode::Visual {
-                    vec![ReedlineOption::Edit(EditCommand::CutSelection)]
+                    vec![ReedlineOption::Edit(EditCommand::CutSelection {
+                        granularity: Granularity::CharWise,
+                    })]
                 } else {
                     vec![ReedlineOption::Edit(EditCommand::CutChar)]
                 }
@@ -267,7 +275,9 @@ impl Command {
             }
             Self::SubstituteCharWithInsert => {
                 if vi_state.mode == ViMode::Visual {
-                    vec![ReedlineOption::Edit(EditCommand::CutSelection)]
+                    vec![ReedlineOption::Edit(EditCommand::CutSelection {
+                        granularity: Granularity::CharWise,
+                    })]
                 } else {
                     vec![ReedlineOption::Edit(EditCommand::CutChar)]
                 }
@@ -275,7 +285,9 @@ impl Command {
             Self::HistorySearch => vec![ReedlineOption::Event(ReedlineEvent::SearchHistory)],
             Self::Switchcase => vec![ReedlineOption::Edit(EditCommand::SwitchcaseChar)],
             // Whenever a motion is required to finish the command we must be in visual mode
-            Self::Delete | Self::Change => vec![ReedlineOption::Edit(EditCommand::CutSelection)],
+            Self::Delete | Self::Change => vec![ReedlineOption::Edit(EditCommand::CutSelection {
+                granularity: Granularity::CharWise,
+            })],
             Self::Yank => vec![ReedlineOption::Edit(EditCommand::CopySelection)],
             Self::Incomplete => vec![ReedlineOption::Incomplete],
             Self::RepeatLastAction => match &vi_state.previous {

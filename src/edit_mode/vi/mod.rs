@@ -562,7 +562,9 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutSelection])]),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutSelection {
+                granularity: Granularity::CharWise
+            }])]),
         );
         assert!(matches!(vi.mode, ViMode::Normal));
     }

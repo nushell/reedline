@@ -579,7 +579,10 @@ pub enum EditCommand {
     SelectAll,
 
     /// Cut selection to local buffer
-    CutSelection,
+    CutSelection {
+        /// Char-wise span or whole lines.
+        granularity: Granularity,
+    },
 
     /// Copy selection to local buffer
     CopySelection,
@@ -783,7 +786,7 @@ impl EditCommand {
             | EditCommand::CutRightBefore(_)
             | EditCommand::CutLeftUntil(_)
             | EditCommand::CutLeftBefore(_)
-            | EditCommand::CutSelection
+            | EditCommand::CutSelection { .. }
             | EditCommand::Paste
             | EditCommand::CutInsidePair { .. }
             | EditCommand::CutAroundPair { .. }

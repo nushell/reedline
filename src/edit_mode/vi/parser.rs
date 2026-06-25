@@ -735,7 +735,7 @@ mod tests {
         ReedlineEvent::Edit(vec![EditCommand::Undo])
         ]))]
     #[case(&['d'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Edit(vec![EditCommand::CutSelection])]))]
+        ReedlineEvent::Edit(vec![EditCommand::CutSelection { granularity: Granularity::CharWise }]),]))]
     fn test_reedline_move_in_visual_mode(#[case] input: &[char], #[case] expected: ReedlineEvent) {
         let mut vi = Vi {
             mode: ViMode::Visual,
