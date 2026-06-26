@@ -182,7 +182,17 @@ impl EditMode for Vi {
                         // Default Enter behavior when no custom binding
                         if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
                             self.mode = ViMode::Insert;
-                            ReedlineEvent::Enter
+                            // The normal/visual block caret rests *on* a grapheme;
+                            // submitting (or inserting a newline on incomplete input)
+                            // acts past it. Release the caret forward like `a`/append
+                            // — under the now-`Between` policy — so the trailing edit
+                            // (abbreviation expansion or the newline) lands at the line
+                            // end, not one grapheme short, which otherwise split the
+                            // last word and dropped submit-time abbreviation expansion.
+                            ReedlineEvent::Multiple(vec![
+                                ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }]),
+                                ReedlineEvent::Enter,
+                            ])
                         } else {
                             ReedlineEvent::None
                         }
@@ -596,7 +606,15 @@ mod test {
         };
         let result = vi.parse_event(key(KeyCode::Enter, KeyModifiers::NONE));
 
-        assert_eq!(result, ReedlineEvent::Enter);
+        // Releases the block caret forward (like `a`) before submitting, so a
+        // trailing abbreviation / newline acts past the resting grapheme.
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }]),
+                ReedlineEvent::Enter,
+            ])
+        );
         assert!(matches!(vi.mode, ViMode::Insert));
     }
 

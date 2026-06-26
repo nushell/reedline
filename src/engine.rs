@@ -2814,6 +2814,51 @@ mod tests {
         assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
     }
 
+    // Feed one key as its own batch, mirroring real interactive input where each
+    // keypress drives a separate `process_input_batch`.
+    fn step_key(rl: &mut Reedline, k: KeyEvent) -> ControlFlow<Signal> {
+        rl.process_input_batch(&DefaultPrompt::default(), vec![Event::Key(k)])
+            .expect("batch ok")
+    }
+
+    #[test]
+    fn abbreviation_expands_on_enter_in_vi_normal() {
+        // Regression: a vi-normal block caret rests *on* the last grapheme, so
+        // before the caret-release on Enter the submit-time scan saw `g` instead
+        // of `gc` and silently skipped expansion.
+        let mut abbreviations = HashMap::new();
+        abbreviations.insert("gc".to_string(), "git commit".to_string());
+        let mut rl = seam_engine(Box::<crate::Vi>::default()).with_abbreviations(abbreviations);
+
+        let _ = step_key(&mut rl, ch('g'));
+        let _ = step_key(&mut rl, ch('c'));
+        let _ = step_key(&mut rl, key(KeyCode::Esc)); // vi normal, caret on 'c'
+        match step_key(&mut rl, key(KeyCode::Enter)) {
+            ControlFlow::Break(Signal::Success(buf)) => assert_eq!(buf, "git commit"),
+            other => panic!("expected submit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vi_normal_enter_inserts_newline_at_end_not_mid_word() {
+        // Regression: the same stranded block caret made an incomplete-input
+        // newline land one grapheme short, splitting the last word (`ab` -> `a\nb`).
+        struct AlwaysIncomplete;
+        impl crate::Validator for AlwaysIncomplete {
+            fn validate(&self, _line: &str) -> ValidationResult {
+                ValidationResult::Incomplete
+            }
+        }
+        let mut rl =
+            seam_engine(Box::<crate::Vi>::default()).with_validator(Box::new(AlwaysIncomplete));
+
+        let _ = step_key(&mut rl, ch('a'));
+        let _ = step_key(&mut rl, ch('b'));
+        let _ = step_key(&mut rl, key(KeyCode::Esc)); // vi normal, caret on 'b'
+        let _ = step_key(&mut rl, key(KeyCode::Enter)); // incomplete -> insert newline
+        assert_eq!(rl.editor.get_buffer(), "ab\n");
+    }
+
     #[cfg(feature = "bashisms")]
     fn reedline_with_history_and_string_lit_check(entries: &[&str]) -> Reedline {
         let mut reedline =
