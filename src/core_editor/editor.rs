@@ -326,28 +326,39 @@ impl Editor {
     }
 
     fn operate(&mut self, selection: Cursor, verb: OperatorVerb, granularity: Granularity) {
-        let range = match granularity {
-            Granularity::CharWise => selection.start()..selection.end(),
+        // `register` is the span the cut buffer keeps; `delete` is the span that
+        // leaves the buffer. They coincide except for a linewise Cut/Copy of the
+        // *last* line: the deletion eats the preceding terminator so no blank line
+        // is stranded, but the register must hold only the line's content —
+        // otherwise a later linewise paste re-introduces that newline as a
+        // spurious leading blank line.
+        let (register, delete) = match granularity {
+            Granularity::CharWise => {
+                let r = selection.start()..selection.end();
+                (r.clone(), r)
+            }
             Granularity::LineWise => {
                 let buf = self.get_buffer();
                 let s = line::start_of_line(buf, selection.start());
                 match verb {
                     // Change keeps the line terminators: only the lines'
                     // content is consumed, so one blank line remains for the
-                    // re-entered insert mode.
-                    OperatorVerb::Change => s..line::end_of_line(buf, selection.end()),
+                    // re-entered insert mode. Register and deletion coincide.
+                    OperatorVerb::Change => {
+                        let r = s..line::end_of_line(buf, selection.end());
+                        (r.clone(), r)
+                    }
                     // Cut/Copy/Erase consume whole lines including the trailing
-                    // `\n`; on the last line (no trailing `\n`) eat the
-                    // *preceding* one instead so no stray blank line is left.
+                    // `\n`. On the last line (no trailing `\n`) the *deletion*
+                    // eats the whole preceding terminator instead so no stray
+                    // blank line is left — 2 bytes for a `\r\n`, so the `\r` is
+                    // not orphaned (e.g. a CRLF history entry "ab\r\ncd" + `dd`
+                    // → "ab"; the buffer can carry CR, see `LineBuffer`'s
+                    // line-ending contract). The *register* keeps just `s..e` so
+                    // a later linewise paste does not gain a leading blank line.
                     _ => {
                         let e = line::start_of_next_line(buf, selection.end()).unwrap_or(buf.len());
-                        // On the last line, eat the whole *preceding* terminator,
-                        // not just one byte: `s` is a line start, so `buf[s-1]` is
-                        // a `\n` that may be the LF half of a `\r\n`. Stepping back
-                        // a single byte would orphan the `\r` (e.g. a CRLF history
-                        // entry: "ab\r\ncd" + `dd` → "ab\r"). The buffer can carry
-                        // CR — see `LineBuffer`'s line-ending contract.
-                        let s = if e == buf.len() && s > 0 {
+                        let delete_start = if e == buf.len() && s > 0 {
                             if buf[..s].ends_with("\r\n") {
                                 s - 2
                             } else {
@@ -356,18 +367,24 @@ impl Editor {
                         } else {
                             s
                         };
-                        s..e
+                        (s..e, delete_start..e)
                     }
                 }
             }
         };
 
         match verb {
-            OperatorVerb::Cut | OperatorVerb::Change => self.cut_range_with(range, granularity),
-            OperatorVerb::Copy => self.copy_range_with(range, granularity),
+            OperatorVerb::Cut => {
+                self.copy_range_with(register, granularity);
+                self.line_buffer.clear_range_safe(delete.clone());
+                self.line_buffer.set_insertion_point(delete.start);
+            }
+            // Change's register and deletion coincide, so one range suffices.
+            OperatorVerb::Change => self.cut_range_with(delete, granularity),
+            OperatorVerb::Copy => self.copy_range_with(register, granularity),
             OperatorVerb::Erase => {
-                self.line_buffer.clear_range_safe(range.clone());
-                self.line_buffer.set_insertion_point(range.start);
+                self.line_buffer.clear_range_safe(delete.clone());
+                self.line_buffer.set_insertion_point(delete.start);
             }
         }
     }
@@ -807,27 +824,30 @@ impl Editor {
 
     fn cut_from_end_linewise(&mut self, leave_blank_line: bool) {
         let buf = self.line_buffer.get_buffer();
-        let start_offset = buf[..self.line_buffer.insertion_point()]
-            .rfind('\n')
-            .map_or(0, |offset| {
-                // When leave_blank_line is true, we add 1 to the offset
-                // So the \n character is not truncated
-                if leave_blank_line {
-                    offset + 1
-                } else if buf[..offset].ends_with('\r') {
-                    // eat the whole `\r\n` terminator, not just the `\n`, so a
-                    // CRLF buffer leaves no stray `\r` (see LineBuffer's
-                    // line-ending contract)
-                    offset - 1
-                } else {
-                    offset
-                }
-            });
+        let len = buf.len();
+        let nl = buf[..self.line_buffer.insertion_point()].rfind('\n');
+        // The register keeps content from the line start only (no leading
+        // terminator) so a later linewise paste gains no blank line. The
+        // deletion eats the preceding terminator when not leaving a blank line —
+        // the whole `\r\n` for CRLF (see `LineBuffer`'s line-ending contract).
+        // Same register/delete split as `operate`.
+        let register_start = nl.map_or(0, |offset| offset + 1);
+        let delete_start = nl.map_or(0, |offset| {
+            if leave_blank_line {
+                offset + 1
+            } else if buf[..offset].ends_with('\r') {
+                offset - 1
+            } else {
+                offset
+            }
+        });
 
-        let cut_slice = &self.line_buffer.get_buffer()[start_offset..];
-        if !cut_slice.is_empty() {
-            self.cut_buffer.set(cut_slice, Granularity::LineWise);
-            self.line_buffer.set_insertion_point(start_offset);
+        if delete_start < len {
+            let register_slice = &self.line_buffer.get_buffer()[register_start..];
+            if !register_slice.is_empty() {
+                self.cut_buffer.set(register_slice, Granularity::LineWise);
+            }
+            self.line_buffer.set_insertion_point(delete_start);
             self.line_buffer.clear_to_end();
         }
     }
@@ -910,21 +930,46 @@ impl Editor {
     }
 
     fn insert_cut_buffer_after(&mut self) {
+        // After replacing a selection the cursor already sits at the deletion
+        // point, so it must NOT skip a grapheme; only the plain no-selection `p`
+        // steps past the grapheme under the cursor before inserting.
+        let had_selection = self.line_buffer.selection_anchor().is_some();
         self.delete_selection();
         match self.cut_buffer.get() {
             (content, Granularity::CharWise) => {
-                self.line_buffer.move_right();
+                if !had_selection {
+                    self.line_buffer.move_right();
+                }
                 self.line_buffer.insert_str(&content);
             }
             (mut content, Granularity::LineWise) => {
-                // TODO: Simplify that?
-                self.line_buffer.move_to_line_start();
-                self.line_buffer.move_line_down();
                 if !content.ends_with('\n') {
-                    // TODO: Make sure platform requirements are met
                     content.push('\n');
                 }
-                self.line_buffer.insert_str(&content);
+                let ip = self.line_buffer.insertion_point();
+                match line::start_of_next_line(self.line_buffer.get_buffer(), ip) {
+                    // A line exists below: insert at its start so the pasted lines
+                    // land between current and next — i.e. below the current line.
+                    Some(next) => {
+                        self.line_buffer.set_insertion_point(next);
+                        self.line_buffer.insert_str(&content);
+                    }
+                    // Last line: no line below, so append after the current line's
+                    // terminator. Drop the trailing `\n` so no blank line is added,
+                    // otherwise the paste would land *above* (like `P`).
+                    None => {
+                        let trimmed = content.strip_suffix('\n').unwrap_or(&content);
+                        if self.line_buffer.is_empty() {
+                            // No current line to append below — insert as-is so an
+                            // empty buffer (e.g. after `dd` on the only line) does
+                            // not gain a leading blank line.
+                            self.line_buffer.insert_str(trimmed);
+                        } else {
+                            self.line_buffer.set_insertion_point(self.line_buffer.len());
+                            self.line_buffer.insert_str(&format!("\n{trimmed}"));
+                        }
+                    }
+                }
             }
         }
     }
@@ -1017,6 +1062,24 @@ impl Editor {
     }
 
     fn replace_char(&mut self, character: char) {
+        // Visual `r`: replace every grapheme in the selection with `character`,
+        // preserving line terminators — vim's `r` over a selection.
+        if let Some((start, end)) = self.get_selection() {
+            use unicode_segmentation::UnicodeSegmentation;
+            let replacement: String = self.line_buffer.get_buffer()[start..end]
+                .graphemes(true)
+                .map(|g| {
+                    if g == "\n" || g == "\r\n" || g == "\r" {
+                        g.to_string()
+                    } else {
+                        character.to_string()
+                    }
+                })
+                .collect();
+            self.line_buffer.replace_range(start..end, &replacement);
+            self.line_buffer.set_cursor(Cursor::point(start));
+            return;
+        }
         // Anchor the in-place replace on the caret: under a Block/visual cursor
         // head is one grapheme past the caret, so deleting+inserting without
         // collapsing first would clear two graphemes and corrupt the buffer.
@@ -1089,8 +1152,9 @@ impl Editor {
     /// If a selection is active returns the selected range, otherwise None.
     /// The range is guaranteed to be ascending.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
-        // `None` exactly when no anchor is planted. A planted anchor that
-        // happens to sit on the head is still a (degenerate) selection.
+        // `None` exactly when the cursor is empty (head == anchor): with the
+        // collapsed `Cursor` storage, `selection_anchor()` is derived from
+        // `!is_empty()`, so an anchor on the head is simply no selection.
         self.line_buffer.selection_anchor()?;
         let cursor = self.line_buffer.cursor();
 
@@ -1976,7 +2040,9 @@ mod test {
         assert_eq!(editor.get_buffer(), "aaa");
         assert_eq!(editor.insertion_point(), 3);
         let (content, gran) = editor.cut_buffer.get();
-        assert_eq!(content, "\nbbb\nccc");
+        // The buffer-end fixup eats the *preceding* `\n` from the deletion only;
+        // the register keeps content (no leading `\n`) so paste stays blank-safe.
+        assert_eq!(content, "bbb\nccc");
         assert_eq!(gran, Granularity::LineWise);
     }
 
@@ -2017,7 +2083,9 @@ mod test {
         });
         assert_eq!(editor.get_buffer(), "aaa");
         let (content, gran) = editor.cut_buffer.get();
-        assert_eq!(content, "\nbbb\nccc");
+        // Register keeps the line content only — no leading `\n` — so a linewise
+        // paste does not gain a spurious blank line.
+        assert_eq!(content, "bbb\nccc");
         assert_eq!(gran, Granularity::LineWise);
     }
 
@@ -2049,8 +2117,114 @@ mod test {
         });
         assert_eq!(editor.get_buffer(), "aaa\nbbb");
         let (content, gran) = editor.cut_buffer.get();
-        assert_eq!(content, "\nccc");
+        // Register keeps content only; the leading `\n` is eaten from the
+        // deletion alone, keeping a later linewise paste blank-safe.
+        assert_eq!(content, "ccc");
         assert_eq!(gran, Granularity::LineWise);
+    }
+
+    #[test]
+    fn dd_on_last_line_then_paste_leaves_no_blank_line() {
+        // Regression: a linewise cut of the last line stored the deletion span
+        // (with its eaten leading `\n`) in the register, so a later linewise
+        // paste re-introduced that newline as a spurious blank line.
+        let mut editor = vi_editor("ab\ncd", PromptViMode::Normal);
+        editor.line_buffer.set_insertion_point(3); // on "cd"
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::LineEdge(Direction::Forward),
+            granularity: Granularity::LineWise,
+        });
+        assert_eq!(editor.get_buffer(), "ab");
+        assert_eq!(editor.cut_buffer.get().0, "cd"); // content only
+        editor.run_edit_command(&EditCommand::PasteCutBufferBefore);
+        assert_eq!(editor.get_buffer(), "cd\nab"); // no leading blank line
+    }
+
+    #[test]
+    fn word_operator_never_splits_a_combining_grapheme() {
+        // Regression: NFD "aé" = 'a' + 'e' + U+0301 (combining acute). The
+        // combining mark classifies differently, so the word-start boundary lands
+        // mid-grapheme; `dw` must floor to a grapheme boundary rather than cut
+        // mid-cluster and strand the combining mark at the buffer start.
+        let mut editor = vi_editor("ae\u{0301}", PromptViMode::Normal);
+        editor.line_buffer.set_insertion_point(0);
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::Word {
+                kind: WordKind::Word,
+                edge: WordEdge::Start,
+                direction: Direction::Forward,
+            },
+            granularity: Granularity::CharWise,
+        });
+        let buf = editor.get_buffer();
+        assert!(
+            !buf.starts_with('\u{0301}'),
+            "word operator orphaned a combining mark: {buf:?}"
+        );
+    }
+
+    #[test]
+    fn paste_after_over_selection_does_not_skip_a_grapheme() {
+        // Regression: paste-after replaced the selection then `move_right`,
+        // skipping the first remaining grapheme, so the register landed one
+        // grapheme too late ("hello" + select "hel" + register "xyz" → "lxyzo").
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.cut_buffer.set("xyz", Granularity::CharWise);
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 0,
+            select: false,
+        });
+        for _ in 0..2 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+        assert_eq!(editor.get_selection(), Some((0, 3))); // "hel"
+        editor.run_edit_command(&EditCommand::PasteCutBufferAfter);
+        assert_eq!(editor.get_buffer(), "xyzlo");
+    }
+
+    #[test]
+    fn paste_after_linewise_on_last_line_lands_below() {
+        // Regression: `p` on the last line fell back to the line start (no line
+        // below), pasting *above* like `P`.
+        let mut editor = editor_with("ab");
+        editor.cut_buffer.set("cd", Granularity::LineWise);
+        editor.line_buffer.set_insertion_point(0);
+        editor.run_edit_command(&EditCommand::PasteCutBufferAfter);
+        assert_eq!(editor.get_buffer(), "ab\ncd"); // below, not "cd\nab"
+    }
+
+    #[test]
+    fn paste_after_linewise_into_empty_buffer_has_no_blank_line() {
+        // Regression (introduced by the last-line paste fix): `dd` on the only
+        // line empties the buffer, and `p` must not prepend a blank line.
+        let mut editor = editor_with("");
+        editor.cut_buffer.set("ab", Granularity::LineWise);
+        editor.run_edit_command(&EditCommand::PasteCutBufferAfter);
+        assert_eq!(editor.get_buffer(), "ab");
+    }
+
+    #[test]
+    fn paste_after_linewise_middle_line_lands_below() {
+        let mut editor = editor_with("a\nb");
+        editor.cut_buffer.set("X", Granularity::LineWise);
+        editor.line_buffer.set_insertion_point(0); // on line "a"
+        editor.run_edit_command(&EditCommand::PasteCutBufferAfter);
+        assert_eq!(editor.get_buffer(), "a\nX\nb");
+    }
+
+    #[test]
+    fn visual_replace_char_replaces_whole_selection() {
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 0,
+            select: false,
+        });
+        for _ in 0..2 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+        assert_eq!(editor.get_selection(), Some((0, 3))); // "hel"
+        editor.run_edit_command(&EditCommand::ReplaceChar('x'));
+        assert_eq!(editor.get_buffer(), "xxxlo");
     }
 
     #[test]
@@ -2215,7 +2389,9 @@ mod test {
         assert_eq!(editor.get_buffer(), "aaa");
         assert_eq!(editor.insertion_point(), 3);
         let (content, mode) = editor.cut_buffer.get();
-        assert_eq!(content, "\nbbb\nccc");
+        // Register holds content only (no leading `\n`); the deletion alone eats
+        // the preceding terminator, so a later linewise paste stays blank-safe.
+        assert_eq!(content, "bbb\nccc");
         assert!(matches!(mode, Granularity::LineWise));
     }
 

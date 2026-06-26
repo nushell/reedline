@@ -115,6 +115,9 @@ impl ParsedViSequence {
             (Some(Command::Delete), ParseResult::Incomplete) if mode == ViMode::Visual => {
                 Some(ViMode::Normal)
             }
+            // `r<char>` in Visual replaces and returns to Normal; without this it
+            // would fall through to `None` and leave the editor stuck in Visual.
+            (Some(Command::ReplaceChar(_)), _) if mode == ViMode::Visual => Some(ViMode::Normal),
             (Some(Command::ChangeInsidePair { .. }), _) => Some(ViMode::Insert),
             (Some(Command::ChangeTextObject { .. }), _) => Some(ViMode::Insert),
             (Some(Command::Delete), ParseResult::Incomplete)
@@ -253,6 +256,17 @@ mod tests {
         assert_eq!(output.is_valid(), true);
         assert_eq!(output.is_complete(ViMode::Normal), false);
         assert_eq!(output.is_complete(ViMode::Visual), true);
+    }
+
+    #[test]
+    fn replace_char_in_visual_returns_to_normal() {
+        // Regression: `r<char>` in Visual had no `changes_mode` arm, so it fell
+        // through to `None` and left the editor stuck in Visual forever.
+        let output = vi_parse(&['r', 'k']);
+        assert_eq!(output.command, Some(Command::ReplaceChar('k')));
+        assert_eq!(output.changes_mode(ViMode::Visual), Some(ViMode::Normal));
+        // Normal-mode `r` does not change mode.
+        assert_eq!(output.changes_mode(ViMode::Normal), None);
     }
 
     #[test]

@@ -15,7 +15,7 @@
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::core_editor::graphemes::next_grapheme_boundary;
+use crate::core_editor::graphemes::{ensure_grapheme_boundary_prev, next_grapheme_boundary};
 use crate::core_editor::line_buffer::is_whitespace_str;
 use crate::enums::{Direction, WordEdge, WordKind};
 
@@ -132,7 +132,12 @@ pub(crate) fn locate_word(
                 // `End` is the gap *after* its last grapheme. (The block-caret
                 // `e` rendering is applied by the identity at the top.)
                 let boundary = match edge {
-                    WordEdge::Start => byte,
+                    // `char_indices` yields char boundaries, which can fall
+                    // *inside* a grapheme cluster (e.g. a base char followed by a
+                    // combining mark of a different `CharClass`). Floor a `Start`
+                    // onto its grapheme boundary so operators never cut mid-cluster
+                    // and orphan a combining mark. (`End` already snaps forward.)
+                    WordEdge::Start => ensure_grapheme_boundary_prev(buf, byte),
                     WordEdge::End => next_grapheme_boundary(buf, byte),
                 };
                 if boundary > origin {
@@ -150,7 +155,8 @@ pub(crate) fn locate_word(
         while let Some((byte, ch)) = iter.next() {
             let before = iter.peek().map(|&(_, c)| c);
             if is_target(before, ch, after) {
-                return byte;
+                // Floor onto a grapheme boundary — see the forward `Start` note.
+                return ensure_grapheme_boundary_prev(buf, byte);
             }
             after = Some(ch);
         }

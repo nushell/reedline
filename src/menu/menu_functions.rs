@@ -366,11 +366,16 @@ pub fn replace_in_buffer(
             value.push(' ');
         }
 
+        // Base the new cursor on the head, not `insertion_point()` (which is the
+        // caret — one grapheme back under a forward selection), and clear any
+        // selection so completion never leaves a stale anchor.
+        let head = editor.line_buffer().cursor().head();
         let mut line_buffer = editor.line_buffer().clone();
         line_buffer.replace_range(start..end, &value);
-        let mut offset = line_buffer.insertion_point();
+        let mut offset = head;
         offset = offset.saturating_add(value.len());
         offset = offset.saturating_sub(end.saturating_sub(start));
+        line_buffer.clear_selection();
         line_buffer.set_insertion_point(offset);
         editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
     }
@@ -391,17 +396,19 @@ pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> boo
             && matching != entered_input;
 
         if !matching.is_empty() && extends_input {
+            // Base the new cursor on the head, not `insertion_point()` (the
+            // caret), and clear any selection — see `replace_in_buffer`.
+            let head = editor.line_buffer().cursor().head();
             let mut line_buffer = editor.line_buffer().clone();
             line_buffer.replace_range(start..end, matching);
 
             let offset = if matching.len() < (end - start) {
-                line_buffer
-                    .insertion_point()
-                    .saturating_sub((end - start) - matching.len())
+                head.saturating_sub((end - start) - matching.len())
             } else {
-                line_buffer.insertion_point() + matching.len() - (end - start)
+                head + matching.len() - (end - start)
             };
 
+            line_buffer.clear_selection();
             line_buffer.set_insertion_point(offset);
             editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
 
