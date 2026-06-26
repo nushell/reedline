@@ -79,7 +79,11 @@ impl EditMode for Vi {
                 (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v')) => {
                     self.cache.clear();
                     self.mode = ViMode::Visual;
-                    ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
+                    // Entering Visual switches the rest policy to `Block`; the
+                    // pre-paint commit then widens the cursor into its min-width-1
+                    // selection. Just repaint — do *not* clear the selection here
+                    // (e.g. by emitting `Esc`), which would defeat starting one.
+                    ReedlineEvent::Repaint
                 }
                 (ViMode::Normal | ViMode::Visual, modifier, KeyCode::Char(c)) => {
                     let c = c.to_ascii_lowercase();
@@ -178,7 +182,17 @@ impl EditMode for Vi {
                         // Default Enter behavior when no custom binding
                         if modifiers == KeyModifiers::NONE && code == KeyCode::Enter {
                             self.mode = ViMode::Insert;
-                            ReedlineEvent::Enter
+                            // The normal/visual block caret rests *on* a grapheme;
+                            // submitting (or inserting a newline on incomplete input)
+                            // acts past it. Release the caret forward like `a`/append
+                            // — under the now-`Between` policy — so the trailing edit
+                            // (abbreviation expansion or the newline) lands at the line
+                            // end, not one grapheme short, which otherwise split the
+                            // last word and dropped submit-time abbreviation expansion.
+                            ReedlineEvent::Multiple(vec![
+                                ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }]),
+                                ReedlineEvent::Enter,
+                            ])
                         } else {
                             ReedlineEvent::None
                         }
@@ -218,7 +232,10 @@ impl EditMode for Vi {
 
     fn edit_mode(&self) -> PromptEditMode {
         match self.mode {
-            ViMode::Normal | ViMode::Visual => PromptEditMode::Vi(PromptViMode::Normal),
+            ViMode::Normal => PromptEditMode::Vi(PromptViMode::Normal),
+            // Visual maps to its own policy (min-width-1 `Block`) so the commit
+            // boundary widens the cursor into a selection on entry.
+            ViMode::Visual => PromptEditMode::Vi(PromptViMode::Visual),
             ViMode::Insert => PromptEditMode::Vi(PromptViMode::Insert),
         }
     }
@@ -461,10 +478,9 @@ mod test {
         let result = vi.parse_event(key(KeyCode::Char('v'), KeyModifiers::NONE));
 
         assert!(matches!(vi.mode, ViMode::Visual));
-        assert_eq!(
-            result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint])
-        );
+        // `v` only enters Visual + repaints; it must NOT emit `Esc` (which would
+        // clear the selection). The `Block` rest policy materializes the block.
+        assert_eq!(result, ReedlineEvent::Repaint);
     }
 
     #[test]
@@ -507,7 +523,7 @@ mod test {
             result,
             ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Cut {
                 target: MotionTarget::Word {
-                    kind: WordKind::Small,
+                    kind: WordKind::Word,
                     edge: WordEdge::Start,
                     direction: Direction::Forward,
                 },
@@ -544,7 +560,7 @@ mod test {
             result,
             ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Move(
                 MotionTarget::Word {
-                    kind: WordKind::Big,
+                    kind: WordKind::LongWord,
                     edge: WordEdge::Start,
                     direction: Direction::Forward,
                 }
@@ -590,7 +606,15 @@ mod test {
         };
         let result = vi.parse_event(key(KeyCode::Enter, KeyModifiers::NONE));
 
-        assert_eq!(result, ReedlineEvent::Enter);
+        // Releases the block caret forward (like `a`) before submitting, so a
+        // trailing abbreviation / newline acts past the resting grapheme.
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }]),
+                ReedlineEvent::Enter,
+            ])
+        );
         assert!(matches!(vi.mode, ViMode::Insert));
     }
 
@@ -717,7 +741,7 @@ mod test {
 
         let cut_word = ReedlineEvent::Edit(vec![EditCommand::Cut {
             target: MotionTarget::Word {
-                kind: WordKind::Small,
+                kind: WordKind::Word,
                 edge: WordEdge::Start,
                 direction: Direction::Forward,
             },
@@ -740,7 +764,7 @@ mod test {
         let result = vi.parse_event(key(KeyCode::Char('w'), KeyModifiers::NONE));
 
         let mv = ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Word {
-            kind: WordKind::Small,
+            kind: WordKind::Word,
             edge: WordEdge::Start,
             direction: Direction::Forward,
         })]);

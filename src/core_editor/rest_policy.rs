@@ -25,9 +25,8 @@ pub(crate) enum RestPolicy {
     /// The resting cursor always covers exactly one grapheme: a point is widened
     /// onto the grapheme to its right, or — at the buffer end, where there is
     /// none — onto the grapheme to its left. Mirrors Helix's `Range::min_width_1`.
-    /// Vi normal / Helix. No producer until those modes are wired, so it is
-    /// intentionally unconstructed for now.
-    #[allow(dead_code)]
+    /// The policy for Vi visual mode, whose selection is always at least the
+    /// grapheme it sits on.
     Block,
 }
 
@@ -76,13 +75,19 @@ pub(crate) fn commit(buf: &str, c: Cursor, policy: RestPolicy) -> Cursor {
     match policy {
         RestPolicy::Between => c,
         RestPolicy::OnGrapheme => {
-            if c.head() == len && len > 0 && !buf.ends_with('\n') {
-                let prev = prev_grapheme_boundary(buf, c.head());
-                if c.is_empty() {
-                    Cursor::point(prev)
-                } else {
-                    c.move_head(prev)
-                }
+            // A *bare* cursor (an empty point) may not rest past the last grapheme
+            // of its line: pull it back off the line terminator (or the buffer end)
+            // onto that grapheme. Skip when the line is empty — the char before is
+            // itself a terminator (or the buffer start), so column 0 is the only
+            // cell and pulling back would cross into the previous line. A selection
+            // may legitimately cover the final grapheme (head at the boundary,
+            // caret one grapheme inward), so its head is left alone — inclusivity
+            // is geometric now, not a query-time `+1`.
+            let head = c.head();
+            let past_last_grapheme = head == len || buf[head..].starts_with(['\n', '\r']);
+            let line_has_grapheme = head > 0 && !buf[..head].ends_with(['\n', '\r']);
+            if c.is_empty() && past_last_grapheme && line_has_grapheme {
+                Cursor::point(prev_grapheme_boundary(buf, head))
             } else {
                 c
             }
@@ -93,15 +98,16 @@ pub(crate) fn commit(buf: &str, c: Cursor, policy: RestPolicy) -> Cursor {
             if c.is_empty() {
                 let head = c.head();
                 let next = next_grapheme_boundary(buf, head);
-                if next > head {
+                if next > head && !buf[head..].starts_with(['\n', '\r']) {
                     // widen forward onto the grapheme to the right: [head, next)
                     c.move_head(next)
-                } else if head > 0 {
+                } else if head > 0 && !buf[..head].ends_with(['\n', '\r']) {
                     // at the buffer end there's nothing to the right, so cover the
                     // last grapheme instead: [prev, head)
                     Cursor::new(prev_grapheme_boundary(buf, head), head)
                 } else {
-                    // empty buffer: nothing to cover
+                    // empty buffer, or an empty line (no grapheme to cover without
+                    // crossing the newline): stay a zero-width point
                     c
                 }
             } else {
@@ -222,6 +228,32 @@ mod tests {
     }
 
     #[test]
+    fn on_grapheme_pulls_back_from_interior_line_end() {
+        // A point past the last grapheme of an *interior* line (the gap before the
+        // `\n`) is pulled back onto that grapheme, like at the buffer end — vi
+        // normal's caret never sits on the terminator. "abc\ndef": gap 3 -> 'c' (2).
+        assert_eq!(
+            commit("abc\ndef", Cursor::point(3), RestPolicy::OnGrapheme),
+            Cursor::point(2)
+        );
+        // `\r\n` terminator: pull back over the whole grapheme. "ab\r\ncd": gap 2 -> 'b' (1).
+        assert_eq!(
+            commit("ab\r\ncd", Cursor::point(2), RestPolicy::OnGrapheme),
+            Cursor::point(1)
+        );
+    }
+
+    #[test]
+    fn on_grapheme_rests_on_interior_empty_line() {
+        // An empty interior line ("abc\n\ndef": the byte-4 newline is that line's
+        // column 0) keeps the point — pulling back would cross up a line.
+        assert_eq!(
+            commit("abc\n\ndef", Cursor::point(4), RestPolicy::OnGrapheme),
+            Cursor::point(4)
+        );
+    }
+
+    #[test]
     fn on_grapheme_empty_buffer_is_noop() {
         assert_eq!(
             commit("", Cursor::point(0), RestPolicy::OnGrapheme),
@@ -230,11 +262,13 @@ mod tests {
     }
 
     #[test]
-    fn on_grapheme_pulls_only_head_of_selection() {
-        // head at end pulls back to 4; anchor stays put
+    fn on_grapheme_leaves_selection_head_at_end() {
+        // A selection may cover the final grapheme: its head at `len` is left
+        // alone (inclusivity is geometric now). Only a bare *point* is pulled
+        // back off the end — see `on_grapheme_pulls_back_from_end`.
         assert_eq!(
             commit("hello", Cursor::new(0, 5), RestPolicy::OnGrapheme),
-            Cursor::new(0, 4)
+            Cursor::new(0, 5)
         );
     }
 
@@ -281,6 +315,18 @@ mod tests {
         assert_eq!(
             commit("", Cursor::point(0), RestPolicy::Block),
             Cursor::point(0)
+        );
+    }
+
+    #[test]
+    fn block_does_not_rest_on_crlf_terminator() {
+        // A point on the `\r` of a CRLF terminator must not widen forward over
+        // the line break; it covers the last real grapheme of the line instead.
+        // Mirrors the `['\n','\r']` guard OnGrapheme already uses. "ab\r\ncd":
+        // point at byte 2 (the `\r`) → block over 'b' at [1,2), not [2,4).
+        assert_eq!(
+            commit("ab\r\ncd", Cursor::point(2), RestPolicy::Block),
+            Cursor::new(1, 2)
         );
     }
 

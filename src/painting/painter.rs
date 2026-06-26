@@ -632,7 +632,7 @@ impl Painter {
             let shape = match &prompt_mode {
                 PromptEditMode::Emacs => shapes.emacs,
                 PromptEditMode::Vi(PromptViMode::Insert) => shapes.vi_insert,
-                PromptEditMode::Vi(PromptViMode::Normal) => shapes.vi_normal,
+                PromptEditMode::Vi(PromptViMode::Normal | PromptViMode::Visual) => shapes.vi_normal,
                 _ => None,
             };
             if let Some(shape) = shape {
@@ -1209,6 +1209,10 @@ impl Painter {
             self.stdout.queue(Print(&coerce_crlf("\n")))?;
         }
         Ok(())
+    }
+    #[cfg(test)]
+    pub(crate) fn force_prompt_anchored_for_test(&mut self, row: u16) {
+        self.prompt_start_row = PromptStartRow::Verified(row);
     }
 }
 

@@ -190,18 +190,26 @@ impl Motion {
 
         match self {
             // `w` / `W` — start of the next word, forward.
-            Motion::NextWord => Some(word(WordKind::Small, WordEdge::Start, Direction::Forward)),
-            Motion::NextBigWord => Some(word(WordKind::Big, WordEdge::Start, Direction::Forward)),
+            Motion::NextWord => Some(word(WordKind::Word, WordEdge::Start, Direction::Forward)),
+            Motion::NextBigWord => Some(word(
+                WordKind::LongWord,
+                WordEdge::Start,
+                Direction::Forward,
+            )),
             // `e` / `E` — end of the next word, forward.
-            Motion::NextWordEnd => Some(word(WordKind::Small, WordEdge::End, Direction::Forward)),
-            Motion::NextBigWordEnd => Some(word(WordKind::Big, WordEdge::End, Direction::Forward)),
+            Motion::NextWordEnd => Some(word(WordKind::Word, WordEdge::End, Direction::Forward)),
+            Motion::NextBigWordEnd => {
+                Some(word(WordKind::LongWord, WordEdge::End, Direction::Forward))
+            }
             // `b` / `B` — start of the previous word, backward.
             Motion::PreviousWord => {
-                Some(word(WordKind::Small, WordEdge::Start, Direction::Backward))
+                Some(word(WordKind::Word, WordEdge::Start, Direction::Backward))
             }
-            Motion::PreviousBigWord => {
-                Some(word(WordKind::Big, WordEdge::Start, Direction::Backward))
-            }
+            Motion::PreviousBigWord => Some(word(
+                WordKind::LongWord,
+                WordEdge::Start,
+                Direction::Backward,
+            )),
 
             // `0` / `$` — start / end of the current line.
             Motion::Start => Some(MotionTarget::LineEdge(Direction::Backward)),
