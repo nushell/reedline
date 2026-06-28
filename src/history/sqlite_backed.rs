@@ -818,15 +818,21 @@ mod tests {
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     #[test]
     fn json_filter_value_real_vs_integer() -> crate::Result<()> {
+        // Two structs so we can store the same path ($.score) as either real or integer.
         #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-        struct WithScore {
+        struct WithRealScore {
             score: f64,
-            count: i64,
         }
-        impl HistoryItemExtraInfo for WithScore {}
+        impl HistoryItemExtraInfo for WithRealScore {}
+
+        #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+        struct WithIntScore {
+            score: i64,
+        }
+        impl HistoryItemExtraInfo for WithIntScore {}
 
         let mut db = SqliteBackedHistory::in_memory()?;
-        let make = |cmd: &str, score: f64, count: i64| HistoryItem {
+        let make_real = |cmd: &str, score: f64| HistoryItem {
             id: None,
             start_timestamp: None,
             command_line: cmd.to_string(),
@@ -835,10 +841,25 @@ mod tests {
             cwd: None,
             duration: None,
             exit_status: None,
-            more_info: Some(WithScore { score, count }),
+            more_info: Some(WithRealScore { score }),
         };
-        db.save_with_extra(make("cmd_a", 1.5, 1))?;
-        db.save_with_extra(make("cmd_b", 1.0, 2))?;
+        let make_int = |cmd: &str, score: i64| HistoryItem {
+            id: None,
+            start_timestamp: None,
+            command_line: cmd.to_string(),
+            session_id: None,
+            hostname: None,
+            cwd: None,
+            duration: None,
+            exit_status: None,
+            more_info: Some(WithIntScore { score }),
+        };
+        // Row A: $.score = 1.5 (JSON real)
+        db.save_with_extra(make_real("real_a", 1.5))?;
+        // Row B: $.score = 1.0 (JSON real — serde_json always emits decimal point for f64)
+        db.save_with_extra(make_real("real_b", 1.0))?;
+        // Row C: $.score = 1 (JSON integer — stored via i64 struct)
+        db.save_with_extra(make_int("int_c", 1))?;
 
         let search_score = |val: JsonFilterValue| -> crate::Result<Vec<String>> {
             let filter = SearchFilter {
@@ -846,7 +867,7 @@ mod tests {
                 ..SearchFilter::anything(None)
             };
             Ok(db
-                .search_with_extra::<WithScore>(SearchQuery {
+                .search_with_extra::<WithRealScore>(SearchQuery {
                     filter,
                     ..SearchQuery::everything(SearchDirection::Forward, None)
                 })?
@@ -855,13 +876,15 @@ mod tests {
                 .collect())
         };
 
-        assert_eq!(search_score(JsonFilterValue::Real(1.5))?, vec!["cmd_a"]);
-        assert_eq!(search_score(JsonFilterValue::Real(1.0))?, vec!["cmd_b"]);
-        // Integer(1) must not match JSON real numbers (different json_type)
+        // Real(1.5) matches only real_a
+        assert_eq!(search_score(JsonFilterValue::Real(1.5))?, vec!["real_a"]);
+        // Real(1.0) matches real_b but NOT int_c (json_type for int_c is 'integer', not 'real')
+        assert_eq!(search_score(JsonFilterValue::Real(1.0))?, vec!["real_b"]);
+        // Integer(1) matches int_c but NOT real_a or real_b
         assert_eq!(
             search_score(JsonFilterValue::Integer(1))?,
-            Vec::<String>::new(),
-            "Integer(1) must not match JSON real numbers"
+            vec!["int_c"],
+            "Integer(1) must match JSON integer 1 but not JSON reals"
         );
 
         Ok(())
@@ -877,6 +900,13 @@ mod tests {
             val: Option<i64>,
         }
         impl HistoryItemExtraInfo for WithOptVal {}
+
+        // A separate struct without a `val` field to produce JSON that omits $.val entirely.
+        #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+        struct WithoutVal {
+            other: String,
+        }
+        impl HistoryItemExtraInfo for WithoutVal {}
 
         let mut db = SqliteBackedHistory::in_memory()?;
         let make_opt = |cmd: &str, val: Option<i64>| HistoryItem {
@@ -894,17 +924,31 @@ mod tests {
         db.save_with_extra(make_opt("null_row", None))?;
         // Row B: val=42 in JSON
         db.save_with_extra(make_opt("int_row", Some(42)))?;
-        // Row C: SQL NULL more_info — $.val path is therefore absent
+        // Row C: SQL NULL more_info — $.val is absent because more_info IS NULL
         db.save_with_extra::<WithOptVal>(HistoryItem {
             id: None,
             start_timestamp: None,
-            command_line: "no_extra".to_string(),
+            command_line: "sql_null_row".to_string(),
             session_id: None,
             hostname: None,
             cwd: None,
             duration: None,
             exit_status: None,
             more_info: None,
+        })?;
+        // Row D: non-null JSON that simply has no `val` key — $.val path is missing
+        db.save_with_extra(HistoryItem {
+            id: None,
+            start_timestamp: None,
+            command_line: "missing_path_row".to_string(),
+            session_id: None,
+            hostname: None,
+            cwd: None,
+            duration: None,
+            exit_status: None,
+            more_info: Some(WithoutVal {
+                other: "x".into(),
+            }),
         })?;
 
         let search_val = |val: JsonFilterValue| -> crate::Result<Vec<String>> {
@@ -922,7 +966,7 @@ mod tests {
                 .collect())
         };
 
-        // Null matches row A (json_type = 'null') only; row B and C are excluded
+        // Null matches row A (json_type = 'null') only; rows B, C, and D are excluded
         assert_eq!(search_val(JsonFilterValue::Null)?, vec!["null_row"]);
         // Integer(42) matches row B only
         assert_eq!(search_val(JsonFilterValue::Integer(42))?, vec!["int_row"]);
