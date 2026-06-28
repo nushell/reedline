@@ -174,7 +174,8 @@ fn map_json_err(err: serde_json::Error) -> ReedlineError {
     )))
 }
 
-type BoxedNamedParams<'a> = Vec<(String, Box<dyn ToSql + 'a>)>;
+type BoxedNamedParams<'a> = Vec<(&'static str, Box<dyn ToSql + 'a>)>;
+type OwnedNamedParams<'a> = Vec<(String, Box<dyn ToSql + 'a>)>;
 
 impl SqliteBackedHistory {
     /// Creates a new history with an associated history file.
@@ -265,13 +266,13 @@ impl SqliteBackedHistory {
         &self,
         query: &'a SearchQuery,
         select_expression: &str,
-    ) -> (String, BoxedNamedParams<'a>) {
+    ) -> (String, OwnedNamedParams<'a>) {
         // TODO: this whole function could be done with less allocs
         let (is_asc, asc) = match query.direction {
             SearchDirection::Forward => (true, "asc"),
             SearchDirection::Backward => (false, "desc"),
         };
-        let mut wheres: Vec<&str> = Vec::new();
+        let mut wheres = Vec::new();
         let mut params: BoxedNamedParams = Vec::new();
         if let Some(start) = query.start_time {
             wheres.push(if is_asc {
@@ -279,10 +280,7 @@ impl SqliteBackedHistory {
             } else {
                 "timestamp_start < :start_time"
             });
-            params.push((
-                ":start_time".to_string(),
-                Box::new(start.timestamp_millis()),
-            ));
+            params.push((":start_time", Box::new(start.timestamp_millis())));
         }
         if let Some(end) = query.end_time {
             wheres.push(if is_asc {
@@ -290,7 +288,7 @@ impl SqliteBackedHistory {
             } else {
                 ":end_time <= timestamp_start"
             });
-            params.push((":end_time".to_string(), Box::new(end.timestamp_millis())));
+            params.push((":end_time", Box::new(end.timestamp_millis())));
         }
         if let Some(start) = query.start_id {
             wheres.push(if is_asc {
@@ -298,7 +296,7 @@ impl SqliteBackedHistory {
             } else {
                 "id < :start_id"
             });
-            params.push((":start_id".to_string(), Box::new(start.0)));
+            params.push((":start_id", Box::new(start.0)));
         }
         if let Some(end) = query.end_id {
             wheres.push(if is_asc {
@@ -306,11 +304,11 @@ impl SqliteBackedHistory {
             } else {
                 ":end_id <= id"
             });
-            params.push((":end_id".to_string(), Box::new(end.0)));
+            params.push((":end_id", Box::new(end.0)));
         }
         let limit = match query.limit {
             Some(l) => {
-                params.push((":limit".to_string(), Box::new(l)));
+                params.push((":limit", Box::new(l)));
                 "limit :limit"
             }
             None => "",
@@ -319,35 +317,35 @@ impl SqliteBackedHistory {
             match command_line {
                 CommandLineSearch::Exact(e) => {
                     wheres.push("command_line == :command_line");
-                    params.push((":command_line".to_string(), Box::new(e)));
+                    params.push((":command_line", Box::new(e)));
                 }
                 CommandLineSearch::Prefix(prefix) => {
                     wheres.push("instr(command_line, :command_line) == 1");
-                    params.push((":command_line".to_string(), Box::new(prefix)));
+                    params.push((":command_line", Box::new(prefix)));
                 }
                 CommandLineSearch::Substring(cont) => {
                     wheres.push("instr(command_line, :command_line) >= 1");
-                    params.push((":command_line".to_string(), Box::new(cont)));
+                    params.push((":command_line", Box::new(cont)));
                 }
             };
         }
 
         if let Some(str) = &query.filter.not_command_line {
             wheres.push("command_line != :not_cmd");
-            params.push((":not_cmd".to_string(), Box::new(str)));
+            params.push((":not_cmd", Box::new(str)));
         }
         if let Some(hostname) = &query.filter.hostname {
             wheres.push("hostname = :hostname");
-            params.push((":hostname".to_string(), Box::new(hostname)));
+            params.push((":hostname", Box::new(hostname)));
         }
         if let Some(cwd_exact) = &query.filter.cwd_exact {
             wheres.push("cwd = :cwd");
-            params.push((":cwd".to_string(), Box::new(cwd_exact)));
+            params.push((":cwd", Box::new(cwd_exact)));
         }
         if let Some(cwd_prefix) = &query.filter.cwd_prefix {
             wheres.push("cwd like :cwd_like");
             let cwd_like = format!("{cwd_prefix}%");
-            params.push((":cwd_like".to_string(), Box::new(cwd_like)));
+            params.push((":cwd_like", Box::new(cwd_like)));
         }
         if let Some(exit_successful) = query.filter.exit_successful {
             if exit_successful {
@@ -363,9 +361,9 @@ impl SqliteBackedHistory {
             // - that have the same session_id, or
             // - were executed before our session started
             wheres.push("(session_id = :session_id OR start_timestamp < :session_timestamp)");
-            params.push((":session_id".to_string(), Box::new(session_id)));
+            params.push((":session_id", Box::new(session_id)));
             params.push((
-                ":session_timestamp".to_string(),
+                ":session_timestamp",
                 Box::new(session_timestamp.timestamp_millis()),
             ));
         }
@@ -373,7 +371,10 @@ impl SqliteBackedHistory {
         // Build WHERE string, appending dynamic json_type/json_extract conditions last.
         // Each JsonFilterValue variant generates type-precise SQL so that JSON booleans,
         // integers, and strings cannot collide with each other.
+        // Dynamic parameter names (":json_path_N", ":json_val_N") are stored separately
+        // since they cannot be &'static str.
         let mut where_string = wheres.join(" and ");
+        let mut json_params: Vec<(String, Box<dyn ToSql + 'a>)> = Vec::new();
         if let Some(filters) = &query.filter.more_info_json {
             for (i, (path, value)) in filters.iter().enumerate() {
                 if !where_string.is_empty() {
@@ -402,7 +403,7 @@ impl SqliteBackedHistory {
                              AND json_extract(more_info, :json_path_{i}) = :json_val_{i}"
                         )
                         .unwrap();
-                        params.push((format!(":json_val_{i}"), Box::new(*n)));
+                        json_params.push((format!(":json_val_{i}"), Box::new(*n)));
                     }
                     JsonFilterValue::Real(f) => {
                         write!(
@@ -411,7 +412,7 @@ impl SqliteBackedHistory {
                              AND json_extract(more_info, :json_path_{i}) = :json_val_{i}"
                         )
                         .unwrap();
-                        params.push((format!(":json_val_{i}"), Box::new(*f)));
+                        json_params.push((format!(":json_val_{i}"), Box::new(*f)));
                     }
                     JsonFilterValue::Text(s) => {
                         write!(
@@ -420,10 +421,10 @@ impl SqliteBackedHistory {
                              AND json_extract(more_info, :json_path_{i}) = :json_val_{i}"
                         )
                         .unwrap();
-                        params.push((format!(":json_val_{i}"), Box::new(s.clone())));
+                        json_params.push((format!(":json_val_{i}"), Box::new(s.clone())));
                     }
                 }
-                params.push((format!(":json_path_{i}"), Box::new(path.clone())));
+                json_params.push((format!(":json_path_{i}"), Box::new(path.clone())));
             }
         }
         if where_string.is_empty() {
@@ -436,7 +437,12 @@ impl SqliteBackedHistory {
              ORDER BY id {asc} \
              {limit}"
         );
-        (query, params)
+        let mut all_params: OwnedNamedParams = params
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        all_params.extend(json_params);
+        (query, all_params)
     }
 
     fn save_impl<E: HistoryItemExtraInfo>(
