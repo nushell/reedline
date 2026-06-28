@@ -946,9 +946,7 @@ mod tests {
             cwd: None,
             duration: None,
             exit_status: None,
-            more_info: Some(WithoutVal {
-                other: "x".into(),
-            }),
+            more_info: Some(WithoutVal { other: "x".into() }),
         })?;
 
         let search_val = |val: JsonFilterValue| -> crate::Result<Vec<String>> {
