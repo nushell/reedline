@@ -1,5 +1,5 @@
 use super::{
-    base::{CommandLineSearch, SearchDirection, SearchQuery},
+    base::{CommandLineSearch, JsonFilterValue, SearchDirection, SearchQuery},
     History, HistoryItem, HistoryItemExtraInfo, HistoryItemId, HistorySessionId,
     IgnoreAllExtraInfo,
 };
@@ -370,32 +370,60 @@ impl SqliteBackedHistory {
             ));
         }
 
-        // Build WHERE string, appending dynamic json_extract conditions last
+        // Build WHERE string, appending dynamic json_type/json_extract conditions last.
+        // Each JsonFilterValue variant generates type-precise SQL so that JSON booleans,
+        // integers, and strings cannot collide with each other.
         let mut where_string = wheres.join(" and ");
         if let Some(filters) = &query.filter.more_info_json {
             for (i, (path, value)) in filters.iter().enumerate() {
                 if !where_string.is_empty() {
                     where_string.push_str(" and ");
                 }
-                if value == "true" || value == "false" {
-                    // Use json_type() to match JSON booleans exactly.
-                    // CAST-based comparison would collide with integer 1/0 and strings "true"/"false".
-                    // json_type() returns 'true' or 'false' only for JSON boolean values.
-                    write!(
-                        where_string,
-                        "json_type(more_info, :json_path_{i}) = :json_val_{i}"
-                    )
-                    .unwrap();
-                } else {
-                    // For non-boolean values, CAST to TEXT for consistent string comparison.
-                    write!(
-                        where_string,
-                        "CAST(json_extract(more_info, :json_path_{i}) AS TEXT) = :json_val_{i}"
-                    )
-                    .unwrap();
+                match value {
+                    JsonFilterValue::Null => {
+                        write!(
+                            where_string,
+                            "json_type(more_info, :json_path_{i}) = 'null'"
+                        )
+                        .unwrap();
+                    }
+                    JsonFilterValue::Bool(b) => {
+                        let type_str = if *b { "true" } else { "false" };
+                        write!(
+                            where_string,
+                            "json_type(more_info, :json_path_{i}) = '{type_str}'"
+                        )
+                        .unwrap();
+                    }
+                    JsonFilterValue::Integer(n) => {
+                        write!(
+                            where_string,
+                            "json_type(more_info, :json_path_{i}) = 'integer' \
+                             AND json_extract(more_info, :json_path_{i}) = :json_val_{i}"
+                        )
+                        .unwrap();
+                        params.push((format!(":json_val_{i}"), Box::new(*n)));
+                    }
+                    JsonFilterValue::Real(f) => {
+                        write!(
+                            where_string,
+                            "json_type(more_info, :json_path_{i}) = 'real' \
+                             AND json_extract(more_info, :json_path_{i}) = :json_val_{i}"
+                        )
+                        .unwrap();
+                        params.push((format!(":json_val_{i}"), Box::new(*f)));
+                    }
+                    JsonFilterValue::Text(s) => {
+                        write!(
+                            where_string,
+                            "json_type(more_info, :json_path_{i}) = 'text' \
+                             AND json_extract(more_info, :json_path_{i}) = :json_val_{i}"
+                        )
+                        .unwrap();
+                        params.push((format!(":json_val_{i}"), Box::new(s.clone())));
+                    }
                 }
                 params.push((format!(":json_path_{i}"), Box::new(path.clone())));
-                params.push((format!(":json_val_{i}"), Box::new(value.clone())));
             }
         }
         if where_string.is_empty() {
@@ -518,13 +546,14 @@ impl SqliteBackedHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::history::base::{SearchDirection, SearchFilter};
+    use crate::history::base::{JsonFilterValue, SearchDirection, SearchFilter};
     use serde::{Deserialize, Serialize};
 
     #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     struct TestExtra {
         meta_command: bool,
         tag: String,
+        count: i64,
     }
     impl HistoryItemExtraInfo for TestExtra {}
 
@@ -565,6 +594,7 @@ mod tests {
             TestExtra {
                 meta_command: false,
                 tag: "test".into(),
+                ..Default::default()
             },
         );
         let saved = db.save_with_extra(item.clone())?;
@@ -599,6 +629,7 @@ mod tests {
             TestExtra {
                 meta_command: true,
                 tag: "meta".into(),
+                ..Default::default()
             },
         ))?;
         let saved_normal = db.save_with_extra(item_with_extra(
@@ -606,13 +637,16 @@ mod tests {
             TestExtra {
                 meta_command: false,
                 tag: "normal".into(),
+                ..Default::default()
             },
         ))?;
         db.save_with_extra(item_no_extra("pwd"))?;
 
-        // "true"/"false" use json_type() so they match JSON booleans only, not integer 1/0
         let filter = SearchFilter {
-            more_info_json: Some(vec![("$.meta_command".to_string(), "true".to_string())]),
+            more_info_json: Some(vec![(
+                "$.meta_command".to_string(),
+                JsonFilterValue::Bool(true),
+            )]),
             ..SearchFilter::anything(None)
         };
         let results = db.search_with_extra::<TestExtra>(SearchQuery {
@@ -624,7 +658,10 @@ mod tests {
         assert_eq!(results[0].id, saved_meta.id);
 
         let filter2 = SearchFilter {
-            more_info_json: Some(vec![("$.meta_command".to_string(), "false".to_string())]),
+            more_info_json: Some(vec![(
+                "$.meta_command".to_string(),
+                JsonFilterValue::Bool(false),
+            )]),
             ..SearchFilter::anything(None)
         };
         let results2 = db.search_with_extra::<TestExtra>(SearchQuery {
@@ -645,7 +682,10 @@ mod tests {
         db.save_with_extra(item_no_extra("pwd"))?;
 
         let filter = SearchFilter {
-            more_info_json: Some(vec![("$.meta_command".to_string(), "true".to_string())]),
+            more_info_json: Some(vec![(
+                "$.meta_command".to_string(),
+                JsonFilterValue::Bool(true),
+            )]),
             ..SearchFilter::anything(None)
         };
         let results = db.search_with_extra::<TestExtra>(SearchQuery {
@@ -657,6 +697,123 @@ mod tests {
         Ok(())
     }
 
+    /// Verify that Bool, Integer, and Text filters do not collide with each other
+    /// even when the raw JSON bytes look similar (e.g. `true` vs `1` vs `"1"`).
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[test]
+    fn json_filter_value_no_type_collisions() -> crate::Result<()> {
+        let mut db = SqliteBackedHistory::in_memory()?;
+
+        // Row A: meta_command=true (JSON boolean), count=1 (JSON integer), tag="1" (JSON string)
+        db.save_with_extra(item_with_extra(
+            "cmd_a",
+            TestExtra {
+                meta_command: true,
+                tag: "1".into(),
+                count: 1,
+            },
+        ))?;
+        // Row B: meta_command=false, count=0, tag="true"
+        db.save_with_extra(item_with_extra(
+            "cmd_b",
+            TestExtra {
+                meta_command: false,
+                tag: "true".into(),
+                count: 0,
+            },
+        ))?;
+
+        let search = |val: JsonFilterValue| -> crate::Result<usize> {
+            let filter = SearchFilter {
+                more_info_json: Some(vec![("$.meta_command".to_string(), val)]),
+                ..SearchFilter::anything(None)
+            };
+            Ok(db
+                .search_with_extra::<TestExtra>(SearchQuery {
+                    filter,
+                    ..SearchQuery::everything(SearchDirection::Forward, None)
+                })?
+                .len())
+        };
+
+        // Bool(true) must match only row A (meta_command: true), not integer 1 or string "1"
+        assert_eq!(search(JsonFilterValue::Bool(true))?, 1);
+        // Bool(false) must match only row B (meta_command: false)
+        assert_eq!(search(JsonFilterValue::Bool(false))?, 1);
+        // Integer(1) must not match the boolean true in meta_command
+        assert_eq!(
+            search(JsonFilterValue::Integer(1))?,
+            0,
+            "Integer(1) must not match JSON boolean true"
+        );
+        // Text("true") must not match the boolean true in meta_command
+        assert_eq!(
+            search(JsonFilterValue::Text("true".into()))?,
+            0,
+            r#"Text("true") must not match JSON boolean true"#
+        );
+
+        let search_count = |val: JsonFilterValue| -> crate::Result<usize> {
+            let filter = SearchFilter {
+                more_info_json: Some(vec![("$.count".to_string(), val)]),
+                ..SearchFilter::anything(None)
+            };
+            Ok(db
+                .search_with_extra::<TestExtra>(SearchQuery {
+                    filter,
+                    ..SearchQuery::everything(SearchDirection::Forward, None)
+                })?
+                .len())
+        };
+
+        // Integer(1) must match row A (count: 1) but not row B (count: 0)
+        assert_eq!(search_count(JsonFilterValue::Integer(1))?, 1);
+        // Bool(true) must not match integer 1 in count
+        assert_eq!(
+            search_count(JsonFilterValue::Bool(true))?,
+            0,
+            "Bool(true) must not match JSON integer 1"
+        );
+        // Text("1") must not match JSON integer 1
+        assert_eq!(
+            search_count(JsonFilterValue::Text("1".into()))?,
+            0,
+            r#"Text("1") must not match JSON integer 1"#
+        );
+
+        let search_tag = |val: JsonFilterValue| -> crate::Result<usize> {
+            let filter = SearchFilter {
+                more_info_json: Some(vec![("$.tag".to_string(), val)]),
+                ..SearchFilter::anything(None)
+            };
+            Ok(db
+                .search_with_extra::<TestExtra>(SearchQuery {
+                    filter,
+                    ..SearchQuery::everything(SearchDirection::Forward, None)
+                })?
+                .len())
+        };
+
+        // Text("1") must match row A (tag: "1") but not row B (tag: "true")
+        assert_eq!(search_tag(JsonFilterValue::Text("1".into()))?, 1);
+        // Text("true") must match row B (tag: "true") but not row A
+        assert_eq!(search_tag(JsonFilterValue::Text("true".into()))?, 1);
+        // Bool(true) must not match the string "true" in tag
+        assert_eq!(
+            search_tag(JsonFilterValue::Bool(true))?,
+            0,
+            r#"Bool(true) must not match JSON string "true""#
+        );
+        // Integer(1) must not match the string "1" in tag
+        assert_eq!(
+            search_tag(JsonFilterValue::Integer(1))?,
+            0,
+            r#"Integer(1) must not match JSON string "1""#
+        );
+
+        Ok(())
+    }
+
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     #[test]
     fn typed_and_untyped_interop() -> crate::Result<()> {
@@ -665,7 +822,7 @@ mod tests {
             ":cd /tmp",
             TestExtra {
                 meta_command: true,
-                tag: String::new(),
+                ..Default::default()
             },
         );
         let saved = db.save_with_extra(item)?;
