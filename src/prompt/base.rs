@@ -95,6 +95,24 @@ impl PromptEditMode {
         }
     }
 
+    /// Whether a non-empty cursor in this mode is an *intentional selection*
+    /// rather than the resting caret.
+    ///
+    /// A block mode rests one grapheme wide, so cursor shape alone cannot tell
+    /// vi visual's `v`-started selection from helix normal's resting block;
+    /// the mode has to answer.
+    pub(crate) fn is_selection_mode(&self) -> bool {
+        match self {
+            PromptEditMode::Vi(PromptViMode::Visual)
+            | PromptEditMode::Helix(PromptHelixMode::Select) => true,
+            PromptEditMode::Vi(PromptViMode::Normal | PromptViMode::Insert)
+            | PromptEditMode::Helix(PromptHelixMode::Normal | PromptHelixMode::Insert)
+            | PromptEditMode::Default
+            | PromptEditMode::Emacs
+            | PromptEditMode::Custom(_) => false,
+        }
+    }
+
     /// Whether an operation *on* the selection leaves it standing.
     ///
     /// Helix keeps it, so a yank or a case change can be followed by another
