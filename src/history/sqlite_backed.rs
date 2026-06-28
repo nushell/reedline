@@ -63,7 +63,7 @@ fn deserialize_history_item<E: HistoryItemExtraInfo>(
 
 impl History for SqliteBackedHistory {
     fn save(&mut self, entry: HistoryItem) -> Result<HistoryItem> {
-        self.save_impl(entry)
+        self.save_with_extra(entry)
     }
 
     fn load(&self, id: HistoryItemId) -> Result<HistoryItem> {
@@ -445,7 +445,14 @@ impl SqliteBackedHistory {
         (query, all_params)
     }
 
-    fn save_impl<E: HistoryItemExtraInfo>(
+    /// Save a history item with typed `more_info`.
+    ///
+    /// Unlike [`History::save`], this method preserves the full `more_info` type `E`
+    /// by serializing it to JSON and storing it in the `more_info` column.
+    ///
+    /// Note: this method is specific to [`SqliteBackedHistory`]. The [`History`] trait
+    /// methods use [`IgnoreAllExtraInfo`] and do not roundtrip custom `more_info`.
+    pub fn save_with_extra<E: HistoryItemExtraInfo>(
         &mut self,
         mut entry: HistoryItem<E>,
     ) -> Result<HistoryItem<E>> {
@@ -490,20 +497,6 @@ impl SqliteBackedHistory {
             .map_err(map_sqlite_err)?;
         entry.id = Some(HistoryItemId::new(ret));
         Ok(entry)
-    }
-
-    /// Save a history item with typed `more_info`.
-    ///
-    /// Unlike [`History::save`], this method preserves the full `more_info` type `E`
-    /// by serializing it to JSON and storing it in the `more_info` column.
-    ///
-    /// Note: this method is specific to [`SqliteBackedHistory`]. The [`History`] trait
-    /// methods use [`IgnoreAllExtraInfo`] and do not roundtrip custom `more_info`.
-    pub fn save_with_extra<E: HistoryItemExtraInfo>(
-        &mut self,
-        entry: HistoryItem<E>,
-    ) -> Result<HistoryItem<E>> {
-        self.save_impl(entry)
     }
 
     /// Load a history item by ID with typed `more_info`.
