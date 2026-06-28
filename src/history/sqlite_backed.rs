@@ -814,6 +814,122 @@ mod tests {
         Ok(())
     }
 
+    /// Verify that Real(f) does not collide with Integer values stored at the same path.
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[test]
+    fn json_filter_value_real_vs_integer() -> crate::Result<()> {
+        #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+        struct WithScore {
+            score: f64,
+            count: i64,
+        }
+        impl HistoryItemExtraInfo for WithScore {}
+
+        let mut db = SqliteBackedHistory::in_memory()?;
+        let make = |cmd: &str, score: f64, count: i64| HistoryItem {
+            id: None,
+            start_timestamp: None,
+            command_line: cmd.to_string(),
+            session_id: None,
+            hostname: None,
+            cwd: None,
+            duration: None,
+            exit_status: None,
+            more_info: Some(WithScore { score, count }),
+        };
+        db.save_with_extra(make("cmd_a", 1.5, 1))?;
+        db.save_with_extra(make("cmd_b", 1.0, 2))?;
+
+        let search_score = |val: JsonFilterValue| -> crate::Result<Vec<String>> {
+            let filter = SearchFilter {
+                more_info_json: Some(vec![("$.score".to_string(), val)]),
+                ..SearchFilter::anything(None)
+            };
+            Ok(db
+                .search_with_extra::<WithScore>(SearchQuery {
+                    filter,
+                    ..SearchQuery::everything(SearchDirection::Forward, None)
+                })?
+                .into_iter()
+                .map(|h| h.command_line)
+                .collect())
+        };
+
+        assert_eq!(search_score(JsonFilterValue::Real(1.5))?, vec!["cmd_a"]);
+        assert_eq!(search_score(JsonFilterValue::Real(1.0))?, vec!["cmd_b"]);
+        // Integer(1) must not match JSON real numbers (different json_type)
+        assert_eq!(
+            search_score(JsonFilterValue::Integer(1))?,
+            Vec::<String>::new(),
+            "Integer(1) must not match JSON real numbers"
+        );
+
+        Ok(())
+    }
+
+    /// Verify that Null matches JSON null at a path but not SQL-NULL more_info
+    /// or a path that is simply absent from the JSON object.
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[test]
+    fn json_filter_value_null_vs_missing_path() -> crate::Result<()> {
+        #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+        struct WithOptVal {
+            val: Option<i64>,
+        }
+        impl HistoryItemExtraInfo for WithOptVal {}
+
+        let mut db = SqliteBackedHistory::in_memory()?;
+        let make_opt = |cmd: &str, val: Option<i64>| HistoryItem {
+            id: None,
+            start_timestamp: None,
+            command_line: cmd.to_string(),
+            session_id: None,
+            hostname: None,
+            cwd: None,
+            duration: None,
+            exit_status: None,
+            more_info: Some(WithOptVal { val }),
+        };
+        // Row A: val=null in JSON  (serde serializes None as JSON null)
+        db.save_with_extra(make_opt("null_row", None))?;
+        // Row B: val=42 in JSON
+        db.save_with_extra(make_opt("int_row", Some(42)))?;
+        // Row C: SQL NULL more_info — $.val path is therefore absent
+        db.save_with_extra::<WithOptVal>(HistoryItem {
+            id: None,
+            start_timestamp: None,
+            command_line: "no_extra".to_string(),
+            session_id: None,
+            hostname: None,
+            cwd: None,
+            duration: None,
+            exit_status: None,
+            more_info: None,
+        })?;
+
+        let search_val = |val: JsonFilterValue| -> crate::Result<Vec<String>> {
+            let filter = SearchFilter {
+                more_info_json: Some(vec![("$.val".to_string(), val)]),
+                ..SearchFilter::anything(None)
+            };
+            Ok(db
+                .search_with_extra::<WithOptVal>(SearchQuery {
+                    filter,
+                    ..SearchQuery::everything(SearchDirection::Forward, None)
+                })?
+                .into_iter()
+                .map(|h| h.command_line)
+                .collect())
+        };
+
+        // Null matches row A (json_type = 'null') only; row B and C are excluded
+        assert_eq!(search_val(JsonFilterValue::Null)?, vec!["null_row"]);
+        // Integer(42) matches row B only
+        assert_eq!(search_val(JsonFilterValue::Integer(42))?, vec!["int_row"]);
+
+        Ok(())
+    }
+
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     #[test]
     fn typed_and_untyped_interop() -> crate::Result<()> {
