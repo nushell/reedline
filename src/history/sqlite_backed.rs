@@ -79,7 +79,9 @@ impl History for SqliteBackedHistory {
         Ok(entry)
     }
 
-    fn count(&self, query: SearchQuery) -> Result<i64> {
+    fn count(&self, mut query: SearchQuery) -> Result<i64> {
+        // more_info_json is only evaluated by search_with_extra; ignore it here
+        query.filter.more_info_json = None;
         let (query, params) = self.construct_query(&query, "coalesce(count(*), 0)");
         let params_borrow: Vec<(&str, &dyn ToSql)> =
             params.iter().map(|e| (e.0.as_str(), &*e.1)).collect();
@@ -92,7 +94,9 @@ impl History for SqliteBackedHistory {
         Ok(result)
     }
 
-    fn search(&self, query: SearchQuery) -> Result<Vec<HistoryItem>> {
+    fn search(&self, mut query: SearchQuery) -> Result<Vec<HistoryItem>> {
+        // more_info_json is only evaluated by search_with_extra; ignore it here
+        query.filter.more_info_json = None;
         let (query, params) = self.construct_query(&query, "*");
         let params_borrow: Vec<(&str, &dyn ToSql)> =
             params.iter().map(|e| (e.0.as_str(), &*e.1)).collect();
@@ -373,13 +377,23 @@ impl SqliteBackedHistory {
                 if !where_string.is_empty() {
                     where_string.push_str(" and ");
                 }
-                // CAST to TEXT so that json_extract's type-dependent output (e.g. integer 1 for
-                // JSON `true`) is consistently comparable to the string expected value.
-                write!(
-                    where_string,
-                    "CAST(json_extract(more_info, :json_path_{i}) AS TEXT) = :json_val_{i}"
-                )
-                .unwrap();
+                if value == "true" || value == "false" {
+                    // Use json_type() to match JSON booleans exactly.
+                    // CAST-based comparison would collide with integer 1/0 and strings "true"/"false".
+                    // json_type() returns 'true' or 'false' only for JSON boolean values.
+                    write!(
+                        where_string,
+                        "json_type(more_info, :json_path_{i}) = :json_val_{i}"
+                    )
+                    .unwrap();
+                } else {
+                    // For non-boolean values, CAST to TEXT for consistent string comparison.
+                    write!(
+                        where_string,
+                        "CAST(json_extract(more_info, :json_path_{i}) AS TEXT) = :json_val_{i}"
+                    )
+                    .unwrap();
+                }
                 params.push((format!(":json_path_{i}"), Box::new(path.clone())));
                 params.push((format!(":json_val_{i}"), Box::new(value.clone())));
             }
@@ -580,8 +594,6 @@ mod tests {
     fn search_with_extra_more_info_json_matches() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
 
-        // SQLite's json_extract() returns booleans as integers (1/0), not strings ("true"/"false").
-        // Use "1" to match JSON `true` and "0" to match JSON `false`.
         let saved_meta = db.save_with_extra(item_with_extra(
             ":help",
             TestExtra {
@@ -598,9 +610,9 @@ mod tests {
         ))?;
         db.save_with_extra(item_no_extra("pwd"))?;
 
-        // Filter for meta commands (meta_command = true → SQLite integer 1)
+        // "true"/"false" use json_type() so they match JSON booleans only, not integer 1/0
         let filter = SearchFilter {
-            more_info_json: Some(vec![("$.meta_command".to_string(), "1".to_string())]),
+            more_info_json: Some(vec![("$.meta_command".to_string(), "true".to_string())]),
             ..SearchFilter::anything(None)
         };
         let results = db.search_with_extra::<TestExtra>(SearchQuery {
@@ -611,9 +623,8 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, saved_meta.id);
 
-        // Filter for non-meta commands (meta_command = false → SQLite integer 0)
         let filter2 = SearchFilter {
-            more_info_json: Some(vec![("$.meta_command".to_string(), "0".to_string())]),
+            more_info_json: Some(vec![("$.meta_command".to_string(), "false".to_string())]),
             ..SearchFilter::anything(None)
         };
         let results2 = db.search_with_extra::<TestExtra>(SearchQuery {
@@ -621,7 +632,7 @@ mod tests {
             ..SearchQuery::everything(SearchDirection::Forward, None)
         })?;
 
-        // Only "ls" matches (meta_command: false = integer 0); "pwd" with NULL more_info does not match
+        // Only "ls" matches (meta_command: false); "pwd" with NULL more_info does not match
         assert_eq!(results2.len(), 1);
         assert_eq!(results2[0].id, saved_normal.id);
         Ok(())
@@ -634,7 +645,7 @@ mod tests {
         db.save_with_extra(item_no_extra("pwd"))?;
 
         let filter = SearchFilter {
-            more_info_json: Some(vec![("$.meta_command".to_string(), "1".to_string())]),
+            more_info_json: Some(vec![("$.meta_command".to_string(), "true".to_string())]),
             ..SearchFilter::anything(None)
         };
         let results = db.search_with_extra::<TestExtra>(SearchQuery {

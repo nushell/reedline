@@ -55,15 +55,19 @@ pub struct SearchFilter {
     pub session: Option<HistorySessionId>,
     /// Filter by JSON path in the `more_info` column using SQLite's `json_extract()`.
     ///
-    /// Each entry is `(json_path, expected_value)`, e.g. `("$.meta_command", "1")`.
-    /// The expected value is compared against the raw SQLite value returned by `json_extract()`:
-    /// - JSON booleans map to integers: use `"1"` for `true`, `"0"` for `false`
-    /// - JSON strings: use the string value directly, e.g. `"$.tag", "mytag"`
-    /// - JSON numbers: use the numeric string, e.g. `"$.count", "42"`
+    /// Each entry is `(json_path, expected_value)`, e.g. `("$.meta_command", "true")`.
+    ///
+    /// ## Expected value encoding
+    ///
+    /// - **JSON booleans**: use `"true"` or `"false"` — matched via `json_type()`, which
+    ///   guarantees that integer `1`/`0` and strings `"true"`/`"false"` do *not* collide.
+    /// - **JSON strings**: use the string value directly, e.g. `"$.tag", "mytag"`.
+    /// - **JSON numbers**: use the numeric string, e.g. `"$.count", "42"`.
     ///
     /// Rows where `more_info` is SQL `NULL` or the JSON path does not exist will not match.
-    /// Only evaluated by [`crate::SqliteBackedHistory`] typed search methods;
-    /// ignored by [`crate::FileBackedHistory`] and the non-typed [`History`] trait methods.
+    /// Only evaluated by [`crate::SqliteBackedHistory`] typed search methods
+    /// (`search_with_extra`); the non-typed [`History`] trait methods and
+    /// [`crate::FileBackedHistory`] ignore this field.
     pub more_info_json: Option<Vec<(String, String)>>,
 }
 
