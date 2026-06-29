@@ -660,4 +660,46 @@ mod tests {
         assert_eq!(c, Cursor::new(5, 0));
         assert!(c.contains(3) && c.contains(4)); // both bytes of é covered
     }
+
+    // --- extend_span (Span selection model) ----------------------------------
+
+    #[test]
+    fn extend_span_bar_grows_head_no_flip() {
+        // The emacs / default path: Bar geometry makes flip_anchor a no-op, so
+        // the head jumps to op_end and the anchor never moves: [0,3) → [0,4).
+        let c = Cursor::new(0, 3).extend_span("hello", 4, CaretGeometry::Bar);
+        assert_eq!(c, Cursor::new(0, 4));
+    }
+
+    #[test]
+    fn extend_span_does_not_widen_like_put_cursor() {
+        // The property that separates the two models. From the same [0,1) a
+        // forward Extend to 2 under Block: put_cursor (CoverLanding) widens the
+        // head onto the landing grapheme's far edge (3); extend_span (Span) stops
+        // the head exactly at op_end (2) with no widening.
+        let landing =
+            Cursor::new(0, 1).put_cursor("hello", 2, Movement::Extend, CaretGeometry::Block);
+        assert_eq!(landing, Cursor::new(0, 3));
+        let span = Cursor::new(0, 1).extend_span("hello", 2, CaretGeometry::Block);
+        assert_eq!(span, Cursor::new(0, 2));
+    }
+
+    #[test]
+    fn extend_span_block_flip_forward_to_backward_keeps_anchor_grapheme() {
+        // Helix groundwork (no current mode pairs Span with Block): a Span that
+        // reverses past the anchor still hops it onto the far edge — the same
+        // flip_anchor as put_cursor — but the head lands exactly on op_end with
+        // no widening. [2,4) → op_end 0 → [3,0).
+        let c = Cursor::new(2, 4).extend_span("hello", 0, CaretGeometry::Block);
+        assert_eq!(c, Cursor::new(3, 0));
+        assert!(c.contains(2)); // start grapheme survives the reversal
+    }
+
+    #[test]
+    fn extend_span_block_flip_backward_to_forward_keeps_anchor_grapheme() {
+        // backward [4,2) Span reverses right to op_end 5 → anchor hops 4→3 → [3,5).
+        let c = Cursor::new(4, 2).extend_span("hello", 5, CaretGeometry::Block);
+        assert_eq!(c, Cursor::new(3, 5));
+        assert!(c.contains(3)); // the 'l' at 3 (start grapheme) survived
+    }
 }

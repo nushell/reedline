@@ -3779,6 +3779,20 @@ mod test {
     }
 
     #[test]
+    fn emacs_extend_word_twice_grows_span() {
+        // A second `Extend` resolves the next motion from the live head and grows
+        // the existing Span — not from a collapsed or retreated caret. "foo bar
+        // baz": 0 → "foo " (0,4) → "foo bar " (0,8), anchor pinned at the origin.
+        let mut editor = editor_with("foo bar baz");
+        editor.set_edit_mode(PromptEditMode::Emacs);
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+        assert_eq!(editor.get_selection(), Some((0, 4)));
+        editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+        assert_eq!(editor.get_selection(), Some((0, 8)));
+    }
+
+    #[test]
     fn cut_word_forward_removes_range_and_yanks() {
         let mut editor = editor_with("foo bar baz");
         editor.move_to_position(0, false);
