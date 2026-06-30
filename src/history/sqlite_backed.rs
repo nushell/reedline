@@ -355,9 +355,8 @@ impl SqliteBackedHistory {
             params.push((":cwd", Box::new(cwd_exact)));
         }
         if let Some(cwd_prefix) = &query.filter.cwd_prefix {
-            wheres.push("cwd like :cwd_like");
-            let cwd_like = format!("{cwd_prefix}%");
-            params.push((":cwd_like", Box::new(cwd_like)));
+            wheres.push("instr(cwd, :cwd_like) == 1");
+            params.push((":cwd_like", Box::new(cwd_prefix)));
         }
         if let Some(exit_successful) = query.filter.exit_successful {
             if exit_successful {
