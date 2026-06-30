@@ -168,12 +168,14 @@ impl Editor {
             EditCommand::InsertChar(c) => self.insert_char(*c),
             EditCommand::Complete => {}
             EditCommand::InsertString(str) => self.insert_str(str),
+            EditCommand::InsertPair { left, right } => self.insert_pair(*left, *right),
             EditCommand::InsertNewline => self.insert_newline(),
             EditCommand::InsertNewlineAbove => self.insert_newline_above(),
             EditCommand::InsertNewlineBelow => self.insert_newline_below(),
             EditCommand::ReplaceChar(chr) => self.replace_char(*chr),
             EditCommand::ReplaceChars(n_chars, str) => self.replace_chars(*n_chars, str),
             EditCommand::Backspace => self.backspace(),
+            EditCommand::BackspacePair { left, right } => self.backspace_pair(*left, *right),
             EditCommand::Delete => self.delete(),
             EditCommand::CutChar => self.cut_char(),
             EditCommand::BackspaceWord => self.line_buffer.delete_word_left(),
@@ -1252,6 +1254,42 @@ impl Editor {
             CaretGeometry::Block,
         )
         .head
+    }
+
+    fn insert_pair(&mut self, open: char, close: char) {
+        if let Some((start, end)) = self.get_selection() {
+            let selected = self.line_buffer.get_buffer()[start..end].to_string();
+            let replacement = format!("{open}{selected}{close}");
+            self.line_buffer.replace_range(start..end, &replacement);
+            self.line_buffer.set_cursor(Cursor::point(
+                start + open.len_utf8() + selected.len() + close.len_utf8(),
+            ));
+        } else {
+            self.line_buffer.insert_char(open);
+            let inner = self.line_buffer.insertion_point();
+            self.line_buffer.insert_char(close);
+            self.line_buffer.set_cursor(Cursor::point(inner));
+        }
+    }
+
+    pub(crate) fn is_auto_pair_closer_at_cursor(&self, close: char) -> bool {
+        self.line_buffer.selection_anchor().is_none()
+            && self.line_buffer.grapheme_right().starts_with(close)
+    }
+
+    pub(crate) fn is_empty_auto_pair_at_cursor(&self, open: char, close: char) -> bool {
+        self.line_buffer.selection_anchor().is_none()
+            && self.line_buffer.grapheme_left().starts_with(open)
+            && self.line_buffer.grapheme_right().starts_with(close)
+    }
+
+    fn backspace_pair(&mut self, open: char, close: char) {
+        if !self.is_empty_auto_pair_at_cursor(open, close) {
+            return;
+        }
+
+        self.line_buffer.delete_right_grapheme();
+        self.line_buffer.delete_left_grapheme();
     }
 
     fn insert_char(&mut self, c: char) {

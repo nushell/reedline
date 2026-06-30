@@ -110,6 +110,36 @@ impl MouseClickMode {
     }
 }
 
+/// Configuration for automatic pair insertion.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct AutoPairs {
+    pairs: Vec<(char, char)>,
+}
+
+impl AutoPairs {
+    /// Create automatic pair insertion configuration from `(open, close)` pairs.
+    pub fn new<I>(pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (char, char)>,
+    {
+        Self {
+            pairs: pairs.into_iter().collect(),
+        }
+    }
+
+    fn opening_pair(&self, ch: char) -> Option<(char, char)> {
+        self.pairs.iter().find(|pair| pair.0 == ch).copied()
+    }
+
+    fn closing_pair(&self, ch: char) -> Option<(char, char)> {
+        self.pairs.iter().find(|pair| pair.1 == ch).copied()
+    }
+
+    fn pairs(&self) -> impl Iterator<Item = (char, char)> + '_ {
+        self.pairs.iter().copied()
+    }
+}
+
 /// Line editor engine
 ///
 /// ## Example usage
@@ -176,6 +206,9 @@ pub struct Reedline {
 
     // Use ansi coloring or not
     use_ansi_coloring: bool,
+
+    // Automatically insert and manage configured character pairs.
+    auto_pairs: Option<AutoPairs>,
 
     // Whether to enable mouse click-to-cursor functionality
     mouse_click_mode: MouseClickMode,
@@ -289,6 +322,7 @@ impl Reedline {
             hide_hints: false,
             validator,
             use_ansi_coloring: true,
+            auto_pairs: None,
             mouse_click_mode: MouseClickMode::default(),
             cwd: None,
             menus: Vec::new(),
@@ -447,6 +481,20 @@ impl Reedline {
     #[must_use]
     pub fn with_ansi_colors(mut self, use_ansi_coloring: bool) -> Self {
         self.use_ansi_coloring = use_ansi_coloring;
+        self
+    }
+
+    /// A builder that configures automatic pair insertion for the Reedline engine.
+    #[must_use]
+    pub fn with_auto_pairs(mut self, auto_pairs: AutoPairs) -> Self {
+        self.auto_pairs = Some(auto_pairs);
+        self
+    }
+
+    /// Disable automatic pair insertion.
+    #[must_use]
+    pub fn disable_auto_pairs(mut self) -> Self {
+        self.auto_pairs = None;
         self
     }
 
@@ -1774,7 +1822,35 @@ impl Reedline {
 
         // Run the commands over the edit buffer
         for command in commands {
+            if let Some(command) = self.auto_pair_command(command) {
+                self.editor.run_edit_command(&command);
+                continue;
+            }
+
             self.editor.run_edit_command(command);
+        }
+    }
+
+    fn auto_pair_command(&self, command: &EditCommand) -> Option<EditCommand> {
+        let auto_pairs = self.auto_pairs.as_ref()?;
+
+        match command {
+            EditCommand::InsertChar(ch) => {
+                if let Some((_, close)) = auto_pairs.closing_pair(*ch) {
+                    if self.editor.is_auto_pair_closer_at_cursor(close) {
+                        return Some(EditCommand::MoveRight { select: false });
+                    }
+                }
+
+                auto_pairs
+                    .opening_pair(*ch)
+                    .map(|(left, right)| EditCommand::InsertPair { left, right })
+            }
+            EditCommand::Backspace => auto_pairs
+                .pairs()
+                .find(|(left, right)| self.editor.is_empty_auto_pair_at_cursor(*left, *right))
+                .map(|(left, right)| EditCommand::BackspacePair { left, right }),
+            _ => None,
         }
     }
 
@@ -2402,6 +2478,115 @@ mod tests {
         for k in keys {
             drive(rl, &[*k]);
         }
+    }
+
+    fn auto_pair_engine(pairs: &[(char, char)]) -> Reedline {
+        Reedline::create().with_auto_pairs(AutoPairs::new(pairs.iter().copied()))
+    }
+
+    #[test]
+    fn auto_pairs_disabled_keeps_literal_typing() {
+        let mut rl = Reedline::create();
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_ignore_unconfigured_openers() {
+        let mut rl = auto_pair_engine(&[('[', ']')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_insert_pair_and_continue_inside() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        rl.run_edit_commands(&[EditCommand::InsertChar('a')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(a)");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_skip_existing_closer() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('('), EditCommand::InsertChar(')')]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_backspace_removes_empty_pair_as_one_undo_step() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
+    fn auto_pairs_wrap_selection_with_opener() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("abc".into()),
+            EditCommand::MoveToStart { select: false },
+            EditCommand::MoveRight { select: true },
+            EditCommand::MoveRight { select: true },
+            EditCommand::MoveRight { select: true },
+            EditCommand::InsertChar('('),
+        ]);
+
+        assert_eq!(rl.editor.get_buffer(), "(abc)");
+        assert_eq!(rl.editor.get_selection(), None);
+        assert_eq!(rl.editor.insertion_point(), 5);
+    }
+
+    #[test]
+    fn auto_pairs_do_not_rewrite_insert_string() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertString("()".into())]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_support_same_character_pairs() {
+        let mut rl = auto_pair_engine(&[('"', '"')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('"')]);
+
+        assert_eq!(rl.editor.get_buffer(), "\"\"");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        rl.run_edit_commands(&[EditCommand::InsertChar('"')]);
+
+        assert_eq!(rl.editor.get_buffer(), "\"\"");
+        assert_eq!(rl.editor.insertion_point(), 2);
+
+        rl.run_edit_commands(&[
+            EditCommand::MoveLeft { select: false },
+            EditCommand::Backspace,
+        ]);
+
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
     }
 
     // FLIP SAFETY NET (Group C) — visual operability at the engine seam.
