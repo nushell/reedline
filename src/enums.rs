@@ -390,6 +390,14 @@ pub enum EditCommand {
     /// Insert a string at the current insertion point
     InsertString(String),
 
+    /// Insert a character pair around the selection or insertion point
+    InsertPair {
+        /// Left character of the pair
+        left: char,
+        /// Right character of the pair
+        right: char,
+    },
+
     /// Inserts the system specific new line character
     ///
     /// - On Unix systems LF (`"\n"`)
@@ -416,6 +424,14 @@ pub enum EditCommand {
 
     /// Backspace delete from the current insertion point
     Backspace,
+
+    /// Backspace delete an empty character pair
+    BackspacePair {
+        /// Left character of the pair
+        left: char,
+        /// Right character of the pair
+        right: char,
+    },
 
     /// Delete in-place from the current insertion point
     Delete,
@@ -743,9 +759,11 @@ impl EditCommand {
             // Text edits
             EditCommand::InsertChar(_)
             | EditCommand::Backspace
+            | EditCommand::BackspacePair { .. }
             | EditCommand::Delete
             | EditCommand::CutChar
             | EditCommand::InsertString(_)
+            | EditCommand::InsertPair { .. }
             | EditCommand::InsertNewline
             | EditCommand::InsertNewlineAbove
             | EditCommand::InsertNewlineBelow
