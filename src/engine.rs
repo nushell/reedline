@@ -3,11 +3,11 @@ use std::{collections::HashMap, ops::ControlFlow, path::PathBuf};
 use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
 
-use crate::{CursorConfig, enums::ReedlineRawEvent};
+use crate::{enums::ReedlineRawEvent, CursorConfig};
 #[cfg(feature = "bashisms")]
 use crate::{
     history::SearchFilter,
-    menu_functions::{ParseAction, parse_selection_char},
+    menu_functions::{parse_selection_char, ParseAction},
 };
 #[cfg(feature = "external_printer")]
 use {
@@ -17,9 +17,6 @@ use {
 };
 use {
     crate::{
-        AbbrExpandContext, EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu,
-        MenuEvent, MouseButton, Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior,
-        ValidationResult, Validator,
         completion::{Completer, DefaultCompleter},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
@@ -39,13 +36,15 @@ use {
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
         },
         utils::text_manipulation,
+        AbbrExpandContext, EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu,
+        MenuEvent, MouseButton, Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior,
+        ValidationResult, Validator,
     },
     crossterm::{
-        QueueableCommand,
         cursor::{SetCursorStyle, Show},
         event,
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
-        terminal,
+        terminal, QueueableCommand,
     },
     std::{
         fs::File,
@@ -53,7 +52,7 @@ use {
         io::Result,
         io::Write,
         process::Command,
-        sync::{Arc, atomic::AtomicBool},
+        sync::{atomic::AtomicBool, Arc},
         time::Duration,
         time::SystemTime,
     },
@@ -118,6 +117,7 @@ pub struct AutoPairs {
 }
 
 impl AutoPairs {
+    /// Create automatic pair insertion configuration from `(open, close)` pairs.
     pub fn new<I>(pairs: I) -> Self
     where
         I: IntoIterator<Item = (char, char)>,
@@ -2747,8 +2747,8 @@ mod tests {
     #[test]
     #[cfg(feature = "idle_callback")]
     fn thread_safe_with_idle_callback() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
 
         fn f<S: Send>(_: S) {}
 
