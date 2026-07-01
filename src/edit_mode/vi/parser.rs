@@ -240,6 +240,36 @@ mod tests {
     }
 
     #[test]
+    fn test_delete_char_backward() {
+        let input = ['X'];
+        let output = vi_parse(&input);
+        assert_eq!(
+            output,
+            ParsedViSequence {
+                multiplier: None,
+                command: Some(Command::DeleteCharBackward),
+                count: None,
+                motion: ParseResult::Incomplete,
+            }
+        );
+    }
+
+    #[test]
+    fn test_two_delete_char_backward() {
+        let input = ['2', 'X'];
+        let output = vi_parse(&input);
+        assert_eq!(
+            output,
+            ParsedViSequence {
+                multiplier: Some(2),
+                command: Some(Command::DeleteCharBackward),
+                count: None,
+                motion: ParseResult::Incomplete,
+            }
+        );
+    }
+
+    #[test]
     fn test_delete_without_motion() {
         let input = ['d'];
         let output = vi_parse(&input);
@@ -719,7 +749,7 @@ mod tests {
         ReedlineEvent::Edit(vec![EditCommand::Undo])
         ]))]
     #[case(&['d'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Edit(vec![EditCommand::CutSelection])]))]
+        ReedlineEvent::Edit(vec![EditCommand::CutSelection { granularity: Granularity::CharWise }]),]))]
     fn test_reedline_move_in_visual_mode(#[case] input: &[char], #[case] expected: ReedlineEvent) {
         let mut vi = Vi {
             mode: ViMode::Visual,

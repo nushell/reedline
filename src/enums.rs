@@ -420,6 +420,9 @@ pub enum EditCommand {
     /// Delete in-place from the current insertion point
     Delete,
 
+    /// Cut the grapheme left from the current insertion point
+    CutCharLeft,
+
     /// Cut the grapheme right from the current insertion point
     CutChar,
 
@@ -580,7 +583,10 @@ pub enum EditCommand {
     SelectAll,
 
     /// Cut selection to local buffer
-    CutSelection,
+    CutSelection {
+        /// Char-wise span or whole lines.
+        granularity: Granularity,
+    },
 
     /// Copy selection to local buffer
     CopySelection,
@@ -745,6 +751,7 @@ impl EditCommand {
             | EditCommand::Backspace
             | EditCommand::Delete
             | EditCommand::CutChar
+            | EditCommand::CutCharLeft
             | EditCommand::InsertString(_)
             | EditCommand::InsertNewline
             | EditCommand::InsertNewlineAbove
@@ -783,7 +790,7 @@ impl EditCommand {
             | EditCommand::CutRightBefore(_)
             | EditCommand::CutLeftUntil(_)
             | EditCommand::CutLeftBefore(_)
-            | EditCommand::CutSelection
+            | EditCommand::CutSelection { .. }
             | EditCommand::Paste
             | EditCommand::CutInsidePair { .. }
             | EditCommand::CutAroundPair { .. }
