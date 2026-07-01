@@ -1,5 +1,5 @@
 use {
-    crate::core_editor::RestPolicy,
+    crate::core_editor::{RestPolicy, SelectionExtent},
     crossterm::style::Color,
     serde::{Deserialize, Serialize},
     std::{
@@ -75,6 +75,21 @@ impl PromptEditMode {
             // given an explicit policy, rather than silently defaulting. The `_`
             // below only ignores the custom mode's name.
             PromptEditMode::Custom(_) => RestPolicy::Between,
+        }
+    }
+
+    pub(crate) fn selection_extent(&self) -> SelectionExtent {
+        match self {
+            // Vi normal/visual sweep the block cursor over the grapheme it
+            // lands on (vim's inclusive visual: `vw` selects "foo b").
+            PromptEditMode::Vi(_) => SelectionExtent::CoverLanding,
+            // The bar modes never form a block selection, and `op_end` is
+            // exclusive for the word/line/grapheme motions they emit (a forward
+            // find stays inclusive, matching its operator span), so the
+            // gap-indexed `Span` is the natural reading. Helix will use this one!
+            PromptEditMode::Default | PromptEditMode::Emacs | PromptEditMode::Custom(_) => {
+                SelectionExtent::Span
+            }
         }
     }
 }
