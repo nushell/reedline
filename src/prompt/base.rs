@@ -65,6 +65,9 @@ pub enum PromptEditMode {
     /// A vi-specific mode
     Vi(PromptViMode),
 
+    /// A helix/Kakoune like mode
+    Helix(PromptHelixMode),
+
     /// A custom mode
     Custom(String),
 }
@@ -75,14 +78,17 @@ impl PromptEditMode {
             PromptEditMode::Vi(PromptViMode::Normal) => RestPolicy::OnGrapheme,
             // Visual selections are min-width-1: the cursor always covers at
             // least the grapheme it sits on, so an empty point widens to a block.
-            PromptEditMode::Vi(PromptViMode::Visual) => RestPolicy::Block,
+            PromptEditMode::Vi(PromptViMode::Visual)
+            | PromptEditMode::Helix(PromptHelixMode::Normal)
+            | PromptEditMode::Helix(PromptHelixMode::Select) => RestPolicy::Block,
             PromptEditMode::Vi(PromptViMode::Insert)
+            | PromptEditMode::Helix(PromptHelixMode::Insert)
             | PromptEditMode::Default
             | PromptEditMode::Emacs => RestPolicy::Between,
             // No catch-all `_ =>` arm over the variants on purpose: a future
-            // variant (e.g. a Helix mode) then fails to compile here until it is
-            // given an explicit policy, rather than silently defaulting. The `_`
-            // below only ignores the custom mode's name.
+            // variant then fails to compile here until it is given an explicit
+            // policy, rather than silently defaulting. The `_` below only
+            // ignores the custom mode's name.
             PromptEditMode::Custom(_) => RestPolicy::Between,
         }
     }
@@ -95,10 +101,11 @@ impl PromptEditMode {
             // The bar modes never form a block selection, and `op_end` is
             // exclusive for the word/line/grapheme motions they emit (a forward
             // find stays inclusive, matching its operator span), so the
-            // gap-indexed `Span` is the natural reading. Helix will use this one!
-            PromptEditMode::Default | PromptEditMode::Emacs | PromptEditMode::Custom(_) => {
-                SelectionExtent::Span
-            }
+            // gap-indexed `Span` is the natural reading.
+            PromptEditMode::Default
+            | PromptEditMode::Emacs
+            | PromptEditMode::Helix(_)
+            | PromptEditMode::Custom(_) => SelectionExtent::Span,
         }
     }
 }
@@ -116,6 +123,23 @@ pub enum PromptViMode {
     /// Visual (selection) mode — like normal, but the cursor carries a
     /// min-width-1 selection that motions extend.
     Visual,
+}
+
+/// The helix/Kakoune like modes that the prompt can be in
+#[derive(Serialize, Deserialize, Clone, Debug, EnumIter, Default, PartialEq, Eq)]
+pub enum PromptHelixMode {
+    /// Normal mode carries an at least 1 grapheme wide selection
+    /// and extends the selection depending on the motion and its target
+    /// , both anchor and head can move
+    #[default]
+    Normal,
+
+    /// Insert mode is a collapsed cursor between graphemes
+    Insert,
+
+    /// Select mode plants an anchor and extends the selection through
+    /// the head, only the head moves
+    Select,
 }
 
 /// This is the discriminant type for [`PromptEditMode`]
@@ -137,6 +161,14 @@ pub enum PromptEditModeDiscriminants {
     #[strum(serialize = "ViInsert", serialize = "vi_insert")]
     ViInsert,
 
+    /// Helix normal mode
+    #[strum(serialize = "HelixNormal", serialize = "helix_normal")]
+    HelixNormal,
+
+    /// Helix insert mode
+    #[strum(serialize = "HelixInsert", serialize = "helix_insert")]
+    HelixInsert,
+
     /// A custom mode
     Custom,
 }
@@ -149,6 +181,7 @@ impl From<PromptViMode> for PromptEditMode {
 
 impl Display for PromptEditMode {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        use PromptHelixMode as Helix;
         use PromptViMode as Vi;
         match self {
             Self::Default => write!(f, "Default"),
@@ -156,6 +189,9 @@ impl Display for PromptEditMode {
             Self::Vi(Vi::Normal) => write!(f, "Vi_Normal"),
             Self::Vi(Vi::Insert) => write!(f, "Vi_Insert"),
             Self::Vi(Vi::Visual) => write!(f, "Vi_Visual"),
+            Self::Helix(Helix::Normal) => write!(f, "Helix_Normal"),
+            Self::Helix(Helix::Insert) => write!(f, "Helix_Insert"),
+            Self::Helix(Helix::Select) => write!(f, "Helix_Select"),
             Self::Custom(s) => write!(f, "Custom_{s}"),
         }
     }
@@ -165,6 +201,7 @@ impl IntoDiscriminant for PromptEditMode {
     type Discriminant = PromptEditModeDiscriminants;
 
     fn discriminant(&self) -> Self::Discriminant {
+        use PromptHelixMode as Helix;
         use PromptViMode as Vi;
         match self {
             Self::Default => Self::Discriminant::Default,
@@ -173,6 +210,8 @@ impl IntoDiscriminant for PromptEditMode {
             // keybindings, differing only in selection geometry.
             Self::Vi(Vi::Normal | Vi::Visual) => Self::Discriminant::ViNormal,
             Self::Vi(Vi::Insert) => Self::Discriminant::ViInsert,
+            Self::Helix(Helix::Normal | Helix::Select) => Self::Discriminant::HelixNormal,
+            Self::Helix(Helix::Insert) => Self::Discriminant::HelixInsert,
             Self::Custom(_) => Self::Discriminant::Custom,
         }
     }

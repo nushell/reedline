@@ -1,10 +1,12 @@
 use crate::{
     core_editor::{
         graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
-        line, word, CaretGeometry, Cursor,
+        line,
+        word::{self, categorize_char, CharClass},
+        CaretGeometry, Cursor,
     },
     enums::{Direction, MotionTarget, WordEdge},
-    FindStop,
+    FindStop, WordKind,
 };
 
 /// A resolved motion, as two byte positions:
@@ -130,6 +132,96 @@ pub(crate) fn resolve_motion(
             span(hit.unwrap_or(origin), inclusive)
         }
     }
+}
+
+pub(crate) fn resolve_selection(
+    buf: &str,
+    origin: usize,
+    target: MotionTarget,
+    geometry: CaretGeometry,
+) -> Cursor {
+    let m = resolve_motion(buf, origin, target, geometry);
+    if m.head == origin {
+        return Cursor::point(origin);
+    }
+
+    if m.head < origin {
+        let anchor = if word_boundary_at_origin(buf, origin, target, Direction::Backward) {
+            origin
+        } else {
+            next_grapheme_boundary(buf, origin)
+        };
+        return Cursor::new(anchor, m.head);
+    }
+
+    let next = next_grapheme_boundary(buf, origin);
+    let on_boundary = word_boundary_at_origin(buf, origin, target, Direction::Forward);
+    let (anchor, movement) = match target {
+        MotionTarget::Word {
+            edge: WordEdge::Start,
+            ..
+        } if on_boundary => (next, resolve_motion(buf, next, target, geometry)),
+        MotionTarget::Word {
+            edge: WordEdge::End,
+            ..
+        } if on_boundary => (next, m),
+        _ => (origin, m),
+    };
+
+    Cursor::new(anchor, movement.op_end.max(anchor))
+}
+
+/// Helix's `reached_target` evaluated at the cursor itself.
+/// Checks if `origin` already landed at a wordboundary and thus
+/// must hop over it to select the next word target.
+/// Only meaningful for word targets and not a valid code for emacs
+/// `WordKind::Unicode`
+fn word_boundary_at_origin(
+    buf: &str,
+    origin: usize,
+    target: MotionTarget,
+    direction: Direction,
+) -> bool {
+    let MotionTarget::Word { kind, edge, .. } = target else {
+        return false;
+    };
+
+    // `a` is the grapheme under the cursor, `b` its neighbor in travel direction.
+    let Some(a) = buf[origin..].chars().next() else {
+        return false;
+    };
+    let b = match direction {
+        Direction::Forward => buf[next_grapheme_boundary(buf, origin)..].chars().next(),
+        Direction::Backward => buf[prev_grapheme_boundary(buf, origin)..].chars().next(),
+    };
+
+    let Some(b) = b else {
+        return false;
+    };
+
+    let is_boundary = match kind {
+        WordKind::Word => word::is_word_boundary(a, b),
+        WordKind::LongWord => word::is_long_word_boundary(a, b),
+        // The hop mirrors helix's `reached_target`, which is defined
+        // for the char-class kinds; `Unicode` takes the default
+        // anchor rule and is never produced by the helix machine.
+        WordKind::Unicode => return false,
+    };
+
+    // Mirrors Helix's `reached_target`: a *start* must land on the word grapheme;
+    // an *end* must leave one.
+    let class_ok = match (edge, direction) {
+        (WordEdge::Start, Direction::Forward) => {
+            matches!(categorize_char(b), CharClass::Word | CharClass::Punctuation)
+        }
+        (WordEdge::End, Direction::Forward) | (WordEdge::Start, Direction::Backward) => {
+            matches!(categorize_char(a), CharClass::Word | CharClass::Punctuation)
+        }
+        (WordEdge::End, Direction::Backward) => {
+            matches!(categorize_char(b), CharClass::Word | CharClass::Punctuation)
+        }
+    };
+    is_boundary && class_ok
 }
 
 /// Byte offset for a `f`/`t`/`F`/`T` search, or `None` if `ch` isn't found in
@@ -638,5 +730,100 @@ mod tests {
         )
         .head;
         assert_eq!(head, expected);
+    }
+
+    // --- selection-first resolution (Helix motions) ---
+    //
+    // `resolve_selection` returns a gap-indexed Cursor, exactly Helix's Range
+    // convention: `start()..end()` is the covered byte span, the caret rests
+    // on the grapheme before a forward head. Expectations are checked against
+    // Helix's `movement::word_move` semantics.
+
+    fn selection(buf: &str, origin: usize, target: MotionTarget) -> Cursor {
+        resolve_selection(buf, origin, target, CaretGeometry::Block)
+    }
+
+    #[test]
+    fn resolve_selection_word_start_selects_through_the_gap() {
+        // `w` from 'f' in "foo bar": Range(0, 4) covers "foo " — the caret on
+        // the space *before* the next word, not on 'b'.
+        let sel = selection("foo bar", 0, word(WordEdge::Start, Direction::Forward));
+        assert_eq!((sel.anchor(), sel.head()), (0, 4));
+        assert_eq!(sel.caret("foo bar"), 3);
+    }
+
+    #[test]
+    fn resolve_selection_word_start_hops_when_cursor_touches_the_boundary() {
+        // "foo bar baz", caret on the space at 3 — exactly where the previous
+        // `w` parked it. Helix re-anchors past the boundary and selects the
+        // *next* span "bar " (4..8); a naive span-from-origin would collapse
+        // onto the space and stick there forever.
+        let sel = selection("foo bar baz", 3, word(WordEdge::Start, Direction::Forward));
+        assert_eq!((sel.anchor(), sel.head()), (4, 8));
+    }
+
+    #[test]
+    fn resolve_selection_word_start_from_space_before_last_word() {
+        // "a b", caret on the space: the hop lands on 'b' and the span is just
+        // that final word.
+        let sel = selection("a b", 1, word(WordEdge::Start, Direction::Forward));
+        assert_eq!((sel.anchor(), sel.head()), (2, 3));
+    }
+
+    #[test]
+    fn resolve_selection_word_end_includes_cursor_unless_on_word_end() {
+        // `e` from 'f': Range(0, 3) covers "foo", caret on the last 'o'.
+        let sel = selection("foo bar", 0, word(WordEdge::End, Direction::Forward));
+        assert_eq!((sel.anchor(), sel.head()), (0, 3));
+        // `e` from the last 'o' (a word end): Helix re-anchors past the cursor
+        // grapheme — Range(3, 7) covers " bar", the 'o' is *not* included.
+        let sel = selection("foo bar", 2, word(WordEdge::End, Direction::Forward));
+        assert_eq!((sel.anchor(), sel.head()), (3, 7));
+    }
+
+    #[test]
+    fn resolve_selection_word_back_excludes_cursor_on_word_start() {
+        // `b` from 'b' (a word start): Range(4, 0) covers "foo " — the 'b'
+        // itself is excluded, caret on 'f'.
+        let sel = selection("foo bar", 4, word(WordEdge::Start, Direction::Backward));
+        assert_eq!((sel.anchor(), sel.head()), (4, 0));
+        assert_eq!(sel.caret("foo bar"), 0);
+    }
+
+    #[test]
+    fn resolve_selection_word_back_includes_cursor_mid_word() {
+        // `b` from 'a' (mid-word): Range(6, 4) covers "ba" — the cursor
+        // grapheme stays covered (anchor one past it).
+        let sel = selection("foo bar", 5, word(WordEdge::Start, Direction::Backward));
+        assert_eq!((sel.anchor(), sel.head()), (6, 4));
+    }
+
+    #[test]
+    fn resolve_selection_find_spans_origin_to_hit() {
+        // `f b`: Range(0, 5) covers "foo b", caret on the found char.
+        let sel = selection("foo bar", 0, find('b', Direction::Forward, FindStop::On));
+        assert_eq!((sel.anchor(), sel.head()), (0, 5));
+        assert_eq!(sel.caret("foo bar"), 4);
+        // `t b` stops one short.
+        let sel = selection(
+            "foo bar",
+            0,
+            find('b', Direction::Forward, FindStop::Before),
+        );
+        assert_eq!((sel.anchor(), sel.head()), (0, 4));
+        // backward `F f` from 'r': the cursor grapheme stays covered
+        // (anchor 7), head on the hit.
+        let sel = selection("foo bar", 6, find('f', Direction::Backward, FindStop::On));
+        assert_eq!((sel.anchor(), sel.head()), (7, 0));
+    }
+
+    #[test]
+    fn resolve_selection_at_buffer_end_covers_the_tail() {
+        // `w` on the last grapheme runs to the buffer end and still covers it
+        // (Helix's early-out keeps the block); a missed find is a no-op point.
+        let sel = selection("foo", 2, word(WordEdge::Start, Direction::Forward));
+        assert_eq!((sel.anchor(), sel.head()), (2, 3));
+        let sel = selection("foo bar", 3, find('z', Direction::Forward, FindStop::On));
+        assert!(sel.is_empty());
     }
 }

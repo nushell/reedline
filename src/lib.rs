@@ -259,17 +259,18 @@ pub use history::{
 mod prompt;
 pub use prompt::{
     DefaultPrompt, DefaultPromptSegment, Prompt, PromptEditMode, PromptEditModeDiscriminants,
-    PromptHistorySearch, PromptHistorySearchStatus, PromptViMode, DEFAULT_INDICATOR_COLOR,
-    DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_MULTILINE_COLOR, DEFAULT_PROMPT_RIGHT_COLOR,
+    PromptHelixMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode,
+    DEFAULT_INDICATOR_COLOR, DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_MULTILINE_COLOR,
+    DEFAULT_PROMPT_RIGHT_COLOR,
 };
 
 mod edit_mode;
-#[cfg(feature = "helix")]
-pub use edit_mode::Helix;
 pub use edit_mode::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     CursorConfig, EditMode, Emacs, Keybindings, Vi,
 };
+#[cfg(feature = "helix")]
+pub use edit_mode::{default_helix_insert_keybindings, default_helix_normal_keybindings, Helix};
 
 mod highlighter;
 pub use highlighter::{AbbrExpandContext, ExampleHighlighter, Highlighter, SimpleMatchHighlighter};

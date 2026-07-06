@@ -4,6 +4,7 @@ use super::{
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
 use crate::core_editor::graphemes::{next_grapheme_boundary, prev_grapheme_boundary};
+use crate::core_editor::resolve::resolve_selection;
 use crate::core_editor::{commit, line, operator_span, resolve_motion, RestPolicy};
 use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
 use crate::prompt::PromptEditMode;
@@ -138,6 +139,43 @@ impl Editor {
                     self.place(next);
                 }
             },
+            EditCommand::Select(t) => match self.caret_extent() {
+                SelectionExtent::CoverLanding => {
+                    let origin = self.insertion_point();
+                    self.place(Cursor::point(origin));
+                    let head = self.resolve_head(*t);
+                    self.move_head_to(head, true);
+                }
+                SelectionExtent::Span => {
+                    let geom = self.caret_geometry();
+                    let origin = self.insertion_point();
+                    let selection = resolve_selection(self.get_buffer(), origin, *t, geom);
+                    let selection = if self.edit_mode.rest_policy() == RestPolicy::Block
+                        || selection.is_empty()
+                    {
+                        selection
+                    } else {
+                        let buf = self.get_buffer();
+                        if selection.head() >= selection.anchor() {
+                            selection.move_head(prev_grapheme_boundary(buf, selection.head()))
+                        } else {
+                            Cursor::new(
+                                prev_grapheme_boundary(buf, selection.anchor()),
+                                selection.head(),
+                            )
+                        }
+                    };
+                    self.place(selection);
+                }
+            },
+            EditCommand::CollapseSelection(direction) => {
+                let cursor = self.line_buffer.cursor();
+                let pos = match direction {
+                    Direction::Backward => cursor.start(),
+                    Direction::Forward => cursor.end(),
+                };
+                self.place(Cursor::point(pos));
+            }
             EditCommand::Cut {
                 target,
                 granularity,
@@ -3822,6 +3860,47 @@ mod test {
         assert_eq!(editor.get_selection(), Some((0, 4)));
         editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
         assert_eq!(editor.get_selection(), Some((0, 8)));
+    }
+
+    fn helix_editor(buffer: &str) -> Editor {
+        let mut editor = editor_with(buffer);
+        editor.set_edit_mode(PromptEditMode::Helix(crate::PromptHelixMode::Normal));
+        editor
+    }
+
+    #[test]
+    fn helix_select_re_anchors_at_each_word() {
+        // Successive `Select(w)` tile the line — "foo " then "bar " — instead
+        // of growing from the origin like `Extend` does above.
+        let mut editor = helix_editor("foo bar baz");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+        assert_eq!(editor.get_selection(), Some((0, 4)));
+        editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+        assert_eq!(editor.get_selection(), Some((4, 8)));
+    }
+
+    #[test]
+    fn helix_collapse_selection_forward_lands_after_it() {
+        // The collapse lands as a point, but the Block rest policy widens it
+        // back onto one grapheme — a helix caret is always a 1-wide cover, so
+        // `a` rests *on* 'b' with the old selection gone.
+        let mut editor = helix_editor("foo bar baz");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+        editor.run_edit_command(&EditCommand::CollapseSelection(Direction::Forward));
+        assert_eq!(editor.get_selection(), Some((4, 5)));
+        assert_eq!(editor.insertion_point(), 4);
+    }
+
+    #[test]
+    fn helix_collapse_selection_backward_lands_at_its_start() {
+        let mut editor = helix_editor("foo bar baz");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+        editor.run_edit_command(&EditCommand::CollapseSelection(Direction::Backward));
+        assert_eq!(editor.get_selection(), Some((0, 1)));
+        assert_eq!(editor.insertion_point(), 0);
     }
 
     #[test]

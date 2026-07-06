@@ -368,6 +368,10 @@ pub enum EditCommand {
         granularity: Granularity,
     },
 
+    /// Select up to a [`MotionTarget`]: drop a fresh anchor at the caret, then
+    /// move the heat to the target, so the selection covers the span just traveled.
+    Select(MotionTarget),
+
     /// Cut like [`EditCommand::Cut`], except that a `LineWise` span keeps its
     /// line terminators: only the lines' *content* is consumed, so one blank
     /// line remains — the vi change operator's linewise semantics
@@ -581,6 +585,9 @@ pub enum EditCommand {
 
     /// Cut selection to local buffer
     CutSelection,
+
+    /// Collapse the selection (or a block cursor's width) to a caret at one of its edges
+    CollapseSelection(Direction),
 
     /// Copy selection to local buffer
     CopySelection,
@@ -827,6 +834,8 @@ impl EditCommand {
             // mutate the buffer; `Copy` does not.
             EditCommand::Move(_) => EditType::MoveCursor { select: false },
             EditCommand::Extend(_) => EditType::MoveCursor { select: true },
+            EditCommand::CollapseSelection(_) => EditType::MoveCursor { select: false },
+            EditCommand::Select(_) => EditType::MoveCursor { select: true },
             EditCommand::Cut { .. } => EditType::EditText,
             EditCommand::Copy { .. } => EditType::NoOp,
             EditCommand::Change { .. } => EditType::EditText,
