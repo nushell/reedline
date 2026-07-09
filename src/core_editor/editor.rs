@@ -895,7 +895,18 @@ impl Editor {
         }
     }
 
+
+    /// Cut the grapheme left of the caret into the cut buffer (vi `X`).
+    ///
+    /// Intended for vi normal mode only, where there is no selection, since
+    /// visual `X` is dispatched as a linewise `CutSelection`. Bound directly
+    /// elsewhere, a selection could exist, so clear it first: `X` always means
+    /// "delete the grapheme before the caret," and clearing avoids leaving a
+    /// stale anchor pointing into the mutated buffer. The cut is clamped to
+    /// the current line so `X` never crosses a terminator (unconditional,
+    /// unlike the `cross_line_cursor`-gated clamp in `resolve_head`).
     fn cut_char_left(&mut self) {
+        self.clear_selection();
         let cur_pos = self.line_buffer.insertion_point();
         let left_index = self.line_buffer.grapheme_left_index();
         if left_index < cur_pos && left_index >= self.line_buffer.current_line_range().start {
