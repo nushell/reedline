@@ -326,6 +326,7 @@ impl Reedline {
             kitty_protocol: KittyProtocolGuard::default(),
             immediately_accept: false,
             break_signal: None,
+            repaint_signal: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
             #[cfg(feature = "external_printer")]
             external_printer: None,
@@ -712,6 +713,16 @@ impl Reedline {
         self
     }
 
+    /// Get a [`RepaintSignal`] handle that can trigger an in-place repaint of
+    /// the prompt from another thread while [`Reedline::read_line()`] is
+    /// running, avoiding interfering with current line edit.
+    pub fn repaint_signal(&mut self) -> RepaintSignal {
+        // The handle is created lazily on the first call; subsequent calls return clones
+        self.repaint_signal
+            .get_or_insert_with(RepaintSignal::default)
+            .clone()
+    }
+
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
         self.edit_mode.edit_mode()
@@ -852,6 +863,29 @@ impl Reedline {
         Ok(())
     }
 
+    /// Consume a pending external repaint request, returning whether one was
+    /// pending. Any number of requests since the last check collapse into one.
+    fn take_repaint_request(&self) -> bool {
+        self.repaint_signal
+            .as_ref()
+            .map_or(false, RepaintSignal::take)
+    }
+
+    /// Whether the input loop must poll with a timeout instead of blocking
+    /// indefinitely, so external triggers (break signal, repaint signal,
+    /// external printer, idle callback) are noticed while waiting for input.
+    fn input_needs_polling(&self) -> bool {
+        let poll = self.break_signal.is_some() || self.repaint_signal.is_some();
+
+        #[cfg(feature = "external_printer")]
+        let poll = poll || self.external_printer.is_some();
+
+        #[cfg(feature = "idle_callback")]
+        let poll = poll || self.idle_callback.is_some();
+
+        poll
+    }
+
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
@@ -863,6 +897,10 @@ impl Reedline {
             self.suspended_state = None;
         }
         self.hide_hints = false;
+
+        // Repaint requests raised while no read_line was active are stale:
+        // the fresh prompt painted below already reflects the latest state.
+        self.take_repaint_request();
 
         self.repaint(prompt)?;
 
@@ -886,6 +924,10 @@ impl Reedline {
                     self.editor.reset_undo_stack();
                     return Ok(Signal::ExternalBreak(buffer));
                 }
+            }
+
+            if self.take_repaint_request() {
+                self.repaint(prompt)?;
             }
 
             #[cfg(feature = "external_printer")]
@@ -941,22 +983,7 @@ impl Reedline {
             let mut events: Vec<Event> = vec![];
 
             if !self.immediately_accept {
-                let needs_polling = {
-                    #[allow(unused_mut)]
-                    let mut result = self.break_signal.is_some();
-                    result |= completer_pending;
-                    #[cfg(feature = "external_printer")]
-                    if self.external_printer.is_some() {
-                        result = true;
-                    }
-                    #[cfg(feature = "idle_callback")]
-                    if self.idle_callback.is_some() {
-                        result = true;
-                    }
-                    result
-                };
-
-                if needs_polling {
+                if self.input_needs_polling() || completer_pending {
                     if event::poll(self.poll_interval)? {
                         events.push(crossterm::event::read()?);
                     }
@@ -2702,6 +2729,62 @@ mod tests {
         fn f<S: Send>(_: S) {}
         let signal = Arc::new(AtomicBool::new(false));
         f(Reedline::create().with_break_signal(signal));
+    }
+
+    #[test]
+    fn take_repaint_request_is_false_without_a_handle() {
+        let reedline = Reedline::create();
+        assert!(!reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn take_repaint_request_consumes_the_request() {
+        let mut reedline = Reedline::create();
+        let signal = reedline.repaint_signal();
+
+        signal.request_repaint();
+        assert!(reedline.take_repaint_request());
+        // Consumed: no repaint left pending
+        assert!(!reedline.take_repaint_request());
+
+        // A new request is honored again
+        signal.request_repaint();
+        assert!(reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_signal_switches_input_loop_to_polling() {
+        let mut reedline = Reedline::create();
+        assert!(
+            !reedline.input_needs_polling(),
+            "without external triggers the loop should block on input"
+        );
+
+        let _signal = reedline.repaint_signal();
+        assert!(
+            reedline.input_needs_polling(),
+            "a repaint handle must switch the loop to polling so requests are noticed"
+        );
+    }
+
+    #[test]
+    fn repaint_request_during_active_read_survives_while_stale_ones_are_dropped() {
+        // Emulates the loop's consumption pattern: read_line_helper drains any
+        // stale pre-read_line request before painting the initial prompt, so
+        // only requests raised afterwards trigger an extra repaint.
+        let mut reedline = Reedline::create();
+        let signal = reedline.repaint_signal();
+
+        // Raised while no read_line is active -> dropped by the initial drain
+        signal.request_repaint();
+        reedline.take_repaint_request();
+        assert!(!reedline.take_repaint_request());
+
+        // Raised "mid-edit" -> observed by the next loop iteration
+        signal.request_repaint();
+        assert!(reedline.take_repaint_request());
     }
 
     #[test]
