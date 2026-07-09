@@ -2073,6 +2073,15 @@ mod test {
     }
 
     #[test]
+    fn test_cut_char_left_cuts_char_and_puts_in_buffer() {
+        let mut editor = editor_with("hello");
+        editor.line_buffer.set_insertion_point(3);
+        editor.run_edit_command(&EditCommand::CutCharLeft);
+        assert_eq!(editor.get_buffer(), "helo");
+        assert_eq!(editor.cut_buffer.get().0, "l");
+    }
+
+    #[test]
     fn test_cut_char_left_at_beginning_of_line() {
         let starting_line = "This is a single line test";
         let mut editor = editor_with(starting_line);
@@ -2088,6 +2097,20 @@ mod test {
         editor.line_buffer.set_insertion_point(12);
         editor.run_edit_command(&EditCommand::CutCharLeft);
         assert_eq!(editor.get_buffer(), starting_line);
+    }
+
+    #[test]
+    fn test_cut_char_left_clears_stale_selection() {
+        let mut editor = editor_with("hello");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Normal));
+        editor.line_buffer.set_insertion_point(2);
+        editor.update_selection_anchor(true);
+        editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        // stale selection present
+        editor.run_edit_command(&EditCommand::CutCharLeft);
+        assert_eq!(editor.get_buffer(), "helo");
+        assert_eq!(editor.cut_buffer.get().0, "l");
+        assert!(editor.get_selection().is_none());
     }
 
     #[test]
