@@ -52,7 +52,10 @@ use {
         io::Result,
         io::Write,
         process::Command,
-        sync::{atomic::AtomicBool, Arc},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
         time::Duration,
         time::SystemTime,
     },
@@ -208,6 +211,10 @@ pub struct Reedline {
     // `Signal::ExternalBreak` with the current buffer contents.
     break_signal: Option<Arc<AtomicBool>>,
 
+    // External repaint signal: when triggered, the prompt is re-evaluated
+    // and repainted in place while `read_line()` is running.
+    repaint_signal: Option<RepaintSignal>,
+
     // Maximum time to block on input before yielding control for features that
     // require periodic processing (external printer, idle callback).
     // Only used when external_printer or idle_callback is configured.
@@ -225,6 +232,26 @@ pub struct Reedline {
 struct BufferEditor {
     command: Command,
     temp_file: PathBuf,
+}
+
+/// Call [`request_repaint`](RepaintSignal::request_repaint) once
+/// new prompt data is ready! The next iteration of the input loop re-evaluates
+/// the [`Prompt`] and redraws it without interrupting the current line edit.
+#[derive(Clone, Debug, Default)]
+pub struct RepaintSignal {
+    flag: Arc<AtomicBool>,
+}
+
+impl RepaintSignal {
+    /// Request that the prompt is re-evaluated and repainted in place.
+    pub fn request_repaint(&self) {
+        self.flag.store(true, Ordering::Relaxed);
+    }
+
+    /// Consume a pending repaint request.
+    fn take(&self) -> bool {
+        self.flag.swap(false, Ordering::Relaxed)
+    }
 }
 
 impl Drop for Reedline {
