@@ -2788,6 +2788,95 @@ mod tests {
     }
 
     #[test]
+    fn repaint_signal_handles_share_one_flag() {
+        // Every handle returned by `repaint_signal()` (and its clones) must
+        // observe the same underlying flag, so a request from any of them is
+        // seen exactly once by the loop.
+        let mut reedline = Reedline::create();
+        let a = reedline.repaint_signal();
+        let b = reedline.repaint_signal();
+        let c = a.clone();
+
+        b.request_repaint();
+        assert!(reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
+
+        // A request made through the clone is also observed.
+        c.request_repaint();
+        assert!(reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_signal_survives_behind_an_arc() {
+        // This is what a shell would be using...
+        // handed to a worker that knows nothing about `Reedline`.
+        use std::sync::Arc;
+        let mut reedline = Reedline::create();
+        let shared: Arc<RepaintSignal> = Arc::new(reedline.repaint_signal());
+
+        let worker = shared.clone();
+        std::thread::spawn(move || worker.request_repaint())
+            .join()
+            .expect("worker thread panicked");
+
+        assert!(reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_request_collapses_rapid_fire() {
+        // Many requests arriving between two loop iterations must collapse into
+        // a single repaint, not N. `take` is a swap(false), so only one take
+        // should observe the request regardless of how many were raised.
+        let mut reedline = Reedline::create();
+        let signal = reedline.repaint_signal();
+
+        for _ in 0..1_000 {
+            signal.request_repaint();
+        }
+        assert!(reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_signal_is_independent_of_break_signal() {
+        // The two out-of-band triggers must not interfere: arming a repaint
+        // request must not be mistaken for a break, and vice versa.
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let mut reedline = Reedline::create().with_break_signal(Arc::new(AtomicBool::new(false)));
+        let repaint = reedline.repaint_signal();
+
+        repaint.request_repaint();
+        assert!(reedline.take_repaint_request());
+        assert!(
+            !reedline
+                .break_signal
+                .as_ref()
+                .unwrap()
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "repaint must not toggle the break flag"
+        );
+
+        reedline
+            .break_signal
+            .as_ref()
+            .unwrap()
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            reedline
+                .break_signal
+                .as_ref()
+                .unwrap()
+                .swap(false, std::sync::atomic::Ordering::Relaxed),
+            "break flag must be independently observable"
+        );
+        assert!(
+            !reedline.take_repaint_request(),
+            "break must not leave a repaint pending"
+        );
+    }
+    #[test]
     fn signal_external_break_pattern_match() {
         let buffer_content = "some partial input".to_string();
         let signal = Signal::ExternalBreak(buffer_content.clone());
