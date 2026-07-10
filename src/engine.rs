@@ -875,13 +875,22 @@ impl Reedline {
     /// indefinitely, so external triggers (break signal, repaint signal,
     /// external printer, idle callback) are noticed while waiting for input.
     fn input_needs_polling(&self) -> bool {
-        let poll = self.break_signal.is_some() || self.repaint_signal.is_some();
+        #[allow(unused_mut)] // Dependent on feature flags
+        let mut poll = self.break_signal.is_some()
+            || self
+                .repaint_signal
+                .as_ref()
+                .map_or(false, |sig| Arc::strong_count(&sig.flag) > 1);
 
         #[cfg(feature = "external_printer")]
-        let poll = poll || self.external_printer.is_some();
+        {
+            poll |= self.external_printer.is_some();
+        }
 
         #[cfg(feature = "idle_callback")]
-        let poll = poll || self.idle_callback.is_some();
+        {
+            poll |= self.idle_callback.is_some();
+        }
 
         poll
     }
