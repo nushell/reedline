@@ -24,6 +24,7 @@ It is currently primarily developed as the interactive editor for [nushell](http
   - [Integrate with custom line completion `Validator`](#integrate-with-custom-line-completion-validator)
   - [Use custom `EditMode`](#use-custom-editmode)
 - [Crate features](#crate-features)
+- [Default keybindings](./KEYBINDINGS.md)
 - [Are we prompt yet? (Development status)](#are-we-prompt-yet-development-status)
 - [Contributing](./CONTRIBUTING.md)
 - [Alternatives](#alternatives)
