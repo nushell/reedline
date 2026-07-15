@@ -1855,7 +1855,14 @@ impl Reedline {
             false => (1, " "), // expand on <space>
         };
 
-        let word_end = cursor_position_in_buffer - offset;
+        let mut word_end = cursor_position_in_buffer - offset;
+        // `offset` is a raw byte count (0 on <enter>, 1 on <space>), so
+        // `word_end` can land inside a multi-byte UTF-8 char sitting just
+        // before the cursor (e.g. pasted CJK text). Floor it down to the
+        // nearest char boundary before slicing to avoid a panic.
+        while word_end > 0 && !buffer.is_char_boundary(word_end) {
+            word_end -= 1;
+        }
         let prefix = &buffer[..word_end];
         let word_start = prefix
             .char_indices()
@@ -2825,6 +2832,27 @@ mod tests {
             _ => panic!("expected Edit event"),
         });
         assert_eq!(reedline.current_buffer_contents(), "coffee shop");
+    }
+
+    #[test]
+    fn try_expand_abbreviation_survives_multibyte_char_before_cursor() {
+        // Regression: `word_end` was a raw byte subtraction of `offset` from the
+        // byte cursor position. With a multi-byte char (e.g. pasted CJK) right
+        // before the cursor, `word_end` could land inside that char, so slicing
+        // the buffer panicked with "byte index N is not a char boundary".
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, "中");
+        // Place the cursor at byte offset 1, inside the 3-byte '中'. Pre-patch,
+        // `&buffer[..1]` would panic here.
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.set_buffer("中".to_string());
+        line_buffer.set_insertion_point(1);
+        reedline
+            .editor
+            .set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
+        // Must return without panicking (no match, so `None` is expected).
+        assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
     }
 
     #[test]
