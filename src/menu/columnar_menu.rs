@@ -506,7 +506,9 @@ impl ColumnarMenu {
             MenuEvent::MoveDown => self.move_down(),
             MenuEvent::MoveLeft => self.move_left(),
             MenuEvent::MoveRight => self.move_right(),
-            MenuEvent::PreviousPage | MenuEvent::NextPage => {}
+            MenuEvent::PreviousPage | MenuEvent::NextPage => {
+                // The columnar menu doest have the concept of pages, yet
+            }
         }
     }
 
@@ -515,6 +517,8 @@ impl ColumnarMenu {
     pub fn recompute_layout(&mut self, painter: &Painter) {
         let screen_width = painter.screen_width() as usize;
 
+        // If there is at least one suggestion that contains a description, then the layout
+        // is changed to one column to fit the description
         let has_descriptions = self
             .get_values()
             .iter()
@@ -524,15 +528,21 @@ impl ColumnarMenu {
             self.working_details.columns = 1;
             self.working_details.col_width = screen_width;
         } else {
+            // If no default width is found, then the total screen width is used to estimate
+            // the column width based on the default number of columns
             let default_width = self
                 .default_details
                 .col_width
                 .unwrap_or_else(|| screen_width / self.default_details.columns as usize);
 
+            // Adjusting the working width of the column based the max line width found
+            // in the menu values
             let required_width = self.longest_suggestion + self.default_details.col_padding;
 
             self.working_details.col_width = required_width.max(default_width).min(screen_width);
 
+            // The working columns is adjusted based on possible number of columns
+            // that could be fitted in the screen with the calculated column width
             let possible_columns = (screen_width / self.working_details.col_width) as u16;
             self.working_details.columns =
                 possible_columns.min(self.default_details.columns).max(1);

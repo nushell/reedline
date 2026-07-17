@@ -346,6 +346,8 @@ pub fn floor_char_boundary(s: &str, index: usize) -> usize {
 pub(crate) fn available_lines(painter: &Painter, min_rows: u16, max_lines: u16) -> u16 {
     let lines = painter.remaining_lines_real().min(max_lines);
     if lines == 0 {
+        // Handle the case where a prompt uses the entire screen.
+        // Drawing the menu has priority over the drawing the prompt.
         painter.remaining_lines().min(min_rows)
     } else {
         lines
@@ -355,10 +357,13 @@ pub(crate) fn available_lines(painter: &Painter, min_rows: u16, max_lines: u16) 
 /// Scroll a fixed window so the selected row stays inside
 pub(crate) fn scroll_offset(selected: u16, current: u16, window: u16) -> u16 {
     if selected <= current {
+        // Selection is above the visible area, scroll up
         selected
     } else if selected >= current.saturating_add(window) {
+        // Selection is below the visible area, scroll down
         selected.saturating_sub(window) + 1
     } else {
+        // Selection is within the visible area
         current
     }
 }

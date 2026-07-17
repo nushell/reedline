@@ -631,6 +631,7 @@ impl IdeMenu {
             + (PADDING_SIDES * self.default_details.padding)
             + border_width;
 
+        // Big enough to show "..."
         let minimum_required = self
             .default_details
             .min_completion_width
@@ -654,6 +655,7 @@ impl IdeMenu {
             .cursor_col
             .saturating_sub(border_width / HALF_DIVISOR);
 
+        // Columns at which completion box begins
         let mut start_pos = (base as i16 + self.default_details.cursor_offset).max(0) as u16;
 
         if self.default_details.correct_cursor_pos {
@@ -661,7 +663,9 @@ impl IdeMenu {
             start_pos = start_pos.saturating_sub(base_string_width as u16);
         }
 
+        // Not enough space on the right, must push completion box left
         let start_pos = start_pos.min(terminal_width.saturating_sub(completion_width));
+        // The end of the completion box
         let end_pos = start_pos + completion_width;
 
         (start_pos, end_pos)
@@ -683,6 +687,7 @@ impl IdeMenu {
             .filter(|desc| !desc.is_empty());
 
         if let Some(description) = active_description {
+            // Horizontal space on the left and right (not including description)
             let requested_offset = self.default_details.description_offset;
             let usable_left = start_pos.saturating_sub(requested_offset);
             let usable_right = terminal_width.saturating_sub(end_pos + requested_offset);
