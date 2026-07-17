@@ -229,13 +229,6 @@ impl DescriptionMenu {
         self.working_details.col_width
     }
 
-    /// Reset menu position
-    fn reset_position(&mut self) {
-        self.col_pos = 0;
-        self.row_pos = 0;
-        self.skipped_rows = 0;
-    }
-
     fn no_records_msg(&self, use_ansi_coloring: bool) -> String {
         let msg = "TYPE TO START SEARCH";
         if use_ansi_coloring {
@@ -442,6 +435,12 @@ impl Menu for DescriptionMenu {
     }
 
     /// Updates menu values
+    fn reset_position(&mut self) {
+        self.col_pos = 0;
+        self.row_pos = 0;
+        self.skipped_rows = 0;
+    }
+
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
         self.values = completer.complete(&input, pos);

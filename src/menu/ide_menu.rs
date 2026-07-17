@@ -353,10 +353,6 @@ impl IdeMenu {
         values.max(description_height)
     }
 
-    fn reset_position(&mut self) {
-        self.selected = 0;
-    }
-
     fn no_records_msg(&self, use_ansi_coloring: bool) -> String {
         let msg = "NO RECORDS FOUND";
         if use_ansi_coloring {
@@ -620,6 +616,10 @@ impl Menu for IdeMenu {
     }
 
     /// Update menu values
+    fn reset_position(&mut self) {
+        self.selected = 0;
+    }
+
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
         let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);

@@ -119,6 +119,9 @@ pub trait Menu: Send {
     /// immediately
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer);
 
+    /// Resets the menu's selection back to its initial position.
+    fn reset_position(&mut self);
+
     /// The working details of a menu are values that could change based on
     /// the menu conditions before it being printed, such as the number or size
     /// of columns, etc.
@@ -504,6 +507,10 @@ impl Menu for ReedlineMenu {
                 menu.update_values(editor, own_completer.as_mut());
             }
         }
+    }
+
+    fn reset_position(&mut self) {
+        self.as_mut().reset_position();
     }
 
     fn update_working_details(

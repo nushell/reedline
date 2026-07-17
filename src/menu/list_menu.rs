@@ -182,13 +182,6 @@ impl ListMenu {
         self.get_values().get(self.index()).cloned()
     }
 
-    /// Reset menu position
-    fn reset_position(&mut self) {
-        self.page = 0;
-        self.row_position = 0;
-        self.pages = Vec::new();
-    }
-
     fn printable_entries(&self, painter: &Painter) -> usize {
         // The number 2 comes from the prompt line and the banner printed at the bottom
         // of the menu
@@ -380,6 +373,12 @@ impl Menu for ListMenu {
     }
 
     /// Collecting the value from the completer to be shown in the menu
+    fn reset_position(&mut self) {
+        self.page = 0;
+        self.row_position = 0;
+        self.pages = Vec::new();
+    }
+
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
 
