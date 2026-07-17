@@ -806,13 +806,21 @@ mod tests {
 
     struct FakeCompleter {
         completions: Vec<String>,
+        /// When set, every suggestion carries a description
+        describe: bool,
     }
 
     impl FakeCompleter {
         fn new(completions: &[&str]) -> Self {
             Self {
                 completions: completions.iter().map(|c| c.to_string()).collect(),
+                describe: false,
             }
+        }
+
+        fn with_descriptions(mut self) -> Self {
+            self.describe = true;
+            self
         }
     }
 
@@ -820,7 +828,10 @@ mod tests {
         fn complete(&mut self, _line: &str, pos: usize) -> Vec<Suggestion> {
             self.completions
                 .iter()
-                .map(|c| fake_suggestion(c, pos))
+                .map(|c| Suggestion {
+                    description: self.describe.then(|| format!("desc for {c}")),
+                    ..fake_suggestion(c, pos)
+                })
                 .collect()
         }
     }
@@ -1039,5 +1050,33 @@ mod tests {
             menu.move_down();
             assert!(menu.row_pos == 0 && menu.col_pos == 1);
         }
+    }
+
+    #[test]
+    fn layout_recomputes_without_a_menu_event() {
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(120, 10);
+
+        let mut plain = FakeCompleter::new(&["alpha", "beta", "gamma"]);
+        menu.menu_event(MenuEvent::Activate(false));
+        menu.update_working_details(&mut editor, &mut plain, &painter);
+        assert!(
+            menu.get_cols() > 1,
+            "expected a multi-column layout without descriptions"
+        );
+
+        let mut described =
+            FakeCompleter::new(&["alpha", "beta", "gamma"]).with_descriptions();
+        menu.update_values(&mut editor, &mut described);
+        assert!(menu.event.is_none(), "no menu event should be queued");
+        menu.update_working_details(&mut editor, &mut described, &painter);
+
+        assert_eq!(
+            menu.get_cols(),
+            1,
+            "descriptions must relayout to one column without a menu event"
+        );
     }
 }
