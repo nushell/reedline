@@ -1,12 +1,13 @@
 use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
+    Completer, Suggestion,
     core_editor::Editor,
     menu_functions::{
-        can_partially_complete, floor_char_boundary, get_match_indices, replace_in_buffer,
-        resolve_completer_input, style_suggestion, truncate_with_ansi,
+        available_lines, can_partially_complete, floor_char_boundary, get_match_indices,
+        replace_in_buffer, resolve_completer_input, scroll_offset, style_suggestion,
+        truncate_with_ansi,
     },
     painting::Painter,
-    Completer, Suggestion,
 };
 use nu_ansi_term::ansi::RESET;
 use unicode_width::UnicodeWidthStr;
