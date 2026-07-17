@@ -96,7 +96,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
                         marker: Some(&buffer[index..index + 2 * marker.len_utf8()]),
                         action: ParseAction::LastCommand,
                         prefix: None,
-                    }
+                    };
                 }
                 #[cfg(feature = "bashisms")]
                 Some(&x) if x == '$' => {
@@ -106,7 +106,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
                         marker: Some(&buffer[index..index + 2]),
                         action: ParseAction::LastToken,
                         prefix: None,
-                    }
+                    };
                 }
                 Some(&x) if x.is_ascii_digit() || x == '-' => {
                     let mut count: usize = 0;
@@ -151,7 +151,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
                         marker: Some(&buffer[index..index + marker.len_utf8()]),
                         action: ParseAction::BackwardPrefixSearch,
                         prefix: Some(&buffer[index + marker.len_utf8()..buffer.len()]),
-                    }
+                    };
                 }
                 None => {
                     return ParseResult {
@@ -160,7 +160,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
                         marker: Some(&buffer[index..buffer.len()]),
                         action: ParseAction::ForwardSearch,
                         prefix: Some(&buffer[index..buffer.len()]),
-                    }
+                    };
                 }
                 _ => {}
             }
