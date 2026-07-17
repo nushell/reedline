@@ -122,6 +122,14 @@ pub trait Menu: Send {
     /// Resets the menu's selection back to its initial position.
     fn reset_position(&mut self);
 
+    /// Handles a menu event that reloads the menu's contents
+    fn reload(&mut self, updated: bool, editor: &mut Editor, completer: &mut dyn Completer) {
+        self.reset_position();
+        if !updated {
+            self.update_values(editor, completer);
+        }
+    }
+
     /// The working details of a menu are values that could change based on
     /// the menu conditions before it being printed, such as the number or size
     /// of columns, etc.
