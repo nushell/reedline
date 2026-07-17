@@ -352,6 +352,17 @@ pub(crate) fn available_lines(painter: &Painter, min_rows: u16, max_lines: u16) 
     }
 }
 
+/// Scroll a fixed window so the selected row stays inside
+pub(crate) fn scroll_offset(selected: u16, current: u16, window: u16) -> u16 {
+    if selected <= current {
+        selected
+    } else if selected >= current.saturating_add(window) {
+        selected.saturating_sub(window) + 1
+    } else {
+        current
+    }
+}
+
 /// Helper to accept a completion suggestion and edit the buffer
 pub fn replace_in_buffer(
     value: Option<Suggestion>,
