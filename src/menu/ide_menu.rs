@@ -560,6 +560,27 @@ impl IdeMenu {
             )
         }
     }
+
+    /// Apply a queued menu event, refreshing the values or moving the selection
+    fn apply_event(
+        &mut self,
+        event: MenuEvent,
+        editor: &mut Editor,
+        completer: &mut dyn Completer,
+    ) {
+        match event {
+            MenuEvent::Activate(updated) | MenuEvent::Edit(updated) => {
+                self.reload(updated, editor, completer)
+            }
+            MenuEvent::Deactivate => {}
+            MenuEvent::NextElement | MenuEvent::MoveDown => self.move_next(),
+            MenuEvent::PreviousElement | MenuEvent::MoveUp => self.move_previous(),
+            MenuEvent::MoveLeft
+            | MenuEvent::MoveRight
+            | MenuEvent::PreviousPage
+            | MenuEvent::NextPage => {}
+        }
+    }
 }
 
 impl Menu for IdeMenu {
@@ -653,29 +674,7 @@ impl Menu for IdeMenu {
         painter: &Painter,
     ) {
         if let Some(event) = self.event.take() {
-            match event {
-                MenuEvent::Activate(updated) => {
-                    self.reset_position();
-
-                    if !updated {
-                        self.update_values(editor, completer);
-                    }
-                }
-                MenuEvent::Deactivate => {}
-                MenuEvent::Edit(updated) => {
-                    self.reset_position();
-
-                    if !updated {
-                        self.update_values(editor, completer);
-                    }
-                }
-                MenuEvent::NextElement | MenuEvent::MoveDown => self.move_next(),
-                MenuEvent::PreviousElement | MenuEvent::MoveUp => self.move_previous(),
-                MenuEvent::MoveLeft
-                | MenuEvent::MoveRight
-                | MenuEvent::PreviousPage
-                | MenuEvent::NextPage => {}
-            }
+            self.apply_event(event, editor, completer);
 
             let terminal_width = painter.screen_width();
 
