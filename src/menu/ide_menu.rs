@@ -645,8 +645,7 @@ impl IdeMenu {
         completion_width: u16,
         border_width: u16,
     ) -> (u16, u16) {
-        const HALF_DIVISOR: i16 = 2;
-        const SCREEN_EDGE_LEFT: u16 = 0;
+        const HALF_DIVISOR: u16 = 2;
 
         let cursor_offset = self
             .working_details
@@ -654,11 +653,11 @@ impl IdeMenu {
             .saturating_sub(border_width / HALF_DIVISOR);
 
         let mut start_pos =
-            cursor_offset + self.default_details.cursor_offset.max(SCREEN_EDGE_LEFT);
+            cursor_offset + self.default_details.cursor_offset.max(0) as u16;
 
         if self.default_details.correct_cursor_pos {
             let base_string_width = self.working_details.shortest_base_string.width();
-            start_pos = start_pos.saturating_sub(base_string_width);
+            start_pos = start_pos.saturating_sub(base_string_width as u16);
         }
 
         let start_pos = start_pos.min(terminal_width.saturating_sub(completion_width));
