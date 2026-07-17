@@ -342,6 +342,16 @@ pub fn floor_char_boundary(s: &str, index: usize) -> usize {
     }
 }
 
+/// Number of lines available for the menu body
+pub(crate) fn available_lines(painter: &Painter, min_rows: u16, max_lines: u16) -> u16 {
+    let lines = painter.remaining_lines_real().min(max_lines);
+    if lines == 0 {
+        painter.remaining_lines().min(min_rows)
+    } else {
+        lines
+    }
+}
+
 /// Helper to accept a completion suggestion and edit the buffer
 pub fn replace_in_buffer(
     value: Option<Suggestion>,
