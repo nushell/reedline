@@ -6,14 +6,14 @@ use itertools::{
     FoldWhile::{Continue, Done},
     Itertools,
 };
-use nu_ansi_term::{Style, ansi::RESET};
+use nu_ansi_term::{ansi::RESET, Style};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    Editor, Suggestion, UndoBehavior,
     menu::{InputMode, MenuSettings, OutputMode},
     painting::Painter,
+    Editor, Suggestion, UndoBehavior,
 };
 
 /// Index result obtained from parsing a string with an index marker

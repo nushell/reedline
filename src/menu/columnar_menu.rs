@@ -1,6 +1,5 @@
 use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
-    Completer, Suggestion,
     core_editor::Editor,
     menu_functions::{
         available_lines, can_partially_complete, floor_char_boundary, get_match_indices,
@@ -8,6 +7,7 @@ use crate::{
         truncate_with_ansi,
     },
     painting::Painter,
+    Completer, Suggestion,
 };
 use nu_ansi_term::ansi::RESET;
 use unicode_width::UnicodeWidthStr;
@@ -480,7 +480,11 @@ impl ColumnarMenu {
                 )
             };
 
-            if selected { line.to_uppercase() } else { line }
+            if selected {
+                line.to_uppercase()
+            } else {
+                line
+            }
         }
     }
 

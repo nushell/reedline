@@ -4,9 +4,9 @@ mod ide_menu;
 mod list_menu;
 pub mod menu_functions;
 
-use crate::History;
 use crate::core_editor::Editor;
-use crate::{Completer, Suggestion, completion::history::HistoryCompleter, painting::Painter};
+use crate::History;
+use crate::{completion::history::HistoryCompleter, painting::Painter, Completer, Suggestion};
 pub use columnar_menu::ColumnarMenu;
 pub use columnar_menu::TraversalDirection;
 pub use description_menu::DescriptionMenu;
@@ -80,7 +80,9 @@ pub trait Menu: Send {
         // We panic here, so this function has base implementation
         // so existing menus will not break.
         // if a breaking change is ok, this can be removed
-        panic!("`settings` requires a manual implementation per menu. It has a base implementation to not break existing menus")
+        panic!(
+            "`settings` requires a manual implementation per menu. It has a base implementation to not break existing menus"
+        )
     }
 
     /// Menu name
