@@ -487,6 +487,28 @@ impl ColumnarMenu {
             }
         }
     }
+
+    /// Apply a queued menu event, refreshing the values or moving the selection
+    fn apply_event(
+        &mut self,
+        event: MenuEvent,
+        editor: &mut Editor,
+        completer: &mut dyn Completer,
+    ) {
+        match event {
+            MenuEvent::Activate(updated) | MenuEvent::Edit(updated) => {
+                self.reload(updated, editor, completer)
+            }
+            MenuEvent::Deactivate => {}
+            MenuEvent::NextElement => self.move_next(),
+            MenuEvent::PreviousElement => self.move_previous(),
+            MenuEvent::MoveUp => self.move_up(),
+            MenuEvent::MoveDown => self.move_down(),
+            MenuEvent::MoveLeft => self.move_left(),
+            MenuEvent::MoveRight => self.move_right(),
+            MenuEvent::PreviousPage | MenuEvent::NextPage => {}
+        }
+    }
 }
 
 impl Menu for ColumnarMenu {
@@ -584,32 +606,7 @@ impl Menu for ColumnarMenu {
         painter: &Painter,
     ) {
         if let Some(event) = self.event.take() {
-            match event {
-                MenuEvent::Activate(updated) => {
-                    self.reset_position();
-
-                    if !updated {
-                        self.update_values(editor, completer);
-                    }
-                }
-                MenuEvent::Deactivate => {}
-                MenuEvent::Edit(updated) => {
-                    self.reset_position();
-
-                    if !updated {
-                        self.update_values(editor, completer);
-                    }
-                }
-                MenuEvent::NextElement => self.move_next(),
-                MenuEvent::PreviousElement => self.move_previous(),
-                MenuEvent::MoveUp => self.move_up(),
-                MenuEvent::MoveDown => self.move_down(),
-                MenuEvent::MoveLeft => self.move_left(),
-                MenuEvent::MoveRight => self.move_right(),
-                MenuEvent::PreviousPage | MenuEvent::NextPage => {
-                    // The columnar menu doest have the concept of pages, yet
-                }
-            }
+            self.apply_event(event, editor, completer);
 
             // The working value for the menu are updated only after executing the menu events,
             // so they have the latest suggestions
