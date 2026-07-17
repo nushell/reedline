@@ -509,6 +509,38 @@ impl ColumnarMenu {
             MenuEvent::PreviousPage | MenuEvent::NextPage => {}
         }
     }
+
+    /// Recompute the completion box geometry from the current suggestions,
+    /// selection, and terminal size. Runs on every repaint.
+    pub fn recompute_layout(&mut self, painter: &Painter) {
+        let screen_width = painter.screen_width() as usize;
+
+        let has_descriptions = self
+            .get_values()
+            .iter()
+            .any(|suggestion| suggestion.description.is_some());
+
+        if has_descriptions {
+            self.working_details.columns = 1;
+            self.working_details.col_width = screen_width;
+        } else {
+            let default_width = self
+                .default_details
+                .col_width
+                .unwrap_or_else(|| screen_width / self.default_details.columns as usize);
+
+            let required_width = self.longest_suggestion + self.default_details.col_padding;
+
+            self.working_details.col_width = required_width.clamp(default_width, screen_width);
+
+            let possible_columns = (screen_width / self.working_details.col_width) as u16;
+            self.working_details.columns =
+                possible_columns.min(self.default_details.columns).max(1);
+        }
+
+        let available = available_lines(painter, self.min_rows(), u16::MAX);
+        self.skip_rows = scroll_offset(self.row_pos, self.skip_rows, available);
+    }
 }
 
 impl Menu for ColumnarMenu {
@@ -607,64 +639,9 @@ impl Menu for ColumnarMenu {
     ) {
         if let Some(event) = self.event.take() {
             self.apply_event(event, editor, completer);
-
-            // The working value for the menu are updated only after executing the menu events,
-            // so they have the latest suggestions
-            //
-            // If there is at least one suggestion that contains a description, then the layout
-            // is changed to one column to fit the description
-            let exist_description = self
-                .get_values()
-                .iter()
-                .any(|suggestion| suggestion.description.is_some());
-
-            let screen_width = painter.screen_width() as usize;
-            if exist_description {
-                self.working_details.columns = 1;
-                self.working_details.col_width = screen_width;
-            } else {
-                // If no default width is found, then the total screen width is used to estimate
-                // the column width based on the default number of columns
-                let default_width = if let Some(col_width) = self.default_details.col_width {
-                    col_width
-                } else {
-                    screen_width / self.default_details.columns as usize
-                };
-
-                // Adjusting the working width of the column based the max line width found
-                // in the menu values
-                self.working_details.col_width = default_width
-                    .max(self.longest_suggestion + self.default_details.col_padding)
-                    .min(screen_width);
-
-                // The working columns is adjusted based on possible number of columns
-                // that could be fitted in the screen with the calculated column width
-                let possible_cols = painter.screen_width() / self.working_details.col_width as u16;
-                if possible_cols > self.default_details.columns {
-                    self.working_details.columns = self.default_details.columns.max(1);
-                } else {
-                    self.working_details.columns = possible_cols;
-                }
-            }
-
-            let mut available_lines = painter.remaining_lines_real();
-            // Handle the case where a prompt uses the entire screen.
-            // Drawing the menu has priority over the drawing the prompt.
-            if available_lines == 0 {
-                available_lines = painter.remaining_lines().min(self.min_rows());
-            }
-
-            self.skip_rows = if self.row_pos < self.skip_rows {
-                // Selection is above the visible area, scroll up
-                self.row_pos
-            } else if self.row_pos >= self.skip_rows + available_lines {
-                // Selection is below the visible area, scroll down
-                self.row_pos - available_lines + 1
-            } else {
-                // Selection is within the visible area
-                self.skip_rows
-            };
         }
+
+        self.recompute_layout(painter);
     }
 
     /// The buffer gets replaced in the Span location
