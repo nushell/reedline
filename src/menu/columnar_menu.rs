@@ -480,11 +480,7 @@ impl ColumnarMenu {
                 )
             };
 
-            if selected {
-                line.to_uppercase()
-            } else {
-                line
-            }
+            if selected { line.to_uppercase() } else { line }
         }
     }
 
@@ -531,7 +527,7 @@ impl ColumnarMenu {
 
             let required_width = self.longest_suggestion + self.default_details.col_padding;
 
-            self.working_details.col_width = required_width.clamp(default_width, screen_width);
+            self.working_details.col_width = required_width.max(default_width).min(screen_width);
 
             let possible_columns = (screen_width / self.working_details.col_width) as u16;
             self.working_details.columns =
@@ -1067,8 +1063,7 @@ mod tests {
             "expected a multi-column layout without descriptions"
         );
 
-        let mut described =
-            FakeCompleter::new(&["alpha", "beta", "gamma"]).with_descriptions();
+        let mut described = FakeCompleter::new(&["alpha", "beta", "gamma"]).with_descriptions();
         menu.update_values(&mut editor, &mut described);
         assert!(menu.event.is_none(), "no menu event should be queued");
         menu.update_working_details(&mut editor, &mut described, &painter);

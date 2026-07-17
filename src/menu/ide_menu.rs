@@ -636,7 +636,9 @@ impl IdeMenu {
             .min_completion_width
             .max(ELLIPSIS_WIDTH + border_width);
 
-        desired_width.clamp(minimum_required, self.default_details.max_completion_width)
+        desired_width
+            .min(self.default_details.max_completion_width)
+            .max(minimum_required)
     }
 
     fn calculate_horizontal_bounds(
@@ -647,13 +649,12 @@ impl IdeMenu {
     ) -> (u16, u16) {
         const HALF_DIVISOR: u16 = 2;
 
-        let cursor_offset = self
+        let base = self
             .working_details
             .cursor_col
             .saturating_sub(border_width / HALF_DIVISOR);
 
-        let mut start_pos =
-            cursor_offset + self.default_details.cursor_offset.max(0) as u16;
+        let mut start_pos = (base as i16 + self.default_details.cursor_offset).max(0) as u16;
 
         if self.default_details.correct_cursor_pos {
             let base_string_width = self.working_details.shortest_base_string.width();
