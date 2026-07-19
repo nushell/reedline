@@ -209,3 +209,36 @@ pub trait Prompt: Send {
         false
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn selection_extent_maps_vi_to_cover_landing_and_bar_modes_to_span() {
+        // Pin the dispatch table itself: the PR's headline invariant is that vi
+        // stays on `CoverLanding` (a strict noop) while the bar modes move to the
+        // `Span` model. Asserting the mapping here fails loudly at the switch if a
+        // future refactor accidentally reroutes a mode, rather than surfacing as a
+        // downstream selection assertion in some editor test.
+        use PromptViMode::{Insert, Normal, Visual};
+        for mode in [Normal, Insert, Visual] {
+            assert_eq!(
+                PromptEditMode::Vi(mode).selection_extent(),
+                SelectionExtent::CoverLanding,
+            );
+        }
+        assert_eq!(
+            PromptEditMode::Emacs.selection_extent(),
+            SelectionExtent::Span,
+        );
+        assert_eq!(
+            PromptEditMode::Default.selection_extent(),
+            SelectionExtent::Span,
+        );
+        assert_eq!(
+            PromptEditMode::Custom("anything".into()).selection_extent(),
+            SelectionExtent::Span,
+        );
+    }
+}

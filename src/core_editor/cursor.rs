@@ -702,4 +702,18 @@ mod tests {
         assert_eq!(c, Cursor::new(3, 5));
         assert!(c.contains(3)); // the 'l' at 3 (start grapheme) survived
     }
+
+    #[test]
+    fn extend_span_block_flip_hops_full_multibyte_grapheme() {
+        // `extend_span` is a *new* caller into `flip_anchor`; every other Span
+        // flip test uses single-byte ASCII where a boundary hop is trivially ±1.
+        // Here the anchor sits on a 2-byte grapheme: "café" has é at [3,5). A
+        // forward Span [3,5) (on é) that reverses past the anchor (op_end 0) must
+        // hop the anchor across the *whole* é (3→5), not one byte, so both of é's
+        // bytes stay covered — the same multibyte flip `put_cursor` makes through
+        // the shared helper, now proven from the Span entry point too.
+        let c = Cursor::new(3, 5).extend_span("café", 0, CaretGeometry::Block);
+        assert_eq!(c, Cursor::new(5, 0));
+        assert!(c.contains(3) && c.contains(4)); // both bytes of é covered
+    }
 }
