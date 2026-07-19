@@ -1,8 +1,8 @@
 use std::{collections::HashSet, ops::Deref};
 
 use crate::{
-    history::SearchQuery, menu_functions::parse_selection_char, Completer, History, HistoryItem,
-    Result, Span, Suggestion,
+    history::SearchQuery, menu_functions::parse_selection_char, Completer, CompletionResult,
+    History, HistoryItem, Result, Span, Suggestion,
 };
 
 const SELECTION_CHAR: char = '!';
@@ -27,13 +27,14 @@ fn search_unique(
 }
 
 impl Completer for HistoryCompleter<'_> {
-    fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
-        match search_unique(self, line) {
+    fn complete(&mut self, line: &str, pos: usize) -> CompletionResult {
+        let suggestions = match search_unique(self, line) {
             Err(_) => vec![],
             Ok(search_results) => search_results
                 .map(|value| self.create_suggestion(line, pos, value.command_line.deref()))
                 .collect(),
-        }
+        };
+        CompletionResult::fresh(suggestions)
     }
 
     // TODO: Implement `fn partial_complete()`
@@ -110,7 +111,7 @@ mod tests {
         let input = "git s";
         let mut sut = HistoryCompleter::new(&history);
 
-        let actual = sut.complete(input, input.len());
+        let actual = sut.complete(input, input.len()).into_suggestions();
         let num_completions = sut.total_completions(input, input.len());
 
         assert_eq!(actual[0].value, "git status", "it was the last command");
@@ -149,6 +150,7 @@ mod tests {
         let mut sut = HistoryCompleter::new(&history);
         let actual: Vec<String> = sut
             .complete(line, line.len())
+            .into_suggestions()
             .into_iter()
             .map(|suggestion| suggestion.value)
             .collect();
