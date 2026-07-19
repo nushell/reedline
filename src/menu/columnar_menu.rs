@@ -374,6 +374,17 @@ impl ColumnarMenu {
         }
     }
 
+    /// Horizontal split of a menu row into the suggestion column and the
+    /// description that follows it.
+    fn column_split(&self, terminal_width: usize) -> (usize, usize) {
+        let maximum_left_size =
+            self.completions.longest_suggestion + self.default_details.col_padding;
+        let left_text_size = terminal_width.min(maximum_left_size);
+        let description_size = terminal_width.saturating_sub(left_text_size);
+
+        (left_text_size, description_size)
+    }
+
     /// Handles plain-text formatting.
     fn format_plain(&self, suggestion: &Suggestion, index: usize) -> String {
         let is_selected = index == self.index();
@@ -390,13 +401,13 @@ impl ColumnarMenu {
             let padding_width = empty_space.saturating_sub(marker.len());
             format!("{marker}{display_value}{:padding_width$}", "")
         } else {
-            // Calculate padding taking the marker into account
-            let padding_width = self.completions.longest_suggestion
-                + self.default_details.col_padding
-                - marker.len();
+            // The left column is capped at `left_text_size` and the description
+            // takes only what's left, so the row can't exceed the terminal
+            let (left_text_size, description_size) = self.column_split(terminal_width);
+            let padding_width = left_text_size.saturating_sub(marker.len());
             let mut base_line = format!("{marker}{display_value:padding_width$}");
 
-            base_line.extend(description.chars().take(empty_space).map(|character| {
+            base_line.extend(description.chars().take(description_size).map(|character| {
                 if character == '\n' {
                     ' '
                 } else {
@@ -432,10 +443,7 @@ impl ColumnarMenu {
             get_match_indices(display_value, &suggestion.match_indices, base_string);
 
         // Calculate spatial boundaries for the suggestion text and its description.
-        let maximum_left_size =
-            self.completions.longest_suggestion + self.default_details.col_padding;
-        let left_text_size = terminal_width.min(maximum_left_size);
-        let description_size = terminal_width.saturating_sub(left_text_size);
+        let (left_text_size, description_size) = self.column_split(terminal_width);
 
         // Resolve ANSI styles based on selection state.
         let text_style = suggestion

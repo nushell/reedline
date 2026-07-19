@@ -111,7 +111,8 @@ mod tests {
         let input = "git s";
         let mut sut = HistoryCompleter::new(&history);
 
-        let actual = sut.complete(input, input.len()).into_suggestions();
+        let completion = sut.complete(input, input.len());
+        let actual = completion.suggestions();
         let num_completions = sut.total_completions(input, input.len());
 
         assert_eq!(actual[0].value, "git status", "it was the last command");
@@ -150,9 +151,9 @@ mod tests {
         let mut sut = HistoryCompleter::new(&history);
         let actual: Vec<String> = sut
             .complete(line, line.len())
-            .into_suggestions()
-            .into_iter()
-            .map(|suggestion| suggestion.value)
+            .suggestions()
+            .iter()
+            .map(|suggestion| suggestion.value.clone())
             .collect();
         assert_eq!(actual, expected);
         Ok(())

@@ -36,14 +36,14 @@ impl Span {
 
 /// The outcome of a [`Completer::complete`] request.
 ///
-/// Synchro completor only EVER produces [`Fresh`](Self::Fresh). An
+/// A synchronous completer only ever produces [`Fresh`](Self::Fresh). An
 /// asynchronous completer that computes in the background reports its progress
 /// through this type.
 #[derive(Debug, Clone)]
 pub enum CompletionResult {
     /// Final, authoritative results. No further computation is in flight.
     Fresh(Suggestions),
-    /// Best-effort results to show in the momemnt; a fresh computation is still running and
+    /// Best-effort results to show in the moment; a fresh computation is still running and
     /// will replace these once it finishes.
     Stale(Suggestions),
     /// No results are available yet; a computation is spinning in the background.
@@ -56,12 +56,14 @@ impl CompletionResult {
         CompletionResult::Fresh(suggestions.into())
     }
 
-    /// Best-effort fallback while an authoritative result is still computing
-    pub fn stale_or_pending(fallback: Vec<Suggestion>) -> Self {
+    /// Best-effort fallback while an authoritative result is still computing:
+    /// [`Stale`](Self::Stale) when there is something to show now, else
+    /// [`Pending`](Self::Pending).
+    pub fn stale_or_pending(fallback: Suggestions) -> Self {
         if fallback.is_empty() {
             CompletionResult::Pending
         } else {
-            CompletionResult::Stale(fallback.into())
+            CompletionResult::Stale(fallback)
         }
     }
 
@@ -73,14 +75,14 @@ impl CompletionResult {
         }
     }
 
-    /// Consume the result into its suggestions (empty for [`Pending`](Self::Pending)).
+    /// Move the shared suggestion list out of the result without copying.
     ///
-    /// Prefer [`suggestions`](Self::suggestions) when a borrow suffices; this
-    /// copies the list out of the shared `Arc` into an owned `Vec`.
-    pub fn into_suggestions(self) -> Vec<Suggestion> {
+    /// Returns `None` for [`Pending`](Self::Pending) nothing is settled yet, so
+    /// callers should keep whatever they are already displaying.
+    pub fn into_shared(self) -> Option<Suggestions> {
         match self {
-            CompletionResult::Fresh(values) | CompletionResult::Stale(values) => values.to_vec(),
-            CompletionResult::Pending => Vec::new(),
+            CompletionResult::Fresh(values) | CompletionResult::Stale(values) => Some(values),
+            CompletionResult::Pending => None,
         }
     }
 
@@ -137,12 +139,13 @@ pub trait Completer {
         pos: usize,
         start: usize,
         offset: usize,
-    ) -> Vec<Suggestion> {
+    ) -> Suggestions {
         self.complete(line, pos)
-            .into_suggestions()
-            .into_iter()
+            .suggestions()
+            .iter()
             .skip(start)
             .take(offset)
+            .cloned()
             .collect()
     }
 
