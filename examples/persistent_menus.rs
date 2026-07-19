@@ -10,9 +10,9 @@
 // menu; without quick completions, the menu closes once the line is empty.
 
 use reedline::{
-    default_emacs_keybindings, ColumnarMenu, Completer, DefaultPrompt, Emacs, KeyCode,
-    KeyModifiers, Keybindings, MenuBuilder, Reedline, ReedlineEvent, ReedlineMenu, Signal, Span,
-    Suggestion,
+    default_emacs_keybindings, ColumnarMenu, Completer, CompletionResult, DefaultPrompt, Emacs,
+    KeyCode, KeyModifiers, Keybindings, MenuBuilder, Reedline, ReedlineEvent, ReedlineMenu, Signal,
+    Span, Suggestion,
 };
 use std::io;
 
@@ -24,17 +24,19 @@ struct PrefixCompleter {
 }
 
 impl Completer for PrefixCompleter {
-    fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
+    fn complete(&mut self, line: &str, pos: usize) -> CompletionResult {
         let filter = &line[..pos];
-        self.commands
-            .iter()
-            .filter(|command| command.starts_with(filter))
-            .map(|command| Suggestion {
-                value: command.clone(),
-                span: Span::new(0, pos),
-                ..Suggestion::default()
-            })
-            .collect()
+        CompletionResult::fresh(
+            self.commands
+                .iter()
+                .filter(|command| command.starts_with(filter))
+                .map(|command| Suggestion {
+                    value: command.clone(),
+                    span: Span::new(0, pos),
+                    ..Suggestion::default()
+                })
+                .collect::<Vec<_>>(),
+        )
     }
 }
 
