@@ -1,5 +1,6 @@
 //! Collection of common functions that can be used to create menus
 use std::borrow::Cow;
+use std::ops::Range;
 use unicase::UniCase;
 
 use itertools::{
@@ -13,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     menu::{InputMode, MenuSettings, OutputMode},
     painting::Painter,
-    Editor, Suggestion, UndoBehavior,
+    CompletionResult, Editor, Suggestion, Suggestions, UndoBehavior,
 };
 
 /// Index result obtained from parsing a string with an index marker
@@ -365,6 +366,71 @@ pub(crate) fn scroll_offset(selected: u16, current: u16, window: u16) -> u16 {
     } else {
         // Selection is within the visible area
         current
+    }
+}
+
+/// The suggestions a completion menu is currently displaying, together with the
+/// display metrics derived from them. Grouping these keeps the completion display
+/// state cohesive and separate from a menu's column/layout details. Shared by the
+/// columnar and IDE menus.
+#[derive(Default)]
+pub struct CompletionDisplay {
+    /// Cached suggestion values shown by the menu.
+    pub values: Suggestions,
+    /// Display width of each suggestion in `values`.
+    pub display_widths: Vec<usize>,
+    /// Shortest of the strings the suggestions are based on.
+    pub shortest_base_string: String,
+    /// Width of the longest suggestion in `values`.
+    pub longest_suggestion: usize,
+}
+
+impl CompletionDisplay {
+    /// Build the display for a completion `result`, or `None` when there is
+    /// nothing to adopt yet.
+    pub fn from_result(
+        result: CompletionResult,
+        base_ranges: &[Range<usize>],
+        editor: &Editor,
+    ) -> Option<Self> {
+        match result {
+            CompletionResult::Pending => None,
+            CompletionResult::Fresh(values) | CompletionResult::Stale(values) => {
+                Some(Self::new(values, base_ranges, editor))
+            }
+        }
+    }
+
+    /// Adopt `values` as the menu's suggestions and measure their display metrics
+    /// against the buffer's replacement `base_ranges`.
+    pub fn new(values: Suggestions, base_ranges: &[Range<usize>], editor: &Editor) -> Self {
+        let display_widths: Vec<usize> = values
+            .iter()
+            .map(|suggestion| strip_ansi_escapes::strip_str(suggestion.display_value()).width())
+            .collect();
+
+        // Find the maximum width
+        let longest_suggestion = display_widths.iter().copied().max().unwrap_or(0);
+
+        // Find the shortest buffer slice
+        let buffer = editor.get_buffer();
+        let shortest_base_string = base_ranges
+            .iter()
+            .map(|range| {
+                let end_index = floor_char_boundary(buffer, range.end);
+                let start_index = floor_char_boundary(buffer, range.start).min(end_index);
+                &buffer[start_index..end_index]
+            })
+            .min_by_key(|buffer_slice| buffer_slice.width())
+            .map(String::from)
+            .unwrap_or_default();
+
+        Self {
+            values,
+            display_widths,
+            shortest_base_string,
+            longest_suggestion,
+        }
     }
 }
 
