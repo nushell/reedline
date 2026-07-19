@@ -17,7 +17,7 @@ use {
 };
 use {
     crate::{
-        completion::{Completer, DefaultCompleter},
+        completion::{Completer, CompletionStatus, DefaultCompleter},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
         enums::{EventStatus, ReedlineEvent},
@@ -972,19 +972,21 @@ impl Reedline {
             // Determine if we need to poll (non-blocking) or can block on input.
             // We need polling if external_printer or idle_callback is configured,
             // using the shared poll_interval for the timeout.
-            let completer_pending = self.completer.has_pending();
+            let status = self.completer.poll_completion();
+            // Anything BUT idle means work is in flight. We need to keep polling.
+            let completer_pending = status != CompletionStatus::Idle;
 
-            // When a background completion finishes, re-populate the active
-            // menu so results appear without waiting for another keypress.
-            if completer_pending && self.completer.check_pending() {
-                if let Some(menu) = self.menus.iter_mut().find(|m| m.is_active()) {
-                    menu.update_values(
-                        &mut self.editor,
-                        self.completer.as_mut(),
-                        self.history.as_ref(),
-                    );
-                    self.repaint(prompt)?;
-                }
+            if let Some(menu) = (status == CompletionStatus::Ready)
+                .then(|| self.menus.iter_mut().find(|m| m.is_active()))
+                .flatten()
+            {
+                // latest request finished, so repopulate
+                menu.update_values(
+                    &mut self.editor,
+                    self.completer.as_mut(),
+                    self.history.as_ref(),
+                );
+                self.repaint(prompt)?;
             }
 
             // Helper function that returns true if the input is complete and
