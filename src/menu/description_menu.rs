@@ -443,7 +443,7 @@ impl Menu for DescriptionMenu {
 
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
-        self.values = completer.complete(&input, pos);
+        self.values = completer.complete(&input, pos).into_suggestions();
 
         self.reset_position();
     }

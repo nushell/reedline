@@ -404,7 +404,7 @@ impl Menu for ListMenu {
             completer.partial_complete(&input, pos, skip, take)
         } else {
             self.query_size = None;
-            completer.complete(&input, pos)
+            completer.complete(&input, pos).into_suggestions()
         }
     }
 
