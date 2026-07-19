@@ -10,7 +10,6 @@ use crate::{
     Completer, Suggestion,
 };
 use nu_ansi_term::ansi::RESET;
-use unicode_width::UnicodeWidthStr;
 
 /// The traversal direction of the menu
 #[derive(Debug, PartialEq, Eq)]
