@@ -1950,6 +1950,17 @@ impl Reedline {
             // The first char in the buffer is a space or there are consecutive spaces
             return None;
         }
+
+        if submitted
+            && buffer[word_end..]
+                .chars()
+                .next()
+                .map_or(false, |ch| !ch.is_whitespace())
+        {
+            // The cursor is in the middle of a word, e.g. "hello|world"
+            return None;
+        }
+
         if !self.highlighter.should_expand_abbr(
             buffer,
             word_start,
@@ -3060,6 +3071,42 @@ mod tests {
             reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
         set_buffer_at_end(&mut reedline, "   ");
         assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
+    }
+
+    #[test]
+    fn abbreviation_mid_word_cursor_on_submit_returns_none() {
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, "gcsomething");
+        reedline.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 2,
+            select: false,
+        }]);
+        assert!(
+            reedline.try_expand_abbreviation_at_cursor(true).is_none(),
+            "must not expand the prefix of a word when the cursor is mid-word"
+        );
+    }
+
+    #[test]
+    fn abbreviation_expands_before_trailing_text_on_submit() {
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, "gc rest");
+        reedline.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 2,
+            select: false,
+        }]);
+        let event = reedline.try_expand_abbreviation_at_cursor(true);
+        assert!(
+            event.is_some(),
+            "expected expansion at a real word boundary"
+        );
+        reedline.run_edit_commands(&match event.unwrap() {
+            ReedlineEvent::Edit(cmds) => cmds,
+            _ => panic!("expected Edit event"),
+        });
+        assert_eq!(reedline.current_buffer_contents(), "git commit rest");
     }
 
     // Feed one key as its own batch, mirroring real interactive input where each
