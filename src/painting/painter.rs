@@ -1552,6 +1552,9 @@ mod tests {
         fn update_values(&mut self, _editor: &mut Editor, _completer: &mut dyn Completer) {
             unimplemented!()
         }
+        fn reset_position(&mut self) {
+            unimplemented!()
+        }
         fn update_working_details(
             &mut self,
             _editor: &mut Editor,

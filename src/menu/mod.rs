@@ -80,7 +80,9 @@ pub trait Menu: Send {
         // We panic here, so this function has base implementation
         // so existing menus will not break.
         // if a breaking change is ok, this can be removed
-        panic!("`settings` requires a manual implementation per menu. It has a base implementation to not break existing menus")
+        panic!(
+            "`settings` requires a manual implementation per menu. It has a base implementation to not break existing menus"
+        )
     }
 
     /// Menu name
@@ -118,6 +120,17 @@ pub trait Menu: Send {
     /// is calculated to know if there is only one value so it can be selected
     /// immediately
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer);
+
+    /// Resets the menu's selection back to its initial position.
+    fn reset_position(&mut self);
+
+    /// Handles a menu event that reloads the menu's contents
+    fn reload(&mut self, updated: bool, editor: &mut Editor, completer: &mut dyn Completer) {
+        self.reset_position();
+        if !updated {
+            self.update_values(editor, completer);
+        }
+    }
 
     /// The working details of a menu are values that could change based on
     /// the menu conditions before it being printed, such as the number or size
@@ -504,6 +517,10 @@ impl Menu for ReedlineMenu {
                 menu.update_values(editor, own_completer.as_mut());
             }
         }
+    }
+
+    fn reset_position(&mut self) {
+        self.as_mut().reset_position();
     }
 
     fn update_working_details(

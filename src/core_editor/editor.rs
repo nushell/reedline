@@ -1,4 +1,6 @@
-use super::{edit_stack::EditStack, CaretGeometry, Clipboard, Cursor, LineBuffer, Movement};
+use super::{
+    edit_stack::EditStack, CaretGeometry, Clipboard, Cursor, LineBuffer, Movement, SelectionExtent,
+};
 #[cfg(feature = "system_clipboard")]
 use crate::core_editor::get_system_clipboard;
 use crate::core_editor::graphemes::{next_grapheme_boundary, prev_grapheme_boundary};
@@ -116,10 +118,22 @@ impl Editor {
                 let head = self.resolve_head(*t);
                 self.move_head_to(head, false);
             }
-            EditCommand::Extend(t) => {
-                let head = self.resolve_head(*t);
-                self.move_head_to(head, true);
-            }
+            EditCommand::Extend(t) => match self.caret_extent() {
+                SelectionExtent::CoverLanding => {
+                    let head = self.resolve_head(*t);
+                    self.move_head_to(head, true);
+                }
+                SelectionExtent::Span => {
+                    let geom = self.caret_geometry();
+                    let origin = self.insertion_point();
+                    let op_end = resolve_motion(self.get_buffer(), origin, *t, geom).op_end;
+                    let next =
+                        self.line_buffer
+                            .cursor()
+                            .extend_span(self.get_buffer(), op_end, geom);
+                    self.place(next);
+                }
+            },
             EditCommand::Cut {
                 target,
                 granularity,
@@ -555,16 +569,18 @@ impl Editor {
         }
     }
 
-    /// Move the cursor head to `head` — collapsing the selection unless `select`
-    /// keeps the anchor — then normalize at the commit boundary (RestPolicy snap
-    /// and selection bookkeeping). The single sink every motion funnels through,
-    /// after its target has been resolved via [`resolve_motion`].
-    /// The single motion sink: place the caret on the grapheme at `target` via
-    /// [`Cursor::put_cursor`] (Helix's central op), then normalize at the commit
-    /// boundary. `select` keeps the anchor (Extend) or collapses (Move); the
-    /// per-mode selection geometry (inclusive block vs exclusive bar) is the
-    /// `inclusive` argument, so inclusivity is now carried by the range itself —
-    /// there is no `selection_inclusive` side-channel to maintain.
+    /// Place the caret on the grapheme at `target` via [`Cursor::put_cursor`]
+    /// (Helix's central op), collapsing the selection unless `select` keeps the
+    /// anchor, then normalize at the commit boundary (RestPolicy snap and
+    /// selection bookkeeping). The per-mode geometry (inclusive block vs
+    /// exclusive bar) rides on [`caret_geometry`](Self::caret_geometry), so
+    /// inclusivity is carried by the range itself — there is no
+    /// `selection_inclusive` side-channel to maintain.
+    ///
+    /// The sink for [`CoverLanding`](SelectionExtent::CoverLanding) placement:
+    /// every `Move`, and every `Extend` under that extent, funnels here after
+    /// its target is resolved via [`resolve_motion`]. [`SelectionExtent::Span`]
+    /// extension goes around it through [`Cursor::extend_span`].
     fn move_head_to(&mut self, target: usize, select: bool) {
         let next = self.line_buffer.cursor().put_cursor(
             self.line_buffer.get_buffer(),
@@ -572,8 +588,26 @@ impl Editor {
             Movement::select(select),
             self.caret_geometry(),
         );
+        self.place(next);
+    }
+
+    /// Install an already-placed [`Cursor`] and normalize it at the commit
+    /// boundary — the shared tail of every placement strategy ([`put_cursor`]'s
+    /// `CoverLanding` via [`move_head_to`](Self::move_head_to), [`extend_span`]'s
+    /// `Span`). The strategy decides *where* the caret goes; `place` is *how* it
+    /// lands: `set_cursor` then [`commit_cursor`](Self::commit_cursor).
+    ///
+    /// [`put_cursor`]: Cursor::put_cursor
+    /// [`extend_span`]: Cursor::extend_span
+    fn place(&mut self, next: Cursor) {
         self.line_buffer.set_cursor(next);
         self.commit_cursor();
+    }
+
+    /// The active mode's selection model: how `Extend` places the head (vi-visual
+    /// `CoverLanding` vs bar/helix `Span`). Orthogonal to [`caret_geometry`](Self::caret_geometry).
+    fn caret_extent(&self) -> SelectionExtent {
+        self.edit_mode.selection_extent()
     }
 
     /// Lower a [`MotionTarget`] onto the cursor (the `Move`/`Extend` path):
@@ -3718,6 +3752,44 @@ mod test {
         editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
         assert_eq!(editor.insertion_point(), 4);
         assert_eq!(editor.get_selection(), Some((0, 4))); // anchor stays at the origin
+    }
+
+    #[test]
+    fn vi_visual_extend_word_covers_landing() {
+        // `CoverLanding`: vi visual sweeps the grapheme the motion lands *on*, so
+        // `Extend(w)` over "foo bar" selects "foo b" (vim's inclusive visual).
+        let mut editor = editor_with("foo bar baz");
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Visual));
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+        assert_eq!(editor.get_selection(), Some((0, 5)));
+        assert_eq!(editor.insertion_point(), 4);
+    }
+
+    #[test]
+    fn emacs_extend_word_is_exclusive_span() {
+        // The contrast that proves the axis is real: the *same* `Extend(w)` from
+        // the *same position in a `Span` (bar) mode stops at the boundary "foo "
+        // instead of sweeping the landing grapheme.
+        let mut editor = editor_with("foo bar baz");
+        editor.set_edit_mode(PromptEditMode::Emacs);
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+        assert_eq!(editor.get_selection(), Some((0, 4)))
+    }
+
+    #[test]
+    fn emacs_extend_word_twice_grows_span() {
+        // A second `Extend` resolves the next motion from the live head and grows
+        // the existing Span — not from a collapsed or retreated caret. "foo bar
+        // baz": 0 → "foo " (0,4) → "foo bar " (0,8), anchor pinned at the origin.
+        let mut editor = editor_with("foo bar baz");
+        editor.set_edit_mode(PromptEditMode::Emacs);
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+        assert_eq!(editor.get_selection(), Some((0, 4)));
+        editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+        assert_eq!(editor.get_selection(), Some((0, 8)));
     }
 
     #[test]

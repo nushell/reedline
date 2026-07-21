@@ -1,5 +1,5 @@
 use {
-    crate::core_editor::RestPolicy,
+    crate::core_editor::{RestPolicy, SelectionExtent},
     crossterm::style::Color,
     serde::{Deserialize, Serialize},
     std::{
@@ -75,6 +75,21 @@ impl PromptEditMode {
             // given an explicit policy, rather than silently defaulting. The `_`
             // below only ignores the custom mode's name.
             PromptEditMode::Custom(_) => RestPolicy::Between,
+        }
+    }
+
+    pub(crate) fn selection_extent(&self) -> SelectionExtent {
+        match self {
+            // Vi normal/visual sweep the block cursor over the grapheme it
+            // lands on (vim's inclusive visual: `vw` selects "foo b").
+            PromptEditMode::Vi(_) => SelectionExtent::CoverLanding,
+            // The bar modes never form a block selection, and `op_end` is
+            // exclusive for the word/line/grapheme motions they emit (a forward
+            // find stays inclusive, matching its operator span), so the
+            // gap-indexed `Span` is the natural reading. Helix will use this one!
+            PromptEditMode::Default | PromptEditMode::Emacs | PromptEditMode::Custom(_) => {
+                SelectionExtent::Span
+            }
         }
     }
 }
@@ -192,5 +207,38 @@ pub trait Prompt: Send {
     /// Whether to render right prompt on the last line
     fn right_prompt_on_last_line(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn selection_extent_maps_vi_to_cover_landing_and_bar_modes_to_span() {
+        // Pin the dispatch table itself: the PR's headline invariant is that vi
+        // stays on `CoverLanding` (a strict noop) while the bar modes move to the
+        // `Span` model. Asserting the mapping here fails loudly at the switch if a
+        // future refactor accidentally reroutes a mode, rather than surfacing as a
+        // downstream selection assertion in some editor test.
+        use PromptViMode::{Insert, Normal, Visual};
+        for mode in [Normal, Insert, Visual] {
+            assert_eq!(
+                PromptEditMode::Vi(mode).selection_extent(),
+                SelectionExtent::CoverLanding,
+            );
+        }
+        assert_eq!(
+            PromptEditMode::Emacs.selection_extent(),
+            SelectionExtent::Span,
+        );
+        assert_eq!(
+            PromptEditMode::Default.selection_extent(),
+            SelectionExtent::Span,
+        );
+        assert_eq!(
+            PromptEditMode::Custom("anything".into()).selection_extent(),
+            SelectionExtent::Span,
+        );
     }
 }

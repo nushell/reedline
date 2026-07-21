@@ -17,7 +17,7 @@ use {
 };
 use {
     crate::{
-        completion::{Completer, DefaultCompleter},
+        completion::{Completer, CompletionStatus, DefaultCompleter},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
         enums::{EventStatus, ReedlineEvent},
@@ -52,7 +52,10 @@ use {
         io::Result,
         io::Write,
         process::Command,
-        sync::{atomic::AtomicBool, Arc},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
         time::Duration,
         time::SystemTime,
     },
@@ -163,6 +166,7 @@ pub struct Reedline {
     completer: Box<dyn Completer + Send>,
     quick_completions: bool,
     partial_completions: bool,
+    persistent_menus: bool,
 
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
@@ -208,6 +212,10 @@ pub struct Reedline {
     // `Signal::ExternalBreak` with the current buffer contents.
     break_signal: Option<Arc<AtomicBool>>,
 
+    // External repaint signal: when triggered, the prompt is re-evaluated
+    // and repainted in place while `read_line()` is running.
+    repaint_signal: Option<RepaintSignal>,
+
     // Maximum time to block on input before yielding control for features that
     // require periodic processing (external printer, idle callback).
     // Only used when external_printer or idle_callback is configured.
@@ -225,6 +233,26 @@ pub struct Reedline {
 struct BufferEditor {
     command: Command,
     temp_file: PathBuf,
+}
+
+/// Call [`request_repaint`](RepaintSignal::request_repaint) once
+/// new prompt data is ready! The next iteration of the input loop re-evaluates
+/// the [`Prompt`] and redraws it without interrupting the current line edit.
+#[derive(Clone, Debug, Default)]
+pub struct RepaintSignal {
+    flag: Arc<AtomicBool>,
+}
+
+impl RepaintSignal {
+    /// Request that the prompt is re-evaluated and repainted in place.
+    pub fn request_repaint(&self) {
+        self.flag.store(true, Ordering::Relaxed);
+    }
+
+    /// Consume a pending repaint request.
+    fn take(&self) -> bool {
+        self.flag.swap(false, Ordering::Relaxed)
+    }
 }
 
 impl Drop for Reedline {
@@ -283,6 +311,7 @@ impl Reedline {
             completer,
             quick_completions: false,
             partial_completions: false,
+            persistent_menus: false,
             highlighter: buffer_highlighter,
             visual_selection_style,
             hinter,
@@ -299,6 +328,7 @@ impl Reedline {
             kitty_protocol: KittyProtocolGuard::default(),
             immediately_accept: false,
             break_signal: None,
+            repaint_signal: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
             #[cfg(feature = "external_printer")]
             external_printer: None,
@@ -439,6 +469,19 @@ impl Reedline {
     #[must_use]
     pub fn with_partial_completions(mut self, partial_completions: bool) -> Self {
         self.partial_completions = partial_completions;
+        self
+    }
+
+    /// Make active menus persist while the line is edited: erasing characters
+    /// or emptying the line refilters the menu instead of dismissing it.
+    ///
+    /// When disabled (the default), an active menu is deactivated by a backspace
+    /// when quick completions are on, and by any edit that leaves the line
+    /// buffer empty. A persistent menu still closes on Esc, Ctrl-C, or when a
+    /// value is accepted.
+    #[must_use]
+    pub fn with_persistent_menus(mut self, persistent_menus: bool) -> Self {
+        self.persistent_menus = persistent_menus;
         self
     }
 
@@ -685,6 +728,16 @@ impl Reedline {
         self
     }
 
+    /// Get a [`RepaintSignal`] handle that can trigger an in-place repaint of
+    /// the prompt from another thread while [`Reedline::read_line()`] is
+    /// running, avoiding interfering with current line edit.
+    pub fn repaint_signal(&mut self) -> RepaintSignal {
+        // The handle is created lazily on the first call; subsequent calls return clones
+        self.repaint_signal
+            .get_or_insert_with(RepaintSignal::default)
+            .clone()
+    }
+
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
         self.edit_mode.edit_mode()
@@ -825,6 +878,38 @@ impl Reedline {
         Ok(())
     }
 
+    /// Consume a pending external repaint request, returning whether one was
+    /// pending. Any number of requests since the last check collapse into one.
+    fn take_repaint_request(&self) -> bool {
+        self.repaint_signal
+            .as_ref()
+            .map_or(false, RepaintSignal::take)
+    }
+
+    /// Whether the input loop must poll with a timeout instead of blocking
+    /// indefinitely, so external triggers (break signal, repaint signal,
+    /// external printer, idle callback) are noticed while waiting for input.
+    fn input_needs_polling(&self) -> bool {
+        #[allow(unused_mut)] // Dependent on feature flags
+        let mut poll = self.break_signal.is_some()
+            || self
+                .repaint_signal
+                .as_ref()
+                .map_or(false, |sig| Arc::strong_count(&sig.flag) > 1);
+
+        #[cfg(feature = "external_printer")]
+        {
+            poll |= self.external_printer.is_some();
+        }
+
+        #[cfg(feature = "idle_callback")]
+        {
+            poll |= self.idle_callback.is_some();
+        }
+
+        poll
+    }
+
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
@@ -836,6 +921,10 @@ impl Reedline {
             self.suspended_state = None;
         }
         self.hide_hints = false;
+
+        // Repaint requests raised while no read_line was active are stale:
+        // the fresh prompt painted below already reflects the latest state.
+        self.take_repaint_request();
 
         self.repaint(prompt)?;
 
@@ -861,6 +950,10 @@ impl Reedline {
                 }
             }
 
+            if self.take_repaint_request() {
+                self.repaint(prompt)?;
+            }
+
             #[cfg(feature = "external_printer")]
             if let Some(ref external_printer) = self.external_printer {
                 // get messages from printer as crlf separated "lines"
@@ -879,19 +972,21 @@ impl Reedline {
             // Determine if we need to poll (non-blocking) or can block on input.
             // We need polling if external_printer or idle_callback is configured,
             // using the shared poll_interval for the timeout.
-            let completer_pending = self.completer.has_pending();
+            let status = self.completer.poll_completion();
+            // Anything BUT idle means work is in flight. We need to keep polling.
+            let completer_pending = status != CompletionStatus::Idle;
 
-            // When a background completion finishes, re-populate the active
-            // menu so results appear without waiting for another keypress.
-            if completer_pending && self.completer.check_pending() {
-                if let Some(menu) = self.menus.iter_mut().find(|m| m.is_active()) {
-                    menu.update_values(
-                        &mut self.editor,
-                        self.completer.as_mut(),
-                        self.history.as_ref(),
-                    );
-                    self.repaint(prompt)?;
-                }
+            if let Some(menu) = (status == CompletionStatus::Ready)
+                .then(|| self.menus.iter_mut().find(|m| m.is_active()))
+                .flatten()
+            {
+                // latest request finished, so repopulate
+                menu.update_values(
+                    &mut self.editor,
+                    self.completer.as_mut(),
+                    self.history.as_ref(),
+                );
+                self.repaint(prompt)?;
             }
 
             // Helper function that returns true if the input is complete and
@@ -914,22 +1009,7 @@ impl Reedline {
             let mut events: Vec<Event> = vec![];
 
             if !self.immediately_accept {
-                let needs_polling = {
-                    #[allow(unused_mut)]
-                    let mut result = self.break_signal.is_some();
-                    result |= completer_pending;
-                    #[cfg(feature = "external_printer")]
-                    if self.external_printer.is_some() {
-                        result = true;
-                    }
-                    #[cfg(feature = "idle_callback")]
-                    if self.idle_callback.is_some() {
-                        result = true;
-                    }
-                    result
-                };
-
-                if needs_polling {
+                if self.input_needs_polling() || completer_pending {
                     if event::poll(self.poll_interval)? {
                         events.push(crossterm::event::read()?);
                     }
@@ -1411,7 +1491,9 @@ impl Reedline {
                         match commands.first() {
                             Some(&EditCommand::Backspace)
                             | Some(&EditCommand::BackspaceWord)
-                            | Some(&EditCommand::MoveToLineStart { select: false }) => {
+                            | Some(&EditCommand::MoveToLineStart { select: false })
+                                if !self.persistent_menus =>
+                            {
                                 menu.menu_event(MenuEvent::Deactivate)
                             }
                             _ => {
@@ -1439,7 +1521,7 @@ impl Reedline {
                             }
                         }
                     }
-                    if self.editor.line_buffer().get_buffer().is_empty() {
+                    if !self.persistent_menus && self.editor.line_buffer().get_buffer().is_empty() {
                         menu.menu_event(MenuEvent::Deactivate);
                     } else {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
@@ -1855,7 +1937,13 @@ impl Reedline {
             false => (1, " "), // expand on <space>
         };
 
-        let word_end = cursor_position_in_buffer - offset;
+        // `offset` is a raw byte count (0 on <enter>, 1 on <space>), so
+        // `cursor_position_in_buffer - offset` can land inside a multi-byte
+        // UTF-8 char sitting just before the cursor (e.g. pasted CJK text).
+        // Floor it down to the nearest char boundary before slicing to avoid
+        // a panic.
+        let word_end =
+            crate::menu_functions::floor_char_boundary(buffer, cursor_position_in_buffer - offset);
         let prefix = &buffer[..word_end];
         let word_start = prefix
             .char_indices()
@@ -1868,6 +1956,17 @@ impl Reedline {
             // The first char in the buffer is a space or there are consecutive spaces
             return None;
         }
+
+        if submitted
+            && buffer[word_end..]
+                .chars()
+                .next()
+                .map_or(false, |ch| !ch.is_whitespace())
+        {
+            // The cursor is in the middle of a word, e.g. "hello|world"
+            return None;
+        }
+
         if !self.highlighter.should_expand_abbr(
             buffer,
             word_start,
@@ -2678,6 +2777,151 @@ mod tests {
     }
 
     #[test]
+    fn take_repaint_request_is_false_without_a_handle() {
+        let reedline = Reedline::create();
+        assert!(!reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn take_repaint_request_consumes_the_request() {
+        let mut reedline = Reedline::create();
+        let signal = reedline.repaint_signal();
+
+        signal.request_repaint();
+        assert!(reedline.take_repaint_request());
+        // Consumed: no repaint left pending
+        assert!(!reedline.take_repaint_request());
+
+        // A new request is honored again
+        signal.request_repaint();
+        assert!(reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_signal_switches_input_loop_to_polling() {
+        let mut reedline = Reedline::create();
+        assert!(
+            !reedline.input_needs_polling(),
+            "without external triggers the loop should block on input"
+        );
+
+        let _signal = reedline.repaint_signal();
+        assert!(
+            reedline.input_needs_polling(),
+            "a repaint handle must switch the loop to polling so requests are noticed"
+        );
+    }
+
+    #[test]
+    fn repaint_request_during_active_read_survives_while_stale_ones_are_dropped() {
+        // Emulates the loop's consumption pattern: read_line_helper drains any
+        // stale pre-read_line request before painting the initial prompt, so
+        // only requests raised afterwards trigger an extra repaint.
+        let mut reedline = Reedline::create();
+        let signal = reedline.repaint_signal();
+
+        // Raised while no read_line is active -> dropped by the initial drain
+        signal.request_repaint();
+        reedline.take_repaint_request();
+        assert!(!reedline.take_repaint_request());
+
+        // Raised "mid-edit" -> observed by the next loop iteration
+        signal.request_repaint();
+        assert!(reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_signal_handles_share_one_flag() {
+        // Every handle returned by `repaint_signal()` (and its clones) must
+        // observe the same underlying flag, so a request from any of them is
+        // seen exactly once by the loop.
+        let mut reedline = Reedline::create();
+        let a = reedline.repaint_signal();
+        let b = reedline.repaint_signal();
+        let c = a.clone();
+
+        b.request_repaint();
+        assert!(reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
+
+        // A request made through the clone is also observed.
+        c.request_repaint();
+        assert!(reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_signal_survives_behind_an_arc() {
+        // This is what a shell would be using...
+        // handed to a worker that knows nothing about `Reedline`.
+        use std::sync::Arc;
+        let mut reedline = Reedline::create();
+        let shared: Arc<RepaintSignal> = Arc::new(reedline.repaint_signal());
+
+        let worker = shared.clone();
+        std::thread::spawn(move || worker.request_repaint())
+            .join()
+            .expect("worker thread panicked");
+
+        assert!(reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_request_collapses_rapid_fire() {
+        // Many requests arriving between two loop iterations must collapse into
+        // a single repaint, not N. `take` is a swap(false), so only one take
+        // should observe the request regardless of how many were raised.
+        let mut reedline = Reedline::create();
+        let signal = reedline.repaint_signal();
+
+        for _ in 0..1_000 {
+            signal.request_repaint();
+        }
+        assert!(reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_signal_is_independent_of_break_signal() {
+        // The two out-of-band triggers must not interfere: arming a repaint
+        // request must not be mistaken for a break, and vice versa.
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let mut reedline = Reedline::create().with_break_signal(Arc::new(AtomicBool::new(false)));
+        let repaint = reedline.repaint_signal();
+
+        repaint.request_repaint();
+        assert!(reedline.take_repaint_request());
+        assert!(
+            !reedline
+                .break_signal
+                .as_ref()
+                .unwrap()
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "repaint must not toggle the break flag"
+        );
+
+        reedline
+            .break_signal
+            .as_ref()
+            .unwrap()
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            reedline
+                .break_signal
+                .as_ref()
+                .unwrap()
+                .swap(false, std::sync::atomic::Ordering::Relaxed),
+            "break flag must be independently observable"
+        );
+        assert!(
+            !reedline.take_repaint_request(),
+            "break must not leave a repaint pending"
+        );
+    }
+    #[test]
     fn signal_external_break_pattern_match() {
         let buffer_content = "some partial input".to_string();
         let signal = Signal::ExternalBreak(buffer_content.clone());
@@ -2828,11 +3072,68 @@ mod tests {
     }
 
     #[test]
+    fn try_expand_abbreviation_survives_multibyte_char_before_cursor() {
+        // Regression: `word_end` was a raw byte subtraction of `offset` from the
+        // byte cursor position. With a multi-byte char (e.g. pasted CJK) right
+        // before the cursor, `word_end` could land inside that char, so slicing
+        // the buffer panicked with "byte index N is not a char boundary".
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, "中");
+        // Place the cursor at byte offset 1, inside the 3-byte '中'. Pre-patch,
+        // `&buffer[..1]` would panic here.
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.set_buffer("中".to_string());
+        line_buffer.set_insertion_point(1);
+        reedline
+            .editor
+            .set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
+        // Must return without panicking (no match, so `None` is expected).
+        assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
+    }
+
+    #[test]
     fn abbreviation_leading_spaces_returns_none() {
         let mut reedline =
             reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
         set_buffer_at_end(&mut reedline, "   ");
         assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
+    }
+
+    #[test]
+    fn abbreviation_mid_word_cursor_on_submit_returns_none() {
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, "gcsomething");
+        reedline.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 2,
+            select: false,
+        }]);
+        assert!(
+            reedline.try_expand_abbreviation_at_cursor(true).is_none(),
+            "must not expand the prefix of a word when the cursor is mid-word"
+        );
+    }
+
+    #[test]
+    fn abbreviation_expands_before_trailing_text_on_submit() {
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, "gc rest");
+        reedline.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 2,
+            select: false,
+        }]);
+        let event = reedline.try_expand_abbreviation_at_cursor(true);
+        assert!(
+            event.is_some(),
+            "expected expansion at a real word boundary"
+        );
+        reedline.run_edit_commands(&match event.unwrap() {
+            ReedlineEvent::Edit(cmds) => cmds,
+            _ => panic!("expected Edit event"),
+        });
+        assert_eq!(reedline.current_buffer_contents(), "git commit rest");
     }
 
     // Feed one key as its own batch, mirroring real interactive input where each
@@ -3105,6 +3406,80 @@ mod tests {
         let insertion = EditCommand::InsertString(String::from("x"));
         reedline.run_edit_commands(&[insertion]);
         assert_eq!(reedline.current_buffer_contents(), "67x");
+    }
+
+    fn menu_is_active(reedline: &Reedline) -> bool {
+        reedline.menus.iter().any(|menu| menu.is_active())
+    }
+
+    /// Engine with a completion menu activated on a "th" buffer. "th" matches
+    /// two words, so quick completions don't auto-select on activation.
+    fn engine_with_active_menu(quick: bool, persistent: bool) -> Reedline {
+        let completer = Box::new(DefaultCompleter::new_with_wordlen(
+            vec![
+                String::from("test"),
+                String::from("this"),
+                String::from("that"),
+            ],
+            1,
+        ));
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name("completion_menu"),
+        ));
+        let mut reedline = Reedline::create()
+            .with_completer(completer)
+            .with_menu(completion_menu)
+            .with_quick_completions(quick)
+            .with_persistent_menus(persistent);
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Menu(String::from("completion_menu")),
+            )
+            .unwrap();
+        assert!(menu_is_active(&reedline));
+        reedline
+    }
+
+    fn send_edit(reedline: &mut Reedline, command: EditCommand) {
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Edit(vec![command]),
+            )
+            .unwrap();
+    }
+
+    #[rstest]
+    #[case(false, false)]
+    #[case(false, true)]
+    #[case(true, false)]
+    #[case(true, true)]
+    fn test_menu_persistence_while_erasing(#[case] quick: bool, #[case] persistent: bool) {
+        let mut reedline = engine_with_active_menu(quick, persistent);
+
+        // quick completions close the menu on any backspace unless menus are persistent
+        send_edit(&mut reedline, EditCommand::Backspace);
+        assert_eq!(reedline.current_buffer_contents(), "t");
+        assert_eq!(menu_is_active(&reedline), persistent || !quick);
+
+        // emptying the buffer closes the menu unless menus are persistent
+        send_edit(&mut reedline, EditCommand::Backspace);
+        assert!(reedline.current_buffer_contents().is_empty());
+        assert_eq!(menu_is_active(&reedline), persistent);
+    }
+
+    #[rstest]
+    #[case(EditCommand::BackspaceWord)]
+    #[case(EditCommand::MoveToLineStart { select: false })]
+    fn test_menu_persistence_covers_all_quick_dismissal_commands(#[case] command: EditCommand) {
+        for persistent in [false, true] {
+            let mut reedline = engine_with_active_menu(true, persistent);
+            send_edit(&mut reedline, command.clone());
+            assert_eq!(menu_is_active(&reedline), persistent);
+        }
     }
 
     /// A hinter that always offers a fixed suggestion, so the completion flow can
