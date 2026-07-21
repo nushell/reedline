@@ -43,6 +43,7 @@ pub enum SearchDirection {
 /// using `json_type()` to avoid collisions between JSON booleans, integers, and strings.
 /// Arrays and objects are intentionally unsupported.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum JsonFilterValue {
     /// Match a JSON `null` at the given path.
     Null,

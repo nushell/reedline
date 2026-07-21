@@ -121,8 +121,13 @@ impl History for SqliteBackedHistory {
     ) -> Result<()> {
         // in theory this should run in a transaction
         let item = self.load(id)?;
-        self.save(updater(item))?;
-        Ok(())
+        // `HistoryItem` here is always `HistoryItem<IgnoreAllExtraInfo>`, which cannot
+        // carry a meaningful `more_info` value (it serializes to `null` regardless of
+        // what was loaded). So this type-erased path updates every column except
+        // `more_info`, leaving whatever a typed caller wrote via `save_with_extra`
+        // intact. Callers that need to read/modify typed `more_info` should use
+        // [`Self::update_with_extra`] instead.
+        self.update_preserving_more_info(updater(item))
     }
 
     fn clear(&mut self) -> Result<()> {
@@ -515,6 +520,63 @@ impl SqliteBackedHistory {
             .map_err(map_sqlite_err)?
             .query_row(named_params! { ":id": id.0 }, deserialize_history_item::<E>)
             .map_err(map_sqlite_err)
+    }
+
+    /// Update every column of an existing row except `more_info`, leaving it as-is.
+    ///
+    /// Used by the type-erased [`History::update`], which cannot express a meaningful
+    /// change to `more_info` (see its implementation for why).
+    fn update_preserving_more_info(&mut self, entry: HistoryItem) -> Result<()> {
+        let changed = self
+            .db
+            .prepare(
+                "update history set
+                    start_timestamp = :start_timestamp,
+                    command_line = :command_line,
+                    session_id = :session_id,
+                    hostname = :hostname,
+                    cwd = :cwd,
+                    duration_ms = :duration_ms,
+                    exit_status = :exit_status
+                 where id = :id",
+            )
+            .map_err(map_sqlite_err)?
+            .execute(named_params! {
+                ":id": entry.id.map(|id| id.0),
+                ":start_timestamp": entry.start_timestamp.map(|e| e.timestamp_millis()),
+                ":command_line": entry.command_line,
+                ":session_id": entry.session_id.map(|e| e.0),
+                ":hostname": entry.hostname,
+                ":cwd": entry.cwd,
+                ":duration_ms": entry.duration.map(|e| e.as_millis() as i64),
+                ":exit_status": entry.exit_status,
+            })
+            .map_err(map_sqlite_err)?;
+        if changed == 0 {
+            return Err(ReedlineError(ReedlineErrorVariants::HistoryDatabaseError(
+                "Could not find item".to_string(),
+            )));
+        }
+        Ok(())
+    }
+
+    /// Update a history item atomically while preserving typed `more_info`.
+    ///
+    /// Unlike [`History::update`], this loads and saves through [`Self::load_with_extra`]
+    /// and [`Self::save_with_extra`], so `updater` can read and change the typed
+    /// `more_info` and have the change persisted.
+    ///
+    /// Note: this method is specific to [`SqliteBackedHistory`]. It is not part of the
+    /// [`History`] trait and so is unavailable through `&dyn History`.
+    pub fn update_with_extra<E: HistoryItemExtraInfo>(
+        &mut self,
+        id: HistoryItemId,
+        updater: &dyn Fn(HistoryItem<E>) -> HistoryItem<E>,
+    ) -> Result<()> {
+        // in theory this should run in a transaction
+        let item = self.load_with_extra::<E>(id)?;
+        self.save_with_extra(updater(item))?;
+        Ok(())
     }
 
     /// Search history items with typed `more_info`.
@@ -989,6 +1051,82 @@ mod tests {
         let untyped = db.load(saved.id.unwrap())?;
         assert_eq!(untyped.command_line, ":cd /tmp");
         assert_eq!(untyped.more_info, Some(IgnoreAllExtraInfo));
+        Ok(())
+    }
+
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[test]
+    fn trait_update_preserves_typed_more_info() -> crate::Result<()> {
+        let mut db = SqliteBackedHistory::in_memory()?;
+        let saved = db.save_with_extra(item_with_extra(
+            "cmd",
+            TestExtra {
+                meta_command: true,
+                tag: "keep-me".into(),
+                count: 7,
+            },
+        ))?;
+        let id = saved.id.unwrap();
+
+        // Go through the type-erased `History::update`, e.g. as
+        // `Reedline::update_last_command_context` does for post-command bookkeeping.
+        History::update(&mut db, id, &|mut e| {
+            e.exit_status = Some(0);
+            e
+        })?;
+
+        let reloaded = db.load_with_extra::<TestExtra>(id)?;
+        assert_eq!(reloaded.exit_status, Some(0));
+        assert_eq!(
+            reloaded.more_info,
+            Some(TestExtra {
+                meta_command: true,
+                tag: "keep-me".into(),
+                count: 7,
+            })
+        );
+        Ok(())
+    }
+
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[test]
+    fn trait_update_missing_id_errors() {
+        let mut db = SqliteBackedHistory::in_memory().unwrap();
+        let result = History::update(&mut db, HistoryItemId::new(999), &|e| e);
+        assert!(result.is_err());
+    }
+
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[test]
+    fn update_with_extra_modifies_typed_more_info() -> crate::Result<()> {
+        let mut db = SqliteBackedHistory::in_memory()?;
+        let saved = db.save_with_extra(item_with_extra(
+            "cmd",
+            TestExtra {
+                meta_command: false,
+                tag: "before".into(),
+                count: 1,
+            },
+        ))?;
+        let id = saved.id.unwrap();
+
+        db.update_with_extra::<TestExtra>(id, &|mut e| {
+            if let Some(extra) = e.more_info.as_mut() {
+                extra.tag = "after".into();
+                extra.count += 1;
+            }
+            e
+        })?;
+
+        let reloaded = db.load_with_extra::<TestExtra>(id)?;
+        assert_eq!(
+            reloaded.more_info,
+            Some(TestExtra {
+                meta_command: false,
+                tag: "after".into(),
+                count: 2,
+            })
+        );
         Ok(())
     }
 }
