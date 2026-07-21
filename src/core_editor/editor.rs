@@ -771,7 +771,13 @@ impl Editor {
     /// character — accepting a trailing history hint must append instead. Does
     /// not commit, so the following `InsertString` reads this position.
     pub(crate) fn prepare_append_at_buffer_end(&mut self) {
-        self.line_buffer.set_insertion_point(self.line_buffer.len());
+        // Collapse to a bare point, don't just move the head: a resting block
+        // caret is anchored (a helix "cursor" is a 1-wide selection), and
+        // `set_insertion_point` would keep that anchor. The append then runs
+        // through `insert_str`'s `delete_selection` and eats the covered
+        // grapheme -- accepting the hint "-add" on "ssh" gave "ss-add".
+        self.line_buffer
+            .set_cursor(Cursor::point(self.line_buffer.len()));
     }
 
     pub(crate) fn move_to_line_start(&mut self, select: bool) {
