@@ -895,7 +895,6 @@ impl Editor {
         }
     }
 
-
     /// Cut the grapheme left of the caret into the cut buffer (vi `X`).
     ///
     /// Intended for vi normal mode only, where there is no selection, since
