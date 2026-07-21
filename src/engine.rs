@@ -1855,14 +1855,13 @@ impl Reedline {
             false => (1, " "), // expand on <space>
         };
 
-        let mut word_end = cursor_position_in_buffer - offset;
         // `offset` is a raw byte count (0 on <enter>, 1 on <space>), so
-        // `word_end` can land inside a multi-byte UTF-8 char sitting just
-        // before the cursor (e.g. pasted CJK text). Floor it down to the
-        // nearest char boundary before slicing to avoid a panic.
-        while word_end > 0 && !buffer.is_char_boundary(word_end) {
-            word_end -= 1;
-        }
+        // `cursor_position_in_buffer - offset` can land inside a multi-byte
+        // UTF-8 char sitting just before the cursor (e.g. pasted CJK text).
+        // Floor it down to the nearest char boundary before slicing to avoid
+        // a panic.
+        let word_end =
+            crate::menu_functions::floor_char_boundary(buffer, cursor_position_in_buffer - offset);
         let prefix = &buffer[..word_end];
         let word_start = prefix
             .char_indices()
