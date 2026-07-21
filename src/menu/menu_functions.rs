@@ -281,7 +281,7 @@ pub fn resolve_completer_input(
     }
     completer_input(
         editor.get_buffer(),
-        editor.insertion_point(),
+        editor.completion_point(),
         saved_input.as_deref(),
         mode,
     )
@@ -844,9 +844,57 @@ pub(crate) fn truncate_with_ansi(s: &str, max_width: usize) -> Cow<'_, str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EditCommand, LineBuffer, Span};
+    use crate::{EditCommand, LineBuffer, PromptEditMode, PromptViMode, Span};
     use nu_ansi_term::Color;
     use rstest::rstest;
+
+    /// A caret cursor rests on the last grapheme of the word, so completion must
+    /// count that grapheme as part of the word instead of stranding it after the
+    /// replacement (`foo` + `foobar` used to yield `foobaro`).
+    #[rstest]
+    #[case::vi_normal(PromptEditMode::Vi(PromptViMode::Normal), "foo", "foobar")]
+    // The covered grapheme is multi-byte: stepping by bytes would split it.
+    #[case::multibyte(PromptEditMode::Vi(PromptViMode::Normal), "café", "cafétería")]
+    fn completion_covers_the_caret_grapheme(
+        #[case] mode: PromptEditMode,
+        #[case] buffer: &str,
+        #[case] expected: &str,
+    ) {
+        use crate::{menu::MenuSettings, Completer, DefaultCompleter};
+
+        let mut completer = DefaultCompleter::default();
+        completer.insert(vec![expected.to_string()]);
+
+        let mut editor = Editor::default();
+        let mut lb = LineBuffer::new();
+        lb.set_buffer(buffer.to_string());
+        editor.set_line_buffer(lb, UndoBehavior::CreateUndoPoint);
+        editor.set_edit_mode(mode);
+
+        let mut saved = None;
+        let (input, pos) = resolve_completer_input(&editor, &mut saved, &MenuSettings::default());
+        let suggestions = completer.complete(&input, pos);
+        replace_in_buffer(
+            suggestions.suggestions().first().cloned(),
+            &mut editor,
+            None,
+        );
+
+        assert_eq!(editor.get_buffer(), expected);
+    }
+
+    /// Insert mode has no caret widening, so it must keep the plain insertion
+    /// point — the guard against the fix leaking into bar-cursor modes.
+    #[test]
+    fn completion_point_is_untouched_for_bar_cursors() {
+        let mut editor = Editor::default();
+        let mut lb = LineBuffer::new();
+        lb.set_buffer("foo".to_string());
+        editor.set_line_buffer(lb, UndoBehavior::CreateUndoPoint);
+        editor.set_edit_mode(PromptEditMode::Vi(PromptViMode::Insert));
+
+        assert_eq!(editor.completion_point(), editor.insertion_point());
+    }
 
     #[test]
     fn parse_row_test() {
