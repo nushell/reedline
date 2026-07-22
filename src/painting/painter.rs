@@ -10,7 +10,7 @@ use {
     },
     crossterm::{
         cursor::{self, MoveTo, RestorePosition, SavePosition},
-        style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor},
+        style::{Attribute, Print, ResetColor, SetAttribute},
         terminal::{self, Clear, ClearType},
         QueueableCommand,
     },
@@ -914,7 +914,7 @@ impl Painter {
         // print our prompt with color
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_color()))?;
+                .queue(Print(prompt.get_prompt_color().prefix()))?;
         }
 
         self.stdout
@@ -922,7 +922,7 @@ impl Painter {
 
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_indicator_color()))?;
+                .queue(Print(prompt.get_indicator_color().prefix()))?;
         }
 
         self.stdout
@@ -930,7 +930,7 @@ impl Painter {
 
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
+                .queue(Print(prompt.get_prompt_right_color().prefix()))?;
         }
 
         self.print_right_prompt(lines, layout)?;
@@ -987,7 +987,7 @@ impl Painter {
         // print our prompt with color
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_color()))?;
+                .queue(Print(prompt.get_prompt_color().prefix()))?;
         }
 
         // In case the prompt is made out of multiple lines, the prompt is split by
@@ -998,7 +998,7 @@ impl Painter {
         if extra_rows == 0 {
             if use_ansi_coloring {
                 self.stdout
-                    .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
+                    .queue(Print(prompt.get_prompt_right_color().prefix()))?;
             }
 
             self.print_right_prompt(lines, layout)?;
@@ -1006,7 +1006,7 @@ impl Painter {
 
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_indicator_color()))?;
+                .queue(Print(prompt.get_indicator_color().prefix()))?;
         }
         let indicator_skipped =
             skip_buffer_lines(&lines.prompt_indicator, extra_rows_after_prompt, None);
