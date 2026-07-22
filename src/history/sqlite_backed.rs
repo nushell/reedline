@@ -8,7 +8,7 @@ use crate::{
     Result,
 };
 use chrono::{TimeZone, Utc};
-use rusqlite::{named_params, params, Connection, ToSql};
+use rusqlite::{named_params, params, Connection, ToSql, TransactionBehavior};
 use std::{fmt::Write, path::PathBuf, time::Duration};
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
 
@@ -59,6 +59,68 @@ fn deserialize_history_item<E: HistoryItemExtraInfo>(
             })
             .transpose()?,
     })
+}
+
+/// Shared implementation of [`SqliteBackedHistory::load_with_extra`], generic over
+/// anything that derefs to a [`Connection`] so it can run against either the history's
+/// own connection or an in-flight [`rusqlite::Transaction`].
+fn load_with_extra_conn<E: HistoryItemExtraInfo>(
+    conn: &Connection,
+    id: HistoryItemId,
+) -> Result<HistoryItem<E>> {
+    conn.prepare("select * from history where id = :id")
+        .map_err(map_sqlite_err)?
+        .query_row(named_params! { ":id": id.0 }, deserialize_history_item::<E>)
+        .map_err(map_sqlite_err)
+}
+
+/// Shared implementation of [`SqliteBackedHistory::save_with_extra`], generic over
+/// anything that derefs to a [`Connection`] so it can run against either the history's
+/// own connection or an in-flight [`rusqlite::Transaction`].
+fn save_with_extra_conn<E: HistoryItemExtraInfo>(
+    conn: &Connection,
+    mut entry: HistoryItem<E>,
+) -> Result<HistoryItem<E>> {
+    let more_info_serialized = entry
+        .more_info
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(map_json_err)?;
+    let ret: i64 = conn
+        .prepare(
+            "insert into history
+                           (id,  start_timestamp,  command_line,  session_id,  hostname,  cwd,  duration_ms,  exit_status,  more_info)
+                    values (:id, :start_timestamp, :command_line, :session_id, :hostname, :cwd, :duration_ms, :exit_status, :more_info)
+                on conflict (history.id) do update set
+                    start_timestamp = excluded.start_timestamp,
+                    command_line = excluded.command_line,
+                    session_id = excluded.session_id,
+                    hostname = excluded.hostname,
+                    cwd = excluded.cwd,
+                    duration_ms = excluded.duration_ms,
+                    exit_status = excluded.exit_status,
+                    more_info = excluded.more_info
+                returning id",
+        )
+        .map_err(map_sqlite_err)?
+        .query_row(
+            named_params! {
+                ":id": entry.id.map(|id| id.0),
+                ":start_timestamp": entry.start_timestamp.map(|e| e.timestamp_millis()),
+                ":command_line": entry.command_line,
+                ":session_id": entry.session_id.map(|e| e.0),
+                ":hostname": entry.hostname,
+                ":cwd": entry.cwd,
+                ":duration_ms": entry.duration.map(|e| e.as_millis() as i64),
+                ":exit_status": entry.exit_status,
+                ":more_info": more_info_serialized,
+            },
+            |row| row.get(0),
+        )
+        .map_err(map_sqlite_err)?;
+    entry.id = Some(HistoryItemId::new(ret));
+    Ok(entry)
 }
 
 impl History for SqliteBackedHistory {
@@ -459,49 +521,9 @@ impl SqliteBackedHistory {
     /// methods use [`IgnoreAllExtraInfo`] and do not roundtrip custom `more_info`.
     pub fn save_with_extra<E: HistoryItemExtraInfo>(
         &mut self,
-        mut entry: HistoryItem<E>,
+        entry: HistoryItem<E>,
     ) -> Result<HistoryItem<E>> {
-        let more_info_serialized = entry
-            .more_info
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(map_json_err)?;
-        let ret: i64 = self
-            .db
-            .prepare(
-                "insert into history
-                               (id,  start_timestamp,  command_line,  session_id,  hostname,  cwd,  duration_ms,  exit_status,  more_info)
-                        values (:id, :start_timestamp, :command_line, :session_id, :hostname, :cwd, :duration_ms, :exit_status, :more_info)
-                    on conflict (history.id) do update set
-                        start_timestamp = excluded.start_timestamp,
-                        command_line = excluded.command_line,
-                        session_id = excluded.session_id,
-                        hostname = excluded.hostname,
-                        cwd = excluded.cwd,
-                        duration_ms = excluded.duration_ms,
-                        exit_status = excluded.exit_status,
-                        more_info = excluded.more_info
-                    returning id",
-            )
-            .map_err(map_sqlite_err)?
-            .query_row(
-                named_params! {
-                    ":id": entry.id.map(|id| id.0),
-                    ":start_timestamp": entry.start_timestamp.map(|e| e.timestamp_millis()),
-                    ":command_line": entry.command_line,
-                    ":session_id": entry.session_id.map(|e| e.0),
-                    ":hostname": entry.hostname,
-                    ":cwd": entry.cwd,
-                    ":duration_ms": entry.duration.map(|e| e.as_millis() as i64),
-                    ":exit_status": entry.exit_status,
-                    ":more_info": more_info_serialized,
-                },
-                |row| row.get(0),
-            )
-            .map_err(map_sqlite_err)?;
-        entry.id = Some(HistoryItemId::new(ret));
-        Ok(entry)
+        save_with_extra_conn(&self.db, entry)
     }
 
     /// Load a history item by ID with typed `more_info`.
@@ -515,11 +537,7 @@ impl SqliteBackedHistory {
         &self,
         id: HistoryItemId,
     ) -> Result<HistoryItem<E>> {
-        self.db
-            .prepare("select * from history where id = :id")
-            .map_err(map_sqlite_err)?
-            .query_row(named_params! { ":id": id.0 }, deserialize_history_item::<E>)
-            .map_err(map_sqlite_err)
+        load_with_extra_conn(&self.db, id)
     }
 
     /// Update every column of an existing row except `more_info`, leaving it as-is.
@@ -573,9 +591,15 @@ impl SqliteBackedHistory {
         id: HistoryItemId,
         updater: &dyn Fn(HistoryItem<E>) -> HistoryItem<E>,
     ) -> Result<()> {
-        // in theory this should run in a transaction
-        let item = self.load_with_extra::<E>(id)?;
-        self.save_with_extra(updater(item))?;
+        // `Immediate` acquires the write lock up front, so no other connection can
+        // interleave a write between the load and the save below.
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite_err)?;
+        let item = load_with_extra_conn::<E>(&tx, id)?;
+        save_with_extra_conn(&tx, updater(item))?;
+        tx.commit().map_err(map_sqlite_err)?;
         Ok(())
     }
 
