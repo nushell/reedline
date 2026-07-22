@@ -1153,4 +1153,73 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn update_with_extra_blocks_concurrent_writer() -> crate::Result<()> {
+        use std::cell::{Cell, RefCell};
+        use tempfile::tempdir;
+
+        let tmp = tempdir().unwrap();
+        let histfile = tmp.path().join("history.sqlite3");
+
+        let mut writer = SqliteBackedHistory::with_file(histfile.clone(), None, None)?;
+        let saved = writer.save_with_extra(item_with_extra(
+            "cmd",
+            TestExtra {
+                meta_command: false,
+                tag: "before".into(),
+                count: 1,
+            },
+        ))?;
+        let id = saved.id.unwrap();
+
+        // A second connection to the same file. Its busy timeout is set to 0 so a
+        // lock conflict surfaces immediately as an error instead of blocking for
+        // rusqlite's default 5-second busy handler, keeping this test fast.
+        let other = SqliteBackedHistory::with_file(histfile, None, None)?;
+        other
+            .db
+            .busy_timeout(Duration::from_millis(0))
+            .map_err(map_sqlite_err)?;
+        let other = RefCell::new(other);
+
+        let concurrent_write_blocked = Cell::new(false);
+        writer.update_with_extra::<TestExtra>(id, &|mut e| {
+            // Runs while `writer`'s immediate transaction still holds the write
+            // lock. Without it, this competing write would succeed.
+            let result = other.borrow_mut().save_with_extra(item_with_extra(
+                "competing",
+                TestExtra {
+                    meta_command: false,
+                    tag: "concurrent".into(),
+                    count: 0,
+                },
+            ));
+            let is_locked_error =
+                matches!(&result, Err(e) if e.to_string().contains("database is locked"));
+            concurrent_write_blocked.set(is_locked_error);
+
+            if let Some(extra) = e.more_info.as_mut() {
+                extra.tag = "after".into();
+                extra.count += 1;
+            }
+            e
+        })?;
+
+        assert!(
+            concurrent_write_blocked.get(),
+            "expected the competing writer to fail with a database-locked error while update_with_extra's immediate transaction was held"
+        );
+
+        let reloaded = writer.load_with_extra::<TestExtra>(id)?;
+        assert_eq!(
+            reloaded.more_info,
+            Some(TestExtra {
+                meta_command: false,
+                tag: "after".into(),
+                count: 2,
+            })
+        );
+        Ok(())
+    }
 }
