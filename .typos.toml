@@ -13,6 +13,7 @@ ba = "ba"
 descriptio = "descriptio"
 ot = "ot"
 strin = "strin"
+helo  = "helo"
 # for sqlite backed history
 wheres = "wheres"
 # for list_menu tests
