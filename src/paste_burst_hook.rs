@@ -48,6 +48,18 @@ pub trait PasteBurstHook: Send + Sync {
 
     /// True while a real paste burst is coalescing — the read loop keeps
     /// draining the event queue instead of processing the batch.
+    ///
+    /// # Required semantics: latch until [`settle`](Self::settle)
+    ///
+    /// The engine queries this flag twice for a single burst: once to decide
+    /// whether to keep draining events, and again — after the idle flush — to
+    /// decide whether to treat the drained batch as a coalesced burst. Both must
+    /// see the same answer, so an implementation MUST latch `true` from the
+    /// moment a burst is detected until [`settle`](Self::settle) is called, even
+    /// if the burst's inter-char timing has already gone idle by the second
+    /// query. Returning `false` once idle (before `settle`) makes the engine
+    /// skip the coalescing / [`resolve_burst`](Self::resolve_burst) path for the
+    /// already-drained batch, leaking the raw paste text.
     fn is_burst_active(&self) -> bool;
 
     /// Poll timeout to use while draining an active burst (the idle-flush
@@ -56,7 +68,9 @@ pub trait PasteBurstHook: Send + Sync {
     fn poll_timeout(&self) -> Duration;
 
     /// Reset detector state after a batch settles, so the next line starts
-    /// clean.
+    /// clean. This is also the point at which [`is_burst_active`](Self::is_burst_active)
+    /// is released from its latch (see that method's required semantics): the
+    /// engine calls `settle` once per batch, after the batch has been processed.
     fn settle(&self);
 
     /// Resolve a settled paste burst. Given the coalesced burst text (embedded
