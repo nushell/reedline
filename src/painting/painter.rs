@@ -562,37 +562,27 @@ impl Painter {
             self.just_resized = false;
         }
 
-        // Lines and distance parameters
-        let remaining_lines = self.remaining_lines();
-        let required_lines = lines.required_lines(screen_width, false, menu);
-
-        // Marking the painter state as larger buffer to avoid animations
-        self.large_buffer = required_lines >= screen_height;
-
-        // True if the prompt has scrolled above the cached
-        // `prompt_start_row` and the caller must re-anchor at row 0.
-        // When not verified, query the terminal; promote to verified if
-        // the query confirms no drift, so later paints can skip it.
+        // Reconcile a stale anchor: something yielded the tty (a resize, or an
+        // external completer running e.g. `fzf --height`) and may have scrolled
+        // our content since the last paint.
         let should_reset_anchor = match self.prompt_start_row {
             PromptStartRow::Verified(_) => false,
-            PromptStartRow::Stale(row) => match cursor::position() {
-                // The `+1` handles the case where the previous output
-                // ended without a newline, leaving the cursor on the
-                // same row as the next prompt.
-                Ok(position) => {
-                    let drifted = position.1 + 1 < row;
-                    if !drifted {
-                        self.prompt_start_row.mark_verified(row);
+            PromptStartRow::Stale(row) => {
+                // Cursor above the cached row => content scrolled up while the
+                // tty was yielded. Re-anchor to the cursor (ground truth) rather
+                // than homing to row 0, which would yank the prompt to the top.
+                // The `+1` allows for output that left the cursor on the prompt
+                // row. See nushell/reedline#1130.
+                match cursor::position() {
+                    Ok(position) if position.1 + 1 < row => {
+                        self.prompt_start_row.mark_verified(position.1);
                     }
-                    drifted
+                    Ok(_) | Err(_) => self.prompt_start_row.mark_verified(row),
                 }
-                Err(_) => false,
-            },
-            // `initialize_prompt_position` runs before any
-            // `repaint_buffer`, so this branch is unreachable in normal
-            // flow. Panic loudly in debug builds; in release, force a
-            // re-anchor since the alternative is drawing over screen
-            // content at row 0 with no scroll.
+                false
+            }
+            // Unreachable in normal flow (initialize_prompt_position runs
+            // first); in release, reset rather than draw over row 0 content.
             PromptStartRow::Unverified => {
                 debug_assert!(
                     false,
@@ -601,6 +591,14 @@ impl Painter {
                 true
             }
         };
+
+        // Distance parameters, computed after reconciling so they reflect the
+        // re-anchored row.
+        let remaining_lines = self.remaining_lines();
+        let required_lines = lines.required_lines(screen_width, false, menu);
+
+        // Marking the painter state as larger buffer to avoid animations
+        self.large_buffer = required_lines >= screen_height;
 
         // Moving the start position of the cursor based on the size of the required lines
         if self.large_buffer || should_reset_anchor {
