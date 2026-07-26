@@ -1384,14 +1384,16 @@ impl Reedline {
             .map_or(false, |h| h.is_burst_active());
         if burst_batch {
             let mut coalesced = String::new();
-            // A real "submit" Enter pressed right after the paste can be drained
-            // into this same batch: the read loop keeps draining until an idle
-            // poll, and an Enter is not a char so it never advances the burst
-            // detector's own timing. Consult the oracle for every Enter instead
-            // of assuming all are embedded — an embedded newline keeps coalescing,
-            // but the first Enter the host judges to be a real submit ends the
-            // burst so this batch submits rather than swallowing the Enter.
-            let mut submit_after_burst = false;
+            // Every Enter drained into this batch is coalesced as an embedded
+            // newline, never a submit. An Enter only reaches this loop by
+            // being drained while `is_burst_active` stayed latched true, which
+            // only happens inside the poll-timeout idle window that keeps the
+            // burst coalescing (see the drain loop above) — i.e. it arrived at
+            // machine paste speed, not from a human keypress. A real human
+            // submit Enter, typed after the paste, lands past that idle
+            // window: the drain loop has already stopped and `settle` has
+            // already run by the time it is read, so it starts the *next*
+            // batch instead, where it is handled as an ordinary submit.
             for event in &events {
                 match event {
                     Event::Key(KeyEvent {
@@ -1410,16 +1412,7 @@ impl Reedline {
                         kind: KeyEventKind::Press,
                         ..
                     }) => {
-                        if self
-                            .paste_burst
-                            .as_ref()
-                            .map_or(false, |h| h.enter_is_newline())
-                        {
-                            coalesced.push('\n');
-                        } else {
-                            submit_after_burst = true;
-                            break;
-                        }
+                        coalesced.push('\n');
                     }
                     // Release events and any other keys are paste artifacts here.
                     _ => {}
@@ -1432,13 +1425,6 @@ impl Reedline {
                     .and_then(|h| h.resolve_burst(&coalesced))
                     .unwrap_or(coalesced);
                 reedline_events.push(ReedlineEvent::Edit(vec![EditCommand::InsertString(insert)]));
-            }
-            // The oracle flagged a real submit Enter inside this batch: after
-            // inserting the coalesced paste, submit the line. `ReedlineEvent::Enter`
-            // is validator-gated, so an incomplete multi-line paste inserts a
-            // newline instead of submitting.
-            if submit_after_burst {
-                reedline_events.push(ReedlineEvent::Enter);
             }
         } else {
             let mut edits = vec![];
@@ -3303,18 +3289,20 @@ mod tests {
     }
 
     #[test]
-    fn paste_burst_real_submit_enter_ends_burst() {
-        // A real submit Enter drained into the same burst batch is judged NOT
-        // paste-embedded by the oracle. The coalescing path then inserts the
-        // pasted chars and submits the line, instead of swallowing the Enter as
-        // a newline (which would leave the line unsubmittable).
+    fn paste_burst_enter_coalesces_as_newline_without_submit() {
+        // An Enter drained into an active burst batch is always coalesced as
+        // an embedded newline, never a submit: a detected burst never
+        // consults the oracle for its Enters (see `enter_is_newline`'s docs),
+        // it treats every one of them as paste-embedded. The coalescing path
+        // inserts the pasted chars with the Enter folded in as `\n`, and the
+        // line stays unsubmitted.
         let mut rl =
             seam_engine(Box::<crate::Emacs>::default()).with_paste_burst(Arc::new(StubBurst {
-                enter_newline: false,
+                enter_newline: true,
                 active: true,
             }));
         let prompt = DefaultPrompt::default();
-        match rl
+        let result = rl
             .process_input_batch(
                 &prompt,
                 vec![
@@ -3323,11 +3311,51 @@ mod tests {
                     Event::Key(key(KeyCode::Enter)),
                 ],
             )
-            .expect("batch ok")
-        {
-            ControlFlow::Break(Signal::Success(buf)) => assert_eq!(buf, "hi"),
-            other => panic!("expected submit, got {other:?}"),
+            .expect("batch ok");
+        assert!(matches!(result, ControlFlow::Continue(())));
+        assert_eq!(rl.editor.get_buffer(), "hi\n");
+    }
+
+    #[test]
+    fn paste_burst_resolve_burst_inserts_placeholder() {
+        // When the hook's `resolve_burst` reference-ifies the coalesced burst
+        // text, the read loop inserts the placeholder it returned instead of
+        // the raw pasted text.
+        struct PlaceholderBurst;
+        impl crate::PasteBurstHook for PlaceholderBurst {
+            fn on_char(&self, _c: char) {}
+            fn enter_is_newline(&self) -> bool {
+                true
+            }
+            fn is_burst_active(&self) -> bool {
+                true
+            }
+            fn poll_timeout(&self) -> Duration {
+                Duration::from_millis(1)
+            }
+            fn settle(&self) {}
+            fn resolve_burst(&self, _coalesced: &str) -> Option<String> {
+                Some("[Pasted text #1 +2 lines]".into())
+            }
         }
+
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_paste_burst(Arc::new(PlaceholderBurst));
+        let prompt = DefaultPrompt::default();
+        let result = rl
+            .process_input_batch(
+                &prompt,
+                vec![
+                    Event::Key(ch('a')),
+                    Event::Key(key(KeyCode::Enter)),
+                    Event::Key(ch('b')),
+                    Event::Key(key(KeyCode::Enter)),
+                    Event::Key(ch('c')),
+                ],
+            )
+            .expect("batch ok");
+        assert!(matches!(result, ControlFlow::Continue(())));
+        assert_eq!(rl.editor.get_buffer(), "[Pasted text #1 +2 lines]");
     }
 
     #[test]
