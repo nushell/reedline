@@ -8,7 +8,8 @@ mod sqlite_backed;
 pub use sqlite_backed::SqliteBackedHistory;
 
 pub use base::{
-    CommandLineSearch, History, HistoryNavigationQuery, SearchDirection, SearchFilter, SearchQuery,
+    CommandLineSearch, History, HistoryNavigationQuery, JsonFilterValue, SearchDirection,
+    SearchFilter, SearchQuery,
 };
 pub use cursor::HistoryCursor;
 pub use item::{

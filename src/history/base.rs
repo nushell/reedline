@@ -37,6 +37,26 @@ pub enum SearchDirection {
     Forward,
 }
 
+/// A typed expected value for [`SearchFilter::more_info_json`] filters.
+///
+/// Each variant maps to a JSON scalar type and produces a type-precise SQL comparison
+/// using `json_type()` to avoid collisions between JSON booleans, integers, and strings.
+/// Arrays and objects are intentionally unsupported.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum JsonFilterValue {
+    /// Match a JSON `null` at the given path.
+    Null,
+    /// Match a JSON boolean (`true` or `false`) at the given path.
+    Bool(bool),
+    /// Match a JSON integer at the given path. Does not match JSON `true`/`false` or strings.
+    Integer(i64),
+    /// Match a JSON floating-point number at the given path.
+    Real(f64),
+    /// Match a JSON string at the given path. Does not match numbers or booleans.
+    Text(String),
+}
+
 /// Defines additional filters for querying the [`History`]
 pub struct SearchFilter {
     /// Query for the command line content
@@ -53,6 +73,19 @@ pub struct SearchFilter {
     pub exit_successful: Option<bool>,
     /// Filter on the session id
     pub session: Option<HistorySessionId>,
+    /// Filter by JSON path in the `more_info` column using SQLite's `json_type()` /
+    /// `json_extract()`.
+    ///
+    /// Each entry is `(json_path, expected_value)`. The [`JsonFilterValue`] variant
+    /// determines the exact SQL comparison used, preventing collisions between JSON
+    /// booleans, integers, and strings (e.g. `Bool(true)` will not match integer `1`
+    /// or string `"true"`).
+    ///
+    /// Rows where `more_info` is SQL `NULL` or the JSON path does not exist will not match.
+    /// Only evaluated by [`crate::SqliteBackedHistory`] typed search methods
+    /// (`search_with_extra`); the non-typed [`History`] trait methods and
+    /// [`crate::FileBackedHistory`] ignore this field.
+    pub more_info_json: Option<Vec<(String, JsonFilterValue)>>,
 }
 
 impl SearchFilter {
@@ -88,6 +121,7 @@ impl SearchFilter {
             cwd_prefix: None,
             exit_successful: None,
             session,
+            more_info_json: None,
         }
     }
 }

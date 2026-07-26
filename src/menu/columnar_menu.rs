@@ -2,14 +2,14 @@ use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
-        can_partially_complete, floor_char_boundary, get_match_indices, replace_in_buffer,
-        resolve_completer_input, style_suggestion, truncate_with_ansi,
+        available_lines, can_partially_complete, get_match_indices, replace_in_buffer,
+        resolve_completer_input, scroll_offset, style_suggestion, truncate_with_ansi,
+        CompletionDisplay,
     },
     painting::Painter,
     Completer, Suggestion,
 };
 use nu_ansi_term::ansi::RESET;
-use unicode_width::UnicodeWidthStr;
 
 /// The traversal direction of the menu
 #[derive(Debug, PartialEq, Eq)]
@@ -53,8 +53,6 @@ struct ColumnDetails {
     pub columns: u16,
     /// Column width
     pub col_width: usize,
-    /// The shortest of the strings, which the suggestions are based on
-    pub shortest_base_string: String,
 }
 
 /// Menu to present suggestions in a columnar fashion
@@ -72,10 +70,12 @@ pub struct ColumnarMenu {
     min_rows: u16,
     /// Working column details keep changing based on the collected values
     working_details: ColumnDetails,
-    /// Menu cached values
-    values: Vec<Suggestion>,
-    /// Cached display width of each suggestion in `values`
-    display_widths: Vec<usize>,
+    /// Suggestions currently displayed and their derived display metrics
+    completions: CompletionDisplay,
+    /// Whether a background completion is still in flight with nothing to show
+    /// yet. While set, the menu draws nothing rather than a premature
+    /// "NO RECORDS FOUND" (which is reserved for a settled, genuinely empty result).
+    awaiting_results: bool,
     /// column position of the cursor. Starts from 0
     col_pos: u16,
     /// row position in the menu. Starts from 0
@@ -85,8 +85,6 @@ pub struct ColumnarMenu {
     skip_rows: u16,
     /// Event sent to the menu
     event: Option<MenuEvent>,
-    /// Longest suggestion found in the values
-    longest_suggestion: usize,
     /// String collected after the menu is activated
     input: Option<String>,
 }
@@ -99,13 +97,12 @@ impl Default for ColumnarMenu {
             default_details: DefaultColumnDetails::default(),
             min_rows: 3,
             working_details: ColumnDetails::default(),
-            values: Vec::new(),
-            display_widths: Vec::new(),
+            completions: CompletionDisplay::default(),
+            awaiting_results: false,
             col_pos: 0,
             row_pos: 0,
             skip_rows: 0,
             event: None,
-            longest_suggestion: 0,
             input: None,
         }
     }
@@ -168,7 +165,7 @@ impl ColumnarMenu {
     fn move_previous(&mut self) {
         let new_index = match self.index().checked_sub(1) {
             Some(index) => index,
-            None => self.values.len().saturating_sub(1),
+            None => self.completions.values.len().saturating_sub(1),
         };
 
         (self.row_pos, self.col_pos) = self.position_from_index(new_index);
@@ -309,18 +306,12 @@ impl ColumnarMenu {
 
     /// Calculates how many rows the menu will use
     fn get_rows(&self) -> u16 {
-        let values = self.get_values().len() as u16;
-
-        if values == 0 {
-            // When the values are empty the "NO RECORDS FOUND" message is shown, taking 1 line
-            return 1;
-        }
-
-        let rows = values / self.get_cols();
-        if values % self.get_cols() != 0 {
-            rows + 1
-        } else {
-            rows
+        match self.get_values().len() as u16 {
+            // No reason to save space if we're waiting for results.
+            0 if self.awaiting_results => 0,
+            // Should be one row for actual empty results
+            0 => 1,
+            total_values => (total_values + self.get_cols() - 1) / self.get_cols(),
         }
     }
 
@@ -351,12 +342,6 @@ impl ColumnarMenu {
         self.working_details.col_width
     }
 
-    /// Reset menu position
-    fn reset_position(&mut self) {
-        self.col_pos = 0;
-        self.row_pos = 0;
-    }
-
     fn no_records_msg(&self, use_ansi_coloring: bool) -> String {
         let msg = "NO RECORDS FOUND";
         if use_ansi_coloring {
@@ -377,120 +362,213 @@ impl ColumnarMenu {
     }
 
     /// Creates default string that represents one suggestion from the menu
-    fn create_string(
+    pub fn create_string(
         &self,
         suggestion: &Suggestion,
         index: usize,
         use_ansi_coloring: bool,
     ) -> String {
-        let selected = index == self.index();
+        match use_ansi_coloring {
+            true => self.format_ansi(suggestion, index),
+            false => self.format_plain(suggestion, index),
+        }
+    }
+
+    /// Horizontal split of a menu row into the suggestion column and the
+    /// description that follows it.
+    fn column_split(&self, terminal_width: usize) -> (usize, usize) {
+        let maximum_left_size =
+            self.completions.longest_suggestion + self.default_details.col_padding;
+        let left_text_size = terminal_width.min(maximum_left_size);
+        let description_size = terminal_width.saturating_sub(left_text_size);
+
+        (left_text_size, description_size)
+    }
+
+    /// Handles plain-text formatting.
+    fn format_plain(&self, suggestion: &Suggestion, index: usize) -> String {
+        let is_selected = index == self.index();
+        let terminal_width = self.get_width();
         let display_value = suggestion.display_value();
-        let empty_space = self.get_width().saturating_sub(self.display_widths[index]);
 
-        if use_ansi_coloring {
-            // TODO(ysthakur): let the user strip quotes, rather than doing it here
-            let is_quote = |c: char| "`'\"".contains(c);
-            let shortest_base = &self.working_details.shortest_base_string;
-            let shortest_base = shortest_base
-                .strip_prefix(is_quote)
-                .unwrap_or(shortest_base);
+        // Calculate the remaining space after the suggestion text
+        let empty_space = terminal_width.saturating_sub(self.completions.display_widths[index]);
+        let marker = if is_selected { ">" } else { "" };
+        let description = suggestion.description.as_deref().unwrap_or("");
 
-            let match_indices =
-                get_match_indices(display_value, &suggestion.match_indices, shortest_base);
-
-            let left_text_size = self
-                .get_width()
-                .min(self.longest_suggestion + self.default_details.col_padding);
-            let description_size = self.get_width().saturating_sub(left_text_size);
-            let padding = left_text_size.saturating_sub(self.display_widths[index]);
-
-            let text_style = &suggestion.style.unwrap_or(self.settings.color.text_style);
-            let match_style = if selected {
-                &self.settings.color.selected_match_style
-            } else {
-                &self.settings.color.match_style
-            };
-            let value_trunc = truncate_with_ansi(display_value, left_text_size);
-            let styled_value = style_suggestion(
-                &value_trunc,
-                &match_indices,
-                text_style,
-                match_style,
-                selected.then_some(&self.settings.color.selected_text_style),
-            );
-
-            match &suggestion.description {
-                Some(desc) if description_size > 3 => {
-                    let desc = desc.replace('\n', "");
-                    let desc_trunc = truncate_with_ansi(desc.as_str(), description_size);
-                    if selected {
-                        format!(
-                            "{}{}{}{}{}{}{}",
-                            styled_value,
-                            RESET,
-                            text_style.prefix(),
-                            self.settings.color.selected_text_style.prefix(),
-                            " ".repeat(padding),
-                            self.settings.color.description_style.paint(desc_trunc),
-                            RESET,
-                        )
-                    } else {
-                        format!(
-                            "{}{}{}{}{}",
-                            styled_value,
-                            " ".repeat(padding),
-                            RESET,
-                            self.settings.color.description_style.paint(desc_trunc),
-                            RESET,
-                        )
-                    }
-                }
-                _ => {
-                    format!(
-                        "{}{}{:>empty$}",
-                        styled_value,
-                        RESET,
-                        "",
-                        empty = empty_space
-                    )
-                }
-            }
+        let mut formatted_line = if description.is_empty() {
+            // If there is no description, pad with empty space to fill the terminal width.
+            let padding_width = empty_space.saturating_sub(marker.len());
+            format!("{marker}{display_value}{:padding_width$}", "")
         } else {
-            // If no ansi coloring is found, then the selection word is the line in uppercase
-            let marker = if index == self.index() { ">" } else { "" };
+            // The left column is capped at `left_text_size` and the description
+            // takes only what's left, so the row can't exceed the terminal
+            let (left_text_size, description_size) = self.column_split(terminal_width);
+            let padding_width = left_text_size.saturating_sub(marker.len());
+            let mut base_line = format!("{marker}{display_value:padding_width$}");
 
-            let line = if let Some(description) = &suggestion.description {
-                format!(
-                    "{}{:max$}{}",
-                    marker,
-                    display_value,
-                    description
-                        .chars()
-                        .take(empty_space)
-                        .collect::<String>()
-                        .replace('\n', " "),
-                    max = self.longest_suggestion
-                        + self
-                            .default_details
-                            .col_padding
-                            .saturating_sub(marker.width()),
-                )
-            } else {
-                format!(
-                    "{}{}{:>empty$}",
-                    marker,
-                    display_value,
-                    "",
-                    empty = empty_space.saturating_sub(marker.width()),
-                )
-            };
+            base_line.extend(description.chars().take(description_size).map(|character| {
+                if character == '\n' {
+                    ' '
+                } else {
+                    character
+                }
+            }));
+            base_line
+        };
 
-            if selected {
-                line.to_uppercase()
-            } else {
-                line
+        if is_selected {
+            // Modifies in-place. Prevents unicode edge cases as well.
+            formatted_line.make_ascii_uppercase();
+        }
+
+        formatted_line
+    }
+
+    /// Handles ANSI-colored formatting.
+    fn format_ansi(&self, suggestion: &Suggestion, index: usize) -> String {
+        let is_selected = index == self.index();
+        let terminal_width = self.get_width();
+        let display_value = suggestion.display_value();
+        let display_width = self.completions.display_widths[index];
+        let color_settings = &self.settings.color;
+
+        // TODO(ysthakur): let the user strip quotes, rather than doing it here
+        // Natively trim standard quote characters using a character array match.
+        let base_string = self
+            .completions
+            .shortest_base_string
+            .trim_start_matches(['`', '\'', '"']);
+        let match_indices =
+            get_match_indices(display_value, &suggestion.match_indices, base_string);
+
+        // Calculate spatial boundaries for the suggestion text and its description.
+        let (left_text_size, description_size) = self.column_split(terminal_width);
+
+        // Resolve ANSI styles based on selection state.
+        let text_style = suggestion
+            .style
+            .as_ref()
+            .unwrap_or(&color_settings.text_style);
+        let match_style = if is_selected {
+            &color_settings.selected_match_style
+        } else {
+            &color_settings.match_style
+        };
+
+        let selected_style = is_selected.then_some(&color_settings.selected_text_style);
+
+        // Truncate and apply ANSI highlighting to the primary suggestion text.
+        let truncated_value = truncate_with_ansi(display_value, left_text_size);
+        let styled_value = style_suggestion(
+            &truncated_value,
+            &match_indices,
+            text_style,
+            match_style,
+            selected_style,
+        );
+
+        // Extract the description, but only if it's long enough
+        // to be visible (> 3).
+        let description = suggestion
+            .description
+            .as_deref()
+            .filter(|_| description_size > 3)
+            .unwrap_or("");
+
+        if description.is_empty() {
+            let padding_width = terminal_width.saturating_sub(display_width);
+            return format!("{styled_value}{RESET}{:padding_width$}", "");
+        }
+
+        // Prepare the description by filtering out newlines
+        // and applying truncation and paint.
+        let padding_size = left_text_size.saturating_sub(display_width);
+        let cleaned_description: String = description
+            .chars()
+            .filter(|&character| character != '\n')
+            .collect();
+        let painted_description = color_settings
+            .description_style
+            .paint(truncate_with_ansi(&cleaned_description, description_size));
+
+        match is_selected {
+            true => format!(
+                "{styled_value}{RESET}{}{}{:padding_size$}{painted_description}{RESET}",
+                text_style.prefix(),
+                color_settings.selected_text_style.prefix(),
+                ""
+            ),
+            false => format!(
+                "{styled_value}{:padding_size$}{RESET}{painted_description}{RESET}",
+                ""
+            ),
+        }
+    }
+
+    /// Apply a queued menu event, refreshing the values or moving the selection
+    fn apply_event(
+        &mut self,
+        event: MenuEvent,
+        editor: &mut Editor,
+        completer: &mut dyn Completer,
+    ) {
+        match event {
+            MenuEvent::Activate(updated) | MenuEvent::Edit(updated) => {
+                self.reload(updated, editor, completer)
+            }
+            MenuEvent::Deactivate => {}
+            MenuEvent::NextElement => self.move_next(),
+            MenuEvent::PreviousElement => self.move_previous(),
+            MenuEvent::MoveUp => self.move_up(),
+            MenuEvent::MoveDown => self.move_down(),
+            MenuEvent::MoveLeft => self.move_left(),
+            MenuEvent::MoveRight => self.move_right(),
+            MenuEvent::PreviousPage | MenuEvent::NextPage => {
+                // The columnar menu doest have the concept of pages, yet
             }
         }
+    }
+
+    /// Recompute the completion box geometry from the current suggestions,
+    /// selection, and terminal size. Runs on every repaint.
+    pub fn recompute_layout(&mut self, painter: &Painter) {
+        let screen_width = painter.screen_width() as usize;
+
+        // If there is at least one suggestion that contains a description, then the layout
+        // is changed to one column to fit the description
+        let has_descriptions = self
+            .get_values()
+            .iter()
+            .any(|suggestion| suggestion.description.is_some());
+
+        if has_descriptions {
+            self.working_details.columns = 1;
+            self.working_details.col_width = screen_width;
+        } else {
+            // If no default width is found, then the total screen width is used to estimate
+            // the column width based on the default number of columns
+            let default_width = self
+                .default_details
+                .col_width
+                .unwrap_or_else(|| screen_width / self.default_details.columns as usize);
+
+            // Adjusting the working width of the column based the max line width found
+            // in the menu values
+            let required_width =
+                self.completions.longest_suggestion + self.default_details.col_padding;
+
+            self.working_details.col_width = required_width.max(default_width).min(screen_width);
+
+            // The working columns is adjusted based on possible number of columns
+            // that could be fitted in the screen with the calculated column width
+            let possible_columns = (screen_width / self.working_details.col_width) as u16;
+            self.working_details.columns =
+                possible_columns.min(self.default_details.columns).max(1);
+        }
+
+        let available = available_lines(painter, self.min_rows(), u16::MAX);
+        self.skip_rows = scroll_offset(self.row_pos, self.skip_rows, available);
     }
 }
 
@@ -550,29 +628,20 @@ impl Menu for ColumnarMenu {
     }
 
     /// Updates menu values
+    fn reset_position(&mut self) {
+        self.col_pos = 0;
+        self.row_pos = 0;
+    }
+
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
 
-        let (values, base_ranges) = completer.complete_with_base_ranges(&input, pos);
-
-        self.values = values;
-        self.display_widths = self
-            .values
-            .iter()
-            .map(|sugg| strip_ansi_escapes::strip_str(sugg.display_value()).width())
-            .collect();
-        self.working_details.shortest_base_string = base_ranges
-            .iter()
-            .map(|range| {
-                let end = floor_char_boundary(editor.get_buffer(), range.end);
-                let start = floor_char_boundary(editor.get_buffer(), range.start).min(end);
-                editor.get_buffer()[start..end].to_string()
-            })
-            .min_by_key(|s| s.width())
-            .unwrap_or_default();
-        self.longest_suggestion = *self.display_widths.iter().max().unwrap_or(&0);
-
-        self.reset_position();
+        let (result, base_ranges) = completer.complete_with_base_ranges(&input, pos);
+        self.awaiting_results = result.is_pending();
+        if let Some(completions) = CompletionDisplay::from_result(result, &base_ranges, editor) {
+            self.completions = completions;
+            self.reset_position();
+        }
     }
 
     /// The working details for the menu changes based on the size of the lines
@@ -584,90 +653,10 @@ impl Menu for ColumnarMenu {
         painter: &Painter,
     ) {
         if let Some(event) = self.event.take() {
-            match event {
-                MenuEvent::Activate(updated) => {
-                    self.reset_position();
-
-                    if !updated {
-                        self.update_values(editor, completer);
-                    }
-                }
-                MenuEvent::Deactivate => {}
-                MenuEvent::Edit(updated) => {
-                    self.reset_position();
-
-                    if !updated {
-                        self.update_values(editor, completer);
-                    }
-                }
-                MenuEvent::NextElement => self.move_next(),
-                MenuEvent::PreviousElement => self.move_previous(),
-                MenuEvent::MoveUp => self.move_up(),
-                MenuEvent::MoveDown => self.move_down(),
-                MenuEvent::MoveLeft => self.move_left(),
-                MenuEvent::MoveRight => self.move_right(),
-                MenuEvent::PreviousPage | MenuEvent::NextPage => {
-                    // The columnar menu doest have the concept of pages, yet
-                }
-            }
-
-            // The working value for the menu are updated only after executing the menu events,
-            // so they have the latest suggestions
-            //
-            // If there is at least one suggestion that contains a description, then the layout
-            // is changed to one column to fit the description
-            let exist_description = self
-                .get_values()
-                .iter()
-                .any(|suggestion| suggestion.description.is_some());
-
-            let screen_width = painter.screen_width() as usize;
-            if exist_description {
-                self.working_details.columns = 1;
-                self.working_details.col_width = screen_width;
-            } else {
-                // If no default width is found, then the total screen width is used to estimate
-                // the column width based on the default number of columns
-                let default_width = if let Some(col_width) = self.default_details.col_width {
-                    col_width
-                } else {
-                    screen_width / self.default_details.columns as usize
-                };
-
-                // Adjusting the working width of the column based the max line width found
-                // in the menu values
-                self.working_details.col_width = default_width
-                    .max(self.longest_suggestion + self.default_details.col_padding)
-                    .min(screen_width);
-
-                // The working columns is adjusted based on possible number of columns
-                // that could be fitted in the screen with the calculated column width
-                let possible_cols = painter.screen_width() / self.working_details.col_width as u16;
-                if possible_cols > self.default_details.columns {
-                    self.working_details.columns = self.default_details.columns.max(1);
-                } else {
-                    self.working_details.columns = possible_cols;
-                }
-            }
-
-            let mut available_lines = painter.remaining_lines_real();
-            // Handle the case where a prompt uses the entire screen.
-            // Drawing the menu has priority over the drawing the prompt.
-            if available_lines == 0 {
-                available_lines = painter.remaining_lines().min(self.min_rows());
-            }
-
-            self.skip_rows = if self.row_pos < self.skip_rows {
-                // Selection is above the visible area, scroll up
-                self.row_pos
-            } else if self.row_pos >= self.skip_rows + available_lines {
-                // Selection is below the visible area, scroll down
-                self.row_pos - available_lines + 1
-            } else {
-                // Selection is within the visible area
-                self.skip_rows
-            };
+            self.apply_event(event, editor, completer);
         }
+
+        self.recompute_layout(painter);
     }
 
     /// The buffer gets replaced in the Span location
@@ -682,7 +671,7 @@ impl Menu for ColumnarMenu {
 
     /// Gets values from filler that will be displayed in the menu
     fn get_values(&self) -> &[Suggestion] {
-        &self.values
+        &self.completions.values
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
@@ -691,7 +680,13 @@ impl Menu for ColumnarMenu {
 
     fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String {
         if self.get_values().is_empty() {
-            self.no_records_msg(use_ansi_coloring)
+            if self.awaiting_results {
+                // A background completion is still running; draw nothing rather
+                // than flashing "NO RECORDS FOUND" before the results land.
+                String::new()
+            } else {
+                self.no_records_msg(use_ansi_coloring)
+            }
         } else {
             // It seems that crossterm prefers to have a complete string ready to be printed
             // rather than looping through the values and printing multiple things
@@ -843,11 +838,13 @@ mod tests {
     }
 
     impl Completer for FakeCompleter {
-        fn complete(&mut self, _line: &str, pos: usize) -> Vec<Suggestion> {
-            self.completions
-                .iter()
-                .map(|c| fake_suggestion(c, pos))
-                .collect()
+        fn complete(&mut self, _line: &str, pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::fresh(
+                self.completions
+                    .iter()
+                    .map(|c| fake_suggestion(c, pos))
+                    .collect::<Vec<_>>(),
+            )
         }
     }
 
@@ -863,6 +860,35 @@ mod tests {
         }
     }
 
+    /// Like [`FakeCompleter`] but every suggestion carries a description, which
+    /// drives the columnar menu into its single-column layout.
+    struct DescribedCompleter {
+        completions: Vec<String>,
+    }
+
+    impl DescribedCompleter {
+        fn new(completions: &[&str]) -> Self {
+            Self {
+                completions: completions.iter().map(|c| c.to_string()).collect(),
+            }
+        }
+    }
+
+    impl Completer for DescribedCompleter {
+        fn complete(&mut self, _line: &str, pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::fresh(
+                self.completions
+                    .iter()
+                    .map(|c| {
+                        let mut suggestion = fake_suggestion(c, pos);
+                        suggestion.description = Some(format!("desc for {c}"));
+                        suggestion
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        }
+    }
+
     fn setup_menu(
         menu: &mut ColumnarMenu,
         editor: &mut Editor,
@@ -874,6 +900,42 @@ mod tests {
 
         menu.menu_event(MenuEvent::Activate(false));
         menu.update_working_details(editor, completer, &painter);
+    }
+
+    /// The menu layout must recompute whenever `update_working_details` runs,
+    /// not only when a menu event is queued. Here the suggestions are refreshed
+    /// through `update_values` (as a repaint would after new results arrive)
+    /// with no pending event; the appearance of descriptions must still collapse
+    /// the layout to a single column instead of waiting for the next keypress.
+    #[test]
+    fn layout_recomputes_without_a_menu_event() {
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(120, 10);
+
+        // Initial results have no descriptions -> normal multi-column layout.
+        let mut plain = FakeCompleter::new(&["alpha", "beta", "gamma"]);
+        menu.menu_event(MenuEvent::Activate(false));
+        menu.update_working_details(&mut editor, &mut plain, &painter);
+        assert!(
+            menu.get_cols() > 1,
+            "expected a multi-column layout without descriptions"
+        );
+
+        // Refresh the values without queuing a menu event, then repaint.
+        let mut described = DescribedCompleter::new(&["alpha", "beta", "gamma"]);
+        menu.update_values(&mut editor, &mut described);
+        assert!(menu.event.is_none(), "no menu event should be queued");
+        menu.update_working_details(&mut editor, &mut described, &painter);
+
+        // Descriptions must collapse the menu to one column now; before the fix
+        // this only took effect after the next menu event (e.g. an arrow key).
+        assert_eq!(
+            menu.get_cols(),
+            1,
+            "descriptions must relayout to one column without a menu event"
+        );
     }
 
     #[test]
@@ -931,6 +993,36 @@ mod tests {
         setup_menu(&mut menu, &mut editor, &mut completer, (10, 10));
 
         assert!(menu.menu_string(10, true).contains("验"));
+    }
+
+    /// A completer whose result is always `Pending` (a background compute that
+    /// never lands within the test), to exercise the awaiting-results path.
+    struct PendingCompleter;
+
+    impl Completer for PendingCompleter {
+        fn complete(&mut self, _line: &str, _pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::Pending
+        }
+    }
+
+    #[test]
+    fn pending_completion_draws_nothing_instead_of_no_records() {
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+
+        // A settled, genuinely empty result shows "NO RECORDS FOUND" on 1 line.
+        let mut empty = FakeCompleter::new(&[]);
+        setup_menu(&mut menu, &mut editor, &mut empty, (30, 10));
+        assert_eq!(menu.get_rows(), 1);
+        assert!(menu.menu_string(10, false).contains("NO RECORDS FOUND"));
+
+        // A pending result (background work still in flight) reserves no space and
+        // draws nothing, so the menu never flashes "NO RECORDS FOUND".
+        let mut pending = PendingCompleter;
+        setup_menu(&mut menu, &mut editor, &mut pending, (30, 10));
+        assert_eq!(menu.get_rows(), 0);
+        assert_eq!(menu.menu_required_lines(30), 0);
+        assert!(menu.menu_string(10, false).is_empty());
     }
 
     #[test]

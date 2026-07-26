@@ -1,4 +1,4 @@
-use crate::{Completer, Span, Suggestion};
+use crate::{Completer, CompletionResult, Span, Suggestion};
 use std::{
     collections::{BTreeMap, BTreeSet},
     str::Chars,
@@ -53,7 +53,7 @@ impl Completer for DefaultCompleter {
     /// let mut completions = DefaultCompleter::default();
     /// completions.insert(vec!["batman","robin","batmobile","batcave","robber"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
-    ///     completions.complete("bat",3),
+    ///     completions.complete("bat",3).suggestions(),
     ///     vec![
     ///         Suggestion {value: "batcave".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false, ..Default::default()},
     ///         Suggestion {value: "batman".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 3 }, append_whitespace: false, ..Default::default()},
@@ -61,14 +61,14 @@ impl Completer for DefaultCompleter {
     ///     ]);
     ///
     /// assert_eq!(
-    ///     completions.complete("to the\r\nbat",11),
+    ///     completions.complete("to the\r\nbat",11).suggestions(),
     ///     vec![
     ///         Suggestion {value: "batcave".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false, ..Default::default()},
     ///         Suggestion {value: "batman".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false, ..Default::default()},
     ///         Suggestion {value: "batmobile".into(), description: None, style: None, extra: None, span: Span { start: 8, end: 11 }, append_whitespace: false, ..Default::default()},
     ///     ]);
     /// ```
-    fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
+    fn complete(&mut self, line: &str, pos: usize) -> CompletionResult {
         let mut span_line_whitespaces = 0;
         let mut completions = vec![];
         // Trimming in case someone passes in text containing stuff after the cursor, if
@@ -121,7 +121,7 @@ impl Completer for DefaultCompleter {
             }
         }
         completions.dedup();
-        completions
+        CompletionResult::fresh(completions)
     }
 }
 
@@ -182,13 +182,13 @@ impl DefaultCompleter {
     /// let mut completions = DefaultCompleter::default();
     /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
-    ///     completions.complete("te",2),
+    ///     completions.complete("te",2).suggestions(),
     ///     vec![Suggestion {value: "test".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false, ..Default::default()}]);
     ///
     /// let mut completions = DefaultCompleter::with_inclusions(&['-', '_']);
     /// completions.insert(vec!["test-hyphen","test_underscore"].iter().map(|s| s.to_string()).collect());
     /// assert_eq!(
-    ///     completions.complete("te",2),
+    ///     completions.complete("te",2).suggestions(),
     ///     vec![
     ///         Suggestion {value: "test-hyphen".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false, ..Default::default()},
     ///         Suggestion {value: "test_underscore".into(), description: None, style: None, extra: None, span: Span { start: 0, end: 2 }, append_whitespace: false, ..Default::default()},
@@ -376,7 +376,7 @@ mod tests {
         );
 
         assert_eq!(
-            completions.complete("ｎ", 3),
+            completions.complete("ｎ", 3).suggestions(),
             [
                 Suggestion {
                     value: "ｎｕｌｌ".into(),
@@ -421,9 +421,9 @@ mod tests {
 
         let buffer = "this is t";
 
-        let (suggestions, ranges) = completions.complete_with_base_ranges(buffer, 9);
+        let (result, ranges) = completions.complete_with_base_ranges(buffer, 9);
         assert_eq!(
-            suggestions,
+            result.suggestions(),
             [
                 Suggestion {
                     value: "test".into(),

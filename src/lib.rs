@@ -252,14 +252,15 @@ mod history;
 pub use history::SqliteBackedHistory;
 pub use history::{
     CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemExtraInfo,
-    HistoryItemId, HistoryNavigationQuery, HistorySessionId, IgnoreAllExtraInfo, SearchDirection,
-    SearchFilter, SearchQuery, HISTORY_SIZE,
+    HistoryItemId, HistoryNavigationQuery, HistorySessionId, IgnoreAllExtraInfo, JsonFilterValue,
+    SearchDirection, SearchFilter, SearchQuery, HISTORY_SIZE,
 };
 
 mod prompt;
 pub use prompt::{
     DefaultPrompt, DefaultPromptSegment, Prompt, PromptEditMode, PromptEditModeDiscriminants,
-    PromptHistorySearch, PromptHistorySearchStatus, PromptViMode,
+    PromptHistorySearch, PromptHistorySearchStatus, PromptViMode, DEFAULT_INDICATOR_COLOR,
+    DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_MULTILINE_COLOR, DEFAULT_PROMPT_RIGHT_COLOR,
 };
 
 mod edit_mode;
@@ -274,7 +275,9 @@ mod highlighter;
 pub use highlighter::{AbbrExpandContext, ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
 
 mod completion;
-pub use completion::{Completer, DefaultCompleter, Span, Suggestion};
+pub use completion::{
+    Completer, CompletionResult, CompletionStatus, DefaultCompleter, Span, Suggestion, Suggestions,
+};
 
 mod hinter;
 pub use hinter::CwdAwareHinter;
@@ -304,9 +307,7 @@ pub use utils::{
 };
 
 // Reexport the key types to be independent from an explicit crossterm dependency.
-pub use crossterm::{
-    event::{KeyCode, KeyModifiers},
-    style::Color,
-};
+pub use crossterm::event::{KeyCode, KeyModifiers};
 #[cfg(feature = "external_printer")]
 pub use external_printer::ExternalPrinter;
+pub use nu_ansi_term::Color;
