@@ -100,17 +100,14 @@ impl PasteBurstHook for TimingBurstDetector {
     fn enter_is_newline(&self) -> bool {
         let mut state = self.state.lock().expect("detector poisoned");
 
-        // A declared burst answers this on its own, without consulting the
-        // clock. The engine asks the question while parsing a batch it stopped
-        // draining because `poll_timeout` found the input idle, so the newest
-        // pasted character is always at least that old by now: a freshness test
-        // here would answer "not a paste" for every burst, whatever the
-        // threshold, and the paste would submit at its first newline.
-        //
-        // Every Enter in this batch belongs to the paste by construction, since
-        // an Enter arriving after the idle window lands in the next batch, and
-        // `settle` has cleared the latch by then. That is what keeps an Enter
-        // the user presses a moment later a submit.
+        // The engine only asks this outside a detected burst: once `burst` is
+        // latched true, every Enter drained into that batch is coalesced as a
+        // newline unconditionally, and the engine never calls this method for
+        // it — an Enter arriving after the idle window lands in the next
+        // batch instead, where it submits normally. This early return is
+        // therefore never reached from the engine's burst path; it stays here
+        // so the method answers consistently with `is_burst_active` if
+        // anything else calls it.
         if state.burst {
             return true;
         }

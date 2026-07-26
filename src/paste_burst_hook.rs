@@ -14,10 +14,12 @@
 //! loop feeds each just-read plain char to [`PasteBurstHook::on_char`] at read
 //! time (so real inter-char timing is preserved), keeps draining while
 //! [`PasteBurstHook::is_burst_active`] is true (using
-//! [`PasteBurstHook::poll_timeout`] as the idle-flush window), calls
-//! [`PasteBurstHook::settle`] once the burst goes idle, and reclassifies a bare
-//! `Enter` to an inserted newline when [`PasteBurstHook::enter_is_newline`]
-//! returns true.
+//! [`PasteBurstHook::poll_timeout`] as the idle-flush window), and calls
+//! [`PasteBurstHook::settle`] once the burst goes idle. A bare `Enter` drained
+//! into a detected burst is always coalesced as an embedded newline; outside a
+//! detected burst (a short paste that never reached the burst threshold), a
+//! bare `Enter` is instead reclassified to an inserted newline when
+//! [`PasteBurstHook::enter_is_newline`] returns true.
 //!
 //! The trait is intentionally generic (no application-specific concepts). The
 //! detector state and timing thresholds live entirely on the host side; reedline
@@ -40,43 +42,41 @@ use std::time::Duration;
 ///
 /// Only [`on_char`](Self::on_char) is called at the moment the input it
 /// describes arrives, so it is the one place where reading the clock measures
-/// what it looks like it measures. The other methods are called at points in
-/// the read loop that are separated from the input by an idle poll — see
-/// [`enter_is_newline`](Self::enter_is_newline) and
-/// [`is_burst_active`](Self::is_burst_active) for what each must answer from
-/// recorded state instead.
+/// what it looks like it measures. [`is_burst_active`](Self::is_burst_active)
+/// is called at a point in the read loop that is separated from the input by
+/// an idle poll — see that method for what it must answer from recorded state
+/// instead. [`enter_is_newline`](Self::enter_is_newline) is only asked outside
+/// a detected burst, where no such separation applies; see that method for
+/// details.
 pub trait PasteBurstHook: Send + Sync {
     /// Feed one just-read plain char to the burst detector. Called at read time
     /// so the detector sees real inter-char timing.
     fn on_char(&self, c: char);
 
-    /// Decide AND record whether a bare `Enter` in the batch being processed is
-    /// a paste-embedded newline (insert `\n`, do not submit) rather than a
+    /// Decide whether a bare `Enter` in the batch being processed is a
+    /// paste-embedded newline (insert `\n`, do not submit) rather than a
     /// settling submit.
     ///
-    /// # Required semantics: answer a detected burst from the latch, not the clock
+    /// # When this is called
     ///
-    /// This is asked while the batch is processed, not when the `Enter` arrives:
-    /// the hook is never told the `Enter`'s arrival time, and for a detected
-    /// burst the engine only stops draining once a poll of
-    /// [`poll_timeout`](Self::poll_timeout) finds the input idle. The newest
-    /// pasted char is therefore always at least that old by the time this is
-    /// called, so an implementation that answers with a freshness test — "did a
-    /// char arrive within the last N ms" — returns `false` for every burst
-    /// whatever N is, and the paste submits at its first embedded newline.
+    /// The engine only asks this outside a detected burst: a short, fast
+    /// paste (e.g. `aa\nbb`) whose lines never reach the detector's burst
+    /// threshold is never drained past the ordinary end-of-batch stop, so the
+    /// batch (and this question) follows the chars immediately, with no idle
+    /// poll in between. An inter-char freshness test — "did a char arrive
+    /// within the last N ms" — is therefore the right signal here, and
+    /// correctly keeps the paste from submitting halfway through.
     ///
-    /// So once a burst has been detected, an implementation MUST answer `true`
-    /// from the same latched state that [`is_burst_active`](Self::is_burst_active)
-    /// reports, until [`settle`](Self::settle) releases it. That does not swallow
-    /// a real submit: an `Enter` the user presses after the paste arrives past
-    /// the idle window, so it lands in the next batch, by which point the engine
-    /// has called [`settle`](Self::settle) and the latch is gone.
-    ///
-    /// Timing is still the right signal on the other path. A short fast paste
-    /// (e.g. `aa\nbb`) whose lines never reach the detector's burst threshold is
-    /// not drained, so there this question does follow the chars immediately and
-    /// an inter-char freshness test correctly keeps the paste from submitting
-    /// halfway through.
+    /// A bare `Enter` drained into a *detected* burst is never routed through
+    /// this method: the engine coalesces it as an embedded newline
+    /// unconditionally. Reaching the drain loop at all means it arrived
+    /// inside the idle-flush window (see [`poll_timeout`](Self::poll_timeout))
+    /// that keeps a burst coalescing — i.e. at machine paste speed, which by
+    /// definition is not a human `Enter` press. A real submit `Enter`, typed
+    /// after the paste settles, arrives past that window: the drain has
+    /// already stopped and [`settle`](Self::settle) has already run by the
+    /// time it is read, so it starts the *next* batch and is handled there as
+    /// an ordinary submit.
     fn enter_is_newline(&self) -> bool;
 
     /// True while a real paste burst is coalescing — the read loop keeps
