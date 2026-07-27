@@ -128,6 +128,9 @@ pub trait Highlighter: Send {
     /// [`AutoPairAction::BackspacePair`])
     ///
     /// The default implementation always returns `true` (always auto-pair)
+    ///
+    /// See [`Reedline::with_auto_pairs`](crate::Reedline::with_auto_pairs) for how
+    /// this interacts with pair lookup order and with pasted text.
     fn should_auto_pair(&self, context: &AutoPairContext<'_>) -> bool {
         let _ = context;
         true

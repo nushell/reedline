@@ -528,6 +528,28 @@ impl Reedline {
     }
 
     /// A builder that configures automatic pair insertion for the Reedline engine.
+    ///
+    /// By default, auto-pairing applies at every position for the configured pairs.
+    /// To suppress it in certain syntactic positions (e.g. string literals, or in the
+    /// middle of a word), override [`Highlighter::should_auto_pair`].
+    ///
+    /// For `InsertChar`, the closer is looked up before the opener. A character that
+    /// is registered as both a closer of one pair and an opener of another therefore
+    /// resolves based on whether that closer currently sits at the cursor, not on the
+    /// order the pairs were passed to [`AutoPairs::new`].
+    ///
+    /// This builder does not touch the terminal's bracketed paste setting.
+    /// If bracketed paste is enabled (see [`Self::use_bracketed_paste`]), a paste is
+    /// delivered as [`EditCommand::InsertString`](crate::EditCommand::InsertString),
+    /// which never goes through auto-pairing. If bracketed paste is disabled, pasted
+    /// characters arrive the same way as typed ones and are auto-paired like typing:
+    /// pasting text that has an opener without its closer (e.g. `foo(bar`) inserts a
+    /// closing character that was never in the clipboard content. For this reason it
+    /// is recommended to combine `with_auto_pairs` with
+    /// `use_bracketed_paste(cfg!(not(target_os = "windows")))`, the same guard
+    /// nushell itself uses. On Windows, stock crossterm reads console input through
+    /// the Win32 console API and has no ANSI input parser, so there is no
+    /// `Event::Paste` path to enable there (see crossterm-rs/crossterm#737).
     #[must_use]
     pub fn with_auto_pairs(mut self, auto_pairs: AutoPairs) -> Self {
         self.auto_pairs = Some(auto_pairs);
