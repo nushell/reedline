@@ -1988,13 +1988,7 @@ impl Reedline {
         // treating `None` from this function as a pass-through.
         let buffer = self.editor.get_buffer();
         let insertion_point = self.editor.insertion_point();
-        let selection = self.editor.line_buffer().selection_anchor().map(|anchor| {
-            if anchor <= insertion_point {
-                anchor..insertion_point
-            } else {
-                insertion_point..anchor
-            }
-        });
+        let selection = self.editor.get_selection().map(|(start, end)| start..end);
         let context = AutoPairContext::new(buffer, insertion_point, pair, selection, action);
 
         if self.highlighter.should_auto_pair(&context) {
@@ -2918,6 +2912,99 @@ mod tests {
         assert_eq!(recorded[0].0, "echo hi");
         assert_eq!(recorded[0].1, "echo hi".len());
         assert_eq!(recorded[0].2, AutoPairAction::Open);
+    }
+
+    // Regression: `auto_pair_command` used to derive the context's selection
+    // by comparing `selection_anchor()` against `insertion_point()` directly.
+    // Under a forward vi-normal (block) selection those two disagree with the
+    // actual selected range: `insertion_point()` is the *caret*, one grapheme
+    // back from the cursor's `head` (see `Editor::insertion_point` /
+    // `Cursor::caret`), while `Editor::get_selection()` — the range
+    // `insert_pair` (and thus the real `InsertPair` wrap) actually uses —
+    // reports `cursor.start()..cursor.end()` with `end()` at the widened
+    // `head`. The old code silently dropped the selection's last grapheme
+    // from the context it handed to `should_auto_pair`.
+    //
+    // This mirrors the exact selection shape pinned by
+    // `vi_normal_selection_cut_is_inclusive` in `core_editor::editor`'s own
+    // tests: from "hello" at position 0, two forward `MoveRight { select:
+    // true }` steps land the head on 'l' (byte 2) but widen the selection to
+    // byte 3 to cover it.
+    #[test]
+    fn auto_pairs_context_selection_matches_vi_block_forward_selection() {
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<std::ops::Range<usize>>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        struct RecordingSelectionHighlighter {
+            seen: std::sync::Arc<std::sync::Mutex<Vec<std::ops::Range<usize>>>>,
+        }
+
+        impl Highlighter for RecordingSelectionHighlighter {
+            fn highlight(&self, _line: &str, _cursor: usize) -> crate::StyledText {
+                crate::StyledText::new()
+            }
+
+            fn should_auto_pair(&self, context: &AutoPairContext<'_>) -> bool {
+                if let Some(selection) = context.selection() {
+                    self.seen.lock().unwrap().push(selection);
+                }
+                true
+            }
+        }
+
+        // A fixed `EditMode` that always reports Vi-normal, so `run_edit_commands`'s
+        // `sync_edit_mode` (which re-adopts `Reedline`'s own edit mode on every
+        // call, independent of whatever `Editor::set_edit_mode` was last told)
+        // does not flip the block-caret rest policy back to `Bar` behind our
+        // back between the selection setup below and the `InsertChar` that
+        // exercises `auto_pair_command`.
+        struct AlwaysViNormal;
+        impl EditMode for AlwaysViNormal {
+            fn parse_event(&mut self, _e: ReedlineRawEvent) -> ReedlineEvent {
+                ReedlineEvent::None
+            }
+            fn edit_mode(&self) -> PromptEditMode {
+                PromptEditMode::Vi(PromptViMode::Normal)
+            }
+        }
+
+        let mut rl = auto_pair_engine(&[('(', ')')])
+            .with_highlighter(Box::new(RecordingSelectionHighlighter {
+                seen: seen.clone(),
+            }))
+            .with_edit_mode(Box::new(AlwaysViNormal));
+
+        rl.run_edit_commands(&[EditCommand::InsertString("hello".into())]);
+        rl.editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 0,
+            select: false,
+        });
+        rl.editor
+            .run_edit_command(&EditCommand::MoveRight { select: true });
+        rl.editor
+            .run_edit_command(&EditCommand::MoveRight { select: true });
+
+        // Sanity-check the premise: a forward block selection whose head sits
+        // one grapheme past what `insertion_point()` alone would suggest.
+        assert_eq!(rl.editor.insertion_point(), 2);
+        let expected_selection = rl.editor.get_selection().expect("selection active");
+        assert_eq!(expected_selection, (0, 3));
+
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+
+        let recorded = seen.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            recorded[0],
+            expected_selection.0..expected_selection.1,
+            "context selection must match Editor::get_selection(), not a range \
+             derived from insertion_point()"
+        );
+
+        // `insert_pair` wraps the exact same range `get_selection()` reported,
+        // so the buffer confirms the context wasn't merely coincidentally
+        // correct: 'l' at byte 2 must be inside the pair.
+        assert_eq!(rl.editor.get_buffer(), "(hel)lo");
     }
 
     /// Implements arf's real auto-pair rules as a spec example:
