@@ -272,7 +272,10 @@ pub use edit_mode::{
 };
 
 mod highlighter;
-pub use highlighter::{AbbrExpandContext, ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
+pub use highlighter::{
+    AbbrExpandContext, AutoPairAction, AutoPairContext, ExampleHighlighter, Highlighter,
+    SimpleMatchHighlighter,
+};
 
 mod completion;
 pub use completion::{
