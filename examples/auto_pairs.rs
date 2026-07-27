@@ -78,6 +78,11 @@ impl Highlighter for RConsoleHighlighter {
 /// delimiter: once inside a single-quoted string, `"` characters are just
 /// text until the single quote closes, and vice versa. Backslash-escaped
 /// quotes never toggle either state.
+///
+/// This scanner is deliberately minimal: it exists to keep the example
+/// self-contained, and it is not covered by tests. A real consumer should
+/// answer this question with the parser it already owns — which is the point
+/// of putting the veto on `Highlighter`, where that parser normally lives.
 fn is_inside_unclosed_quote(buffer: &str, insertion_point: usize, quote: char) -> bool {
     let mut in_single = false;
     let mut in_double = false;
