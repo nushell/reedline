@@ -19,7 +19,11 @@ use std::io;
 ///    the same quote kind, typing that quote character closes the string
 ///    instead of opening a new pair. Brackets are not subject to this rule:
 ///    `(` and `[` still pair normally *inside* a string, e.g. typing `(` after
-///    `"foo` produces `"foo()`. Only same-kind quote nesting is special-cased.
+///    `"foo` produces `"foo()`. Only same-kind quote nesting is special-cased,
+///    and quote kinds don't interfere with each other: e.g. in `'foo"`, the
+///    `"` is plain text inside the still-open single-quoted string, not a
+///    string delimiter, so typing `"` there still opens a new double-quote
+///    pair.
 const FOLLOWING_CLOSERS: [char; 5] = [')', ']', '}', '"', '\''];
 
 struct RConsoleHighlighter;
@@ -66,11 +70,17 @@ impl Highlighter for RConsoleHighlighter {
     }
 }
 
-/// Returns `true` if `buffer[..insertion_point]` contains an odd number of
-/// unescaped `quote` characters, i.e. the cursor sits inside a string of that
-/// quote kind which hasn't been closed yet.
+/// Returns `true` if the cursor at `insertion_point` sits inside an unclosed
+/// string of the given `quote` kind (`'` or `"`).
+///
+/// Both quote kinds are tracked simultaneously so that a quote of one kind
+/// found *inside* an unclosed string of the other kind is not mistaken for a
+/// delimiter: once inside a single-quoted string, `"` characters are just
+/// text until the single quote closes, and vice versa. Backslash-escaped
+/// quotes never toggle either state.
 fn is_inside_unclosed_quote(buffer: &str, insertion_point: usize, quote: char) -> bool {
-    let mut in_quote = false;
+    let mut in_single = false;
+    let mut in_double = false;
     let mut escaped = false;
     for ch in buffer[..insertion_point].chars() {
         if escaped {
@@ -79,11 +89,16 @@ fn is_inside_unclosed_quote(buffer: &str, insertion_point: usize, quote: char) -
         }
         match ch {
             '\\' => escaped = true,
-            c if c == quote => in_quote = !in_quote,
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
             _ => {}
         }
     }
-    in_quote
+    match quote {
+        '\'' => in_single,
+        '"' => in_double,
+        _ => false,
+    }
 }
 
 fn main() -> io::Result<()> {
