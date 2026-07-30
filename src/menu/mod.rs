@@ -229,9 +229,29 @@ pub trait Menu: Send {
         &self.settings().name
     }
 
-    /// Menu indicator
+    /// Completion progress for in-flight work.
+    fn progress(&self) -> CompletionProgress {
+        CompletionProgress::default()
+    }
+
+    /// Marker; animated frame if work in flight.
     fn indicator(&self) -> &str {
-        &self.settings().marker
+        let settings = self.settings();
+        settings
+            .working
+            .marker(self.progress().elapsed())
+            .unwrap_or(&settings.marker)
+    }
+
+    /// Current working phase, or None.
+    fn working_phase(&self) -> Option<WorkingPhase> {
+        self.settings().working.phase(self.progress().elapsed())
+    }
+
+    /// Message shown while completion is running.
+    fn working_message(&self, use_ansi_coloring: bool) -> String {
+        self.settings()
+            .working_message(self.progress(), use_ansi_coloring)
     }
 
     /// Checks if the menu is active
@@ -538,6 +558,19 @@ pub trait MenuBuilder: Menu + Sized {
         self
     }
 
+    /// Set static working marker
+    #[must_use]
+    fn with_working_marker(self, marker: &str) -> Self {
+        self.with_working_indicator(WorkingIndicator::new([marker]))
+    }
+
+    /// Set full in-flight indicator
+    #[must_use]
+    fn with_working_indicator(mut self, working: WorkingIndicator) -> Self {
+        self.settings_mut().working = working;
+        self
+    }
+
     /// Set only_buffer_difference. Ignored when input_mode set.
     #[must_use]
     fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
@@ -667,6 +700,10 @@ impl Menu for ReedlineMenu {
 
     fn name(&self) -> &str {
         self.as_ref().name()
+    }
+
+    fn progress(&self) -> CompletionProgress {
+        self.as_ref().progress()
     }
 
     fn indicator(&self) -> &str {
