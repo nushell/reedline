@@ -65,6 +65,17 @@ struct Action {
     next_mode: Option<HelixMode>,
 }
 
+impl Action {
+    /// Emit `cmd` once per count.
+    ///
+    /// Valid only when repeating the event composes, i.e. the op re-reads
+    /// the cursor each time. Motions and undo qualify; paste won't, since
+    /// it writes a cursor derived from what it just inserted.
+    fn repeated(self, cmd: EditCommand) -> ReedlineEvent {
+        ReedlineEvent::Edit(vec![cmd; self.count])
+    }
+}
+
 /// This parses incoming input `Event`s like a Helix/Kakoune-style editor: motions are
 /// selection first, lowered onto the editor's [`MotionTarget`](crate::MotionTarget) verb vocabulary.
 #[derive(Debug, Clone)]
@@ -395,22 +406,16 @@ fn interpret(mode: HelixMode, count: usize, key: KeyEvent) -> Outcome {
 fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
     let event = match action.verb {
         Verb::SelectingMotion(target) => match mode {
-            HelixMode::Normal => {
-                ReedlineEvent::Edit(vec![EditCommand::Select(target); action.count])
-            }
-            HelixMode::Select => {
-                ReedlineEvent::Edit(vec![EditCommand::Extend(target); action.count])
-            }
+            HelixMode::Normal => action.repeated(EditCommand::Select(target)),
+            HelixMode::Select => action.repeated(EditCommand::Extend(target)),
             HelixMode::Insert => {
                 // unreachable at runtime: dispatch guards against insert mode
                 ReedlineEvent::None
             }
         },
         Verb::CollapsingMotion(target) => match mode {
-            HelixMode::Normal => ReedlineEvent::Edit(vec![EditCommand::Move(target); action.count]),
-            HelixMode::Select => {
-                ReedlineEvent::Edit(vec![EditCommand::Extend(target); action.count])
-            }
+            HelixMode::Normal => action.repeated(EditCommand::Move(target)),
+            HelixMode::Select => action.repeated(EditCommand::Extend(target)),
             HelixMode::Insert => {
                 // unreachable at runtime: dispatch guards against insert mode
                 ReedlineEvent::None
@@ -423,12 +428,8 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             Op::Replace(ch) => ReedlineEvent::Edit(vec![EditCommand::ReplaceChar(ch)]),
         },
         Verb::Collapse(dir) => ReedlineEvent::Edit(vec![EditCommand::CollapseSelection(dir)]),
-        // The count rule is "motions only" everywhere else, because for the
-        // operators a count is not a repeat (`3d` does not cut three times).
-        // Undo/redo are the exception: stepping the edit stack back N times is
-        // exactly what `3u` means in helix.
-        Verb::Undo => ReedlineEvent::Edit(vec![EditCommand::Undo; action.count]),
-        Verb::Redo => ReedlineEvent::Edit(vec![EditCommand::Redo; action.count]),
+        Verb::Undo => action.repeated(EditCommand::Undo),
+        Verb::Redo => action.repeated(EditCommand::Redo),
         Verb::Deselect => ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint]),
         Verb::ChangeMode => ReedlineEvent::None,
         Verb::Submit => {
