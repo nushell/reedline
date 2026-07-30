@@ -6,7 +6,10 @@ pub mod menu_functions;
 
 use crate::core_editor::Editor;
 use crate::History;
-use crate::{completion::history::HistoryCompleter, painting::Painter, Completer, Suggestion};
+use crate::{
+    completion::history::HistoryCompleter, painting::Painter, Completer, CompletionResult,
+    Suggestion,
+};
 pub use columnar_menu::ColumnarMenu;
 pub use columnar_menu::TraversalDirection;
 pub use description_menu::DescriptionMenu;
@@ -14,7 +17,8 @@ pub use ide_menu::DescriptionMode;
 pub use ide_menu::IdeMenu;
 pub use list_menu::DescriptionPosition;
 pub use list_menu::ListMenu;
-use nu_ansi_term::{Color, Style};
+use nu_ansi_term::{ansi::RESET, Color, Style};
+use std::time::{Duration, Instant};
 
 /// Struct to store the menu style
 pub struct MenuTextStyle {
@@ -41,6 +45,141 @@ impl Default for MenuTextStyle {
             selected_match_style: Color::Green.bold().reverse().underline(),
             match_style: Style::default().underline(),
         }
+    }
+}
+
+/// In-flight completion indicator: animated marker + optional message.
+#[derive(Debug, Clone)]
+pub struct WorkingIndicator {
+    /// Animation frames
+    frames: Vec<String>,
+    /// Duration for one full frame cycle.
+    period: Duration,
+    /// Debounce: how long before the indicator shows.
+    grace: Duration,
+    /// Duration before message appears
+    patience: Duration,
+    /// Message shown when the wait is long enough.
+    message: String,
+}
+
+impl Default for WorkingIndicator {
+    fn default() -> Self {
+        // ASCII spinner: single-column in all terminals
+        Self::new(["- ", "\\ ", "| ", "/ "])
+    }
+}
+
+impl WorkingIndicator {
+    /// New indicator with default timings.
+    #[must_use]
+    pub fn new<I: IntoIterator<Item = impl Into<String>>>(frames: I) -> Self {
+        Self {
+            frames: frames.into_iter().map(Into::into).collect(),
+            period: Duration::from_millis(800),
+            grace: Duration::from_millis(120),
+            patience: Duration::from_secs(2),
+            message: "searching...".to_string(),
+        }
+    }
+
+    /// Set period.
+    #[must_use]
+    pub fn with_period(mut self, period: Duration) -> Self {
+        self.period = period;
+        self
+    }
+
+    /// Set grace period.
+    #[must_use]
+    pub fn with_grace(mut self, grace: Duration) -> Self {
+        self.grace = grace;
+        self
+    }
+
+    /// Set patience.
+    #[must_use]
+    pub fn with_patience(mut self, patience: Duration) -> Self {
+        self.patience = patience;
+        self
+    }
+
+    /// Set message.
+    #[must_use]
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.message = message.into();
+        self
+    }
+
+    /// Current visible state, or None during grace period.
+    pub fn phase(&self, elapsed: Option<Duration>) -> Option<WorkingPhase> {
+        let elapsed = elapsed.filter(|&e| !self.frames.is_empty() && e >= self.grace)?;
+        let nanos = self.period.as_nanos();
+        // Nanos per frame; minimum 1 step per tick.
+        let step = if nanos == 0 {
+            0
+        } else {
+            (nanos / self.frames.len() as u128).max(1)
+        };
+        let ticks = (elapsed - self.grace).as_nanos().checked_div(step);
+
+        Some(WorkingPhase {
+            frame: ticks.map_or(0, |t| (t % self.frames.len() as u128) as usize),
+            spelled_out: elapsed >= self.patience,
+        })
+    }
+
+    fn marker(&self, elapsed: Option<Duration>) -> Option<&str> {
+        Some(self.frames[self.phase(elapsed)?.frame].as_str())
+    }
+
+    fn message(&self, elapsed: Option<Duration>) -> Option<&str> {
+        self.phase(elapsed)?.spelled_out.then_some(&*self.message)
+    }
+}
+
+/// Snapshot of WorkingIndicator at an instant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkingPhase {
+    /// Current frame index
+    pub frame: usize,
+    /// Whether message is also shown
+    pub spelled_out: bool,
+}
+
+/// Completion start instant, or None.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompletionProgress {
+    since: Option<Instant>,
+}
+
+impl CompletionProgress {
+    /// Create progress already at a given elapsed time.
+    pub fn working_for(elapsed: Duration) -> Self {
+        let now = Instant::now();
+        Self {
+            since: Some(now.checked_sub(elapsed).unwrap_or(now)),
+        }
+    }
+
+    /// Start/stop clock on work in flight; idempotent start.
+    pub fn update(&mut self, result: &CompletionResult) {
+        match result {
+            CompletionResult::Fresh { .. } => self.since = None,
+            CompletionResult::Stale { .. } | CompletionResult::Pending => {
+                self.since.get_or_insert_with(Instant::now);
+            }
+        }
+    }
+
+    /// Whether a completion is still in flight.
+    pub fn is_working(&self) -> bool {
+        self.since.is_some()
+    }
+
+    /// Elapsed time since start.
+    pub fn elapsed(&self) -> Option<Duration> {
+        self.since.map(|since| since.elapsed())
     }
 }
 
