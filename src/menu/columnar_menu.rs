@@ -1,4 +1,4 @@
-use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
+use super::{CompletionProgress, Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
@@ -71,10 +71,8 @@ pub struct ColumnarMenu {
     working_details: ColumnDetails,
     /// Suggestions currently displayed and their derived display metrics
     completions: CompletionDisplay,
-    /// Whether a background completion is still in flight with nothing to show
-    /// yet. While set, the menu draws nothing rather than a premature
-    /// "NO RECORDS FOUND" (which is reserved for a settled, genuinely empty result).
-    awaiting_results: bool,
+    /// In-flight completion state
+    progress: CompletionProgress,
     /// Column position
     col_pos: u16,
     /// row position in the menu. Starts from 0
@@ -97,7 +95,7 @@ impl Default for ColumnarMenu {
             min_rows: 3,
             working_details: ColumnDetails::default(),
             completions: CompletionDisplay::default(),
-            awaiting_results: false,
+            progress: CompletionProgress::default(),
             col_pos: 0,
             row_pos: 0,
             skip_rows: 0,
@@ -301,9 +299,15 @@ impl ColumnarMenu {
     /// Calculates how many rows the menu will use
     fn get_rows(&self) -> u16 {
         match self.get_values().len() as u16 {
-            // No reason to save space if we're waiting for results.
-            0 if self.awaiting_results => 0,
-            // Should be one row for actual empty results
+            // No space while working indicator is still in grace period
+            0 if self.progress.is_working()
+                && !self
+                    .working_phase()
+                    .map_or(false, |phase| phase.spelled_out) =>
+            {
+                0
+            }
+            // One row for "no records" or working message
             0 => 1,
             total_values => (total_values + self.get_cols() - 1) / self.get_cols(),
         }
@@ -572,6 +576,11 @@ impl Menu for ColumnarMenu {
         &self.settings
     }
 
+    /// Progress
+    fn progress(&self) -> CompletionProgress {
+        self.progress
+    }
+
     /// Active status
     fn is_active(&self) -> bool {
         self.active
@@ -618,6 +627,7 @@ impl Menu for ColumnarMenu {
     fn on_activate(&mut self) {
         // Reset completions on activation
         self.completions = CompletionDisplay::default();
+        self.progress = CompletionProgress::default();
     }
 
     /// Queue menu event
@@ -636,7 +646,7 @@ impl Menu for ColumnarMenu {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
 
         let (result, base_ranges) = completer.complete_with_base_ranges(&input, pos);
-        self.awaiting_results = result.is_pending();
+        self.progress.update(&result);
         if let Some(completions) = CompletionDisplay::from_result(result, &base_ranges, editor) {
             self.completions = completions;
             self.reset_position();
@@ -680,10 +690,8 @@ impl Menu for ColumnarMenu {
 
     fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String {
         if self.get_values().is_empty() {
-            if self.awaiting_results {
-                // A background completion is still running; draw nothing rather
-                // than flashing "NO RECORDS FOUND" before the results land.
-                String::new()
+            if self.progress.is_working() {
+                self.working_message(use_ansi_coloring)
             } else {
                 self.no_records_msg(use_ansi_coloring)
             }
@@ -749,9 +757,11 @@ impl Menu for ColumnarMenu {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use crate::painting::W;
 
-    use crate::{CompletionOrigin, Span, UndoBehavior};
+    use crate::{CompletionOrigin, Span, UndoBehavior, WorkingIndicator};
 
     use super::*;
 
@@ -1006,7 +1016,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_completion_draws_nothing_instead_of_no_records() {
+    fn pending_completion_never_reads_as_no_records() {
         let mut menu = ColumnarMenu::default().with_name("testmenu");
         let mut editor = Editor::default();
 
@@ -1015,14 +1025,151 @@ mod tests {
         setup_menu(&mut menu, &mut editor, &mut empty, (30, 10));
         assert_eq!(menu.get_rows(), 1);
         assert!(menu.menu_string(10, false).contains("NO RECORDS FOUND"));
+        assert_eq!(menu.indicator(), menu.settings.marker);
 
-        // A pending result (background work still in flight) reserves no space and
-        // draws nothing, so the menu never flashes "NO RECORDS FOUND".
+        // No space while in grace period
         let mut pending = PendingCompleter;
         setup_menu(&mut menu, &mut editor, &mut pending, (30, 10));
         assert_eq!(menu.get_rows(), 0);
         assert_eq!(menu.menu_required_lines(30), 0);
         assert!(menu.menu_string(10, false).is_empty());
+
+        // Row reserved for working message
+        menu.progress = CompletionProgress::working_for(Duration::from_secs(5));
+        assert_eq!(menu.get_rows(), 1);
+        assert_eq!(menu.menu_required_lines(30), 1);
+        assert!(!menu.menu_string(10, false).contains("NO RECORDS FOUND"));
+        assert!(menu.menu_string(10, false).contains("searching"));
+    }
+
+    #[test]
+    fn working_indicator_escalates_with_the_length_of_the_wait() {
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+
+        let mut pending = PendingCompleter;
+        setup_menu(&mut menu, &mut editor, &mut pending, (30, 10));
+
+        // Grace period: no visible change
+        menu.progress = CompletionProgress::working_for(Duration::from_millis(10));
+        assert_eq!(menu.indicator(), menu.settings.marker);
+        assert!(menu.menu_string(10, false).is_empty());
+        assert_eq!(menu.working_phase(), None);
+
+        // Past grace: marker active, no row reserved
+        menu.progress = CompletionProgress::working_for(Duration::from_millis(500));
+        assert_ne!(menu.indicator(), menu.settings.marker);
+        assert!(menu.menu_string(10, false).is_empty());
+        assert_eq!(menu.get_rows(), 0);
+        assert_eq!(
+            menu.working_phase().map(|phase| phase.spelled_out),
+            Some(false)
+        );
+
+        // Long wait: spelled out and row reserved
+        menu.progress = CompletionProgress::working_for(Duration::from_secs(5));
+        assert!(menu.menu_string(10, false).contains("searching"));
+        assert_eq!(menu.get_rows(), 1);
+        assert_eq!(
+            menu.working_phase().map(|phase| phase.spelled_out),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn working_marker_cycles_through_its_frames() {
+        let indicator = WorkingIndicator::new(["a", "b", "c", "d"])
+            .with_grace(Duration::from_millis(100))
+            .with_period(Duration::from_millis(400));
+
+        // Before grace: nothing
+        assert_eq!(indicator.marker(Some(Duration::from_millis(99))), None);
+        // Quarter-period frames wrap around
+        assert_eq!(
+            indicator.marker(Some(Duration::from_millis(100))),
+            Some("a")
+        );
+        assert_eq!(
+            indicator.marker(Some(Duration::from_millis(250))),
+            Some("b")
+        );
+        assert_eq!(
+            indicator.marker(Some(Duration::from_millis(350))),
+            Some("c")
+        );
+        assert_eq!(
+            indicator.marker(Some(Duration::from_millis(450))),
+            Some("d")
+        );
+        assert_eq!(
+            indicator.marker(Some(Duration::from_millis(550))),
+            Some("a")
+        );
+        // Settled: no frame
+        assert_eq!(indicator.marker(None), None);
+    }
+
+    /// Short period still advances frames
+    #[test]
+    fn a_period_shorter_than_the_frame_count_still_advances() {
+        let indicator = WorkingIndicator::new(["a", "b", "c", "d"])
+            .with_grace(Duration::from_millis(0))
+            .with_period(Duration::from_nanos(3));
+
+        assert_eq!(indicator.marker(Some(Duration::from_nanos(0))), Some("a"));
+        assert_eq!(indicator.marker(Some(Duration::from_nanos(1))), Some("b"));
+        assert_eq!(indicator.marker(Some(Duration::from_nanos(2))), Some("c"));
+        assert_eq!(indicator.marker(Some(Duration::from_nanos(3))), Some("d"));
+    }
+
+    #[test]
+    fn a_single_frame_is_a_static_marker() {
+        let mut menu = ColumnarMenu::default()
+            .with_name("testmenu")
+            .with_working_marker("~ ");
+        let mut editor = Editor::default();
+
+        let mut pending = PendingCompleter;
+        setup_menu(&mut menu, &mut editor, &mut pending, (30, 10));
+
+        menu.progress = CompletionProgress::working_for(Duration::from_millis(500));
+        assert_eq!(menu.indicator(), "~ ");
+        menu.progress = CompletionProgress::working_for(Duration::from_millis(900));
+        assert_eq!(menu.indicator(), "~ ");
+    }
+
+    /// Completer with stale values while fresh result pending
+    struct StaleCompleter;
+
+    impl Completer for StaleCompleter {
+        fn complete(&mut self, line: &str, pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::Stale {
+                suggestions: vec![Suggestion {
+                    value: "stale".to_string(),
+                    span: crate::Span::new(0, 0),
+                    ..Default::default()
+                }]
+                .into(),
+                origin: CompletionOrigin::new(line, pos),
+                partial: None,
+            }
+        }
+    }
+
+    #[test]
+    fn stale_completion_shows_values_and_still_marks_itself_working() {
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+
+        let mut stale = StaleCompleter;
+        setup_menu(&mut menu, &mut editor, &mut stale, (30, 10));
+
+        // Stale values displayed with marker
+        assert!(menu.menu_string(10, false).contains("STALE"));
+        // Working marker shown, values preserved
+        menu.progress = CompletionProgress::working_for(Duration::from_millis(500));
+        assert_ne!(menu.indicator(), menu.settings.marker);
+        assert!(menu.menu_string(10, false).contains("STALE"));
     }
 
     /// Completer with fixed value and span
