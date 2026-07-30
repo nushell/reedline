@@ -34,6 +34,35 @@ impl Span {
     }
 }
 
+/// Buffer text and cursor position the completion was computed against.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompletionOrigin {
+    pub(crate) buffer: String,
+    pub(crate) insertion_point: usize,
+}
+
+impl CompletionOrigin {
+    /// Buffer/cursor for stale results.
+    pub fn new(buffer: impl Into<String>, insertion_point: usize) -> Self {
+        Self {
+            buffer: buffer.into(),
+            insertion_point,
+        }
+    }
+}
+
+/// Longest common prefix extension computed by the completer.
+///
+/// When present, reedline splices `insert` over `span` verbatim.
+/// Absent — reedline uses its own LCP derivation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Partial {
+    /// Buffer range to replace.
+    pub span: Span,
+    /// Text to splice in.
+    pub insert: String,
+}
+
 /// The outcome of a [`Completer::complete`] request.
 ///
 /// A synchronous completer only ever produces [`Fresh`](Self::Fresh). An
