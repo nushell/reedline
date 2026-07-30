@@ -419,18 +419,21 @@ impl Menu for DescriptionMenu {
         false
     }
 
-    /// Selects what type of event happened with the menu
-    fn menu_event(&mut self, event: MenuEvent) {
-        match &event {
-            MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => {
-                self.active = false;
-                self.input = None;
-                self.values = Suggestions::default();
-            }
-            _ => {}
-        };
+    fn set_active(&mut self, active: bool) {
+        self.active = active;
+    }
 
+    fn clear_input(&mut self) {
+        self.input = None;
+    }
+
+    fn on_deactivate(&mut self) {
+        self.values = Suggestions::default();
+    }
+
+    /// Handle menu event
+    fn menu_event(&mut self, event: MenuEvent) {
+        self.handle_menu_event(&event);
         self.event = Some(event);
     }
 

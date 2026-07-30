@@ -1535,6 +1535,8 @@ mod tests {
         fn is_active(&self) -> bool {
             true
         }
+        fn set_active(&mut self, _active: bool) {}
+        fn clear_input(&mut self) {}
         fn menu_event(&mut self, _event: MenuEvent) {
             unimplemented!()
         }

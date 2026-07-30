@@ -44,7 +44,7 @@ impl Default for MenuTextStyle {
     }
 }
 
-/// Defines all possible events that could happen with a menu.
+/// Menu events.
 #[derive(Clone)]
 pub enum MenuEvent {
     /// Activation event for the menu. When the bool is true it means that the values
@@ -98,7 +98,35 @@ pub trait Menu: Send {
     /// Checks if the menu is active
     fn is_active(&self) -> bool;
 
-    /// Selects what type of event happened with the menu
+    /// Set active state
+    fn set_active(&mut self, active: bool);
+
+    /// Clear input
+    fn clear_input(&mut self);
+
+    /// Called after Activate event.
+    fn on_activate(&mut self) {}
+
+    /// Called after Deactivate event.
+    fn on_deactivate(&mut self) {}
+
+    /// Handle Activate/Deactivate events.
+    fn handle_menu_event(&mut self, event: &MenuEvent) {
+        match event {
+            MenuEvent::Activate(_) => {
+                self.set_active(true);
+                self.on_activate();
+            }
+            MenuEvent::Deactivate => {
+                self.set_active(false);
+                self.clear_input();
+                self.on_deactivate();
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle menu event
     fn menu_event(&mut self, event: MenuEvent);
 
     /// A menu may not be allowed to quick complete because it needs to stay
@@ -173,8 +201,7 @@ pub struct MenuSettings {
     color: MenuTextStyle,
     /// Menu marker when active
     marker: String,
-    /// Calls the completer using only the line buffer difference
-    /// after the menu was activated. Ignored if `input_mode` is set.
+    /// Use buffer diff after activation. Ignored if input_mode set.
     only_buffer_difference: bool,
     /// Optional override for completer input handling.
     /// If `Some`, takes precedence over `only_buffer_difference`.
@@ -212,7 +239,7 @@ impl MenuSettings {
         self
     }
 
-    /// MenuSettings builder with marker
+    /// Set marker
     #[must_use]
     pub fn with_marker(mut self, marker: &str) -> Self {
         self.marker = marker.to_string();
@@ -340,8 +367,7 @@ pub trait MenuBuilder: Menu + Sized {
         self
     }
 
-    /// Menu builder with new value for only_buffer_difference.
-    /// Ignored when `input_mode` is set; consider `with_input_mode` for finer control.
+    /// Set only_buffer_difference. Ignored when input_mode set.
     #[must_use]
     fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
         self.settings_mut().only_buffer_difference = only_buffer_difference;
@@ -478,6 +504,14 @@ impl Menu for ReedlineMenu {
 
     fn is_active(&self) -> bool {
         self.as_ref().is_active()
+    }
+
+    fn set_active(&mut self, active: bool) {
+        self.as_mut().set_active(active);
+    }
+
+    fn clear_input(&mut self) {
+        self.as_mut().clear_input();
     }
 
     fn menu_event(&mut self, event: MenuEvent) {

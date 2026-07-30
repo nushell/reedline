@@ -276,7 +276,8 @@ pub use highlighter::{AbbrExpandContext, ExampleHighlighter, Highlighter, Simple
 
 mod completion;
 pub use completion::{
-    Completer, CompletionResult, CompletionStatus, DefaultCompleter, Span, Suggestion, Suggestions,
+    Completer, CompletionOrigin, CompletionResult, CompletionStatus, DefaultCompleter, Partial,
+    Span, Suggestion, Suggestions,
 };
 
 mod hinter;

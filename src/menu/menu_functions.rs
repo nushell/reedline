@@ -3,10 +3,6 @@ use std::borrow::Cow;
 use std::ops::Range;
 use unicase::UniCase;
 
-use itertools::{
-    FoldWhile::{Continue, Done},
-    Itertools,
-};
 use nu_ansi_term::{ansi::RESET, Style};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -14,7 +10,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     menu::{InputMode, MenuSettings, OutputMode},
     painting::Painter,
-    CompletionResult, Editor, Suggestion, Suggestions, UndoBehavior,
+    CompletionOrigin, CompletionResult, Editor, Partial, Suggestion, Suggestions, UndoBehavior,
 };
 
 /// Index result obtained from parsing a string with an index marker
@@ -178,43 +174,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
     }
 }
 
-/// Finds index for the common string in a list of suggestions
-pub fn find_common_string(values: &[Suggestion]) -> Option<(&Suggestion, usize)> {
-    let first_suggestion = values.first()?;
-    let max_len = first_suggestion.value.len();
-
-    let index = values
-        .iter()
-        .skip(1)
-        .fold_while(max_len, |cumulated_min, current_suggestion| {
-            let new_common_prefix_len = first_suggestion
-                .value
-                .char_indices()
-                .zip(current_suggestion.value.chars())
-                .find_map(|((idx, lhs), rhs)| (rhs != lhs).then_some(idx))
-                .unwrap_or(current_suggestion.value.len());
-            if new_common_prefix_len == 0 {
-                Done(0)
-            } else {
-                Continue(cumulated_min.min(new_common_prefix_len))
-            }
-        });
-
-    Some((first_suggestion, index.into_inner()))
-}
-
-/// Finds different string between two strings
-///
-/// ## Example usage
-/// ```
-/// use reedline::menu_functions::string_difference;
-///
-/// let new_string = "this is a new string";
-/// let old_string = "this is a string";
-///
-/// let res = string_difference(new_string, old_string);
-/// assert_eq!(res, (10, "new "));
-/// ```
+/// Find differing substring between two strings
 pub fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &'a str) {
     if old_string.is_empty() {
         return (0, new_string);
@@ -369,20 +329,22 @@ pub(crate) fn scroll_offset(selected: u16, current: u16, window: u16) -> u16 {
     }
 }
 
-/// The suggestions a completion menu is currently displaying, together with the
-/// display metrics derived from them. Grouping these keeps the completion display
-/// state cohesive and separate from a menu's column/layout details. Shared by the
-/// columnar and IDE menus.
+/// A menu's suggestions, tied to the buffer they were computed against.
+/// Spans are validated before reaching the buffer.
 #[derive(Default)]
 pub struct CompletionDisplay {
-    /// Cached suggestion values shown by the menu.
-    pub values: Suggestions,
-    /// Display width of each suggestion in `values`.
+    /// Menu suggestions (private; spans via accept/common_prefix)
+    values: Suggestions,
+    /// Display widths
     pub display_widths: Vec<usize>,
     /// Shortest of the strings the suggestions are based on.
     pub shortest_base_string: String,
     /// Width of the longest suggestion in `values`.
     pub longest_suggestion: usize,
+    /// Completer-supplied partial (None = use derivation)
+    partial: Option<Partial>,
+    /// Buffer/cursor for span validation
+    computed_for: CompletionOrigin,
 }
 
 impl CompletionDisplay {
@@ -395,15 +357,29 @@ impl CompletionDisplay {
     ) -> Option<Self> {
         match result {
             CompletionResult::Pending => None,
-            CompletionResult::Fresh(values) | CompletionResult::Stale(values) => {
-                Some(Self::new(values, base_ranges, editor))
+            CompletionResult::Fresh {
+                suggestions,
+                partial,
+            } => {
+                // Stamped from live editor (Fresh result)
+                let origin = CompletionOrigin::new(editor.get_buffer(), editor.insertion_point());
+                Some(Self::new(suggestions, partial, base_ranges, origin))
             }
+            CompletionResult::Stale {
+                suggestions,
+                origin,
+                partial,
+            } => Some(Self::new(suggestions, partial, base_ranges, origin)),
         }
     }
 
-    /// Adopt `values` as the menu's suggestions and measure their display metrics
-    /// against the buffer's replacement `base_ranges`.
-    pub fn new(values: Suggestions, base_ranges: &[Range<usize>], editor: &Editor) -> Self {
+    /// Adopt suggestions and measure display metrics
+    fn new(
+        values: Suggestions,
+        partial: Option<Partial>,
+        base_ranges: &[Range<usize>],
+        computed_for: CompletionOrigin,
+    ) -> Self {
         let display_widths: Vec<usize> = values
             .iter()
             .map(|suggestion| strip_ansi_escapes::strip_str(suggestion.display_value()).width())
@@ -412,8 +388,8 @@ impl CompletionDisplay {
         // Find the maximum width
         let longest_suggestion = display_widths.iter().copied().max().unwrap_or(0);
 
-        // Find the shortest buffer slice
-        let buffer = editor.get_buffer();
+        // Shortest slice from stored buffer (may differ from editor if stale)
+        let buffer = computed_for.buffer.as_str();
         let shortest_base_string = base_ranges
             .iter()
             .map(|range| {
@@ -430,8 +406,101 @@ impl CompletionDisplay {
             display_widths,
             shortest_base_string,
             longest_suggestion,
+            partial,
+            computed_for,
         }
     }
+
+    /// Read-only: values, descriptions, widths (no spans)
+    pub fn suggestions(&self) -> &[Suggestion] {
+        &self.values
+    }
+
+    /// Whether spans match the current editor buffer
+    fn is_current(&self, editor: &Editor) -> bool {
+        self.computed_for.buffer == editor.get_buffer()
+            && self.computed_for.insertion_point == editor.insertion_point()
+    }
+
+    /// Accept suggestion at index (no-op if stale or out of range)
+    pub fn accept(&self, index: usize, editor: &mut Editor, output_mode: Option<OutputMode>) {
+        if self.is_current(editor) {
+            replace_in_buffer(self.values.get(index).cloned(), editor, output_mode);
+        }
+    }
+
+    /// Apply partial completion (completer-supplied or derived). No-op and returns false when stale or unchanged.
+    pub fn common_prefix(&self, editor: &mut Editor) -> bool {
+        if !self.is_current(editor) {
+            return false;
+        }
+        match &self.partial {
+            Some(partial) => apply_partial(partial, editor),
+            None => match derive_common_prefix(editor.get_buffer(), &self.values) {
+                Some(partial) => apply_partial(&partial, editor),
+                None => false,
+            },
+        }
+    }
+}
+
+/// Longest common prefix across suggestions sharing a span
+fn derive_common_prefix(line: &str, suggestions: &[Suggestion]) -> Option<Partial> {
+    let span = suggestions.first()?.span;
+    let mut values = suggestions
+        .iter()
+        .filter(|s| s.span == span)
+        .map(|s| s.value.as_str());
+
+    let mut insert = values.next()?.to_string();
+    for value in values {
+        let shared = insert
+            .char_indices()
+            .zip(value.chars())
+            .find_map(|((i, a), b)| (a != b).then_some(i))
+            .unwrap_or(insert.len().min(value.len()));
+        insert.truncate(shared);
+    }
+
+    let end = floor_char_boundary(line, span.end);
+    let start = floor_char_boundary(line, span.start).min(end);
+    let entered = line.get(start..end)?;
+
+    // Ensure prefix extends (not overwrites) user input
+    let extends = !insert.is_empty()
+        && insert != entered
+        && UniCase::new(insert.as_str())
+            .to_folded_case()
+            .contains(&UniCase::new(entered).to_folded_case());
+    extends.then_some(Partial { span, insert })
+}
+
+/// Apply partial to buffer. No-op if buffer already matches
+fn apply_partial(partial: &Partial, editor: &mut Editor) -> bool {
+    let buffer = editor.get_buffer();
+    let end = floor_char_boundary(buffer, partial.span.end);
+    let start = floor_char_boundary(buffer, partial.span.start).min(end);
+    if buffer[start..end] == partial.insert {
+        return false;
+    }
+    commit_buffer_replacement(editor, start, end, &partial.insert);
+    true
+}
+
+/// Apply string replacement to line buffer
+fn commit_buffer_replacement(editor: &mut Editor, start: usize, end: usize, replacement: &str) {
+    // Use cursor head, clear selection
+    let mut line_buffer = std::mem::take(editor.line_buffer_mut());
+    let head = line_buffer.cursor().head();
+
+    line_buffer.replace_range(start..end, replacement);
+    line_buffer.clear_selection();
+    line_buffer.set_insertion_point(
+        head.saturating_add(replacement.len())
+            .saturating_sub(end - start),
+    );
+
+    editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
 }
 
 /// Helper to accept a completion suggestion and edit the buffer
@@ -440,78 +509,31 @@ pub fn replace_in_buffer(
     editor: &mut Editor,
     output_mode: Option<OutputMode>,
 ) {
-    if let Some(Suggestion {
+    let Some(Suggestion {
         mut value,
         span,
         append_whitespace,
         ..
     }) = value
-    {
-        let buffer_len = editor.get_buffer().len();
-        let (raw_start, raw_end) = match output_mode {
-            Some(OutputMode::FullBuffer) => (0, buffer_len),
-            Some(OutputMode::ExtendToEnd) => (span.start, buffer_len),
-            Some(OutputMode::SuggestedSpan) | None => (span.start, span.end),
-        };
-        let end = floor_char_boundary(editor.get_buffer(), raw_end);
-        let start = floor_char_boundary(editor.get_buffer(), raw_start).min(end);
-        if append_whitespace {
-            value.push(' ');
-        }
+    else {
+        return;
+    };
 
-        // Base the new cursor on the head, not `insertion_point()` (which is the
-        // caret — one grapheme back under a forward selection), and clear any
-        // selection so completion never leaves a stale anchor.
-        let head = editor.line_buffer().cursor().head();
-        let mut line_buffer = editor.line_buffer().clone();
-        line_buffer.replace_range(start..end, &value);
-        let mut offset = head;
-        offset = offset.saturating_add(value.len());
-        offset = offset.saturating_sub(end.saturating_sub(start));
-        line_buffer.clear_selection();
-        line_buffer.set_insertion_point(offset);
-        editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
+    let buffer = editor.get_buffer();
+    let (raw_start, raw_end) = match output_mode {
+        Some(OutputMode::FullBuffer) => (0, buffer.len()),
+        Some(OutputMode::ExtendToEnd) => (span.start, buffer.len()),
+        Some(OutputMode::SuggestedSpan) | None => (span.start, span.end),
+    };
+
+    let end = floor_char_boundary(buffer, raw_end);
+    let start = floor_char_boundary(buffer, raw_start).min(end);
+
+    if append_whitespace {
+        value.push(' ');
     }
-}
 
-/// Helper for `Menu::can_partially_complete`
-pub fn can_partially_complete(values: &[Suggestion], editor: &mut Editor) -> bool {
-    if let Some((Suggestion { value, span, .. }, index)) = find_common_string(values) {
-        let matching = &value[0..index];
-        let end = floor_char_boundary(editor.get_buffer(), span.end);
-        let start = floor_char_boundary(editor.get_buffer(), span.start).min(end);
-
-        // make sure that the partial completion does not overwrite user entered input
-        let entered_input = &editor.get_buffer()[start..end];
-        let extends_input = UniCase::new(matching)
-            .to_folded_case()
-            .contains(&UniCase::new(entered_input).to_folded_case())
-            && matching != entered_input;
-
-        if !matching.is_empty() && extends_input {
-            // Base the new cursor on the head, not `insertion_point()` (the
-            // caret), and clear any selection — see `replace_in_buffer`.
-            let head = editor.line_buffer().cursor().head();
-            let mut line_buffer = editor.line_buffer().clone();
-            line_buffer.replace_range(start..end, matching);
-
-            let offset = if matching.len() < (end - start) {
-                head.saturating_sub((end - start) - matching.len())
-            } else {
-                head + matching.len() - (end - start)
-            };
-
-            line_buffer.clear_selection();
-            line_buffer.set_insertion_point(offset);
-            editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
-
-            true
-        } else {
-            false
-        }
-    } else {
-        false
-    }
+    commit_buffer_replacement(editor, start, end, &value);
 }
 
 #[derive(Debug, PartialEq)]
@@ -1072,7 +1094,7 @@ mod tests {
     #[case::unsorted(vec!["a", "b", "ab"], 0)]
     #[case::should_be_case_sensitive(vec!["a", "A"], 0)]
     #[case::first_suggestion_longest(vec!["foobar", "foo"], 3)]
-    fn test_find_common_string(#[case] input: Vec<&str>, #[case] expected: usize) {
+    fn test_derive_common_prefix(#[case] input: Vec<&str>, #[case] expected: usize) {
         let input: Vec<_> = input
             .into_iter()
             .map(|s| Suggestion {
@@ -1080,9 +1102,40 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        let (_, len) = find_common_string(&input).unwrap();
+        // Shared default span, empty buffer: gate reduces to "non-empty prefix?"
+        let partial = derive_common_prefix("", &input);
 
-        assert!(len == expected);
+        match expected {
+            0 => assert!(partial.is_none()),
+            len => assert_eq!(partial.unwrap().insert.len(), len),
+        }
+    }
+
+    /// Verifies fallback to built-in derivation without completer-supplied Partial
+    #[test]
+    fn common_prefix_falls_back_to_derivation_without_a_completer_supplied_partial() {
+        let mut editor = Editor::default();
+        editor.set_buffer("ab".to_string(), UndoBehavior::CreateUndoPoint);
+
+        // Mirrors demo example: "ab" + Tab -> longest prefix "abaaa"
+        let values: Suggestions = ["abaaacas", "abaaac", "abaaaxyc", "abaaarabc"]
+            .into_iter()
+            .map(|value| Suggestion {
+                value: value.to_string(),
+                span: Span::new(0, 2),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let display = CompletionDisplay::new(
+            values,
+            None,
+            &[],
+            CompletionOrigin::new(editor.get_buffer(), editor.insertion_point()),
+        );
+
+        assert!(display.common_prefix(&mut editor));
+        assert_eq!(editor.get_buffer(), "abaaa");
     }
 
     #[rstest]

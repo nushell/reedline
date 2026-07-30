@@ -2,9 +2,8 @@ use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
-        available_lines, can_partially_complete, get_match_indices, replace_in_buffer,
-        resolve_completer_input, scroll_offset, style_suggestion, truncate_with_ansi,
-        CompletionDisplay,
+        available_lines, get_match_indices, resolve_completer_input, scroll_offset,
+        style_suggestion, truncate_with_ansi, CompletionDisplay,
     },
     painting::Painter,
     Completer, Suggestion,
@@ -148,7 +147,7 @@ pub struct IdeMenu {
     /// yet. While set, the menu draws nothing rather than a premature
     /// "NO RECORDS FOUND" (which is reserved for a settled, genuinely empty result).
     awaiting_results: bool,
-    /// Selected value. Starts at 0
+    /// Selected index
     selected: u16,
     /// Number of values that are skipped when printing,
     /// depending on selected value and terminal height
@@ -295,7 +294,7 @@ impl IdeMenu {
 // Menu functionality
 impl IdeMenu {
     fn move_next(&mut self) {
-        if self.selected < (self.completions.values.len() as u16).saturating_sub(1) {
+        if self.selected < (self.completions.suggestions().len() as u16).saturating_sub(1) {
             self.selected += 1;
         } else {
             self.selected = 0;
@@ -306,7 +305,7 @@ impl IdeMenu {
         if self.selected > 0 {
             self.selected -= 1;
         } else {
-            self.selected = self.completions.values.len().saturating_sub(1) as u16;
+            self.selected = self.completions.suggestions().len().saturating_sub(1) as u16;
         }
     }
 
@@ -315,7 +314,7 @@ impl IdeMenu {
     }
 
     fn get_value(&self) -> Option<Suggestion> {
-        self.completions.values.get(self.index()).cloned()
+        self.completions.suggestions().get(self.index()).cloned()
     }
 
     /// Calculates how many rows the Menu will try to use (if available)
@@ -750,7 +749,7 @@ impl Menu for IdeMenu {
         &self.settings
     }
 
-    /// Deactivates context menu
+    /// Active status
     fn is_active(&self) -> bool {
         self.active
     }
@@ -772,9 +771,9 @@ impl Menu for IdeMenu {
             self.update_values(editor, completer);
         }
 
-        if can_partially_complete(self.get_values(), editor) {
-            // The values need to be updated because the spans need to be
-            // recalculated for accurate replacement in the string
+        // `common_prefix` guards against stale completions
+        if self.completions.common_prefix(editor) {
+            // Recalculate spans for replacement
             self.update_values(editor, completer);
 
             true
@@ -783,17 +782,22 @@ impl Menu for IdeMenu {
         }
     }
 
-    /// Selects what type of event happened with the menu
-    fn menu_event(&mut self, event: MenuEvent) {
-        match &event {
-            MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => {
-                self.active = false;
-                self.input = None;
-            }
-            _ => {}
-        }
+    fn set_active(&mut self, active: bool) {
+        self.active = active;
+    }
 
+    fn clear_input(&mut self) {
+        self.input = None;
+    }
+
+    fn on_activate(&mut self) {
+        // Clear stale completions from previous activation
+        self.completions = CompletionDisplay::default();
+    }
+
+    /// Queue menu event
+    fn menu_event(&mut self, event: MenuEvent) {
+        self.handle_menu_event(&event);
         self.event = Some(event);
     }
 
@@ -827,9 +831,10 @@ impl Menu for IdeMenu {
         self.recompute_layout(painter);
     }
 
-    /// The buffer gets replaced in the Span location
+    /// Apply via `CompletionDisplay::accept` (guards against stale spans)
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        replace_in_buffer(self.get_value(), editor, self.settings.output_mode);
+        self.completions
+            .accept(self.index(), editor, self.settings.output_mode);
     }
 
     /// Minimum rows that should be displayed by the menu
@@ -838,7 +843,7 @@ impl Menu for IdeMenu {
     }
 
     fn get_values(&self) -> &[Suggestion] {
-        &self.completions.values
+        self.completions.suggestions()
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {

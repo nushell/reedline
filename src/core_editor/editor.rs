@@ -82,8 +82,12 @@ impl Editor {
         &self.line_buffer
     }
 
-    /// Set the current [`LineBuffer`].
-    /// [`UndoBehavior`] specifies how this change should be reflected on the undo stack.
+    /// Mutable [`LineBuffer`] access, no undo.
+    pub(crate) fn line_buffer_mut(&mut self) -> &mut LineBuffer {
+        &mut self.line_buffer
+    }
+
+    /// Set the [`LineBuffer`] with undo behavior.
     pub(crate) fn set_line_buffer(&mut self, line_buffer: LineBuffer, undo_behavior: UndoBehavior) {
         self.line_buffer = line_buffer;
         self.update_undo_state(undo_behavior);
@@ -1192,9 +1196,7 @@ impl Editor {
         self.line_buffer.selection_anchor()?;
         let cursor = self.line_buffer.cursor();
 
-        // Inclusivity is carried by the range geometry now: `put_cursor` widens
-        // the head for block / Vi-normal selections, so the selected span is just
-        // the cursor's range — no captured-inclusivity `+1`.
+        // Inclusivity is geometric (widened by put_cursor).
         Some((cursor.start(), cursor.end().min(self.line_buffer.len())))
     }
 
@@ -1236,9 +1238,7 @@ impl Editor {
     }
 
     fn move_word_right(&mut self, select: bool) {
-        // emacs `M-f`: end of the word the cursor is inside (no skip). Under a bar
-        // caret `Word{End}` resolves to the word's *trailing boundary*, which is
-        // exactly `word_right_index` — so the verb path now expresses it directly.
+        // emacs M-f: end of current word, no skip.
         self.apply_move(
             word_target(WordKind::Unicode, WordEdge::End, Direction::Forward),
             select,
