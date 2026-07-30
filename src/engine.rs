@@ -928,6 +928,9 @@ impl Reedline {
 
         self.repaint(prompt)?;
 
+        // Working phase of active menu at last paint.
+        let mut painted_working_phase = None;
+
         loop {
             // Call idle callback if set (for processing external events like GUI updates)
             #[cfg(feature = "idle_callback")]
@@ -976,12 +979,11 @@ impl Reedline {
             // Anything BUT idle means work is in flight. We need to keep polling.
             let completer_pending = status != CompletionStatus::Idle;
 
-            if let Some(menu) = (status == CompletionStatus::Ready)
-                .then(|| self.menus.iter_mut().find(|m| m.is_active()))
-                .flatten()
-            {
+            let active_menu = self.menus.iter().position(|m| m.is_active());
+
+            if let Some(idx) = active_menu.filter(|_| status == CompletionStatus::Ready) {
                 // latest request finished, so repopulate
-                menu.update_values(
+                self.menus[idx].update_values(
                     &mut self.editor,
                     self.completer.as_mut(),
                     self.history.as_ref(),
@@ -989,8 +991,16 @@ impl Reedline {
                 self.repaint(prompt)?;
             }
 
-            // Helper function that returns true if the input is complete and
-            // can be sent to the hosting application.
+            // Advance the in-flight indicator.
+            let working_phase = active_menu.and_then(|idx| self.menus[idx].working_phase());
+            if working_phase != painted_working_phase {
+                painted_working_phase = working_phase;
+                if working_phase.is_some() {
+                    self.repaint(prompt)?;
+                }
+            }
+
+            // Check if last event is Enter.
             fn completed(events: &[Event]) -> bool {
                 if let Some(event) = events.last() {
                     matches!(
