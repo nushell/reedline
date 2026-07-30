@@ -3904,6 +3904,37 @@ mod test {
     }
 
     #[test]
+    fn helix_undo_re_widens_the_restored_caret() {
+        // `undo()` replaces the whole LineBuffer, cursor included, so the
+        // restored cursor is whatever the undo stack recorded — here the pre-cut
+        // selection (0, 4). Nothing in the Undo arm normalizes it: the
+        // unconditional `commit_cursor()` at the end of `run_edit_command` does,
+        // via the Block rest policy. That is the guarantee under test — a command
+        // that never mentions the cursor still cannot leave a helix caret
+        // rendering as a bar.
+        //
+        // Note *where* it lands. Undo's `EditType` is not
+        // `MoveCursor { select: true }`, so `run_edit_command` calls
+        // `clear_selection`, which collapses to the caret — for a forward Block
+        // selection that is the last covered grapheme's start (3, the space), not
+        // the selection start. So `d` then `u` restores the text but parks the
+        // caret at the end of it. Real helix re-highlights the restored selection
+        // instead; pinned here so that deviation is visible rather than
+        // rediscovered.
+        let mut editor = helix_editor("foo bar baz");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+        editor.run_edit_command(&EditCommand::CutSelection);
+        assert_eq!(editor.get_buffer(), "bar baz");
+
+        editor.run_edit_command(&EditCommand::Undo);
+        assert_eq!(editor.get_buffer(), "foo bar baz");
+        // a 1-wide cover, not a bare point
+        assert_eq!(editor.get_selection(), Some((3, 4)));
+        assert_eq!(editor.insertion_point(), 3);
+    }
+
+    #[test]
     fn cut_word_forward_removes_range_and_yanks() {
         let mut editor = editor_with("foo bar baz");
         editor.move_to_position(0, false);

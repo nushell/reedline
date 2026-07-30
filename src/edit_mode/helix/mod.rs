@@ -46,6 +46,8 @@ enum Verb {
     OnSelection(Op),
     Submit,
     ChangeMode,
+    Undo,
+    Redo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -355,6 +357,16 @@ fn interpret(mode: HelixMode, count: usize, key: KeyEvent) -> Outcome {
                 verb: Verb::OnSelection(Op::Yank),
                 next_mode: Some(HelixMode::Normal),
             }),
+            'u' => Outcome::Execute(Action {
+                count,
+                verb: Verb::Undo,
+                next_mode: None,
+            }),
+            'U' => Outcome::Execute(Action {
+                count,
+                verb: Verb::Redo,
+                next_mode: None,
+            }),
             _ => Outcome::Reject,
         },
         KeyCode::Enter => Outcome::Execute(Action {
@@ -411,6 +423,12 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             Op::Replace(ch) => ReedlineEvent::Edit(vec![EditCommand::ReplaceChar(ch)]),
         },
         Verb::Collapse(dir) => ReedlineEvent::Edit(vec![EditCommand::CollapseSelection(dir)]),
+        // The count rule is "motions only" everywhere else, because for the
+        // operators a count is not a repeat (`3d` does not cut three times).
+        // Undo/redo are the exception: stepping the edit stack back N times is
+        // exactly what `3u` means in helix.
+        Verb::Undo => ReedlineEvent::Edit(vec![EditCommand::Undo; action.count]),
+        Verb::Redo => ReedlineEvent::Edit(vec![EditCommand::Redo; action.count]),
         Verb::Deselect => ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint]),
         Verb::ChangeMode => ReedlineEvent::None,
         Verb::Submit => {
@@ -785,7 +803,11 @@ mod test {
     #[test]
     fn v_toggles_between_normal_and_select() {
         assert_eq!(
-            interpret(HelixMode::Normal, 1, kev(KeyCode::Char('v'), KeyModifiers::NONE)),
+            interpret(
+                HelixMode::Normal,
+                1,
+                kev(KeyCode::Char('v'), KeyModifiers::NONE)
+            ),
             Outcome::Execute(Action {
                 count: 1,
                 verb: Verb::ChangeMode,
@@ -793,7 +815,11 @@ mod test {
             })
         );
         assert_eq!(
-            interpret(HelixMode::Select, 1, kev(KeyCode::Char('v'), KeyModifiers::NONE)),
+            interpret(
+                HelixMode::Select,
+                1,
+                kev(KeyCode::Char('v'), KeyModifiers::NONE)
+            ),
             Outcome::Execute(Action {
                 count: 1,
                 verb: Verb::ChangeMode,
@@ -892,6 +918,52 @@ mod test {
             ReedlineEvent::Enter
         );
         assert_eq!(helix.mode, HelixMode::Insert);
+    }
+
+    // ---- undo / redo ----
+
+    #[rstest]
+    #[case('u', EditCommand::Undo)]
+    #[case('U', EditCommand::Redo)]
+    fn undo_redo_lower_to_bare_edits(#[case] c: char, #[case] expected: EditCommand) {
+        // `next_mode` is None, so these must escape the repaint wrap in `lower`:
+        // no mode indicator changed, and an `Edit` repaints on its own. `U`
+        // arrives with SHIFT, which `is_typeable` accepts.
+        let mut helix = normal();
+        assert_eq!(
+            helix.parse_event(chr(c)),
+            ReedlineEvent::Edit(vec![expected])
+        );
+    }
+
+    #[test]
+    fn count_repeats_undo() {
+        // This is the reason undo lives in the machine rather than the binding
+        // table: `dispatch` only consults the table while no count is live, so a
+        // table-bound `u` would give a working `u` and a silently dead `3u`.
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('3'));
+        assert_eq!(
+            helix.parse_event(chr('u')),
+            ReedlineEvent::Edit(vec![EditCommand::Undo; 3])
+        );
+        assert_eq!(helix.count, None);
+    }
+
+    #[rstest]
+    #[case('u', EditCommand::Undo)]
+    #[case('U', EditCommand::Redo)]
+    fn undo_redo_keep_select_mode(#[case] c: char, #[case] expected: EditCommand) {
+        // Select mode is sticky: only operators and Esc leave it, and undo is
+        // neither. Asserted on the machine rather than on `interpret`'s
+        // `next_mode`, since "the mode survives" is the actual claim.
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('v'));
+        assert_eq!(
+            helix.parse_event(chr(c)),
+            ReedlineEvent::Edit(vec![expected])
+        );
+        assert_eq!(helix.mode, HelixMode::Select);
     }
 
     #[test]
