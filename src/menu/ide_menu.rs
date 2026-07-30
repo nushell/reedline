@@ -1,4 +1,4 @@
-use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
+use super::{CompletionProgress, Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
@@ -143,10 +143,8 @@ pub struct IdeMenu {
     working_details: IdeMenuDetails,
     /// Suggestions currently displayed and their derived display metrics
     completions: CompletionDisplay,
-    /// Whether a background completion is still in flight with nothing to show
-    /// yet. While set, the menu draws nothing rather than a premature
-    /// "NO RECORDS FOUND" (which is reserved for a settled, genuinely empty result).
-    awaiting_results: bool,
+    /// In-flight completion state
+    progress: CompletionProgress,
     /// Selected index
     selected: u16,
     /// Number of values that are skipped when printing,
@@ -166,7 +164,7 @@ impl Default for IdeMenu {
             default_details: DefaultIdeMenuDetails::default(),
             working_details: IdeMenuDetails::default(),
             completions: CompletionDisplay::default(),
-            awaiting_results: false,
+            progress: CompletionProgress::default(),
             selected: 0,
             skip_values: 0,
             event: None,
@@ -322,10 +320,15 @@ impl IdeMenu {
         let mut values = self.get_values().len() as u16;
 
         if values == 0 {
-            // While a background completion is still in flight there is nothing to
-            // show yet, so reserve no space; otherwise the empty menu is a settled
-            // result and reserves 1 line for the no_records_msg.
-            return if self.awaiting_results { 0 } else { 1 };
+            // Reserve only when working phase has a spelled-out message
+            let reserve_for_working = self
+                .working_phase()
+                .map_or(false, |phase| phase.spelled_out);
+            return if self.progress.is_working() && !reserve_for_working {
+                0
+            } else {
+                1
+            };
         }
 
         if self.default_details.border.is_some() {
@@ -749,6 +752,11 @@ impl Menu for IdeMenu {
         &self.settings
     }
 
+    /// Progress
+    fn progress(&self) -> CompletionProgress {
+        self.progress
+    }
+
     /// Active status
     fn is_active(&self) -> bool {
         self.active
@@ -793,6 +801,7 @@ impl Menu for IdeMenu {
     fn on_activate(&mut self) {
         // Clear stale completions from previous activation
         self.completions = CompletionDisplay::default();
+        self.progress = CompletionProgress::default();
     }
 
     /// Queue menu event
@@ -809,7 +818,7 @@ impl Menu for IdeMenu {
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
         let (result, base_ranges) = completer.complete_with_base_ranges(&input, pos);
-        self.awaiting_results = result.is_pending();
+        self.progress.update(&result);
         if let Some(completions) = CompletionDisplay::from_result(result, &base_ranges, editor) {
             self.completions = completions;
             self.reset_position();
@@ -853,10 +862,8 @@ impl Menu for IdeMenu {
 
     fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String {
         if self.get_values().is_empty() {
-            if self.awaiting_results {
-                // A background completion is still running; draw nothing rather
-                // than flashing "NO RECORDS FOUND" before the results land.
-                String::new()
+            if self.progress.is_working() {
+                self.working_message(use_ansi_coloring)
             } else {
                 self.no_records_msg(use_ansi_coloring)
             }
