@@ -340,6 +340,8 @@ pub struct MenuSettings {
     color: MenuTextStyle,
     /// Menu marker when active
     marker: String,
+    /// Working indicator; replaces marker during in-flight work.
+    working: WorkingIndicator,
     /// Use buffer diff after activation. Ignored if input_mode set.
     only_buffer_difference: bool,
     /// Optional override for completer input handling.
@@ -356,6 +358,7 @@ impl Default for MenuSettings {
             name: "menu".to_string(),
             color: MenuTextStyle::default(),
             marker: "| ".to_string(),
+            working: WorkingIndicator::default(),
             only_buffer_difference: false,
             input_mode: None,
             output_mode: None,
@@ -376,6 +379,35 @@ impl MenuSettings {
     pub fn with_color(mut self, color: MenuTextStyle) -> Self {
         self.color = color;
         self
+    }
+
+    /// Static marker for in-flight work
+    #[must_use]
+    pub fn with_working_marker(self, marker: &str) -> Self {
+        self.with_working_indicator(WorkingIndicator::new([marker]))
+    }
+
+    /// Set working indicator
+    #[must_use]
+    pub fn with_working_indicator(mut self, working: WorkingIndicator) -> Self {
+        self.working = working;
+        self
+    }
+
+    /// Working indicator reference
+    pub fn working_indicator(&self) -> &WorkingIndicator {
+        &self.working
+    }
+
+    /// Message after patience elapsed; empty otherwise.
+    fn working_message(&self, progress: CompletionProgress, use_ansi_coloring: bool) -> String {
+        match self.working.message(progress.elapsed()) {
+            Some(msg) if use_ansi_coloring => {
+                format!("{}{}{}", self.color.text_style.prefix(), msg, RESET)
+            }
+            Some(msg) => msg.to_string(),
+            None => String::new(),
+        }
     }
 
     /// Set marker
