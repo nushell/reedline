@@ -434,44 +434,52 @@ impl CompletionDisplay {
     }
 }
 
+/// Apply string replacement to line buffer
+fn commit_buffer_replacement(editor: &mut Editor, start: usize, end: usize, replacement: &str) {
+    let mut line_buffer = std::mem::take(editor.line_buffer_mut());
+    let head = line_buffer.cursor().head();
+
+    line_buffer.replace_range(start..end, replacement);
+    line_buffer.clear_selection();
+    line_buffer.set_insertion_point(
+        head.saturating_add(replacement.len())
+            .saturating_sub(end - start),
+    );
+
+    editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
+}
+
 /// Helper to accept a completion suggestion and edit the buffer
 pub fn replace_in_buffer(
     value: Option<Suggestion>,
     editor: &mut Editor,
     output_mode: Option<OutputMode>,
 ) {
-    if let Some(Suggestion {
+    let Some(Suggestion {
         mut value,
         span,
         append_whitespace,
         ..
     }) = value
-    {
-        let buffer_len = editor.get_buffer().len();
-        let (raw_start, raw_end) = match output_mode {
-            Some(OutputMode::FullBuffer) => (0, buffer_len),
-            Some(OutputMode::ExtendToEnd) => (span.start, buffer_len),
-            Some(OutputMode::SuggestedSpan) | None => (span.start, span.end),
-        };
-        let end = floor_char_boundary(editor.get_buffer(), raw_end);
-        let start = floor_char_boundary(editor.get_buffer(), raw_start).min(end);
-        if append_whitespace {
-            value.push(' ');
-        }
+    else {
+        return;
+    };
 
-        // Base the new cursor on the head, not `insertion_point()` (which is the
-        // caret — one grapheme back under a forward selection), and clear any
-        // selection so completion never leaves a stale anchor.
-        let head = editor.line_buffer().cursor().head();
-        let mut line_buffer = editor.line_buffer().clone();
-        line_buffer.replace_range(start..end, &value);
-        let mut offset = head;
-        offset = offset.saturating_add(value.len());
-        offset = offset.saturating_sub(end.saturating_sub(start));
-        line_buffer.clear_selection();
-        line_buffer.set_insertion_point(offset);
-        editor.set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
+    let buffer = editor.get_buffer();
+    let (raw_start, raw_end) = match output_mode {
+        Some(OutputMode::FullBuffer) => (0, buffer.len()),
+        Some(OutputMode::ExtendToEnd) => (span.start, buffer.len()),
+        Some(OutputMode::SuggestedSpan) | None => (span.start, span.end),
+    };
+
+    let end = floor_char_boundary(buffer, raw_end);
+    let start = floor_char_boundary(buffer, raw_start).min(end);
+
+    if append_whitespace {
+        value.push(' ');
     }
+
+    commit_buffer_replacement(editor, start, end, &value);
 }
 
 /// Helper for `Menu::can_partially_complete`
