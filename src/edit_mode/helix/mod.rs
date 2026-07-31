@@ -48,6 +48,7 @@ enum Verb {
     ChangeMode,
     Undo,
     Redo,
+    Paste(Direction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,6 +379,16 @@ fn interpret(mode: HelixMode, count: usize, key: KeyEvent) -> Outcome {
                 verb: Verb::Redo,
                 next_mode: None,
             }),
+            'p' => Outcome::Execute(Action {
+                count,
+                verb: Verb::Paste(Direction::Forward),
+                next_mode: Some(HelixMode::Normal),
+            }),
+            'P' => Outcome::Execute(Action {
+                count,
+                verb: Verb::Paste(Direction::Backward),
+                next_mode: Some(HelixMode::Normal),
+            }),
             _ => Outcome::Reject,
         },
         KeyCode::Enter => Outcome::Execute(Action {
@@ -430,6 +441,10 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
         Verb::Collapse(dir) => ReedlineEvent::Edit(vec![EditCommand::CollapseSelection(dir)]),
         Verb::Undo => action.repeated(EditCommand::Undo),
         Verb::Redo => action.repeated(EditCommand::Redo),
+        Verb::Paste(direction) => ReedlineEvent::Edit(vec![EditCommand::PasteAtSelectionEdge {
+            direction,
+            count: action.count,
+        }]),
         Verb::Deselect => ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint]),
         Verb::ChangeMode => ReedlineEvent::None,
         Verb::Submit => {
@@ -965,6 +980,79 @@ mod test {
             ReedlineEvent::Edit(vec![expected])
         );
         assert_eq!(helix.mode, HelixMode::Select);
+    }
+
+    // ---- paste ----
+
+    #[rstest]
+    #[case('p', Direction::Forward)]
+    #[case('P', Direction::Backward)]
+    fn paste_carries_the_edge_direction(#[case] c: char, #[case] direction: Direction) {
+        // `next_mode` is `Some`, so the repaint rule wraps the edit — same shape
+        // the operators produce.
+        let mut helix = normal();
+        assert_eq!(
+            helix.parse_event(chr(c)),
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::PasteAtSelectionEdge {
+                    direction,
+                    count: 1
+                }]),
+                ReedlineEvent::Repaint,
+            ])
+        );
+    }
+
+    #[test]
+    fn paste_carries_the_count_in_the_command() {
+        // Paste must not go through `Action::repeated`: repeating the event
+        // re-anchors at each paste, so the selection would end up covering only
+        // the last copy. One command carrying 3, not three commands.
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('3'));
+        assert_eq!(
+            helix.parse_event(chr('p')),
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::PasteAtSelectionEdge {
+                    direction: Direction::Forward,
+                    count: 3,
+                }]),
+                ReedlineEvent::Repaint,
+            ])
+        );
+        assert_eq!(helix.count, None);
+    }
+
+    #[rstest]
+    #[case('p')]
+    #[case('P')]
+    fn paste_leaves_select_mode(#[case] c: char) {
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('v'));
+        let _ = helix.parse_event(chr(c));
+        assert_eq!(helix.mode, HelixMode::Normal);
+    }
+
+    #[rstest]
+    #[case('p', KeyModifiers::NONE, Direction::Forward)]
+    #[case('P', KeyModifiers::SHIFT, Direction::Backward)]
+    fn paste_next_mode_is_mode_independent(
+        #[case] c: char,
+        #[case] modifiers: KeyModifiers,
+        #[case] direction: Direction,
+    ) {
+        // Like the operators, paste's `next_mode` must not depend on where it
+        // started: it returns to normal from select and is inert in normal.
+        for mode in [HelixMode::Normal, HelixMode::Select] {
+            assert_eq!(
+                interpret(mode, 1, kev(KeyCode::Char(c), modifiers)),
+                Outcome::Execute(Action {
+                    count: 1,
+                    verb: Verb::Paste(direction),
+                    next_mode: Some(HelixMode::Normal),
+                })
+            );
+        }
     }
 
     #[test]

@@ -257,6 +257,9 @@ impl Editor {
             EditCommand::CutBigWordRightToNext => self.cut_big_word_right_to_next(),
             EditCommand::PasteCutBufferBefore => self.insert_cut_buffer_before(),
             EditCommand::PasteCutBufferAfter => self.insert_cut_buffer_after(),
+            EditCommand::PasteAtSelectionEdge { direction, count } => {
+                self.paste_at_selection_edge(*direction, *count)
+            }
             EditCommand::UppercaseWord => self.line_buffer.uppercase_word(),
             EditCommand::LowercaseWord => self.line_buffer.lowercase_word(),
             EditCommand::SwitchcaseChar => self.line_buffer.switchcase_char(),
@@ -347,7 +350,9 @@ impl Editor {
             EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
             EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
         }
-        if !matches!(command.edit_type(), EditType::MoveCursor { select: true }) {
+        let leaves_selection = matches!(command.edit_type(), EditType::MoveCursor { select: true })
+            || matches!(command, EditCommand::PasteAtSelectionEdge { .. });
+        if !leaves_selection {
             self.clear_selection();
         }
 
@@ -1079,6 +1084,25 @@ impl Editor {
                     }
                 }
             }
+        }
+    }
+
+    fn paste_at_selection_edge(&mut self, direction: Direction, count: usize) {
+        let at = match direction {
+            Direction::Forward => self.line_buffer.cursor().end(),
+            Direction::Backward => self.line_buffer.cursor().start(),
+        };
+
+        match self.cut_buffer.get() {
+            (content, Granularity::CharWise) if !content.is_empty() => {
+                let to_paste = content.repeat(count);
+                self.line_buffer.set_cursor(Cursor::point(at));
+                self.line_buffer.insert_str(&to_paste);
+                self.line_buffer
+                    .set_cursor(Cursor::new(at, at + to_paste.len()));
+            }
+            // no consumer for linewise paste yet
+            _ => (),
         }
     }
 
@@ -3932,6 +3956,104 @@ mod test {
         // a 1-wide cover, not a bare point
         assert_eq!(editor.get_selection(), Some((3, 4)));
         assert_eq!(editor.insertion_point(), 3);
+    }
+
+    /// Helix `p`: insert at the selection's far edge, leaving the pasted text
+    /// selected. The resting block covers the final `o`, so the far edge is 3.
+    #[test]
+    fn helix_paste_after_lands_past_the_selection_and_selects_it() {
+        let mut editor = helix_editor("foo");
+        editor.move_to_position(2, false);
+        editor.commit_cursor();
+        editor.cut_buffer.set("bar", Granularity::CharWise);
+
+        editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
+            direction: Direction::Forward,
+            count: 1,
+        });
+
+        assert_eq!(editor.get_buffer(), "foobar");
+        assert_eq!(editor.get_selection(), Some((3, 6)));
+    }
+
+    /// Helix `P`: the near edge instead, so the pasted text pushes the covered
+    /// grapheme right rather than following it.
+    #[test]
+    fn helix_paste_before_lands_at_the_selection_start_and_selects_it() {
+        let mut editor = helix_editor("foo");
+        editor.move_to_position(2, false);
+        editor.commit_cursor();
+        editor.cut_buffer.set("bar", Granularity::CharWise);
+
+        editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
+            direction: Direction::Backward,
+            count: 1,
+        });
+
+        assert_eq!(editor.get_buffer(), "fobaro");
+        assert_eq!(editor.get_selection(), Some((2, 5)));
+    }
+
+    /// `3p` pastes three copies and selects *all* of them. This is the reason
+    /// the count rides inside the command rather than repeating the event.
+    #[test]
+    fn helix_paste_count_selects_every_copy() {
+        let mut editor = helix_editor("foo");
+        editor.move_to_position(2, false);
+        editor.commit_cursor();
+        editor.cut_buffer.set("ab", Granularity::CharWise);
+
+        editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
+            direction: Direction::Forward,
+            count: 3,
+        });
+
+        assert_eq!(editor.get_buffer(), "fooababab");
+        assert_eq!(editor.get_selection(), Some((3, 9)));
+    }
+
+    /// Pasting nothing must not move the caret: the guard has to run *before*
+    /// the cursor is written, or the block would shift one grapheme right for a
+    /// paste that inserted no text.
+    #[test]
+    fn helix_paste_of_an_empty_cut_buffer_leaves_the_caret_put() {
+        let mut editor = helix_editor("foobar");
+        editor.move_to_position(1, false);
+        editor.commit_cursor();
+        let before = editor.get_selection();
+        editor.cut_buffer.set("", Granularity::CharWise);
+
+        editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
+            direction: Direction::Forward,
+            count: 1,
+        });
+
+        assert_eq!(editor.get_buffer(), "foobar");
+        assert_eq!(editor.get_selection(), before);
+    }
+
+    /// `café` has `é` at [3,5), so a caret resting on it has a far edge of 5.
+    /// Byte arithmetic that assumed one byte per grapheme would land mid-`é`.
+    ///
+    /// The pasted text is deliberately multibyte *and* more than one grapheme
+    /// wide: with a single-grapheme payload, "selection covers what was pasted"
+    /// and "1-wide block at the far end" are the same answer, so the assertion
+    /// would hold even if the selection were being collapsed.
+    #[test]
+    fn helix_paste_does_not_split_a_multibyte_grapheme() {
+        let mut editor = helix_editor("café");
+        editor.move_to_position(3, false);
+        editor.commit_cursor();
+        editor.cut_buffer.set("éx", Granularity::CharWise);
+
+        editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
+            direction: Direction::Forward,
+            count: 1,
+        });
+
+        assert_eq!(editor.get_buffer(), "cafééx");
+        // 3 bytes of payload from the far edge of the first `é`
+        assert_eq!(editor.get_selection(), Some((5, 8)));
     }
 
     #[test]

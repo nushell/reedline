@@ -512,6 +512,17 @@ pub enum EditCommand {
     /// Paste the cut buffer in front of the insertion point (vi `p`)
     PasteCutBufferAfter,
 
+    /// Paste the cut buffer at the selection edge in the given `direction` while
+    /// selecting the pasted buffer (helix `p`/`P`), which makes them non composable
+    /// thus carrying `count` explicitly
+    PasteAtSelectionEdge {
+        /// decides whether to paste on the Forward or Backward edge
+        /// of the selection
+        direction: Direction,
+        /// number of times the `cut_buffer` content is placed
+        count: usize,
+    },
+
     /// Upper case the current word
     UppercaseWord,
 
@@ -794,7 +805,8 @@ impl EditCommand {
             | EditCommand::Paste
             | EditCommand::CutInsidePair { .. }
             | EditCommand::CutAroundPair { .. }
-            | EditCommand::CutTextObject { .. } => EditType::EditText,
+            | EditCommand::CutTextObject { .. }
+            | EditCommand::PasteAtSelectionEdge { .. } => EditType::EditText,
 
             #[cfg(feature = "system_clipboard")] // Sadly cfg attributes in patterns don't work
             EditCommand::CutSelectionSystem | EditCommand::PasteSystem => EditType::EditText,
