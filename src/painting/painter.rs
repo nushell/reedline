@@ -1180,12 +1180,24 @@ impl Painter {
             self.stdout.queue(Print(line))?.queue(Print("\r\n"))?;
             row = row.saturating_add(1).min(max_row);
         }
-        // Track the row by counting `\r\n`s — matches reedline's
-        // historical behavior. The drift check is one-sided so a
-        // message that secretly scrolls more rows than we counted
-        // (embedded `\n`, certain CSI sequences) can still incorrectly
-        // anchor.
-        self.prompt_start_row = PromptStartRow::Stale(row);
+        // The lines above are only *queued*, so the terminal's cursor has not
+        // moved yet: a row counted forward from `starting_row` names a position
+        // the terminal has not reached. Recorded as `Stale`, the next paint
+        // re-verifies it against the real, still-earlier cursor, reads that as
+        // the prompt having scrolled off the top, and re-anchors by printing a
+        // whole screen of newlines -- wiping the display (#1005).
+        //
+        // Counting was also only as good as its assumption that a message
+        // occupies exactly one row, which fails as soon as one wraps or carries
+        // its own control sequences. Flush and ask instead: one round-trip per
+        // batch of messages, not per message, so the flicker the comment above
+        // guards against is unaffected.
+        self.stdout.flush()?;
+        let row = match cursor::position() {
+            Ok((_, actual)) => actual,
+            Err(_) => row,
+        };
+        self.prompt_start_row = PromptStartRow::Verified(row);
         Ok(())
     }
 
