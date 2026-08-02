@@ -488,16 +488,18 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             Op::Replace(ch) => ReedlineEvent::Edit(vec![EditCommand::ReplaceChar(ch)]),
         },
         Verb::Collapse(dir) => ReedlineEvent::Edit(vec![EditCommand::CollapseSelection(dir)]),
-        // Not `repeated`: a second `InsertNewlineBelow` seeks the next `\n` from
-        // the blank line just made, finds none, and appends at the buffer end.
-        // Only the first open has to seek; the rest split at the caret.
+        // Only the first open seeks; the rest go *above* the blank line it just
+        // made. A repeated `InsertNewlineBelow` would find no `\n` past that
+        // line and append at the buffer end, and a plain `InsertNewline` would
+        // delete the resting selection, which under `BlockOverNewline` always
+        // covers a grapheme.
         Verb::OpenLine(direction) => {
-            let open = match direction {
+            let first = match direction {
                 Direction::Forward => EditCommand::InsertNewlineBelow,
                 Direction::Backward => EditCommand::InsertNewlineAbove,
             };
-            let mut cmds = vec![open];
-            cmds.resize(action.count.max(1), EditCommand::InsertNewline);
+            let mut cmds = vec![first];
+            cmds.resize(action.count.max(1), EditCommand::InsertNewlineAbove);
             ReedlineEvent::Edit(cmds)
         }
         Verb::Undo => action.repeated(EditCommand::Undo),
@@ -1280,7 +1282,7 @@ mod test {
     }
 
     #[test]
-    fn count_seeks_once_then_splits_at_the_caret() {
+    fn count_seeks_once_then_opens_above() {
         let mut helix = normal();
         let _ = helix.parse_event(chr('3'));
         assert_eq!(
@@ -1288,8 +1290,8 @@ mod test {
             ReedlineEvent::Multiple(vec![
                 ReedlineEvent::Edit(vec![
                     EditCommand::InsertNewlineBelow,
-                    EditCommand::InsertNewline,
-                    EditCommand::InsertNewline,
+                    EditCommand::InsertNewlineAbove,
+                    EditCommand::InsertNewlineAbove,
                 ]),
                 ReedlineEvent::Repaint,
             ])

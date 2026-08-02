@@ -150,9 +150,11 @@ impl Editor {
                     let geom = self.caret_geometry();
                     let origin = self.insertion_point();
                     let selection = resolve_selection(self.get_buffer(), origin, *t, geom);
-                    let selection = if self.edit_mode.rest_policy() == RestPolicy::Block
-                        || selection.is_empty()
-                    {
+                    let block = matches!(
+                        self.edit_mode.rest_policy(),
+                        RestPolicy::Block | RestPolicy::BlockOverNewline
+                    );
+                    let selection = if block || selection.is_empty() {
                         selection
                     } else {
                         let buf = self.get_buffer();
@@ -548,8 +550,13 @@ impl Editor {
         // Only a block-caret grapheme step needs a line policy at the edges; every
         // other target's line-crossing is already fixed by `resolve_motion`, and a
         // bar caret (`Between`) moves freely across the terminator either way.
+        // `BlockOverNewline` opts out: the terminator is a cell it may rest on, so
+        // the raw step is already the landing and clamping or skipping would put
+        // the newline out of reach.
         if let MotionTarget::Grapheme(direction) = target {
-            if self.caret_geometry() == CaretGeometry::Block {
+            if self.caret_geometry() == CaretGeometry::Block
+                && self.edit_mode.rest_policy() != RestPolicy::BlockOverNewline
+            {
                 return self.grapheme_line_policy(buf, origin, head, direction);
             }
         }
@@ -3909,6 +3916,47 @@ mod test {
         assert_eq!(editor.get_selection(), Some((4, 8)));
     }
 
+    // --- the newline as a cell (helix `l` / `h`) ---
+    //
+    // "ab\ncd" is a0 b1 \n2 c3 d4.
+
+    #[rstest]
+    #[case(Direction::Forward, 1, (2, 3))]
+    #[case(Direction::Backward, 3, (2, 3))]
+    fn helix_grapheme_step_rests_on_the_newline(
+        #[case] direction: Direction,
+        #[case] from: usize,
+        #[case] expected: (usize, usize),
+    ) {
+        let mut editor = helix_editor("ab\ncd");
+        editor.line_buffer.set_cursor(Cursor::new(from, from + 1));
+        editor.run_edit_command(&EditCommand::Move(MotionTarget::Grapheme(direction)));
+        assert_eq!(editor.get_selection(), Some(expected));
+    }
+
+    #[test]
+    fn helix_cut_on_the_newline_joins_the_lines() {
+        let mut editor = helix_editor("ab\ncd");
+        editor.line_buffer.set_cursor(Cursor::new(1, 2));
+        editor.run_edit_command(&EditCommand::Move(MotionTarget::Grapheme(
+            Direction::Forward,
+        )));
+        editor.run_edit_command(&EditCommand::CutSelection);
+        assert_eq!(editor.get_buffer(), "abcd");
+    }
+
+    #[test]
+    fn vi_visual_still_stops_before_the_newline() {
+        // The reason `Block` and `BlockOverNewline` are separate: vim's visual
+        // `l` does not step onto the terminator.
+        let mut editor = vi_editor("ab\ncd", PromptViMode::Visual);
+        editor.line_buffer.set_cursor(Cursor::new(1, 2));
+        editor.run_edit_command(&EditCommand::Move(MotionTarget::Grapheme(
+            Direction::Forward,
+        )));
+        assert_eq!(editor.get_selection(), Some((3, 4)));
+    }
+
     // --- open line (`o` / `O`) ---
     //
     // "abc\ndef" is a0 b1 c2 \n3 d4 e5 f6; after either insert the buffer is
@@ -3946,15 +3994,16 @@ mod test {
     #[rstest]
     #[case(EditCommand::InsertNewlineBelow, 1)]
     #[case(EditCommand::InsertNewlineAbove, 5)]
-    fn open_line_then_plain_newlines_stack(#[case] open: EditCommand, #[case] caret: usize) {
-        // Opening N lines means one seeking open plus plain newlines: only the
-        // first has a line edge to find. See the negative case below.
+    fn open_line_then_opens_above_stack(#[case] open: EditCommand, #[case] caret: usize) {
+        // Opening N lines means one seeking open plus N-1 opens *above* it:
+        // only the first has a line edge to find. See the negative case below.
         let mut editor = helix_editor("abc\ndef");
         editor.line_buffer.set_cursor(Cursor::new(caret, caret + 1));
         editor.run_edit_command(&open);
-        editor.run_edit_command(&EditCommand::InsertNewline);
-        editor.run_edit_command(&EditCommand::InsertNewline);
+        editor.run_edit_command(&EditCommand::InsertNewlineAbove);
+        editor.run_edit_command(&EditCommand::InsertNewlineAbove);
         assert_eq!(editor.get_buffer(), "abc\n\n\n\ndef");
+        assert_eq!(editor.insertion_point(), 4);
     }
 
     #[test]
