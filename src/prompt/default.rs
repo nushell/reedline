@@ -1,7 +1,6 @@
-use crate::{
-    prompt::base::PromptHelixMode, Prompt, PromptEditMode, PromptHistorySearch,
-    PromptHistorySearchStatus, PromptViMode,
-};
+#[cfg(feature = "helix")]
+use crate::prompt::base::PromptHelixMode;
+use crate::{Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode};
 
 use {
     chrono::Local,
@@ -65,6 +64,7 @@ impl Prompt for DefaultPrompt {
     fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<'_, str> {
         match edit_mode {
             PromptEditMode::Default | PromptEditMode::Emacs => DEFAULT_PROMPT_INDICATOR.into(),
+            #[cfg(feature = "helix")]
             PromptEditMode::Helix(hx_mode) => match hx_mode {
                 PromptHelixMode::Normal | PromptHelixMode::Select => {
                     DEFAULT_VI_NORMAL_PROMPT_INDICATOR.into()

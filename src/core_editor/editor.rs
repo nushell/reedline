@@ -150,11 +150,7 @@ impl Editor {
                     let geom = self.caret_geometry();
                     let origin = self.insertion_point();
                     let selection = resolve_selection(self.get_buffer(), origin, *t, geom);
-                    let block = matches!(
-                        self.edit_mode.rest_policy(),
-                        RestPolicy::Block | RestPolicy::BlockOverNewline
-                    );
-                    let selection = if block || selection.is_empty() {
+                    let selection = if self.is_block_policy() || selection.is_empty() {
                         selection
                     } else {
                         let buf = self.get_buffer();
@@ -560,9 +556,7 @@ impl Editor {
         // the raw step is already the landing and clamping or skipping would put
         // the newline out of reach.
         if let MotionTarget::Grapheme(direction) = target {
-            if self.caret_geometry() == CaretGeometry::Block
-                && self.edit_mode.rest_policy() != RestPolicy::BlockOverNewline
-            {
+            if self.caret_geometry() == CaretGeometry::Block && !self.covers_terminator() {
                 return self.grapheme_line_policy(buf, origin, head, direction);
             }
         }
@@ -621,6 +615,29 @@ impl Editor {
     /// the trailing boundary). Drives the forward word-end landing and operator
     /// inclusivity in [`resolve_motion`] and the selection extension in
     /// [`Cursor::put_cursor`].
+    /// Whether the resting cursor covers exactly one grapheme (either block
+    /// policy), as opposed to sitting between them.
+    fn is_block_policy(&self) -> bool {
+        match self.edit_mode.rest_policy() {
+            RestPolicy::Block => true,
+            #[cfg(feature = "helix")]
+            RestPolicy::BlockOverNewline => true,
+            RestPolicy::Between | RestPolicy::OnGrapheme => false,
+        }
+    }
+
+    /// Whether a line terminator is a cell the caret may rest on. Helix only;
+    /// every other mode steps over or clamps before it.
+    #[cfg(feature = "helix")]
+    fn covers_terminator(&self) -> bool {
+        self.edit_mode.rest_policy() == RestPolicy::BlockOverNewline
+    }
+
+    #[cfg(not(feature = "helix"))]
+    fn covers_terminator(&self) -> bool {
+        false
+    }
+
     fn caret_geometry(&self) -> CaretGeometry {
         if self.edit_mode.rest_policy() == RestPolicy::Between {
             CaretGeometry::Bar
@@ -4084,55 +4101,6 @@ mod test {
         assert_eq!(editor.get_selection(), Some((0, 8)));
     }
 
-    fn helix_editor(buffer: &str) -> Editor {
-        let mut editor = editor_with(buffer);
-        editor.set_edit_mode(PromptEditMode::Helix(crate::PromptHelixMode::Normal));
-        editor
-    }
-
-    #[test]
-    fn helix_select_re_anchors_at_each_word() {
-        // Successive `Select(w)` tile the line — "foo " then "bar " — instead
-        // of growing from the origin like `Extend` does above.
-        let mut editor = helix_editor("foo bar baz");
-        editor.move_to_position(0, false);
-        editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
-        assert_eq!(editor.get_selection(), Some((0, 4)));
-        editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
-        assert_eq!(editor.get_selection(), Some((4, 8)));
-    }
-
-    // --- the newline as a cell (helix `l` / `h`) ---
-    //
-    // "ab\ncd" is a0 b1 \n2 c3 d4.
-
-    #[rstest]
-    #[case(Direction::Forward, 1, (2, 3))]
-    #[case(Direction::Backward, 3, (2, 3))]
-    fn helix_grapheme_step_rests_on_the_newline(
-        #[case] direction: Direction,
-        #[case] from: usize,
-        #[case] expected: (usize, usize),
-    ) {
-        let mut editor = helix_editor("ab\ncd");
-        editor.line_buffer.set_cursor(Cursor::new(from, from + 1));
-        editor.run_edit_command(&EditCommand::Move(MotionTarget::Grapheme(direction)));
-        assert_eq!(editor.get_selection(), Some(expected));
-    }
-
-    #[test]
-    fn helix_cut_on_the_newline_joins_the_lines() {
-        let mut editor = helix_editor("ab\ncd");
-        editor.line_buffer.set_cursor(Cursor::new(1, 2));
-        editor.run_edit_command(&EditCommand::Move(MotionTarget::Grapheme(
-            Direction::Forward,
-        )));
-        editor.run_edit_command(&EditCommand::CutSelection {
-            granularity: Granularity::CharWise,
-        });
-        assert_eq!(editor.get_buffer(), "abcd");
-    }
-
     #[test]
     fn vi_visual_still_stops_before_the_newline() {
         // The reason `Block` and `BlockOverNewline` are separate: vim's visual
@@ -4143,28 +4111,6 @@ mod test {
             Direction::Forward,
         )));
         assert_eq!(editor.get_selection(), Some((3, 4)));
-    }
-
-    // --- open line (`o` / `O`) ---
-    //
-    // "abc\ndef" is a0 b1 c2 \n3 d4 e5 f6; after either insert the buffer is
-    // "abc\n\ndef", whose new empty line is the second `\n` at byte 4.
-
-    #[rstest]
-    #[case(EditCommand::InsertNewlineBelow, 1)]
-    #[case(EditCommand::InsertNewlineAbove, 5)]
-    fn open_line_lands_on_the_new_line_from_an_anchored_cursor(
-        #[case] command: EditCommand,
-        #[case] caret: usize,
-    ) {
-        // The helix regression: a resting block cursor is always anchored, and
-        // the line-edge seek used to move only its head, so the stale anchor
-        // pulled the caret back onto the original line.
-        let mut editor = helix_editor("abc\ndef");
-        editor.line_buffer.set_cursor(Cursor::new(caret, caret + 1));
-        editor.run_edit_command(&command);
-        assert_eq!(editor.get_buffer(), "abc\n\ndef");
-        assert_eq!(editor.insertion_point(), 4);
     }
 
     #[rstest]
@@ -4179,185 +4125,264 @@ mod test {
         assert_eq!(editor.insertion_point(), 4);
     }
 
-    #[rstest]
-    #[case(EditCommand::InsertNewlineBelow, 1)]
-    #[case(EditCommand::InsertNewlineAbove, 5)]
-    fn open_line_then_opens_above_stack(#[case] open: EditCommand, #[case] caret: usize) {
-        // Opening N lines means one seeking open plus N-1 opens *above* it:
-        // only the first has a line edge to find. See the negative case below.
-        let mut editor = helix_editor("abc\ndef");
-        editor.line_buffer.set_cursor(Cursor::new(caret, caret + 1));
-        editor.run_edit_command(&open);
-        editor.run_edit_command(&EditCommand::InsertNewlineAbove);
-        editor.run_edit_command(&EditCommand::InsertNewlineAbove);
-        assert_eq!(editor.get_buffer(), "abc\n\n\n\ndef");
-        assert_eq!(editor.insertion_point(), 4);
-    }
+    /// Helix-only editor behaviour. One gate for the whole block so it
+    /// lifts in a single edit once helix stops being feature gated.
+    #[cfg(feature = "helix")]
+    mod helix {
+        use super::*;
+        use pretty_assertions::assert_eq;
 
-    #[test]
-    fn repeating_open_below_does_not_stack() {
-        // The second seek finds no `\n` past the blank line just made, so it
-        // appends at the buffer end rather than stacking.
-        let mut editor = helix_editor("abc\ndef");
-        editor.line_buffer.set_cursor(Cursor::new(1, 2));
-        for _ in 0..3 {
-            editor.run_edit_command(&EditCommand::InsertNewlineBelow);
+        fn helix_editor(buffer: &str) -> Editor {
+            let mut editor = editor_with(buffer);
+            editor.set_edit_mode(PromptEditMode::Helix(crate::PromptHelixMode::Normal));
+            editor
         }
-        assert_eq!(editor.get_buffer(), "abc\n\ndef\n\n");
-    }
 
-    #[test]
-    fn helix_collapse_selection_forward_lands_after_it() {
-        // The collapse lands as a point, but the Block rest policy widens it
-        // back onto one grapheme — a helix caret is always a 1-wide cover, so
-        // `a` rests *on* 'b' with the old selection gone.
-        let mut editor = helix_editor("foo bar baz");
-        editor.move_to_position(0, false);
-        editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
-        editor.run_edit_command(&EditCommand::CollapseSelection(Direction::Forward));
-        assert_eq!(editor.get_selection(), Some((4, 5)));
-        assert_eq!(editor.insertion_point(), 4);
-    }
+        #[test]
+        fn helix_select_re_anchors_at_each_word() {
+            // Successive `Select(w)` tile the line — "foo " then "bar " — instead
+            // of growing from the origin like `Extend` does above.
+            let mut editor = helix_editor("foo bar baz");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+            assert_eq!(editor.get_selection(), Some((0, 4)));
+            editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+            assert_eq!(editor.get_selection(), Some((4, 8)));
+        }
 
-    #[test]
-    fn helix_collapse_selection_backward_lands_at_its_start() {
-        let mut editor = helix_editor("foo bar baz");
-        editor.move_to_position(0, false);
-        editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
-        editor.run_edit_command(&EditCommand::CollapseSelection(Direction::Backward));
-        assert_eq!(editor.get_selection(), Some((0, 1)));
-        assert_eq!(editor.insertion_point(), 0);
-    }
-
-    #[test]
-    fn helix_undo_re_widens_the_restored_caret() {
-        // `undo()` replaces the whole LineBuffer, cursor included, so the
-        // restored cursor is whatever the undo stack recorded — here the pre-cut
-        // selection (0, 4). Nothing in the Undo arm normalizes it: the
-        // unconditional `commit_cursor()` at the end of `run_edit_command` does,
-        // via the Block rest policy. That is the guarantee under test — a command
-        // that never mentions the cursor still cannot leave a helix caret
-        // rendering as a bar.
+        // --- the newline as a cell (helix `l` / `h`) ---
         //
-        // Note *where* it lands. Undo's `EditType` is not
-        // `MoveCursor { select: true }`, so `run_edit_command` calls
-        // `clear_selection`, which collapses to the caret — for a forward Block
-        // selection that is the last covered grapheme's start (3, the space), not
-        // the selection start. So `d` then `u` restores the text but parks the
-        // caret at the end of it. Real helix re-highlights the restored selection
-        // instead; pinned here so that deviation is visible rather than
-        // rediscovered.
-        let mut editor = helix_editor("foo bar baz");
-        editor.move_to_position(0, false);
-        editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
-        editor.run_edit_command(&EditCommand::CutSelection {
-            granularity: Granularity::CharWise,
-        });
-        assert_eq!(editor.get_buffer(), "bar baz");
+        // "ab\ncd" is a0 b1 \n2 c3 d4.
 
-        editor.run_edit_command(&EditCommand::Undo);
-        assert_eq!(editor.get_buffer(), "foo bar baz");
-        // a 1-wide cover, not a bare point
-        assert_eq!(editor.get_selection(), Some((3, 4)));
-        assert_eq!(editor.insertion_point(), 3);
-    }
+        #[rstest]
+        #[case(Direction::Forward, 1, (2, 3))]
+        #[case(Direction::Backward, 3, (2, 3))]
+        fn helix_grapheme_step_rests_on_the_newline(
+            #[case] direction: Direction,
+            #[case] from: usize,
+            #[case] expected: (usize, usize),
+        ) {
+            let mut editor = helix_editor("ab\ncd");
+            editor.line_buffer.set_cursor(Cursor::new(from, from + 1));
+            editor.run_edit_command(&EditCommand::Move(MotionTarget::Grapheme(direction)));
+            assert_eq!(editor.get_selection(), Some(expected));
+        }
 
-    /// Helix `p`: insert at the selection's far edge, leaving the pasted text
-    /// selected. The resting block covers the final `o`, so the far edge is 3.
-    #[test]
-    fn helix_paste_after_lands_past_the_selection_and_selects_it() {
-        let mut editor = helix_editor("foo");
-        editor.move_to_position(2, false);
-        editor.commit_cursor();
-        editor.cut_buffer.set("bar", Granularity::CharWise);
+        #[test]
+        fn helix_cut_on_the_newline_joins_the_lines() {
+            let mut editor = helix_editor("ab\ncd");
+            editor.line_buffer.set_cursor(Cursor::new(1, 2));
+            editor.run_edit_command(&EditCommand::Move(MotionTarget::Grapheme(
+                Direction::Forward,
+            )));
+            editor.run_edit_command(&EditCommand::CutSelection {
+                granularity: Granularity::CharWise,
+            });
+            assert_eq!(editor.get_buffer(), "abcd");
+        }
 
-        editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
-            direction: Direction::Forward,
-            count: 1,
-        });
+        // --- open line (`o` / `O`) ---
+        //
+        // "abc\ndef" is a0 b1 c2 \n3 d4 e5 f6; after either insert the buffer is
+        // "abc\n\ndef", whose new empty line is the second `\n` at byte 4.
 
-        assert_eq!(editor.get_buffer(), "foobar");
-        assert_eq!(editor.get_selection(), Some((3, 6)));
-    }
+        #[rstest]
+        #[case(EditCommand::InsertNewlineBelow, 1)]
+        #[case(EditCommand::InsertNewlineAbove, 5)]
+        fn open_line_lands_on_the_new_line_from_an_anchored_cursor(
+            #[case] command: EditCommand,
+            #[case] caret: usize,
+        ) {
+            // The helix regression: a resting block cursor is always anchored, and
+            // the line-edge seek used to move only its head, so the stale anchor
+            // pulled the caret back onto the original line.
+            let mut editor = helix_editor("abc\ndef");
+            editor.line_buffer.set_cursor(Cursor::new(caret, caret + 1));
+            editor.run_edit_command(&command);
+            assert_eq!(editor.get_buffer(), "abc\n\ndef");
+            assert_eq!(editor.insertion_point(), 4);
+        }
 
-    /// Helix `P`: the near edge instead, so the pasted text pushes the covered
-    /// grapheme right rather than following it.
-    #[test]
-    fn helix_paste_before_lands_at_the_selection_start_and_selects_it() {
-        let mut editor = helix_editor("foo");
-        editor.move_to_position(2, false);
-        editor.commit_cursor();
-        editor.cut_buffer.set("bar", Granularity::CharWise);
+        #[rstest]
+        #[case(EditCommand::InsertNewlineBelow, 1)]
+        #[case(EditCommand::InsertNewlineAbove, 5)]
+        fn open_line_then_opens_above_stack(#[case] open: EditCommand, #[case] caret: usize) {
+            // Opening N lines means one seeking open plus N-1 opens *above* it:
+            // only the first has a line edge to find. See the negative case below.
+            let mut editor = helix_editor("abc\ndef");
+            editor.line_buffer.set_cursor(Cursor::new(caret, caret + 1));
+            editor.run_edit_command(&open);
+            editor.run_edit_command(&EditCommand::InsertNewlineAbove);
+            editor.run_edit_command(&EditCommand::InsertNewlineAbove);
+            assert_eq!(editor.get_buffer(), "abc\n\n\n\ndef");
+            assert_eq!(editor.insertion_point(), 4);
+        }
 
-        editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
-            direction: Direction::Backward,
-            count: 1,
-        });
+        #[test]
+        fn repeating_open_below_does_not_stack() {
+            // The second seek finds no `\n` past the blank line just made, so it
+            // appends at the buffer end rather than stacking.
+            let mut editor = helix_editor("abc\ndef");
+            editor.line_buffer.set_cursor(Cursor::new(1, 2));
+            for _ in 0..3 {
+                editor.run_edit_command(&EditCommand::InsertNewlineBelow);
+            }
+            assert_eq!(editor.get_buffer(), "abc\n\ndef\n\n");
+        }
 
-        assert_eq!(editor.get_buffer(), "fobaro");
-        assert_eq!(editor.get_selection(), Some((2, 5)));
-    }
+        #[test]
+        fn helix_collapse_selection_forward_lands_after_it() {
+            // The collapse lands as a point, but the Block rest policy widens it
+            // back onto one grapheme — a helix caret is always a 1-wide cover, so
+            // `a` rests *on* 'b' with the old selection gone.
+            let mut editor = helix_editor("foo bar baz");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+            editor.run_edit_command(&EditCommand::CollapseSelection(Direction::Forward));
+            assert_eq!(editor.get_selection(), Some((4, 5)));
+            assert_eq!(editor.insertion_point(), 4);
+        }
 
-    /// `3p` pastes three copies and selects *all* of them. This is the reason
-    /// the count rides inside the command rather than repeating the event.
-    #[test]
-    fn helix_paste_count_selects_every_copy() {
-        let mut editor = helix_editor("foo");
-        editor.move_to_position(2, false);
-        editor.commit_cursor();
-        editor.cut_buffer.set("ab", Granularity::CharWise);
+        #[test]
+        fn helix_collapse_selection_backward_lands_at_its_start() {
+            let mut editor = helix_editor("foo bar baz");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+            editor.run_edit_command(&EditCommand::CollapseSelection(Direction::Backward));
+            assert_eq!(editor.get_selection(), Some((0, 1)));
+            assert_eq!(editor.insertion_point(), 0);
+        }
 
-        editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
-            direction: Direction::Forward,
-            count: 3,
-        });
+        #[test]
+        fn helix_undo_re_widens_the_restored_caret() {
+            // `undo()` replaces the whole LineBuffer, cursor included, so the
+            // restored cursor is whatever the undo stack recorded — here the pre-cut
+            // selection (0, 4). Nothing in the Undo arm normalizes it: the
+            // unconditional `commit_cursor()` at the end of `run_edit_command` does,
+            // via the Block rest policy. That is the guarantee under test — a command
+            // that never mentions the cursor still cannot leave a helix caret
+            // rendering as a bar.
+            //
+            // Note *where* it lands. Undo's `EditType` is not
+            // `MoveCursor { select: true }`, so `run_edit_command` calls
+            // `clear_selection`, which collapses to the caret — for a forward Block
+            // selection that is the last covered grapheme's start (3, the space), not
+            // the selection start. So `d` then `u` restores the text but parks the
+            // caret at the end of it. Real helix re-highlights the restored selection
+            // instead; pinned here so that deviation is visible rather than
+            // rediscovered.
+            let mut editor = helix_editor("foo bar baz");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+            editor.run_edit_command(&EditCommand::CutSelection {
+                granularity: Granularity::CharWise,
+            });
+            assert_eq!(editor.get_buffer(), "bar baz");
 
-        assert_eq!(editor.get_buffer(), "fooababab");
-        assert_eq!(editor.get_selection(), Some((3, 9)));
-    }
+            editor.run_edit_command(&EditCommand::Undo);
+            assert_eq!(editor.get_buffer(), "foo bar baz");
+            // a 1-wide cover, not a bare point
+            assert_eq!(editor.get_selection(), Some((3, 4)));
+            assert_eq!(editor.insertion_point(), 3);
+        }
 
-    /// Pasting nothing must not move the caret: the guard has to run *before*
-    /// the cursor is written, or the block would shift one grapheme right for a
-    /// paste that inserted no text.
-    #[test]
-    fn helix_paste_of_an_empty_cut_buffer_leaves_the_caret_put() {
-        let mut editor = helix_editor("foobar");
-        editor.move_to_position(1, false);
-        editor.commit_cursor();
-        let before = editor.get_selection();
-        editor.cut_buffer.set("", Granularity::CharWise);
+        /// Helix `p`: insert at the selection's far edge, leaving the pasted text
+        /// selected. The resting block covers the final `o`, so the far edge is 3.
+        #[test]
+        fn helix_paste_after_lands_past_the_selection_and_selects_it() {
+            let mut editor = helix_editor("foo");
+            editor.move_to_position(2, false);
+            editor.commit_cursor();
+            editor.cut_buffer.set("bar", Granularity::CharWise);
 
-        editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
-            direction: Direction::Forward,
-            count: 1,
-        });
+            editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
+                direction: Direction::Forward,
+                count: 1,
+            });
 
-        assert_eq!(editor.get_buffer(), "foobar");
-        assert_eq!(editor.get_selection(), before);
-    }
+            assert_eq!(editor.get_buffer(), "foobar");
+            assert_eq!(editor.get_selection(), Some((3, 6)));
+        }
 
-    /// `café` has `é` at [3,5), so a caret resting on it has a far edge of 5.
-    /// Byte arithmetic that assumed one byte per grapheme would land mid-`é`.
-    ///
-    /// The pasted text is deliberately multibyte *and* more than one grapheme
-    /// wide: with a single-grapheme payload, "selection covers what was pasted"
-    /// and "1-wide block at the far end" are the same answer, so the assertion
-    /// would hold even if the selection were being collapsed.
-    #[test]
-    fn helix_paste_does_not_split_a_multibyte_grapheme() {
-        let mut editor = helix_editor("café");
-        editor.move_to_position(3, false);
-        editor.commit_cursor();
-        editor.cut_buffer.set("éx", Granularity::CharWise);
+        /// Helix `P`: the near edge instead, so the pasted text pushes the covered
+        /// grapheme right rather than following it.
+        #[test]
+        fn helix_paste_before_lands_at_the_selection_start_and_selects_it() {
+            let mut editor = helix_editor("foo");
+            editor.move_to_position(2, false);
+            editor.commit_cursor();
+            editor.cut_buffer.set("bar", Granularity::CharWise);
 
-        editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
-            direction: Direction::Forward,
-            count: 1,
-        });
+            editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
+                direction: Direction::Backward,
+                count: 1,
+            });
 
-        assert_eq!(editor.get_buffer(), "cafééx");
-        // 3 bytes of payload from the far edge of the first `é`
-        assert_eq!(editor.get_selection(), Some((5, 8)));
+            assert_eq!(editor.get_buffer(), "fobaro");
+            assert_eq!(editor.get_selection(), Some((2, 5)));
+        }
+
+        /// `3p` pastes three copies and selects *all* of them. This is the reason
+        /// the count rides inside the command rather than repeating the event.
+        #[test]
+        fn helix_paste_count_selects_every_copy() {
+            let mut editor = helix_editor("foo");
+            editor.move_to_position(2, false);
+            editor.commit_cursor();
+            editor.cut_buffer.set("ab", Granularity::CharWise);
+
+            editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
+                direction: Direction::Forward,
+                count: 3,
+            });
+
+            assert_eq!(editor.get_buffer(), "fooababab");
+            assert_eq!(editor.get_selection(), Some((3, 9)));
+        }
+
+        /// Pasting nothing must not move the caret: the guard has to run *before*
+        /// the cursor is written, or the block would shift one grapheme right for a
+        /// paste that inserted no text.
+        #[test]
+        fn helix_paste_of_an_empty_cut_buffer_leaves_the_caret_put() {
+            let mut editor = helix_editor("foobar");
+            editor.move_to_position(1, false);
+            editor.commit_cursor();
+            let before = editor.get_selection();
+            editor.cut_buffer.set("", Granularity::CharWise);
+
+            editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
+                direction: Direction::Forward,
+                count: 1,
+            });
+
+            assert_eq!(editor.get_buffer(), "foobar");
+            assert_eq!(editor.get_selection(), before);
+        }
+
+        /// `café` has `é` at [3,5), so a caret resting on it has a far edge of 5.
+        /// Byte arithmetic that assumed one byte per grapheme would land mid-`é`.
+        ///
+        /// The pasted text is deliberately multibyte *and* more than one grapheme
+        /// wide: with a single-grapheme payload, "selection covers what was pasted"
+        /// and "1-wide block at the far end" are the same answer, so the assertion
+        /// would hold even if the selection were being collapsed.
+        #[test]
+        fn helix_paste_does_not_split_a_multibyte_grapheme() {
+            let mut editor = helix_editor("café");
+            editor.move_to_position(3, false);
+            editor.commit_cursor();
+            editor.cut_buffer.set("éx", Granularity::CharWise);
+
+            editor.run_edit_command(&EditCommand::PasteAtSelectionEdge {
+                direction: Direction::Forward,
+                count: 1,
+            });
+
+            assert_eq!(editor.get_buffer(), "cafééx");
+            // 3 bytes of payload from the far edge of the first `é`
+            assert_eq!(editor.get_selection(), Some((5, 8)));
+        }
     }
 
     #[test]

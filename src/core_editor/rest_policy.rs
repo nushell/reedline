@@ -32,6 +32,7 @@ pub(crate) enum RestPolicy {
     /// [`Block`](RestPolicy::Block) with the terminator counted as a cell, so
     /// `l` walks onto the `\n` and an operator there joins the lines. Helix
     /// normal / select, whose `Range` is over the newline like any other char.
+    #[cfg(feature = "helix")]
     BlockOverNewline,
 }
 
@@ -97,31 +98,37 @@ pub(crate) fn commit(buf: &str, c: Cursor, policy: RestPolicy) -> Cursor {
                 c
             }
         }
-        RestPolicy::Block | RestPolicy::BlockOverNewline => {
-            // A block cursor always covers exactly one grapheme. Only a resting
-            // *point* needs adjusting; an existing selection is already a range.
-            let over_newline = policy == RestPolicy::BlockOverNewline;
-            if c.is_empty() {
-                let head = c.head();
-                let next = next_grapheme_boundary(buf, head);
-                if next > head && (over_newline || !buf[head..].starts_with(['\n', '\r'])) {
-                    // widen forward onto the grapheme to the right: [head, next)
-                    c.move_head(next)
-                } else if head > 0 && !buf[..head].ends_with(['\n', '\r']) {
-                    // at the buffer end there's nothing to the right, so cover the
-                    // last grapheme instead: [prev, head). Never crosses a line
-                    // boundary, in either policy — that would move the caret up a
-                    // line rather than widen it.
-                    Cursor::new(prev_grapheme_boundary(buf, head), head)
-                } else {
-                    // empty buffer, or an empty line (no grapheme to cover without
-                    // crossing the newline): stay a zero-width point
-                    c
-                }
-            } else {
-                c
-            }
+        RestPolicy::Block => block(buf, c, false),
+        #[cfg(feature = "helix")]
+        RestPolicy::BlockOverNewline => block(buf, c, true),
+    }
+}
+
+/// The block-caret resting rule, shared by [`RestPolicy::Block`] and the
+/// helix-only `BlockOverNewline`. `over_newline` decides whether a line
+/// terminator counts as a coverable cell.
+fn block(buf: &str, c: Cursor, over_newline: bool) -> Cursor {
+    // A block cursor always covers exactly one grapheme. Only a resting
+    // *point* needs adjusting; an existing selection is already a range.
+    if c.is_empty() {
+        let head = c.head();
+        let next = next_grapheme_boundary(buf, head);
+        if next > head && (over_newline || !buf[head..].starts_with(['\n', '\r'])) {
+            // widen forward onto the grapheme to the right: [head, next)
+            c.move_head(next)
+        } else if head > 0 && !buf[..head].ends_with(['\n', '\r']) {
+            // at the buffer end there's nothing to the right, so cover the
+            // last grapheme instead: [prev, head). Never crosses a line
+            // boundary, in either policy — that would move the caret up a
+            // line rather than widen it.
+            Cursor::new(prev_grapheme_boundary(buf, head), head)
+        } else {
+            // empty buffer, or an empty line (no grapheme to cover without
+            // crossing the newline): stay a zero-width point
+            c
         }
+    } else {
+        c
     }
 }
 
@@ -348,6 +355,7 @@ mod tests {
 
     // --- commit: BlockOverNewline --------------------------------------------
 
+    #[cfg(feature = "helix")]
     #[test]
     fn block_over_newline_widens_onto_the_terminator() {
         // The one difference from `Block`: "ab\ncd" at the `\n` (byte 2) covers
@@ -362,6 +370,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "helix")]
     #[test]
     fn block_over_newline_covers_a_whole_crlf() {
         // CRLF is one grapheme, so the cell is both bytes: "ab\r\ncd" at 2.
@@ -371,6 +380,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "helix")]
     #[test]
     fn block_over_newline_still_will_not_widen_across_a_line() {
         // The *backward* guard is kept: at the end of a buffer ending in `\n`
@@ -387,6 +397,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "helix")]
     #[test]
     fn block_over_newline_matches_block_away_from_terminators() {
         for (buf, pos) in [("hello", 2), ("caf\u{e9}", 3), ("hello", 5), ("", 0)] {
@@ -409,6 +420,7 @@ mod tests {
             RestPolicy::Between,
             RestPolicy::OnGrapheme,
             RestPolicy::Block,
+            #[cfg(feature = "helix")]
             RestPolicy::BlockOverNewline,
         ] {
             for buf in [MIXED, MULTILINE] {

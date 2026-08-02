@@ -66,6 +66,7 @@ pub enum PromptEditMode {
     Vi(PromptViMode),
 
     /// A helix/Kakoune like mode
+    #[cfg(feature = "helix")]
     Helix(PromptHelixMode),
 
     /// A custom mode
@@ -81,10 +82,12 @@ impl PromptEditMode {
             PromptEditMode::Vi(PromptViMode::Visual) => RestPolicy::Block,
             // Helix counts the line terminator as a cell, so `l` reaches it and
             // `d` there joins the lines; vi visual stops short of it.
+            #[cfg(feature = "helix")]
             PromptEditMode::Helix(PromptHelixMode::Normal)
             | PromptEditMode::Helix(PromptHelixMode::Select) => RestPolicy::BlockOverNewline,
+            #[cfg(feature = "helix")]
+            PromptEditMode::Helix(PromptHelixMode::Insert) => RestPolicy::Between,
             PromptEditMode::Vi(PromptViMode::Insert)
-            | PromptEditMode::Helix(PromptHelixMode::Insert)
             | PromptEditMode::Default
             | PromptEditMode::Emacs => RestPolicy::Between,
             // No catch-all `_ =>` arm over the variants on purpose: a future
@@ -104,10 +107,11 @@ impl PromptEditMode {
             // exclusive for the word/line/grapheme motions they emit (a forward
             // find stays inclusive, matching its operator span), so the
             // gap-indexed `Span` is the natural reading.
-            PromptEditMode::Default
-            | PromptEditMode::Emacs
-            | PromptEditMode::Helix(_)
-            | PromptEditMode::Custom(_) => SelectionExtent::Span,
+            #[cfg(feature = "helix")]
+            PromptEditMode::Helix(_) => SelectionExtent::Span,
+            PromptEditMode::Default | PromptEditMode::Emacs | PromptEditMode::Custom(_) => {
+                SelectionExtent::Span
+            }
         }
     }
 }
@@ -128,6 +132,7 @@ pub enum PromptViMode {
 }
 
 /// The helix/Kakoune like modes that the prompt can be in
+#[cfg(feature = "helix")]
 #[derive(Serialize, Deserialize, Clone, Debug, EnumIter, Default, PartialEq, Eq)]
 pub enum PromptHelixMode {
     /// Normal mode carries an at least 1 grapheme wide selection
@@ -164,10 +169,12 @@ pub enum PromptEditModeDiscriminants {
     ViInsert,
 
     /// Helix normal mode
+    #[cfg(feature = "helix")]
     #[strum(serialize = "HelixNormal", serialize = "helix_normal")]
     HelixNormal,
 
     /// Helix insert mode
+    #[cfg(feature = "helix")]
     #[strum(serialize = "HelixInsert", serialize = "helix_insert")]
     HelixInsert,
 
@@ -183,6 +190,7 @@ impl From<PromptViMode> for PromptEditMode {
 
 impl Display for PromptEditMode {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        #[cfg(feature = "helix")]
         use PromptHelixMode as Helix;
         use PromptViMode as Vi;
         match self {
@@ -191,8 +199,11 @@ impl Display for PromptEditMode {
             Self::Vi(Vi::Normal) => write!(f, "Vi_Normal"),
             Self::Vi(Vi::Insert) => write!(f, "Vi_Insert"),
             Self::Vi(Vi::Visual) => write!(f, "Vi_Visual"),
+            #[cfg(feature = "helix")]
             Self::Helix(Helix::Normal) => write!(f, "Helix_Normal"),
+            #[cfg(feature = "helix")]
             Self::Helix(Helix::Insert) => write!(f, "Helix_Insert"),
+            #[cfg(feature = "helix")]
             Self::Helix(Helix::Select) => write!(f, "Helix_Select"),
             Self::Custom(s) => write!(f, "Custom_{s}"),
         }
@@ -203,6 +214,7 @@ impl IntoDiscriminant for PromptEditMode {
     type Discriminant = PromptEditModeDiscriminants;
 
     fn discriminant(&self) -> Self::Discriminant {
+        #[cfg(feature = "helix")]
         use PromptHelixMode as Helix;
         use PromptViMode as Vi;
         match self {
@@ -212,7 +224,9 @@ impl IntoDiscriminant for PromptEditMode {
             // keybindings, differing only in selection geometry.
             Self::Vi(Vi::Normal | Vi::Visual) => Self::Discriminant::ViNormal,
             Self::Vi(Vi::Insert) => Self::Discriminant::ViInsert,
+            #[cfg(feature = "helix")]
             Self::Helix(Helix::Normal | Helix::Select) => Self::Discriminant::HelixNormal,
+            #[cfg(feature = "helix")]
             Self::Helix(Helix::Insert) => Self::Discriminant::HelixInsert,
             Self::Custom(_) => Self::Discriminant::Custom,
         }

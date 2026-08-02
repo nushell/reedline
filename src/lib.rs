@@ -257,11 +257,12 @@ pub use history::{
 };
 
 mod prompt;
+#[cfg(feature = "helix")]
+pub use prompt::PromptHelixMode;
 pub use prompt::{
     DefaultPrompt, DefaultPromptSegment, Prompt, PromptEditMode, PromptEditModeDiscriminants,
-    PromptHelixMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode,
-    DEFAULT_INDICATOR_COLOR, DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_MULTILINE_COLOR,
-    DEFAULT_PROMPT_RIGHT_COLOR,
+    PromptHistorySearch, PromptHistorySearchStatus, PromptViMode, DEFAULT_INDICATOR_COLOR,
+    DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_MULTILINE_COLOR, DEFAULT_PROMPT_RIGHT_COLOR,
 };
 
 mod edit_mode;
