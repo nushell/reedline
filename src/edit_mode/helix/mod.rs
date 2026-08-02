@@ -4,8 +4,8 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, Mouse
 pub use helix_keybindings::{default_helix_insert_keybindings, default_helix_normal_keybindings};
 
 use crate::{
-    Direction, EditCommand, EditMode, FindStop, Keybindings, MotionTarget, PromptEditMode,
-    PromptHelixMode, ReedlineEvent, WordEdge,
+    Direction, EditCommand, EditMode, FindStop, Granularity, Keybindings, MotionTarget,
+    PromptEditMode, PromptHelixMode, ReedlineEvent, WordEdge,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -482,8 +482,14 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             }
         },
         Verb::OnSelection(op) => match op {
-            Op::Cut => ReedlineEvent::Edit(vec![EditCommand::CutSelection]),
-            Op::Change => ReedlineEvent::Edit(vec![EditCommand::CutSelection]),
+            // Helix has no linewise register: `d` and `c` cut exactly the
+            // selection, whatever it spans.
+            Op::Cut => ReedlineEvent::Edit(vec![EditCommand::CutSelection {
+                granularity: Granularity::CharWise,
+            }]),
+            Op::Change => ReedlineEvent::Edit(vec![EditCommand::CutSelection {
+                granularity: Granularity::CharWise,
+            }]),
             Op::Yank => ReedlineEvent::Edit(vec![EditCommand::CopySelection]),
             Op::Replace(ch) => ReedlineEvent::Edit(vec![EditCommand::ReplaceChar(ch)]),
         },
@@ -1050,7 +1056,9 @@ mod test {
         assert_eq!(
             helix.parse_event(chr('d')),
             ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![EditCommand::CutSelection]),
+                ReedlineEvent::Edit(vec![EditCommand::CutSelection {
+                    granularity: Granularity::CharWise,
+                }]),
                 ReedlineEvent::Repaint,
             ])
         );
@@ -1063,7 +1071,9 @@ mod test {
         assert_eq!(
             helix.parse_event(chr('c')),
             ReedlineEvent::Multiple(vec![
-                ReedlineEvent::Edit(vec![EditCommand::CutSelection]),
+                ReedlineEvent::Edit(vec![EditCommand::CutSelection {
+                    granularity: Granularity::CharWise,
+                }]),
                 ReedlineEvent::Repaint,
             ])
         );
