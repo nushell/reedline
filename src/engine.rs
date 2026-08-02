@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, ops::ControlFlow, path::PathBuf};
 
 use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
@@ -17,7 +17,7 @@ use {
 };
 use {
     crate::{
-        completion::{Completer, DefaultCompleter},
+        completion::{Completer, CompletionStatus, DefaultCompleter},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
         enums::{EventStatus, ReedlineEvent},
@@ -52,7 +52,10 @@ use {
         io::Result,
         io::Write,
         process::Command,
-        sync::{atomic::AtomicBool, Arc},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
         time::Duration,
         time::SystemTime,
     },
@@ -163,6 +166,7 @@ pub struct Reedline {
     completer: Box<dyn Completer + Send>,
     quick_completions: bool,
     partial_completions: bool,
+    persistent_menus: bool,
 
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
@@ -208,6 +212,10 @@ pub struct Reedline {
     // `Signal::ExternalBreak` with the current buffer contents.
     break_signal: Option<Arc<AtomicBool>>,
 
+    // External repaint signal: when triggered, the prompt is re-evaluated
+    // and repainted in place while `read_line()` is running.
+    repaint_signal: Option<RepaintSignal>,
+
     // Maximum time to block on input before yielding control for features that
     // require periodic processing (external printer, idle callback).
     // Only used when external_printer or idle_callback is configured.
@@ -225,6 +233,26 @@ pub struct Reedline {
 struct BufferEditor {
     command: Command,
     temp_file: PathBuf,
+}
+
+/// Call [`request_repaint`](RepaintSignal::request_repaint) once
+/// new prompt data is ready! The next iteration of the input loop re-evaluates
+/// the [`Prompt`] and redraws it without interrupting the current line edit.
+#[derive(Clone, Debug, Default)]
+pub struct RepaintSignal {
+    flag: Arc<AtomicBool>,
+}
+
+impl RepaintSignal {
+    /// Request that the prompt is re-evaluated and repainted in place.
+    pub fn request_repaint(&self) {
+        self.flag.store(true, Ordering::Relaxed);
+    }
+
+    /// Consume a pending repaint request.
+    fn take(&self) -> bool {
+        self.flag.swap(false, Ordering::Relaxed)
+    }
 }
 
 impl Drop for Reedline {
@@ -283,6 +311,7 @@ impl Reedline {
             completer,
             quick_completions: false,
             partial_completions: false,
+            persistent_menus: false,
             highlighter: buffer_highlighter,
             visual_selection_style,
             hinter,
@@ -299,6 +328,7 @@ impl Reedline {
             kitty_protocol: KittyProtocolGuard::default(),
             immediately_accept: false,
             break_signal: None,
+            repaint_signal: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
             #[cfg(feature = "external_printer")]
             external_printer: None,
@@ -417,11 +447,41 @@ impl Reedline {
         self
     }
 
+    /// Control whether the cursor crosses line boundaries on left/right motions
+    /// in a block caret (vi normal/visual mode). When `true` (the default), `l`
+    /// at the end of a line moves to the next line's first character and `h` at
+    /// column 0 to the previous line's last; when `false`, both stop at the line
+    /// edge (vim's default `h`/`l`). Has no effect on emacs or vi insert mode,
+    /// whose bar caret always moves freely across lines.
+    ///
+    /// Scope: this steers where the **caret rests** on `h`/`l`, not how far an
+    /// operator reaches. Operator motions (`d`/`c`/`y`) delete the literal
+    /// grapheme span regardless of this flag, so e.g. `dl` always deletes the
+    /// char under the caret and never the line break.
+    #[must_use]
+    pub fn with_cross_line_cursor(mut self, cross_line_cursor: bool) -> Self {
+        self.editor.set_cross_line_cursor(cross_line_cursor);
+        self
+    }
+
     /// Turn on partial completions. These completions will fill the buffer with the
     /// smallest common string from all the options
     #[must_use]
     pub fn with_partial_completions(mut self, partial_completions: bool) -> Self {
         self.partial_completions = partial_completions;
+        self
+    }
+
+    /// Make active menus persist while the line is edited: erasing characters
+    /// or emptying the line refilters the menu instead of dismissing it.
+    ///
+    /// When disabled (the default), an active menu is deactivated by a backspace
+    /// when quick completions are on, and by any edit that leaves the line
+    /// buffer empty. A persistent menu still closes on Esc, Ctrl-C, or when a
+    /// value is accepted.
+    #[must_use]
+    pub fn with_persistent_menus(mut self, persistent_menus: bool) -> Self {
+        self.persistent_menus = persistent_menus;
         self
     }
 
@@ -668,6 +728,16 @@ impl Reedline {
         self
     }
 
+    /// Get a [`RepaintSignal`] handle that can trigger an in-place repaint of
+    /// the prompt from another thread while [`Reedline::read_line()`] is
+    /// running, avoiding interfering with current line edit.
+    pub fn repaint_signal(&mut self) -> RepaintSignal {
+        // The handle is created lazily on the first call; subsequent calls return clones
+        self.repaint_signal
+            .get_or_insert_with(RepaintSignal::default)
+            .clone()
+    }
+
     /// Returns the corresponding expected prompt style for the given edit mode
     pub fn prompt_edit_mode(&self) -> PromptEditMode {
         self.edit_mode.edit_mode()
@@ -808,6 +878,38 @@ impl Reedline {
         Ok(())
     }
 
+    /// Consume a pending external repaint request, returning whether one was
+    /// pending. Any number of requests since the last check collapse into one.
+    fn take_repaint_request(&self) -> bool {
+        self.repaint_signal
+            .as_ref()
+            .map_or(false, RepaintSignal::take)
+    }
+
+    /// Whether the input loop must poll with a timeout instead of blocking
+    /// indefinitely, so external triggers (break signal, repaint signal,
+    /// external printer, idle callback) are noticed while waiting for input.
+    fn input_needs_polling(&self) -> bool {
+        #[allow(unused_mut)] // Dependent on feature flags
+        let mut poll = self.break_signal.is_some()
+            || self
+                .repaint_signal
+                .as_ref()
+                .map_or(false, |sig| Arc::strong_count(&sig.flag) > 1);
+
+        #[cfg(feature = "external_printer")]
+        {
+            poll |= self.external_printer.is_some();
+        }
+
+        #[cfg(feature = "idle_callback")]
+        {
+            poll |= self.idle_callback.is_some();
+        }
+
+        poll
+    }
+
     /// Helper implementing the logic for [`Reedline::read_line()`] to be wrapped
     /// in a `raw_mode` context.
     fn read_line_helper(&mut self, prompt: &dyn Prompt) -> Result<Signal> {
@@ -819,6 +921,10 @@ impl Reedline {
             self.suspended_state = None;
         }
         self.hide_hints = false;
+
+        // Repaint requests raised while no read_line was active are stale:
+        // the fresh prompt painted below already reflects the latest state.
+        self.take_repaint_request();
 
         self.repaint(prompt)?;
 
@@ -844,6 +950,10 @@ impl Reedline {
                 }
             }
 
+            if self.take_repaint_request() {
+                self.repaint(prompt)?;
+            }
+
             #[cfg(feature = "external_printer")]
             if let Some(ref external_printer) = self.external_printer {
                 // get messages from printer as crlf separated "lines"
@@ -862,19 +972,21 @@ impl Reedline {
             // Determine if we need to poll (non-blocking) or can block on input.
             // We need polling if external_printer or idle_callback is configured,
             // using the shared poll_interval for the timeout.
-            let completer_pending = self.completer.has_pending();
+            let status = self.completer.poll_completion();
+            // Anything BUT idle means work is in flight. We need to keep polling.
+            let completer_pending = status != CompletionStatus::Idle;
 
-            // When a background completion finishes, re-populate the active
-            // menu so results appear without waiting for another keypress.
-            if completer_pending && self.completer.check_pending() {
-                if let Some(menu) = self.menus.iter_mut().find(|m| m.is_active()) {
-                    menu.update_values(
-                        &mut self.editor,
-                        self.completer.as_mut(),
-                        self.history.as_ref(),
-                    );
-                    self.repaint(prompt)?;
-                }
+            if let Some(menu) = (status == CompletionStatus::Ready)
+                .then(|| self.menus.iter_mut().find(|m| m.is_active()))
+                .flatten()
+            {
+                // latest request finished, so repopulate
+                menu.update_values(
+                    &mut self.editor,
+                    self.completer.as_mut(),
+                    self.history.as_ref(),
+                );
+                self.repaint(prompt)?;
             }
 
             // Helper function that returns true if the input is complete and
@@ -897,22 +1009,7 @@ impl Reedline {
             let mut events: Vec<Event> = vec![];
 
             if !self.immediately_accept {
-                let needs_polling = {
-                    #[allow(unused_mut)]
-                    let mut result = self.break_signal.is_some();
-                    result |= completer_pending;
-                    #[cfg(feature = "external_printer")]
-                    if self.external_printer.is_some() {
-                        result = true;
-                    }
-                    #[cfg(feature = "idle_callback")]
-                    if self.idle_callback.is_some() {
-                        result = true;
-                    }
-                    result
-                };
-
-                if needs_polling {
+                if self.input_needs_polling() || completer_pending {
                     if event::poll(self.poll_interval)? {
                         events.push(crossterm::event::read()?);
                     }
@@ -938,78 +1035,99 @@ impl Reedline {
                 }
             }
 
-            // Convert `Event` into `ReedlineEvent`. Also, fuse consecutive
-            // `ReedlineEvent::EditCommand` into one. Also, if there're multiple
-            // `ReedlineEvent::Resize`, only keep the last one.
-            let mut reedline_events: Vec<ReedlineEvent> = vec![];
-            let mut edits = vec![];
-            let mut resize = None;
-            for event in events {
-                if let Ok(event) = ReedlineRawEvent::try_from(event) {
-                    match self.edit_mode.parse_event(event) {
-                        ReedlineEvent::Edit(edit) => edits.extend(edit),
-                        ReedlineEvent::Resize(x, y) => resize = Some((x, y)),
-                        event => {
-                            if !edits.is_empty() {
-                                reedline_events
-                                    .push(ReedlineEvent::Edit(std::mem::take(&mut edits)));
-                            }
-                            reedline_events.push(event);
-                        }
-                    }
-                }
-            }
-            if !edits.is_empty() {
-                reedline_events.push(ReedlineEvent::Edit(edits));
-            }
-            if let Some((x, y)) = resize {
-                reedline_events.push(ReedlineEvent::Resize(x, y));
-            }
-            if self.immediately_accept {
-                reedline_events.push(ReedlineEvent::Submit);
-            }
-
-            // The mode machine has parsed this batch, so the rest policy it
-            // declares is now final. Relay it to the editor before running the
-            // emitted commands so a command a mode transition issued (e.g. the
-            // Esc→normal grapheme step-back) resolves under the new policy. This
-            // does not commit the cursor — the commands settle it, and the
-            // pre-paint `set_edit_mode` below still clamps no-command switches.
-            self.editor.sync_edit_mode(self.edit_mode.edit_mode());
-
-            // Handle reedline events.
-            let mut need_repaint = false;
-            for event in reedline_events {
-                match self.handle_event(prompt, event)? {
-                    EventStatus::Exits(signal) => {
-                        // Check if we are merely suspended (to process an ExecuteHostCommand event)
-                        // or if we're about to quit the editor.
-                        if self.suspended_state.is_none() {
-                            // We are about to quit the editor, move the cursor below the input
-                            // area, for external commands or new read_line call
-                            self.painter.move_cursor_to_end()?;
-                        }
-                        return Ok(signal);
-                    }
-                    EventStatus::Handled => {
-                        need_repaint = true;
-                    }
-                    EventStatus::Inapplicable => {
-                        // Nothing changed, no need to repaint
-                    }
-                }
-            }
-            if need_repaint {
-                // Sync the editor's edit mode before painting so the cursor is
-                // normalized under the current rest policy. A mode change that
-                // bypasses the command path (e.g. Esc → Vi normal) otherwise
-                // wouldn't clamp until the next command, painting the cursor past
-                // the last grapheme for a frame.
-                let mode = self.edit_mode.edit_mode();
-                self.editor.set_edit_mode(mode);
-                self.repaint(prompt)?;
+            // Process the batch unconditionally: in `immediately_accept` mode
+            // `events` stays empty, but `process_input_batch` still pushes the
+            // synthetic `Submit` and returns the buffer. Gating this call behind
+            // `!immediately_accept` would spin the loop forever.
+            if let ControlFlow::Break(signal) = self.process_input_batch(prompt, events)? {
+                return Ok(signal);
             }
         }
+    }
+
+    fn process_input_batch(
+        &mut self,
+        prompt: &dyn Prompt,
+        events: Vec<Event>,
+    ) -> Result<ControlFlow<Signal>> {
+        // Convert `Event` into `ReedlineEvent`. Also, fuse consecutive
+        // `ReedlineEvent::EditCommand` into one. Also, if there're multiple
+        // `ReedlineEvent::Resize`, only keep the last one.
+        let mut reedline_events: Vec<ReedlineEvent> = vec![];
+        let mut edits = vec![];
+        let mut resize = None;
+        for event in events {
+            if let Ok(event) = ReedlineRawEvent::try_from(event) {
+                match self.edit_mode.parse_event(event) {
+                    ReedlineEvent::Edit(edit) => edits.extend(edit),
+                    ReedlineEvent::Resize(x, y) => resize = Some((x, y)),
+                    event => {
+                        if !edits.is_empty() {
+                            reedline_events.push(ReedlineEvent::Edit(std::mem::take(&mut edits)));
+                        }
+                        reedline_events.push(event);
+                    }
+                }
+            }
+        }
+        if !edits.is_empty() {
+            reedline_events.push(ReedlineEvent::Edit(edits));
+        }
+        if let Some((x, y)) = resize {
+            reedline_events.push(ReedlineEvent::Resize(x, y));
+        }
+        if self.immediately_accept {
+            reedline_events.push(ReedlineEvent::Submit);
+        }
+
+        // The mode machine has parsed this batch, so the rest policy it
+        // declares is now final. Relay it to the editor before running the
+        // emitted commands so a command a mode transition issued (e.g. the
+        // Esc→normal grapheme step-back) resolves under the new policy. This
+        // does not commit the cursor — the commands settle it, and the
+        // pre-paint `set_edit_mode` below still clamps no-command switches.
+        self.editor.sync_edit_mode(self.edit_mode.edit_mode());
+
+        // Handle reedline events.
+        let mut need_repaint = false;
+        for event in reedline_events {
+            match self.handle_event(prompt, event)? {
+                EventStatus::Exits(signal) => {
+                    // Check if we are merely suspended (to process an ExecuteHostCommand event)
+                    // or if we're about to quit the editor.
+                    if self.suspended_state.is_none() {
+                        // We are about to quit the editor, move the cursor below the input
+                        // area, for external commands or new read_line call
+                        self.painter.move_cursor_to_end()?;
+                    }
+                    return Ok(ControlFlow::Break(signal));
+                }
+                EventStatus::Handled => {
+                    need_repaint = true;
+                }
+                EventStatus::Inapplicable => {
+                    // Nothing changed, no need to repaint
+                }
+            }
+        }
+        // A command-less mode transition adopts a new rest policy via
+        // `sync_edit_mode` but emits nothing to commit the cursor. Force the
+        // settle (and a repaint) so it doesn't stay unsettled until the next
+        // command.
+        if self.editor.policy_unsettled() {
+            need_repaint = true;
+        }
+        if need_repaint {
+            // Sync the editor's edit mode before painting so the cursor is
+            // normalized under the current rest policy. A mode change that
+            // bypasses the command path (e.g. Esc → Vi normal) otherwise
+            // wouldn't clamp until the next command, painting the cursor past
+            // the last grapheme for a frame.
+            let mode = self.edit_mode.edit_mode();
+            self.editor.set_edit_mode(mode);
+            self.repaint(prompt)?;
+        }
+        Ok(ControlFlow::Continue(()))
     }
 
     fn handle_event(&mut self, prompt: &dyn Prompt, event: ReedlineEvent) -> Result<EventStatus> {
@@ -1251,32 +1369,12 @@ impl Reedline {
                     })
             }
             ReedlineEvent::HistoryHintComplete => {
-                if let Some(hinter) = self.hinter.as_mut() {
-                    let current_hint = hinter.complete_hint();
-                    if self.hints_active()
-                        && self.editor.is_cursor_at_buffer_end()
-                        && !current_hint.is_empty()
-                        && self.active_menu().is_none()
-                    {
-                        self.run_edit_commands(&[EditCommand::InsertString(current_hint)]);
-                        return Ok(EventStatus::Handled);
-                    }
-                }
-                Ok(EventStatus::Inapplicable)
+                let hint = self.hinter.as_mut().map(|h| h.complete_hint());
+                Ok(self.accept_history_hint(hint))
             }
             ReedlineEvent::HistoryHintWordComplete => {
-                if let Some(hinter) = self.hinter.as_mut() {
-                    let current_hint_part = hinter.next_hint_token();
-                    if self.hints_active()
-                        && self.editor.is_cursor_at_buffer_end()
-                        && !current_hint_part.is_empty()
-                        && self.active_menu().is_none()
-                    {
-                        self.run_edit_commands(&[EditCommand::InsertString(current_hint_part)]);
-                        return Ok(EventStatus::Handled);
-                    }
-                }
-                Ok(EventStatus::Inapplicable)
+                let hint = self.hinter.as_mut().map(|h| h.next_hint_token());
+                Ok(self.accept_history_hint(hint))
             }
             ReedlineEvent::Esc => {
                 self.deactivate_menus();
@@ -1393,7 +1491,9 @@ impl Reedline {
                         match commands.first() {
                             Some(&EditCommand::Backspace)
                             | Some(&EditCommand::BackspaceWord)
-                            | Some(&EditCommand::MoveToLineStart { select: false }) => {
+                            | Some(&EditCommand::MoveToLineStart { select: false })
+                                if !self.persistent_menus =>
+                            {
                                 menu.menu_event(MenuEvent::Deactivate)
                             }
                             _ => {
@@ -1421,7 +1521,7 @@ impl Reedline {
                             }
                         }
                     }
-                    if self.editor.line_buffer().get_buffer().is_empty() {
+                    if !self.persistent_menus && self.editor.line_buffer().get_buffer().is_empty() {
                         menu.menu_event(MenuEvent::Deactivate);
                     } else {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
@@ -1465,10 +1565,14 @@ impl Reedline {
             }
             ReedlineEvent::ToStart => {
                 self.editor.move_to_start(false);
+                self.editor.commit_cursor();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::ToEnd => {
                 self.editor.move_to_end(false);
+                // Settle under the rest policy: `Alt+>` is bound in vi normal too,
+                // where the block caret must not rest past the last grapheme.
+                self.editor.commit_cursor();
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::SearchHistory => {
@@ -1577,6 +1681,9 @@ impl Reedline {
         self.update_buffer_from_history();
         self.editor.move_to_start(false);
         self.editor.move_to_line_end(false);
+        // History navigation positions the cursor outside the command path, so
+        // settle it under the rest policy (vi-normal must not rest past the line).
+        self.editor.commit_cursor();
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
     }
@@ -1611,6 +1718,8 @@ impl Reedline {
         }
         self.update_buffer_from_history();
         self.editor.move_to_end(false);
+        // See `previous_history`: settle the out-of-band cursor under the policy.
+        self.editor.commit_cursor();
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation)
     }
@@ -1736,8 +1845,14 @@ impl Reedline {
             self.input_mode = InputMode::Regular;
         }
 
-        // Update editor with current edit mode for mode-aware selection behavior
-        self.editor.set_edit_mode(self.edit_mode.edit_mode());
+        // Adopt the current edit mode's rest policy so these commands resolve
+        // under it (e.g. block-caret selection geometry) — but *without*
+        // committing the cursor first. A commit here would apply the policy's
+        // resting rule (e.g. `OnGrapheme` pulling an at-end point back) before
+        // the commands run, double-stepping a mode-transition backstep like the
+        // vi `Esc`→normal `MoveLeft`. The commands settle the cursor themselves,
+        // and the pre-paint `set_edit_mode` makes the final commit.
+        self.editor.sync_edit_mode(self.edit_mode.edit_mode());
 
         // Run the commands over the edit buffer
         for command in commands {
@@ -1751,7 +1866,10 @@ impl Reedline {
             // If we're at the top, move to previous history
             self.previous_history();
         } else {
-            self.editor.move_line_up(false);
+            // Through `run_edit_commands` so the cursor settles under the mode's
+            // rest policy — a bare `editor.move_line_up` skips the commit boundary,
+            // leaving a vi-normal caret past the last grapheme on a short line.
+            self.run_edit_commands(&[EditCommand::MoveLineUp { select: false }]);
         }
     }
 
@@ -1761,13 +1879,36 @@ impl Reedline {
             // If we're at the top, move to previous history
             self.next_history();
         } else {
-            self.editor.move_line_down(false);
+            // See `up_command`: settle under the rest policy via the commit boundary.
+            self.run_edit_commands(&[EditCommand::MoveLineDown { select: false }]);
         }
     }
 
     /// Checks if hints should be displayed and are able to be completed
     fn hints_active(&self) -> bool {
         !self.hide_hints && matches!(self.input_mode, InputMode::Regular)
+    }
+
+    /// Accept a trailing history hint (full hint or next word) by appending it at
+    /// the buffer end. `Handled` only when a non-empty hint applies: hints active,
+    /// cursor at the buffer end, no menu open. Appending positions past the last
+    /// grapheme first — a block caret (vi normal) rests *on* it, so a plain insert
+    /// would split it.
+    fn accept_history_hint(&mut self, hint: Option<String>) -> EventStatus {
+        let Some(hint) = hint else {
+            return EventStatus::Inapplicable;
+        };
+        if self.hints_active()
+            && self.editor.is_cursor_at_buffer_end()
+            && !hint.is_empty()
+            && self.active_menu().is_none()
+        {
+            self.editor.prepare_append_at_buffer_end();
+            self.run_edit_commands(&[EditCommand::InsertString(hint)]);
+            EventStatus::Handled
+        } else {
+            EventStatus::Inapplicable
+        }
     }
 
     /// Repaint of either the buffer or the parts for reverse history search
@@ -1796,7 +1937,13 @@ impl Reedline {
             false => (1, " "), // expand on <space>
         };
 
-        let word_end = cursor_position_in_buffer - offset;
+        // `offset` is a raw byte count (0 on <enter>, 1 on <space>), so
+        // `cursor_position_in_buffer - offset` can land inside a multi-byte
+        // UTF-8 char sitting just before the cursor (e.g. pasted CJK text).
+        // Floor it down to the nearest char boundary before slicing to avoid
+        // a panic.
+        let word_end =
+            crate::menu_functions::floor_char_boundary(buffer, cursor_position_in_buffer - offset);
         let prefix = &buffer[..word_end];
         let word_start = prefix
             .char_indices()
@@ -1809,6 +1956,17 @@ impl Reedline {
             // The first char in the buffer is a space or there are consecutive spaces
             return None;
         }
+
+        if submitted
+            && buffer[word_end..]
+                .chars()
+                .next()
+                .map_or(false, |ch| !ch.is_whitespace())
+        {
+            // The cursor is in the middle of a word, e.g. "hello|world"
+            return None;
+        }
+
         if !self.highlighter.should_expand_abbr(
             buffer,
             word_start,
@@ -1825,7 +1983,10 @@ impl Reedline {
                     select: false,
                 },
                 EditCommand::MoveToPosition {
-                    position: word_end,
+                    // Select through the cursor, not just the end of the word, so
+                    // the triggering space (already inserted on a <space> expansion)
+                    // is replaced rather than left beside the inserted suffix.
+                    position: cursor_position_in_buffer,
                     select: true,
                 },
                 EditCommand::InsertString(format!("{}{}", expansion, suffix)),
@@ -2001,6 +2162,12 @@ impl Reedline {
                     let mut file = File::create(temp_file)?;
                     write!(file, "{}", self.editor.get_buffer())?;
                 }
+                // Capture the prompt's screen range so that an editor
+                // that leaves the cursor untouched (e.g. an editor that
+                // uses the alternate screen only) re-uses the existing
+                // prompt rows instead of starting a new prompt a row
+                // below the old one.
+                let suspended_state = self.painter.state_before_suspension();
                 {
                     let mut child = command.spawn()?;
                     // The child owns the tty now; invalidate eagerly so
@@ -2011,12 +2178,15 @@ impl Reedline {
                 }
 
                 // On the success path, re-initialize position and size
-                // from scratch (covers a resize-during-editor with no
-                // SIGWINCH). On query failure, the eager invalidate
-                // above is our floor — losing the size refresh is
-                // acceptable; losing the user's edited buffer below
-                // is not.
-                let _ = self.painter.initialize_prompt_position(None);
+                // (covers a resize-during-editor with no SIGWINCH). If
+                // the editor moved the cursor out of the prompt's rows
+                // (it printed output), a fresh prompt starts below that
+                // output. On query failure, the eager invalidate above
+                // is our floor — losing the size refresh is acceptable;
+                // losing the user's edited buffer below is not.
+                let _ = self
+                    .painter
+                    .initialize_prompt_position(Some(&suspended_state));
 
                 let res = std::fs::read_to_string(temp_file)?;
                 let res = res.trim_end().to_string();
@@ -2302,8 +2472,128 @@ impl Reedline {
 mod tests {
     use super::*;
     use crate::terminal_extensions::semantic_prompt::PromptKind;
-    use crate::{ColumnarMenu, DefaultPrompt, MenuBuilder};
+    use crate::{ColumnarMenu, DefaultPrompt, MenuBuilder, PromptViMode};
     use rstest::rstest;
+
+    fn seam_engine(edit_mode: Box<dyn EditMode>) -> Reedline {
+        let mut rl = Reedline::create().with_edit_mode(edit_mode);
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl
+    }
+
+    fn drive(rl: &mut Reedline, keys: &[KeyEvent]) {
+        let prompt = DefaultPrompt::default();
+        let events = keys.iter().copied().map(Event::Key).collect();
+        let _ = rl.process_input_batch(&prompt, events).expect("batch ok");
+    }
+
+    fn ch(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    /// Drive each key as its own input batch, so vi mode transitions settle
+    /// between presses the way real keystrokes arrive.
+    fn type_each(rl: &mut Reedline, keys: &[KeyEvent]) {
+        for k in keys {
+            drive(rl, &[*k]);
+        }
+    }
+
+    // FLIP SAFETY NET (Group C) — visual operability at the engine seam.
+    // RED until the cursor-as-truth flip: `v` emits Esc which clears the
+    // selection, so visual mode starts anchorless and `d` cuts nothing. The
+    // flip makes the cursor an always-present range, so `v` then `d` deletes
+    // the grapheme under the cursor. Valid under both models, so never wasted.
+    #[test]
+    fn v_then_d_deletes_cursor_grapheme() {
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        type_each(
+            &mut rl,
+            &[ch('a'), ch('b'), key(KeyCode::Esc), ch('v'), ch('d')],
+        );
+        assert_eq!(rl.editor.get_buffer(), "a");
+    }
+
+    #[test]
+    fn v_extend_left_then_d_deletes_selection() {
+        // Visual mode is min-width-1 and motions extend it: from "abc" the cursor
+        // rests on 'c'; `v` selects it, `h` grows the selection left over 'b',
+        // and `d` deletes both — leaving "a".
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        type_each(
+            &mut rl,
+            &[
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                key(KeyCode::Esc),
+                ch('v'),
+                ch('h'),
+                ch('d'),
+            ],
+        );
+        assert_eq!(rl.editor.get_buffer(), "a");
+    }
+
+    struct FlipToNormal {
+        switched: bool,
+    }
+    impl EditMode for FlipToNormal {
+        fn parse_event(&mut self, _e: ReedlineRawEvent) -> ReedlineEvent {
+            self.switched = true;
+            ReedlineEvent::None
+        }
+        fn edit_mode(&self) -> PromptEditMode {
+            if self.switched {
+                PromptEditMode::Vi(PromptViMode::Normal)
+            }
+            // OnGrapheme
+            else {
+                PromptEditMode::Vi(PromptViMode::Insert)
+            }
+        }
+    }
+
+    #[test]
+    fn command_less_mode_transition_settles_cursor() {
+        let mut rl = seam_engine(Box::new(FlipToNormal { switched: false }));
+        rl.editor
+            .set_buffer("ab".into(), UndoBehavior::CreateUndoPoint);
+        rl.editor
+            .edit_buffer(|b| b.set_insertion_point(2), UndoBehavior::MoveCursor); // at len, legal under Between
+        drive(&mut rl, &[ch('x')]); // flipts to OnGrapheme, emits nothing
+        assert_eq!(rl.current_insertion_point(), 1);
+    }
+
+    #[test]
+    fn harness_drives_typed_chars_into_buffer() {
+        // Smoke test: proves the seam harness runs the real batch pipeline
+        // (parse_event -> handle_event -> repaint-to-sink) headlessly.
+        let mut rl = seam_engine(Box::<crate::Emacs>::default());
+        drive(&mut rl, &[ch('h'), ch('i')]);
+        assert_eq!(rl.editor.get_buffer(), "hi");
+        assert_eq!(rl.current_insertion_point(), 2);
+    }
+
+    #[test]
+    fn immediately_accept_submits_without_hanging() {
+        // Regression: the batch-processing call (which pushes the synthetic
+        // Submit and returns the buffer) must run even in immediately_accept
+        // mode. When it was gated behind `!immediately_accept`, read_line spun
+        // forever instead of submitting.
+        let mut rl = seam_engine(Box::<crate::Emacs>::default());
+        rl.immediately_accept = true;
+        rl.run_edit_commands(&[EditCommand::InsertString("hi".into())]);
+        let prompt = DefaultPrompt::default();
+        match rl.process_input_batch(&prompt, vec![]).expect("batch ok") {
+            ControlFlow::Break(Signal::Success(buf)) => assert_eq!(buf, "hi"),
+            other => panic!("expected immediate submit, got {other:?}"),
+        }
+    }
 
     #[test]
     fn reedline_is_send() {
@@ -2487,6 +2777,151 @@ mod tests {
     }
 
     #[test]
+    fn take_repaint_request_is_false_without_a_handle() {
+        let reedline = Reedline::create();
+        assert!(!reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn take_repaint_request_consumes_the_request() {
+        let mut reedline = Reedline::create();
+        let signal = reedline.repaint_signal();
+
+        signal.request_repaint();
+        assert!(reedline.take_repaint_request());
+        // Consumed: no repaint left pending
+        assert!(!reedline.take_repaint_request());
+
+        // A new request is honored again
+        signal.request_repaint();
+        assert!(reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_signal_switches_input_loop_to_polling() {
+        let mut reedline = Reedline::create();
+        assert!(
+            !reedline.input_needs_polling(),
+            "without external triggers the loop should block on input"
+        );
+
+        let _signal = reedline.repaint_signal();
+        assert!(
+            reedline.input_needs_polling(),
+            "a repaint handle must switch the loop to polling so requests are noticed"
+        );
+    }
+
+    #[test]
+    fn repaint_request_during_active_read_survives_while_stale_ones_are_dropped() {
+        // Emulates the loop's consumption pattern: read_line_helper drains any
+        // stale pre-read_line request before painting the initial prompt, so
+        // only requests raised afterwards trigger an extra repaint.
+        let mut reedline = Reedline::create();
+        let signal = reedline.repaint_signal();
+
+        // Raised while no read_line is active -> dropped by the initial drain
+        signal.request_repaint();
+        reedline.take_repaint_request();
+        assert!(!reedline.take_repaint_request());
+
+        // Raised "mid-edit" -> observed by the next loop iteration
+        signal.request_repaint();
+        assert!(reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_signal_handles_share_one_flag() {
+        // Every handle returned by `repaint_signal()` (and its clones) must
+        // observe the same underlying flag, so a request from any of them is
+        // seen exactly once by the loop.
+        let mut reedline = Reedline::create();
+        let a = reedline.repaint_signal();
+        let b = reedline.repaint_signal();
+        let c = a.clone();
+
+        b.request_repaint();
+        assert!(reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
+
+        // A request made through the clone is also observed.
+        c.request_repaint();
+        assert!(reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_signal_survives_behind_an_arc() {
+        // This is what a shell would be using...
+        // handed to a worker that knows nothing about `Reedline`.
+        use std::sync::Arc;
+        let mut reedline = Reedline::create();
+        let shared: Arc<RepaintSignal> = Arc::new(reedline.repaint_signal());
+
+        let worker = shared.clone();
+        std::thread::spawn(move || worker.request_repaint())
+            .join()
+            .expect("worker thread panicked");
+
+        assert!(reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_request_collapses_rapid_fire() {
+        // Many requests arriving between two loop iterations must collapse into
+        // a single repaint, not N. `take` is a swap(false), so only one take
+        // should observe the request regardless of how many were raised.
+        let mut reedline = Reedline::create();
+        let signal = reedline.repaint_signal();
+
+        for _ in 0..1_000 {
+            signal.request_repaint();
+        }
+        assert!(reedline.take_repaint_request());
+        assert!(!reedline.take_repaint_request());
+    }
+
+    #[test]
+    fn repaint_signal_is_independent_of_break_signal() {
+        // The two out-of-band triggers must not interfere: arming a repaint
+        // request must not be mistaken for a break, and vice versa.
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let mut reedline = Reedline::create().with_break_signal(Arc::new(AtomicBool::new(false)));
+        let repaint = reedline.repaint_signal();
+
+        repaint.request_repaint();
+        assert!(reedline.take_repaint_request());
+        assert!(
+            !reedline
+                .break_signal
+                .as_ref()
+                .unwrap()
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "repaint must not toggle the break flag"
+        );
+
+        reedline
+            .break_signal
+            .as_ref()
+            .unwrap()
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            reedline
+                .break_signal
+                .as_ref()
+                .unwrap()
+                .swap(false, std::sync::atomic::Ordering::Relaxed),
+            "break flag must be independently observable"
+        );
+        assert!(
+            !reedline.take_repaint_request(),
+            "break must not leave a repaint pending"
+        );
+    }
+    #[test]
     fn signal_external_break_pattern_match() {
         let buffer_content = "some partial input".to_string();
         let signal = Signal::ExternalBreak(buffer_content.clone());
@@ -2535,6 +2970,24 @@ mod tests {
             _ => panic!("expected Edit event"),
         });
         assert_eq!(reedline.current_buffer_contents(), "git commit");
+    }
+
+    #[test]
+    fn abbreviation_expands_on_space_without_double_space() {
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+        // When expansion is triggered by <space>, the triggering space has
+        // already been inserted into the buffer before the expansion runs.
+        set_buffer_at_end(&mut reedline, "gc ");
+        let event = reedline.try_expand_abbreviation_at_cursor(false);
+        assert!(event.is_some(), "expected expansion on space");
+        reedline.run_edit_commands(&match event.unwrap() {
+            ReedlineEvent::Edit(cmds) => cmds,
+            _ => panic!("expected Edit event"),
+        });
+        // Exactly one trailing space: the triggering space must be replaced,
+        // not left in place alongside the inserted suffix space.
+        assert_eq!(reedline.current_buffer_contents(), "git commit ");
     }
 
     #[test]
@@ -2619,11 +3072,113 @@ mod tests {
     }
 
     #[test]
+    fn try_expand_abbreviation_survives_multibyte_char_before_cursor() {
+        // Regression: `word_end` was a raw byte subtraction of `offset` from the
+        // byte cursor position. With a multi-byte char (e.g. pasted CJK) right
+        // before the cursor, `word_end` could land inside that char, so slicing
+        // the buffer panicked with "byte index N is not a char boundary".
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, "中");
+        // Place the cursor at byte offset 1, inside the 3-byte '中'. Pre-patch,
+        // `&buffer[..1]` would panic here.
+        let mut line_buffer = LineBuffer::new();
+        line_buffer.set_buffer("中".to_string());
+        line_buffer.set_insertion_point(1);
+        reedline
+            .editor
+            .set_line_buffer(line_buffer, UndoBehavior::CreateUndoPoint);
+        // Must return without panicking (no match, so `None` is expected).
+        assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
+    }
+
+    #[test]
     fn abbreviation_leading_spaces_returns_none() {
         let mut reedline =
             reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
         set_buffer_at_end(&mut reedline, "   ");
         assert!(reedline.try_expand_abbreviation_at_cursor(true).is_none());
+    }
+
+    #[test]
+    fn abbreviation_mid_word_cursor_on_submit_returns_none() {
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, "gcsomething");
+        reedline.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 2,
+            select: false,
+        }]);
+        assert!(
+            reedline.try_expand_abbreviation_at_cursor(true).is_none(),
+            "must not expand the prefix of a word when the cursor is mid-word"
+        );
+    }
+
+    #[test]
+    fn abbreviation_expands_before_trailing_text_on_submit() {
+        let mut reedline =
+            reedline_with_abbrevs_and_default_string_lit_check(&[("gc", "git commit")]);
+        set_buffer_at_end(&mut reedline, "gc rest");
+        reedline.run_edit_commands(&[EditCommand::MoveToPosition {
+            position: 2,
+            select: false,
+        }]);
+        let event = reedline.try_expand_abbreviation_at_cursor(true);
+        assert!(
+            event.is_some(),
+            "expected expansion at a real word boundary"
+        );
+        reedline.run_edit_commands(&match event.unwrap() {
+            ReedlineEvent::Edit(cmds) => cmds,
+            _ => panic!("expected Edit event"),
+        });
+        assert_eq!(reedline.current_buffer_contents(), "git commit rest");
+    }
+
+    // Feed one key as its own batch, mirroring real interactive input where each
+    // keypress drives a separate `process_input_batch`.
+    fn step_key(rl: &mut Reedline, k: KeyEvent) -> ControlFlow<Signal> {
+        rl.process_input_batch(&DefaultPrompt::default(), vec![Event::Key(k)])
+            .expect("batch ok")
+    }
+
+    #[test]
+    fn abbreviation_expands_on_enter_in_vi_normal() {
+        // Regression: a vi-normal block caret rests *on* the last grapheme, so
+        // before the caret-release on Enter the submit-time scan saw `g` instead
+        // of `gc` and silently skipped expansion.
+        let mut abbreviations = HashMap::new();
+        abbreviations.insert("gc".to_string(), "git commit".to_string());
+        let mut rl = seam_engine(Box::<crate::Vi>::default()).with_abbreviations(abbreviations);
+
+        let _ = step_key(&mut rl, ch('g'));
+        let _ = step_key(&mut rl, ch('c'));
+        let _ = step_key(&mut rl, key(KeyCode::Esc)); // vi normal, caret on 'c'
+        match step_key(&mut rl, key(KeyCode::Enter)) {
+            ControlFlow::Break(Signal::Success(buf)) => assert_eq!(buf, "git commit"),
+            other => panic!("expected submit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vi_normal_enter_inserts_newline_at_end_not_mid_word() {
+        // Regression: the same stranded block caret made an incomplete-input
+        // newline land one grapheme short, splitting the last word (`ab` -> `a\nb`).
+        struct AlwaysIncomplete;
+        impl crate::Validator for AlwaysIncomplete {
+            fn validate(&self, _line: &str) -> ValidationResult {
+                ValidationResult::Incomplete
+            }
+        }
+        let mut rl =
+            seam_engine(Box::<crate::Vi>::default()).with_validator(Box::new(AlwaysIncomplete));
+
+        let _ = step_key(&mut rl, ch('a'));
+        let _ = step_key(&mut rl, ch('b'));
+        let _ = step_key(&mut rl, key(KeyCode::Esc)); // vi normal, caret on 'b'
+        let _ = step_key(&mut rl, key(KeyCode::Enter)); // incomplete -> insert newline
+        assert_eq!(rl.editor.get_buffer(), "ab\n");
     }
 
     #[cfg(feature = "bashisms")]
@@ -2851,5 +3406,262 @@ mod tests {
         let insertion = EditCommand::InsertString(String::from("x"));
         reedline.run_edit_commands(&[insertion]);
         assert_eq!(reedline.current_buffer_contents(), "67x");
+    }
+
+    fn menu_is_active(reedline: &Reedline) -> bool {
+        reedline.menus.iter().any(|menu| menu.is_active())
+    }
+
+    /// Engine with a completion menu activated on a "th" buffer. "th" matches
+    /// two words, so quick completions don't auto-select on activation.
+    fn engine_with_active_menu(quick: bool, persistent: bool) -> Reedline {
+        let completer = Box::new(DefaultCompleter::new_with_wordlen(
+            vec![
+                String::from("test"),
+                String::from("this"),
+                String::from("that"),
+            ],
+            1,
+        ));
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name("completion_menu"),
+        ));
+        let mut reedline = Reedline::create()
+            .with_completer(completer)
+            .with_menu(completion_menu)
+            .with_quick_completions(quick)
+            .with_persistent_menus(persistent);
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Menu(String::from("completion_menu")),
+            )
+            .unwrap();
+        assert!(menu_is_active(&reedline));
+        reedline
+    }
+
+    fn send_edit(reedline: &mut Reedline, command: EditCommand) {
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Edit(vec![command]),
+            )
+            .unwrap();
+    }
+
+    #[rstest]
+    #[case(false, false)]
+    #[case(false, true)]
+    #[case(true, false)]
+    #[case(true, true)]
+    fn test_menu_persistence_while_erasing(#[case] quick: bool, #[case] persistent: bool) {
+        let mut reedline = engine_with_active_menu(quick, persistent);
+
+        // quick completions close the menu on any backspace unless menus are persistent
+        send_edit(&mut reedline, EditCommand::Backspace);
+        assert_eq!(reedline.current_buffer_contents(), "t");
+        assert_eq!(menu_is_active(&reedline), persistent || !quick);
+
+        // emptying the buffer closes the menu unless menus are persistent
+        send_edit(&mut reedline, EditCommand::Backspace);
+        assert!(reedline.current_buffer_contents().is_empty());
+        assert_eq!(menu_is_active(&reedline), persistent);
+    }
+
+    #[rstest]
+    #[case(EditCommand::BackspaceWord)]
+    #[case(EditCommand::MoveToLineStart { select: false })]
+    fn test_menu_persistence_covers_all_quick_dismissal_commands(#[case] command: EditCommand) {
+        for persistent in [false, true] {
+            let mut reedline = engine_with_active_menu(true, persistent);
+            send_edit(&mut reedline, command.clone());
+            assert_eq!(menu_is_active(&reedline), persistent);
+        }
+    }
+
+    /// A hinter that always offers a fixed suggestion, so the completion flow can
+    /// be driven without the paint cycle that normally refreshes the hint.
+    struct FixedHinter(&'static str);
+    impl Hinter for FixedHinter {
+        fn handle(&mut self, _: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
+            self.0.to_string()
+        }
+        fn complete_hint(&self) -> String {
+            self.0.to_string()
+        }
+        fn next_hint_token(&self) -> String {
+            self.0.to_string()
+        }
+    }
+
+    fn vi_with_hint(hint: &'static str) -> Reedline {
+        seam_engine(Box::<crate::Vi>::default()).with_hinter(Box::new(FixedHinter(hint)))
+    }
+
+    #[test]
+    fn vi_normal_history_hint_appends_at_buffer_end() {
+        // The reported bug: a block caret rests on the last grapheme, so the
+        // completion must append *after* it, not split it.
+        let mut rl = vi_with_hint("def");
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        drive(&mut rl, &[key(KeyCode::Esc)]); // vi normal, caret on 'c' at the end
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
+        assert_eq!(rl.editor.get_buffer(), "abcdef");
+    }
+
+    #[test]
+    fn vi_visual_selection_blocks_hint_completion() {
+        // A hint completing over a selection would run through `delete_selection`
+        // and clobber it — the empty-cursor guard must suppress it.
+        let mut rl = vi_with_hint("def");
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        drive(&mut rl, &[key(KeyCode::Esc), ch('v')]); // visual: selection covers 'c' to len
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
+        assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    #[test]
+    fn undo_removes_accepted_history_hint() {
+        let mut rl = vi_with_hint("def");
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        drive(&mut rl, &[key(KeyCode::Esc)]);
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
+        assert_eq!(rl.editor.get_buffer(), "abcdef");
+        rl.run_edit_commands(&[EditCommand::Undo]);
+        assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    #[test]
+    fn vi_normal_down_rests_on_last_grapheme() {
+        // Down onto a shorter last line must rest *on* the last grapheme, not the
+        // gap past it: `down_command` has to settle under the `OnGrapheme` policy.
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        rl.run_edit_commands(&[EditCommand::InsertString("abc\nd".into())]); // a0 b1 c2 \n3 d4
+        drive(&mut rl, &[key(KeyCode::Esc)]); // vi normal
+        rl.run_edit_commands(&[
+            EditCommand::MoveToStart { select: false },
+            EditCommand::MoveRight { select: false },
+            EditCommand::MoveRight { select: false },
+        ]); // caret on 'c' (col 2 of line 1)
+        rl.down_command();
+        assert_eq!(rl.editor.insertion_point(), 4); // on 'd', not 5 (past it)
+    }
+
+    #[test]
+    fn vi_normal_to_end_rests_on_last_grapheme() {
+        // `Alt+>` (ToEnd) is bound in vi normal; it must land on the last char.
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        drive(&mut rl, &[key(KeyCode::Esc)]);
+        rl.run_edit_commands(&[EditCommand::MoveToStart { select: false }]); // 'a'
+        drive(
+            &mut rl,
+            &[KeyEvent::new(KeyCode::Char('>'), KeyModifiers::ALT)],
+        );
+        assert_eq!(rl.editor.insertion_point(), 2); // 'c', not 3 (past it)
+    }
+
+    #[test]
+    fn vi_normal_single_line_down_rests_on_last_grapheme() {
+        // Single-line buffer: `down` hits the last line and routes to history nav,
+        // which positions the cursor outside the command path. It must still
+        // settle on the last grapheme, not the gap past it.
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        drive(&mut rl, &[key(KeyCode::Esc)]); // vi normal, on 'c'
+        rl.down_command(); // last line -> next_history (no forward entry -> draft)
+        assert_eq!(rl.editor.insertion_point(), 2); // 'c', not 3 (past it)
+    }
+
+    #[test]
+    fn vi_normal_end_of_line_rests_on_last_grapheme() {
+        // `$` on an interior line lands ON the last char, not the gap before `\n`.
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        rl.run_edit_commands(&[EditCommand::InsertString("abc\ndef".into())]); // a0 b1 c2 \n3
+        drive(&mut rl, &[key(KeyCode::Esc)]);
+        rl.run_edit_commands(&[
+            EditCommand::MoveToStart { select: false },
+            EditCommand::MoveToLineEnd { select: false },
+        ]);
+        assert_eq!(rl.editor.insertion_point(), 2); // 'c', not 3 (the newline gap)
+    }
+
+    #[test]
+    fn vi_normal_k_uses_prefix_search() {
+        // `j`/`k` in vi normal mode should use prefix search instead of plain
+        // history traversal
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+
+        let success_cond = "ls /tmp";
+
+        rl.history
+            .save(HistoryItem::from_command_line("ls -la"))
+            .unwrap();
+        rl.history
+            .save(HistoryItem::from_command_line(success_cond))
+            .unwrap();
+        rl.history
+            .save(HistoryItem::from_command_line("echo hi"))
+            .unwrap();
+
+        type_each(&mut rl, &[ch('l'), ch('s'), key(KeyCode::Esc)]);
+        drive(&mut rl, &[ch('k')]);
+
+        assert_eq!(rl.editor.get_buffer(), success_cond);
+    }
+
+    #[test]
+    fn vi_normal_k_off_end_uses_plain_walk() {
+        // The complement of the prefix case: once the caret leaves the buffer
+        // end (here `h` steps it onto 'l'), history nav falls back to plain
+        // bash-style traversal and returns the most recent entry overall, not a
+        // prefix match.
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+
+        rl.history
+            .save(HistoryItem::from_command_line("ls -la"))
+            .unwrap();
+        rl.history
+            .save(HistoryItem::from_command_line("ls /tmp"))
+            .unwrap();
+        rl.history
+            .save(HistoryItem::from_command_line("echo hi"))
+            .unwrap();
+
+        type_each(&mut rl, &[ch('l'), ch('s'), key(KeyCode::Esc)]);
+        drive(&mut rl, &[ch('h')]); // caret off the end, onto 'l'
+        drive(&mut rl, &[ch('k')]);
+
+        assert_eq!(rl.editor.get_buffer(), "echo hi");
+    }
+
+    #[test]
+    fn vi_hl_cross_newline_at_engine_seam() {
+        // `h`/`l` keys, driven through the vi parser, cross the line terminator
+        // under the default cross-line policy. Buffer "ab\ncd".
+        let mut rl = seam_engine(Box::<crate::Vi>::default());
+        rl.run_edit_commands(&[EditCommand::InsertString("ab\ncd".into())]);
+        drive(&mut rl, &[key(KeyCode::Esc)]); // vi normal
+        rl.run_edit_commands(&[EditCommand::MoveToLineStart { select: false }]);
+        assert_eq!(rl.editor.insertion_point(), 3); // 'c', start of line 2
+        drive(&mut rl, &[ch('h')]); // crosses up to 'b' (end of line 1)
+        assert_eq!(rl.editor.insertion_point(), 1);
+        drive(&mut rl, &[ch('l')]); // crosses down to 'c' (start of line 2)
+        assert_eq!(rl.editor.insertion_point(), 3);
     }
 }

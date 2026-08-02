@@ -2,7 +2,7 @@ use {
     super::MenuSettings,
     crate::{
         menu_functions::{replace_in_buffer, resolve_completer_input},
-        Completer, Editor, Menu, MenuBuilder, MenuEvent, Painter, Suggestion,
+        Completer, Editor, Menu, MenuBuilder, MenuEvent, Painter, Suggestion, Suggestions,
     },
     nu_ansi_term::ansi::RESET,
 };
@@ -62,7 +62,7 @@ pub struct DescriptionMenu {
     /// Working column details keep changing based on the collected values
     working_details: WorkingDetails,
     /// Menu cached values
-    values: Vec<Suggestion>,
+    values: Suggestions,
     /// column position of the cursor. Starts from 0
     col_pos: u16,
     /// row position in the menu. Starts from 0
@@ -92,7 +92,7 @@ impl Default for DescriptionMenu {
             default_details: DefaultMenuDetails::default(),
             min_rows: 3,
             working_details: WorkingDetails::default(),
-            values: Vec::new(),
+            values: Suggestions::default(),
             col_pos: 0,
             row_pos: 0,
             event: None,
@@ -227,13 +227,6 @@ impl DescriptionMenu {
     /// Returns working details col width
     fn get_width(&self) -> usize {
         self.working_details.col_width
-    }
-
-    /// Reset menu position
-    fn reset_position(&mut self) {
-        self.col_pos = 0;
-        self.row_pos = 0;
-        self.skipped_rows = 0;
     }
 
     fn no_records_msg(&self, use_ansi_coloring: bool) -> String {
@@ -426,27 +419,42 @@ impl Menu for DescriptionMenu {
         false
     }
 
-    /// Selects what type of event happened with the menu
-    fn menu_event(&mut self, event: MenuEvent) {
-        match &event {
-            MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => {
-                self.active = false;
-                self.input = None;
-                self.values = Vec::new();
-            }
-            _ => {}
-        };
+    fn set_active(&mut self, active: bool) {
+        self.active = active;
+    }
 
+    fn clear_input(&mut self) {
+        self.input = None;
+    }
+
+    fn on_deactivate(&mut self) {
+        self.values = Suggestions::default();
+    }
+
+    /// Handle menu event
+    fn menu_event(&mut self, event: MenuEvent) {
+        self.handle_menu_event(&event);
         self.event = Some(event);
     }
 
     /// Updates menu values
+    fn reset_position(&mut self) {
+        self.col_pos = 0;
+        self.row_pos = 0;
+        self.skipped_rows = 0;
+    }
+
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
-        self.values = completer.complete(&input, pos);
 
-        self.reset_position();
+        // `into_shared` yields `None` for a `Pending` result (a background
+        // completion is still in flight with nothing to show yet), so we keep the
+        // current suggestions and selection rather than blanking the menu. A
+        // settled result hands over its shared `Arc` without copying.
+        if let Some(values) = completer.complete(&input, pos).into_shared() {
+            self.values = values;
+            self.reset_position();
+        }
     }
 
     /// The working details for the menu changes based on the size of the lines

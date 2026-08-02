@@ -1,6 +1,6 @@
 use {
-    crate::core_editor::RestPolicy,
-    crossterm::style::Color,
+    crate::core_editor::{RestPolicy, SelectionExtent},
+    nu_ansi_term::Color,
     serde::{Deserialize, Serialize},
     std::{
         borrow::Cow,
@@ -9,11 +9,20 @@ use {
     strum::{EnumIter, EnumString, IntoDiscriminant},
 };
 
-/// The default color for the prompt, indicator, and right prompt
-pub static DEFAULT_PROMPT_COLOR: Color = Color::Green;
-pub static DEFAULT_PROMPT_MULTILINE_COLOR: nu_ansi_term::Color = nu_ansi_term::Color::LightBlue;
-pub static DEFAULT_INDICATOR_COLOR: Color = Color::Cyan;
-pub static DEFAULT_PROMPT_RIGHT_COLOR: Color = Color::AnsiValue(5);
+// The *light* variants are deliberate. Before the nu-ansi-term migration these
+// were crossterm's `Color::Green`/`Color::Cyan`, which are palette 10 and 14;
+// crossterm spells the dark ones `DarkGreen`/`DarkCyan`. nu-ansi-term has no
+// `Dark*` prefix, so its `Green` is palette 2. Naming them here would darken
+// every default prompt.
+
+/// The default color for the prompt
+pub static DEFAULT_PROMPT_COLOR: Color = Color::LightGreen;
+/// The default color for the multiline prompt indicator
+pub static DEFAULT_PROMPT_MULTILINE_COLOR: Color = Color::LightBlue;
+/// The default color for the prompt indicator
+pub static DEFAULT_INDICATOR_COLOR: Color = Color::LightCyan;
+/// The default color for the right prompt
+pub static DEFAULT_PROMPT_RIGHT_COLOR: Color = Color::Purple;
 
 /// The current success/failure of the history search
 pub enum PromptHistorySearchStatus {
@@ -44,7 +53,7 @@ impl PromptHistorySearch {
 }
 
 /// Modes that the prompt can be in
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub enum PromptEditMode {
     /// The default mode
     #[default]
@@ -64,6 +73,9 @@ impl PromptEditMode {
     pub(crate) fn rest_policy(&self) -> RestPolicy {
         match self {
             PromptEditMode::Vi(PromptViMode::Normal) => RestPolicy::OnGrapheme,
+            // Visual selections are min-width-1: the cursor always covers at
+            // least the grapheme it sits on, so an empty point widens to a block.
+            PromptEditMode::Vi(PromptViMode::Visual) => RestPolicy::Block,
             PromptEditMode::Vi(PromptViMode::Insert)
             | PromptEditMode::Default
             | PromptEditMode::Emacs => RestPolicy::Between,
@@ -74,10 +86,25 @@ impl PromptEditMode {
             PromptEditMode::Custom(_) => RestPolicy::Between,
         }
     }
+
+    pub(crate) fn selection_extent(&self) -> SelectionExtent {
+        match self {
+            // Vi normal/visual sweep the block cursor over the grapheme it
+            // lands on (vim's inclusive visual: `vw` selects "foo b").
+            PromptEditMode::Vi(_) => SelectionExtent::CoverLanding,
+            // The bar modes never form a block selection, and `op_end` is
+            // exclusive for the word/line/grapheme motions they emit (a forward
+            // find stays inclusive, matching its operator span), so the
+            // gap-indexed `Span` is the natural reading. Helix will use this one!
+            PromptEditMode::Default | PromptEditMode::Emacs | PromptEditMode::Custom(_) => {
+                SelectionExtent::Span
+            }
+        }
+    }
 }
 
 /// The vi-specific modes that the prompt can be in
-#[derive(Serialize, Deserialize, Clone, Debug, EnumIter, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, EnumIter, Default, PartialEq, Eq)]
 pub enum PromptViMode {
     /// The default mode
     #[default]
@@ -85,6 +112,10 @@ pub enum PromptViMode {
 
     /// Insertion mode
     Insert,
+
+    /// Visual (selection) mode — like normal, but the cursor carries a
+    /// min-width-1 selection that motions extend.
+    Visual,
 }
 
 /// This is the discriminant type for [`PromptEditMode`]
@@ -124,6 +155,7 @@ impl Display for PromptEditMode {
             Self::Emacs => write!(f, "Emacs"),
             Self::Vi(Vi::Normal) => write!(f, "Vi_Normal"),
             Self::Vi(Vi::Insert) => write!(f, "Vi_Insert"),
+            Self::Vi(Vi::Visual) => write!(f, "Vi_Visual"),
             Self::Custom(s) => write!(f, "Custom_{s}"),
         }
     }
@@ -137,7 +169,9 @@ impl IntoDiscriminant for PromptEditMode {
         match self {
             Self::Default => Self::Discriminant::Default,
             Self::Emacs => Self::Discriminant::Emacs,
-            Self::Vi(Vi::Normal) => Self::Discriminant::ViNormal,
+            // Visual shares Normal's discriminant: it uses the normal-mode
+            // keybindings, differing only in selection geometry.
+            Self::Vi(Vi::Normal | Vi::Visual) => Self::Discriminant::ViNormal,
             Self::Vi(Vi::Insert) => Self::Discriminant::ViInsert,
             Self::Custom(_) => Self::Discriminant::Custom,
         }
@@ -167,7 +201,7 @@ pub trait Prompt: Send {
         DEFAULT_PROMPT_COLOR
     }
     /// Get the default multiline prompt color
-    fn get_prompt_multiline_color(&self) -> nu_ansi_term::Color {
+    fn get_prompt_multiline_color(&self) -> Color {
         DEFAULT_PROMPT_MULTILINE_COLOR
     }
     /// Get the default indicator color
@@ -182,5 +216,38 @@ pub trait Prompt: Send {
     /// Whether to render right prompt on the last line
     fn right_prompt_on_last_line(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn selection_extent_maps_vi_to_cover_landing_and_bar_modes_to_span() {
+        // Pin the dispatch table itself: the PR's headline invariant is that vi
+        // stays on `CoverLanding` (a strict noop) while the bar modes move to the
+        // `Span` model. Asserting the mapping here fails loudly at the switch if a
+        // future refactor accidentally reroutes a mode, rather than surfacing as a
+        // downstream selection assertion in some editor test.
+        use PromptViMode::{Insert, Normal, Visual};
+        for mode in [Normal, Insert, Visual] {
+            assert_eq!(
+                PromptEditMode::Vi(mode).selection_extent(),
+                SelectionExtent::CoverLanding,
+            );
+        }
+        assert_eq!(
+            PromptEditMode::Emacs.selection_extent(),
+            SelectionExtent::Span,
+        );
+        assert_eq!(
+            PromptEditMode::Default.selection_extent(),
+            SelectionExtent::Span,
+        );
+        assert_eq!(
+            PromptEditMode::Custom("anything".into()).selection_extent(),
+            SelectionExtent::Span,
+        );
     }
 }

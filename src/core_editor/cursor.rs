@@ -15,6 +15,86 @@ pub enum Direction {
     Backward,
 }
 
+/// Selection intent of a motion — whether it carries the anchor along or drops
+/// it. Mirrors Helix's `Movement`; the readable face of `put_cursor`'s old
+/// `extend: bool`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Movement {
+    /// Collapse to a point at the target — an ordinary (non-selecting) motion.
+    Move,
+    /// Keep the anchor fixed and move only the head — extend the selection.
+    Extend,
+}
+
+impl Movement {
+    /// `Extend` when selecting, `Move` otherwise — the bridge from the boolean
+    /// `select` flag the edit commands still carry.
+    pub(crate) fn select(select: bool) -> Self {
+        if select {
+            Movement::Extend
+        } else {
+            Movement::Move
+        }
+    }
+}
+
+/// Where the caret sits relative to a grapheme — the geometry axis shared by
+/// motion resolution ([`resolve_motion`](super::resolve_motion)) and selection
+/// extension ([`Cursor::put_cursor`]).
+///
+/// - `Block` (vi normal / visual): the caret sits *on* a grapheme. A forward
+///   word-end lands on the last char, and an inclusive motion's operator or
+///   selection covers it.
+/// - `Bar` (emacs / vi-insert): the caret sits *between* graphemes, on the
+///   trailing boundary, so the same motion is exclusive.
+///
+/// The readable face of the `block`/`inclusive` boolean that used to thread
+/// through the motion path under three different names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CaretGeometry {
+    Block,
+    Bar,
+}
+
+impl CaretGeometry {
+    /// `true` for `Block` — the caret is on a grapheme, so inclusive motions
+    /// cover it. The boolean the geometry-sensitive internals still branch on.
+    pub(crate) fn is_inclusive(self) -> bool {
+        matches!(self, CaretGeometry::Block)
+    }
+}
+
+/// How a mode's `Extend` grows a selection — the selection-model axis, chosen
+/// per edit mode by [`PromptEditMode::selection_extent`](crate::PromptEditMode).
+/// Orthogonal to [`CaretGeometry`]: geometry is *where the caret rests*, extent
+/// is *how far a motion drags the head*.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SelectionExtent {
+    /// Vi visual: the block cursor sweeps the grapheme it lands *on*, so head
+    /// covers the motion target: `vw` over `"foo bar"` selects `"foo b"`.
+    CoverLanding,
+    /// Helix: the selection is the gap-indexed operator span (`op_end`), so the
+    /// head stops at the motion boundary: `w` selects `"foo "`, caret on the
+    /// space.
+    Span,
+}
+
+/// Keep the anchor's grapheme covered when a block selection reverses direction
+/// across it (Helix `Range::put_cursor`): the anchor hops to the far edge of its
+/// grapheme so it stays inside the range. A bar (exclusive) selection is half-open
+/// `[min, max)`, so its anchor never moves.
+fn flip_anchor(buf: &str, anchor: usize, old_head: usize, new_head: usize, block: bool) -> usize {
+    if !block {
+        anchor
+    } else if old_head >= anchor && new_head < anchor {
+        next_grapheme_boundary(buf, anchor)
+    } else if old_head < anchor && new_head >= anchor {
+        prev_grapheme_boundary(buf, anchor)
+    } else {
+        anchor
+    }
+}
+
 /// A cursor as a (possibly empty) range over a buffer.
 ///
 /// Uses gap indexing — `anchor` and `head` represent positions *between* bytes,
@@ -164,35 +244,53 @@ impl Cursor {
     /// Move the caret to land on the grapheme at byte `target`, returning the new
     /// cursor. Mirrors Helix's `Range::put_cursor`.
     ///
-    /// `extend = false` collapses to a point at `target` (the commit boundary's
-    /// `Block` policy then widens it to a 1-grapheme block). `extend = true`
+    /// [`Movement::Move`] collapses to a point at `target` (the commit boundary's
+    /// `Block` policy then widens it to a 1-grapheme block). [`Movement::Extend`]
     /// keeps the anchor side — but **flips the anchor onto the other edge of its
     /// grapheme when the selection changes direction**, so the grapheme the
     /// selection started on stays covered (see the type docs / convergence note).
-    pub fn put_cursor(self, buf: &str, target: usize, extend: bool) -> Self {
-        if !extend {
+    ///
+    /// `geometry` is the per-mode selection geometry: when extending *forward*, a
+    /// `Block` (vi-normal) cursor places the head one grapheme past `target` so
+    /// `target`'s grapheme is covered; a `Bar` (emacs / Between) cursor places the
+    /// head exactly on `target`. It only affects the forward head — a backward
+    /// range already covers `target` at its low end, and a collapse ignores it.
+    pub fn put_cursor(
+        self,
+        buf: &str,
+        target: usize,
+        movement: Movement,
+        geometry: CaretGeometry,
+    ) -> Self {
+        if movement == Movement::Move {
             return Self::point(target);
         }
+        let inclusive = geometry.is_inclusive();
 
-        // Flip the anchor onto the far edge of its grapheme when the direction
-        // changes; otherwise leave it (Helix `Range::put_cursor` semantics).
-        let anchor: usize = if self.head >= self.anchor && target < self.anchor {
-            next_grapheme_boundary(buf, self.anchor)
-        } else if self.head < self.anchor && target >= self.anchor {
-            prev_grapheme_boundary(buf, self.anchor)
-        } else {
-            self.anchor
-        };
+        // Flip the anchor onto the far edge of its grapheme when direction
+        // changes, so the grapheme the selection started on stays covered.
+        let anchor = flip_anchor(buf, self.anchor, self.head, target, inclusive);
 
-        // Place the head so `caret()` lands back on `target`'s grapheme:
-        // forward → head on the far edge; backward → head *is* the caret.
-        let head = if anchor <= target {
+        // Place the head so `caret()` lands back on `target`'s grapheme: forward
+        // *and inclusive* → head on the far edge; otherwise → head *is* `target`.
+        // This forward widening is the `CoverLanding` selection model.
+        let head = if anchor <= target && inclusive {
             next_grapheme_boundary(buf, target)
         } else {
             target
         };
 
         Self::new(anchor, head)
+    }
+
+    /// Grow a selection under the [`SelectionExtent::Span`] model: place the head
+    /// at the motion's gap-indexed end (`op_end`, with per-motion inclusivity
+    /// already baked in by [`resolve_motion`](super::resolve_motion)), with *no*
+    /// vi-visual widening, while keeping the anchor grapheme covered through a
+    /// block reversal via the same [`flip_anchor`] as [`Cursor::put_cursor`].
+    pub(crate) fn extend_span(self, buf: &str, op_end: usize, geometry: CaretGeometry) -> Self {
+        let anchor = flip_anchor(buf, self.anchor, self.head, op_end, geometry.is_inclusive());
+        Self::new(anchor, op_end)
     }
 }
 
@@ -514,7 +612,7 @@ mod tests {
     #[test]
     fn put_cursor_non_extend_collapses_to_point() {
         assert_eq!(
-            Cursor::new(2, 4).put_cursor("hello", 3, false),
+            Cursor::new(2, 4).put_cursor("hello", 3, Movement::Move, CaretGeometry::Block),
             Cursor::point(3)
         );
     }
@@ -522,7 +620,7 @@ mod tests {
     #[test]
     fn put_cursor_extend_forward_places_head_on_far_edge() {
         // [0,1) extend to byte 2 → [0,3); caret retreats to 2 (the 'l')
-        let c = Cursor::new(0, 1).put_cursor("hello", 2, true);
+        let c = Cursor::new(0, 1).put_cursor("hello", 2, Movement::Extend, CaretGeometry::Block);
         assert_eq!(c, Cursor::new(0, 3));
         assert_eq!(c.caret("hello"), 2);
     }
@@ -530,7 +628,7 @@ mod tests {
     #[test]
     fn put_cursor_extend_no_flip_stays_backward() {
         // backward [4,2) extend further left to 1, no crossing → [4,1)
-        let c = Cursor::new(4, 2).put_cursor("hello", 1, true);
+        let c = Cursor::new(4, 2).put_cursor("hello", 1, Movement::Extend, CaretGeometry::Block);
         assert_eq!(c, Cursor::new(4, 1));
         assert_eq!(c.caret("hello"), 1);
     }
@@ -539,7 +637,7 @@ mod tests {
     fn put_cursor_extend_flip_forward_to_backward_keeps_anchor_grapheme() {
         // the worked example: [2,4) drag caret to 0 → anchor hops 2→3 → [3,0),
         // so the 'l' at byte 2 (the start grapheme) stays covered.
-        let c = Cursor::new(2, 4).put_cursor("hello", 0, true);
+        let c = Cursor::new(2, 4).put_cursor("hello", 0, Movement::Extend, CaretGeometry::Block);
         assert_eq!(c, Cursor::new(3, 0));
         assert_eq!(c.caret("hello"), 0);
         assert!(c.contains(2)); // start grapheme survived the turn
@@ -548,7 +646,7 @@ mod tests {
     #[test]
     fn put_cursor_extend_flip_backward_to_forward_keeps_anchor_grapheme() {
         // backward [4,2) drag caret right to 5 → anchor hops 4→3 → [3,5)
-        let c = Cursor::new(4, 2).put_cursor("hello", 5, true);
+        let c = Cursor::new(4, 2).put_cursor("hello", 5, Movement::Extend, CaretGeometry::Block);
         assert_eq!(c, Cursor::new(3, 5));
         assert_eq!(c.caret("hello"), 4);
         assert!(c.contains(3)); // the 'l' at 3 (start grapheme) survived
@@ -558,7 +656,63 @@ mod tests {
     fn put_cursor_extend_flip_across_multibyte_anchor() {
         // "café": é is [3,5). forward [3,5) (on é) drag caret to 0 → anchor hops
         // 3→5 (far edge of é) → [5,0); the whole é stays covered.
-        let c = Cursor::new(3, 5).put_cursor("café", 0, true);
+        let c = Cursor::new(3, 5).put_cursor("café", 0, Movement::Extend, CaretGeometry::Block);
+        assert_eq!(c, Cursor::new(5, 0));
+        assert!(c.contains(3) && c.contains(4)); // both bytes of é covered
+    }
+
+    // --- extend_span (Span selection model) ----------------------------------
+
+    #[test]
+    fn extend_span_bar_grows_head_no_flip() {
+        // The emacs / default path: Bar geometry makes flip_anchor a no-op, so
+        // the head jumps to op_end and the anchor never moves: [0,3) → [0,4).
+        let c = Cursor::new(0, 3).extend_span("hello", 4, CaretGeometry::Bar);
+        assert_eq!(c, Cursor::new(0, 4));
+    }
+
+    #[test]
+    fn extend_span_does_not_widen_like_put_cursor() {
+        // The property that separates the two models. From the same [0,1) a
+        // forward Extend to 2 under Block: put_cursor (CoverLanding) widens the
+        // head onto the landing grapheme's far edge (3); extend_span (Span) stops
+        // the head exactly at op_end (2) with no widening.
+        let landing =
+            Cursor::new(0, 1).put_cursor("hello", 2, Movement::Extend, CaretGeometry::Block);
+        assert_eq!(landing, Cursor::new(0, 3));
+        let span = Cursor::new(0, 1).extend_span("hello", 2, CaretGeometry::Block);
+        assert_eq!(span, Cursor::new(0, 2));
+    }
+
+    #[test]
+    fn extend_span_block_flip_forward_to_backward_keeps_anchor_grapheme() {
+        // Helix groundwork (no current mode pairs Span with Block): a Span that
+        // reverses past the anchor still hops it onto the far edge — the same
+        // flip_anchor as put_cursor — but the head lands exactly on op_end with
+        // no widening. [2,4) → op_end 0 → [3,0).
+        let c = Cursor::new(2, 4).extend_span("hello", 0, CaretGeometry::Block);
+        assert_eq!(c, Cursor::new(3, 0));
+        assert!(c.contains(2)); // start grapheme survives the reversal
+    }
+
+    #[test]
+    fn extend_span_block_flip_backward_to_forward_keeps_anchor_grapheme() {
+        // backward [4,2) Span reverses right to op_end 5 → anchor hops 4→3 → [3,5).
+        let c = Cursor::new(4, 2).extend_span("hello", 5, CaretGeometry::Block);
+        assert_eq!(c, Cursor::new(3, 5));
+        assert!(c.contains(3)); // the 'l' at 3 (start grapheme) survived
+    }
+
+    #[test]
+    fn extend_span_block_flip_hops_full_multibyte_grapheme() {
+        // `extend_span` is a *new* caller into `flip_anchor`; every other Span
+        // flip test uses single-byte ASCII where a boundary hop is trivially ±1.
+        // Here the anchor sits on a 2-byte grapheme: "café" has é at [3,5). A
+        // forward Span [3,5) (on é) that reverses past the anchor (op_end 0) must
+        // hop the anchor across the *whole* é (3→5), not one byte, so both of é's
+        // bytes stay covered — the same multibyte flip `put_cursor` makes through
+        // the shared helper, now proven from the Span entry point too.
+        let c = Cursor::new(3, 5).extend_span("café", 0, CaretGeometry::Block);
         assert_eq!(c, Cursor::new(5, 0));
         assert!(c.contains(3) && c.contains(4)); // both bytes of é covered
     }

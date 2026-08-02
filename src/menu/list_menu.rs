@@ -4,7 +4,7 @@ use {
         core_editor::Editor,
         menu_functions::{replace_in_buffer, resolve_completer_input},
         painting::{estimate_single_line_wraps, Painter},
-        Completer, Suggestion,
+        Completer, Suggestion, Suggestions,
     },
     nu_ansi_term::ansi::RESET,
     std::{fmt::Write, iter::Sum},
@@ -62,8 +62,8 @@ pub struct ListMenu {
     /// When collecting chronological values, the menu only caches at least
     /// page_size records.
     /// When performing a query to the completer, the cached values will
-    /// be the result from such query
-    values: Vec<Suggestion>,
+    /// be the result from such query.
+    values: Suggestions,
     /// row position in the menu. Starts from 0
     row_position: u16,
     /// Max size of the suggestions when querying without a search buffer
@@ -93,7 +93,7 @@ impl Default for ListMenu {
                 .with_only_buffer_difference(true),
             page_size: 10,
             active: false,
-            values: Vec::new(),
+            values: Suggestions::default(),
             row_position: 0,
             page: 0,
             query_size: None,
@@ -180,13 +180,6 @@ impl ListMenu {
     /// Get selected value from the menu
     fn get_value(&self) -> Option<Suggestion> {
         self.get_values().get(self.index()).cloned()
-    }
-
-    /// Reset menu position
-    fn reset_position(&mut self) {
-        self.page = 0;
-        self.row_position = 0;
-        self.pages = Vec::new();
     }
 
     fn printable_entries(&self, painter: &Painter) -> usize {
@@ -365,47 +358,63 @@ impl Menu for ListMenu {
         false
     }
 
-    /// Selects what type of event happened with the menu
-    fn menu_event(&mut self, event: MenuEvent) {
-        match &event {
-            MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => {
-                self.active = false;
-                self.input = None;
-            }
-            _ => {}
-        }
+    fn set_active(&mut self, active: bool) {
+        self.active = active;
+    }
 
+    fn clear_input(&mut self) {
+        self.input = None;
+    }
+
+    /// Handle menu event
+    fn menu_event(&mut self, event: MenuEvent) {
+        self.handle_menu_event(&event);
         self.event = Some(event);
     }
 
     /// Collecting the value from the completer to be shown in the menu
+    fn reset_position(&mut self) {
+        self.page = 0;
+        self.row_position = 0;
+        self.pages = Vec::new();
+    }
+
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
-
         let parsed = parse_selection_char(&input, SELECTION_CHAR);
         self.update_row_pos(parsed.index);
 
         // If there are no row selector and the menu has an Edit event, this clears
         // the position together with the pages vector
-        if matches!(self.event, Some(MenuEvent::Edit(_))) && parsed.index.is_none() {
+        if parsed.index.is_none() && matches!(self.event, Some(MenuEvent::Edit(_))) {
             self.reset_position();
         }
 
-        self.values = if parsed.remainder.is_empty() {
+        if parsed.remainder.is_empty() {
             self.query_size = Some(completer.total_completions(parsed.remainder, pos));
 
-            let skip = self.pages.iter().take(self.page).sum::<Page>().size;
+            let skip = self
+                .pages
+                .iter()
+                .take(self.page)
+                .map(|page| page.size)
+                .sum();
+
             let take = self
                 .pages
                 .get(self.page)
-                .map(|page| page.size)
-                .unwrap_or(self.page_size);
+                .map_or(self.page_size, |page| page.size);
 
-            completer.partial_complete(&input, pos, skip, take)
+            self.values = completer.partial_complete(&input, pos, skip, take);
         } else {
             self.query_size = None;
-            completer.complete(&input, pos)
+
+            // `into_shared` yields `None` for a `Pending` result (a background
+            // completion is still in flight with nothing to show yet), so we keep
+            // the current suggestions rather than blanking the menu.
+            if let Some(values) = completer.complete(&input, pos).into_shared() {
+                self.values = values;
+            }
         }
     }
 

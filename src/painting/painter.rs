@@ -10,7 +10,7 @@ use {
     },
     crossterm::{
         cursor::{self, MoveTo, RestorePosition, SavePosition},
-        style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor},
+        style::{Attribute, Print, ResetColor, SetAttribute},
         terminal::{self, Clear, ClearType},
         QueueableCommand,
     },
@@ -632,7 +632,7 @@ impl Painter {
             let shape = match &prompt_mode {
                 PromptEditMode::Emacs => shapes.emacs,
                 PromptEditMode::Vi(PromptViMode::Insert) => shapes.vi_insert,
-                PromptEditMode::Vi(PromptViMode::Normal) => shapes.vi_normal,
+                PromptEditMode::Vi(PromptViMode::Normal | PromptViMode::Visual) => shapes.vi_normal,
                 _ => None,
             };
             if let Some(shape) = shape {
@@ -914,7 +914,7 @@ impl Painter {
         // print our prompt with color
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_color()))?;
+                .queue(Print(prompt.get_prompt_color().prefix()))?;
         }
 
         self.stdout
@@ -922,7 +922,7 @@ impl Painter {
 
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_indicator_color()))?;
+                .queue(Print(prompt.get_indicator_color().prefix()))?;
         }
 
         self.stdout
@@ -930,7 +930,7 @@ impl Painter {
 
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
+                .queue(Print(prompt.get_prompt_right_color().prefix()))?;
         }
 
         self.print_right_prompt(lines, layout)?;
@@ -987,7 +987,7 @@ impl Painter {
         // print our prompt with color
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_prompt_color()))?;
+                .queue(Print(prompt.get_prompt_color().prefix()))?;
         }
 
         // In case the prompt is made out of multiple lines, the prompt is split by
@@ -998,7 +998,7 @@ impl Painter {
         if extra_rows == 0 {
             if use_ansi_coloring {
                 self.stdout
-                    .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
+                    .queue(Print(prompt.get_prompt_right_color().prefix()))?;
             }
 
             self.print_right_prompt(lines, layout)?;
@@ -1006,7 +1006,7 @@ impl Painter {
 
         if use_ansi_coloring {
             self.stdout
-                .queue(SetForegroundColor(prompt.get_indicator_color()))?;
+                .queue(Print(prompt.get_indicator_color().prefix()))?;
         }
         let indicator_skipped =
             skip_buffer_lines(&lines.prompt_indicator, extra_rows_after_prompt, None);
@@ -1210,13 +1210,17 @@ impl Painter {
         }
         Ok(())
     }
+    #[cfg(test)]
+    pub(crate) fn force_prompt_anchored_for_test(&mut self, row: u16) {
+        self.prompt_start_row = PromptStartRow::Verified(row);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::menu::MenuEvent;
-    use crate::{Completer, Editor, PromptHistorySearch, Suggestion};
+    use crate::{Color, Completer, Editor, PromptHistorySearch, Suggestion};
     use pretty_assertions::assert_eq;
     use std::borrow::Cow;
     use std::sync::{Arc, Mutex};
@@ -1531,6 +1535,8 @@ mod tests {
         fn is_active(&self) -> bool {
             true
         }
+        fn set_active(&mut self, _active: bool) {}
+        fn clear_input(&mut self) {}
         fn menu_event(&mut self, _event: MenuEvent) {
             unimplemented!()
         }
@@ -1546,6 +1552,9 @@ mod tests {
             unimplemented!()
         }
         fn update_values(&mut self, _editor: &mut Editor, _completer: &mut dyn Completer) {
+            unimplemented!()
+        }
+        fn reset_position(&mut self) {
             unimplemented!()
         }
         fn update_working_details(
@@ -1733,5 +1742,197 @@ mod tests {
                 MarkerCall::CommandInput
             ]
         );
+    }
+
+    const SGR_GREEN: &str = "\x1b[92m"; // DEFAULT_PROMPT_COLOR (LightGreen, palette 10)
+    const SGR_CYAN: &str = "\x1b[96m"; // DEFAULT_INDICATOR_COLOR (LightCyan, palette 14)
+    const SGR_PURPLE: &str = "\x1b[35m"; // DEFAULT_PROMPT_RIGHT_COLOR (Purple, palette 5)
+    const SGR_DEFAULT_FG: &str = "\x1b[39m"; // Color::Default — "terminal foreground"
+
+    /// A prompt whose color methods are set per-test. Rendering is inherited from
+    /// `TestPrompt` since these tests only care about the emitted escapes.
+    struct ColoredPrompt {
+        prompt: Color,
+        indicator: Color,
+        right: Color,
+    }
+
+    impl Prompt for ColoredPrompt {
+        fn render_prompt_left(&self) -> Cow<'_, str> {
+            TestPrompt.render_prompt_left()
+        }
+        fn render_prompt_right(&self) -> Cow<'_, str> {
+            TestPrompt.render_prompt_right()
+        }
+        fn render_prompt_indicator(&self, mode: PromptEditMode) -> Cow<'_, str> {
+            TestPrompt.render_prompt_indicator(mode)
+        }
+        fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
+            TestPrompt.render_prompt_multiline_indicator()
+        }
+        fn render_prompt_history_search_indicator(
+            &self,
+            search: PromptHistorySearch,
+        ) -> Cow<'_, str> {
+            TestPrompt.render_prompt_history_search_indicator(search)
+        }
+
+        fn get_prompt_color(&self) -> Color {
+            self.prompt
+        }
+        fn get_indicator_color(&self) -> Color {
+            self.indicator
+        }
+        fn get_prompt_right_color(&self) -> Color {
+            self.right
+        }
+    }
+    /// Like `capture_repaint`, but with configurable ANSI coloring. Also returns
+    /// whether the paint took the large-buffer branch, since `repaint_buffer`
+    /// recomputes that field and a caller cannot force it.
+    fn capture_repaint_ansi(
+        prompt: &dyn Prompt,
+        lines: &PromptLines,
+        use_ansi_coloring: bool,
+    ) -> (String, bool) {
+        let mut p = Painter::new(W::capture());
+        p.terminal_size = (20, 10);
+        p.prompt_start_row.mark_verified(0);
+        p.prompt_height = 1;
+        p.repaint_buffer(
+            prompt,
+            lines,
+            PromptEditMode::Default,
+            None,
+            use_ansi_coloring,
+            &None,
+        )
+        .expect("repaint_buffer failed");
+        let large = p.large_buffer;
+        (
+            String::from_utf8_lossy(p.stdout.captured()).into_owned(),
+            large,
+        )
+    }
+
+    /// Records which palette entries crossterm's `SetForegroundColor` selected
+    /// for the pre-migration defaults. crossterm's `Green`/`Cyan` are the
+    /// *bright* entries (10/14) — `DarkGreen`/`DarkCyan` are 2/6 — so the
+    /// nu-ansi-term replacements have to be the `Light*` variants to keep the
+    /// prompt looking the same.
+    ///
+    /// Green and cyan intentionally re-encode from the 256-color form
+    /// (`38;5;10`) to the aixterm form (`92`); both select palette entry 10.
+    #[test]
+    fn crossterm_defaults_were_the_bright_palette_entries() {
+        use crossterm::{
+            style::{Color as CtColor, SetForegroundColor},
+            Command,
+        };
+
+        fn crossterm_sgr(color: CtColor) -> String {
+            let mut buf = String::new();
+            SetForegroundColor(color)
+                .write_ansi(&mut buf)
+                .expect("write_ansi failed");
+            buf
+        }
+
+        for (name, crossterm, palette) in [
+            ("prompt", CtColor::Green, 10),
+            ("indicator", CtColor::Cyan, 14),
+            ("right prompt", CtColor::AnsiValue(5), 5),
+        ] {
+            assert_eq!(
+                crossterm_sgr(crossterm),
+                Color::Fixed(palette).prefix().to_string(),
+                "{name} default selected a different palette entry than assumed"
+            );
+        }
+
+        // "Unstyled" has no palette entry; both spellings are SGR 39.
+        assert_eq!(
+            Color::Default.prefix().to_string(),
+            crossterm_sgr(CtColor::Reset)
+        );
+    }
+
+    /// The trait's default colors reach the terminal as the expected SGR
+    /// sequences, on the small-buffer path.
+    #[test]
+    fn default_prompt_colors_emit_expected_sgr() {
+        let (out, _) =
+            capture_repaint_ansi(&TestPrompt, &make_lines("> ", "", "RP", "hi", ""), true);
+
+        assert!(
+            out.contains(SGR_GREEN),
+            "left prompt color missing: {out:?}"
+        );
+        assert!(out.contains(SGR_CYAN), "indicator color missing: {out:?}");
+        assert!(
+            out.contains(SGR_PURPLE),
+            "right prompt color missing: {out:?}"
+        );
+    }
+
+    /// `Color::Default` must emit an explicit SGR 39, never an empty prefix —
+    /// an empty one would let the active color bleed into an unstyled prompt,
+    /// which is the starship bug (#1046).
+    #[test]
+    fn default_color_emits_explicit_foreground_reset() {
+        let prompt = ColoredPrompt {
+            prompt: Color::Default,
+            indicator: Color::Default,
+            right: Color::Default,
+        };
+        let (out, _) = capture_repaint_ansi(&prompt, &make_lines("> ", "", "RP", "hi", ""), true);
+
+        assert!(
+            out.contains(SGR_DEFAULT_FG),
+            "Color::Default must emit an explicit SGR 39, not nothing: {out:?}"
+        );
+        assert!(
+            !out.contains(SGR_GREEN),
+            "no default color should leak through: {out:?}"
+        );
+    }
+
+    /// `print_large_buffer` has its own three color call sites that the other
+    /// capture tests never reach.
+    ///
+    /// The bulk sits in `after_cursor` so `extra_rows` stays 0 and the right
+    /// prompt is still drawn; a tall `before_cursor` would suppress it (see
+    /// `test_layout_right_prompt_suppressed_in_large_buffer`).
+    #[test]
+    fn large_buffer_path_emits_prompt_colors() {
+        let tall = "line\n".repeat(15);
+        let (out, large) =
+            capture_repaint_ansi(&TestPrompt, &make_lines("> ", "", "RP", "hi", &tall), true);
+
+        assert!(large, "expected the large-buffer path to be taken");
+        assert!(
+            out.contains(SGR_GREEN),
+            "left prompt color missing: {out:?}"
+        );
+        assert!(out.contains(SGR_CYAN), "indicator color missing: {out:?}");
+        assert!(
+            out.contains(SGR_PURPLE),
+            "right prompt color missing: {out:?}"
+        );
+    }
+
+    /// Every color write stays inside its `use_ansi_coloring` guard. Checks the
+    /// color sequences only — `repaint_buffer` always emits a leading `\x1b[0m`.
+    #[test]
+    fn no_prompt_colors_when_ansi_coloring_disabled() {
+        let (out, _) =
+            capture_repaint_ansi(&TestPrompt, &make_lines("> ", "", "RP", "hi", ""), false);
+
+        for sgr in [SGR_GREEN, SGR_CYAN, SGR_PURPLE] {
+            assert!(
+                !out.contains(sgr),
+                "emitted {sgr:?} with coloring disabled: {out:?}"
+            );
+        }
     }
 }

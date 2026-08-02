@@ -1,5 +1,6 @@
 use nu_ansi_term::Style;
 use std::ops::Range;
+use std::sync::Arc;
 
 /// A span of source code, with positions in bytes
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
@@ -10,6 +11,12 @@ pub struct Span {
     /// The ending position of the span, in bytes
     pub end: usize,
 }
+
+/// A shared, immutable list of completion suggestions.
+///
+/// Held behind an [`Arc`] so a completer that caches results can hand the same
+/// list to reedline on every keystroke, without massive penalty
+pub type Suggestions = Arc<[Suggestion]>;
 
 impl Span {
     /// Creates a new `Span` from start and end inputs.
@@ -27,27 +34,161 @@ impl Span {
     }
 }
 
+/// Buffer text and cursor position the completion was computed against.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompletionOrigin {
+    pub(crate) buffer: String,
+    pub(crate) insertion_point: usize,
+}
+
+impl CompletionOrigin {
+    /// Buffer/cursor for stale results.
+    pub fn new(buffer: impl Into<String>, insertion_point: usize) -> Self {
+        Self {
+            buffer: buffer.into(),
+            insertion_point,
+        }
+    }
+}
+
+/// Longest common prefix extension computed by the completer.
+///
+/// When present, reedline splices `insert` over `span` verbatim.
+/// Absent — reedline uses its own LCP derivation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Partial {
+    /// Buffer range to replace.
+    pub span: Span,
+    /// Text to splice in.
+    pub insert: String,
+}
+
+/// Outcome of a [`Completer::complete`] request.
+#[derive(Debug, Clone)]
+pub enum CompletionResult {
+    /// Authoritative results.
+    Fresh {
+        /// The suggestions.
+        suggestions: Suggestions,
+        /// Partial completion prefix.
+        partial: Option<Partial>,
+    },
+    /// Best-effort results while computation is in flight.
+    Stale {
+        /// The suggestions.
+        suggestions: Suggestions,
+        /// Buffer/cursor these were computed against.
+        origin: CompletionOrigin,
+        /// Partial completion prefix.
+        partial: Option<Partial>,
+    },
+    /// No results yet; computation in progress.
+    Pending,
+}
+
+impl CompletionResult {
+    /// Wrap authoritative results with no partial.
+    pub fn fresh(suggestions: impl Into<Suggestions>) -> Self {
+        CompletionResult::Fresh {
+            suggestions: suggestions.into(),
+            partial: None,
+        }
+    }
+
+    /// Stale result if there is something to show, else Pending.
+    pub fn stale_or_pending(fallback: Suggestions, origin: CompletionOrigin) -> Self {
+        if fallback.is_empty() {
+            CompletionResult::Pending
+        } else {
+            CompletionResult::Stale {
+                suggestions: fallback,
+                origin,
+                partial: None,
+            }
+        }
+    }
+
+    /// Attach a partial completion prefix.
+    pub fn with_partial(mut self, partial: Option<Partial>) -> Self {
+        match &mut self {
+            Self::Fresh { partial: slot, .. } | Self::Stale { partial: slot, .. } => {
+                *slot = partial;
+            }
+            Self::Pending => {}
+        }
+        self
+    }
+
+    /// Borrow the suggestions this result carries (empty for [`Pending`](Self::Pending)).
+    pub fn suggestions(&self) -> &[Suggestion] {
+        match self {
+            CompletionResult::Fresh { suggestions, .. }
+            | CompletionResult::Stale { suggestions, .. } => suggestions,
+            CompletionResult::Pending => &[],
+        }
+    }
+
+    /// The completer-supplied partial completion, if any.
+    pub fn partial(&self) -> Option<&Partial> {
+        match self {
+            CompletionResult::Fresh { partial, .. } | CompletionResult::Stale { partial, .. } => {
+                partial.as_ref()
+            }
+            CompletionResult::Pending => None,
+        }
+    }
+
+    /// Move the shared suggestion list out without copying.
+    pub fn into_shared(self) -> Option<Suggestions> {
+        match self {
+            CompletionResult::Fresh { suggestions, .. }
+            | CompletionResult::Stale { suggestions, .. } => Some(suggestions),
+            CompletionResult::Pending => None,
+        }
+    }
+
+    /// Whether there is nothing to show yet because a computation is in flight.
+    /// When `true`, callers should preserve any results already displayed.
+    pub fn is_pending(&self) -> bool {
+        matches!(self, CompletionResult::Pending)
+    }
+}
+
+/// Vitality of a completer's background work, grabbed by the engine once per
+/// event-loop iteration. It tells the engine whether to keep polling for
+/// input (rather than blocking) and when a finished result is ready to display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionStatus {
+    /// No background completion is in flight.... the engine may block on input.
+    Idle,
+    /// A background completion is still running... the engine should keep polling.
+    Pending,
+    /// The latest background completion just finished! Its results are now
+    /// available and any active menu should be refreshed.
+    Ready,
+}
+
 /// A trait that defines how to convert some text and a position to a list of potential completions in that position.
 /// The text could be a part of the whole line, and the position is the index of the end of the text in the original line.
 pub trait Completer {
     /// the action that will take the line and position and convert it to a vector of completions, which include the
     /// span to replace and the contents of that replacement
-    fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion>;
+    fn complete(&mut self, line: &str, pos: usize) -> CompletionResult;
 
-    /// same as [`Completer::complete`] but it will return a vector of ranges of the strings
-    /// the suggestions are based on
+    /// same as [`Completer::complete`] but it will also return a vector of ranges
+    /// of the strings the suggestions are based on
     fn complete_with_base_ranges(
         &mut self,
         line: &str,
         pos: usize,
-    ) -> (Vec<Suggestion>, Vec<Range<usize>>) {
+    ) -> (CompletionResult, Vec<Range<usize>>) {
+        let result = self.complete(line, pos);
         let mut ranges = vec![];
-        let suggestions = self.complete(line, pos);
-        for suggestion in &suggestions {
+        for suggestion in result.suggestions() {
             ranges.push(suggestion.span.start..suggestion.span.end);
         }
         ranges.dedup();
-        (suggestions, ranges)
+        (result, ranges)
     }
 
     /// action that will return a partial section of available completions
@@ -59,38 +200,28 @@ pub trait Completer {
         pos: usize,
         start: usize,
         offset: usize,
-    ) -> Vec<Suggestion> {
+    ) -> Suggestions {
         self.complete(line, pos)
-            .into_iter()
+            .suggestions()
+            .iter()
             .skip(start)
             .take(offset)
+            .cloned()
             .collect()
     }
 
     /// number of available completions
     fn total_completions(&mut self, line: &str, pos: usize) -> usize {
-        self.complete(line, pos).len()
+        self.complete(line, pos).suggestions().len()
     }
 
-    /// Returns `true` while completions are being computed in the background.
+    /// Poll the completer's background work.
     ///
-    /// When this returns `true` the engine switches to polling mode so it can
-    /// call [`check_pending`](Self::check_pending) periodically without
-    /// stopping on keyboard input.  The default implementation always returns
-    /// `false` (sync completer).
-    fn has_pending(&mut self) -> bool {
-        false
-    }
-
-    /// Checks whether a background completion has finished.
-    ///
-    /// Returns `true` once the results have been stored in the completer's
-    /// internal cache so that the next call to [`complete`](Self::complete)
-    /// will return them immediately.  The engine calls this while a menu is
-    /// active and [`has_pending`](Self::has_pending) has returned `true`.
-    /// The default implementation always returns `false`.
-    fn check_pending(&mut self) -> bool {
-        false
+    /// Called once per event-loop iteration by the engine. Synchronous
+    /// completers use the default, which always reports
+    /// [`CompletionStatus::Idle`].
+    fn poll_completion(&mut self) -> CompletionStatus {
+        CompletionStatus::Idle
     }
 }
 
