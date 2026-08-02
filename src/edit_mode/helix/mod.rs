@@ -15,6 +15,12 @@ enum HelixMode {
     Select,
 }
 /// A prefix key waiting for its argument.
+///
+/// Two kinds live here, and the difference decides what a generalized chord
+/// table could ever subsume. `Find` and `Replace` take an arbitrary typed char
+/// as *data*, so they cannot be spelled as a finite key sequence. `Goto` takes
+/// one key from a fixed set, so it is expressible either way and stays here
+/// only because the machine already owns the mechanism.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pending {
     /// `f`/`F`/`t`/`T` are waiting for the character to find.
@@ -24,6 +30,8 @@ enum Pending {
     },
     /// `r` is waiting for the replacement character.
     Replace,
+    /// `g` is waiting for the goto target (`h`/`l`/`g`/`e`).
+    Goto,
 }
 
 /// Every parse_event will result in one of three outcomes:
@@ -88,7 +96,7 @@ pub struct Helix {
     mode: HelixMode,
     /// Count prefix being accumulated (`3w`).
     count: Option<usize>,
-    /// Prefix key waiting for its argument (`f`/`r`).
+    /// Prefix key waiting for its argument (`f`/`r`/`g`).
     pending: Option<Pending>,
 }
 
@@ -159,7 +167,7 @@ impl Helix {
                         }
                     }
                 }
-                interpret(self.mode, self.count.unwrap_or(1), key)
+                interpret(self.mode, self.count, key)
             }
         };
 
@@ -237,17 +245,51 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
             verb: Verb::OnSelection(Op::Replace(ch)),
             next_mode: None,
         }),
+        Pending::Goto => match ch {
+            'h' => Outcome::Execute(Action {
+                count,
+                verb: Verb::CollapsingMotion(MotionTarget::LineEdge(Direction::Backward)),
+                next_mode: None,
+            }),
+            'l' => Outcome::Execute(Action {
+                count,
+                verb: Verb::CollapsingMotion(MotionTarget::LineEdge(Direction::Forward)),
+                next_mode: None,
+            }),
+            'g' => Outcome::Execute(Action {
+                count,
+                verb: Verb::CollapsingMotion(MotionTarget::BufferEdge(Direction::Backward)),
+                next_mode: None,
+            }),
+            'e' => Outcome::Execute(Action {
+                count,
+                verb: Verb::CollapsingMotion(MotionTarget::BufferEdge(Direction::Forward)),
+                next_mode: None,
+            }),
+            _ => Outcome::Reject,
+        },
     }
 }
 
 /// Interpret a state
-fn interpret(mode: HelixMode, count: usize, key: KeyEvent) -> Outcome {
+///
+/// `count` is the live count prefix, still `Option` so a *typed* `1` stays
+/// distinguishable from no count at all; only the goto prefix cares.
+fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
     // reject any non typeable char, this has to be changed when Alt-d is introduced
     if let KeyCode::Char(_) = key.code {
         if !is_typeable(key.modifiers) {
             return Outcome::Reject;
         }
     }
+    // `g` takes the goto prefix only while no count is live. Helix reads `3gg`
+    // as "go to line 3", which needs a line-number `MotionTarget` that does not
+    // exist yet; falling through to the reject arm makes the counted form a
+    // deliberate no-op rather than a silent plain `gg`.
+    if key.code == KeyCode::Char('g') && count.is_none() {
+        return Outcome::Absorb(Pending::Goto);
+    }
+    let count = count.unwrap_or(1);
     match key.code {
         KeyCode::Char(ch) => match ch {
             'f' => Outcome::Absorb(Pending::Find {
@@ -760,6 +802,125 @@ mod test {
         );
     }
 
+    // ---- goto ----
+
+    #[rstest]
+    #[case('h', MotionTarget::LineEdge(Direction::Backward))]
+    #[case('l', MotionTarget::LineEdge(Direction::Forward))]
+    #[case('g', MotionTarget::BufferEdge(Direction::Backward))]
+    #[case('e', MotionTarget::BufferEdge(Direction::Forward))]
+    fn goto_moves_in_normal_and_extends_in_select(#[case] c: char, #[case] target: MotionTarget) {
+        // Goto is a `CollapsingMotion`, matching Helix: in normal mode it drops
+        // the selection and lands a bare cursor, in select mode it extends.
+        let mut helix = normal();
+        assert_eq!(helix.parse_event(chr('g')), ReedlineEvent::None);
+        assert_eq!(
+            helix.parse_event(chr(c)),
+            ReedlineEvent::Edit(vec![EditCommand::Move(target)])
+        );
+
+        let _ = helix.parse_event(chr('v'));
+        let _ = helix.parse_event(chr('g'));
+        assert_eq!(
+            helix.parse_event(chr(c)),
+            ReedlineEvent::Edit(vec![EditCommand::Extend(target)])
+        );
+    }
+
+    #[test]
+    fn g_absorbs_without_emitting() {
+        let mut helix = normal();
+        assert_eq!(helix.parse_event(chr('g')), ReedlineEvent::None);
+        assert_eq!(helix.pending, Some(Pending::Goto));
+    }
+
+    #[rstest]
+    #[case('h', MotionTarget::LineEdge(Direction::Backward))]
+    #[case('l', MotionTarget::LineEdge(Direction::Forward))]
+    #[case('e', MotionTarget::BufferEdge(Direction::Forward))]
+    fn goto_shadows_the_bare_binding_for_the_same_key(
+        #[case] c: char,
+        #[case] target: MotionTarget,
+    ) {
+        // `h`/`l`/`e` all mean something else at the top level (grapheme steps
+        // and a word-end). `dispatch` checks `pending` before the table and
+        // before `interpret`, so the prefix wins for the second key.
+        let mut helix = normal();
+        let bare = helix.parse_event(chr(c));
+        assert_ne!(bare, ReedlineEvent::Edit(vec![EditCommand::Move(target)]));
+
+        let _ = helix.parse_event(chr('g'));
+        assert_eq!(
+            helix.parse_event(chr(c)),
+            ReedlineEvent::Edit(vec![EditCommand::Move(target)])
+        );
+    }
+
+    #[test]
+    fn goto_keeps_select_mode() {
+        // `next_mode` is None: only operators, paste and Esc leave select.
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('v'));
+        let _ = helix.parse_event(chr('g'));
+        let _ = helix.parse_event(chr('h'));
+        assert_eq!(helix.mode, HelixMode::Select);
+    }
+
+    #[test]
+    fn unbound_goto_target_rejects_and_clears() {
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('g'));
+        assert_eq!(helix.parse_event(chr('z')), ReedlineEvent::None);
+        assert_eq!(helix.pending, None);
+        // the machine is usable again, not stuck holding the prefix
+        assert_eq!(
+            helix.parse_event(chr('w')),
+            ReedlineEvent::Edit(vec![EditCommand::Select(w())])
+        );
+    }
+
+    #[test]
+    fn esc_cancels_pending_goto() {
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('g'));
+        let _ = helix.parse_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(helix.pending, None);
+        // `h` is a grapheme step again, not a goto target
+        assert_eq!(
+            helix.parse_event(chr('h')),
+            ReedlineEvent::Edit(vec![EditCommand::Move(MotionTarget::Grapheme(
+                Direction::Backward
+            ))])
+        );
+    }
+
+    #[test]
+    fn a_live_count_rejects_the_goto_prefix() {
+        // Helix reads `3gg` as "go to line 3". Without a line-number target,
+        // acting like a plain `gg` would look like it worked, so `g` is not
+        // absorbed at all while a count is live.
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('3'));
+        assert_eq!(helix.parse_event(chr('g')), ReedlineEvent::None);
+        assert_eq!(helix.pending, None);
+        assert_eq!(helix.count, None);
+        // the rejected prefix consumed the count; `g` works again immediately
+        assert_eq!(helix.parse_event(chr('g')), ReedlineEvent::None);
+        assert_eq!(helix.pending, Some(Pending::Goto));
+    }
+
+    #[test]
+    fn a_typed_one_is_still_a_count() {
+        // The reason `interpret` keeps `Option<usize>`: collapsing it with
+        // `unwrap_or(1)` would make a typed `1` indistinguishable from no
+        // count, and `1gg` would silently become `gg`.
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('1'));
+        assert_eq!(helix.count, Some(1));
+        assert_eq!(helix.parse_event(chr('g')), ReedlineEvent::None);
+        assert_eq!(helix.pending, None);
+    }
+
     #[test]
     fn esc_cancels_pending_sequence() {
         let mut helix = normal();
@@ -790,7 +951,7 @@ mod test {
         // they started (this is where the copy-paste bugs lived)
         for mode in [HelixMode::Normal, HelixMode::Select] {
             assert_eq!(
-                interpret(mode, 1, kev(KeyCode::Char(c), KeyModifiers::NONE)),
+                interpret(mode, None, kev(KeyCode::Char(c), KeyModifiers::NONE)),
                 Outcome::Execute(Action {
                     count: 1,
                     verb: Verb::OnSelection(op),
@@ -806,7 +967,7 @@ mod test {
     fn insert_entries_collapse_to_an_edge(#[case] c: char, #[case] direction: Direction) {
         for mode in [HelixMode::Normal, HelixMode::Select] {
             assert_eq!(
-                interpret(mode, 1, kev(KeyCode::Char(c), KeyModifiers::NONE)),
+                interpret(mode, None, kev(KeyCode::Char(c), KeyModifiers::NONE)),
                 Outcome::Execute(Action {
                     count: 1,
                     verb: Verb::Collapse(direction),
@@ -821,7 +982,7 @@ mod test {
         assert_eq!(
             interpret(
                 HelixMode::Normal,
-                1,
+                None,
                 kev(KeyCode::Char('v'), KeyModifiers::NONE)
             ),
             Outcome::Execute(Action {
@@ -833,7 +994,7 @@ mod test {
         assert_eq!(
             interpret(
                 HelixMode::Select,
-                1,
+                None,
                 kev(KeyCode::Char('v'), KeyModifiers::NONE)
             ),
             Outcome::Execute(Action {
@@ -847,7 +1008,11 @@ mod test {
     #[test]
     fn esc_deselects_in_normal_and_leaves_select() {
         assert_eq!(
-            interpret(HelixMode::Normal, 1, kev(KeyCode::Esc, KeyModifiers::NONE)),
+            interpret(
+                HelixMode::Normal,
+                None,
+                kev(KeyCode::Esc, KeyModifiers::NONE)
+            ),
             Outcome::Execute(Action {
                 count: 1,
                 verb: Verb::Deselect,
@@ -855,7 +1020,11 @@ mod test {
             })
         );
         assert_eq!(
-            interpret(HelixMode::Select, 1, kev(KeyCode::Esc, KeyModifiers::NONE)),
+            interpret(
+                HelixMode::Select,
+                None,
+                kev(KeyCode::Esc, KeyModifiers::NONE)
+            ),
             Outcome::Execute(Action {
                 count: 1,
                 verb: Verb::ChangeMode,
@@ -1045,7 +1214,7 @@ mod test {
         // started: it returns to normal from select and is inert in normal.
         for mode in [HelixMode::Normal, HelixMode::Select] {
             assert_eq!(
-                interpret(mode, 1, kev(KeyCode::Char(c), modifiers)),
+                interpret(mode, None, kev(KeyCode::Char(c), modifiers)),
                 Outcome::Execute(Action {
                     count: 1,
                     verb: Verb::Paste(direction),
