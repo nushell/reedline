@@ -4,6 +4,7 @@ extend-exclude = ["src/core_editor/line_buffer.rs"]
 [default.extend-words]
 # Ignore false-positives
 iterm = "iterm"
+nd = "nd"
 # For testing completion of the word build
 bui = "bui"
 # For testing partial completion
@@ -12,6 +13,7 @@ ba = "ba"
 descriptio = "descriptio"
 ot = "ot"
 strin = "strin"
+helo  = "helo"
 # for sqlite backed history
 wheres = "wheres"
 # for list_menu tests
