@@ -1397,13 +1397,18 @@ impl Editor {
         self.line_buffer.insert_newline();
     }
 
+    /// Collapse first: `set_insertion_point` is `set_head`, so on an anchored
+    /// cursor (every helix one) the stale anchor dragged the caret back onto
+    /// the old line.
     fn insert_newline_above(&mut self) {
+        self.clear_selection();
         let index = self.line_buffer.find_char_left('\n', false).unwrap_or(0);
         self.line_buffer.set_insertion_point(index);
         self.line_buffer.insert_newline();
     }
 
     fn insert_newline_below(&mut self) {
+        self.clear_selection();
         let index = self
             .line_buffer
             .find_char_right('\n', false)
@@ -3902,6 +3907,66 @@ mod test {
         assert_eq!(editor.get_selection(), Some((0, 4)));
         editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
         assert_eq!(editor.get_selection(), Some((4, 8)));
+    }
+
+    // --- open line (`o` / `O`) ---
+    //
+    // "abc\ndef" is a0 b1 c2 \n3 d4 e5 f6; after either insert the buffer is
+    // "abc\n\ndef", whose new empty line is the second `\n` at byte 4.
+
+    #[rstest]
+    #[case(EditCommand::InsertNewlineBelow, 1)]
+    #[case(EditCommand::InsertNewlineAbove, 5)]
+    fn open_line_lands_on_the_new_line_from_an_anchored_cursor(
+        #[case] command: EditCommand,
+        #[case] caret: usize,
+    ) {
+        // The helix regression: a resting block cursor is always anchored, and
+        // the line-edge seek used to move only its head, so the stale anchor
+        // pulled the caret back onto the original line.
+        let mut editor = helix_editor("abc\ndef");
+        editor.line_buffer.set_cursor(Cursor::new(caret, caret + 1));
+        editor.run_edit_command(&command);
+        assert_eq!(editor.get_buffer(), "abc\n\ndef");
+        assert_eq!(editor.insertion_point(), 4);
+    }
+
+    #[rstest]
+    #[case(EditCommand::InsertNewlineBelow, 1)]
+    #[case(EditCommand::InsertNewlineAbove, 5)]
+    fn open_line_is_unchanged_for_a_bar_caret(#[case] command: EditCommand, #[case] caret: usize) {
+        // Pinned so the collapse added for helix cannot regress the bar modes.
+        let mut editor = editor_with("abc\ndef");
+        editor.move_to_position(caret, false);
+        editor.run_edit_command(&command);
+        assert_eq!(editor.get_buffer(), "abc\n\ndef");
+        assert_eq!(editor.insertion_point(), 4);
+    }
+
+    #[rstest]
+    #[case(EditCommand::InsertNewlineBelow, 1)]
+    #[case(EditCommand::InsertNewlineAbove, 5)]
+    fn open_line_then_plain_newlines_stack(#[case] open: EditCommand, #[case] caret: usize) {
+        // Opening N lines means one seeking open plus plain newlines: only the
+        // first has a line edge to find. See the negative case below.
+        let mut editor = helix_editor("abc\ndef");
+        editor.line_buffer.set_cursor(Cursor::new(caret, caret + 1));
+        editor.run_edit_command(&open);
+        editor.run_edit_command(&EditCommand::InsertNewline);
+        editor.run_edit_command(&EditCommand::InsertNewline);
+        assert_eq!(editor.get_buffer(), "abc\n\n\n\ndef");
+    }
+
+    #[test]
+    fn repeating_open_below_does_not_stack() {
+        // The second seek finds no `\n` past the blank line just made, so it
+        // appends at the buffer end rather than stacking.
+        let mut editor = helix_editor("abc\ndef");
+        editor.line_buffer.set_cursor(Cursor::new(1, 2));
+        for _ in 0..3 {
+            editor.run_edit_command(&EditCommand::InsertNewlineBelow);
+        }
+        assert_eq!(editor.get_buffer(), "abc\n\ndef\n\n");
     }
 
     #[test]
