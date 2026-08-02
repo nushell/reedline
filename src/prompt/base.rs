@@ -178,6 +178,11 @@ pub enum PromptEditModeDiscriminants {
     #[strum(serialize = "HelixInsert", serialize = "helix_insert")]
     HelixInsert,
 
+    /// Helix select mode
+    #[cfg(feature = "helix")]
+    #[strum(serialize = "HelixSelect", serialize = "helix_select")]
+    HelixSelect,
+
     /// A custom mode
     Custom,
 }
@@ -220,14 +225,17 @@ impl IntoDiscriminant for PromptEditMode {
         match self {
             Self::Default => Self::Discriminant::Default,
             Self::Emacs => Self::Discriminant::Emacs,
-            // Visual shares Normal's discriminant: it uses the normal-mode
-            // keybindings, differing only in selection geometry.
+            // Vi visual still shares Normal's discriminant: it uses the
+            // normal-mode keybindings, differing only in selection geometry.
+            // Splitting that pair is its own change.
             Self::Vi(Vi::Normal | Vi::Visual) => Self::Discriminant::ViNormal,
             Self::Vi(Vi::Insert) => Self::Discriminant::ViInsert,
             #[cfg(feature = "helix")]
-            Self::Helix(Helix::Normal | Helix::Select) => Self::Discriminant::HelixNormal,
+            Self::Helix(Helix::Normal) => Self::Discriminant::HelixNormal,
             #[cfg(feature = "helix")]
             Self::Helix(Helix::Insert) => Self::Discriminant::HelixInsert,
+            #[cfg(feature = "helix")]
+            Self::Helix(Helix::Select) => Self::Discriminant::HelixSelect,
             Self::Custom(_) => Self::Discriminant::Custom,
         }
     }
@@ -304,5 +312,51 @@ mod test {
             PromptEditMode::Custom("anything".into()).selection_extent(),
             SelectionExtent::Span,
         );
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn each_helix_mode_gets_its_own_discriminant() {
+        // Select is no longer folded into `HelixNormal`, so a consumer naming
+        // modes by discriminant can address it separately.
+        use PromptEditModeDiscriminants as D;
+        use PromptHelixMode::{Insert, Normal, Select};
+        for (mode, expected) in [
+            (Normal, D::HelixNormal),
+            (Insert, D::HelixInsert),
+            (Select, D::HelixSelect),
+        ] {
+            assert_eq!(PromptEditMode::Helix(mode).discriminant(), expected);
+        }
+    }
+
+    #[test]
+    fn vi_visual_still_shares_the_normal_discriminant() {
+        // The counterpart pair is deliberately left bundled; splitting it is a
+        // separate change. Pinned so doing it is a conscious edit.
+        use PromptEditModeDiscriminants as D;
+        assert_eq!(
+            PromptEditMode::Vi(PromptViMode::Visual).discriminant(),
+            D::ViNormal,
+        );
+        assert_eq!(
+            PromptEditMode::Vi(PromptViMode::Normal).discriminant(),
+            D::ViNormal,
+        );
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_discriminants_round_trip_through_their_names() {
+        use std::str::FromStr;
+        use PromptEditModeDiscriminants as D;
+        for (name, expected) in [
+            ("helix_normal", D::HelixNormal),
+            ("helix_insert", D::HelixInsert),
+            ("helix_select", D::HelixSelect),
+            ("HelixSelect", D::HelixSelect),
+        ] {
+            assert_eq!(D::from_str(name), Ok(expected), "{name}");
+        }
     }
 }
