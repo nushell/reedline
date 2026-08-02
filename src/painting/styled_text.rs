@@ -191,15 +191,11 @@ fn render_as_string(
         format!("\n{multiline_prompt}")
     };
 
-    // A chunk that is *only* a line terminator has no glyph to carry a
-    // background: `split` consumes the `\n` and leaves two empty pieces, so a
-    // helix block cursor resting on the terminator paints nothing. Give it a
-    // cell — but only when there is a background to show, since a highlighter
-    // emitting a bare `"\n"` chunk (the whole buffer being one newline, say)
-    // would otherwise gain a stray space in every mode.
-    //
-    // A terminator *inside* a wider styled span is still invisible; covering
-    // that needs paint-to-end-of-line, not a single cell.
+    // `split` consumes the `\n` and leaves two empty pieces, so a background on
+    // a terminator-only chunk paints nothing. Give it a cell, but only when
+    // there is a background, or a highlighter emitting a bare `"\n"` chunk
+    // would gain a stray space in every mode. A terminator *inside* a wider
+    // span stays invisible; that needs paint-to-end-of-line.
     let terminator_cell =
         renderable.0.background.is_some() && matches!(renderable.1.as_str(), "\n" | "\r\n");
 
@@ -368,8 +364,6 @@ mod test {
 
     #[test]
     fn lone_terminator_chunk_gets_a_painted_cell() {
-        // Without the cell the background has no glyph to land on and the
-        // cursor vanishes; `split('\n')` yields two empty pieces.
         let style = Style::new().on(Color::LightGray);
         for text in ["\n", "\r\n"] {
             let result =
@@ -403,9 +397,6 @@ mod test {
 
     #[test]
     fn a_terminator_inside_a_wider_chunk_is_untouched() {
-        // Only an isolated terminator gets a cell. A `\n` inside a longer span
-        // still paints nothing, which is the known gap: covering it needs
-        // paint-to-end-of-line rather than one cell.
         let style = Style::new().on(Color::LightGray);
         let result =
             super::render_as_string(&(style, "a\nb".to_string()), &Style::new(), "::: ", None);
@@ -442,8 +433,6 @@ mod test {
 
     #[test]
     fn selecting_only_the_newline_paints_a_cell_end_to_end() {
-        // The helix case as it actually arrives: `style_range` isolates the
-        // terminator, then rendering gives it a cell.
         let sel = Style::new().on(Color::LightGray);
         let mut styled = StyledText {
             buffer: vec![(Style::new(), "ab\ncd".into())],

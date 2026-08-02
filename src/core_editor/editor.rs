@@ -616,7 +616,7 @@ impl Editor {
     /// inclusivity in [`resolve_motion`] and the selection extension in
     /// [`Cursor::put_cursor`].
     /// Whether the resting cursor covers exactly one grapheme (either block
-    /// policy), as opposed to sitting between them.
+    /// policy).
     fn is_block_policy(&self) -> bool {
         match self.edit_mode.rest_policy() {
             RestPolicy::Block => true,

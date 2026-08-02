@@ -105,8 +105,7 @@ pub(crate) fn commit(buf: &str, c: Cursor, policy: RestPolicy) -> Cursor {
 }
 
 /// The block-caret resting rule, shared by [`RestPolicy::Block`] and the
-/// helix-only `BlockOverNewline`. `over_newline` decides whether a line
-/// terminator counts as a coverable cell.
+/// helix-only `BlockOverNewline`.
 fn block(buf: &str, c: Cursor, over_newline: bool) -> Cursor {
     // A block cursor always covers exactly one grapheme. Only a resting
     // *point* needs adjusting; an existing selection is already a range.

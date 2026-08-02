@@ -317,8 +317,6 @@ mod test {
     #[cfg(feature = "helix")]
     #[test]
     fn each_helix_mode_gets_its_own_discriminant() {
-        // Select is no longer folded into `HelixNormal`, so a consumer naming
-        // modes by discriminant can address it separately.
         use PromptEditModeDiscriminants as D;
         use PromptHelixMode::{Insert, Normal, Select};
         for (mode, expected) in [
@@ -332,8 +330,7 @@ mod test {
 
     #[test]
     fn vi_visual_still_shares_the_normal_discriminant() {
-        // The counterpart pair is deliberately left bundled; splitting it is a
-        // separate change. Pinned so doing it is a conscious edit.
+        // Pinned so splitting the vi pair stays a conscious edit.
         use PromptEditModeDiscriminants as D;
         assert_eq!(
             PromptEditMode::Vi(PromptViMode::Visual).discriminant(),
