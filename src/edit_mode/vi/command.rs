@@ -78,7 +78,7 @@ where
             let _ = input.next();
             Some(Command::EnterViAppend)
         }
-        Some('u') => {
+        Some('u') if mode == ViMode::Normal => {
             let _ = input.next();
             Some(Command::Undo)
         }
@@ -168,6 +168,14 @@ where
             // This arm should be unreachable
             ViMode::Insert => None,
         },
+        Some(&&u @ ('u' | 'U')) if mode == ViMode::Visual => {
+            let _ = input.next();
+            if u.is_ascii_lowercase() {
+                Some(Command::Lowercase)
+            } else {
+                Some(Command::Uppercase)
+            }
+        }
         _ => None,
     }
 }
@@ -193,6 +201,8 @@ pub enum Command {
     RewriteCurrentLine,
     Change,
     HistorySearch,
+    Lowercase,
+    Uppercase,
     Switchcase,
     RepeatLastAction,
     Yank,
@@ -265,7 +275,19 @@ impl Command {
                 }
             }
             Self::HistorySearch => vec![ReedlineOption::Event(ReedlineEvent::SearchHistory)],
-            Self::Switchcase => vec![ReedlineOption::Edit(EditCommand::SwitchcaseChar)],
+            Self::Lowercase => {
+                vec![ReedlineOption::Edit(EditCommand::LowercaseSelection)]
+            }
+            Self::Uppercase => {
+                vec![ReedlineOption::Edit(EditCommand::UppercaseSelection)]
+            }
+            Self::Switchcase => {
+                if vi_state.mode == ViMode::Visual {
+                    vec![ReedlineOption::Edit(EditCommand::SwitchcaseSelection)]
+                } else {
+                    vec![ReedlineOption::Edit(EditCommand::SwitchcaseChar)]
+                }
+            }
             // Whenever a motion is required to finish the command we must be in visual mode
             Self::Delete | Self::Change => vec![ReedlineOption::Edit(EditCommand::CutSelection)],
             Self::Yank => vec![ReedlineOption::Edit(EditCommand::CopySelection)],

@@ -585,6 +585,15 @@ pub enum EditCommand {
     /// Copy selection to local buffer
     CopySelection,
 
+    /// LowercaseSelection
+    LowercaseSelection,
+
+    /// Uppercase selection
+    UppercaseSelection,
+
+    /// Switchcase selection
+    SwitchcaseSelection,
+
     /// Paste content from local buffer at the current cursor position
     Paste,
 
@@ -784,6 +793,9 @@ impl EditCommand {
             | EditCommand::CutLeftUntil(_)
             | EditCommand::CutLeftBefore(_)
             | EditCommand::CutSelection
+            | EditCommand::LowercaseSelection
+            | EditCommand::UppercaseSelection
+            | EditCommand::SwitchcaseSelection
             | EditCommand::Paste
             | EditCommand::CutInsidePair { .. }
             | EditCommand::CutAroundPair { .. }
