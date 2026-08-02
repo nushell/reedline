@@ -191,11 +191,27 @@ fn render_as_string(
         format!("\n{multiline_prompt}")
     };
 
+    // A chunk that is *only* a line terminator has no glyph to carry a
+    // background: `split` consumes the `\n` and leaves two empty pieces, so a
+    // helix block cursor resting on the terminator paints nothing. Give it a
+    // cell — but only when there is a background to show, since a highlighter
+    // emitting a bare `"\n"` chunk (the whole buffer being one newline, say)
+    // would otherwise gain a stray space in every mode.
+    //
+    // A terminator *inside* a wider styled span is still invisible; covering
+    // that needs paint-to-end-of-line, not a single cell.
+    let terminator_cell =
+        renderable.0.background.is_some() && matches!(renderable.1.as_str(), "\n" | "\r\n");
+
     for (line_number, line) in renderable.1.split('\n').enumerate() {
         if line_number != 0 {
             rendered.push_str(&prompt_style.paint(&formatted_multiline_prompt).to_string());
         }
-        rendered.push_str(&renderable.0.paint(line).to_string());
+        if terminator_cell && line_number == 0 {
+            rendered.push_str(&renderable.0.paint(" ").to_string());
+        } else {
+            rendered.push_str(&renderable.0.paint(line).to_string());
+        }
     }
     rendered
 }
@@ -204,6 +220,7 @@ fn render_as_string(
 mod test {
     use nu_ansi_term::{Color, Style};
 
+    use super::strip_ansi;
     use crate::StyledText;
 
     fn get_styled_text_template() -> (super::StyledText, Style, Style) {
@@ -345,5 +362,100 @@ mod test {
             super::render_as_string(&renderable, &prompt_style, multiline_prompt, Some(&markers));
         assert!(!result.contains("\x1b]133;A;k=s"));
         assert!(!result.contains("\x1b]133;B"));
+    }
+
+    // --- the terminator cell (helix block cursor on a `\n`) ---
+
+    #[test]
+    fn lone_terminator_chunk_gets_a_painted_cell() {
+        // Without the cell the background has no glyph to land on and the
+        // cursor vanishes; `split('\n')` yields two empty pieces.
+        let style = Style::new().on(Color::LightGray);
+        for text in ["\n", "\r\n"] {
+            let result =
+                super::render_as_string(&(style, text.to_string()), &Style::new(), "::: ", None);
+            assert!(
+                strip_ansi(&result).starts_with(' '),
+                "{text:?} rendered {result:?}"
+            );
+            assert_eq!(
+                result,
+                format!("{}\n::: {}", style.paint(" "), style.paint(""))
+            );
+        }
+    }
+
+    #[test]
+    fn the_cell_survives_the_split_at_the_caret() {
+        // The real path. Helix rests the caret at the *start* of the covered
+        // grapheme, so the insertion point lands exactly on the chunk boundary
+        // and the terminator stays whole rather than being split in half.
+        let sel = Style::new().on(Color::LightGray);
+        let mut styled = StyledText {
+            buffer: vec![(Style::new(), "ab\ncd".into())],
+        };
+        styled.style_range(2, 3, sel);
+        let (left, right) =
+            styled.render_around_insertion_point(2, &crate::DefaultPrompt::default(), false, None);
+        assert_eq!(left, "ab");
+        assert!(right.starts_with(' '), "right was {right:?}");
+    }
+
+    #[test]
+    fn a_terminator_inside_a_wider_chunk_is_untouched() {
+        // Only an isolated terminator gets a cell. A `\n` inside a longer span
+        // still paints nothing, which is the known gap: covering it needs
+        // paint-to-end-of-line rather than one cell.
+        let style = Style::new().on(Color::LightGray);
+        let result =
+            super::render_as_string(&(style, "a\nb".to_string()), &Style::new(), "::: ", None);
+        assert_eq!(strip_ansi(&result), "a\n::: b");
+    }
+
+    #[test]
+    fn an_unstyled_terminator_chunk_gains_nothing() {
+        // The non-helix exposure: a highlighter that pushes the whole buffer as
+        // one chunk emits a bare `"\n"` for a newline-only buffer, with no
+        // `style_range` involved. Every mode would gain a stray space.
+        use crate::{Highlighter, SimpleMatchHighlighter};
+        let styled = SimpleMatchHighlighter::default().highlight("\n", 0);
+        assert_eq!(styled.buffer[0].0.background, None, "premise of this test");
+        let (left, right) =
+            styled.render_around_insertion_point(0, &crate::DefaultPrompt::default(), false, None);
+        assert_eq!((left.as_str(), right.starts_with(' ')), ("", false));
+
+        // A foreground-only style is the same case: nothing to show on a blank
+        // cell, so no cell.
+        let fg = Style::new().fg(Color::Green);
+        let out = super::render_as_string(&(fg, "\n".to_string()), &Style::new(), "> ", None);
+        assert_eq!(strip_ansi(&out), "\n> ");
+    }
+
+    #[test]
+    fn an_empty_chunk_is_not_given_a_cell() {
+        // `render_around_insertion_point` splits pairs and can hand us an empty
+        // string; that must not gain a stray space.
+        let style = Style::new().on(Color::LightGray);
+        let result = super::render_as_string(&(style, String::new()), &Style::new(), "::: ", None);
+        assert_eq!(strip_ansi(&result), "");
+    }
+
+    #[test]
+    fn selecting_only_the_newline_paints_a_cell_end_to_end() {
+        // The helix case as it actually arrives: `style_range` isolates the
+        // terminator, then rendering gives it a cell.
+        let sel = Style::new().on(Color::LightGray);
+        let mut styled = StyledText {
+            buffer: vec![(Style::new(), "ab\ncd".into())],
+        };
+        styled.style_range(2, 3, sel);
+        assert_eq!(styled.buffer[1], (sel, "\n".into()));
+
+        let rendered: String = styled
+            .buffer
+            .iter()
+            .map(|p| super::render_as_string(p, &Style::new(), "> ", None))
+            .collect();
+        assert_eq!(strip_ansi(&rendered), "ab \n> cd");
     }
 }
