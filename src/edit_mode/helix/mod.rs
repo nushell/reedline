@@ -16,11 +16,8 @@ enum HelixMode {
 }
 /// A prefix key waiting for its argument.
 ///
-/// Two kinds live here, and the difference decides what a generalized chord
-/// table could ever subsume. `Find` and `Replace` take an arbitrary typed char
-/// as *data*, so they cannot be spelled as a finite key sequence. `Goto` takes
-/// one key from a fixed set, so it is expressible either way and stays here
-/// only because the machine already owns the mechanism.
+/// `Find` and `Replace` take an arbitrary char as data, so no finite key
+/// sequence can spell them; `Goto` takes one key from a fixed set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pending {
     /// `f`/`F`/`t`/`T` are waiting for the character to find.
@@ -57,6 +54,8 @@ enum Verb {
     Undo,
     Redo,
     Paste(Direction),
+    /// Open a blank line below (`Forward`, `o`) or above (`Backward`, `O`).
+    OpenLine(Direction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -273,8 +272,8 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
 
 /// Interpret a state
 ///
-/// `count` is the live count prefix, still `Option` so a *typed* `1` stays
-/// distinguishable from no count at all; only the goto prefix cares.
+/// `count` stays `Option` so a typed `1` is distinguishable from no count;
+/// only the goto prefix cares.
 fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
     // reject any non typeable char, this has to be changed when Alt-d is introduced
     if let KeyCode::Char(_) = key.code {
@@ -282,10 +281,8 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
             return Outcome::Reject;
         }
     }
-    // `g` takes the goto prefix only while no count is live. Helix reads `3gg`
-    // as "go to line 3", which needs a line-number `MotionTarget` that does not
-    // exist yet; falling through to the reject arm makes the counted form a
-    // deliberate no-op rather than a silent plain `gg`.
+    // Helix reads `3gg` as "go to line 3", which has no `MotionTarget` yet, so
+    // a counted `g` falls through to the reject arm rather than acting as `gg`.
     if key.code == KeyCode::Char('g') && count.is_none() {
         return Outcome::Absorb(Pending::Goto);
     }
@@ -411,6 +408,16 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
                 verb: Verb::OnSelection(Op::Yank),
                 next_mode: Some(HelixMode::Normal),
             }),
+            'o' => Outcome::Execute(Action {
+                count,
+                verb: Verb::OpenLine(Direction::Forward),
+                next_mode: Some(HelixMode::Insert),
+            }),
+            'O' => Outcome::Execute(Action {
+                count,
+                verb: Verb::OpenLine(Direction::Backward),
+                next_mode: Some(HelixMode::Insert),
+            }),
             'u' => Outcome::Execute(Action {
                 count,
                 verb: Verb::Undo,
@@ -481,6 +488,18 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             Op::Replace(ch) => ReedlineEvent::Edit(vec![EditCommand::ReplaceChar(ch)]),
         },
         Verb::Collapse(dir) => ReedlineEvent::Edit(vec![EditCommand::CollapseSelection(dir)]),
+        // Not `repeated`: a second `InsertNewlineBelow` seeks the next `\n` from
+        // the blank line just made, finds none, and appends at the buffer end.
+        // Only the first open has to seek; the rest split at the caret.
+        Verb::OpenLine(direction) => {
+            let open = match direction {
+                Direction::Forward => EditCommand::InsertNewlineBelow,
+                Direction::Backward => EditCommand::InsertNewlineAbove,
+            };
+            let mut cmds = vec![open];
+            cmds.resize(action.count.max(1), EditCommand::InsertNewline);
+            ReedlineEvent::Edit(cmds)
+        }
         Verb::Undo => action.repeated(EditCommand::Undo),
         Verb::Redo => action.repeated(EditCommand::Redo),
         Verb::Paste(direction) => ReedlineEvent::Edit(vec![EditCommand::PasteAtSelectionEdge {
@@ -810,8 +829,6 @@ mod test {
     #[case('g', MotionTarget::BufferEdge(Direction::Backward))]
     #[case('e', MotionTarget::BufferEdge(Direction::Forward))]
     fn goto_moves_in_normal_and_extends_in_select(#[case] c: char, #[case] target: MotionTarget) {
-        // Goto is a `CollapsingMotion`, matching Helix: in normal mode it drops
-        // the selection and lands a bare cursor, in select mode it extends.
         let mut helix = normal();
         assert_eq!(helix.parse_event(chr('g')), ReedlineEvent::None);
         assert_eq!(
@@ -842,9 +859,7 @@ mod test {
         #[case] c: char,
         #[case] target: MotionTarget,
     ) {
-        // `h`/`l`/`e` all mean something else at the top level (grapheme steps
-        // and a word-end). `dispatch` checks `pending` before the table and
-        // before `interpret`, so the prefix wins for the second key.
+        // `dispatch` checks `pending` before the table and before `interpret`.
         let mut helix = normal();
         let bare = helix.parse_event(chr(c));
         assert_ne!(bare, ReedlineEvent::Edit(vec![EditCommand::Move(target)]));
@@ -858,7 +873,6 @@ mod test {
 
     #[test]
     fn goto_keeps_select_mode() {
-        // `next_mode` is None: only operators, paste and Esc leave select.
         let mut helix = normal();
         let _ = helix.parse_event(chr('v'));
         let _ = helix.parse_event(chr('g'));
@@ -896,24 +910,18 @@ mod test {
 
     #[test]
     fn a_live_count_rejects_the_goto_prefix() {
-        // Helix reads `3gg` as "go to line 3". Without a line-number target,
-        // acting like a plain `gg` would look like it worked, so `g` is not
-        // absorbed at all while a count is live.
         let mut helix = normal();
         let _ = helix.parse_event(chr('3'));
         assert_eq!(helix.parse_event(chr('g')), ReedlineEvent::None);
         assert_eq!(helix.pending, None);
         assert_eq!(helix.count, None);
-        // the rejected prefix consumed the count; `g` works again immediately
         assert_eq!(helix.parse_event(chr('g')), ReedlineEvent::None);
         assert_eq!(helix.pending, Some(Pending::Goto));
     }
 
     #[test]
     fn a_typed_one_is_still_a_count() {
-        // The reason `interpret` keeps `Option<usize>`: collapsing it with
-        // `unwrap_or(1)` would make a typed `1` indistinguishable from no
-        // count, and `1gg` would silently become `gg`.
+        // `unwrap_or(1)` here would make `1gg` silently become `gg`.
         let mut helix = normal();
         let _ = helix.parse_event(chr('1'));
         assert_eq!(helix.count, Some(1));
@@ -1232,5 +1240,60 @@ mod test {
             helix.parse_event(paste),
             ReedlineEvent::Edit(vec![EditCommand::InsertString("hello".to_string())])
         );
+    }
+
+    // ---- open line ----
+
+    #[rstest]
+    #[case('o', EditCommand::InsertNewlineBelow)]
+    #[case('O', EditCommand::InsertNewlineAbove)]
+    fn open_line_enters_insert(#[case] c: char, #[case] expected: EditCommand) {
+        let mut helix = normal();
+        assert_eq!(
+            helix.parse_event(chr(c)),
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![expected]),
+                ReedlineEvent::Repaint,
+            ])
+        );
+        assert_eq!(helix.mode, HelixMode::Insert);
+    }
+
+    #[rstest]
+    #[case('o', KeyModifiers::NONE, Direction::Forward)]
+    #[case('O', KeyModifiers::SHIFT, Direction::Backward)]
+    fn open_line_next_mode_is_mode_independent(
+        #[case] c: char,
+        #[case] modifiers: KeyModifiers,
+        #[case] direction: Direction,
+    ) {
+        for mode in [HelixMode::Normal, HelixMode::Select] {
+            assert_eq!(
+                interpret(mode, None, kev(KeyCode::Char(c), modifiers)),
+                Outcome::Execute(Action {
+                    count: 1,
+                    verb: Verb::OpenLine(direction),
+                    next_mode: Some(HelixMode::Insert),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn count_seeks_once_then_splits_at_the_caret() {
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('3'));
+        assert_eq!(
+            helix.parse_event(chr('o')),
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![
+                    EditCommand::InsertNewlineBelow,
+                    EditCommand::InsertNewline,
+                    EditCommand::InsertNewline,
+                ]),
+                ReedlineEvent::Repaint,
+            ])
+        );
+        assert_eq!(helix.count, None);
     }
 }
