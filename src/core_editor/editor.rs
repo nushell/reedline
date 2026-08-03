@@ -4250,6 +4250,119 @@ mod test {
             assert_eq!(editor.get_selection(), Some((0, 6)));
         }
 
+        /// `b` as a target: small-word start, backward.
+        fn word_start_bwd() -> MotionTarget {
+            MotionTarget::Word {
+                kind: WordKind::Word,
+                edge: WordEdge::Start,
+                direction: Direction::Backward,
+            }
+        }
+
+        /// `e` as a target: small-word end, forward.
+        fn word_end_fwd() -> MotionTarget {
+            MotionTarget::Word {
+                kind: WordKind::Word,
+                edge: WordEdge::End,
+                direction: Direction::Forward,
+            }
+        }
+
+        // --- every select motion, from an already-grown selection ---
+        //
+        // "foo bar baz" is f0 o1 o2 _3 b4 a5 r6 _7 b8 a9 z10, len 11.
+        //
+        // One `Extend(w)` first, so each case starts from (0, 4) rather than a
+        // resting cursor: that is where the caret and the head diverge, and a
+        // motion resolved from the wrong one shows up as a frozen selection.
+        // Two presses each, since the first can succeed where the second cannot.
+
+        #[rstest]
+        #[case::word_start(word_start_fwd(), (0, 8), (0, 11))]
+        #[case::word_end(word_end_fwd(), (0, 7), (0, 11))]
+        #[case::line_end(MotionTarget::LineEdge(Direction::Forward), (0, 11), (0, 11))]
+        #[case::buffer_end(MotionTarget::BufferEdge(Direction::Forward), (0, 11), (0, 11))]
+        #[case::find_on(find('a', Direction::Forward, FindStop::On), (0, 6), (0, 10))]
+        #[case::find_before(find('a', Direction::Forward, FindStop::Before), (0, 5), (0, 9))]
+        fn helix_extend_forward_targets_keep_growing(
+            #[case] target: MotionTarget,
+            #[case] after_one: (usize, usize),
+            #[case] after_two: (usize, usize),
+        ) {
+            let mut editor = helix_select_editor("foo bar baz");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+            assert_eq!(editor.get_selection(), Some((0, 4)));
+            editor.run_edit_command(&EditCommand::Extend(target));
+            assert_eq!(editor.get_selection(), Some(after_one));
+            editor.run_edit_command(&EditCommand::Extend(target));
+            assert_eq!(editor.get_selection(), Some(after_two));
+        }
+
+        // --- backward targets that land on the anchor ---
+        //
+        // Each of these drives the head onto the anchor itself, so `extend_span`
+        // writes an *empty* cursor and only the commit boundary's min-width-1
+        // rule widens it back onto a grapheme. Pinned because that dependency is
+        // invisible at the call site: drop the rest policy and these collapse to
+        // a bare point rather than a helix cursor.
+
+        #[rstest]
+        #[case::word_start(word_start_bwd())]
+        #[case::line_start(MotionTarget::LineEdge(Direction::Backward))]
+        #[case::buffer_start(MotionTarget::BufferEdge(Direction::Backward))]
+        fn helix_extend_backward_onto_the_anchor_stays_one_grapheme(#[case] target: MotionTarget) {
+            let mut editor = helix_select_editor("foo bar baz");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+            editor.run_edit_command(&EditCommand::Extend(target));
+            assert_eq!(editor.get_selection(), Some((0, 1)));
+        }
+
+        // --- backward targets that cross the anchor ---
+        //
+        // Anchored at 4 and grown to 8 ("bar "), so a backward target has to pass
+        // *through* the anchor. `flip_anchor` then hops the anchor to the far edge
+        // of its grapheme (4 -> 5) to keep `b` covered, which is the one place the
+        // block reversal rule is observable from the outside.
+
+        #[rstest]
+        #[case::line_start(MotionTarget::LineEdge(Direction::Backward), (5, 0))]
+        #[case::buffer_start(MotionTarget::BufferEdge(Direction::Backward), (5, 0))]
+        fn helix_extend_backward_across_the_anchor_flips_it(
+            #[case] target: MotionTarget,
+            #[case] expected: (usize, usize),
+        ) {
+            let mut editor = helix_select_editor("foo bar baz");
+            editor.move_to_position(4, false);
+            editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+            assert_eq!(editor.line_buffer.cursor(), Cursor::new(4, 8));
+            editor.run_edit_command(&EditCommand::Extend(target));
+            let (anchor, head) = expected;
+            assert_eq!(editor.line_buffer.cursor(), Cursor::new(anchor, head));
+            // The anchor moved, but the grapheme it started on is still covered.
+            assert_eq!(editor.get_selection(), Some((0, 5)));
+        }
+
+        #[test]
+        fn helix_extend_backward_shrinks_without_crossing_the_anchor() {
+            // The contrast with the flip cases above: `b` and `h` stop short of
+            // the anchor, so it stays put and the selection only narrows.
+            let mut editor = helix_select_editor("foo bar baz");
+            editor.move_to_position(4, false);
+            editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+            editor.run_edit_command(&EditCommand::Extend(word_start_bwd()));
+            assert_eq!(editor.line_buffer.cursor(), Cursor::new(4, 5));
+
+            let mut editor = helix_select_editor("foo bar baz");
+            editor.move_to_position(4, false);
+            editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+            editor.run_edit_command(&EditCommand::Extend(MotionTarget::Grapheme(
+                Direction::Backward,
+            )));
+            assert_eq!(editor.line_buffer.cursor(), Cursor::new(4, 6));
+        }
+
         // --- the newline as a cell (helix `l` / `h`) ---
         //
         // "ab\ncd" is a0 b1 \n2 c3 d4.
