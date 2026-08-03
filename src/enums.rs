@@ -222,6 +222,27 @@ impl MotionTarget {
             other => other,
         }
     }
+
+    /// Which way the motion travels from `origin`.
+    ///
+    /// Most targets carry their direction, and ignore `origin`. An
+    /// [`Offset`](MotionTarget::Offset) names a *destination* instead, so which
+    /// way it lies is only answerable relative to where the cursor is — a tie
+    /// (`byte == origin`) reads as forward, matching a zero-length step.
+    pub(crate) fn direction(self, origin: usize) -> Direction {
+        match self {
+            MotionTarget::Grapheme(direction)
+            | MotionTarget::Word { direction, .. }
+            | MotionTarget::LineEdge(direction)
+            | MotionTarget::BufferEdge(direction)
+            | MotionTarget::Line(direction)
+            | MotionTarget::Find { direction, .. } => direction,
+            // Destination-shaped targets go here: no intrinsic direction, so it
+            // is read off `origin`.
+            MotionTarget::Offset(byte) if byte >= origin => Direction::Forward,
+            MotionTarget::Offset(_) => Direction::Backward,
+        }
+    }
 }
 
 /// Editing actions which can be mapped to key bindings.

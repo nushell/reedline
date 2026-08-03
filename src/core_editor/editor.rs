@@ -130,7 +130,7 @@ impl Editor {
                 }
                 SelectionExtent::Span => {
                     let geom = self.caret_geometry();
-                    let origin = self.insertion_point();
+                    let origin = self.motion_origin(*t);
                     let op_end = resolve_motion(self.get_buffer(), origin, *t, geom).op_end;
                     let next =
                         self.line_buffer
@@ -760,6 +760,27 @@ impl Editor {
             cursor.head()
         } else {
             cursor.caret(self.line_buffer.get_buffer())
+        }
+    }
+
+    /// The edge `target` departs from — the origin an `Extend` resolves against,
+    /// as opposed to [`insertion_point`](Self::insertion_point)'s *where the
+    /// cursor is*.
+    ///
+    /// A forward block selection puts the caret on the near edge of its head
+    /// grapheme and the head on the far edge, so forward travel departs from the
+    /// head and backward travel from the caret. Departing from the caret both
+    /// ways makes an exclusive forward motion a no-op — it lands on the very
+    /// boundary the previous `Extend` parked the head on.
+    ///
+    /// Which way `target` travels is read against the *visible* cursor, so the
+    /// answer never depends on the edge being picked. Under `Between` both edges
+    /// are the head, so this is a no-op there.
+    fn motion_origin(&self, target: MotionTarget) -> usize {
+        let reference = self.insertion_point();
+        match target.direction(reference) {
+            Direction::Forward => self.line_buffer.cursor().head(),
+            Direction::Backward => reference,
         }
     }
 
@@ -4148,6 +4169,85 @@ mod test {
             assert_eq!(editor.get_selection(), Some((0, 4)));
             editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
             assert_eq!(editor.get_selection(), Some((4, 8)));
+        }
+
+        // --- `Extend` grows on every press (helix select `l` / `w` / `h`) ---
+        //
+        // These drive the editor rather than asserting the emitted event, which
+        // is why they catch what the keybinding tests cannot: `Extend` resolved
+        // its motion from the caret, a grapheme behind the head, so an exclusive
+        // forward motion landed on the boundary the previous press had already
+        // parked the head on and froze there.
+        //
+        // Every case presses more than once on purpose. At rest the caret and the
+        // head grapheme coincide, so the first press is correct even when no
+        // later one can move.
+
+        fn helix_select_editor(buffer: &str) -> Editor {
+            let mut editor = editor_with(buffer);
+            editor.set_edit_mode(PromptEditMode::Helix(crate::PromptHelixMode::Select));
+            editor
+        }
+
+        #[test]
+        fn helix_extend_grapheme_forward_grows_on_every_press() {
+            let mut editor = helix_select_editor("hello");
+            editor.move_to_position(2, false);
+            let l = EditCommand::Extend(MotionTarget::Grapheme(Direction::Forward));
+            editor.run_edit_command(&l);
+            assert_eq!(editor.get_selection(), Some((2, 3)));
+            editor.run_edit_command(&l);
+            assert_eq!(editor.get_selection(), Some((2, 4)));
+            editor.run_edit_command(&l);
+            assert_eq!(editor.get_selection(), Some((2, 5)));
+        }
+
+        #[test]
+        fn helix_extend_word_forward_grows_on_every_press() {
+            // Unlike `Select(w)`, which re-anchors and tiles, `Extend(w)` keeps
+            // the anchor and sweeps whole words into one selection.
+            let mut editor = helix_select_editor("foo bar baz");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+            assert_eq!(editor.get_selection(), Some((0, 4)));
+            editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+            assert_eq!(editor.get_selection(), Some((0, 8)));
+            editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+            assert_eq!(editor.get_selection(), Some((0, 11)));
+        }
+
+        #[test]
+        fn helix_extend_grapheme_backward_flips_the_anchor_then_grows() {
+            // The backward path was already correct — for a backward range the
+            // caret *is* the head, so it never had the origin split. Pinned so
+            // the forward fix cannot regress it.
+            let mut editor = helix_select_editor("hello");
+            editor.move_to_position(2, false);
+            let h = EditCommand::Extend(MotionTarget::Grapheme(Direction::Backward));
+            editor.run_edit_command(&h);
+            assert_eq!(editor.get_selection(), Some((1, 3)));
+            editor.run_edit_command(&h);
+            assert_eq!(editor.get_selection(), Some((0, 3)));
+            // At the buffer start there is nowhere left to go.
+            editor.run_edit_command(&h);
+            assert_eq!(editor.get_selection(), Some((0, 3)));
+        }
+
+        #[test]
+        fn helix_extend_hops_a_whole_multibyte_grapheme() {
+            // "cafe\u{301}x" is c0 a1 f2 e+combining[3,6) x6 — the head must clear
+            // the combining mark in one step rather than land inside it.
+            let mut editor = helix_select_editor("cafe\u{301}x");
+            editor.move_to_position(0, false);
+            let l = EditCommand::Extend(MotionTarget::Grapheme(Direction::Forward));
+            editor.run_edit_command(&l);
+            assert_eq!(editor.get_selection(), Some((0, 1)));
+            editor.run_edit_command(&l);
+            assert_eq!(editor.get_selection(), Some((0, 2)));
+            editor.run_edit_command(&l);
+            assert_eq!(editor.get_selection(), Some((0, 3)));
+            editor.run_edit_command(&l);
+            assert_eq!(editor.get_selection(), Some((0, 6)));
         }
 
         // --- the newline as a cell (helix `l` / `h`) ---
