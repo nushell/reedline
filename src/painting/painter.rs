@@ -1,4 +1,6 @@
 use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMarkers};
+#[cfg(feature = "helix")]
+use crate::PromptHelixMode;
 use crate::{CursorConfig, PromptEditMode, PromptViMode};
 
 use {
@@ -633,6 +635,12 @@ impl Painter {
                 PromptEditMode::Emacs => shapes.emacs,
                 PromptEditMode::Vi(PromptViMode::Insert) => shapes.vi_insert,
                 PromptEditMode::Vi(PromptViMode::Normal | PromptViMode::Visual) => shapes.vi_normal,
+                #[cfg(feature = "helix")]
+                PromptEditMode::Helix(PromptHelixMode::Insert) => shapes.hx_insert,
+                #[cfg(feature = "helix")]
+                PromptEditMode::Helix(PromptHelixMode::Normal) => shapes.hx_normal,
+                #[cfg(feature = "helix")]
+                PromptEditMode::Helix(PromptHelixMode::Select) => shapes.hx_select,
                 _ => None,
             };
             if let Some(shape) = shape {
