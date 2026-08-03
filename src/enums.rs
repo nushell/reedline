@@ -198,8 +198,9 @@ pub enum MotionTarget {
         /// Land on the character vs just before it.
         stop: FindStop,
     },
-    /// Absolute byte offset (clamped into the buffer).
-    Offset(usize),
+    /// A byte position, clamped into the buffer — measured from the buffer
+    /// start, not a displacement from the cursor.
+    Position(usize),
 }
 
 impl MotionTarget {
@@ -225,10 +226,10 @@ impl MotionTarget {
 
     /// Which way the motion travels from `origin`.
     ///
-    /// Most targets carry their direction, and ignore `origin`. An
-    /// [`Offset`](MotionTarget::Offset) names a *destination* instead, so which
-    /// way it lies is only answerable relative to where the cursor is — a tie
-    /// (`byte == origin`) reads as forward, matching a zero-length step.
+    /// Most targets carry their direction, and ignore `origin`. A
+    /// [`Position`](MotionTarget::Position) names a *destination* instead, so
+    /// which way it lies is only answerable relative to where the cursor is —
+    /// a tie (`byte == origin`) reads as forward, matching a zero-length step.
     pub(crate) fn direction(self, origin: usize) -> Direction {
         match self {
             MotionTarget::Grapheme(direction)
@@ -239,8 +240,8 @@ impl MotionTarget {
             | MotionTarget::Find { direction, .. } => direction,
             // Destination-shaped targets go here: no intrinsic direction, so it
             // is read off `origin`.
-            MotionTarget::Offset(byte) if byte >= origin => Direction::Forward,
-            MotionTarget::Offset(_) => Direction::Backward,
+            MotionTarget::Position(byte) if byte >= origin => Direction::Forward,
+            MotionTarget::Position(_) => Direction::Backward,
         }
     }
 }

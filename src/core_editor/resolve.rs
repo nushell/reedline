@@ -94,7 +94,7 @@ pub(crate) fn resolve_motion(
             // it. In bar mode the head is already the trailing boundary.
             span(head, on_grapheme)
         }
-        MotionTarget::Offset(n) => span(n.min(buf.len()), false),
+        MotionTarget::Position(n) => span(n.min(buf.len()), false),
         MotionTarget::BufferEdge(Direction::Backward) => span(0, false),
         MotionTarget::BufferEdge(Direction::Forward) => span(buf.len(), false),
         MotionTarget::LineEdge(Direction::Backward) => {
