@@ -4075,6 +4075,54 @@ mod test {
         assert_eq!(editor.insertion_point(), 5); // one grapheme, two bytes
     }
 
+    // --- an operator span is always safe to slice with ---
+    //
+    // `MotionTarget::Position` is the one target that can name a byte the caller
+    // picked rather than one a motion produced, so it can land *inside* a
+    // grapheme. An operator consumes its span before the commit boundary would
+    // normalize anything, so without the `recohere` in `operator_span` these
+    // panic on a non-char-boundary slice rather than failing an assertion.
+    //
+    // `recohere` expands outward, thus the straddled grapheme is consumed whole
+    // from either side rather than truncated.
+
+    #[test]
+    fn cut_to_a_position_inside_a_grapheme_takes_it_whole() {
+        let mut editor = editor_with("café"); // c0 a1 f2, 'é' spans [3, 5)
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::Position(4), // inside the 'é'
+            granularity: Granularity::CharWise,
+        });
+        assert_eq!(editor.get_buffer(), "");
+        let (content, _) = editor.cut_buffer.get();
+        assert_eq!(content, "café");
+    }
+
+    #[test]
+    fn cut_back_to_a_position_inside_a_grapheme_takes_it_whole() {
+        let mut editor = editor_with("café");
+        editor.move_to_position(5, false);
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::Position(4),
+            granularity: Granularity::CharWise,
+        });
+        assert_eq!(editor.get_buffer(), "caf");
+        let (content, _) = editor.cut_buffer.get();
+        assert_eq!(content, "é");
+    }
+
+    #[test]
+    fn cut_to_a_position_past_the_buffer_stops_at_the_end() {
+        let mut editor = editor_with("café");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::Cut {
+            target: MotionTarget::Position(99),
+            granularity: Granularity::CharWise,
+        });
+        assert_eq!(editor.get_buffer(), "");
+    }
+
     #[test]
     fn extend_word_forward_keeps_anchor_at_origin() {
         let mut editor = editor_with("foo bar baz");

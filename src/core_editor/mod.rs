@@ -16,4 +16,4 @@ pub(crate) use cursor::{CaretGeometry, Cursor, Movement, SelectionExtent};
 pub use editor::Editor;
 pub use line_buffer::LineBuffer;
 pub(crate) use resolve::{operator_span, resolve_motion};
-pub(crate) use rest_policy::{commit, RestPolicy};
+pub(crate) use rest_policy::{commit, recohere, RestPolicy};

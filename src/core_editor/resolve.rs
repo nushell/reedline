@@ -1,7 +1,7 @@
 use crate::{
     core_editor::{
         graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
-        line,
+        line, recohere,
         word::{self, categorize_char, CharClass},
         CaretGeometry, Cursor,
     },
@@ -26,13 +26,22 @@ pub(crate) struct ResolvedMotion {
 /// `origin` to the motion's `op_end`. `start()..end()` is the byte range to
 /// consume — inclusivity and direction are already baked into `op_end`, so the
 /// operator never has to reconsider them.
+///
+/// Run through [`recohere`] before returning, so that range is always safe to
+/// slice with. An operator consumes it *before* the commit boundary would
+/// normalize anything, and a [`Position`](MotionTarget::Position) can name a
+/// byte inside a grapheme; expanding outward consumes that grapheme whole
+/// rather than truncating it.
 pub(crate) fn operator_span(
     buf: &str,
     origin: usize,
     target: MotionTarget,
     geometry: CaretGeometry,
 ) -> Cursor {
-    Cursor::new(origin, resolve_motion(buf, origin, target, geometry).op_end)
+    recohere(
+        buf,
+        Cursor::new(origin, resolve_motion(buf, origin, target, geometry).op_end),
+    )
 }
 
 /// Resolve a public [`MotionTarget`] against `buf`, relative to `origin`.

@@ -43,7 +43,7 @@ pub(crate) enum RestPolicy {
 ///
 /// Universal across edit modes and idempotent, so it is safe to run after any
 /// edit. The mode-specific resting rule is layered on top by [`commit`].
-fn recohere(buf: &str, c: Cursor) -> Cursor {
+pub(crate) fn recohere(buf: &str, c: Cursor) -> Cursor {
     let len = buf.len();
 
     let head = c.head().min(len);
