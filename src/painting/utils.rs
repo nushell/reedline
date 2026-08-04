@@ -89,6 +89,24 @@ pub(crate) fn line_width(line: &str) -> usize {
     strip_ansi(line).width()
 }
 
+/// Whether printing `printed` leaves the cursor at the terminal's right margin,
+/// in the *deferred wrap* state.
+///
+/// A terminal does not move to the next row when a glyph lands in the final
+/// column; it flags the cursor pending and only wraps once the next glyph
+/// arrives. Saving and restoring that state is ambiguous, since terminals
+/// disagree about whether DECSC/DECRC carry the flag.
+pub(crate) fn ends_at_right_margin(printed: &str, terminal_columns: u16) -> bool {
+    let terminal_columns: usize = terminal_columns.into();
+    if terminal_columns == 0 {
+        return false;
+    }
+    // Only the text since the last hard line break sits on the cursor's row.
+    let last_row = printed.rsplit('\n').next().unwrap_or(printed);
+    let width = line_width(last_row);
+    width > 0 && width % terminal_columns == 0
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
