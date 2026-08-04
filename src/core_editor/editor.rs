@@ -778,9 +778,9 @@ impl Editor {
     /// are the head, so this is a no-op there.
     fn motion_origin(&self, target: MotionTarget) -> usize {
         let reference = self.insertion_point();
-        match target.direction(reference) {
-            Direction::Forward => self.line_buffer.cursor().head(),
-            Direction::Backward => reference,
+        match target.direction() {
+            Some(Direction::Forward) => self.line_buffer.cursor().head(),
+            _ => reference,
         }
     }
 

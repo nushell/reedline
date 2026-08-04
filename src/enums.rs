@@ -224,24 +224,19 @@ impl MotionTarget {
         }
     }
 
-    /// Which way the motion travels from `origin`.
-    ///
-    /// Most targets carry their direction, and ignore `origin`. A
-    /// [`Position`](MotionTarget::Position) names a *destination* instead, so
-    /// which way it lies is only answerable relative to where the cursor is —
-    /// a tie (`byte == origin`) reads as forward, matching a zero-length step.
-    pub(crate) fn direction(self, origin: usize) -> Direction {
+    /// Which way the motion travels, or `None` for a target that names a
+    /// destination rather than a displacement.
+    pub(crate) fn direction(self) -> Option<Direction> {
         match self {
             MotionTarget::Grapheme(direction)
             | MotionTarget::Word { direction, .. }
             | MotionTarget::LineEdge(direction)
             | MotionTarget::BufferEdge(direction)
             | MotionTarget::Line(direction)
-            | MotionTarget::Find { direction, .. } => direction,
-            // Destination-shaped targets go here: no intrinsic direction, so it
-            // is read off `origin`.
-            MotionTarget::Position(byte) if byte >= origin => Direction::Forward,
-            MotionTarget::Position(_) => Direction::Backward,
+            | MotionTarget::Find { direction, .. } => Some(direction),
+            // Destination-shaped targets go here. Where they lie depends on the
+            // cursor, so callers resolve first and compare after.
+            MotionTarget::Position(_) => None,
         }
     }
 }
