@@ -106,6 +106,14 @@ pub(crate) fn resolve_motion(
         MotionTarget::Position(n) => span(n.min(buf.len()), false),
         MotionTarget::BufferEdge(Direction::Backward) => span(0, false),
         MotionTarget::BufferEdge(Direction::Forward) => span(buf.len(), false),
+        // Exclusive, because covering the landing grapheme depends on which side
+        // of the *anchor* it falls, which only `Cursor::put_cursor` can see (the
+        // `Extend` dispatch in `Editor` routes this target there). Staying put
+        // on a blank line is `resolve_motion` being total, not a special case.
+        #[cfg(feature = "helix")]
+        MotionTarget::LineStartNonBlank => {
+            span(line::first_non_blank(buf, origin).unwrap_or(origin), false)
+        }
         MotionTarget::LineEdge(Direction::Backward) => {
             span(line::start_of_line(buf, origin), false)
         }
@@ -297,6 +305,47 @@ mod tests {
             CaretGeometry::Block,
         );
         assert_eq!(m.op_end, m.head);
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn resolve_motion_line_start_non_blank_lands_on_the_indent_end() {
+        // Same landing from either side, under either geometry: a destination
+        // carries no inclusivity of its own.
+        for origin in [0, 4, 6] {
+            for geometry in [CaretGeometry::Block, CaretGeometry::Bar] {
+                let m =
+                    resolve_motion("    foo", origin, MotionTarget::LineStartNonBlank, geometry);
+                assert_eq!(
+                    m,
+                    ResolvedMotion { head: 4, op_end: 4 },
+                    "origin {origin}, {geometry:?}"
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn resolve_motion_stays_put_for_line_start_non_blank_with_nowhere_to_go() {
+        // Resting at `origin` keeps `resolve_motion` total, so the blank-line
+        // no-op needs no guard upstream.
+        for (buf, origin) in [("   \nfoo", 1), ("foo\n\nbar", 4), ("   \r\nfoo", 2)] {
+            let m = resolve_motion(
+                buf,
+                origin,
+                MotionTarget::LineStartNonBlank,
+                CaretGeometry::Block,
+            );
+            assert_eq!(
+                m,
+                ResolvedMotion {
+                    head: origin,
+                    op_end: origin
+                },
+                "buf {buf:?} at {origin}"
+            );
+        }
     }
 
     #[test]

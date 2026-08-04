@@ -183,6 +183,10 @@ pub enum MotionTarget {
     },
     /// Logical line edge: `Backward` = line start (`0`), `Forward` = line end (`$`).
     LineEdge(Direction),
+    /// First non-whitespace character on the current line (helix `gs`). A blank
+    /// line has none, so the motion stays put.
+    #[cfg(feature = "helix")]
+    LineStartNonBlank,
     /// Whole-buffer edge: `Backward` = start (`gg`), `Forward` = end (`G`).
     BufferEdge(Direction),
     /// The adjacent logical line: `Forward` = line below (`j`), `Backward` =
@@ -237,6 +241,8 @@ impl MotionTarget {
             // Destination-shaped targets go here. Where they lie depends on the
             // cursor, so callers resolve first and compare after.
             MotionTarget::Position(_) => None,
+            #[cfg(feature = "helix")]
+            MotionTarget::LineStartNonBlank => None,
         }
     }
 }

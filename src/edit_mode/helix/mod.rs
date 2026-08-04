@@ -265,6 +265,11 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
                 verb: Verb::CollapsingMotion(MotionTarget::BufferEdge(Direction::Forward)),
                 next_mode: None,
             }),
+            's' => Outcome::Execute(Action {
+                count,
+                verb: Verb::CollapsingMotion(MotionTarget::LineStartNonBlank),
+                next_mode: None,
+            }),
             _ => Outcome::Reject,
         },
     }

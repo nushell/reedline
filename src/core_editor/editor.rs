@@ -123,6 +123,15 @@ impl Editor {
                 let head = self.resolve_head(*t);
                 self.move_head_to(head, false);
             }
+            // A destination-shaped target has no travel direction for `Span`'s
+            // `op_end` to bake inclusivity from: whether its landing grapheme is
+            // covered turns on which side of the *anchor* it falls, which only
+            // `put_cursor` can see. Helix lowers its own (`gs`) through
+            // `put_cursor` in select mode too, so take that path either way.
+            EditCommand::Extend(t) if t.direction().is_none() => {
+                let head = self.resolve_head(*t);
+                self.move_head_to(head, true);
+            }
             EditCommand::Extend(t) => match self.caret_extent() {
                 SelectionExtent::CoverLanding => {
                     let head = self.resolve_head(*t);
@@ -4296,6 +4305,60 @@ mod test {
             assert_eq!(editor.get_selection(), Some((0, 3)));
             editor.run_edit_command(&l);
             assert_eq!(editor.get_selection(), Some((0, 6)));
+        }
+
+        // --- `gs` (goto first non-blank) ---
+
+        #[test]
+        fn helix_extend_line_start_non_blank_forward_covers_the_landing() {
+            // From inside the indent `gs` travels forward, so the selection must
+            // hold the 'f' it lands on. Extending via `Span` stopped at (0, 4).
+            let mut editor = helix_select_editor("    foo");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Extend(MotionTarget::LineStartNonBlank));
+            assert_eq!(editor.get_selection(), Some((0, 5)));
+        }
+
+        #[test]
+        fn helix_extend_line_start_non_blank_backward_reaches_the_indent_end() {
+            // Pinned separately: a backward range covers its target at the low
+            // end, so this direction never widens.
+            let mut editor = helix_select_editor("    foo");
+            editor.move_to_position(6, false);
+            editor.run_edit_command(&EditCommand::Extend(MotionTarget::LineStartNonBlank));
+            assert_eq!(editor.get_selection(), Some((4, 7)));
+        }
+
+        #[test]
+        fn helix_extend_line_start_non_blank_is_idempotent() {
+            // The anchor governs the widening, not the caret, so repeated
+            // presses must neither creep forward nor shrink back.
+            let mut editor = helix_select_editor("    foo");
+            editor.move_to_position(0, false);
+            let gs = EditCommand::Extend(MotionTarget::LineStartNonBlank);
+            editor.run_edit_command(&gs);
+            assert_eq!(editor.get_selection(), Some((0, 5)));
+            editor.run_edit_command(&gs);
+            assert_eq!(editor.get_selection(), Some((0, 5)));
+        }
+
+        #[test]
+        fn helix_move_line_start_non_blank_lands_on_the_first_non_blank() {
+            // Normal mode collapses onto the target.
+            let mut editor = helix_editor("    foo");
+            editor.move_to_position(6, false);
+            editor.run_edit_command(&EditCommand::Move(MotionTarget::LineStartNonBlank));
+            assert_eq!(editor.insertion_point(), 4);
+        }
+
+        #[test]
+        fn helix_move_line_start_non_blank_stays_on_a_blank_line() {
+            // `LineBuffer::line_non_blank_start_index` settles for the
+            // terminator, so lowering `gs` onto it would move here.
+            let mut editor = helix_editor("   \nfoo");
+            editor.move_to_position(1, false);
+            editor.run_edit_command(&EditCommand::Move(MotionTarget::LineStartNonBlank));
+            assert_eq!(editor.insertion_point(), 1);
         }
 
         /// `b` as a target: small-word start, backward.
