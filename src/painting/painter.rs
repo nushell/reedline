@@ -2,7 +2,7 @@ use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMark
 use crate::{CursorConfig, PromptEditMode, PromptViMode};
 
 use {
-    super::utils::{coerce_crlf, estimate_required_lines, line_width},
+    super::utils::{coerce_crlf, ends_at_right_margin, estimate_required_lines, line_width},
     crate::{
         menu::{Menu, ReedlineMenu},
         painting::PromptLines,
@@ -609,11 +609,11 @@ impl Painter {
 
         let layout = self.compute_layout(lines, menu);
 
-        if self.large_buffer {
-            self.print_large_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?;
+        let margin_cursor_row = if self.large_buffer {
+            self.print_large_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
         } else {
-            self.print_small_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?;
-        }
+            self.print_small_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
+        };
 
         self.last_layout = Some(layout);
 
@@ -626,7 +626,20 @@ impl Painter {
             None
         };
 
-        self.stdout.queue(RestorePosition)?;
+        // `SavePosition` may have recorded a deferred wrap (see
+        // `ends_at_right_margin`), which restores to either side of the margin.
+        // Place the cursor absolutely instead.
+        //
+        // It has to happen *here*, after every print: the position
+        // `SavePosition` recorded is also the print head for the text after the
+        // cursor, so disambiguating it earlier either writes a glyph onto an
+        // unreserved row or overwrites the cell the next row's first grapheme
+        // belongs in. Nothing is drawn at this point, so a bare move disturbs
+        // neither.
+        match margin_cursor_row {
+            Some(row) => self.stdout.queue(MoveTo(0, row))?,
+            None => self.stdout.queue(RestorePosition)?,
+        };
 
         if let Some(shapes) = cursor_config {
             let shape = match &prompt_mode {
@@ -897,6 +910,22 @@ impl Painter {
         Ok(())
     }
 
+    /// The absolute row the cursor must be moved to, when `printed` (the text
+    /// this paint actually emitted before the cursor) ends at the right margin.
+    ///
+    /// `None` off the margin, where `RestorePosition` is unambiguous. Each print
+    /// path answers for its own output rather than the caller reconstructing it:
+    /// a large buffer prints line-skipped text, so the rows it occupies are not
+    /// the rows the untrimmed buffer would.
+    fn margin_cursor_row(&self, printed: &str) -> Option<u16> {
+        let width = self.screen_width();
+        if !ends_at_right_margin(printed, width) {
+            return None;
+        }
+        let rows = estimate_required_lines(printed, width) as u16;
+        Some(self.prompt_start_row.last_known_row().saturating_add(rows))
+    }
+
     fn print_small_buffer(
         &mut self,
         prompt: &dyn Prompt,
@@ -904,7 +933,7 @@ impl Painter {
         menu: Option<&ReedlineMenu>,
         use_ansi_coloring: bool,
         layout: &PromptLayout,
-    ) -> Result<()> {
+    ) -> Result<Option<u16>> {
         // Emit prompt start marker (OSC 133;A;k=i for primary prompt)
         if let Some(markers) = &self.semantic_markers {
             self.stdout
@@ -951,13 +980,17 @@ impl Painter {
             .queue(SavePosition)?
             .queue(Print(&lines.after_cursor))?;
 
+        let cursor_row = self.margin_cursor_row(
+            &(lines.prompt_str_left.to_string() + &lines.prompt_indicator + &lines.before_cursor),
+        );
+
         if let Some(menu) = menu {
             self.print_menu(menu, use_ansi_coloring, layout)?;
         } else {
             self.stdout.queue(Print(&lines.hint))?;
         }
 
-        Ok(())
+        Ok(cursor_row)
     }
 
     fn print_large_buffer(
@@ -967,7 +1000,7 @@ impl Painter {
         menu: Option<&ReedlineMenu>,
         use_ansi_coloring: bool,
         layout: &PromptLayout,
-    ) -> Result<()> {
+    ) -> Result<Option<u16>> {
         let screen_width = self.screen_width();
         let screen_height = self.screen_height();
         let cursor_distance = lines.distance_from_prompt(screen_width);
@@ -1030,6 +1063,11 @@ impl Painter {
         self.stdout.queue(Print(before_cursor_skipped))?;
         self.stdout.queue(SavePosition)?;
 
+        // Computed from the *skipped* text, which is what reached the screen.
+        let cursor_row = self.margin_cursor_row(
+            &(prompt_skipped.to_string() + indicator_skipped + before_cursor_skipped),
+        );
+
         if let Some(menu) = menu {
             // TODO: Also solve the difficult problem of displaying (parts of)
             // the content after the cursor with the completion menu
@@ -1054,7 +1092,7 @@ impl Painter {
             self.stdout.queue(Print(hint_skipped))?;
         }
 
-        Ok(())
+        Ok(cursor_row)
     }
 
     /// Updates prompt origin and offset to handle a screen resize event
@@ -1222,6 +1260,7 @@ mod tests {
     use crate::menu::MenuEvent;
     use crate::{Completer, Editor, PromptHistorySearch, Suggestion};
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
     use std::borrow::Cow;
     use std::sync::{Arc, Mutex};
 
@@ -1495,6 +1534,225 @@ mod tests {
         p.repaint_buffer(prompt, lines, PromptEditMode::Default, None, false, &None)
             .expect("repaint_buffer failed");
         String::from_utf8_lossy(p.stdout.captured()).into_owned()
+    }
+
+    /// Replay `bytes` into a character grid, returning the final cursor, the
+    /// highest row a glyph reached, and the rendered screen.
+    ///
+    /// `save_carries_pending` picks which way DECSC/DECRC treat a deferred wrap,
+    /// so the same stream can be read as either kind of terminal would.
+    fn replay(
+        bytes: &str,
+        width: u16,
+        save_carries_pending: bool,
+    ) -> (u16, u16, bool, u16, String) {
+        let (mut row, mut col, mut pending) = (0u16, 0u16, false);
+        let (mut srow, mut scol, mut spend) = (0u16, 0u16, false);
+        let mut max_written = 0u16;
+        let mut grid: Vec<Vec<char>> = vec![];
+        let put = |r: u16, c: u16, ch: char, g: &mut Vec<Vec<char>>| {
+            while g.len() <= r as usize {
+                g.push(vec![' '; width as usize]);
+            }
+            g[r as usize][c as usize] = ch;
+        };
+        let b: Vec<char> = bytes.chars().collect();
+        let mut i = 0;
+        while i < b.len() {
+            match b[i] {
+                '\x1b' if i + 1 < b.len() && b[i + 1] == '7' => {
+                    (srow, scol, spend) = (row, col, pending && save_carries_pending);
+                    i += 2;
+                }
+                '\x1b' if i + 1 < b.len() && b[i + 1] == '8' => {
+                    (row, col, pending) = (srow, scol, spend);
+                    i += 2;
+                }
+                '\x1b' if i + 1 < b.len() && b[i + 1] == '[' => {
+                    let mut j = i + 2;
+                    while j < b.len() && !('\x40'..='\x7e').contains(&b[j]) {
+                        j += 1;
+                    }
+                    let params: String = b[i + 2..j.min(b.len())].iter().collect();
+                    if j < b.len() && b[j] == 'H' {
+                        let mut it = params.split(';');
+                        row = it
+                            .next()
+                            .unwrap_or("1")
+                            .parse::<u16>()
+                            .unwrap_or(1)
+                            .saturating_sub(1);
+                        col = it
+                            .next()
+                            .unwrap_or("1")
+                            .parse::<u16>()
+                            .unwrap_or(1)
+                            .saturating_sub(1);
+                        pending = false;
+                    } else if j < b.len() && b[j] == 'G' {
+                        col = params.parse::<u16>().unwrap_or(1).saturating_sub(1);
+                        pending = false;
+                    }
+                    i = j + 1;
+                }
+                '\n' => {
+                    row += 1;
+                    col = 0;
+                    pending = false;
+                    i += 1;
+                }
+                '\r' => {
+                    col = 0;
+                    pending = false;
+                    i += 1;
+                }
+                ch => {
+                    if pending {
+                        row += 1;
+                        col = 0;
+                        pending = false;
+                    }
+                    put(row, col, ch, &mut grid);
+                    max_written = max_written.max(row);
+                    if col + 1 >= width {
+                        pending = true;
+                    } else {
+                        col += 1;
+                    }
+                    i += 1;
+                }
+            }
+        }
+        let screen: String = grid
+            .iter()
+            .map(|r| r.iter().collect::<String>().trim_end().to_string())
+            .collect();
+        (row, col, pending, max_written, screen)
+    }
+
+    /// Same as [`capture_with_reservation`] but reports whether the paint took
+    /// the large-buffer path, so a case can assert it exercised the one it meant
+    /// to: `large_buffer` turns on at `required_lines >= screen_height`, which is
+    /// a buffer length rather than anything the caller states directly.
+    fn capture_with_mode(lines: &PromptLines) -> (String, u16, bool) {
+        let mut p = Painter::new(W::capture());
+        p.terminal_size = (20, 10);
+        p.prompt_start_row.mark_verified(0);
+        p.prompt_height = 1;
+        p.repaint_buffer(
+            &TestPrompt,
+            lines,
+            PromptEditMode::Default,
+            None,
+            false,
+            &None,
+        )
+        .expect("repaint_buffer failed");
+        (
+            String::from_utf8_lossy(p.stdout.captured()).into_owned(),
+            p.last_required_lines,
+            p.large_buffer,
+        )
+    }
+
+    fn capture_with_reservation(lines: &PromptLines) -> (String, u16) {
+        let mut p = Painter::new(W::capture());
+        p.terminal_size = (20, 10);
+        p.prompt_start_row.mark_verified(0);
+        p.prompt_height = 1;
+        p.repaint_buffer(
+            &TestPrompt,
+            lines,
+            PromptEditMode::Default,
+            None,
+            false,
+            &None,
+        )
+        .expect("repaint_buffer failed");
+        let reserved = p.last_required_lines;
+        (
+            String::from_utf8_lossy(p.stdout.captured()).into_owned(),
+            reserved,
+        )
+    }
+
+    /// The three assertions below must hold *together*: two earlier fixes for
+    /// this bug each satisfied some and broke another, so any one of them alone
+    /// passes a broken painter.
+    ///
+    /// `"> "` is 2 columns of a 20-column terminal, so `n == 18` and `n == 38`
+    /// land the cursor exactly on a margin.
+    #[rstest]
+    #[case(17, "")]
+    #[case(18, "")]
+    #[case(19, "")]
+    #[case(37, "")]
+    #[case(38, "")]
+    #[case(17, "XYZ")]
+    #[case(18, "XYZ")]
+    #[case(19, "XYZ")]
+    #[case(38, "XYZ")]
+    fn a_paint_pins_the_cursor_without_disturbing_the_screen(
+        #[case] n: usize,
+        #[case] after: &str,
+    ) {
+        let before = "a".repeat(n);
+        let lines = make_lines("> ", "", "", &before, after);
+        let (out, reserved) = capture_with_reservation(&lines);
+
+        let (r1, c1, p1, rows1, screen1) = replay(&out, 20, true);
+        let (r2, c2, p2, rows2, screen2) = replay(&out, 20, false);
+
+        assert_eq!(
+            (r1, c1, p1),
+            (r2, c2, p2),
+            "n={n} after={after:?}: cursor depends on how DECSC treats the \
+             pending-wrap flag; emitted {out:?}"
+        );
+        let written = rows1.max(rows2);
+        assert!(
+            written < reserved,
+            "n={n} after={after:?}: wrote to row {written} with only {reserved} \
+             row(s) reserved; the next erase-below would leave it on screen"
+        );
+        let expected = format!("> {before}{after}");
+        assert_eq!(
+            screen1, expected,
+            "n={n} after={after:?}: screen was corrupted"
+        );
+        assert_eq!(
+            screen2, expected,
+            "n={n} after={after:?}: screen was corrupted"
+        );
+    }
+
+    /// The same three invariants on the large-buffer path, which prints
+    /// line-skipped text: the rows it puts on screen are not the rows the whole
+    /// buffer would need, so the margin has to be judged from what was actually
+    /// emitted.
+    ///
+    /// 20x10 terminal, so `large_buffer` turns on past ~200 columns of content.
+    /// `"> "` is 2 columns, making `n == 218` and `n == 238` exact multiples.
+    #[rstest]
+    #[case(218, "")]
+    #[case(238, "")]
+    #[case(217, "XYZ")]
+    #[case(218, "XYZ")]
+    #[case(238, "XYZ")]
+    fn a_large_buffer_paint_pins_the_cursor_too(#[case] n: usize, #[case] after: &str) {
+        let before = "a".repeat(n);
+        let lines = make_lines("> ", "", "", &before, after);
+        let (out, _reserved, large) = capture_with_mode(&lines);
+        assert!(large, "n={n}: meant to exercise the large-buffer path");
+
+        let (r1, c1, p1, ..) = replay(&out, 20, true);
+        let (r2, c2, p2, ..) = replay(&out, 20, false);
+        assert_eq!(
+            (r1, c1, p1),
+            (r2, c2, p2),
+            "n={n} after={after:?}: cursor depends on how DECSC treats the \
+             pending-wrap flag; emitted {out:?}"
+        );
     }
 
     #[test]
