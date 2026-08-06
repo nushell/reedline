@@ -850,7 +850,12 @@ impl Painter {
         None
     }
 
-    fn print_right_prompt(&mut self, lines: &PromptLines, layout: &PromptLayout) -> Result<()> {
+    fn print_right_prompt(
+        &mut self,
+        lines: &PromptLines,
+        layout: &PromptLayout,
+        margin_row: Option<u16>,
+    ) -> Result<()> {
         let Some(rp) = &layout.right_prompt else {
             return Ok(());
         };
@@ -866,8 +871,12 @@ impl Painter {
         }
 
         self.stdout
-            .queue(Print(&coerce_crlf(&lines.prompt_str_right)))?
-            .queue(RestorePosition)?;
+            .queue(Print(&coerce_crlf(&lines.prompt_str_right)))?;
+
+        match margin_row {
+            Some(row) => self.stdout.queue(MoveTo(0, row))?,
+            None => self.stdout.queue(RestorePosition)?,
+        };
 
         Ok(())
     }
@@ -962,7 +971,14 @@ impl Painter {
                 .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
         }
 
-        self.print_right_prompt(lines, layout)?;
+        // Only a *placed* right prompt saves and restores, so skip building the
+        // prefix when there is none: this runs on every paint.
+        let margin_row = if layout.right_prompt.is_some() {
+            self.margin_cursor_row(&(lines.prompt_str_left.to_string() + &lines.prompt_indicator))
+        } else {
+            None
+        };
+        self.print_right_prompt(lines, layout, margin_row)?;
 
         // Emit command input start marker (OSC 133;B) after prompt (including right prompt)
         if let Some(markers) = &self.semantic_markers {
@@ -1034,7 +1050,13 @@ impl Painter {
                     .queue(SetForegroundColor(prompt.get_prompt_right_color()))?;
             }
 
-            self.print_right_prompt(lines, layout)?;
+            // Judged from the *skipped* prompt, which is what reached the screen.
+            let margin_row = if layout.right_prompt.is_some() {
+                self.margin_cursor_row(prompt_skipped)
+            } else {
+                None
+            };
+            self.print_right_prompt(lines, layout, margin_row)?;
         }
 
         if use_ansi_coloring {
@@ -1248,6 +1270,7 @@ impl Painter {
         }
         Ok(())
     }
+
     #[cfg(test)]
     pub(crate) fn force_prompt_anchored_for_test(&mut self, row: u16) {
         self.prompt_start_row = PromptStartRow::Verified(row);
@@ -1753,6 +1776,78 @@ mod tests {
             "n={n} after={after:?}: cursor depends on how DECSC treats the \
              pending-wrap flag; emitted {out:?}"
         );
+    }
+
+    /// The right prompt saves and restores around its own `MoveTo`, and that
+    /// save is a second place a deferred wrap can be recorded ambiguously.
+    ///
+    /// Reaching it needs a *multi-line* left prompt. Placement is judged by
+    /// `estimate_right_prompt_line_width`, which for a one-row prompt adds the
+    /// indicator and input width and so overflows the margin case out of
+    /// existence; past one row it counts only the first line. A short first line
+    /// therefore leaves room for the right prompt while the last line still
+    /// fills the width, which is exactly when the save happens on the margin.
+    #[test]
+    fn a_right_prompt_paint_pins_the_cursor_too() {
+        // 20-column terminal. First line is 2 columns so the right prompt is
+        // placed; the second is 20, landing the cursor on the margin.
+        let left = format!("ab\n{}", "x".repeat(20));
+        let lines = make_lines(&left, "", "R", "Z", "");
+        let (out, reserved, large) = capture_with_mode(&lines);
+        assert!(!large, "meant to exercise the small-buffer path");
+
+        let (r1, c1, p1, rows1, screen1) = replay(&out, 20, true);
+        let (r2, c2, p2, rows2, screen2) = replay(&out, 20, false);
+
+        assert_eq!(
+            (r1, c1, p1),
+            (r2, c2, p2),
+            "cursor depends on how DECSC treats the pending-wrap flag across the \
+             right prompt's save/restore; emitted {out:?}"
+        );
+        let written = rows1.max(rows2);
+        assert!(
+            written < reserved,
+            "wrote to row {written} with only {reserved} row(s) reserved"
+        );
+        // Row 0 is the prompt's first line with `R` in the last cell, row 1 the
+        // filled line, row 2 the input. `replay` concatenates right-trimmed rows.
+        let expected = format!("ab{}R{}Z", " ".repeat(17), "x".repeat(20));
+        assert_eq!(screen1, expected, "screen was corrupted");
+        assert_eq!(screen2, expected, "screen was corrupted");
+    }
+
+    /// The same save, on the large-buffer path, which prints a *skipped* prompt
+    /// and so has to judge the margin from that rather than from `lines`.
+    ///
+    /// The two flags look mutually exclusive and are not: `large_buffer` is
+    /// `required_lines >= screen_height` over the whole content, while
+    /// `extra_rows` counts only what precedes the cursor. Content after the
+    /// cursor therefore turns the large-buffer path on while leaving the prompt
+    /// unscrolled, which is the one combination that still paints a right
+    /// prompt (`extra_rows > 0` suppresses it).
+    #[test]
+    fn a_large_buffer_right_prompt_paint_pins_the_cursor_too() {
+        let left = format!("ab\n{}", "x".repeat(20));
+        // 20x10 terminal: the trailing content pushes `required_lines` past the
+        // height without adding rows before the cursor.
+        let after = "y".repeat(200);
+        let lines = make_lines(&left, "", "R", "Z", &after);
+        let (out, _reserved, large) = capture_with_mode(&lines);
+        assert!(large, "meant to exercise the large-buffer path");
+
+        let (r1, c1, p1, _, screen1) = replay(&out, 20, true);
+        let (r2, c2, p2, _, screen2) = replay(&out, 20, false);
+
+        assert_eq!(
+            (r1, c1, p1),
+            (r2, c2, p2),
+            "cursor depends on how DECSC treats the pending-wrap flag across the \
+             right prompt's save/restore; emitted {out:?}"
+        );
+        // Asserted against each other rather than a literal: what a large buffer
+        // puts on screen is a trimmed window, but it must not differ by terminal.
+        assert_eq!(screen1, screen2, "screen depends on the DECSC convention");
     }
 
     #[test]
