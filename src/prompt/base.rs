@@ -98,6 +98,23 @@ impl PromptEditMode {
         }
     }
 
+    /// Whether an operation *on* the selection leaves it standing.
+    ///
+    /// Helix keeps it, so a yank or a case change can be followed by another
+    /// operation over the same span. Vim drops it: `y` or `~` in visual mode
+    /// returns to normal with nothing selected, and a lingering anchor would
+    /// paint a highlight there.
+    pub(crate) fn retains_selection_after_edit(&self) -> bool {
+        match self {
+            #[cfg(feature = "helix")]
+            PromptEditMode::Helix(_) => true,
+            PromptEditMode::Vi(_)
+            | PromptEditMode::Default
+            | PromptEditMode::Emacs
+            | PromptEditMode::Custom(_) => false,
+        }
+    }
+
     pub(crate) fn selection_extent(&self) -> SelectionExtent {
         match self {
             // Vi normal/visual sweep the block cursor over the grapheme it

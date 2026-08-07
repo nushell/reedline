@@ -366,7 +366,14 @@ impl Editor {
             EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
         }
         let leaves_selection = matches!(command.edit_type(), EditType::MoveCursor { select: true })
-            || matches!(command, EditCommand::PasteAtSelectionEdge { .. });
+            || matches!(command, EditCommand::PasteAtSelectionEdge { .. })
+            || (matches!(
+                command,
+                EditCommand::CopySelection
+                    | EditCommand::LowercaseSelection
+                    | EditCommand::UppercaseSelection
+                    | EditCommand::SwitchcaseSelection
+            ) && self.edit_mode.retains_selection_after_edit());
         if !leaves_selection {
             self.clear_selection();
         }
@@ -4391,6 +4398,47 @@ mod test {
             editor.move_to_position(1, false);
             editor.run_edit_command(&EditCommand::Move(MotionTarget::LineStartNonBlank));
             assert_eq!(editor.insertion_point(), 1);
+        }
+
+        // --- operations that keep the selection ---
+
+        #[test]
+        fn helix_yank_leaves_the_selection_standing() {
+            // Helix yanks without collapsing, so the same span stays operable.
+            let mut editor = helix_editor("abc def");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+            assert_eq!(editor.get_selection(), Some((0, 4)), "setup");
+            editor.run_edit_command(&EditCommand::CopySelection);
+            assert_eq!(editor.get_selection(), Some((0, 4)));
+            assert_eq!(editor.cut_buffer.get().0, "abc ");
+        }
+
+        #[test]
+        fn helix_case_change_leaves_the_selection_standing() {
+            let mut editor = helix_editor("abc def");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+            editor.run_edit_command(&EditCommand::SwitchcaseSelection);
+            assert_eq!(editor.get_buffer(), "ABC def");
+            assert_eq!(editor.get_selection(), Some((0, 4)));
+        }
+
+        #[test]
+        fn vi_yank_still_collapses_the_selection() {
+            // The contrast that gives the two above their meaning. Not `None`:
+            // under `Block` the collapsed point re-widens, so a dropped
+            // selection still reads as a one-grapheme cursor.
+            let mut editor = vi_editor("abc def", PromptViMode::Visual);
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+            assert_eq!(
+                editor.get_selection(),
+                Some((0, 5)),
+                "setup: vim's inclusive visual sweeps onto the `b`"
+            );
+            editor.run_edit_command(&EditCommand::CopySelection);
+            assert_eq!(editor.get_selection(), Some((4, 5)));
         }
 
         // --- `x` (line selection) ---
