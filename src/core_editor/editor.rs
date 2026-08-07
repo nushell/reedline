@@ -298,6 +298,8 @@ impl Editor {
             EditCommand::CutSelection { granularity } => {
                 self.cut_selection_to_cut_buffer(*granularity)
             }
+            #[cfg(feature = "helix")]
+            EditCommand::EraseSelection => self.erase_selection(),
             EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
             EditCommand::LowercaseSelection => self.lowercase_selection(),
             EditCommand::UppercaseSelection => self.uppercase_selection(),
@@ -1362,6 +1364,19 @@ impl Editor {
         if let Some((start, end)) = self.get_selection() {
             let sel = Cursor::new(start, end);
             self.operate(sel, OperatorVerb::Cut, granularity);
+            self.clear_selection();
+        }
+    }
+
+    /// Helix `Alt-d`: drop the selection without touching the cut buffer.
+    ///
+    /// `OperatorVerb::Erase` is the register-free deletion the motion-shaped
+    /// `Erase` already uses; only the span differs.
+    #[cfg(feature = "helix")]
+    fn erase_selection(&mut self) {
+        if let Some((start, end)) = self.get_selection() {
+            let sel = Cursor::new(start, end);
+            self.operate(sel, OperatorVerb::Erase, Granularity::CharWise);
             self.clear_selection();
         }
     }
@@ -4439,6 +4454,61 @@ mod test {
             );
             editor.run_edit_command(&EditCommand::CopySelection);
             assert_eq!(editor.get_selection(), Some((4, 5)));
+        }
+
+        // --- `Alt-d` (erase without yanking) ---
+
+        /// The register is seeded with text the erase does *not* delete, so a
+        /// `Cut` in its place would visibly overwrite it.
+        #[test]
+        fn helix_erase_selection_leaves_the_cut_buffer_alone() {
+            let mut editor = helix_editor("abc def");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+            editor.run_edit_command(&EditCommand::CopySelection);
+            assert_eq!(editor.cut_buffer.get().0, "abc ", "setup");
+
+            editor.move_to_position(4, false);
+            editor.run_edit_command(&EditCommand::Select(MotionTarget::BufferEdge(
+                Direction::Forward,
+            )));
+            editor.run_edit_command(&EditCommand::EraseSelection);
+            assert_eq!(editor.get_buffer(), "abc ");
+            assert_eq!(
+                editor.cut_buffer.get().0,
+                "abc ",
+                "erase must not fill the register"
+            );
+        }
+
+        #[test]
+        fn helix_cut_selection_still_fills_the_cut_buffer() {
+            // The contrast that gives the test above its meaning.
+            let mut editor = helix_editor("abc def");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+            editor.run_edit_command(&EditCommand::CopySelection);
+
+            editor.move_to_position(4, false);
+            editor.run_edit_command(&EditCommand::Select(MotionTarget::BufferEdge(
+                Direction::Forward,
+            )));
+            editor.run_edit_command(&EditCommand::CutSelection {
+                granularity: Granularity::CharWise,
+            });
+            assert_eq!(editor.get_buffer(), "abc ");
+            assert_eq!(editor.cut_buffer.get().0, "def");
+        }
+
+        #[test]
+        fn helix_erase_selection_takes_only_the_selection() {
+            let mut editor = helix_editor("abc def");
+            editor.move_to_position(0, false);
+            // `w` selects "abc " as a small-word start motion.
+            editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+            assert_eq!(editor.get_selection(), Some((0, 4)), "setup");
+            editor.run_edit_command(&EditCommand::EraseSelection);
+            assert_eq!(editor.get_buffer(), "def");
         }
 
         // --- `x` (line selection) ---

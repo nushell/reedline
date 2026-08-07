@@ -628,6 +628,13 @@ pub enum EditCommand {
     #[cfg(feature = "helix")]
     SelectLine,
 
+    /// Delete the selection without filling the cut buffer (helix `Alt-d`).
+    ///
+    /// [`CutSelection`](EditCommand::CutSelection) clobbers the register, which
+    /// is exactly what this avoids when the text is not wanted back.
+    #[cfg(feature = "helix")]
+    EraseSelection,
+
     /// Cut selection to local buffer
     CutSelection {
         /// Char-wise span or whole lines.
@@ -804,6 +811,8 @@ impl EditCommand {
             EditCommand::SwapCursorAndAnchor => EditType::MoveCursor { select: true },
 
             EditCommand::SelectAll => EditType::MoveCursor { select: true },
+            #[cfg(feature = "helix")]
+            EditCommand::EraseSelection => EditType::EditText,
             #[cfg(feature = "helix")]
             EditCommand::SelectLine => EditType::MoveCursor { select: true },
             // Text edits

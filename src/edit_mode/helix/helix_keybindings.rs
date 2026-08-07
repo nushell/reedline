@@ -31,6 +31,13 @@ pub fn default_helix_normal_keybindings() -> Keybindings {
         KeyCode::Delete,
         edit_bind(EditCommand::Delete),
     );
+    // `Alt-d` drops the selection without filling the register, where `d`
+    // clobbers it. The table is shared with select mode, which wants it too.
+    kb.add_binding(
+        KeyModifiers::ALT,
+        KeyCode::Char('d'),
+        edit_bind(EditCommand::EraseSelection),
+    );
 
     kb
 }
