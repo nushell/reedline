@@ -2,7 +2,7 @@ use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMark
 use crate::{CursorConfig, PromptEditMode, PromptViMode};
 
 use {
-    super::utils::{coerce_crlf, ends_at_right_margin, estimate_required_lines, line_width},
+    super::utils::{coerce_crlf, deferred_wrap_row, estimate_required_lines, line_width},
     crate::{
         menu::{Menu, ReedlineMenu},
         painting::PromptLines,
@@ -934,11 +934,7 @@ impl Painter {
     /// first column of the bottom row, which is a whole row's travel from the
     /// text. `RestorePosition` at least lands next to it.
     fn margin_cursor_row(&self, printed: &str) -> Option<u16> {
-        let width = self.screen_width();
-        if !ends_at_right_margin(printed, width) {
-            return None;
-        }
-        let rows = estimate_required_lines(printed, width) as u16;
+        let rows = deferred_wrap_row(printed, self.screen_width())?;
         let row = self.prompt_start_row.last_known_row().saturating_add(rows);
         (row < self.screen_height()).then_some(row)
     }

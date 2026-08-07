@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 /// Ensures input uses CRLF line endings.
@@ -89,22 +90,58 @@ pub(crate) fn line_width(line: &str) -> usize {
     strip_ansi(line).width()
 }
 
-/// Whether printing `printed` leaves the cursor at the terminal's right margin,
-/// in the *deferred wrap* state.
+/// Where printing `printed` leaves the cursor, when it lands on the terminal's
+/// right margin in the *deferred wrap* state.
 ///
 /// A terminal does not move to the next row when a glyph lands in the final
 /// column; it flags the cursor pending and only wraps once the next glyph
 /// arrives. Saving and restoring that state is ambiguous, since terminals
-/// disagree about whether DECSC/DECRC carry the flag.
-pub(crate) fn ends_at_right_margin(printed: &str, terminal_columns: u16) -> bool {
-    let terminal_columns: usize = terminal_columns.into();
-    if terminal_columns == 0 {
-        return false;
+/// disagree about whether DECSC/DECRC carry the flag, so the caller has to
+/// place the cursor absolutely instead. Returns how many rows past the start of
+/// `printed` that row is, or `None` when the run ends off the margin and
+/// `RestorePosition` is already unambiguous.
+///
+/// Laid out one grapheme at a time rather than by dividing the run's width,
+/// because the two disagree: a double-width grapheme with a single column left
+/// cannot be split, so the terminal leaves that column blank and wraps early.
+/// Division would report a 42-column run on a 21-column terminal as two exact
+/// rows ending on the margin, when the terminal has actually wrapped twice and
+/// left the cursor mid-row. That is the difference between restoring the cursor
+/// and moving it somewhere it never was.
+///
+/// Note this is the *only* place in the painter that models wrapping this
+/// precisely; [`estimate_required_lines`] and friends still divide, so row
+/// reservations remain approximate for wide graphemes. Placing the cursor is
+/// worth the extra pass because the error is directly visible.
+pub(crate) fn deferred_wrap_row(printed: &str, terminal_columns: u16) -> Option<u16> {
+    let columns: usize = terminal_columns.into();
+    if columns == 0 {
+        return None;
     }
-    // Only the text since the last hard line break sits on the cursor's row.
-    let last_row = printed.rsplit('\n').next().unwrap_or(printed);
-    let width = line_width(last_row);
-    width > 0 && width % terminal_columns == 0
+
+    let (mut row, mut col, mut pending) = (0u16, 0usize, false);
+    for grapheme in strip_ansi(printed).graphemes(true) {
+        match grapheme {
+            "\n" => (row, col, pending) = (row.saturating_add(1), 0, false),
+            "\r" => (col, pending) = (0, false),
+            _ => {
+                let width = grapheme.width();
+                // The wrap this grapheme's arrival was deferred until.
+                if pending {
+                    (row, col) = (row.saturating_add(1), 0);
+                }
+                // No room for the whole grapheme: the trailing column stays
+                // blank and the terminal wraps before drawing it.
+                if col + width > columns {
+                    (row, col) = (row.saturating_add(1), 0);
+                }
+                col += width;
+                pending = col >= columns;
+            }
+        }
+    }
+
+    pending.then(|| row.saturating_add(1))
 }
 
 #[cfg(test)]
@@ -130,6 +167,78 @@ mod test {
             input != expected || matches!(result, Cow::Borrowed(_)),
             "Unnecessary allocation"
         )
+    }
+
+    /// Narrow graphemes pack a row exactly, so the margin falls on every whole
+    /// multiple of the width and the row is that multiple.
+    #[rstest]
+    #[case("", 20, None)]
+    #[case("a", 20, None)]
+    #[case(&"a".repeat(19), 20, None)]
+    #[case(&"a".repeat(20), 20, Some(1))]
+    #[case(&"a".repeat(21), 20, None)]
+    #[case(&"a".repeat(40), 20, Some(2))]
+    #[case(&"a".repeat(60), 20, Some(3))]
+    // A hard break resets the column, so the rows before it still count.
+    #[case("ab\naaaaaaaaaaaaaaaaaaaa", 20, Some(2))]
+    #[case("ab\n", 20, None)]
+    // Zero columns is reported by terminals mid-resize; nothing to divide by.
+    #[case(&"a".repeat(20), 0, None)]
+    fn deferred_wrap_row_on_narrow_graphemes(
+        #[case] printed: &str,
+        #[case] columns: u16,
+        #[case] expected: Option<u16>,
+    ) {
+        assert_eq!(deferred_wrap_row(printed, columns), expected);
+    }
+
+    /// A double-width grapheme cannot straddle the margin: with one column left
+    /// the terminal blanks it and wraps early, so the run occupies more rows
+    /// than its width divided by the terminal's, and lands off the margin where
+    /// division says it lands on one.
+    ///
+    /// On 21 columns each row fits ten `あ` with a column to spare, so the
+    /// eleventh starts a row and only a multiple of ten ever reaches a margin
+    /// (at column 20 of 21 — never, since 20 < 21).
+    #[rstest]
+    // 42 columns of text on a 21-column terminal: division says two exact rows
+    // ending on the margin, the terminal says three rows ending at column 2.
+    #[case(&"あ".repeat(21), 21, None)]
+    #[case(&"あ".repeat(10), 21, None)]
+    // An even width divides evenly, so wide graphemes do reach the margin.
+    #[case(&"あ".repeat(10), 20, Some(1))]
+    #[case(&"あ".repeat(20), 20, Some(2))]
+    #[case(&"あ".repeat(9), 20, None)]
+    // A narrow lead-in leaves an odd column, pushing every wide grapheme over.
+    #[case(&format!("> {}", "あ".repeat(9)), 20, Some(1))]
+    #[case(&format!("> {}", "あ".repeat(10)), 20, None)]
+    // Narrow terminals make the blanked columns add up fast: 10 columns of text
+    // across 5 columns is two exact rows by division and three by layout.
+    #[case(&"あ".repeat(5), 5, None)]
+    #[case(&"あ".repeat(3), 3, None)]
+    // And the reverse, where the blanked columns are what carry the run *onto*
+    // a margin: 9 columns of text is no multiple of 5, but the early wrap after
+    // the second `あ` pushes the tail out to the end of the next row.
+    #[case("あああaaa", 5, Some(2))]
+    fn deferred_wrap_row_on_wide_graphemes(
+        #[case] printed: &str,
+        #[case] columns: u16,
+        #[case] expected: Option<u16>,
+    ) {
+        assert_eq!(deferred_wrap_row(printed, columns), expected);
+    }
+
+    /// ANSI is stripped before layout, and a combining mark joins the grapheme
+    /// it modifies rather than claiming a column of its own.
+    #[rstest]
+    #[case(&format!("\x1b[31m{}\x1b[0m", "a".repeat(20)), 20, Some(1))]
+    #[case(&"e\u{301}".repeat(20), 20, Some(1))]
+    fn deferred_wrap_row_ignores_zero_width_input(
+        #[case] printed: &str,
+        #[case] columns: u16,
+        #[case] expected: Option<u16>,
+    ) {
+        assert_eq!(deferred_wrap_row(printed, columns), expected);
     }
 
     /// Regression: no-color rendering strips ANSI bytes before CRLF coercion,
