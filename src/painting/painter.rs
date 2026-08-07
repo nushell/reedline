@@ -1193,11 +1193,15 @@ impl Painter {
         // batch of messages, not per message, so the flicker the comment above
         // guards against is unaffected.
         self.stdout.flush()?;
-        let row = match cursor::position() {
-            Ok((_, actual)) => actual,
-            Err(_) => row,
+        self.prompt_start_row = match cursor::position() {
+            // Measured, so later paints can skip the drift check.
+            Ok((_, actual)) => PromptStartRow::Verified(actual),
+            // No answer, so all that is left is the count this function stopped
+            // trusting. `Stale` at least keeps the next paint checking it;
+            // `Verified` would skip the check and paint against a row the
+            // terminal may never have reached.
+            Err(_) => PromptStartRow::Stale(row),
         };
-        self.prompt_start_row = PromptStartRow::Verified(row);
         Ok(())
     }
 
