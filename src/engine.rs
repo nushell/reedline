@@ -2872,6 +2872,101 @@ mod tests {
         }
     }
 
+    // --- `j` / `k` ---
+    //
+    // These lower to `ReedlineEvent::Up`/`Down` rather than a `MotionTarget`,
+    // since which of line movement and history traversal applies is decided
+    // against the whole buffer, above where a motion resolves.
+
+    /// Two lines, built through the incomplete branch since a bare Enter would
+    /// submit. Leaves the caret on the second line, in insert mode.
+    #[cfg(feature = "helix")]
+    fn two_line_helix_engine() -> Reedline {
+        let mut rl = helix_engine_with_validator();
+        drive_until_signal(
+            &mut rl,
+            &[
+                ch('"'),
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                key(KeyCode::Esc),
+                key(KeyCode::Enter),
+                ch('d'),
+                ch('e'),
+                ch('f'),
+            ],
+        );
+        // `"abc` is 0..4, the terminator 4, `def` 5..8. Both lines are wide
+        // enough for a column-preserving move to differ from a line-start one.
+        assert_eq!(rl.editor.get_buffer(), "\"abc\ndef", "setup");
+        rl
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_normal_k_moves_a_line_before_it_reaches_history() {
+        let mut rl = two_line_helix_engine();
+        drive_until_signal(&mut rl, &[key(KeyCode::Esc), ch('k')]);
+        assert!(
+            rl.editor.insertion_point() < 4,
+            "expected the caret on the first line, got {}",
+            rl.editor.insertion_point()
+        );
+        assert_eq!(
+            rl.editor.get_buffer(),
+            "\"abc\ndef",
+            "history must not load yet"
+        );
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_normal_k_recalls_history_at_the_first_line() {
+        let mut rl = seam_engine(Box::<crate::Helix>::default());
+        let signal = drive_until_signal(
+            &mut rl,
+            &[
+                ch('o'),
+                ch('n'),
+                ch('e'),
+                key(KeyCode::Esc),
+                key(KeyCode::Enter),
+            ],
+        );
+        assert!(
+            matches!(signal, Some(Signal::Success(ref b)) if b == "one"),
+            "setup: expected a submit, got {signal:?}"
+        );
+        // The buffer is empty now, so there is no line above to move to.
+        drive_until_signal(&mut rl, &[key(KeyCode::Esc), ch('k')]);
+        assert_eq!(rl.editor.get_buffer(), "one");
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_select_j_extends_to_the_column_normal_mode_would_land_on() {
+        let mut rl = two_line_helix_engine();
+        // `k` from the `f` (column 2) lands on the `b`, also column 2.
+        drive_until_signal(&mut rl, &[key(KeyCode::Esc), ch('k')]);
+        assert_eq!(rl.editor.insertion_point(), 2, "setup: expected the `b`");
+
+        drive_until_signal(&mut rl, &[ch('v'), ch('j')]);
+        assert_eq!(
+            rl.editor.get_buffer(),
+            "\"abc\ndef",
+            "select mode must not traverse history"
+        );
+        let (start, end) = rl.editor.get_selection().expect("expected a selection");
+        // Down from column 2 is the `f` at 7, not the line start at 5: the
+        // extension has to stop where a normal-mode `j` would land.
+        assert_eq!(
+            (start, end),
+            (2, 8),
+            "expected the selection to reach the `f`, not the line start"
+        );
+    }
+
     #[test]
     #[cfg(feature = "helix")]
     fn with_edit_mode_builder_accepts_custom_helix_mode() {

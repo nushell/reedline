@@ -56,6 +56,10 @@ enum Verb {
     Paste(Direction),
     /// Open a blank line below (`Forward`, `o`) or above (`Backward`, `O`).
     OpenLine(Direction),
+    /// `j`/`k`. The only verb that does not lower to a [`MotionTarget`]: which
+    /// of line movement and history traversal applies is decided by the engine
+    /// against the *whole* buffer, above where a motion resolves.
+    LineOrHistory(Direction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,6 +406,16 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
                 verb: Verb::CollapsingMotion(MotionTarget::Grapheme(Direction::Backward)),
                 next_mode: None,
             }),
+            'j' => Outcome::Execute(Action {
+                count,
+                verb: Verb::LineOrHistory(Direction::Forward),
+                next_mode: None,
+            }),
+            'k' => Outcome::Execute(Action {
+                count,
+                verb: Verb::LineOrHistory(Direction::Backward),
+                next_mode: None,
+            }),
             'v' => match mode {
                 HelixMode::Normal => Outcome::Execute(Action {
                     count,
@@ -548,6 +562,30 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
         }]),
         Verb::Deselect => ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint]),
         Verb::ChangeMode => ReedlineEvent::None,
+        // `Up`/`Down` already carry the whole rule: move by line while another
+        // line is there, walk history at the buffer edge, and prefix-search it
+        // when the caret sits at the buffer end. A menu takes the keys first, or
+        // `j` would move the caret out from under an open one.
+        //
+        // Select mode extends by line instead and never reaches history, which
+        // would replace the buffer the selection is anchored in. `Multiple`
+        // carries the count, since `repeated` only multiplies `EditCommand`s.
+        Verb::LineOrHistory(direction) => {
+            let event = match mode {
+                // `MoveLine*`, not `Extend(MotionTarget::Line)`: the target lands
+                // on the line *start*, while `line_down_target` keeps the column,
+                // so only this reaches the grapheme normal mode would land on.
+                HelixMode::Select => ReedlineEvent::Edit(vec![match direction {
+                    Direction::Forward => EditCommand::MoveLineDown { select: true },
+                    Direction::Backward => EditCommand::MoveLineUp { select: true },
+                }]),
+                _ => ReedlineEvent::UntilFound(match direction {
+                    Direction::Forward => vec![ReedlineEvent::MenuDown, ReedlineEvent::Down],
+                    Direction::Backward => vec![ReedlineEvent::MenuUp, ReedlineEvent::Up],
+                }),
+            };
+            ReedlineEvent::Multiple(vec![event; action.count.max(1)])
+        }
         // Collapse forward first, as `a` does. The resting selection outlives the
         // `next_mode` flip to insert, so `InsertNewline` on incomplete input
         // opens with `delete_selection` and eats the covered grapheme, and
