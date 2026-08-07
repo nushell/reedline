@@ -62,6 +62,12 @@ pub(crate) fn estimate_required_lines(input: &str, screen_width: u16) -> usize {
 /// the size is unknown; return 0 in that case rather than dividing by
 /// zero (see #842).
 ///
+/// Dividing the width assumes glyphs pack a row exactly, which a
+/// double-width grapheme at the margin does not: see
+/// [`deferred_wrap_row`], which lays the same text out one grapheme at a
+/// time. Reserving a row too few or too many is recoverable, so the cheap
+/// model stays here; placing the cursor is not, so it uses the other one.
+///
 /// FIXME: The zero-column guard below papers over a caller bug, it
 /// doesn't solve it. `menu::list_menu::ListMenu::menu_required_lines`
 /// passes `terminal_columns.saturating_sub(indicator_width + count_digits)`,
@@ -90,7 +96,7 @@ pub(crate) fn line_width(line: &str) -> usize {
     strip_ansi(line).width()
 }
 
-/// Where printing `printed` leaves the cursor, when it lands on the terminal's
+/// Where printing `pieces` leaves the cursor, when it lands on the terminal's
 /// right margin in the *deferred wrap* state.
 ///
 /// A terminal does not move to the next row when a glyph lands in the final
@@ -98,8 +104,11 @@ pub(crate) fn line_width(line: &str) -> usize {
 /// arrives. Saving and restoring that state is ambiguous, since terminals
 /// disagree about whether DECSC/DECRC carry the flag, so the caller has to
 /// place the cursor absolutely instead. Returns how many rows past the start of
-/// `printed` that row is, or `None` when the run ends off the margin and
+/// the run that row is, or `None` when the run ends off the margin and
 /// `RestorePosition` is already unambiguous.
+///
+/// `pieces` are laid out end to end, so a caller can hand over the parts it
+/// printed without joining them: the walk is a fold and never looks backwards.
 ///
 /// Laid out one grapheme at a time rather than by dividing the run's width,
 /// because the two disagree: a double-width grapheme with a single column left
@@ -109,39 +118,46 @@ pub(crate) fn line_width(line: &str) -> usize {
 /// left the cursor mid-row. That is the difference between restoring the cursor
 /// and moving it somewhere it never was.
 ///
-/// Note this is the *only* place in the painter that models wrapping this
-/// precisely; [`estimate_required_lines`] and friends still divide, so row
-/// reservations remain approximate for wide graphemes. Placing the cursor is
-/// worth the extra pass because the error is directly visible.
-pub(crate) fn deferred_wrap_row(printed: &str, terminal_columns: u16) -> Option<u16> {
+/// [`estimate_required_lines`] and friends still divide, and deliberately: they
+/// answer how many rows to reserve, where being off by one costs a wasted row
+/// or an extra erase, while this answers which cell the cursor occupies, where
+/// being off by one is on screen. The two only disagree on wide graphemes, so
+/// the cheap model stays where its error is recoverable.
+pub(crate) fn deferred_wrap_row<'a>(
+    pieces: impl IntoIterator<Item = &'a str>,
+    terminal_columns: u16,
+) -> Option<u16> {
     let columns: usize = terminal_columns.into();
     if columns == 0 {
         return None;
     }
 
-    let (mut row, mut col, mut pending) = (0u16, 0usize, false);
-    for grapheme in strip_ansi(printed).graphemes(true) {
-        match grapheme {
-            "\n" => (row, col, pending) = (row.saturating_add(1), 0, false),
-            "\r" => (col, pending) = (0, false),
-            _ => {
-                let width = grapheme.width();
-                // The wrap this grapheme's arrival was deferred until.
-                if pending {
-                    (row, col) = (row.saturating_add(1), 0);
+    // `col == columns` *is* the deferred wrap: the run has filled the row but
+    // nothing has arrived to push it over yet.
+    let (mut row, mut col) = (0u16, 0usize);
+    for piece in pieces {
+        for grapheme in strip_ansi(piece).graphemes(true) {
+            match grapheme {
+                "\n" => (row, col) = (row.saturating_add(1), 0),
+                "\r" => col = 0,
+                _ => {
+                    let width = grapheme.width();
+                    // The wrap this grapheme's arrival was deferred until.
+                    if col >= columns {
+                        (row, col) = (row.saturating_add(1), 0);
+                    }
+                    // No room for the whole grapheme: the trailing column stays
+                    // blank and the terminal wraps before drawing it.
+                    if col + width > columns {
+                        (row, col) = (row.saturating_add(1), 0);
+                    }
+                    col += width;
                 }
-                // No room for the whole grapheme: the trailing column stays
-                // blank and the terminal wraps before drawing it.
-                if col + width > columns {
-                    (row, col) = (row.saturating_add(1), 0);
-                }
-                col += width;
-                pending = col >= columns;
             }
         }
     }
 
-    pending.then(|| row.saturating_add(1))
+    (col >= columns).then(|| row.saturating_add(1))
 }
 
 #[cfg(test)]
@@ -189,7 +205,7 @@ mod test {
         #[case] columns: u16,
         #[case] expected: Option<u16>,
     ) {
-        assert_eq!(deferred_wrap_row(printed, columns), expected);
+        assert_eq!(deferred_wrap_row([printed], columns), expected);
     }
 
     /// A double-width grapheme cannot straddle the margin: with one column left
@@ -225,7 +241,7 @@ mod test {
         #[case] columns: u16,
         #[case] expected: Option<u16>,
     ) {
-        assert_eq!(deferred_wrap_row(printed, columns), expected);
+        assert_eq!(deferred_wrap_row([printed], columns), expected);
     }
 
     /// ANSI is stripped before layout, and a combining mark joins the grapheme
@@ -238,7 +254,7 @@ mod test {
         #[case] columns: u16,
         #[case] expected: Option<u16>,
     ) {
-        assert_eq!(deferred_wrap_row(printed, columns), expected);
+        assert_eq!(deferred_wrap_row([printed], columns), expected);
     }
 
     /// Regression: no-color rendering strips ANSI bytes before CRLF coercion,
