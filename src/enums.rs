@@ -620,6 +620,14 @@ pub enum EditCommand {
     /// Select whole input buffer
     SelectAll,
 
+    /// Snap the selection out to the whole lines it touches (helix `x`), or take
+    /// one more line when it already spans them exactly.
+    ///
+    /// Repeating therefore grows it a line at a time, so a count is the command
+    /// applied that many times.
+    #[cfg(feature = "helix")]
+    SelectLine,
+
     /// Cut selection to local buffer
     CutSelection {
         /// Char-wise span or whole lines.
@@ -796,6 +804,8 @@ impl EditCommand {
             EditCommand::SwapCursorAndAnchor => EditType::MoveCursor { select: true },
 
             EditCommand::SelectAll => EditType::MoveCursor { select: true },
+            #[cfg(feature = "helix")]
+            EditCommand::SelectLine => EditType::MoveCursor { select: true },
             // Text edits
             EditCommand::InsertChar(_)
             | EditCommand::Backspace

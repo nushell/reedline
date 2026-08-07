@@ -56,6 +56,9 @@ enum Verb {
     Paste(Direction),
     /// Open a blank line below (`Forward`, `o`) or above (`Backward`, `O`).
     OpenLine(Direction),
+    /// `x`. Selection-shaped rather than motion-shaped: it moves both edges,
+    /// which no [`MotionTarget`] can express.
+    SelectLine,
     /// `j`/`k`. The only verb that does not lower to a [`MotionTarget`]: which
     /// of line movement and history traversal applies is decided by the engine
     /// against the *whole* buffer, above where a motion resolves.
@@ -416,6 +419,11 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
                 verb: Verb::LineOrHistory(Direction::Backward),
                 next_mode: None,
             }),
+            'x' => Outcome::Execute(Action {
+                count,
+                verb: Verb::SelectLine,
+                next_mode: None,
+            }),
             'v' => match mode {
                 HelixMode::Normal => Outcome::Execute(Action {
                     count,
@@ -560,6 +568,9 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             direction,
             count: action.count,
         }]),
+        // Each press grows the selection one line, thus a count is just the
+        // command repeated: it re-reads the selection every time.
+        Verb::SelectLine => action.repeated(EditCommand::SelectLine),
         Verb::Deselect => ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint]),
         Verb::ChangeMode => ReedlineEvent::None,
         // `Up`/`Down` already carry the whole rule: move by line while another
@@ -775,6 +786,22 @@ mod test {
             ReedlineEvent::Edit(vec![EditCommand::Select(w()); 3])
         );
         assert_eq!(helix.count, None);
+    }
+
+    #[test]
+    fn x_selects_a_line_once_per_count() {
+        // Repeating composes here: each application re-reads the selection and
+        // grows it by one line.
+        let mut helix = normal();
+        assert_eq!(
+            helix.parse_event(chr('x')),
+            ReedlineEvent::Edit(vec![EditCommand::SelectLine])
+        );
+        assert_eq!(helix.parse_event(chr('3')), ReedlineEvent::None);
+        assert_eq!(
+            helix.parse_event(chr('x')),
+            ReedlineEvent::Edit(vec![EditCommand::SelectLine; 3])
+        );
     }
 
     #[test]

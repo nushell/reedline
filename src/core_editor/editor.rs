@@ -293,6 +293,8 @@ impl Editor {
                 self.move_left_until_char(*c, true, true, *select)
             }
             EditCommand::SelectAll => self.select_all(),
+            #[cfg(feature = "helix")]
+            EditCommand::SelectLine => self.select_line(),
             EditCommand::CutSelection { granularity } => {
                 self.cut_selection_to_cut_buffer(*granularity)
             }
@@ -1307,6 +1309,36 @@ impl Editor {
     fn select_all(&mut self) {
         let end = self.line_buffer.len();
         self.line_buffer.set_cursor(Cursor::new(0, end));
+    }
+
+    /// Helix `x`: snap out to whole lines, or take one more when already there.
+    ///
+    /// The "already there" test is what no composition of existing commands can
+    /// express: [`Select`](EditCommand::Select) re-anchors at the origin and
+    /// [`Extend`](EditCommand::Extend) keeps its anchor, so neither can move
+    /// both edges to line boundaries *and* notice they were there already.
+    #[cfg(feature = "helix")]
+    fn select_line(&mut self) {
+        let buf = self.line_buffer.get_buffer();
+        let cursor = self.line_buffer.cursor();
+        let (start, end) = (cursor.start(), cursor.end());
+        let first = line::start_of_line(buf, start);
+        // The last byte covered, which for a point is the position itself. Taken
+        // off `end` since that is the exclusive edge and may already be the next
+        // line's first byte.
+        let last = if end > start {
+            prev_grapheme_boundary(buf, end)
+        } else {
+            start
+        };
+        // `None` at an unterminated last line, where the buffer end is the edge.
+        let after = line::start_of_next_line(buf, last).unwrap_or(buf.len());
+        let head = if start == first && end == after {
+            line::start_of_next_line(buf, after).unwrap_or(buf.len())
+        } else {
+            after
+        };
+        self.place(Cursor::new(first, head));
     }
 
     #[cfg(feature = "system_clipboard")]
@@ -4359,6 +4391,64 @@ mod test {
             editor.move_to_position(1, false);
             editor.run_edit_command(&EditCommand::Move(MotionTarget::LineStartNonBlank));
             assert_eq!(editor.insertion_point(), 1);
+        }
+
+        // --- `x` (line selection) ---
+
+        #[test]
+        fn helix_select_line_snaps_out_to_the_whole_line() {
+            // "ab\ncd\nef": line 2 is bytes 3..6, terminator included.
+            let mut editor = helix_editor("ab\ncd\nef");
+            editor.move_to_position(4, false);
+            editor.run_edit_command(&EditCommand::SelectLine);
+            assert_eq!(editor.get_selection(), Some((3, 6)));
+        }
+
+        #[test]
+        fn helix_select_line_takes_one_more_line_on_repeat() {
+            // The press that composition cannot reproduce: growing needs the
+            // command to notice the selection already spans whole lines.
+            let mut editor = helix_editor("ab\ncd\nef");
+            editor.move_to_position(0, false);
+            let x = EditCommand::SelectLine;
+            editor.run_edit_command(&x);
+            assert_eq!(editor.get_selection(), Some((0, 3)));
+            editor.run_edit_command(&x);
+            assert_eq!(editor.get_selection(), Some((0, 6)));
+            editor.run_edit_command(&x);
+            assert_eq!(editor.get_selection(), Some((0, 8)));
+        }
+
+        #[test]
+        fn helix_select_line_stops_at_the_last_line() {
+            // The final line is unterminated, so the buffer end is its edge and
+            // a further press has nowhere to grow.
+            let mut editor = helix_editor("ab\ncd");
+            editor.move_to_position(4, false);
+            let x = EditCommand::SelectLine;
+            editor.run_edit_command(&x);
+            assert_eq!(editor.get_selection(), Some((3, 5)));
+            editor.run_edit_command(&x);
+            assert_eq!(editor.get_selection(), Some((3, 5)));
+        }
+
+        #[test]
+        fn helix_select_line_from_a_terminator_keeps_its_own_line() {
+            // Helix rests *on* the terminator, so `x` there must select the line
+            // that terminator ends, not the one after it.
+            let mut editor = helix_editor("ab\ncd\nef");
+            editor.move_to_position(2, false);
+            editor.run_edit_command(&EditCommand::SelectLine);
+            assert_eq!(editor.get_selection(), Some((0, 3)));
+        }
+
+        #[test]
+        fn helix_select_line_covers_an_empty_line_whole() {
+            // "ab\n\ncd": the blank line is just its terminator at 3.
+            let mut editor = helix_editor("ab\n\ncd");
+            editor.move_to_position(3, false);
+            editor.run_edit_command(&EditCommand::SelectLine);
+            assert_eq!(editor.get_selection(), Some((3, 4)));
         }
 
         /// `b` as a target: small-word start, backward.
