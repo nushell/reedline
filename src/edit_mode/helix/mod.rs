@@ -548,8 +548,18 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
         }]),
         Verb::Deselect => ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint]),
         Verb::ChangeMode => ReedlineEvent::None,
+        // Collapse forward first, as `a` does. The resting selection outlives the
+        // `next_mode` flip to insert, so `InsertNewline` on incomplete input
+        // opens with `delete_selection` and eats the covered grapheme, and
+        // `submit_buffer`'s final repaint leaves the selection highlight in the
+        // scrollback. Forward specifically: the break belongs *past* the covered
+        // grapheme, where `Deselect` would land before it and vi's `MoveRight`
+        // one beyond, since a helix head already sits on the far edge.
         Verb::Submit => {
-            return ReedlineEvent::Enter;
+            return ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::CollapseSelection(Direction::Forward)]),
+                ReedlineEvent::Enter,
+            ]);
         }
     };
 
@@ -1146,13 +1156,19 @@ mod test {
     }
 
     #[test]
-    fn enter_submits_bare_and_enters_insert() {
-        // Enter must escape the repaint rule: the engine matches on a bare
-        // `Enter` event to accept the line
+    fn enter_collapses_then_submits_and_enters_insert() {
+        // Enter must still escape the repaint rule: `next_mode` would otherwise
+        // append a `Repaint` that the submitting `Enter` never reaches, since
+        // the engine returns on the first `Exits`. Asserted on the event rather
+        // than driven, since escaping that wrapping is not observable from the
+        // editor's state.
         let mut helix = normal();
         assert_eq!(
             helix.parse_event(key(KeyCode::Enter, KeyModifiers::NONE)),
-            ReedlineEvent::Enter
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::CollapseSelection(Direction::Forward)]),
+                ReedlineEvent::Enter,
+            ])
         );
         assert_eq!(helix.mode, HelixMode::Insert);
     }

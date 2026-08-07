@@ -2747,6 +2747,131 @@ mod tests {
         );
     }
 
+    /// Drive one key per batch, stopping at the first `Signal`.
+    #[cfg(feature = "helix")]
+    fn drive_until_signal(rl: &mut Reedline, keys: &[KeyEvent]) -> Option<Signal> {
+        let prompt = DefaultPrompt::default();
+        for k in keys {
+            match rl
+                .process_input_batch(&prompt, vec![Event::Key(*k)])
+                .expect("batch ok")
+            {
+                ControlFlow::Break(signal) => return Some(signal),
+                ControlFlow::Continue(()) => {}
+            }
+        }
+        None
+    }
+
+    /// `DefaultValidator` reads an unclosed `"` as incomplete, so `Enter` breaks
+    /// the line instead of submitting it and leaves the buffer inspectable.
+    #[cfg(feature = "helix")]
+    fn helix_engine_with_validator() -> Reedline {
+        let mut rl = Reedline::create()
+            .with_edit_mode(Box::<crate::Helix>::default())
+            .with_validator(Box::new(crate::DefaultValidator));
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl
+    }
+
+    // --- submitting from helix normal mode ---
+    //
+    // The resting cursor is a selection and outlives the `next_mode` flip to
+    // insert, so anything on the `Enter` path that opens with `delete_selection`
+    // eats the covered grapheme. `InsertNewline` does, which makes the incomplete
+    // branch the one that can observe it: a submitted buffer is cleared before
+    // anything can be asserted about it.
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_normal_submit_keeps_the_grapheme_under_the_cursor() {
+        let mut rl = helix_engine_with_validator();
+        let signal = drive_until_signal(
+            &mut rl,
+            &[
+                ch('"'),
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                key(KeyCode::Esc),
+                key(KeyCode::Enter),
+            ],
+        );
+        assert!(signal.is_none(), "incomplete input must not submit");
+        // Not `"ab\n`: the cursor rests *on* the `c`, which is not a selection
+        // the break should consume.
+        assert_eq!(rl.editor.get_buffer(), "\"abc\n");
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_normal_submit_breaks_at_the_cursor_not_past_it() {
+        let mut rl = helix_engine_with_validator();
+        // `hh` walks the caret back onto the `a`.
+        let signal = drive_until_signal(
+            &mut rl,
+            &[
+                ch('"'),
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                key(KeyCode::Esc),
+                ch('h'),
+                ch('h'),
+                key(KeyCode::Enter),
+            ],
+        );
+        assert!(signal.is_none(), "incomplete input must not submit");
+        // The head already sits past the covered `a`, so collapsing forward
+        // breaks there. A vi-style `MoveRight` would step one further and give
+        // `"ab\nc`; a plain deselect would land before it, at `"\nabc`.
+        assert_eq!(rl.editor.get_buffer(), "\"a\nbc");
+    }
+
+    /// Helix rests *on* the line terminator under `BlockOverNewline`, which vi
+    /// never does, so a break from there is a case vi's handling never answers.
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_normal_submit_breaks_from_a_terminator() {
+        let mut rl = helix_engine_with_validator();
+        let signal = drive_until_signal(
+            &mut rl,
+            &[
+                ch('"'),
+                ch('a'),
+                key(KeyCode::Esc),
+                key(KeyCode::Enter),
+                key(KeyCode::Esc),
+                key(KeyCode::Enter),
+            ],
+        );
+        assert!(signal.is_none(), "incomplete input must not submit");
+        assert_eq!(rl.editor.get_buffer(), "\"a\n\n");
+    }
+
+    /// The submitted path cannot assert on the buffer (it is cleared at 2464),
+    /// so pin it through the returned signal instead.
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_normal_submit_returns_the_whole_buffer() {
+        let mut rl = Reedline::create().with_edit_mode(Box::<crate::Helix>::default());
+        rl.painter.force_prompt_anchored_for_test(0);
+        let signal = drive_until_signal(
+            &mut rl,
+            &[
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                key(KeyCode::Esc),
+                key(KeyCode::Enter),
+            ],
+        );
+        match signal {
+            Some(Signal::Success(buffer)) => assert_eq!(buffer, "abc"),
+            other => panic!("expected a submitted buffer, got {other:?}"),
+        }
+    }
+
     #[test]
     #[cfg(feature = "helix")]
     fn with_edit_mode_builder_accepts_custom_helix_mode() {
