@@ -73,6 +73,8 @@ enum Op {
     Change,
     Yank,
     Replace(char),
+    /// `~`. Keeps the selection, like `Yank`, so a further op reuses the span.
+    Switchcase,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -431,6 +433,11 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
                 verb: Verb::SelectAll,
                 next_mode: None,
             }),
+            '~' => Outcome::Execute(Action {
+                count,
+                verb: Verb::OnSelection(Op::Switchcase),
+                next_mode: None,
+            }),
             // Insert at the line's first non-blank, append past its last
             // grapheme. Both collapse first: insert mode rests between
             // graphemes, so the block cursor must not survive the switch.
@@ -566,6 +573,7 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             }]),
             Op::Yank => ReedlineEvent::Edit(vec![EditCommand::CopySelection]),
             Op::Replace(ch) => ReedlineEvent::Edit(vec![EditCommand::ReplaceChar(ch)]),
+            Op::Switchcase => ReedlineEvent::Edit(vec![EditCommand::SwitchcaseSelection]),
         },
         Verb::Collapse(dir) => ReedlineEvent::Edit(vec![EditCommand::CollapseSelection(dir)]),
         // Only the first open seeks; the rest go *above* the blank line it just

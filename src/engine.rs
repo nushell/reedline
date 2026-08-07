@@ -2967,6 +2967,21 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_tilde_switches_case_and_keeps_the_selection() {
+        let mut rl = seam_engine(Box::<crate::Helix>::default());
+        drive_until_signal(&mut rl, &[ch('a'), ch('b'), key(KeyCode::Esc), ch('%')]);
+        assert_eq!(rl.editor.get_selection(), Some((0, 2)), "setup");
+
+        drive_until_signal(&mut rl, &[ch('~')]);
+        assert_eq!(rl.editor.get_buffer(), "AB");
+        // Still selected, so a second `~` acts on the same span.
+        assert_eq!(rl.editor.get_selection(), Some((0, 2)));
+        drive_until_signal(&mut rl, &[ch('~')]);
+        assert_eq!(rl.editor.get_buffer(), "ab");
+    }
+
     // --- `%`, `A`, `I` ---
 
     #[cfg(feature = "helix")]
