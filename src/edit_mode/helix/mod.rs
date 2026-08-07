@@ -56,6 +56,8 @@ enum Verb {
     Paste(Direction),
     /// Open a blank line below (`Forward`, `o`) or above (`Backward`, `O`).
     OpenLine(Direction),
+    /// `%`. Whole-buffer, so both edges move and no [`MotionTarget`] applies.
+    SelectAll,
     /// `x`. Selection-shaped rather than motion-shaped: it moves both edges,
     /// which no [`MotionTarget`] can express.
     SelectLine,
@@ -424,6 +426,24 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
                 verb: Verb::SelectLine,
                 next_mode: None,
             }),
+            '%' => Outcome::Execute(Action {
+                count,
+                verb: Verb::SelectAll,
+                next_mode: None,
+            }),
+            // Insert at the line's first non-blank, append past its last
+            // grapheme. Both collapse first: insert mode rests between
+            // graphemes, so the block cursor must not survive the switch.
+            'I' => Outcome::Execute(Action {
+                count,
+                verb: Verb::CollapsingMotion(MotionTarget::LineStartNonBlank),
+                next_mode: Some(HelixMode::Insert),
+            }),
+            'A' => Outcome::Execute(Action {
+                count,
+                verb: Verb::CollapsingMotion(MotionTarget::LineEdge(Direction::Forward)),
+                next_mode: Some(HelixMode::Insert),
+            }),
             'v' => match mode {
                 HelixMode::Normal => Outcome::Execute(Action {
                     count,
@@ -570,6 +590,7 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
         }]),
         // Each press grows the selection one line, thus a count is just the
         // command repeated: it re-reads the selection every time.
+        Verb::SelectAll => ReedlineEvent::Edit(vec![EditCommand::SelectAll]),
         Verb::SelectLine => action.repeated(EditCommand::SelectLine),
         Verb::Deselect => ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint]),
         Verb::ChangeMode => ReedlineEvent::None,

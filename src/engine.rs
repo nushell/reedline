@@ -2967,6 +2967,55 @@ mod tests {
         );
     }
 
+    // --- `%`, `A`, `I` ---
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_percent_selects_the_whole_buffer() {
+        let mut rl = seam_engine(Box::<crate::Helix>::default());
+        drive_until_signal(
+            &mut rl,
+            &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc), ch('%')],
+        );
+        assert_eq!(rl.editor.get_selection(), Some((0, 3)));
+    }
+
+    /// Appending has to land *past* the last grapheme: the block cursor rests on
+    /// it, while insert mode sits between graphemes.
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_capital_a_appends_past_the_last_grapheme() {
+        use crate::PromptHelixMode;
+
+        let mut rl = seam_engine(Box::<crate::Helix>::default());
+        drive_until_signal(
+            &mut rl,
+            &[ch(' '), ch('h'), ch('i'), key(KeyCode::Esc), ch('A')],
+        );
+        assert_eq!(rl.editor.insertion_point(), 3);
+        assert!(matches!(
+            rl.prompt_edit_mode(),
+            PromptEditMode::Helix(PromptHelixMode::Insert)
+        ));
+        // Typing lands at the end rather than one grapheme short.
+        drive_until_signal(&mut rl, &[ch('!')]);
+        assert_eq!(rl.editor.get_buffer(), " hi!");
+    }
+
+    /// The leading space is what separates this from a plain line start.
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_capital_i_inserts_at_the_first_non_blank() {
+        let mut rl = seam_engine(Box::<crate::Helix>::default());
+        drive_until_signal(
+            &mut rl,
+            &[ch(' '), ch('h'), ch('i'), key(KeyCode::Esc), ch('I')],
+        );
+        assert_eq!(rl.editor.insertion_point(), 1);
+        drive_until_signal(&mut rl, &[ch('!')]);
+        assert_eq!(rl.editor.get_buffer(), " !hi");
+    }
+
     #[test]
     #[cfg(feature = "helix")]
     fn with_edit_mode_builder_accepts_custom_helix_mode() {
