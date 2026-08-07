@@ -135,6 +135,33 @@ impl EditMode for Helix {
 }
 
 impl Helix {
+    /// Replace the insert-mode keybinding table, keeping the normal-mode
+    /// default.
+    ///
+    /// Layer onto the defaults rather than starting from
+    /// [`Keybindings::empty`]: the table is consulted before the state machine
+    /// runs, so an empty one silently drops every bound key.
+    ///
+    ///     # use reedline::{default_helix_insert_keybindings, Helix};
+    ///     let mut bindings = default_helix_insert_keybindings();
+    ///     // bindings.add_binding(..);
+    ///     let helix = Helix::default().with_insert_keybindings(bindings);
+    #[must_use]
+    pub fn with_insert_keybindings(mut self, keybindings: Keybindings) -> Self {
+        self.insert_keybindings = keybindings;
+        self
+    }
+
+    /// Replace the normal-mode keybinding table, keeping the insert-mode
+    /// default. Shared by normal and select mode, and consulted before the
+    /// state machine, so a binding here shadows the built-in key of the same
+    /// name.
+    #[must_use]
+    pub fn with_normal_keybindings(mut self, keybindings: Keybindings) -> Self {
+        self.normal_keybindings = keybindings;
+        self
+    }
+
     fn dispatch(&mut self, key: KeyEvent) -> ReedlineEvent {
         // Insert should never use this code-path.
         debug_assert!(self.mode != HelixMode::Insert);
