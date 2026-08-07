@@ -926,13 +926,21 @@ impl Painter {
     /// path answers for its own output rather than the caller reconstructing it:
     /// a large buffer prints line-skipped text, so the rows it occupies are not
     /// the rows the untrimmed buffer would.
+    ///
+    /// Also `None` when the row the cursor belongs on is past the bottom of the
+    /// screen. Text that fills the screen exactly leaves the deferred wrap
+    /// pointing at a row the terminal has not scrolled into existence yet, so
+    /// there is no position to move to: the terminal would clamp the move to the
+    /// first column of the bottom row, which is a whole row's travel from the
+    /// text. `RestorePosition` at least lands next to it.
     fn margin_cursor_row(&self, printed: &str) -> Option<u16> {
         let width = self.screen_width();
         if !ends_at_right_margin(printed, width) {
             return None;
         }
         let rows = estimate_required_lines(printed, width) as u16;
-        Some(self.prompt_start_row.last_known_row().saturating_add(rows))
+        let row = self.prompt_start_row.last_known_row().saturating_add(rows);
+        (row < self.screen_height()).then_some(row)
     }
 
     fn print_small_buffer(
@@ -1679,24 +1687,8 @@ mod tests {
     }
 
     fn capture_with_reservation(lines: &PromptLines) -> (String, u16) {
-        let mut p = Painter::new(W::capture());
-        p.terminal_size = (20, 10);
-        p.prompt_start_row.mark_verified(0);
-        p.prompt_height = 1;
-        p.repaint_buffer(
-            &TestPrompt,
-            lines,
-            PromptEditMode::Default,
-            None,
-            false,
-            &None,
-        )
-        .expect("repaint_buffer failed");
-        let reserved = p.last_required_lines;
-        (
-            String::from_utf8_lossy(p.stdout.captured()).into_owned(),
-            reserved,
-        )
+        let (out, reserved, _) = capture_with_mode(lines);
+        (out, reserved)
     }
 
     /// The three assertions below must hold *together*: two earlier fixes for
@@ -1755,16 +1747,20 @@ mod tests {
     /// emitted.
     ///
     /// 20x10 terminal, so `large_buffer` turns on past ~200 columns of content.
-    /// `"> "` is 2 columns, making `n == 218` and `n == 238` exact multiples.
+    /// The bulk has to sit *after* the cursor: content before it would push the
+    /// cursor to the bottom of the screen, where the margin is unreachable (see
+    /// [`a_paint_that_fills_the_screen_does_not_move_off_it`]) and this fix does
+    /// not apply. `"> "` is 2 columns, so `n == 38`, `58` and `78` are exact
+    /// multiples and `n == 37` is the off-margin control.
     #[rstest]
-    #[case(218, "")]
-    #[case(238, "")]
-    #[case(217, "XYZ")]
-    #[case(218, "XYZ")]
-    #[case(238, "XYZ")]
-    fn a_large_buffer_paint_pins_the_cursor_too(#[case] n: usize, #[case] after: &str) {
+    #[case(38)]
+    #[case(58)]
+    #[case(78)]
+    #[case(37)]
+    fn a_large_buffer_paint_pins_the_cursor_too(#[case] n: usize) {
         let before = "a".repeat(n);
-        let lines = make_lines("> ", "", "", &before, after);
+        let after = "y".repeat(220);
+        let lines = make_lines("> ", "", "", &before, &after);
         let (out, _reserved, large) = capture_with_mode(&lines);
         assert!(large, "n={n}: meant to exercise the large-buffer path");
 
@@ -1773,8 +1769,8 @@ mod tests {
         assert_eq!(
             (r1, c1, p1),
             (r2, c2, p2),
-            "n={n} after={after:?}: cursor depends on how DECSC treats the \
-             pending-wrap flag; emitted {out:?}"
+            "n={n}: cursor depends on how DECSC treats the pending-wrap flag; \
+             emitted {out:?}"
         );
     }
 
@@ -1848,6 +1844,33 @@ mod tests {
         // Asserted against each other rather than a literal: what a large buffer
         // puts on screen is a trimmed window, but it must not differ by terminal.
         assert_eq!(screen1, screen2, "screen depends on the DECSC convention");
+    }
+
+    /// Content that fills the screen exactly puts the deferred wrap on a row the
+    /// terminal has not scrolled into existence, so there is no row to move to.
+    /// Emitting the move anyway gets it clamped to the bottom row's first
+    /// column, which is further from the text than the save already was.
+    ///
+    /// 20x10 terminal, `"> "` is 2 columns, so `n == 198` fills all ten rows.
+    #[rstest]
+    #[case(198)]
+    #[case(218)]
+    #[case(238)]
+    fn a_paint_that_fills_the_screen_does_not_move_off_it(#[case] n: usize) {
+        let before = "a".repeat(n);
+        let lines = make_lines("> ", "", "", &before, "");
+        let (out, ..) = capture_with_mode(&lines);
+
+        // crossterm encodes MoveTo(0, row) as "\x1b[{row+1};1H"; rows 10 and up
+        // are off a ten-row screen.
+        for row in 10..=40u16 {
+            let escape = format!("\x1b[{};1H", row + 1);
+            assert!(
+                !out.contains(&escape),
+                "n={n}: moved the cursor to row {row} on a ten-row screen; \
+                 emitted {out:?}"
+            );
+        }
     }
 
     #[test]
