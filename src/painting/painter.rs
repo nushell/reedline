@@ -1550,17 +1550,34 @@ mod tests {
         }
     }
 
-    /// Paint once into a capture buffer and return the exact bytes emitted.
+    /// Paint once into a capture buffer, returning the exact bytes emitted, the
+    /// rows the paint reserved, and whether it took the large-buffer path.
+    ///
     /// `anchor_row` is the cached prompt-start row; it is marked verified so the
     /// painter takes the no-drift path and never queries the real terminal.
-    fn capture_repaint(prompt: &dyn Prompt, lines: &PromptLines, anchor_row: u16) -> String {
+    ///
+    /// `large_buffer` comes back so a case can assert it exercised the path it
+    /// meant to: it turns on at `required_lines >= screen_height`, which is a
+    /// buffer length rather than anything the caller states directly.
+    fn capture_repaint(lines: &PromptLines, anchor_row: u16) -> (String, u16, bool) {
         let mut p = Painter::new(W::capture());
         p.terminal_size = (20, 10);
         p.prompt_start_row.mark_verified(anchor_row);
         p.prompt_height = 1;
-        p.repaint_buffer(prompt, lines, PromptEditMode::Default, None, false, &None)
-            .expect("repaint_buffer failed");
-        String::from_utf8_lossy(p.stdout.captured()).into_owned()
+        p.repaint_buffer(
+            &TestPrompt,
+            lines,
+            PromptEditMode::Default,
+            None,
+            false,
+            &None,
+        )
+        .expect("repaint_buffer failed");
+        (
+            String::from_utf8_lossy(p.stdout.captured()).into_owned(),
+            p.last_required_lines,
+            p.large_buffer,
+        )
     }
 
     /// Replay `bytes` into a character grid, returning the final cursor, the
@@ -1657,36 +1674,6 @@ mod tests {
         (row, col, pending, max_written, screen)
     }
 
-    /// Same as [`capture_with_reservation`] but reports whether the paint took
-    /// the large-buffer path, so a case can assert it exercised the one it meant
-    /// to: `large_buffer` turns on at `required_lines >= screen_height`, which is
-    /// a buffer length rather than anything the caller states directly.
-    fn capture_with_mode(lines: &PromptLines) -> (String, u16, bool) {
-        let mut p = Painter::new(W::capture());
-        p.terminal_size = (20, 10);
-        p.prompt_start_row.mark_verified(0);
-        p.prompt_height = 1;
-        p.repaint_buffer(
-            &TestPrompt,
-            lines,
-            PromptEditMode::Default,
-            None,
-            false,
-            &None,
-        )
-        .expect("repaint_buffer failed");
-        (
-            String::from_utf8_lossy(p.stdout.captured()).into_owned(),
-            p.last_required_lines,
-            p.large_buffer,
-        )
-    }
-
-    fn capture_with_reservation(lines: &PromptLines) -> (String, u16) {
-        let (out, reserved, _) = capture_with_mode(lines);
-        (out, reserved)
-    }
-
     /// The three assertions below must hold *together*: two earlier fixes for
     /// this bug each satisfied some and broke another, so any one of them alone
     /// passes a broken painter.
@@ -1709,7 +1696,7 @@ mod tests {
     ) {
         let before = "a".repeat(n);
         let lines = make_lines("> ", "", "", &before, after);
-        let (out, reserved) = capture_with_reservation(&lines);
+        let (out, reserved, _) = capture_repaint(&lines, 0);
 
         let (r1, c1, p1, rows1, screen1) = replay(&out, 20, true);
         let (r2, c2, p2, rows2, screen2) = replay(&out, 20, false);
@@ -1757,7 +1744,7 @@ mod tests {
         let before = "a".repeat(n);
         let after = "y".repeat(220);
         let lines = make_lines("> ", "", "", &before, &after);
-        let (out, _reserved, large) = capture_with_mode(&lines);
+        let (out, _reserved, large) = capture_repaint(&lines, 0);
         assert!(large, "n={n}: meant to exercise the large-buffer path");
 
         let (r1, c1, p1, ..) = replay(&out, 20, true);
@@ -1785,7 +1772,7 @@ mod tests {
         // placed; the second is 20, landing the cursor on the margin.
         let left = format!("ab\n{}", "x".repeat(20));
         let lines = make_lines(&left, "", "R", "Z", "");
-        let (out, reserved, large) = capture_with_mode(&lines);
+        let (out, reserved, large) = capture_repaint(&lines, 0);
         assert!(!large, "meant to exercise the small-buffer path");
 
         let (r1, c1, p1, rows1, screen1) = replay(&out, 20, true);
@@ -1825,7 +1812,7 @@ mod tests {
         // height without adding rows before the cursor.
         let after = "y".repeat(200);
         let lines = make_lines(&left, "", "R", "Z", &after);
-        let (out, _reserved, large) = capture_with_mode(&lines);
+        let (out, _reserved, large) = capture_repaint(&lines, 0);
         assert!(large, "meant to exercise the large-buffer path");
 
         let (r1, c1, p1, _, screen1) = replay(&out, 20, true);
@@ -1855,7 +1842,7 @@ mod tests {
     fn a_paint_that_fills_the_screen_does_not_move_off_it(#[case] n: usize) {
         let before = "a".repeat(n);
         let lines = make_lines("> ", "", "", &before, "");
-        let (out, ..) = capture_with_mode(&lines);
+        let (out, ..) = capture_repaint(&lines, 0);
 
         // crossterm encodes MoveTo(0, row) as "\x1b[{row+1};1H"; rows 10 and up
         // are off a ten-row screen.
@@ -1877,7 +1864,7 @@ mod tests {
         // as "\x1b[J", so that contiguous pair is exactly the bug (#1062).
         // Deliberately coupled to crossterm's escape encoding — it's the
         // byte-level contract we care about.
-        let out = capture_repaint(&TestPrompt, &make_lines("> ", "", "RP", "hello", ""), 0);
+        let (out, ..) = capture_repaint(&make_lines("> ", "", "RP", "hello", ""), 0);
         assert!(
             !out.contains("\x1b[1;1H\x1b[J"),
             "erase-below at home cell (0,0) would make tmux snapshot the prompt to history; emitted: {out:?}"
@@ -1889,7 +1876,7 @@ mod tests {
         // Sanity: away from the home cell the plain MoveTo + erase-below is
         // correct (tmux is not triggered), so the workaround must not apply
         // there. MoveTo(0,3) == "\x1b[4;1H".
-        let out = capture_repaint(&TestPrompt, &make_lines("> ", "", "RP", "hello", ""), 3);
+        let (out, ..) = capture_repaint(&make_lines("> ", "", "RP", "hello", ""), 3);
         assert!(
             out.contains("\x1b[4;1H\x1b[J"),
             "expected an erase-below from the anchor row; emitted: {out:?}"
