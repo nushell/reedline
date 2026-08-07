@@ -62,11 +62,10 @@ pub(crate) fn estimate_required_lines(input: &str, screen_width: u16) -> usize {
 /// the size is unknown; return 0 in that case rather than dividing by
 /// zero (see #842).
 ///
-/// Dividing the width assumes glyphs pack a row exactly, which a
-/// double-width grapheme at the margin does not: see
-/// [`deferred_wrap_row`], which lays the same text out one grapheme at a
-/// time. Reserving a row too few or too many is recoverable, so the cheap
-/// model stays here; placing the cursor is not, so it uses the other one.
+/// Dividing assumes glyphs pack a row exactly, which a double-width
+/// grapheme at the margin does not. A reserved row too few or too many is
+/// recoverable, so the cheap model stays here; [`deferred_wrap_row`] pays
+/// for an exact one where the error would land on screen.
 ///
 /// FIXME: The zero-column guard below papers over a caller bug, it
 /// doesn't solve it. `menu::list_menu::ListMenu::menu_required_lines`
@@ -101,28 +100,20 @@ pub(crate) fn line_width(line: &str) -> usize {
 ///
 /// A terminal does not move to the next row when a glyph lands in the final
 /// column; it flags the cursor pending and only wraps once the next glyph
-/// arrives. Saving and restoring that state is ambiguous, since terminals
-/// disagree about whether DECSC/DECRC carry the flag, so the caller has to
+/// arrives. Terminals disagree about whether DECSC/DECRC carry that flag, so a
+/// save taken there restores to either side of the margin and the caller has to
 /// place the cursor absolutely instead. Returns how many rows past the start of
-/// the run that row is, or `None` when the run ends off the margin and
-/// `RestorePosition` is already unambiguous.
+/// the run that row is, or `None` off the margin, where restoring is already
+/// unambiguous. `pieces` are laid out end to end, since the walk is a fold and
+/// never looks backwards.
 ///
-/// `pieces` are laid out end to end, so a caller can hand over the parts it
-/// printed without joining them: the walk is a fold and never looks backwards.
-///
-/// Laid out one grapheme at a time rather than by dividing the run's width,
-/// because the two disagree: a double-width grapheme with a single column left
-/// cannot be split, so the terminal leaves that column blank and wraps early.
-/// Division would report a 42-column run on a 21-column terminal as two exact
-/// rows ending on the margin, when the terminal has actually wrapped twice and
-/// left the cursor mid-row. That is the difference between restoring the cursor
-/// and moving it somewhere it never was.
-///
-/// [`estimate_required_lines`] and friends still divide, and deliberately: they
-/// answer how many rows to reserve, where being off by one costs a wasted row
-/// or an extra erase, while this answers which cell the cursor occupies, where
-/// being off by one is on screen. The two only disagree on wide graphemes, so
-/// the cheap model stays where its error is recoverable.
+/// Counted a grapheme at a time rather than by dividing the run's width, which
+/// [`estimate_required_lines`] and friends still do. A double-width grapheme
+/// with one column left cannot be split, so the terminal blanks that column and
+/// wraps early: division reads a 42-column run on a 21-column terminal as two
+/// exact rows ending on the margin, when the terminal needs three and leaves
+/// the cursor mid-row. That is the difference between restoring the cursor and
+/// moving it somewhere it never was.
 pub(crate) fn deferred_wrap_row<'a>(
     pieces: impl IntoIterator<Item = &'a str>,
     terminal_columns: u16,
@@ -208,17 +199,12 @@ mod test {
         assert_eq!(deferred_wrap_row([printed], columns), expected);
     }
 
-    /// A double-width grapheme cannot straddle the margin: with one column left
-    /// the terminal blanks it and wraps early, so the run occupies more rows
-    /// than its width divided by the terminal's, and lands off the margin where
-    /// division says it lands on one.
-    ///
-    /// On 21 columns each row fits ten `あ` with a column to spare, so the
-    /// eleventh starts a row and only a multiple of ten ever reaches a margin
-    /// (at column 20 of 21 — never, since 20 < 21).
+    /// Wide graphemes only diverge from division when the width leaves an odd
+    /// column for one to straddle. The even-width cases pin down the agreement,
+    /// the rest are what a revert to division would break.
     #[rstest]
-    // 42 columns of text on a 21-column terminal: division says two exact rows
-    // ending on the margin, the terminal says three rows ending at column 2.
+    // 42 columns on a 21-column terminal: division reads two exact rows ending
+    // on the margin, the terminal needs three and ends at column 2.
     #[case(&"あ".repeat(21), 21, None)]
     #[case(&"あ".repeat(10), 21, None)]
     // An even width divides evenly, so wide graphemes do reach the margin.

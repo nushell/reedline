@@ -843,10 +843,10 @@ impl Painter {
         None
     }
 
-    /// `printed_before` is the text this paint put on screen ahead of the save
-    /// below, which is what decides whether that save landed on the margin. It
-    /// arrives unjoined and is only walked past the early return, so a paint
-    /// with no right prompt pays nothing for it.
+    /// `printed_before` is what this paint put on screen ahead of the save
+    /// below, which decides whether that save landed on the margin. It is only
+    /// walked past the early return, so a paint with no right prompt pays
+    /// nothing for it.
     fn print_right_prompt<'a>(
         &mut self,
         lines: &PromptLines,
@@ -876,12 +876,8 @@ impl Painter {
         self.queue_cursor_placement(margin_row)
     }
 
-    /// Put the cursor back where the paint left it, given the row
-    /// [`Self::margin_cursor_row`] decided on.
-    ///
-    /// `SavePosition` may have recorded a deferred wrap, which restores to
-    /// either side of the margin depending on the terminal, so on the margin the
-    /// cursor is placed absolutely instead of restored.
+    /// Put the cursor back where the paint left it: absolutely on the margin,
+    /// where the save is ambiguous, and by restoring it everywhere else.
     fn queue_cursor_placement(&mut self, margin_row: Option<u16>) -> Result<()> {
         match margin_row {
             Some(row) => self.stdout.queue(MoveTo(0, row))?,
@@ -928,21 +924,18 @@ impl Painter {
         Ok(())
     }
 
-    /// The absolute row the cursor must be moved to, when `printed` (the text
-    /// this paint actually emitted before the cursor, in the order it was
-    /// emitted) ends at the right margin.
+    /// The absolute row the cursor must be moved to, when `printed` (what this
+    /// paint emitted before the cursor, in order) ends at the right margin.
     ///
     /// `None` off the margin, where `RestorePosition` is unambiguous. Each print
     /// path answers for its own output rather than the caller reconstructing it:
     /// a large buffer prints line-skipped text, so the rows it occupies are not
     /// the rows the untrimmed buffer would.
     ///
-    /// Also `None` when the row the cursor belongs on is past the bottom of the
-    /// screen. Text that fills the screen exactly leaves the deferred wrap
-    /// pointing at a row the terminal has not scrolled into existence yet, so
-    /// there is no position to move to: the terminal would clamp the move to the
-    /// first column of the bottom row, which is a whole row's travel from the
-    /// text. `RestorePosition` at least lands next to it.
+    /// Also `None` past the bottom of the screen: text filling it exactly points
+    /// the deferred wrap at a row the terminal has not scrolled into existence,
+    /// and a move there gets clamped to the bottom row's first column, a whole
+    /// row from the text. Restoring at least lands next to it.
     fn margin_cursor_row<'a>(&self, printed: impl IntoIterator<Item = &'a str>) -> Option<u16> {
         let rows = deferred_wrap_row(printed, self.screen_width())?;
         let row = self.prompt_start_row.last_known_row().saturating_add(rows);
@@ -1553,15 +1546,13 @@ mod tests {
         }
     }
 
-    /// Paint once into a capture buffer, returning the exact bytes emitted, the
-    /// rows the paint reserved, and whether it took the large-buffer path.
+    /// Paint once into a capture buffer, returning the bytes emitted, the rows
+    /// the paint reserved, and whether it took the large-buffer path.
     ///
-    /// `anchor_row` is the cached prompt-start row; it is marked verified so the
-    /// painter takes the no-drift path and never queries the real terminal.
-    ///
-    /// `large_buffer` comes back so a case can assert it exercised the path it
-    /// meant to: it turns on at `required_lines >= screen_height`, which is a
-    /// buffer length rather than anything the caller states directly.
+    /// `anchor_row` is marked verified so the painter takes the no-drift path
+    /// and never queries the real terminal. `large_buffer` comes back so a case
+    /// can assert it exercised the path it meant to, since it turns on at
+    /// `required_lines >= screen_height` rather than at anything stated here.
     fn capture_repaint(lines: &PromptLines, anchor_row: u16) -> (String, u16, bool) {
         let mut p = Painter::new(W::capture());
         p.terminal_size = (20, 10);
@@ -1589,13 +1580,10 @@ mod tests {
         /// Row, column, and whether a wrap is deferred. Compared as a unit,
         /// since a cursor that agrees on two of the three is still ambiguous.
         cursor: (u16, u16, bool),
-        /// The highest row a glyph actually reached, to check against the rows
-        /// the paint reserved.
+        /// The highest row a glyph reached, to check against the rows reserved.
         max_written: u16,
-        /// The rendered screen: rows right-trimmed and concatenated, with no
-        /// separator, so a case can state the text it expects without also
-        /// stating where it wrapped. Row structure is covered by `cursor` and
-        /// `max_written` rather than here.
+        /// Rows right-trimmed and concatenated with no separator, so a case can
+        /// state the text it expects without also stating where it wrapped.
         screen: String,
     }
 
@@ -1741,17 +1729,14 @@ mod tests {
         );
     }
 
-    /// The same three invariants on the large-buffer path, which prints
-    /// line-skipped text: the rows it puts on screen are not the rows the whole
-    /// buffer would need, so the margin has to be judged from what was actually
-    /// emitted.
+    /// The large-buffer path prints line-skipped text, so the margin has to be
+    /// judged from what was emitted rather than from the whole buffer.
     ///
-    /// 20x10 terminal, so `large_buffer` turns on past ~200 columns of content.
-    /// The bulk has to sit *after* the cursor: content before it would push the
-    /// cursor to the bottom of the screen, where the margin is unreachable (see
-    /// [`a_paint_that_fills_the_screen_does_not_move_off_it`]) and this fix does
-    /// not apply. `"> "` is 2 columns, so `n == 38`, `58` and `78` are exact
-    /// multiples and `n == 37` is the off-margin control.
+    /// The bulk sits *after* the cursor deliberately: on this 20x10 terminal the
+    /// ~200 columns that turn `large_buffer` on would, placed before the cursor,
+    /// also fill the screen and put the margin out of reach (see
+    /// [`a_paint_that_fills_the_screen_does_not_move_off_it`]). `n == 37` is the
+    /// off-margin control.
     #[rstest]
     #[case(38)]
     #[case(58)]
@@ -1783,8 +1768,7 @@ mod tests {
     /// fills the width, which is exactly when the save happens on the margin.
     #[test]
     fn a_right_prompt_paint_pins_the_cursor_too() {
-        // 20-column terminal. First line is 2 columns so the right prompt is
-        // placed; the second is 20, landing the cursor on the margin.
+        // 20 columns: a 2-column first line, a second that fills the width.
         let left = format!("ab\n{}", "x".repeat(20));
         let lines = make_lines(&left, "", "R", "Z", "");
         let (out, reserved, large) = capture_repaint(&lines, 0);
