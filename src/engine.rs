@@ -2982,6 +2982,23 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "ab");
     }
 
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_backtick_lowercases_and_alt_backtick_uppercases() {
+        let alt_backtick = KeyEvent::new(KeyCode::Char('`'), KeyModifiers::ALT);
+
+        let mut rl = seam_engine(Box::<crate::Helix>::default());
+        drive_until_signal(&mut rl, &[ch('A'), ch('b'), key(KeyCode::Esc), ch('%')]);
+        assert_eq!(rl.editor.get_selection(), Some((0, 2)), "setup");
+
+        drive_until_signal(&mut rl, &[ch('`')]);
+        assert_eq!(rl.editor.get_buffer(), "ab");
+        drive_until_signal(&mut rl, &[alt_backtick]);
+        assert_eq!(rl.editor.get_buffer(), "AB");
+        // Both keep the span, so they can be applied in sequence.
+        assert_eq!(rl.editor.get_selection(), Some((0, 2)));
+    }
+
     // --- `%`, `A`, `I` ---
 
     #[cfg(feature = "helix")]

@@ -38,6 +38,13 @@ pub fn default_helix_normal_keybindings() -> Keybindings {
         KeyCode::Char('d'),
         edit_bind(EditCommand::EraseSelection),
     );
+    // Uppercase is the Alt-modified backtick; plain backtick lowercases and is
+    // typeable, so the state machine takes that one.
+    kb.add_binding(
+        KeyModifiers::ALT,
+        KeyCode::Char('`'),
+        edit_bind(EditCommand::UppercaseSelection),
+    );
 
     kb
 }

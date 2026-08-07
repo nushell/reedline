@@ -75,6 +75,8 @@ enum Op {
     Replace(char),
     /// `~`. Keeps the selection, like `Yank`, so a further op reuses the span.
     Switchcase,
+    /// `` ` ``. Keeps the selection, as `Switchcase` does.
+    Lowercase,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -318,7 +320,8 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
 /// `count` stays `Option` so a typed `1` is distinguishable from no count;
 /// only the goto prefix cares.
 fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
-    // reject any non typeable char, this has to be changed when Alt-d is introduced
+    // Reject any non-typeable char. Alt-modified keys reach the keybinding table
+    // in `dispatch` instead, which is where `Alt-d` and ``Alt-` `` are bound.
     if let KeyCode::Char(_) = key.code {
         if !is_typeable(key.modifiers) {
             return Outcome::Reject;
@@ -436,6 +439,11 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
             '~' => Outcome::Execute(Action {
                 count,
                 verb: Verb::OnSelection(Op::Switchcase),
+                next_mode: None,
+            }),
+            '`' => Outcome::Execute(Action {
+                count,
+                verb: Verb::OnSelection(Op::Lowercase),
                 next_mode: None,
             }),
             // Insert at the line's first non-blank, append past its last
@@ -574,6 +582,7 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             Op::Yank => ReedlineEvent::Edit(vec![EditCommand::CopySelection]),
             Op::Replace(ch) => ReedlineEvent::Edit(vec![EditCommand::ReplaceChar(ch)]),
             Op::Switchcase => ReedlineEvent::Edit(vec![EditCommand::SwitchcaseSelection]),
+            Op::Lowercase => ReedlineEvent::Edit(vec![EditCommand::LowercaseSelection]),
         },
         Verb::Collapse(dir) => ReedlineEvent::Edit(vec![EditCommand::CollapseSelection(dir)]),
         // Only the first open seeks; the rest go *above* the blank line it just
