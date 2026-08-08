@@ -97,6 +97,15 @@ impl Action {
     }
 }
 
+/// Shorthand for the `Outcome::Execute(Action { .. })` arms of the key tables.
+fn exec(count: usize, verb: Verb, next_mode: Option<HelixMode>) -> Outcome {
+    Outcome::Execute(Action {
+        count,
+        verb,
+        next_mode,
+    })
+}
+
 /// This parses incoming input `Event`s like a Helix/Kakoune-style editor: motions are
 /// selection first, lowered onto the editor's [`MotionTarget`](crate::MotionTarget) verb vocabulary.
 #[derive(Debug, Clone)]
@@ -243,7 +252,7 @@ impl Helix {
         }
         match key.code {
             KeyCode::Enter if key.modifiers == KeyModifiers::NONE => ReedlineEvent::Enter,
-            KeyCode::Char(ch) if is_typed_char(key.modifiers) => {
+            KeyCode::Char(ch) if is_text_char(key.modifiers) => {
                 ReedlineEvent::Edit(vec![EditCommand::InsertChar(ch)])
             }
             _ => ReedlineEvent::None,
@@ -265,51 +274,47 @@ impl Default for Helix {
 /// Complete a pending sequence
 fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
     let ch = match key.code {
-        KeyCode::Char(ch) if is_typed_char(key.modifiers) => ch,
+        KeyCode::Char(ch) if is_text_char(key.modifiers) => ch,
         _ => return Outcome::Reject,
     };
 
     match pending {
-        Pending::Find { direction, stop } => Outcome::Execute(Action {
+        Pending::Find { direction, stop } => exec(
             count,
-            verb: Verb::SelectingMotion(MotionTarget::Find {
+            Verb::SelectingMotion(MotionTarget::Find {
                 ch,
                 direction,
                 stop,
             }),
-            next_mode: None,
-        }),
-        Pending::Replace => Outcome::Execute(Action {
-            count,
-            verb: Verb::OnSelection(Op::Replace(ch)),
-            next_mode: None,
-        }),
+            None,
+        ),
+        Pending::Replace => exec(count, Verb::OnSelection(Op::Replace(ch)), None),
         Pending::Goto => match ch {
-            'h' => Outcome::Execute(Action {
+            'h' => exec(
                 count,
-                verb: Verb::CollapsingMotion(MotionTarget::LineEdge(Direction::Backward)),
-                next_mode: None,
-            }),
-            'l' => Outcome::Execute(Action {
+                Verb::CollapsingMotion(MotionTarget::LineEdge(Direction::Backward)),
+                None,
+            ),
+            'l' => exec(
                 count,
-                verb: Verb::CollapsingMotion(MotionTarget::LineEdge(Direction::Forward)),
-                next_mode: None,
-            }),
-            'g' => Outcome::Execute(Action {
+                Verb::CollapsingMotion(MotionTarget::LineEdge(Direction::Forward)),
+                None,
+            ),
+            'g' => exec(
                 count,
-                verb: Verb::CollapsingMotion(MotionTarget::BufferEdge(Direction::Backward)),
-                next_mode: None,
-            }),
-            'e' => Outcome::Execute(Action {
+                Verb::CollapsingMotion(MotionTarget::BufferEdge(Direction::Backward)),
+                None,
+            ),
+            'e' => exec(
                 count,
-                verb: Verb::CollapsingMotion(MotionTarget::BufferEdge(Direction::Forward)),
-                next_mode: None,
-            }),
-            's' => Outcome::Execute(Action {
+                Verb::CollapsingMotion(MotionTarget::BufferEdge(Direction::Forward)),
+                None,
+            ),
+            's' => exec(
                 count,
-                verb: Verb::CollapsingMotion(MotionTarget::LineStartNonBlank),
-                next_mode: None,
-            }),
+                Verb::CollapsingMotion(MotionTarget::LineStartNonBlank),
+                None,
+            ),
             _ => Outcome::Reject,
         },
     }
@@ -323,7 +328,7 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
     // Reject any non-typeable char. Alt-modified keys reach the keybinding table
     // in `dispatch` instead, which is where `Alt-d` and ``Alt-` `` are bound.
     if let KeyCode::Char(_) = key.code {
-        if !is_typeable(key.modifiers) {
+        if !is_plain_char(key.modifiers) {
             return Outcome::Reject;
         }
     }
@@ -352,199 +357,143 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
                 stop: FindStop::Before,
             }),
             'r' => Outcome::Absorb(Pending::Replace),
-            'w' => Outcome::Execute(Action {
+            'w' => exec(
                 count,
-                verb: Verb::SelectingMotion(MotionTarget::Word {
+                Verb::SelectingMotion(MotionTarget::Word {
                     kind: crate::WordKind::Word,
                     edge: WordEdge::Start,
                     direction: Direction::Forward,
                 }),
-                next_mode: None,
-            }),
-            'b' => Outcome::Execute(Action {
+                None,
+            ),
+            'b' => exec(
                 count,
-                verb: Verb::SelectingMotion(MotionTarget::Word {
+                Verb::SelectingMotion(MotionTarget::Word {
                     kind: crate::WordKind::Word,
                     edge: WordEdge::Start,
                     direction: Direction::Backward,
                 }),
-                next_mode: None,
-            }),
-            'e' => Outcome::Execute(Action {
+                None,
+            ),
+            'e' => exec(
                 count,
-                verb: Verb::SelectingMotion(MotionTarget::Word {
+                Verb::SelectingMotion(MotionTarget::Word {
                     kind: crate::WordKind::Word,
                     edge: WordEdge::End,
                     direction: Direction::Forward,
                 }),
-                next_mode: None,
-            }),
-            'W' => Outcome::Execute(Action {
+                None,
+            ),
+            'W' => exec(
                 count,
-                verb: Verb::SelectingMotion(MotionTarget::Word {
+                Verb::SelectingMotion(MotionTarget::Word {
                     kind: crate::WordKind::LongWord,
                     edge: WordEdge::Start,
                     direction: Direction::Forward,
                 }),
-                next_mode: None,
-            }),
-            'B' => Outcome::Execute(Action {
+                None,
+            ),
+            'B' => exec(
                 count,
-                verb: Verb::SelectingMotion(MotionTarget::Word {
+                Verb::SelectingMotion(MotionTarget::Word {
                     kind: crate::WordKind::LongWord,
                     edge: WordEdge::Start,
                     direction: Direction::Backward,
                 }),
-                next_mode: None,
-            }),
-            'E' => Outcome::Execute(Action {
+                None,
+            ),
+            'E' => exec(
                 count,
-                verb: Verb::SelectingMotion(MotionTarget::Word {
+                Verb::SelectingMotion(MotionTarget::Word {
                     kind: crate::WordKind::LongWord,
                     edge: WordEdge::End,
                     direction: Direction::Forward,
                 }),
-                next_mode: None,
-            }),
-            'l' => Outcome::Execute(Action {
+                None,
+            ),
+            'l' => exec(
                 count,
-                verb: Verb::CollapsingMotion(MotionTarget::Grapheme(Direction::Forward)),
-                next_mode: None,
-            }),
-            'h' => Outcome::Execute(Action {
+                Verb::CollapsingMotion(MotionTarget::Grapheme(Direction::Forward)),
+                None,
+            ),
+            'h' => exec(
                 count,
-                verb: Verb::CollapsingMotion(MotionTarget::Grapheme(Direction::Backward)),
-                next_mode: None,
-            }),
-            'j' => Outcome::Execute(Action {
-                count,
-                verb: Verb::LineOrHistory(Direction::Forward),
-                next_mode: None,
-            }),
-            'k' => Outcome::Execute(Action {
-                count,
-                verb: Verb::LineOrHistory(Direction::Backward),
-                next_mode: None,
-            }),
-            'x' => Outcome::Execute(Action {
-                count,
-                verb: Verb::SelectLine,
-                next_mode: None,
-            }),
-            '%' => Outcome::Execute(Action {
-                count,
-                verb: Verb::SelectAll,
-                next_mode: None,
-            }),
-            '~' => Outcome::Execute(Action {
-                count,
-                verb: Verb::OnSelection(Op::Switchcase),
-                next_mode: None,
-            }),
-            '`' => Outcome::Execute(Action {
-                count,
-                verb: Verb::OnSelection(Op::Lowercase),
-                next_mode: None,
-            }),
+                Verb::CollapsingMotion(MotionTarget::Grapheme(Direction::Backward)),
+                None,
+            ),
+            'j' => exec(count, Verb::LineOrHistory(Direction::Forward), None),
+            'k' => exec(count, Verb::LineOrHistory(Direction::Backward), None),
+            'x' => exec(count, Verb::SelectLine, None),
+            '%' => exec(count, Verb::SelectAll, None),
+            '~' => exec(count, Verb::OnSelection(Op::Switchcase), None),
+            '`' => exec(count, Verb::OnSelection(Op::Lowercase), None),
             // Insert at the line's first non-blank, append past its last
             // grapheme. Both collapse first: insert mode rests between
             // graphemes, so the block cursor must not survive the switch.
-            'I' => Outcome::Execute(Action {
+            'I' => exec(
                 count,
-                verb: Verb::CollapsingMotion(MotionTarget::LineStartNonBlank),
-                next_mode: Some(HelixMode::Insert),
-            }),
-            'A' => Outcome::Execute(Action {
+                Verb::CollapsingMotion(MotionTarget::LineStartNonBlank),
+                Some(HelixMode::Insert),
+            ),
+            'A' => exec(
                 count,
-                verb: Verb::CollapsingMotion(MotionTarget::LineEdge(Direction::Forward)),
-                next_mode: Some(HelixMode::Insert),
-            }),
+                Verb::CollapsingMotion(MotionTarget::LineEdge(Direction::Forward)),
+                Some(HelixMode::Insert),
+            ),
             'v' => match mode {
-                HelixMode::Normal => Outcome::Execute(Action {
-                    count,
-                    verb: Verb::ChangeMode,
-                    next_mode: Some(HelixMode::Select),
-                }),
-                HelixMode::Select => Outcome::Execute(Action {
-                    count,
-                    verb: Verb::ChangeMode,
-                    next_mode: Some(HelixMode::Normal),
-                }),
+                HelixMode::Normal => exec(count, Verb::ChangeMode, Some(HelixMode::Select)),
+                HelixMode::Select => exec(count, Verb::ChangeMode, Some(HelixMode::Normal)),
                 _ => Outcome::Reject,
             },
-            'i' => Outcome::Execute(Action {
+            'i' => exec(
                 count,
-                verb: Verb::Collapse(Direction::Backward),
-                next_mode: Some(HelixMode::Insert),
-            }),
-            'a' => Outcome::Execute(Action {
+                Verb::Collapse(Direction::Backward),
+                Some(HelixMode::Insert),
+            ),
+            'a' => exec(
                 count,
-                verb: Verb::Collapse(Direction::Forward),
-                next_mode: Some(HelixMode::Insert),
-            }),
-            'd' => Outcome::Execute(Action {
+                Verb::Collapse(Direction::Forward),
+                Some(HelixMode::Insert),
+            ),
+            'd' => exec(count, Verb::OnSelection(Op::Cut), Some(HelixMode::Normal)),
+            'c' => exec(
                 count,
-                verb: Verb::OnSelection(Op::Cut),
-                next_mode: Some(HelixMode::Normal),
-            }),
-            'c' => Outcome::Execute(Action {
+                Verb::OnSelection(Op::Change),
+                Some(HelixMode::Insert),
+            ),
+            'y' => exec(count, Verb::OnSelection(Op::Yank), Some(HelixMode::Normal)),
+            'o' => exec(
                 count,
-                verb: Verb::OnSelection(Op::Change),
-                next_mode: Some(HelixMode::Insert),
-            }),
-            'y' => Outcome::Execute(Action {
+                Verb::OpenLine(Direction::Forward),
+                Some(HelixMode::Insert),
+            ),
+            'O' => exec(
                 count,
-                verb: Verb::OnSelection(Op::Yank),
-                next_mode: Some(HelixMode::Normal),
-            }),
-            'o' => Outcome::Execute(Action {
+                Verb::OpenLine(Direction::Backward),
+                Some(HelixMode::Insert),
+            ),
+            'u' => exec(count, Verb::Undo, None),
+            'U' => exec(count, Verb::Redo, None),
+            'p' => exec(
                 count,
-                verb: Verb::OpenLine(Direction::Forward),
-                next_mode: Some(HelixMode::Insert),
-            }),
-            'O' => Outcome::Execute(Action {
+                Verb::Paste(Direction::Forward),
+                Some(HelixMode::Normal),
+            ),
+            'P' => exec(
                 count,
-                verb: Verb::OpenLine(Direction::Backward),
-                next_mode: Some(HelixMode::Insert),
-            }),
-            'u' => Outcome::Execute(Action {
-                count,
-                verb: Verb::Undo,
-                next_mode: None,
-            }),
-            'U' => Outcome::Execute(Action {
-                count,
-                verb: Verb::Redo,
-                next_mode: None,
-            }),
-            'p' => Outcome::Execute(Action {
-                count,
-                verb: Verb::Paste(Direction::Forward),
-                next_mode: Some(HelixMode::Normal),
-            }),
-            'P' => Outcome::Execute(Action {
-                count,
-                verb: Verb::Paste(Direction::Backward),
-                next_mode: Some(HelixMode::Normal),
-            }),
+                Verb::Paste(Direction::Backward),
+                Some(HelixMode::Normal),
+            ),
             _ => Outcome::Reject,
         },
-        KeyCode::Enter => Outcome::Execute(Action {
-            count,
-            verb: Verb::Submit,
-            next_mode: Some(HelixMode::Insert),
-        }),
+        KeyCode::Enter => exec(count, Verb::Submit, Some(HelixMode::Insert)),
+        // Esc deviates from helix, which keeps the selection in normal mode:
+        // the single engine-level `Esc` event both dismisses menus and clears
+        // the selection, and with `;` not yet bound it is also the only way to
+        // drop a selection.
         KeyCode::Esc => match mode {
-            HelixMode::Normal => Outcome::Execute(Action {
-                count,
-                verb: Verb::Deselect,
-                next_mode: None,
-            }),
-            HelixMode::Select => Outcome::Execute(Action {
-                count,
-                verb: Verb::ChangeMode,
-                next_mode: Some(HelixMode::Normal),
-            }),
+            HelixMode::Normal => exec(count, Verb::Deselect, None),
+            HelixMode::Select => exec(count, Verb::ChangeMode, Some(HelixMode::Normal)),
             HelixMode::Insert => Outcome::Reject,
         },
         _ => Outcome::Reject,
@@ -572,11 +521,9 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
         },
         Verb::OnSelection(op) => match op {
             // Helix has no linewise register: `d` and `c` cut exactly the
-            // selection, whatever it spans.
-            Op::Cut => ReedlineEvent::Edit(vec![EditCommand::CutSelection {
-                granularity: Granularity::CharWise,
-            }]),
-            Op::Change => ReedlineEvent::Edit(vec![EditCommand::CutSelection {
+            // selection, whatever it spans. They differ only in `next_mode`,
+            // which `interpret` already set.
+            Op::Cut | Op::Change => ReedlineEvent::Edit(vec![EditCommand::CutSelection {
                 granularity: Granularity::CharWise,
             }]),
             Op::Yank => ReedlineEvent::Edit(vec![EditCommand::CopySelection]),
@@ -657,14 +604,17 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
     }
 }
 
-fn is_typeable(modifiers: KeyModifiers) -> bool {
+/// A bare or shifted keypress — the only chords that act as normal-mode
+/// commands. Anything else (Ctrl/Alt chords) belongs to the keybinding table.
+fn is_plain_char(modifiers: KeyModifiers) -> bool {
     modifiers == KeyModifiers::NONE || modifiers == KeyModifiers::SHIFT
 }
 
-/// Modifier sets under which a `KeyCode::Char` is *typed text* (data), not a chord
-fn is_typed_char(modifiers: KeyModifiers) -> bool {
-    modifiers == KeyModifiers::NONE
-        || modifiers == KeyModifiers::SHIFT
+/// Modifier sets under which a `KeyCode::Char` is *typed text* (data), not a
+/// chord: everything [`is_plain_char`] accepts, plus the Ctrl-Alt combinations
+/// some terminals report for AltGr.
+fn is_text_char(modifiers: KeyModifiers) -> bool {
+    is_plain_char(modifiers)
         || modifiers == KeyModifiers::CONTROL | KeyModifiers::ALT
         || modifiers == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
 }
@@ -1284,7 +1234,7 @@ mod test {
     fn undo_redo_lower_to_bare_edits(#[case] c: char, #[case] expected: EditCommand) {
         // `next_mode` is None, so these must escape the repaint wrap in `lower`:
         // no mode indicator changed, and an `Edit` repaints on its own. `U`
-        // arrives with SHIFT, which `is_typeable` accepts.
+        // arrives with SHIFT, which `is_plain_char` accepts.
         let mut helix = normal();
         assert_eq!(
             helix.parse_event(chr(c)),
