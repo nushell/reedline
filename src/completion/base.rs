@@ -152,6 +152,12 @@ impl CompletionResult {
     pub fn is_pending(&self) -> bool {
         matches!(self, CompletionResult::Pending)
     }
+
+    /// Whether a later result may still supersede this one: either nothing has
+    /// arrived yet, or what arrived was computed against a different line.
+    pub fn is_provisional(&self) -> bool {
+        !matches!(self, CompletionResult::Fresh { .. })
+    }
 }
 
 /// Vitality of a completer's background work, grabbed by the engine once per

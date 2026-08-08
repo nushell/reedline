@@ -75,6 +75,9 @@ pub struct ColumnarMenu {
     /// yet. While set, the menu draws nothing rather than a premature
     /// "NO RECORDS FOUND" (which is reserved for a settled, genuinely empty result).
     awaiting_results: bool,
+    /// Whether the displayed values may still be superseded. Implied by
+    /// `awaiting_results`, but also set when stale values *are* on screen.
+    provisional_results: bool,
     /// Column position
     col_pos: u16,
     /// row position in the menu. Starts from 0
@@ -98,6 +101,7 @@ impl Default for ColumnarMenu {
             working_details: ColumnDetails::default(),
             completions: CompletionDisplay::default(),
             awaiting_results: false,
+            provisional_results: false,
             col_pos: 0,
             row_pos: 0,
             skip_rows: 0,
@@ -637,6 +641,7 @@ impl Menu for ColumnarMenu {
 
         let (result, base_ranges) = completer.complete_with_base_ranges(&input, pos);
         self.awaiting_results = result.is_pending();
+        self.provisional_results = result.is_provisional();
         if let Some(completions) = CompletionDisplay::from_result(result, &base_ranges, editor) {
             self.completions = completions;
             self.reset_position();
@@ -672,6 +677,10 @@ impl Menu for ColumnarMenu {
     /// Gets values from filler that will be displayed in the menu
     fn get_values(&self) -> &[Suggestion] {
         self.completions.suggestions()
+    }
+
+    fn results_are_provisional(&self) -> bool {
+        self.provisional_results
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {

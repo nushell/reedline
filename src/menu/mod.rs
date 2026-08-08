@@ -187,6 +187,18 @@ pub trait Menu: Send {
 
     /// Gets cached values from menu that will be displayed
     fn get_values(&self) -> &[Suggestion];
+
+    /// Whether the values currently held may still be superseded, because the
+    /// last request came back [`Pending`](crate::CompletionResult::Pending) or
+    /// [`Stale`](crate::CompletionResult::Stale).
+    ///
+    /// Such values display and navigate normally, but nothing final may be
+    /// decided from them: a lone stale suggestion cannot be accepted, since its
+    /// span belongs to another line.
+    fn results_are_provisional(&self) -> bool {
+        false
+    }
+
     /// Sets the position of the cursor (currently only required by the IDE menu)
     fn set_cursor_pos(&mut self, _pos: (u16, u16)) {
         // empty implementation to make it optional
@@ -608,6 +620,10 @@ impl Menu for ReedlineMenu {
 
     fn get_values(&self) -> &[Suggestion] {
         self.as_ref().get_values()
+    }
+
+    fn results_are_provisional(&self) -> bool {
+        self.as_ref().results_are_provisional()
     }
 
     fn set_cursor_pos(&mut self, pos: (u16, u16)) {

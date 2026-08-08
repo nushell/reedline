@@ -147,6 +147,9 @@ pub struct IdeMenu {
     /// yet. While set, the menu draws nothing rather than a premature
     /// "NO RECORDS FOUND" (which is reserved for a settled, genuinely empty result).
     awaiting_results: bool,
+    /// Whether the displayed values may still be superseded. Implied by
+    /// `awaiting_results`, but also set when stale values *are* on screen.
+    provisional_results: bool,
     /// Selected index
     selected: u16,
     /// Number of values that are skipped when printing,
@@ -167,6 +170,7 @@ impl Default for IdeMenu {
             working_details: IdeMenuDetails::default(),
             completions: CompletionDisplay::default(),
             awaiting_results: false,
+            provisional_results: false,
             selected: 0,
             skip_values: 0,
             event: None,
@@ -810,6 +814,7 @@ impl Menu for IdeMenu {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
         let (result, base_ranges) = completer.complete_with_base_ranges(&input, pos);
         self.awaiting_results = result.is_pending();
+        self.provisional_results = result.is_provisional();
         if let Some(completions) = CompletionDisplay::from_result(result, &base_ranges, editor) {
             self.completions = completions;
             self.reset_position();
@@ -844,6 +849,10 @@ impl Menu for IdeMenu {
 
     fn get_values(&self) -> &[Suggestion] {
         self.completions.suggestions()
+    }
+
+    fn results_are_provisional(&self) -> bool {
+        self.provisional_results
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
