@@ -36,6 +36,29 @@ pub(crate) enum RestPolicy {
     BlockOverNewline,
 }
 
+impl RestPolicy {
+    /// Whether the resting cursor covers exactly one grapheme (either block
+    /// policy).
+    pub(crate) fn is_block(self) -> bool {
+        match self {
+            RestPolicy::Block => true,
+            #[cfg(feature = "helix")]
+            RestPolicy::BlockOverNewline => true,
+            RestPolicy::Between | RestPolicy::OnGrapheme => false,
+        }
+    }
+
+    /// Whether a line terminator is a cell the caret may rest on. Helix only;
+    /// every other mode steps over or clamps before it.
+    pub(crate) fn covers_terminator(self) -> bool {
+        match self {
+            RestPolicy::Between | RestPolicy::OnGrapheme | RestPolicy::Block => false,
+            #[cfg(feature = "helix")]
+            RestPolicy::BlockOverNewline => true,
+        }
+    }
+}
+
 /// Make a cursor *coherent* for `buf`: clamp both ends into `[0, buf.len()]` and
 /// snap them to grapheme boundaries, expanding outward so whole graphemes stay
 /// covered — the low end floors, the high end ceils, and a point floors while

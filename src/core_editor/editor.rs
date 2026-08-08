@@ -159,19 +159,20 @@ impl Editor {
                     let geom = self.caret_geometry();
                     let origin = self.insertion_point();
                     let selection = resolve_selection(self.get_buffer(), origin, *t, geom);
-                    let selection = if self.is_block_policy() || selection.is_empty() {
-                        selection
-                    } else {
-                        let buf = self.get_buffer();
-                        if selection.head() >= selection.anchor() {
-                            selection.move_head(prev_grapheme_boundary(buf, selection.head()))
+                    let selection =
+                        if self.edit_mode.rest_policy().is_block() || selection.is_empty() {
+                            selection
                         } else {
-                            Cursor::new(
-                                prev_grapheme_boundary(buf, selection.anchor()),
-                                selection.head(),
-                            )
-                        }
-                    };
+                            let buf = self.get_buffer();
+                            if selection.head() >= selection.anchor() {
+                                selection.move_head(prev_grapheme_boundary(buf, selection.head()))
+                            } else {
+                                Cursor::new(
+                                    prev_grapheme_boundary(buf, selection.anchor()),
+                                    selection.head(),
+                                )
+                            }
+                        };
                     self.place(selection);
                 }
             },
@@ -576,7 +577,9 @@ impl Editor {
         // the raw step is already the landing and clamping or skipping would put
         // the newline out of reach.
         if let MotionTarget::Grapheme(direction) = target {
-            if self.caret_geometry() == CaretGeometry::Block && !self.covers_terminator() {
+            if self.caret_geometry() == CaretGeometry::Block
+                && !self.edit_mode.rest_policy().covers_terminator()
+            {
                 return self.grapheme_line_policy(buf, origin, head, direction);
             }
         }
@@ -635,29 +638,6 @@ impl Editor {
     /// the trailing boundary). Drives the forward word-end landing and operator
     /// inclusivity in [`resolve_motion`] and the selection extension in
     /// [`Cursor::put_cursor`].
-    /// Whether the resting cursor covers exactly one grapheme (either block
-    /// policy).
-    fn is_block_policy(&self) -> bool {
-        match self.edit_mode.rest_policy() {
-            RestPolicy::Block => true,
-            #[cfg(feature = "helix")]
-            RestPolicy::BlockOverNewline => true,
-            RestPolicy::Between | RestPolicy::OnGrapheme => false,
-        }
-    }
-
-    /// Whether a line terminator is a cell the caret may rest on. Helix only;
-    /// every other mode steps over or clamps before it.
-    #[cfg(feature = "helix")]
-    fn covers_terminator(&self) -> bool {
-        self.edit_mode.rest_policy() == RestPolicy::BlockOverNewline
-    }
-
-    #[cfg(not(feature = "helix"))]
-    fn covers_terminator(&self) -> bool {
-        false
-    }
-
     fn caret_geometry(&self) -> CaretGeometry {
         if self.edit_mode.rest_policy() == RestPolicy::Between {
             CaretGeometry::Bar
