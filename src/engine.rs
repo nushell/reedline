@@ -2438,7 +2438,11 @@ impl Reedline {
         // Updating the working details of the active menu
         for menu in self.menus.iter_mut() {
             if menu.is_active() {
-                lines.prompt_indicator = menu.indicator().to_owned().into();
+                // A menu still waiting on its first answer stays off screen, so a Tab
+                // resolving to one suggestion never draws a menu it takes away again.
+                if !menu.is_awaiting_first_answer() {
+                    lines.prompt_indicator = menu.indicator().to_owned().into();
+                }
                 // If the menu requires the cursor position, update it (ide menu)
                 let cursor_pos = lines.cursor_pos(self.painter.screen_width());
                 menu.set_cursor_pos(cursor_pos);
@@ -2452,7 +2456,10 @@ impl Reedline {
             }
         }
 
-        let menu = self.menus.iter().find(|menu| menu.is_active());
+        let menu = self
+            .menus
+            .iter()
+            .find(|menu| menu.is_active() && !menu.is_awaiting_first_answer());
 
         self.painter.repaint_buffer(
             prompt,
@@ -3834,6 +3841,28 @@ mod tests {
             reedline.current_buffer_contents(),
             "crates",
             "the fresh result was dropped because the stale one closed the menu first"
+        );
+    }
+
+    /// The flicker: a menu opened over an answer that is not about this line stays off
+    /// screen, so a Tab that resolves to one suggestion never draws a menu at all.
+    #[test]
+    fn an_opening_menu_is_not_visible_until_answered() {
+        let (reedline, _) = activate_menu_over(
+            Box::new(StaleThenFreshCompleter::new("console", "co", &["crates"])),
+            "cr",
+            true,
+            false,
+        );
+
+        let menu = reedline
+            .menus
+            .iter()
+            .find(|menu| menu.is_active())
+            .expect("the menu is open");
+        assert!(
+            menu.is_awaiting_first_answer(),
+            "it would only be taken away again once the real answer lands"
         );
     }
 

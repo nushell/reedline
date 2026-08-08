@@ -78,6 +78,9 @@ pub struct ColumnarMenu {
     /// Whether the displayed values may still be superseded. Implied by
     /// `awaiting_results`, but also set when stale values *are* on screen.
     provisional_results: bool,
+    /// Whether the menu is activated but not yet drawn. Cleared by the first
+    /// answer about the line on screen.
+    opening: bool,
     /// Column position
     col_pos: u16,
     /// row position in the menu. Starts from 0
@@ -102,6 +105,7 @@ impl Default for ColumnarMenu {
             completions: CompletionDisplay::default(),
             awaiting_results: false,
             provisional_results: false,
+            opening: false,
             col_pos: 0,
             row_pos: 0,
             skip_rows: 0,
@@ -622,6 +626,7 @@ impl Menu for ColumnarMenu {
     fn on_activate(&mut self) {
         // Reset completions on activation
         self.completions = CompletionDisplay::default();
+        self.opening = true;
     }
 
     /// Queue menu event
@@ -640,8 +645,11 @@ impl Menu for ColumnarMenu {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
 
         let (result, base_ranges) = completer.complete_with_base_ranges(&input, pos);
-        self.awaiting_results = result.is_pending();
         self.provisional_results = result.is_provisional();
+        // The menu becomes visible on the first answer about the line on screen.
+        self.opening &= self.provisional_results;
+
+        self.awaiting_results = result.is_pending();
         if let Some(completions) = CompletionDisplay::from_result(result, &base_ranges, editor) {
             self.completions = completions;
             self.reset_position();
@@ -681,6 +689,10 @@ impl Menu for ColumnarMenu {
 
     fn results_are_provisional(&self) -> bool {
         self.provisional_results
+    }
+
+    fn is_awaiting_first_answer(&self) -> bool {
+        self.opening
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
@@ -1085,6 +1097,62 @@ mod tests {
                 partial: None,
             }
         }
+    }
+
+    /// A menu drawn and then taken away a few frames later reads as the prompt
+    /// flickering, so it stays off screen until it hears about the line on screen.
+    #[test]
+    fn an_opening_menu_is_not_visible_until_answered() {
+        let mut menu = ColumnarMenu::default();
+        let mut editor = Editor::default();
+        editor.set_buffer("cr".to_string(), UndoBehavior::CreateUndoPoint);
+
+        menu.menu_event(MenuEvent::Activate(true));
+        menu.update_values(
+            &mut editor,
+            &mut StaleSpanCompleter::new("console", Span::new(0, 2), "co", 2),
+        );
+        assert!(
+            menu.is_awaiting_first_answer(),
+            "a cached answer about another line does not open the menu"
+        );
+
+        menu.update_values(
+            &mut editor,
+            &mut SpanCompleter {
+                value: String::from("crates"),
+                span: Span::new(0, 2),
+            },
+        );
+        assert!(
+            !menu.is_awaiting_first_answer(),
+            "the first real answer makes it visible"
+        );
+    }
+
+    /// Once open it is the other way round: stale values beat blanking the menu on
+    /// every keystroke, which is what they exist for.
+    #[test]
+    fn an_open_menu_keeps_showing_stale_values() {
+        let mut menu = ColumnarMenu::default();
+        let mut editor = Editor::default();
+        editor.set_buffer("cr".to_string(), UndoBehavior::CreateUndoPoint);
+
+        // A final answer opens the menu for real and ends the opening phase.
+        menu.menu_event(MenuEvent::Activate(true));
+        let mut fresh = SpanCompleter {
+            value: String::from("crates"),
+            span: Span::new(0, 2),
+        };
+        menu.update_values(&mut editor, &mut fresh);
+        assert_eq!(menu.get_values().len(), 1);
+
+        // A later request that can only answer with cached values still populates it.
+        let mut stale = StaleSpanCompleter::new("console", Span::new(0, 2), "co", 2);
+        menu.update_values(&mut editor, &mut stale);
+
+        assert_eq!(menu.get_values().len(), 1, "stale values are still shown");
+        assert_eq!(menu.get_values()[0].value, "console");
     }
 
     /// Stale span not spliced into changed buffer

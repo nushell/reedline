@@ -199,6 +199,12 @@ pub trait Menu: Send {
         false
     }
 
+    /// Whether the menu is activated but not yet drawn, having heard no answer
+    /// about the line on screen. It claims no prompt indicator and reserves no
+    /// rows, so a menu about to be closed by a lone suggestion never appears.
+    fn is_awaiting_first_answer(&self) -> bool {
+        false
+    }
     /// Sets the position of the cursor (currently only required by the IDE menu)
     fn set_cursor_pos(&mut self, _pos: (u16, u16)) {
         // empty implementation to make it optional
@@ -624,6 +630,10 @@ impl Menu for ReedlineMenu {
 
     fn results_are_provisional(&self) -> bool {
         self.as_ref().results_are_provisional()
+    }
+
+    fn is_awaiting_first_answer(&self) -> bool {
+        self.as_ref().is_awaiting_first_answer()
     }
 
     fn set_cursor_pos(&mut self, pos: (u16, u16)) {

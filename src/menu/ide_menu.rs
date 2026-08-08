@@ -150,6 +150,9 @@ pub struct IdeMenu {
     /// Whether the displayed values may still be superseded. Implied by
     /// `awaiting_results`, but also set when stale values *are* on screen.
     provisional_results: bool,
+    /// Whether the menu is activated but not yet drawn. Cleared by the first
+    /// answer about the line on screen.
+    opening: bool,
     /// Selected index
     selected: u16,
     /// Number of values that are skipped when printing,
@@ -171,6 +174,7 @@ impl Default for IdeMenu {
             completions: CompletionDisplay::default(),
             awaiting_results: false,
             provisional_results: false,
+            opening: false,
             selected: 0,
             skip_values: 0,
             event: None,
@@ -797,6 +801,7 @@ impl Menu for IdeMenu {
     fn on_activate(&mut self) {
         // Clear stale completions from previous activation
         self.completions = CompletionDisplay::default();
+        self.opening = true;
     }
 
     /// Queue menu event
@@ -813,8 +818,11 @@ impl Menu for IdeMenu {
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
         let (result, base_ranges) = completer.complete_with_base_ranges(&input, pos);
-        self.awaiting_results = result.is_pending();
         self.provisional_results = result.is_provisional();
+        // The menu becomes visible on the first answer about the line on screen.
+        self.opening &= self.provisional_results;
+
+        self.awaiting_results = result.is_pending();
         if let Some(completions) = CompletionDisplay::from_result(result, &base_ranges, editor) {
             self.completions = completions;
             self.reset_position();
@@ -853,6 +861,10 @@ impl Menu for IdeMenu {
 
     fn results_are_provisional(&self) -> bool {
         self.provisional_results
+    }
+
+    fn is_awaiting_first_answer(&self) -> bool {
+        self.opening
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
