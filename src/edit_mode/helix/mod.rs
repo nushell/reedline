@@ -194,11 +194,14 @@ impl Helix {
             (None, KeyCode::Char(c @ '0'..='9'))
                 if key.modifiers == KeyModifiers::NONE && (c != '0' || self.count.is_some()) =>
             {
+                // Cap the count: every consumer repeats O(count) work on one
+                // keystroke, so an absurd prefix must not freeze the REPL.
                 self.count = Some(
                     self.count
                         .unwrap_or(0)
                         .saturating_mul(10)
-                        .saturating_add(c.to_digit(10).unwrap_or(0) as usize),
+                        .saturating_add(c.to_digit(10).unwrap_or(0) as usize)
+                        .min(u16::MAX as usize),
                 );
                 return ReedlineEvent::None;
             }
