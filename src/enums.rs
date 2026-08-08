@@ -392,7 +392,7 @@ pub enum EditCommand {
     },
 
     /// Select up to a [`MotionTarget`]: drop a fresh anchor at the caret, then
-    /// move the heat to the target, so the selection covers the span just traveled.
+    /// move the head to the target, so the selection covers the span just traveled.
     Select(MotionTarget),
 
     /// Cut like [`EditCommand::Cut`], except that a `LineWise` span keeps its
@@ -538,14 +538,14 @@ pub enum EditCommand {
     /// Paste the cut buffer in front of the insertion point (vi `p`)
     PasteCutBufferAfter,
 
-    /// Paste the cut buffer at the selection edge in the given `direction` while
-    /// selecting the pasted buffer (helix `p`/`P`), which makes them non composable
-    /// thus carrying `count` explicitly
+    /// Paste the cut buffer at the selection edge in the given `direction` and
+    /// select the pasted text (helix `p`/`P`). Selecting the result means the
+    /// command cannot simply be issued twice for a count, so it carries `count`
+    /// explicitly.
     PasteAtSelectionEdge {
-        /// decides whether to paste on the Forward or Backward edge
-        /// of the selection
+        /// Whether to paste on the forward or backward edge of the selection
         direction: Direction,
-        /// number of times the `cut_buffer` content is placed
+        /// Number of times the cut buffer content is placed
         count: usize,
     },
 

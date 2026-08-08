@@ -152,9 +152,9 @@ pub enum PromptViMode {
 #[cfg(feature = "helix")]
 #[derive(Serialize, Deserialize, Clone, Debug, EnumIter, Default, PartialEq, Eq)]
 pub enum PromptHelixMode {
-    /// Normal mode carries an at least 1 grapheme wide selection
-    /// and extends the selection depending on the motion and its target
-    /// , both anchor and head can move
+    /// Normal mode carries an at least 1 grapheme wide selection and
+    /// extends it depending on the motion and its target; both anchor
+    /// and head can move
     #[default]
     Normal,
 

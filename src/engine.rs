@@ -2849,8 +2849,8 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "\"a\n\n");
     }
 
-    /// The submitted path cannot assert on the buffer (it is cleared at 2464),
-    /// so pin it through the returned signal instead.
+    /// The submitted path cannot assert on the buffer (`submit_buffer` clears
+    /// it), so pin it through the returned signal instead.
     #[cfg(feature = "helix")]
     #[test]
     fn helix_normal_submit_returns_the_whole_buffer() {

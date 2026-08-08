@@ -189,9 +189,9 @@ pub(crate) fn resolve_selection(
 }
 
 /// Helix's `reached_target` evaluated at the cursor itself.
-/// Checks if `origin` already landed at a wordboundary and thus
+/// Checks if `origin` already landed at a word boundary and thus
 /// must hop over it to select the next word target.
-/// Only meaningful for word targets and not a valid code for emacs
+/// Only meaningful for word targets; not valid for the emacs
 /// `WordKind::Unicode`
 fn word_boundary_at_origin(
     buf: &str,
