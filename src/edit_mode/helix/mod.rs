@@ -1,11 +1,13 @@
 mod helix_keybindings;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 pub use helix_keybindings::{default_helix_insert_keybindings, default_helix_normal_keybindings};
+
+use super::{is_plain_char, is_text_char, parse_non_key_event};
 
 use crate::{
     Direction, EditCommand, EditMode, FindStop, Granularity, Keybindings, MotionTarget,
-    PromptEditMode, PromptHelixMode, ReedlineEvent, WordEdge,
+    PromptEditMode, PromptHelixMode, ReedlineEvent, WordEdge, WordKind,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +108,15 @@ fn exec(count: usize, verb: Verb, next_mode: Option<HelixMode>) -> Outcome {
     })
 }
 
+/// The word-family target of `w`/`b`/`e` and their WORD (`W`/`B`/`E`) twins.
+fn word(kind: WordKind, edge: WordEdge, direction: Direction) -> MotionTarget {
+    MotionTarget::Word {
+        kind,
+        edge,
+        direction,
+    }
+}
+
 /// This parses incoming input `Event`s like a Helix/Kakoune-style editor: motions are
 /// selection first, lowered onto the editor's [`MotionTarget`](crate::MotionTarget) verb vocabulary.
 #[derive(Debug, Clone)]
@@ -128,23 +139,7 @@ impl EditMode for Helix {
                 HelixMode::Insert => self.dispatch_insert(key),
                 _ => self.dispatch(key),
             },
-            Event::Mouse(MouseEvent {
-                kind: MouseEventKind::Down(button),
-                column,
-                row,
-                modifiers: KeyModifiers::NONE,
-            }) => ReedlineEvent::Mouse {
-                column,
-                row,
-                button: button.into(),
-            },
-            Event::Mouse(_) => ReedlineEvent::None,
-            Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
-            Event::FocusGained => ReedlineEvent::None,
-            Event::FocusLost => ReedlineEvent::None,
-            Event::Paste(body) => ReedlineEvent::Edit(vec![EditCommand::InsertString(
-                body.replace("\r\n", "\n").replace('\r', "\n"),
-            )]),
+            event => parse_non_key_event(event),
         }
     }
     fn edit_mode(&self) -> crate::PromptEditMode {
@@ -206,16 +201,12 @@ impl Helix {
                 return ReedlineEvent::None;
             }
             // Do a table lookup, else use the helix machine,
-            // we don't handle insert mode in dispatch
+            // we don't handle insert mode in dispatch.
+            // Esc must always reach the machine, otherwise modes get stranded.
             (None, code) => {
-                if self.count.is_none() {
-                    // Esc must always reach the machine, otherwise modes get stranded
-                    if code != KeyCode::Esc {
-                        if let Some(event) =
-                            self.normal_keybindings.find_binding(key.modifiers, code)
-                        {
-                            return event;
-                        }
+                if self.count.is_none() && code != KeyCode::Esc {
+                    if let Some(event) = self.normal_keybindings.find_binding(key.modifiers, code) {
+                        return event;
                     }
                 }
                 interpret(self.mode, self.count, key)
@@ -292,34 +283,17 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
             None,
         ),
         Pending::Replace => exec(count, Verb::OnSelection(Op::Replace(ch)), None),
-        Pending::Goto => match ch {
-            'h' => exec(
-                count,
-                Verb::CollapsingMotion(MotionTarget::LineEdge(Direction::Backward)),
-                None,
-            ),
-            'l' => exec(
-                count,
-                Verb::CollapsingMotion(MotionTarget::LineEdge(Direction::Forward)),
-                None,
-            ),
-            'g' => exec(
-                count,
-                Verb::CollapsingMotion(MotionTarget::BufferEdge(Direction::Backward)),
-                None,
-            ),
-            'e' => exec(
-                count,
-                Verb::CollapsingMotion(MotionTarget::BufferEdge(Direction::Forward)),
-                None,
-            ),
-            's' => exec(
-                count,
-                Verb::CollapsingMotion(MotionTarget::LineStartNonBlank),
-                None,
-            ),
-            _ => Outcome::Reject,
-        },
+        Pending::Goto => {
+            let target = match ch {
+                'h' => MotionTarget::LineEdge(Direction::Backward),
+                'l' => MotionTarget::LineEdge(Direction::Forward),
+                'g' => MotionTarget::BufferEdge(Direction::Backward),
+                'e' => MotionTarget::BufferEdge(Direction::Forward),
+                's' => MotionTarget::LineStartNonBlank,
+                _ => return Outcome::Reject,
+            };
+            exec(count, Verb::CollapsingMotion(target), None)
+        }
     }
 }
 
@@ -362,56 +336,40 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
             'r' => Outcome::Absorb(Pending::Replace),
             'w' => exec(
                 count,
-                Verb::SelectingMotion(MotionTarget::Word {
-                    kind: crate::WordKind::Word,
-                    edge: WordEdge::Start,
-                    direction: Direction::Forward,
-                }),
+                Verb::SelectingMotion(word(WordKind::Word, WordEdge::Start, Direction::Forward)),
                 None,
             ),
             'b' => exec(
                 count,
-                Verb::SelectingMotion(MotionTarget::Word {
-                    kind: crate::WordKind::Word,
-                    edge: WordEdge::Start,
-                    direction: Direction::Backward,
-                }),
+                Verb::SelectingMotion(word(WordKind::Word, WordEdge::Start, Direction::Backward)),
                 None,
             ),
             'e' => exec(
                 count,
-                Verb::SelectingMotion(MotionTarget::Word {
-                    kind: crate::WordKind::Word,
-                    edge: WordEdge::End,
-                    direction: Direction::Forward,
-                }),
+                Verb::SelectingMotion(word(WordKind::Word, WordEdge::End, Direction::Forward)),
                 None,
             ),
             'W' => exec(
                 count,
-                Verb::SelectingMotion(MotionTarget::Word {
-                    kind: crate::WordKind::LongWord,
-                    edge: WordEdge::Start,
-                    direction: Direction::Forward,
-                }),
+                Verb::SelectingMotion(word(
+                    WordKind::LongWord,
+                    WordEdge::Start,
+                    Direction::Forward,
+                )),
                 None,
             ),
             'B' => exec(
                 count,
-                Verb::SelectingMotion(MotionTarget::Word {
-                    kind: crate::WordKind::LongWord,
-                    edge: WordEdge::Start,
-                    direction: Direction::Backward,
-                }),
+                Verb::SelectingMotion(word(
+                    WordKind::LongWord,
+                    WordEdge::Start,
+                    Direction::Backward,
+                )),
                 None,
             ),
             'E' => exec(
                 count,
-                Verb::SelectingMotion(MotionTarget::Word {
-                    kind: crate::WordKind::LongWord,
-                    edge: WordEdge::End,
-                    direction: Direction::Forward,
-                }),
+                Verb::SelectingMotion(word(WordKind::LongWord, WordEdge::End, Direction::Forward)),
                 None,
             ),
             'l' => exec(
@@ -506,16 +464,13 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
 /// Lowers an `Action` onto `ReedlineEvent`
 fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
     let event = match action.verb {
-        Verb::SelectingMotion(target) => match mode {
-            HelixMode::Normal => action.repeated(EditCommand::Select(target)),
-            HelixMode::Select => action.repeated(EditCommand::Extend(target)),
-            HelixMode::Insert => {
-                // unreachable at runtime: dispatch guards against insert mode
-                ReedlineEvent::None
-            }
-        },
-        Verb::CollapsingMotion(target) => match mode {
-            HelixMode::Normal => action.repeated(EditCommand::Move(target)),
+        // The two motion verbs differ only in what normal mode does with the
+        // span; select mode extends either way.
+        Verb::SelectingMotion(target) | Verb::CollapsingMotion(target) => match mode {
+            HelixMode::Normal => action.repeated(match action.verb {
+                Verb::SelectingMotion(_) => EditCommand::Select(target),
+                _ => EditCommand::Move(target),
+            }),
             HelixMode::Select => action.repeated(EditCommand::Extend(target)),
             HelixMode::Insert => {
                 // unreachable at runtime: dispatch guards against insert mode
@@ -546,7 +501,7 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
                 Direction::Backward => EditCommand::InsertNewlineAbove,
             };
             let mut cmds = vec![first];
-            cmds.resize(action.count.max(1), EditCommand::InsertNewlineAbove);
+            cmds.resize(action.count, EditCommand::InsertNewlineAbove);
             ReedlineEvent::Edit(cmds)
         }
         Verb::Undo => action.repeated(EditCommand::Undo),
@@ -583,7 +538,7 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
                     Direction::Backward => vec![ReedlineEvent::MenuUp, ReedlineEvent::Up],
                 }),
             };
-            ReedlineEvent::Multiple(vec![event; action.count.max(1)])
+            ReedlineEvent::Multiple(vec![event; action.count])
         }
         // Collapse forward first, as `a` does. The resting selection outlives the
         // `next_mode` flip to insert, so `InsertNewline` on incomplete input
@@ -607,25 +562,10 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
     }
 }
 
-/// A bare or shifted keypress — the only chords that act as normal-mode
-/// commands. Anything else (Ctrl/Alt chords) belongs to the keybinding table.
-fn is_plain_char(modifiers: KeyModifiers) -> bool {
-    modifiers == KeyModifiers::NONE || modifiers == KeyModifiers::SHIFT
-}
-
-/// Modifier sets under which a `KeyCode::Char` is *typed text* (data), not a
-/// chord: everything [`is_plain_char`] accepts, plus the Ctrl-Alt combinations
-/// some terminals report for AltGr.
-fn is_text_char(modifiers: KeyModifiers) -> bool {
-    is_plain_char(modifiers)
-        || modifiers == KeyModifiers::CONTROL | KeyModifiers::ALT
-        || modifiers == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{ReedlineRawEvent, WordKind};
+    use crate::ReedlineRawEvent;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -650,14 +590,6 @@ mod test {
         Helix {
             mode: HelixMode::Normal,
             ..Default::default()
-        }
-    }
-
-    fn word(kind: WordKind, edge: WordEdge, direction: Direction) -> MotionTarget {
-        MotionTarget::Word {
-            kind,
-            edge,
-            direction,
         }
     }
 
