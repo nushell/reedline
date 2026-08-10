@@ -146,12 +146,6 @@ pub struct Reedline {
     history_cursor_on_excluded: bool,
     input_mode: InputMode,
 
-    // Set when a menu event that re-queries the completer (Activate/Edit) is
-    // dispatched. The host completer can shell out and scroll the terminal, so
-    // the next paint re-verifies the prompt anchor. Consumed in `repaint`.
-    // See #1130.
-    completer_may_have_scrolled: bool,
-
     // State of the painter after a `ReedlineEvent::ExecuteHostCommand` was requested, used after
     // execution to decide if we can re-use the previous prompt or paint a new one.
     suspended_state: Option<PainterSuspendedState>,
@@ -277,6 +271,22 @@ impl Drop for Reedline {
     }
 }
 
+/// Mark the painter's cached prompt anchor stale after a menu event that re-queries the
+/// completer.
+///
+/// A host-supplied completer owns the tty while it runs and may shell out to a program
+/// that scrolls the terminal (nushell's external completer running `fzf --height`),
+/// leaving the cached row pointing at content that has moved. Skipped for a menu the
+/// same keystroke deactivated, whose queued event nothing will consume, and for
+/// reedline's own history completer, which never yields the terminal, so neither costs a
+/// `cursor::position()` round-trip. Menu events that only move the selection never reach
+/// the completer and call [`Menu::menu_event`] directly. See #1130.
+fn note_completer_query(menu: &ReedlineMenu, painter: &mut Painter) {
+    if menu.is_active() && menu.queries_host_completer() {
+        painter.invalidate_prompt_start_row();
+    }
+}
+
 impl Reedline {
     const FILTERED_ITEM_ID: HistoryItemId = HistoryItemId(i64::MAX);
 
@@ -309,7 +319,6 @@ impl Reedline {
             history_excluded_item: None,
             history_cursor_on_excluded: false,
             input_mode: InputMode::Regular,
-            completer_may_have_scrolled: false,
             suspended_state: None,
             last_render_snapshot: None,
             painter,
@@ -1277,7 +1286,7 @@ impl Reedline {
                 if self.active_menu().is_none() {
                     if let Some(menu) = self.menus.iter_mut().find(|menu| menu.name() == name) {
                         menu.menu_event(MenuEvent::Activate(self.quick_completions));
-                        self.completer_may_have_scrolled = true;
+                        note_completer_query(menu, &mut self.painter);
 
                         if self.quick_completions && menu.can_quick_complete() {
                             menu.update_values(
@@ -1363,22 +1372,24 @@ impl Reedline {
                     })
             }
             ReedlineEvent::MenuPageNext => {
-                // A page load re-queries the completer (list menu).
-                self.completer_may_have_scrolled |= self.active_menu().is_some();
-                self.active_menu()
-                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
+                match self.menus.iter_mut().find(|menu| menu.is_active()) {
+                    Some(menu) => {
                         menu.menu_event(MenuEvent::NextPage);
+                        note_completer_query(menu, &mut self.painter);
                         Ok(EventStatus::Handled)
-                    })
+                    }
+                    None => Ok(EventStatus::Inapplicable),
+                }
             }
             ReedlineEvent::MenuPagePrevious => {
-                // A page load re-queries the completer (list menu).
-                self.completer_may_have_scrolled |= self.active_menu().is_some();
-                self.active_menu()
-                    .map_or(Ok(EventStatus::Inapplicable), |menu| {
+                match self.menus.iter_mut().find(|menu| menu.is_active()) {
+                    Some(menu) => {
                         menu.menu_event(MenuEvent::PreviousPage);
+                        note_completer_query(menu, &mut self.painter);
                         Ok(EventStatus::Handled)
-                    })
+                    }
+                    None => Ok(EventStatus::Inapplicable),
+                }
             }
             ReedlineEvent::HistoryHintComplete => {
                 let hint = self.hinter.as_mut().map(|h| h.complete_hint());
@@ -1510,7 +1521,7 @@ impl Reedline {
                             }
                             _ => {
                                 menu.menu_event(MenuEvent::Edit(self.quick_completions));
-                                self.completer_may_have_scrolled = true;
+                                note_completer_query(menu, &mut self.painter);
                                 menu.update_values(
                                     &mut self.editor,
                                     self.completer.as_mut(),
@@ -1538,7 +1549,7 @@ impl Reedline {
                         menu.menu_event(MenuEvent::Deactivate);
                     } else {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
-                        self.completer_may_have_scrolled = true;
+                        note_completer_query(menu, &mut self.painter);
                     }
                 }
                 Ok(EventStatus::Handled)
@@ -2330,16 +2341,6 @@ impl Reedline {
                     &self.painter,
                 );
             }
-        }
-
-        // A menu Activate/Edit re-queried the host completer, which owns the tty
-        // and may shell out to a program that scrolls the terminal (nushell's
-        // external completer running `fzf --height`). Mark the anchor stale so
-        // the paint below re-verifies it instead of trusting a row the content
-        // may have scrolled past. Navigation and idle repaints keep the cached
-        // anchor. See #1130.
-        if std::mem::take(&mut self.completer_may_have_scrolled) {
-            self.painter.invalidate_prompt_start_row();
         }
 
         let menu = self.menus.iter().find(|menu| menu.is_active());

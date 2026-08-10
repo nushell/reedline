@@ -395,6 +395,19 @@ impl ReedlineMenu {
         }
     }
 
+    /// Whether updating this menu runs a completer supplied by the host.
+    ///
+    /// Host completers own the tty while they run and may shell out to a program that
+    /// scrolls the terminal (nushell's external completer running `fzf --height`),
+    /// leaving the painter's cached prompt anchor pointing at the wrong row.
+    /// Reedline cannot tell whether a given completer does that, so any host completer
+    /// is assumed to. [`HistoryMenu`](Self::HistoryMenu) is the one case it can rule
+    /// out: it is answered by reedline's own in-process [`HistoryCompleter`], which
+    /// never yields the terminal. See #1130.
+    pub(crate) fn queries_host_completer(&self) -> bool {
+        !matches!(self, Self::HistoryMenu(_))
+    }
+
     pub(crate) fn can_partially_complete(
         &mut self,
         values_updated: bool,
@@ -571,7 +584,26 @@ impl Menu for ReedlineMenu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DefaultCompleter;
     use rstest::rstest;
+
+    /// The prompt anchor is only re-verified for menus that can run host code, since
+    /// that is the only thing reedline cannot see past. A history menu is answered
+    /// in-process, so it must not pay a `cursor::position()` round-trip per keystroke.
+    /// See #1130.
+    #[test]
+    fn only_a_host_completer_can_have_scrolled_the_terminal() {
+        let menu = || Box::new(ColumnarMenu::default()) as Box<dyn Menu>;
+
+        assert!(ReedlineMenu::EngineCompleter(menu()).queries_host_completer());
+        assert!(ReedlineMenu::WithCompleter {
+            menu: menu(),
+            completer: Box::<DefaultCompleter>::default(),
+        }
+        .queries_host_completer());
+
+        assert!(!ReedlineMenu::HistoryMenu(menu()).queries_host_completer());
+    }
 
     #[rstest]
     #[case::bool_only_false(false, None, InputMode::CursorPrefix)]
