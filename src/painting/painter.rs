@@ -565,32 +565,26 @@ impl Painter {
         // Reconcile a stale anchor: something yielded the tty (a resize, or an
         // external completer running e.g. `fzf --height`) and may have scrolled
         // our content since the last paint.
-        let should_reset_anchor = match self.prompt_start_row {
-            PromptStartRow::Verified(_) => false,
-            PromptStartRow::Stale(row) => {
-                // Cursor above the cached row => content scrolled up while the
-                // tty was yielded. Re-anchor to the cursor (ground truth) rather
-                // than homing to row 0, which would yank the prompt to the top.
-                // The `+1` allows for output that left the cursor on the prompt
-                // row. See nushell/reedline#1130.
-                match cursor::position() {
-                    Ok(position) if position.1 + 1 < row => {
-                        self.prompt_start_row.mark_verified(position.1);
-                    }
-                    Ok(_) | Err(_) => self.prompt_start_row.mark_verified(row),
-                }
-                false
-            }
-            // Unreachable in normal flow (initialize_prompt_position runs
-            // first); in release, reset rather than draw over row 0 content.
-            PromptStartRow::Unverified => {
-                debug_assert!(
-                    false,
-                    "repaint_buffer reached before initialize_prompt_position"
-                );
-                true
-            }
-        };
+        if let PromptStartRow::Stale(row) = self.prompt_start_row {
+            // Cursor above the cached row => content scrolled up while the tty
+            // was yielded. Re-anchor to the cursor (ground truth) rather than
+            // homing to row 0, which would yank the prompt to the top. The `+1`
+            // allows for output that left the cursor on the prompt row.
+            // See nushell/reedline#1130.
+            let anchor = match cursor::position() {
+                Ok((_, cursor_row)) if cursor_row + 1 < row => cursor_row,
+                _ => row,
+            };
+            self.prompt_start_row.mark_verified(anchor);
+        }
+
+        // Unreachable in normal flow (initialize_prompt_position runs first);
+        // in release, home to row 0 rather than draw over the content there.
+        let anchor_uninitialized = self.prompt_start_row == PromptStartRow::Unverified;
+        debug_assert!(
+            !anchor_uninitialized,
+            "repaint_buffer reached before initialize_prompt_position"
+        );
 
         // Distance parameters, computed after reconciling so they reflect the
         // re-anchored row.
@@ -601,7 +595,7 @@ impl Painter {
         self.large_buffer = required_lines >= screen_height;
 
         // Moving the start position of the cursor based on the size of the required lines
-        if self.large_buffer || should_reset_anchor {
+        if self.large_buffer || anchor_uninitialized {
             for _ in 0..screen_height.saturating_sub(lines_before_cursor) {
                 self.stdout.queue(Print(&coerce_crlf("\n")))?;
             }
