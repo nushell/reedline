@@ -802,6 +802,10 @@ impl Menu for IdeMenu {
         // Clear stale completions from previous activation
         self.completions = CompletionDisplay::default();
         self.opening = true;
+        // Nothing has been asked about this line yet, so no answer is outstanding and
+        // none is provisional. Left alone, both would describe the previous activation.
+        self.awaiting_results = false;
+        self.provisional_results = false;
     }
 
     /// Queue menu event

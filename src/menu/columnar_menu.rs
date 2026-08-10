@@ -627,6 +627,10 @@ impl Menu for ColumnarMenu {
         // Reset completions on activation
         self.completions = CompletionDisplay::default();
         self.opening = true;
+        // Nothing has been asked about this line yet, so no answer is outstanding and
+        // none is provisional. Left alone, both would describe the previous activation.
+        self.awaiting_results = false;
+        self.provisional_results = false;
     }
 
     /// Queue menu event
@@ -1127,6 +1131,32 @@ mod tests {
         assert!(
             !menu.is_awaiting_first_answer(),
             "the first real answer makes it visible"
+        );
+    }
+
+    /// Freshness describes the line the menu is open over, so re-opening it must not
+    /// inherit the last line's answer. The engine reads this to decide whether anything
+    /// is still owed, and with quick and partial completions both off nothing queries
+    /// the completer, so a leftover `true` would arm a replay that can never come.
+    #[test]
+    fn re_activating_forgets_the_previous_lines_answer() {
+        let mut menu = ColumnarMenu::default();
+        let mut editor = Editor::default();
+        editor.set_buffer("cr".to_string(), UndoBehavior::CreateUndoPoint);
+
+        menu.menu_event(MenuEvent::Activate(true));
+        menu.update_values(
+            &mut editor,
+            &mut StaleSpanCompleter::new("console", Span::new(0, 2), "co", 2),
+        );
+        assert!(menu.results_are_provisional());
+
+        menu.menu_event(MenuEvent::Deactivate);
+        menu.menu_event(MenuEvent::Activate(true));
+
+        assert!(
+            !menu.results_are_provisional(),
+            "nothing has been asked about the new line yet"
         );
     }
 
