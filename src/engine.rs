@@ -1096,43 +1096,29 @@ impl Reedline {
     /// Called when the completer reports [`CompletionStatus::Ready`]. Kept out of the
     /// input loop so it is reachable from tests, which cannot drive the loop itself.
     fn settle_completions(&mut self, prompt: &dyn Prompt) -> Result<()> {
-        let mut repopulated = false;
-        let mut accept_lone_value = false;
-        let mut still_provisional = false;
+        let Some(menu_index) = self.menus.iter().position(|menu| menu.is_active()) else {
+            // No menu to answer to, so nothing can still be owed.
+            self.deferred_menu_completion = None;
+            return Ok(());
+        };
 
-        if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
-            // The request this menu was waiting on finished, so repopulate it.
-            menu.update_values(
-                &mut self.editor,
-                self.completer.as_mut(),
-                self.history.as_ref(),
-            );
-            repopulated = true;
-            still_provisional = menu.results_are_provisional();
+        let menu = &mut self.menus[menu_index];
+        // The request this menu was waiting on finished, so repopulate it.
+        menu.update_values(
+            &mut self.editor,
+            self.completer.as_mut(),
+            self.history.as_ref(),
+        );
+        let still_provisional = menu.results_are_provisional();
 
-            let owed = self
-                .deferred_menu_completion
-                .as_ref()
-                .map_or(false, |deferred| deferred.still_applies(menu, &self.editor));
+        let owed = self
+            .deferred_menu_completion
+            .as_ref()
+            .map_or(false, |deferred| deferred.still_applies(menu, &self.editor));
 
-            if owed && !still_provisional {
-                // Replay what activating the menu would have done, in the same order: a
-                // lone value is accepted outright, otherwise a shared prefix is spliced in.
-                accept_lone_value = self.quick_completions
-                    && menu.can_quick_complete()
-                    && menu.get_values().len() == 1;
-
-                if !accept_lone_value && self.partial_completions {
-                    // Values were just refreshed above, so the menu must not re-fetch them.
-                    menu.can_partially_complete(
-                        true,
-                        &mut self.editor,
-                        self.completer.as_mut(),
-                        self.history.as_ref(),
-                    );
-                }
-            }
-        }
+        // Values were just refreshed above, so the menu must not re-fetch them.
+        let accept_lone_value =
+            owed && !still_provisional && self.decide_menu_completion(menu_index, true);
 
         // Spent once a final answer had its say, so it cannot act on a later one.
         // Provisional results decided nothing, so the arm outlives them.
@@ -1148,11 +1134,46 @@ impl Reedline {
 
         // One paint for every outcome, since painting the menu and then the accepted or
         // extended line would flicker on each completion.
-        if repopulated {
-            self.repaint(prompt)?;
+        self.repaint(prompt)
+    }
+
+    /// The completion an opening menu applies to the line: a lone suggestion is accepted
+    /// outright, otherwise the prefix the suggestions share is spliced in. Returns whether
+    /// the caller should accept that lone suggestion.
+    ///
+    /// Both the [`Menu`](ReedlineEvent::Menu) event and the deferred replay in
+    /// [`settle_completions`](Self::settle_completions) decide this, and they have to
+    /// decide it identically. `values_updated` says whether the caller already refreshed
+    /// the menu's values, so they are not fetched twice.
+    fn decide_menu_completion(&mut self, menu_index: usize, values_updated: bool) -> bool {
+        let menu = &mut self.menus[menu_index];
+
+        let accept_lone_value = if self.quick_completions && menu.can_quick_complete() {
+            if !values_updated {
+                menu.update_values(
+                    &mut self.editor,
+                    self.completer.as_mut(),
+                    self.history.as_ref(),
+                );
+            }
+            // Accepting a lone *stale* value is refused downstream, since its span
+            // belongs to another line, so the menu would close over a completion that
+            // never happened.
+            menu.get_values().len() == 1 && !menu.results_are_provisional()
+        } else {
+            false
+        };
+
+        if !accept_lone_value && self.partial_completions {
+            menu.can_partially_complete(
+                values_updated || self.quick_completions,
+                &mut self.editor,
+                self.completer.as_mut(),
+                self.history.as_ref(),
+            );
         }
 
-        Ok(())
+        accept_lone_value
     }
 
     fn process_input_batch(
@@ -1378,44 +1399,27 @@ impl Reedline {
         match event {
             ReedlineEvent::Menu(name) => {
                 if self.active_menu().is_none() {
-                    if let Some(menu) = self.menus.iter_mut().find(|menu| menu.name() == name) {
-                        menu.menu_event(MenuEvent::Activate(self.quick_completions));
-                        invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
+                    if let Some(index) = self.menus.iter().position(|menu| menu.name() == name) {
+                        self.menus[index].menu_event(MenuEvent::Activate(self.quick_completions));
+                        invalidate_anchor_if_host_completer_runs(
+                            &self.menus[index],
+                            &mut self.painter,
+                        );
 
-                        if self.quick_completions && menu.can_quick_complete() {
-                            menu.update_values(
-                                &mut self.editor,
-                                self.completer.as_mut(),
-                                self.history.as_ref(),
-                            );
-
-                            // Accepting a lone *stale* value is refused downstream,
-                            // since its span belongs to another line, so the menu
-                            // would close over a completion that never happened.
-                            if menu.get_values().len() == 1 && !menu.results_are_provisional() {
-                                return self.handle_editor_event(prompt, ReedlineEvent::Enter);
-                            }
-                        }
-
-                        if self.partial_completions {
-                            menu.can_partially_complete(
-                                self.quick_completions,
-                                &mut self.editor,
-                                self.completer.as_mut(),
-                                self.history.as_ref(),
-                            );
+                        if self.decide_menu_completion(index, false) {
+                            return self.handle_editor_event(prompt, ReedlineEvent::Enter);
                         }
 
                         // A final answer already had its say above, so only a
                         // provisional one leaves anything owed. With neither option set
                         // nothing queried the completer, so this reads the default
                         // `false` and the menu paints as it always has.
-                        if !menu.results_are_provisional() {
-                            return Ok(EventStatus::Handled);
+                        if self.menus[index].results_are_provisional() {
+                            self.deferred_menu_completion = Some(DeferredMenuCompletion::new(
+                                &self.menus[index],
+                                &self.editor,
+                            ));
                         }
-
-                        self.deferred_menu_completion =
-                            Some(DeferredMenuCompletion::new(menu, &self.editor));
 
                         return Ok(EventStatus::Handled);
                     }
