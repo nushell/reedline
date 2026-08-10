@@ -199,16 +199,12 @@ fn select_prompt_row(
     (column, row): (u16, u16), // NOTE: Positions are 0 based here
 ) -> PromptRowSelector {
     if let Some(painter_state) = suspended_state {
-        // The painter was suspended, so re-use the last prompt position rather than
-        // making a new prompt, as long as the cursor came back inside it.
-        //
-        // Re-use is only sound when the previous prompt did not sit flush against the
-        // bottom of the screen. When it did, a suspended program that scrolls the
-        // terminal (an fzf keybinding with little room left) returns with the cursor
-        // pinned on the bottom row, still inside the stored range, which is
-        // indistinguishable from an in-place return. Re-using there would redraw the
-        // prompt over the scrolled-up output, so fall through to a fresh prompt in that
-        // ambiguous case. See nushell/reedline#1130.
+        // Re-use the previous prompt position when the cursor came back inside it,
+        // unless that prompt sat flush against the bottom of the screen. A suspended
+        // program that scrolled the terminal returns with the cursor pinned on the
+        // bottom row, still inside the stored range and indistinguishable from an
+        // in-place return, so re-using there would redraw over the scrolled-up output.
+        // See nushell/reedline#1130.
         if !painter_state.was_flush_at_bottom
             && painter_state.previous_prompt_rows_range.contains(&row)
         {
@@ -561,9 +557,9 @@ impl Painter {
             self.just_resized = false;
         }
 
-        // Reconcile a stale anchor: something yielded the tty (a resize, or an
-        // external completer running e.g. `fzf --height`) and may have scrolled
-        // our content since the last paint.
+        // Reconcile a stale anchor: something yielded the tty since the last paint
+        // (a resize, an external completer, `$EDITOR`) and may have scrolled our
+        // content.
         if let PromptStartRow::Stale(row) = self.prompt_start_row {
             // Cursor above the cached row => content scrolled up while the tty
             // was yielded. Re-anchor to the cursor (ground truth) rather than
