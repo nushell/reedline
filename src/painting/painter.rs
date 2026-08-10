@@ -153,6 +153,10 @@ impl Write for W {
 #[derive(Debug, PartialEq, Eq)]
 pub struct PainterSuspendedState {
     previous_prompt_rows_range: RangeInclusive<u16>,
+    /// Whether the prompt reached the last row of the screen it was captured on.
+    /// Recorded here rather than tested at re-use, since by then the screen may have
+    /// been resized by whatever ran in between.
+    was_flush_at_bottom: bool,
 }
 
 /// Screen bounds of the right prompt when it is visible.
@@ -193,30 +197,23 @@ enum PromptRowSelector {
 fn select_prompt_row(
     suspended_state: Option<&PainterSuspendedState>,
     (column, row): (u16, u16), // NOTE: Positions are 0 based here
-    screen_height: u16,
 ) -> PromptRowSelector {
     if let Some(painter_state) = suspended_state {
-        // The painter was suspended, try to re-use the last prompt position to avoid
-        // unnecessarily making new prompts.
+        // The painter was suspended, so re-use the last prompt position rather than
+        // making a new prompt, as long as the cursor came back inside it.
         //
-        // Re-use is only sound when the previous prompt did not sit flush against
-        // the bottom of the screen. When it did, a suspended program that scrolls
-        // the terminal (e.g. an fzf keybinding with little room left) leaves the
-        // cursor pinned on the bottom row, still inside the stored range, which
-        // is indistinguishable from an in-place return. Re-using there re-anchors
-        // the prompt over the scrolled-up output. Fall through to a fresh prompt
-        // in that ambiguous case. See nushell/reedline#1130.
-        let last_row = screen_height.saturating_sub(1);
-        if *painter_state.previous_prompt_rows_range.end() < last_row
+        // Re-use is only sound when the previous prompt did not sit flush against the
+        // bottom of the screen. When it did, a suspended program that scrolls the
+        // terminal (an fzf keybinding with little room left) returns with the cursor
+        // pinned on the bottom row, still inside the stored range, which is
+        // indistinguishable from an in-place return. Re-using there would redraw the
+        // prompt over the scrolled-up output, so fall through to a fresh prompt in that
+        // ambiguous case. See nushell/reedline#1130.
+        if !painter_state.was_flush_at_bottom
             && painter_state.previous_prompt_rows_range.contains(&row)
         {
-            // Cursor is still in the range of the previous prompt, re-use it.
             let start_row = *painter_state.previous_prompt_rows_range.start();
             return PromptRowSelector::UseExistingPrompt { start_row };
-        } else {
-            // There was some output, the cursor is outside of the range of the
-            // previous prompt, or the prompt was flush at the bottom and may have
-            // scrolled, so make a fresh new prompt.
         }
     }
 
@@ -461,6 +458,9 @@ impl Painter {
         let final_row = start_row + self.last_required_lines;
         PainterSuspendedState {
             previous_prompt_rows_range: start_row..=final_row,
+            // `final_row` can overshoot the last visible row for a prompt at the very
+            // bottom, so this is `>=` rather than an equality.
+            was_flush_at_bottom: final_row >= self.screen_height().saturating_sub(1),
         }
     }
 
@@ -484,8 +484,7 @@ impl Painter {
                 size
             }
         };
-        let prompt_selector =
-            select_prompt_row(suspended_state, cursor::position()?, self.screen_height());
+        let prompt_selector = select_prompt_row(suspended_state, cursor::position()?);
         let new_row = match prompt_selector {
             PromptRowSelector::UseExistingPrompt { start_row } => start_row,
             PromptRowSelector::MakeNewPrompt { new_row } => {
@@ -1228,6 +1227,7 @@ mod tests {
     use crate::menu::MenuEvent;
     use crate::{Color, Completer, Editor, PromptHistorySearch, Suggestion};
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
     use std::borrow::Cow;
     use std::sync::{Arc, Mutex};
 
@@ -1341,7 +1341,7 @@ mod tests {
     #[test]
     fn test_select_new_prompt_with_no_state_no_output() {
         assert_eq!(
-            select_prompt_row(None, (0, 12), 24),
+            select_prompt_row(None, (0, 12)),
             PromptRowSelector::MakeNewPrompt { new_row: 12 }
         );
     }
@@ -1349,7 +1349,7 @@ mod tests {
     #[test]
     fn test_select_new_prompt_with_no_state_but_output() {
         assert_eq!(
-            select_prompt_row(None, (3, 12), 24),
+            select_prompt_row(None, (3, 12)),
             PromptRowSelector::MakeNewPrompt { new_row: 13 }
         );
     }
@@ -1358,14 +1358,14 @@ mod tests {
     fn test_select_existing_prompt() {
         let state = PainterSuspendedState {
             previous_prompt_rows_range: 11..=13,
+            was_flush_at_bottom: false,
         };
-        // Prompt sits well above the bottom of a 24-row screen, so re-use holds.
         assert_eq!(
-            select_prompt_row(Some(&state), (0, 12), 24),
+            select_prompt_row(Some(&state), (0, 12)),
             PromptRowSelector::UseExistingPrompt { start_row: 11 }
         );
         assert_eq!(
-            select_prompt_row(Some(&state), (3, 12), 24),
+            select_prompt_row(Some(&state), (3, 12)),
             PromptRowSelector::UseExistingPrompt { start_row: 11 }
         );
     }
@@ -1379,24 +1379,36 @@ mod tests {
     // output, so the ambiguous bottom case must make a fresh prompt instead.
     #[test]
     fn test_select_prompt_row_does_not_reuse_when_flush_at_bottom() {
-        // Screen height 8 (rows 0..=7); prompt occupied rows 5..=7 and the
-        // range reaches the last row (7).
         let state = PainterSuspendedState {
             previous_prompt_rows_range: 5..=7,
+            was_flush_at_bottom: true,
         };
         assert_eq!(
-            select_prompt_row(Some(&state), (0, 7), 8),
+            select_prompt_row(Some(&state), (0, 7)),
             PromptRowSelector::MakeNewPrompt { new_row: 7 }
         );
+    }
 
-        // `state_before_suspension` can even push `final_row` past the last
-        // visible row when the prompt is at the very bottom; still no re-use.
-        let overshoot = PainterSuspendedState {
-            previous_prompt_rows_range: 5..=8,
-        };
+    // The flush-at-bottom fact is captured against the screen the prompt was
+    // suspended on, since whatever runs in between may resize the terminal.
+    #[rstest]
+    #[case::well_above_bottom(2, 3, false)]
+    #[case::reaches_last_row(5, 2, true)]
+    // A prompt at the very bottom pushes `final_row` past the last visible row.
+    #[case::overshoots_last_row(5, 3, true)]
+    fn test_state_before_suspension_records_flush_at_bottom(
+        #[case] start_row: u16,
+        #[case] required_lines: u16,
+        #[case] expected: bool,
+    ) {
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(80, 8); // rows 0..=7
+        painter.prompt_start_row.mark_verified(start_row);
+        painter.last_required_lines = required_lines;
+
         assert_eq!(
-            select_prompt_row(Some(&overshoot), (0, 7), 8),
-            PromptRowSelector::MakeNewPrompt { new_row: 7 }
+            painter.state_before_suspension().was_flush_at_bottom,
+            expected
         );
     }
 
