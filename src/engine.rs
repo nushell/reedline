@@ -271,17 +271,18 @@ impl Drop for Reedline {
     }
 }
 
-/// Mark the painter's cached prompt anchor stale after a menu event that re-queries the
-/// completer.
+/// Mark the painter's cached prompt anchor stale around a menu running its completer,
+/// which may have left the cached row pointing at content that has scrolled. See
+/// [`ReedlineMenu::queries_host_completer`] for why only some completers count, and
+/// #1130 for the bug.
 ///
-/// A host-supplied completer owns the tty while it runs and may shell out to a program
-/// that scrolls the terminal (nushell's external completer running `fzf --height`),
-/// leaving the cached row pointing at content that has moved. Skipped for a menu the
-/// same keystroke deactivated, whose queued event nothing will consume, and for
-/// reedline's own history completer, which never yields the terminal, so neither costs a
-/// `cursor::position()` round-trip. Menu events that only move the selection never reach
-/// the completer and call [`Menu::menu_event`] directly. See #1130.
-fn note_completer_query(menu: &ReedlineMenu, painter: &mut Painter) {
+/// Also skipped for a menu the same keystroke deactivated, whose queued event nothing
+/// goes on to consume.
+///
+/// Call this from every event that reaches the completer, which is not the same set as
+/// the events that change the menu's selection: `MenuNext` splices a partial completion
+/// and queries, while `MenuPrevious` only moves and does not.
+fn invalidate_anchor_if_host_completer_runs(menu: &ReedlineMenu, painter: &mut Painter) {
     if menu.is_active() && menu.queries_host_completer() {
         painter.invalidate_prompt_start_row();
     }
@@ -1286,7 +1287,7 @@ impl Reedline {
                 if self.active_menu().is_none() {
                     if let Some(menu) = self.menus.iter_mut().find(|menu| menu.name() == name) {
                         menu.menu_event(MenuEvent::Activate(self.quick_completions));
-                        note_completer_query(menu, &mut self.painter);
+                        invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
 
                         if self.quick_completions && menu.can_quick_complete() {
                             menu.update_values(
@@ -1328,6 +1329,7 @@ impl Reedline {
                                 self.completer.as_mut(),
                                 self.history.as_ref(),
                             );
+                            invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
                         }
                         menu.menu_event(MenuEvent::NextElement);
                         Ok(EventStatus::Handled)
@@ -1371,11 +1373,13 @@ impl Reedline {
                         Ok(EventStatus::Handled)
                     })
             }
+            // These two spell out `active_menu()`, since that borrows all of `self` and
+            // the painter has to stay reachable alongside the menu.
             ReedlineEvent::MenuPageNext => {
                 match self.menus.iter_mut().find(|menu| menu.is_active()) {
                     Some(menu) => {
                         menu.menu_event(MenuEvent::NextPage);
-                        note_completer_query(menu, &mut self.painter);
+                        invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
                         Ok(EventStatus::Handled)
                     }
                     None => Ok(EventStatus::Inapplicable),
@@ -1385,7 +1389,7 @@ impl Reedline {
                 match self.menus.iter_mut().find(|menu| menu.is_active()) {
                     Some(menu) => {
                         menu.menu_event(MenuEvent::PreviousPage);
-                        note_completer_query(menu, &mut self.painter);
+                        invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
                         Ok(EventStatus::Handled)
                     }
                     None => Ok(EventStatus::Inapplicable),
@@ -1521,7 +1525,7 @@ impl Reedline {
                             }
                             _ => {
                                 menu.menu_event(MenuEvent::Edit(self.quick_completions));
-                                note_completer_query(menu, &mut self.painter);
+                                invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
                                 menu.update_values(
                                     &mut self.editor,
                                     self.completer.as_mut(),
@@ -1549,7 +1553,7 @@ impl Reedline {
                         menu.menu_event(MenuEvent::Deactivate);
                     } else {
                         menu.menu_event(MenuEvent::Edit(self.quick_completions));
-                        note_completer_query(menu, &mut self.painter);
+                        invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
                     }
                 }
                 Ok(EventStatus::Handled)
@@ -3466,6 +3470,57 @@ mod tests {
             .unwrap();
         assert!(menu_is_active(&reedline));
         reedline
+    }
+
+    /// Engine with a completion menu open over "th" and partial completions on, so
+    /// `MenuNext` reaches the completer through `can_partially_complete`.
+    fn engine_with_partial_completion_menu() -> Reedline {
+        let completer = Box::new(DefaultCompleter::new_with_wordlen(
+            vec![String::from("this"), String::from("that")],
+            1,
+        ));
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name("completion_menu"),
+        ));
+        let mut reedline = Reedline::create()
+            .with_completer(completer)
+            .with_menu(completion_menu)
+            .with_partial_completions(true);
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(String::from("th"))]);
+        reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Menu(String::from("completion_menu")),
+            )
+            .unwrap();
+        assert!(menu_is_active(&reedline));
+        reedline
+    }
+
+    /// The anchor cache exists to keep `cursor::position()` off the hot path (#1090),
+    /// so an event may only spend that round-trip when it actually runs a host
+    /// completer. Which events those are does not follow from whether the menu's
+    /// selection moved: `MenuNext` splices a partial completion first, `MenuPrevious`
+    /// does not. See #1130.
+    #[rstest]
+    #[case::next_queries_the_completer(ReedlineEvent::MenuNext, false)]
+    #[case::previous_only_moves(ReedlineEvent::MenuPrevious, true)]
+    fn menu_events_invalidate_the_anchor_only_when_they_query(
+        #[case] event: ReedlineEvent,
+        #[case] stays_verified: bool,
+    ) {
+        let mut reedline = engine_with_partial_completion_menu();
+        reedline.painter.force_prompt_anchored_for_test(0);
+
+        reedline
+            .handle_event(&DefaultPrompt::default(), event)
+            .unwrap();
+
+        assert_eq!(
+            reedline.painter.prompt_anchor_is_verified_for_test(),
+            stays_verified
+        );
     }
 
     fn send_edit(reedline: &mut Reedline, command: EditCommand) {

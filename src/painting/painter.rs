@@ -1219,6 +1219,13 @@ impl Painter {
     pub(crate) fn force_prompt_anchored_for_test(&mut self, row: u16) {
         self.prompt_start_row = PromptStartRow::Verified(row);
     }
+
+    /// Whether the cached anchor is still trusted, so a test can pin which events cost
+    /// a re-verify and which keep #1090's query-free path.
+    #[cfg(test)]
+    pub(crate) fn prompt_anchor_is_verified_for_test(&self) -> bool {
+        matches!(self.prompt_start_row, PromptStartRow::Verified(_))
+    }
 }
 
 #[cfg(test)]
