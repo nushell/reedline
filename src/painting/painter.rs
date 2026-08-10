@@ -1299,13 +1299,6 @@ impl Painter {
     pub(crate) fn prompt_anchor_is_verified_for_test(&self) -> bool {
         matches!(self.prompt_start_row, PromptStartRow::Verified(_))
     }
-
-    /// Stand in for the size `initialize_prompt_position` would have queried, so a test can
-    /// paint without a terminal. The default `(0, 0)` divides by zero during layout.
-    #[cfg(test)]
-    pub(crate) fn force_terminal_size_for_test(&mut self, columns: u16, rows: u16) {
-        self.terminal_size = (columns, rows);
-    }
 }
 
 #[cfg(test)]

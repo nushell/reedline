@@ -3565,17 +3565,43 @@ mod tests {
         assert_eq!(reedline.current_buffer_contents(), "67x");
     }
 
-    /// A completer that computes in the background: the first request is answered with
-    /// `Pending` and only later requests carry values. This is what a cold cache looks
-    /// like from the engine's side (nushell/reedline#1142).
+    /// A completer that computes in the background: the first request cannot be answered
+    /// for the line on screen, and only later ones carry its values. This is what a cold
+    /// cache looks like from the engine's side (nushell/reedline#1142).
     struct DeferredCompleter {
+        first_answer: CompletionResult,
         values: Vec<String>,
         dispatched: bool,
     }
 
     impl DeferredCompleter {
-        fn new(values: &[&str]) -> Self {
+        /// A cold cache: nothing to show at all until the background work lands.
+        fn pending(values: &[&str]) -> Self {
+            Self::new(CompletionResult::Pending, values)
+        }
+
+        /// A warm-but-wrong cache: `stale` is answered from a neighbouring entry, so the
+        /// value is real but its span belongs to `origin_buffer` rather than the line.
+        fn stale(stale: &str, origin_buffer: &str, values: &[&str]) -> Self {
+            let first_answer = CompletionResult::Stale {
+                suggestions: vec![Suggestion {
+                    value: stale.to_string(),
+                    span: Span {
+                        start: 0,
+                        end: origin_buffer.len(),
+                    },
+                    ..Default::default()
+                }]
+                .into(),
+                origin: CompletionOrigin::new(origin_buffer, origin_buffer.len()),
+                partial: None,
+            };
+            Self::new(first_answer, values)
+        }
+
+        fn new(first_answer: CompletionResult, values: &[&str]) -> Self {
             Self {
+                first_answer,
                 values: values.iter().map(|value| value.to_string()).collect(),
                 dispatched: false,
             }
@@ -3586,7 +3612,7 @@ mod tests {
         fn complete(&mut self, _line: &str, pos: usize) -> CompletionResult {
             if !self.dispatched {
                 self.dispatched = true;
-                return CompletionResult::Pending;
+                return self.first_answer.clone();
             }
             CompletionResult::fresh(
                 self.values
@@ -3609,16 +3635,17 @@ mod tests {
         }
     }
 
-    /// Engine with `quick` completions and a background completer over `values`, with
-    /// `buffer` typed and the completion menu activated — the state right after Tab, while
-    /// the completer is still working.
+    /// [`engine_awaiting`] with partial completions off.
     fn engine_awaiting_completions(values: &[&str], buffer: &str, quick: bool) -> Reedline {
         engine_awaiting(values, buffer, quick, false)
     }
 
+    /// Engine with `quick` and `partial` completions and a background completer over
+    /// `values`, with `buffer` typed and the completion menu activated — the state right
+    /// after Tab, while the completer is still working.
     fn engine_awaiting(values: &[&str], buffer: &str, quick: bool, partial: bool) -> Reedline {
         let (reedline, _) = activate_menu_over(
-            Box::new(DeferredCompleter::new(values)),
+            Box::new(DeferredCompleter::pending(values)),
             buffer,
             quick,
             partial,
@@ -3647,8 +3674,9 @@ mod tests {
             .with_partial_completions(partial);
 
         // Settling repaints, which needs a painter that believes it is on a terminal.
+        // Size first: `handle_resize` invalidates the anchor the next line pins.
+        reedline.painter.handle_resize(80, 24);
         reedline.painter.force_prompt_anchored_for_test(0);
-        reedline.painter.force_terminal_size_for_test(80, 24);
 
         reedline.run_edit_commands(&[EditCommand::InsertString(buffer.to_string())]);
         let status = reedline
@@ -3712,7 +3740,7 @@ mod tests {
         assert!(reedline.deferred_menu_completion.is_none(), "arm is spent");
 
         // A second round of results, now down to one value, with no Tab in between.
-        reedline.completer = Box::new(DeferredCompleter::new(&["test"]));
+        reedline.completer = Box::new(DeferredCompleter::pending(&["test"]));
         reedline.completer.complete("t", 1);
         settle(&mut reedline);
 
@@ -3773,73 +3801,13 @@ mod tests {
         assert!(menu_is_active(&reedline));
     }
 
-    /// A warm-but-wrong cache: the first request is answered from a neighbouring entry,
-    /// so the values are real but belong to another line. Only the second carries the
-    /// answer for the line on screen.
-    struct StaleThenFreshCompleter {
-        stale: String,
-        origin: CompletionOrigin,
-        values: Vec<String>,
-        dispatched: bool,
-    }
-
-    impl StaleThenFreshCompleter {
-        fn new(stale: &str, origin_buffer: &str, values: &[&str]) -> Self {
-            Self {
-                stale: stale.to_string(),
-                origin: CompletionOrigin::new(origin_buffer, origin_buffer.len()),
-                values: values.iter().map(|value| value.to_string()).collect(),
-                dispatched: false,
-            }
-        }
-    }
-
-    impl Completer for StaleThenFreshCompleter {
-        fn complete(&mut self, _line: &str, pos: usize) -> CompletionResult {
-            if !self.dispatched {
-                self.dispatched = true;
-                return CompletionResult::Stale {
-                    suggestions: vec![Suggestion {
-                        value: self.stale.clone(),
-                        span: Span {
-                            start: 0,
-                            end: self.origin.buffer.len(),
-                        },
-                        ..Default::default()
-                    }]
-                    .into(),
-                    origin: self.origin.clone(),
-                    partial: None,
-                };
-            }
-            CompletionResult::fresh(
-                self.values
-                    .iter()
-                    .map(|value| Suggestion {
-                        value: value.clone(),
-                        span: Span { start: 0, end: pos },
-                        ..Default::default()
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        }
-
-        fn poll_completion(&mut self) -> CompletionStatus {
-            if self.dispatched {
-                CompletionStatus::Ready
-            } else {
-                CompletionStatus::Idle
-            }
-        }
-    }
-
     /// A lone *stale* suggestion looks like a lone fresh one to the quick completion
     /// check, but accepting it is a no-op. The Tab must still be honoured once the real
     /// answer lands.
     #[test]
     fn a_lone_stale_suggestion_does_not_swallow_the_completion() {
         let (mut reedline, _) = activate_menu_over(
-            Box::new(StaleThenFreshCompleter::new("console", "co", &["crates"])),
+            Box::new(DeferredCompleter::stale("console", "co", &["crates"])),
             "cr",
             true,
             false,
@@ -3862,7 +3830,7 @@ mod tests {
     #[test]
     fn an_opening_menu_is_not_visible_until_answered() {
         let (reedline, _) = activate_menu_over(
-            Box::new(StaleThenFreshCompleter::new("console", "co", &["crates"])),
+            Box::new(DeferredCompleter::stale("console", "co", &["crates"])),
             "cr",
             true,
             false,
