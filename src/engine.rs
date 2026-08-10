@@ -265,7 +265,9 @@ impl DeferredMenuCompletion {
     /// Anything else means the user moved on and the decision is void.
     fn still_applies(&self, menu: &ReedlineMenu, editor: &Editor) -> bool {
         self.menu == menu.name()
-            && self.origin == CompletionOrigin::new(editor.get_buffer(), editor.insertion_point())
+            && self
+                .origin
+                .matches(editor.get_buffer(), editor.insertion_point())
     }
 }
 

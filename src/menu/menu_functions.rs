@@ -418,8 +418,8 @@ impl CompletionDisplay {
 
     /// Whether spans match the current editor buffer
     fn is_current(&self, editor: &Editor) -> bool {
-        self.computed_for.buffer == editor.get_buffer()
-            && self.computed_for.insertion_point == editor.insertion_point()
+        self.computed_for
+            .matches(editor.get_buffer(), editor.insertion_point())
     }
 
     /// Accept suggestion at index (no-op if stale or out of range)

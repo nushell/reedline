@@ -49,6 +49,14 @@ impl CompletionOrigin {
             insertion_point,
         }
     }
+
+    /// Whether `buffer` and `insertion_point` are still exactly what this was
+    /// stamped for. Anything else means the line moved on and results computed
+    /// against this origin no longer describe it.
+    pub fn matches(&self, buffer: &str, insertion_point: usize) -> bool {
+        // Cursor first: it rules out most drift without comparing the line.
+        self.insertion_point == insertion_point && self.buffer == buffer
+    }
 }
 
 /// Longest common prefix extension computed by the completer.
