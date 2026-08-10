@@ -205,6 +205,13 @@ pub trait Menu: Send {
     fn is_awaiting_first_answer(&self) -> bool {
         false
     }
+
+    /// Whether the menu is on screen. An active menu still awaiting its first answer
+    /// is not: it takes input, but claims no indicator and reserves no rows.
+    fn is_visible(&self) -> bool {
+        self.is_active() && !self.is_awaiting_first_answer()
+    }
+
     /// Sets the position of the cursor (currently only required by the IDE menu)
     fn set_cursor_pos(&mut self, _pos: (u16, u16)) {
         // empty implementation to make it optional

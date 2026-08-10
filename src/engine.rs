@@ -2446,7 +2446,7 @@ impl Reedline {
             if menu.is_active() {
                 // A menu still waiting on its first answer stays off screen, so a Tab
                 // resolving to one suggestion never draws a menu it takes away again.
-                if !menu.is_awaiting_first_answer() {
+                if menu.is_visible() {
                     lines.prompt_indicator = menu.indicator().to_owned().into();
                 }
                 // If the menu requires the cursor position, update it (ide menu)
@@ -2459,13 +2459,20 @@ impl Reedline {
                     self.history.as_ref(),
                     &self.painter,
                 );
+
+                // That update is where a first answer lands and ends the opening phase,
+                // so ask again: the painter picks the menu to draw below, and an
+                // indicator saying otherwise would draw its rows under the ordinary
+                // prompt. Reading it twice is the price of the loop: the indicator sets
+                // the prompt width that positions the cursor, which the update consumes,
+                // so on the frame a menu opens that width lags by one paint.
+                if menu.is_visible() {
+                    lines.prompt_indicator = menu.indicator().to_owned().into();
+                }
             }
         }
 
-        let menu = self
-            .menus
-            .iter()
-            .find(|menu| menu.is_active() && !menu.is_awaiting_first_answer());
+        let menu = self.menus.iter().find(|menu| menu.is_visible());
 
         self.painter.repaint_buffer(
             prompt,
