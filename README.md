@@ -203,7 +203,7 @@ let mut line_editor = Reedline::create().with_edit_mode(Box::new(Vi::new(
 
 ```rust
 // Selection-first editing: motions carry the selection, verbs act on it.
-// Requires the `helix` feature.
+// Requires the `helix` feature (enabled by default).
 
 use reedline::{default_helix_normal_keybindings, Helix, Reedline};
 
@@ -214,9 +214,9 @@ let mut line_editor = Reedline::create()
     .with_edit_mode(Box::new(Helix::default().with_normal_keybindings(normal_keybindings)));
 ```
 
-Run `cargo run --example helix --features helix` for the mode on its own, or
-`cargo run --example demo --features helix -- --helix` to exercise it against
-the demo's history and menus.
+Run `cargo run --example helix` for the mode on its own, or
+`cargo run --example demo -- --helix` to exercise it against the demo's
+history and menus.
 
 ## Crate features
 
@@ -225,7 +225,7 @@ the demo's history and menus.
 - `sqlite`: Provides the `SqliteBackedHistory` to store richer information in the history. Statically links the required sqlite version.
 - `sqlite-dynlib`: Alternative to the feature `sqlite`. Will not statically link. Requires `sqlite >= 3.38` to link dynamically!
 - `external_printer`: **Experimental:** Thread-safe `ExternalPrinter` handle to print lines from concurrently running threads.
-- `helix`: **Experimental:** Selection-first `Helix`/Kakoune-style edit mode, where a motion moves the selection and a verb acts on it. Off by default; the `Helix` type and its keybinding defaults are gated behind it.
+- `helix`: Selection-first `Helix`/Kakoune-style edit mode, where a motion moves the selection and a verb acts on it. On by default; the `Helix` type and its keybinding defaults are gated behind it, so `default-features = false` builds compile without the mode.
 
 ## Are we prompt yet? (Development status)
 
