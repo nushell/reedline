@@ -1181,12 +1181,17 @@ impl Painter {
         self.initialize_prompt_position(None)
     }
 
-    // The prompt is moved to the end of the buffer after the event was handled
+    /// Park the cursor below the entry on the way out of `read_line`.
+    ///
+    /// Nothing repaints after this, so whatever sits below the cursor is what
+    /// the host prints over. A menu or a hint is not user input, so the erase is
+    /// unconditional and only the after-cursor text goes back. Text before the
+    /// cursor survives, leaving a rejected command on screen as the record of
+    /// what was aborted (#1143).
     pub(crate) fn move_cursor_to_end(&mut self) -> Result<()> {
+        self.stdout.queue(Clear(ClearType::FromCursorDown))?;
         if let Some(after_cursor) = &self.after_cursor_lines {
-            self.stdout
-                .queue(Clear(ClearType::FromCursorDown))?
-                .queue(Print(after_cursor))?;
+            self.stdout.queue(Print(after_cursor))?;
         }
         self.print_crlf()
     }
@@ -1706,6 +1711,16 @@ mod tests {
                     } else if j < b.len() && b[j] == 'G' {
                         col = params.parse::<u16>().unwrap_or(1).saturating_sub(1);
                         pending = false;
+                    } else if j < b.len() && b[j] == 'J' && matches!(params.as_str(), "" | "0") {
+                        // Erase-below (`ED(0)`): rest of this row, then every row
+                        // under it. Cells only, so cursor and `max_written` stay
+                        // put; `screen` is the one field an erase can move.
+                        if let Some(line) = grid.get_mut(row as usize) {
+                            for cell in line.iter_mut().skip(col as usize) {
+                                *cell = ' ';
+                            }
+                        }
+                        grid.truncate(row as usize + 1);
                     }
                     i = j + 1;
                 }
@@ -1948,8 +1963,10 @@ mod tests {
         );
     }
 
-    /// Minimal `Menu` whose only real method is `menu_string` — the sole method
-    /// `print_menu` exercises. Everything else is unreachable in these tests.
+    /// Minimal `Menu` reporting a fixed block of rows. `menu_string` draws them,
+    /// `menu_required_lines` books them, and both derive from the same string so
+    /// a test cannot describe a menu that draws more rows than it reserved.
+    /// Everything else is unreachable in these tests.
     struct TestMenu(String);
 
     impl Menu for TestMenu {
@@ -1993,7 +2010,7 @@ mod tests {
             unimplemented!()
         }
         fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
-            unimplemented!()
+            self.0.lines().count() as u16
         }
         fn min_rows(&self) -> u16 {
             unimplemented!()
@@ -2019,6 +2036,70 @@ mod tests {
         p.print_menu(menu, false, &layout)
             .expect("print_menu failed");
         String::from_utf8_lossy(p.stdout.captured()).into_owned()
+    }
+
+    /// Paint, then leave through the exit path, replaying the whole stream.
+    /// Same setup as `capture_repaint`, so the two stay comparable.
+    fn capture_repaint_then_exit(lines: &PromptLines, menu: Option<&ReedlineMenu>) -> Replayed {
+        let mut p = Painter::new(W::capture());
+        p.terminal_size = (20, 10);
+        p.prompt_start_row.mark_verified(0);
+        p.prompt_height = 1;
+        p.repaint_buffer(
+            &TestPrompt,
+            lines,
+            PromptEditMode::Default,
+            menu,
+            false,
+            &None,
+        )
+        .expect("repaint_buffer failed");
+        p.move_cursor_to_end().expect("move_cursor_to_end failed");
+
+        replay(&String::from_utf8_lossy(p.stdout.captured()), 20, false)
+    }
+
+    /// Regression test for nushell/reedline#1143.
+    ///
+    /// The exit path is the last thing to touch the screen, so what it leaves
+    /// below the cursor is what the host prints over. A menu and a hint both sit
+    /// there and neither is user input, so both go; the command stays, as the
+    /// record of what was rejected. One bug, two symptoms: `print_small_buffer`
+    /// draws menu or hint from the same branch, and the erase used to be gated
+    /// on after-cursor text, which is unrelated to either.
+    ///
+    /// Every case types `pwd`, so the surviving screen is always `"> pwd"`.
+    #[rstest]
+    #[case::menu_is_erased(Some("item1\nitem2\nitem3"), "pwd", "", "")]
+    #[case::hint_is_erased(None, "pwd", "", " --help")]
+    // Mid-buffer the erase takes the trailing "d" with it, so this also pins
+    // that the after-cursor text is put back afterwards.
+    #[case::after_cursor_text_survives(Some("item1\nitem2\nitem3"), "pw", "d", "")]
+    #[case::nothing_below_the_cursor_at_all(None, "pwd", "", "")]
+    fn exit_erases_below_the_cursor_but_keeps_the_command(
+        #[case] menu_rows: Option<&str>,
+        #[case] before: &str,
+        #[case] after: &str,
+        #[case] hint: &str,
+    ) {
+        let menu = menu_rows
+            .map(|rows| ReedlineMenu::EngineCompleter(Box::new(TestMenu(rows.to_string()))));
+        let mut lines = make_lines("> ", "", "", before, after);
+        lines.hint = Cow::Borrowed(hint);
+
+        let replayed = capture_repaint_then_exit(&lines, menu.as_ref());
+
+        assert_eq!(
+            replayed.screen, "> pwd",
+            "exit left content below the cursor for the host to print over, or \
+             dropped the command it should have kept"
+        );
+        // Prompt and command occupy row 0 alone once everything below is gone.
+        assert_eq!(
+            replayed.cursor.0, 1,
+            "exit parked the cursor on row {}, not on the first free row",
+            replayed.cursor.0
+        );
     }
 
     #[test]
