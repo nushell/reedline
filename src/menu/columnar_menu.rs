@@ -321,7 +321,7 @@ impl ColumnarMenu {
         match self.default_details.traversal_dir {
             TraversalDirection::Vertical => {
                 let cols = values / self.get_rows();
-                if values % self.get_rows() != 0 {
+                if !values.is_multiple_of(self.get_rows()) {
                     cols + 1
                 } else {
                     cols

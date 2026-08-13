@@ -217,7 +217,7 @@ impl DescriptionMenu {
         }
 
         let rows = values / self.get_cols();
-        if values % self.get_cols() != 0 {
+        if !values.is_multiple_of(self.get_cols()) {
             rows + 1
         } else {
             rows

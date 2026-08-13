@@ -5,7 +5,7 @@ pub struct DefaultValidator;
 
 impl Validator for DefaultValidator {
     fn validate(&self, line: &str) -> ValidationResult {
-        if line.split('"').count() % 2 == 0 || incomplete_brackets(line) {
+        if line.split('"').count().is_multiple_of(2) || incomplete_brackets(line) {
             ValidationResult::Incomplete
         } else {
             ValidationResult::Complete
