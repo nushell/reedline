@@ -329,6 +329,88 @@ pub(crate) fn scroll_offset(selected: u16, current: u16, window: u16) -> u16 {
     }
 }
 
+/// Where a menu stands between its activation and a final answer about the
+/// line on screen.
+///
+/// One value instead of three flags (`awaiting_results`, `provisional_results`,
+/// `opening`), whose invariants — pending implies provisional, and only a final
+/// answer may end the opening phase — lived in the update order rather than in
+/// a type that cannot express their violation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum CompletionPhase {
+    /// Activated with nothing asked about the line yet: no answer is
+    /// outstanding and none is provisional.
+    #[default]
+    Unasked,
+    /// Only provisional answers so far. The menu stays off screen, so one
+    /// about to be closed by a lone suggestion never appears.
+    Opening(AnswerKind),
+    /// A final answer landed once. Later provisional answers keep the menu on
+    /// screen: stale values beat blanking it on every keystroke.
+    Open(AnswerKind),
+}
+
+/// How final the last answer was, as [`CompletionPhase`] remembers it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AnswerKind {
+    /// Computed for the line on screen.
+    Fresh,
+    /// Cached values for another line: shown, never decided on.
+    Stale,
+    /// Nothing yet; the background work is still running.
+    Pending,
+}
+
+impl CompletionPhase {
+    /// A new activation forgets the previous line's answer entirely.
+    pub(crate) fn on_activate(&mut self) {
+        *self = CompletionPhase::Unasked;
+    }
+
+    /// Fold the answer to an update into the phase.
+    pub(crate) fn note(&mut self, result: &CompletionResult) {
+        let kind = if result.is_pending() {
+            AnswerKind::Pending
+        } else if result.is_provisional() {
+            AnswerKind::Stale
+        } else {
+            AnswerKind::Fresh
+        };
+        *self = match (*self, kind) {
+            // Once open, no later answer can put the menu back off screen.
+            (CompletionPhase::Open(_), kind) => CompletionPhase::Open(kind),
+            // Only a final answer ends the opening phase.
+            (_, AnswerKind::Fresh) => CompletionPhase::Open(AnswerKind::Fresh),
+            (_, kind) => CompletionPhase::Opening(kind),
+        };
+    }
+
+    /// Whether the values on display may still be superseded.
+    pub(crate) fn provisional(self) -> bool {
+        match self {
+            CompletionPhase::Unasked => false,
+            CompletionPhase::Opening(kind) | CompletionPhase::Open(kind) => {
+                kind != AnswerKind::Fresh
+            }
+        }
+    }
+
+    /// Whether a background answer is still outstanding, so an empty menu
+    /// means "still computing" rather than "no records".
+    pub(crate) fn awaiting_results(self) -> bool {
+        matches!(
+            self,
+            CompletionPhase::Opening(AnswerKind::Pending)
+                | CompletionPhase::Open(AnswerKind::Pending)
+        )
+    }
+
+    /// Whether no final answer about the line on screen has landed yet.
+    pub(crate) fn awaiting_first_answer(self) -> bool {
+        !matches!(self, CompletionPhase::Open(_))
+    }
+}
+
 /// A menu's suggestions, tied to the buffer they were computed against.
 /// Spans are validated before reaching the buffer.
 #[derive(Default)]
@@ -418,8 +500,8 @@ impl CompletionDisplay {
 
     /// Whether spans match the current editor buffer
     fn is_current(&self, editor: &Editor) -> bool {
-        self.computed_for.buffer == editor.get_buffer()
-            && self.computed_for.insertion_point == editor.insertion_point()
+        self.computed_for
+            .matches(editor.get_buffer(), editor.insertion_point())
     }
 
     /// Accept suggestion at index (no-op if stale or out of range)
