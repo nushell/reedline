@@ -1102,6 +1102,13 @@ impl Reedline {
             return Ok(());
         };
 
+        // The request that just finished was host code, which may have scrolled the
+        // terminal while it ran in the background — after the keystroke that
+        // dispatched it had already re-verified the anchor. `update_values` below
+        // can also dispatch another request for a line that moved on. Either way
+        // the repaint at the end of this settle must not trust the cached row.
+        invalidate_anchor_if_host_completer_runs(&self.menus[menu_index], &mut self.painter);
+
         let menu = &mut self.menus[menu_index];
         // The request this menu was waiting on finished, so repopulate it.
         menu.update_values(
