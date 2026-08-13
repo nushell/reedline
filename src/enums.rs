@@ -183,6 +183,10 @@ pub enum MotionTarget {
     },
     /// Logical line edge: `Backward` = line start (`0`), `Forward` = line end (`$`).
     LineEdge(Direction),
+    /// First non-whitespace character on the current line (helix `gs`). A blank
+    /// line has none, so the motion stays put.
+    #[cfg(feature = "helix")]
+    LineStartNonBlank,
     /// Whole-buffer edge: `Backward` = start (`gg`), `Forward` = end (`G`).
     BufferEdge(Direction),
     /// The adjacent logical line: `Forward` = line below (`j`), `Backward` =
@@ -198,8 +202,9 @@ pub enum MotionTarget {
         /// Land on the character vs just before it.
         stop: FindStop,
     },
-    /// Absolute byte offset (clamped into the buffer).
-    Offset(usize),
+    /// A byte position, clamped into the buffer — measured from the buffer
+    /// start, not a displacement from the cursor.
+    Position(usize),
 }
 
 impl MotionTarget {
@@ -220,6 +225,24 @@ impl MotionTarget {
                 stop,
             },
             other => other,
+        }
+    }
+
+    /// Which way the motion travels, or `None` for a target that names a
+    /// destination rather than a displacement.
+    pub(crate) fn direction(self) -> Option<Direction> {
+        match self {
+            MotionTarget::Grapheme(direction)
+            | MotionTarget::Word { direction, .. }
+            | MotionTarget::LineEdge(direction)
+            | MotionTarget::BufferEdge(direction)
+            | MotionTarget::Line(direction)
+            | MotionTarget::Find { direction, .. } => Some(direction),
+            // Destination-shaped targets go here. Where they lie depends on the
+            // cursor, so callers resolve first and compare after.
+            MotionTarget::Position(_) => None,
+            #[cfg(feature = "helix")]
+            MotionTarget::LineStartNonBlank => None,
         }
     }
 }
@@ -368,6 +391,10 @@ pub enum EditCommand {
         granularity: Granularity,
     },
 
+    /// Select up to a [`MotionTarget`]: drop a fresh anchor at the caret, then
+    /// move the head to the target, so the selection covers the span just traveled.
+    Select(MotionTarget),
+
     /// Cut like [`EditCommand::Cut`], except that a `LineWise` span keeps its
     /// line terminators: only the lines' *content* is consumed, so one blank
     /// line remains — the vi change operator's linewise semantics
@@ -511,6 +538,17 @@ pub enum EditCommand {
     /// Paste the cut buffer in front of the insertion point (vi `p`)
     PasteCutBufferAfter,
 
+    /// Paste the cut buffer at the selection edge in the given `direction` and
+    /// select the pasted text (helix `p`/`P`). Selecting the result means the
+    /// command cannot simply be issued twice for a count, so it carries `count`
+    /// explicitly.
+    PasteAtSelectionEdge {
+        /// Whether to paste on the forward or backward edge of the selection
+        direction: Direction,
+        /// Number of times the cut buffer content is placed
+        count: usize,
+    },
+
     /// Upper case the current word
     UppercaseWord,
 
@@ -582,11 +620,29 @@ pub enum EditCommand {
     /// Select whole input buffer
     SelectAll,
 
+    /// Snap the selection out to the whole lines it touches (helix `x`), or take
+    /// one more line when it already spans them exactly.
+    ///
+    /// Repeating therefore grows it a line at a time, so a count is the command
+    /// applied that many times.
+    #[cfg(feature = "helix")]
+    SelectLine,
+
+    /// Delete the selection without filling the cut buffer (helix `Alt-d`).
+    ///
+    /// [`CutSelection`](EditCommand::CutSelection) clobbers the register, which
+    /// is exactly what this avoids when the text is not wanted back.
+    #[cfg(feature = "helix")]
+    EraseSelection,
+
     /// Cut selection to local buffer
     CutSelection {
         /// Char-wise span or whole lines.
         granularity: Granularity,
     },
+
+    /// Collapse the selection (or a block cursor's width) to a caret at one of its edges
+    CollapseSelection(Direction),
 
     /// Copy selection to local buffer
     CopySelection,
@@ -755,6 +811,10 @@ impl EditCommand {
             EditCommand::SwapCursorAndAnchor => EditType::MoveCursor { select: true },
 
             EditCommand::SelectAll => EditType::MoveCursor { select: true },
+            #[cfg(feature = "helix")]
+            EditCommand::EraseSelection => EditType::EditText,
+            #[cfg(feature = "helix")]
+            EditCommand::SelectLine => EditType::MoveCursor { select: true },
             // Text edits
             EditCommand::InsertChar(_)
             | EditCommand::Backspace
@@ -806,7 +866,8 @@ impl EditCommand {
             | EditCommand::Paste
             | EditCommand::CutInsidePair { .. }
             | EditCommand::CutAroundPair { .. }
-            | EditCommand::CutTextObject { .. } => EditType::EditText,
+            | EditCommand::CutTextObject { .. }
+            | EditCommand::PasteAtSelectionEdge { .. } => EditType::EditText,
 
             #[cfg(feature = "system_clipboard")] // Sadly cfg attributes in patterns don't work
             EditCommand::CutSelectionSystem | EditCommand::PasteSystem => EditType::EditText,
@@ -846,6 +907,8 @@ impl EditCommand {
             // mutate the buffer; `Copy` does not.
             EditCommand::Move(_) => EditType::MoveCursor { select: false },
             EditCommand::Extend(_) => EditType::MoveCursor { select: true },
+            EditCommand::CollapseSelection(_) => EditType::MoveCursor { select: false },
+            EditCommand::Select(_) => EditType::MoveCursor { select: true },
             EditCommand::Cut { .. } => EditType::EditText,
             EditCommand::Copy { .. } => EditType::NoOp,
             EditCommand::Change { .. } => EditType::EditText,

@@ -99,11 +99,20 @@ pub fn get_reedline_keycodes() -> Vec<String> {
 /// where String 1 is `mode`, String 2 is `key_modifiers`, String 3 is `key_code`, and
 /// Sting 4 is `event`
 pub fn get_reedline_default_keybindings() -> Vec<(String, String, String, String)> {
-    let options = vec![
+    #[allow(unused_mut)]
+    let mut options = vec![
         ("emacs", default_emacs_keybindings()),
         ("vi_normal", default_vi_normal_keybindings()),
         ("vi_insert", default_vi_insert_keybindings()),
     ];
+
+    // Only the table layer; the bulk of the helix bindings live in its state
+    // machine, which `Keybindings` iteration cannot see.
+    #[cfg(feature = "helix")]
+    options.extend([
+        ("helix_normal", crate::default_helix_normal_keybindings()),
+        ("helix_insert", crate::default_helix_insert_keybindings()),
+    ]);
 
     options
         .into_iter()

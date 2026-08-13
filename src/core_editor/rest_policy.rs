@@ -26,8 +26,37 @@ pub(crate) enum RestPolicy {
     /// onto the grapheme to its right, or — at the buffer end, where there is
     /// none — onto the grapheme to its left. Mirrors Helix's `Range::min_width_1`.
     /// The policy for Vi visual mode, whose selection is always at least the
-    /// grapheme it sits on.
+    /// grapheme it sits on. A line terminator is not a cell: the cursor covers
+    /// the last grapheme of the line instead, like vim.
     Block,
+    /// [`Block`](RestPolicy::Block) with the terminator counted as a cell, so
+    /// `l` walks onto the `\n` and an operator there joins the lines. Helix
+    /// normal / select, whose `Range` is over the newline like any other char.
+    #[cfg(feature = "helix")]
+    BlockOverNewline,
+}
+
+impl RestPolicy {
+    /// Whether the resting cursor covers exactly one grapheme (either block
+    /// policy).
+    pub(crate) fn is_block(self) -> bool {
+        match self {
+            RestPolicy::Block => true,
+            #[cfg(feature = "helix")]
+            RestPolicy::BlockOverNewline => true,
+            RestPolicy::Between | RestPolicy::OnGrapheme => false,
+        }
+    }
+
+    /// Whether a line terminator is a cell the caret may rest on. Helix only;
+    /// every other mode steps over or clamps before it.
+    pub(crate) fn covers_terminator(self) -> bool {
+        match self {
+            RestPolicy::Between | RestPolicy::OnGrapheme | RestPolicy::Block => false,
+            #[cfg(feature = "helix")]
+            RestPolicy::BlockOverNewline => true,
+        }
+    }
 }
 
 /// Make a cursor *coherent* for `buf`: clamp both ends into `[0, buf.len()]` and
@@ -37,7 +66,7 @@ pub(crate) enum RestPolicy {
 ///
 /// Universal across edit modes and idempotent, so it is safe to run after any
 /// edit. The mode-specific resting rule is layered on top by [`commit`].
-fn recohere(buf: &str, c: Cursor) -> Cursor {
+pub(crate) fn recohere(buf: &str, c: Cursor) -> Cursor {
     let len = buf.len();
 
     let head = c.head().min(len);
@@ -92,28 +121,36 @@ pub(crate) fn commit(buf: &str, c: Cursor, policy: RestPolicy) -> Cursor {
                 c
             }
         }
-        RestPolicy::Block => {
-            // A block cursor always covers exactly one grapheme. Only a resting
-            // *point* needs adjusting; an existing selection is already a range.
-            if c.is_empty() {
-                let head = c.head();
-                let next = next_grapheme_boundary(buf, head);
-                if next > head && !buf[head..].starts_with(['\n', '\r']) {
-                    // widen forward onto the grapheme to the right: [head, next)
-                    c.move_head(next)
-                } else if head > 0 && !buf[..head].ends_with(['\n', '\r']) {
-                    // at the buffer end there's nothing to the right, so cover the
-                    // last grapheme instead: [prev, head)
-                    Cursor::new(prev_grapheme_boundary(buf, head), head)
-                } else {
-                    // empty buffer, or an empty line (no grapheme to cover without
-                    // crossing the newline): stay a zero-width point
-                    c
-                }
-            } else {
-                c
-            }
+        RestPolicy::Block => block(buf, c, false),
+        #[cfg(feature = "helix")]
+        RestPolicy::BlockOverNewline => block(buf, c, true),
+    }
+}
+
+/// The block-caret resting rule, shared by [`RestPolicy::Block`] and the
+/// helix-only `BlockOverNewline`.
+fn block(buf: &str, c: Cursor, over_newline: bool) -> Cursor {
+    // A block cursor always covers exactly one grapheme. Only a resting
+    // *point* needs adjusting; an existing selection is already a range.
+    if c.is_empty() {
+        let head = c.head();
+        let next = next_grapheme_boundary(buf, head);
+        if next > head && (over_newline || !buf[head..].starts_with(['\n', '\r'])) {
+            // widen forward onto the grapheme to the right: [head, next)
+            c.move_head(next)
+        } else if head > 0 && !buf[..head].ends_with(['\n', '\r']) {
+            // at the buffer end there's nothing to the right, so cover the
+            // last grapheme instead: [prev, head). Never crosses a line
+            // boundary, in either policy — that would move the caret up a
+            // line rather than widen it.
+            Cursor::new(prev_grapheme_boundary(buf, head), head)
+        } else {
+            // empty buffer, or an empty line (no grapheme to cover without
+            // crossing the newline): stay a zero-width point
+            c
         }
+    } else {
+        c
     }
 }
 
@@ -338,23 +375,86 @@ mod tests {
         );
     }
 
+    // --- commit: BlockOverNewline --------------------------------------------
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn block_over_newline_widens_onto_the_terminator() {
+        // The one difference from `Block`: "ab\ncd" at the `\n` (byte 2) covers
+        // it, where `Block` falls back onto 'b'.
+        assert_eq!(
+            commit("ab\ncd", Cursor::point(2), RestPolicy::BlockOverNewline),
+            Cursor::new(2, 3)
+        );
+        assert_eq!(
+            commit("ab\ncd", Cursor::point(2), RestPolicy::Block),
+            Cursor::new(1, 2)
+        );
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn block_over_newline_covers_a_whole_crlf() {
+        // CRLF is one grapheme, so the cell is both bytes: "ab\r\ncd" at 2.
+        assert_eq!(
+            commit("ab\r\ncd", Cursor::point(2), RestPolicy::BlockOverNewline),
+            Cursor::new(2, 4)
+        );
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn block_over_newline_still_will_not_widen_across_a_line() {
+        // The *backward* guard is kept: at the end of a buffer ending in `\n`
+        // there is nothing on this line to cover, and reaching back would put
+        // the caret on the previous line. Stays a zero-width point.
+        assert_eq!(
+            commit("abc\n", Cursor::point(4), RestPolicy::BlockOverNewline),
+            Cursor::point(4)
+        );
+        // An empty interior line is the same case.
+        assert_eq!(
+            commit("a\n\nb", Cursor::point(2), RestPolicy::BlockOverNewline),
+            Cursor::new(2, 3)
+        );
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
+    fn block_over_newline_matches_block_away_from_terminators() {
+        for (buf, pos) in [("hello", 2), ("caf\u{e9}", 3), ("hello", 5), ("", 0)] {
+            assert_eq!(
+                commit(buf, Cursor::point(pos), RestPolicy::BlockOverNewline),
+                commit(buf, Cursor::point(pos), RestPolicy::Block),
+                "buf={buf:?} pos={pos}"
+            );
+        }
+    }
+
     // --- commit: idempotency across every policy and char boundary -----------
 
     #[test]
     fn commit_is_idempotent() {
+        // `MULTILINE` carries LF, CRLF, an empty interior line and a trailing
+        // terminator, which is where the policies differ on newlines.
+        const MULTILINE: &str = "ab\ncd\r\n\n日\n";
         for policy in [
             RestPolicy::Between,
             RestPolicy::OnGrapheme,
             RestPolicy::Block,
+            #[cfg(feature = "helix")]
+            RestPolicy::BlockOverNewline,
         ] {
-            for a in (0..=MIXED.len()).filter(|&i| MIXED.is_char_boundary(i)) {
-                for h in (0..=MIXED.len()).filter(|&i| MIXED.is_char_boundary(i)) {
-                    let once = commit(MIXED, Cursor::new(a, h), policy);
-                    assert_eq!(
-                        commit(MIXED, once, policy),
-                        once,
-                        "policy={policy:?} anchor={a} head={h}"
-                    );
+            for buf in [MIXED, MULTILINE] {
+                for a in (0..=buf.len()).filter(|&i| buf.is_char_boundary(i)) {
+                    for h in (0..=buf.len()).filter(|&i| buf.is_char_boundary(i)) {
+                        let once = commit(buf, Cursor::new(a, h), policy);
+                        assert_eq!(
+                            commit(buf, once, policy),
+                            once,
+                            "policy={policy:?} buf={buf:?} anchor={a} head={h}"
+                        );
+                    }
                 }
             }
         }

@@ -5,10 +5,10 @@ mod vi_keybindings;
 
 use std::str::FromStr;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
-use super::EditMode;
+use super::{is_plain_char, is_text_char, parse_non_key_event, EditMode};
 use crate::{
     edit_mode::{keybindings::Keybindings, vi::parser::parse},
     enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
@@ -91,8 +91,7 @@ impl EditMode for Vi {
                     let binding = self
                         .normal_keybindings
                         .find_binding(modifiers, KeyCode::Char(c));
-                    let is_typeable =
-                        modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT;
+                    let is_typeable = is_plain_char(modifier);
 
                     // A pending multi-key motion (e.g. `f<char>`) must be completed
                     // before a custom keybinding can claim the next key; otherwise a
@@ -142,14 +141,7 @@ impl EditMode for Vi {
                     self.insert_keybindings
                         .find_binding(modifier, KeyCode::Char(c))
                         .unwrap_or_else(|| {
-                            if modifier == KeyModifiers::NONE
-                                || modifier == KeyModifiers::SHIFT
-                                || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
-                                || modifier
-                                    == KeyModifiers::CONTROL
-                                        | KeyModifiers::ALT
-                                        | KeyModifiers::SHIFT
-                            {
+                            if is_text_char(modifier) {
                                 ReedlineEvent::Edit(vec![EditCommand::InsertChar(
                                     if modifier == KeyModifiers::SHIFT {
                                         c.to_ascii_uppercase()
@@ -210,23 +202,7 @@ impl EditMode for Vi {
                     }),
             },
 
-            Event::Mouse(MouseEvent {
-                kind: MouseEventKind::Down(button),
-                column,
-                row,
-                modifiers: KeyModifiers::NONE,
-            }) => ReedlineEvent::Mouse {
-                column,
-                row,
-                button: button.into(),
-            },
-            Event::Mouse(_) => ReedlineEvent::None,
-            Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
-            Event::FocusGained => ReedlineEvent::None,
-            Event::FocusLost => ReedlineEvent::None,
-            Event::Paste(body) => ReedlineEvent::Edit(vec![EditCommand::InsertString(
-                body.replace("\r\n", "\n").replace('\r', "\n"),
-            )]),
+            event => parse_non_key_event(event),
         }
     }
 
@@ -258,6 +234,7 @@ impl EditMode for Vi {
 mod test {
     use super::*;
     use crate::{Direction, Granularity, MotionTarget, WordEdge, WordKind};
+    use crossterm::event::{MouseEvent, MouseEventKind};
     use pretty_assertions::assert_eq;
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {

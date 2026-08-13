@@ -4,12 +4,12 @@ use crate::{
             add_common_control_bindings, add_common_edit_bindings, add_common_navigation_bindings,
             add_common_selection_bindings, edit_bind, Keybindings,
         },
-        EditMode,
+        parse_non_key_event, EditMode,
     },
     enums::{EditCommand, ReedlineEvent, ReedlineRawEvent},
     PromptEditMode,
 };
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 /// Returns the current default emacs keybindings
 pub fn default_emacs_keybindings() -> Keybindings {
@@ -164,23 +164,7 @@ impl EditMode for Emacs {
                     .unwrap_or(ReedlineEvent::None),
             },
 
-            Event::Mouse(MouseEvent {
-                kind: MouseEventKind::Down(button),
-                column,
-                row,
-                modifiers: KeyModifiers::NONE,
-            }) => ReedlineEvent::Mouse {
-                column,
-                row,
-                button: button.into(),
-            },
-            Event::Mouse(_) => ReedlineEvent::None,
-            Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
-            Event::FocusGained => ReedlineEvent::None,
-            Event::FocusLost => ReedlineEvent::None,
-            Event::Paste(body) => ReedlineEvent::Edit(vec![EditCommand::InsertString(
-                body.replace("\r\n", "\n").replace('\r', "\n"),
-            )]),
+            event => parse_non_key_event(event),
         }
     }
 

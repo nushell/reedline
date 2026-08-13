@@ -1,24 +1,23 @@
 // Create a reedline object with the experimental Helix edit mode.
 // cargo run --example helix --features helix
-//
-// The current Helix example maps Ctrl-D to exit and uses the default prompt,
-// which renders the active custom mode indicator as "(helix)".
-
-use reedline::{DefaultPrompt, Helix, Reedline, Signal};
+use crossterm::cursor::SetCursorStyle;
+use nu_ansi_term::Style;
+use reedline::{CursorConfig, DefaultPrompt, Helix, Reedline, Signal};
 use std::io;
 
 fn main() -> io::Result<()> {
-    println!(
-        "Helix edit mode demo:
-Default mode is insert (`:` prompt), so you can type words.
-Press Esc for normal mode.
-Press `i` to return to insert mode, or `a` to insert after the current selection.
-Only `h`/`l` motions are currently implemented.
-Abort with Ctrl-C"
-    );
-
     let prompt = DefaultPrompt::default();
-    let mut line_editor = Reedline::create().with_edit_mode(Box::new(Helix::default()));
+    let selection_style = Style::new().reverse();
+    let cursor_shapes = CursorConfig {
+        hx_insert: Some(SetCursorStyle::SteadyBar),
+        hx_normal: Some(SetCursorStyle::SteadyBlock),
+        hx_select: Some(SetCursorStyle::SteadyUnderScore),
+        ..CursorConfig::default()
+    };
+    let mut line_editor = Reedline::create()
+        .with_edit_mode(Box::new(Helix::default()))
+        .with_cursor_config(cursor_shapes)
+        .with_visual_selection_style(selection_style);
 
     loop {
         let sig = line_editor.read_line(&prompt)?;

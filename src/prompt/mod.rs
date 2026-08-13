@@ -1,6 +1,8 @@
 mod base;
 mod default;
 
+#[cfg(feature = "helix")]
+pub use base::PromptHelixMode;
 pub use base::{
     Prompt, PromptEditMode, PromptEditModeDiscriminants, PromptHistorySearch,
     PromptHistorySearchStatus, PromptViMode, DEFAULT_INDICATOR_COLOR, DEFAULT_PROMPT_COLOR,

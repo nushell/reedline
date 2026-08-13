@@ -16,12 +16,14 @@ use {
 
 #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
 use reedline::FileBackedHistory;
+#[cfg(feature = "helix")]
+use reedline::{default_helix_insert_keybindings, default_helix_normal_keybindings, Helix};
 use reedline::{CursorConfig, MenuBuilder, OutputMode};
 
 fn main() -> reedline::Result<()> {
     println!("Ctrl-D to quit");
     // quick command like parameter handling
-    let vi_mode = matches!(std::env::args().nth(1), Some(x) if x == "--vi");
+    let mode_arg = std::env::args().nth(1);
 
     // Setting history_per_session to true will allow the history to be isolated to the current session
     // Setting history_per_session to false will allow the history to be shared across all sessions
@@ -76,7 +78,13 @@ fn main() -> reedline::Result<()> {
     let cursor_config = CursorConfig {
         vi_insert: Some(SetCursorStyle::BlinkingBar),
         vi_normal: Some(SetCursorStyle::SteadyBlock),
-        emacs: None,
+        #[cfg(feature = "helix")]
+        hx_insert: Some(SetCursorStyle::BlinkingBar),
+        #[cfg(feature = "helix")]
+        hx_normal: Some(SetCursorStyle::SteadyBlock),
+        #[cfg(feature = "helix")]
+        hx_select: Some(SetCursorStyle::SteadyUnderScore),
+        ..CursorConfig::default()
     };
 
     let mut line_editor = Reedline::create()
@@ -107,22 +115,10 @@ fn main() -> reedline::Result<()> {
                 .with_output_mode(OutputMode::FullBuffer),
         )));
 
-    let edit_mode: Box<dyn EditMode> = if vi_mode {
-        let mut normal_keybindings = default_vi_normal_keybindings();
-        let mut insert_keybindings = default_vi_insert_keybindings();
-
-        add_menu_keybindings(&mut normal_keybindings);
-        add_menu_keybindings(&mut insert_keybindings);
-
-        add_newline_keybinding(&mut insert_keybindings);
-
-        Box::new(Vi::new(insert_keybindings, normal_keybindings))
-    } else {
-        let mut keybindings = default_emacs_keybindings();
-        add_menu_keybindings(&mut keybindings);
-        add_newline_keybinding(&mut keybindings);
-
-        Box::new(Emacs::new(keybindings))
+    let edit_mode: Box<dyn EditMode> = match mode_arg.as_deref() {
+        Some("--vi") => vi_edit_mode(),
+        Some("--helix") => helix_edit_mode(),
+        _ => emacs_edit_mode(),
     };
 
     line_editor = line_editor.with_edit_mode(edit_mode);
@@ -226,6 +222,55 @@ fn main() -> reedline::Result<()> {
 
     println!();
     Ok(())
+}
+
+fn emacs_edit_mode() -> Box<dyn EditMode> {
+    let mut keybindings = default_emacs_keybindings();
+    add_menu_keybindings(&mut keybindings);
+    add_newline_keybinding(&mut keybindings);
+
+    Box::new(Emacs::new(keybindings))
+}
+
+fn vi_edit_mode() -> Box<dyn EditMode> {
+    let mut normal_keybindings = default_vi_normal_keybindings();
+    let mut insert_keybindings = default_vi_insert_keybindings();
+
+    add_menu_keybindings(&mut normal_keybindings);
+    add_menu_keybindings(&mut insert_keybindings);
+
+    add_newline_keybinding(&mut insert_keybindings);
+
+    Box::new(Vi::new(insert_keybindings, normal_keybindings))
+}
+
+#[cfg(feature = "helix")]
+fn helix_edit_mode() -> Box<dyn EditMode> {
+    let mut normal_keybindings = default_helix_normal_keybindings();
+    let mut insert_keybindings = default_helix_insert_keybindings();
+
+    add_menu_keybindings(&mut normal_keybindings);
+    add_menu_keybindings(&mut insert_keybindings);
+
+    add_newline_keybinding(&mut insert_keybindings);
+
+    Box::new(
+        Helix::default()
+            .with_insert_keybindings(insert_keybindings)
+            .with_normal_keybindings(normal_keybindings),
+    )
+}
+
+/// `--helix` is accepted whether or not the feature is compiled in, since the
+/// example itself has no `required-features`. Say so rather than falling
+/// through to emacs silently.
+#[cfg(not(feature = "helix"))]
+fn helix_edit_mode() -> Box<dyn EditMode> {
+    eprintln!(
+        "--helix needs the feature: cargo run --example demo --features helix -- --helix\n\
+         falling back to emacs"
+    );
+    emacs_edit_mode()
 }
 
 fn add_menu_keybindings(keybindings: &mut Keybindings) {
