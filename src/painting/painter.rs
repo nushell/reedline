@@ -153,6 +153,10 @@ impl Write for W {
 #[derive(Debug, PartialEq, Eq)]
 pub struct PainterSuspendedState {
     previous_prompt_rows_range: RangeInclusive<u16>,
+    /// Whether the prompt reached the last row of the screen it was captured on.
+    /// Recorded here rather than tested at re-use, since by then the screen may have
+    /// been resized by whatever ran in between.
+    was_flush_at_bottom: bool,
 }
 
 /// Screen bounds of the right prompt when it is visible.
@@ -195,15 +199,17 @@ fn select_prompt_row(
     (column, row): (u16, u16), // NOTE: Positions are 0 based here
 ) -> PromptRowSelector {
     if let Some(painter_state) = suspended_state {
-        // The painter was suspended, try to re-use the last prompt position to avoid
-        // unnecessarily making new prompts.
-        if painter_state.previous_prompt_rows_range.contains(&row) {
-            // Cursor is still in the range of the previous prompt, re-use it.
+        // Re-use the previous prompt position when the cursor came back inside it,
+        // unless that prompt sat flush against the bottom of the screen. A suspended
+        // program that scrolled the terminal returns with the cursor pinned on the
+        // bottom row, still inside the stored range and indistinguishable from an
+        // in-place return, so re-using there would redraw over the scrolled-up output.
+        // See nushell/reedline#1130.
+        if !painter_state.was_flush_at_bottom
+            && painter_state.previous_prompt_rows_range.contains(&row)
+        {
             let start_row = *painter_state.previous_prompt_rows_range.start();
             return PromptRowSelector::UseExistingPrompt { start_row };
-        } else {
-            // There was some output or cursor is outside of the range of previous prompt make a
-            // fresh new prompt.
         }
     }
 
@@ -448,6 +454,9 @@ impl Painter {
         let final_row = start_row + self.last_required_lines;
         PainterSuspendedState {
             previous_prompt_rows_range: start_row..=final_row,
+            // `final_row` can overshoot the last visible row for a prompt at the very
+            // bottom, so this is `>=` rather than an equality.
+            was_flush_at_bottom: final_row >= self.screen_height().saturating_sub(1),
         }
     }
 
@@ -548,48 +557,40 @@ impl Painter {
             self.just_resized = false;
         }
 
-        // Lines and distance parameters
+        // Reconcile a stale anchor: something yielded the tty since the last paint
+        // (a resize, an external completer, `$EDITOR`) and may have scrolled our
+        // content.
+        if let PromptStartRow::Stale(row) = self.prompt_start_row {
+            // Cursor above the cached row => content scrolled up while the tty
+            // was yielded. Re-anchor to the cursor (ground truth) rather than
+            // homing to row 0, which would yank the prompt to the top. The `+1`
+            // allows for output that left the cursor on the prompt row.
+            // See nushell/reedline#1130.
+            let anchor = match cursor::position() {
+                Ok((_, cursor_row)) if cursor_row + 1 < row => cursor_row,
+                _ => row,
+            };
+            self.prompt_start_row.mark_verified(anchor);
+        }
+
+        // Unreachable in normal flow (initialize_prompt_position runs first);
+        // in release, home to row 0 rather than draw over the content there.
+        let anchor_uninitialized = self.prompt_start_row == PromptStartRow::Unverified;
+        debug_assert!(
+            !anchor_uninitialized,
+            "repaint_buffer reached before initialize_prompt_position"
+        );
+
+        // Distance parameters, computed after reconciling so they reflect the
+        // re-anchored row.
         let remaining_lines = self.remaining_lines();
         let required_lines = lines.required_lines(screen_width, false, menu);
 
         // Marking the painter state as larger buffer to avoid animations
         self.large_buffer = required_lines >= screen_height;
 
-        // True if the prompt has scrolled above the cached
-        // `prompt_start_row` and the caller must re-anchor at row 0.
-        // When not verified, query the terminal; promote to verified if
-        // the query confirms no drift, so later paints can skip it.
-        let should_reset_anchor = match self.prompt_start_row {
-            PromptStartRow::Verified(_) => false,
-            PromptStartRow::Stale(row) => match cursor::position() {
-                // The `+1` handles the case where the previous output
-                // ended without a newline, leaving the cursor on the
-                // same row as the next prompt.
-                Ok(position) => {
-                    let drifted = position.1 + 1 < row;
-                    if !drifted {
-                        self.prompt_start_row.mark_verified(row);
-                    }
-                    drifted
-                }
-                Err(_) => false,
-            },
-            // `initialize_prompt_position` runs before any
-            // `repaint_buffer`, so this branch is unreachable in normal
-            // flow. Panic loudly in debug builds; in release, force a
-            // re-anchor since the alternative is drawing over screen
-            // content at row 0 with no scroll.
-            PromptStartRow::Unverified => {
-                debug_assert!(
-                    false,
-                    "repaint_buffer reached before initialize_prompt_position"
-                );
-                true
-            }
-        };
-
         // Moving the start position of the cursor based on the size of the required lines
-        if self.large_buffer || should_reset_anchor {
+        if self.large_buffer || anchor_uninitialized {
             for _ in 0..screen_height.saturating_sub(lines_before_cursor) {
                 self.stdout.queue(Print(&coerce_crlf("\n")))?;
             }
@@ -1291,6 +1292,13 @@ impl Painter {
     pub(crate) fn force_prompt_anchored_for_test(&mut self, row: u16) {
         self.prompt_start_row = PromptStartRow::Verified(row);
     }
+
+    /// Whether the cached anchor is still trusted, so a test can pin which events cost
+    /// a re-verify and which keep #1090's query-free path.
+    #[cfg(test)]
+    pub(crate) fn prompt_anchor_is_verified_for_test(&self) -> bool {
+        matches!(self.prompt_start_row, PromptStartRow::Verified(_))
+    }
 }
 
 #[cfg(test)]
@@ -1430,6 +1438,7 @@ mod tests {
     fn test_select_existing_prompt() {
         let state = PainterSuspendedState {
             previous_prompt_rows_range: 11..=13,
+            was_flush_at_bottom: false,
         };
         assert_eq!(
             select_prompt_row(Some(&state), (0, 12)),
@@ -1438,6 +1447,48 @@ mod tests {
         assert_eq!(
             select_prompt_row(Some(&state), (3, 12)),
             PromptRowSelector::UseExistingPrompt { start_row: 11 }
+        );
+    }
+
+    // Regression test for nushell/reedline#1130.
+    //
+    // A multi-line prompt flush against the bottom of the screen is suspended
+    // for an fzf-style keybinding. The program scrolls the terminal and returns
+    // with the cursor pinned on the bottom row, still inside the stored range.
+    // Re-using the old anchor would redraw the prompt over the scrolled-up
+    // output, so the ambiguous bottom case must make a fresh prompt instead.
+    #[test]
+    fn test_select_prompt_row_does_not_reuse_when_flush_at_bottom() {
+        let state = PainterSuspendedState {
+            previous_prompt_rows_range: 5..=7,
+            was_flush_at_bottom: true,
+        };
+        assert_eq!(
+            select_prompt_row(Some(&state), (0, 7)),
+            PromptRowSelector::MakeNewPrompt { new_row: 7 }
+        );
+    }
+
+    // The flush-at-bottom fact is captured against the screen the prompt was
+    // suspended on, since whatever runs in between may resize the terminal.
+    #[rstest]
+    #[case::well_above_bottom(2, 3, false)]
+    #[case::reaches_last_row(5, 2, true)]
+    // A prompt at the very bottom pushes `final_row` past the last visible row.
+    #[case::overshoots_last_row(5, 3, true)]
+    fn test_state_before_suspension_records_flush_at_bottom(
+        #[case] start_row: u16,
+        #[case] required_lines: u16,
+        #[case] expected: bool,
+    ) {
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(80, 8); // rows 0..=7
+        painter.prompt_start_row.mark_verified(start_row);
+        painter.last_required_lines = required_lines;
+
+        assert_eq!(
+            painter.state_before_suspension().was_flush_at_bottom,
+            expected
         );
     }
 
