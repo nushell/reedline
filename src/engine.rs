@@ -1428,7 +1428,15 @@ impl Reedline {
             }
             ReedlineEvent::MenuNext => {
                 if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
-                    if menu.get_values().len() == 1 && menu.can_quick_complete() {
+                    // The second route to the lone-value accept, so it carries the same
+                    // provisional guard as `decide_menu_completion`: accepting a lone
+                    // *stale* value is refused downstream, but the `Enter` would still
+                    // deactivate the menu, closing it over a completion that never
+                    // happened.
+                    if menu.get_values().len() == 1
+                        && menu.can_quick_complete()
+                        && !menu.results_are_provisional()
+                    {
                         self.handle_editor_event(prompt, ReedlineEvent::Enter)
                     } else {
                         if self.partial_completions {
@@ -3823,6 +3831,35 @@ mod tests {
             "crates",
             "the fresh result was dropped because the stale one closed the menu first"
         );
+    }
+
+    /// The same lone stale value through the second route: `MenuNext` with the menu
+    /// already open. The accept is refused downstream either way, but the `Enter` it
+    /// rode on would still deactivate the menu, so the pending completion had nothing
+    /// left to land in.
+    #[test]
+    fn menu_next_does_not_close_the_menu_over_a_lone_stale_value() {
+        let (mut reedline, _) = activate_menu_over(
+            Box::new(DeferredCompleter::stale("console", "co", &["crates"])),
+            "cr",
+            true,
+            false,
+        );
+        assert!(menu_is_active(&reedline), "setup");
+
+        reedline
+            .handle_event(&DefaultPrompt::default(), ReedlineEvent::MenuNext)
+            .unwrap();
+
+        assert!(
+            menu_is_active(&reedline),
+            "MenuNext accepted a provisional lone value and closed the menu"
+        );
+        assert_eq!(reedline.current_buffer_contents(), "cr");
+
+        // With the menu still open, the arm from the activation is still owed.
+        settle(&mut reedline);
+        assert_eq!(reedline.current_buffer_contents(), "crates");
     }
 
     /// The flicker: a menu opened over an answer that is not about this line stays off
