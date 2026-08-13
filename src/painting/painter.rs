@@ -1055,8 +1055,13 @@ impl Painter {
         }
 
         // In case the prompt is made out of multiple lines, the prompt is split by
-        // lines and only the required ones are printed
-        let prompt_skipped = skip_buffer_lines(&lines.prompt_str_left, extra_rows, None);
+        // lines and only the required ones are printed.
+        //
+        // Sliced rather than run through `skip_buffer_lines`, whose trailing-newline
+        // trim would drop the newline that puts the indicator on the row below.
+        let (prompt_start, prompt_end) =
+            skip_buffer_lines_range(&lines.prompt_str_left, extra_rows, None);
+        let prompt_skipped = &lines.prompt_str_left[prompt_start..prompt_end];
         self.stdout.queue(Print(&coerce_crlf(prompt_skipped)))?;
 
         if extra_rows == 0 {
@@ -1844,6 +1849,26 @@ mod tests {
             first.cursor, second.cursor,
             "n={n}: cursor depends on how DECSC treats the pending-wrap flag; \
              emitted {out:?}"
+        );
+    }
+
+    /// Regression: `skip_buffer_lines` trimmed the prompt's trailing newline, so
+    /// a two-line prompt collapsed onto one row and the input painted over it.
+    ///
+    /// Content after the cursor stands in for the tall completion menu that
+    /// reaches this in practice: both turn `large_buffer` on without adding rows
+    /// before the cursor, so `extra_rows` stays 0 and the whole prompt is still
+    /// meant to be drawn.
+    #[test]
+    fn a_large_buffer_keeps_the_prompts_trailing_newline() {
+        let after = "y".repeat(200);
+        let lines = make_lines("ab\n", "> ", "", "Z", &after);
+        let (out, _reserved, large) = capture_repaint(&lines, 0);
+        assert!(large, "meant to exercise the large-buffer path");
+
+        assert!(
+            out.contains("ab\r\n> Z"),
+            "indicator and input landed on the prompt's row; emitted {out:?}"
         );
     }
 
