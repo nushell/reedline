@@ -109,8 +109,8 @@ pub(crate) fn locate_word(
             return false;
         }
         match edge {
-            WordEdge::Start => before.map_or(true, |b| is_boundary(b, ch)),
-            WordEdge::End => after.map_or(true, |a| is_boundary(ch, a)),
+            WordEdge::Start => before.is_none_or(|b| is_boundary(b, ch)),
+            WordEdge::End => after.is_none_or(|a| is_boundary(ch, a)),
         }
     };
 

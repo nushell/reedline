@@ -305,7 +305,7 @@ impl ColumnarMenu {
             0 if self.phase.awaiting_results() => 0,
             // Should be one row for actual empty results
             0 => 1,
-            total_values => (total_values + self.get_cols() - 1) / self.get_cols(),
+            total_values => total_values.div_ceil(self.get_cols()),
         }
     }
 

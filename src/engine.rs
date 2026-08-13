@@ -937,7 +937,7 @@ impl Reedline {
     fn take_repaint_request(&self) -> bool {
         self.repaint_signal
             .as_ref()
-            .map_or(false, RepaintSignal::take)
+            .is_some_and(RepaintSignal::take)
     }
 
     /// Whether the input loop must poll with a timeout instead of blocking
@@ -949,7 +949,7 @@ impl Reedline {
             || self
                 .repaint_signal
                 .as_ref()
-                .map_or(false, |sig| Arc::strong_count(&sig.flag) > 1);
+                .is_some_and(|sig| Arc::strong_count(&sig.flag) > 1);
 
         #[cfg(feature = "external_printer")]
         {
@@ -1121,7 +1121,7 @@ impl Reedline {
         let owed = self
             .deferred_menu_completion
             .as_ref()
-            .map_or(false, |deferred| deferred.still_applies(menu, &self.editor));
+            .is_some_and(|deferred| deferred.still_applies(menu, &self.editor));
 
         // Values were just refreshed above, so the menu must not re-fetch them.
         let accept_lone_value =
@@ -2116,7 +2116,7 @@ impl Reedline {
             && buffer[word_end..]
                 .chars()
                 .next()
-                .map_or(false, |ch| !ch.is_whitespace())
+                .is_some_and(|ch| !ch.is_whitespace())
         {
             // The cursor is in the middle of a word, e.g. "hello|world"
             return None;
