@@ -79,8 +79,7 @@ impl ParsedViSequence {
 
     fn apply_multiplier(&self, raw_events: Option<Vec<ReedlineOption>>) -> ReedlineEvent {
         if let Some(raw_events) = raw_events {
-            let events = std::iter::repeat(raw_events)
-                .take(self.total_multiplier())
+            let events = std::iter::repeat_n(raw_events, self.total_multiplier())
                 .flatten()
                 .filter_map(ReedlineOption::into_reedline_event)
                 .collect::<Vec<ReedlineEvent>>();
