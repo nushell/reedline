@@ -187,6 +187,31 @@ pub trait Menu: Send {
 
     /// Gets cached values from menu that will be displayed
     fn get_values(&self) -> &[Suggestion];
+
+    /// Whether the values currently held may still be superseded, because the
+    /// last request came back [`Pending`](crate::CompletionResult::Pending) or
+    /// [`Stale`](crate::CompletionResult::Stale).
+    ///
+    /// Such values display and navigate normally, but nothing final may be
+    /// decided from them: a lone stale suggestion cannot be accepted, since its
+    /// span belongs to another line.
+    fn results_are_provisional(&self) -> bool {
+        false
+    }
+
+    /// Whether the menu is activated but not yet drawn, having heard no answer
+    /// about the line on screen. It claims no prompt indicator and reserves no
+    /// rows, so a menu about to be closed by a lone suggestion never appears.
+    fn is_awaiting_first_answer(&self) -> bool {
+        false
+    }
+
+    /// Whether the menu is on screen. An active menu still awaiting its first answer
+    /// is not: it takes input, but claims no indicator and reserves no rows.
+    fn is_visible(&self) -> bool {
+        self.is_active() && !self.is_awaiting_first_answer()
+    }
+
     /// Sets the position of the cursor (currently only required by the IDE menu)
     fn set_cursor_pos(&mut self, _pos: (u16, u16)) {
         // empty implementation to make it optional
@@ -608,6 +633,14 @@ impl Menu for ReedlineMenu {
 
     fn get_values(&self) -> &[Suggestion] {
         self.as_ref().get_values()
+    }
+
+    fn results_are_provisional(&self) -> bool {
+        self.as_ref().results_are_provisional()
+    }
+
+    fn is_awaiting_first_answer(&self) -> bool {
+        self.as_ref().is_awaiting_first_answer()
     }
 
     fn set_cursor_pos(&mut self, pos: (u16, u16)) {

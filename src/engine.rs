@@ -17,7 +17,7 @@ use {
 };
 use {
     crate::{
-        completion::{Completer, CompletionStatus, DefaultCompleter},
+        completion::{Completer, CompletionOrigin, CompletionStatus, DefaultCompleter},
         core_editor::Editor,
         edit_mode::{EditMode, Emacs},
         enums::{EventStatus, ReedlineEvent},
@@ -167,6 +167,8 @@ pub struct Reedline {
     quick_completions: bool,
     partial_completions: bool,
     persistent_menus: bool,
+    // Completions owed to a menu activation the completer could not answer in time
+    deferred_menu_completion: Option<DeferredMenuCompletion>,
 
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
@@ -233,6 +235,40 @@ pub struct Reedline {
 struct BufferEditor {
     command: Command,
     temp_file: PathBuf,
+}
+
+/// The completions the [`Menu`](ReedlineEvent::Menu) event could not decide, because the
+/// completer had not answered yet.
+///
+/// Activating a menu immediately inspects its values twice: quick completions accept a
+/// lone suggestion, and partial completions splice in the prefix the suggestions share.
+/// A completer computing in the background can answer neither yet.
+///
+/// The snapshot pins the editor state as of the keystroke this was armed on: a result
+/// landing after the user has typed on is discarded rather than rewriting the line
+/// underneath them.
+struct DeferredMenuCompletion {
+    menu: String,
+    /// The line this was armed on, stamped as a completer stamps its own results.
+    origin: CompletionOrigin,
+}
+
+impl DeferredMenuCompletion {
+    fn new(menu: &ReedlineMenu, editor: &Editor) -> Self {
+        Self {
+            menu: menu.name().to_string(),
+            origin: CompletionOrigin::new(editor.get_buffer(), editor.insertion_point()),
+        }
+    }
+
+    /// Whether the line is still exactly as it was when this was armed, on the same menu.
+    /// Anything else means the user moved on and the decision is void.
+    fn still_applies(&self, menu: &ReedlineMenu, editor: &Editor) -> bool {
+        self.menu == menu.name()
+            && self
+                .origin
+                .matches(editor.get_buffer(), editor.insertion_point())
+    }
 }
 
 /// Call [`request_repaint`](RepaintSignal::request_repaint) once
@@ -329,6 +365,7 @@ impl Reedline {
             quick_completions: false,
             partial_completions: false,
             persistent_menus: false,
+            deferred_menu_completion: None,
             highlighter: buffer_highlighter,
             visual_selection_style,
             hinter,
@@ -993,17 +1030,8 @@ impl Reedline {
             // Anything BUT idle means work is in flight. We need to keep polling.
             let completer_pending = status != CompletionStatus::Idle;
 
-            if let Some(menu) = (status == CompletionStatus::Ready)
-                .then(|| self.menus.iter_mut().find(|m| m.is_active()))
-                .flatten()
-            {
-                // latest request finished, so repopulate
-                menu.update_values(
-                    &mut self.editor,
-                    self.completer.as_mut(),
-                    self.history.as_ref(),
-                );
-                self.repaint(prompt)?;
+            if status == CompletionStatus::Ready {
+                self.settle_completions(prompt)?;
             }
 
             // Helper function that returns true if the input is complete and
@@ -1060,6 +1088,99 @@ impl Reedline {
                 return Ok(signal);
             }
         }
+    }
+
+    /// Fold a finished completion request into the active menu, and honor the completions
+    /// owed from when the request was made.
+    ///
+    /// Called when the completer reports [`CompletionStatus::Ready`]. Kept out of the
+    /// input loop so it is reachable from tests, which cannot drive the loop itself.
+    fn settle_completions(&mut self, prompt: &dyn Prompt) -> Result<()> {
+        let Some(menu_index) = self.menus.iter().position(|menu| menu.is_active()) else {
+            // No menu to answer to, so nothing can still be owed.
+            self.deferred_menu_completion = None;
+            return Ok(());
+        };
+
+        // The request that just finished was host code, which may have scrolled the
+        // terminal while it ran in the background — after the keystroke that
+        // dispatched it had already re-verified the anchor. `update_values` below
+        // can also dispatch another request for a line that moved on. Either way
+        // the repaint at the end of this settle must not trust the cached row.
+        invalidate_anchor_if_host_completer_runs(&self.menus[menu_index], &mut self.painter);
+
+        let menu = &mut self.menus[menu_index];
+        // The request this menu was waiting on finished, so repopulate it.
+        menu.update_values(
+            &mut self.editor,
+            self.completer.as_mut(),
+            self.history.as_ref(),
+        );
+        let still_provisional = menu.results_are_provisional();
+
+        let owed = self
+            .deferred_menu_completion
+            .as_ref()
+            .map_or(false, |deferred| deferred.still_applies(menu, &self.editor));
+
+        // Values were just refreshed above, so the menu must not re-fetch them.
+        let accept_lone_value =
+            owed && !still_provisional && self.decide_menu_completion(menu_index, true);
+
+        // Spent once a final answer had its say, so it cannot act on a later one.
+        // Provisional results decided nothing, so the arm outlives them.
+        if !still_provisional {
+            self.deferred_menu_completion = None;
+        }
+
+        if accept_lone_value {
+            // With a menu active this replaces in the buffer and deactivates, rather than
+            // submitting the line.
+            self.handle_editor_event(prompt, ReedlineEvent::Enter)?;
+        }
+
+        // One paint for every outcome, since painting the menu and then the accepted or
+        // extended line would flicker on each completion.
+        self.repaint(prompt)
+    }
+
+    /// The completion an opening menu applies to the line: a lone suggestion is accepted
+    /// outright, otherwise the prefix the suggestions share is spliced in. Returns whether
+    /// the caller should accept that lone suggestion.
+    ///
+    /// Both the [`Menu`](ReedlineEvent::Menu) event and the deferred replay in
+    /// [`settle_completions`](Self::settle_completions) decide this, and they have to
+    /// decide it identically. `values_updated` says whether the caller already refreshed
+    /// the menu's values, so they are not fetched twice.
+    fn decide_menu_completion(&mut self, menu_index: usize, values_updated: bool) -> bool {
+        let menu = &mut self.menus[menu_index];
+
+        let accept_lone_value = if self.quick_completions && menu.can_quick_complete() {
+            if !values_updated {
+                menu.update_values(
+                    &mut self.editor,
+                    self.completer.as_mut(),
+                    self.history.as_ref(),
+                );
+            }
+            // Accepting a lone *stale* value is refused downstream, since its span
+            // belongs to another line, so the menu would close over a completion that
+            // never happened.
+            menu.get_values().len() == 1 && !menu.results_are_provisional()
+        } else {
+            false
+        };
+
+        if !accept_lone_value && self.partial_completions {
+            menu.can_partially_complete(
+                values_updated || self.quick_completions,
+                &mut self.editor,
+                self.completer.as_mut(),
+                self.history.as_ref(),
+            );
+        }
+
+        accept_lone_value
     }
 
     fn process_input_batch(
@@ -1285,31 +1406,26 @@ impl Reedline {
         match event {
             ReedlineEvent::Menu(name) => {
                 if self.active_menu().is_none() {
-                    if let Some(menu) = self.menus.iter_mut().find(|menu| menu.name() == name) {
-                        menu.menu_event(MenuEvent::Activate(self.quick_completions));
-                        invalidate_anchor_if_host_completer_runs(menu, &mut self.painter);
+                    if let Some(index) = self.menus.iter().position(|menu| menu.name() == name) {
+                        self.menus[index].menu_event(MenuEvent::Activate(self.quick_completions));
+                        invalidate_anchor_if_host_completer_runs(
+                            &self.menus[index],
+                            &mut self.painter,
+                        );
 
-                        if self.quick_completions && menu.can_quick_complete() {
-                            menu.update_values(
-                                &mut self.editor,
-                                self.completer.as_mut(),
-                                self.history.as_ref(),
-                            );
-
-                            if menu.get_values().len() == 1 {
-                                return self.handle_editor_event(prompt, ReedlineEvent::Enter);
-                            }
+                        if self.decide_menu_completion(index, false) {
+                            return self.handle_editor_event(prompt, ReedlineEvent::Enter);
                         }
 
-                        if self.partial_completions
-                            && menu.can_partially_complete(
-                                self.quick_completions,
-                                &mut self.editor,
-                                self.completer.as_mut(),
-                                self.history.as_ref(),
-                            )
-                        {
-                            return Ok(EventStatus::Handled);
+                        // A final answer already had its say above, so only a
+                        // provisional one leaves anything owed. With neither option set
+                        // nothing queried the completer, so this reads the default
+                        // `false` and the menu paints as it always has.
+                        if self.menus[index].results_are_provisional() {
+                            self.deferred_menu_completion = Some(DeferredMenuCompletion::new(
+                                &self.menus[index],
+                                &self.editor,
+                            ));
                         }
 
                         return Ok(EventStatus::Handled);
@@ -1319,7 +1435,15 @@ impl Reedline {
             }
             ReedlineEvent::MenuNext => {
                 if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
-                    if menu.get_values().len() == 1 && menu.can_quick_complete() {
+                    // The second route to the lone-value accept, so it carries the same
+                    // provisional guard as `decide_menu_completion`: accepting a lone
+                    // *stale* value is refused downstream, but the `Enter` would still
+                    // deactivate the menu, closing it over a completion that never
+                    // happened.
+                    if menu.get_values().len() == 1
+                        && menu.can_quick_complete()
+                        && !menu.results_are_provisional()
+                    {
                         self.handle_editor_event(prompt, ReedlineEvent::Enter)
                     } else {
                         if self.partial_completions {
@@ -1683,6 +1807,8 @@ impl Reedline {
     }
 
     fn deactivate_menus(&mut self) {
+        // Nothing is left to complete into.
+        self.deferred_menu_completion = None;
         self.menus
             .iter_mut()
             .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
@@ -2333,7 +2459,11 @@ impl Reedline {
         // Updating the working details of the active menu
         for menu in self.menus.iter_mut() {
             if menu.is_active() {
-                lines.prompt_indicator = menu.indicator().to_owned().into();
+                // A menu still waiting on its first answer stays off screen, so a Tab
+                // resolving to one suggestion never draws a menu it takes away again.
+                if menu.is_visible() {
+                    lines.prompt_indicator = menu.indicator().to_owned().into();
+                }
                 // If the menu requires the cursor position, update it (ide menu)
                 let cursor_pos = lines.cursor_pos(self.painter.screen_width());
                 menu.set_cursor_pos(cursor_pos);
@@ -2344,10 +2474,20 @@ impl Reedline {
                     self.history.as_ref(),
                     &self.painter,
                 );
+
+                // That update is where a first answer lands and ends the opening phase,
+                // so ask again: the painter picks the menu to draw below, and an
+                // indicator saying otherwise would draw its rows under the ordinary
+                // prompt. Reading it twice is the price of the loop: the indicator sets
+                // the prompt width that positions the cursor, which the update consumes,
+                // so on the frame a menu opens that width lags by one paint.
+                if menu.is_visible() {
+                    lines.prompt_indicator = menu.indicator().to_owned().into();
+                }
             }
         }
 
-        let menu = self.menus.iter().find(|menu| menu.is_active());
+        let menu = self.menus.iter().find(|menu| menu.is_visible());
 
         self.painter.repaint_buffer(
             prompt,
@@ -2501,7 +2641,10 @@ impl Reedline {
 mod tests {
     use super::*;
     use crate::terminal_extensions::semantic_prompt::PromptKind;
-    use crate::{ColumnarMenu, DefaultPrompt, MenuBuilder, PromptViMode};
+    use crate::{
+        ColumnarMenu, CompletionOrigin, CompletionResult, DefaultPrompt, MenuBuilder, PromptViMode,
+        Span, Suggestion,
+    };
     use rstest::rstest;
 
     fn seam_engine(edit_mode: Box<dyn EditMode>) -> Reedline {
@@ -3435,6 +3578,317 @@ mod tests {
         let insertion = EditCommand::InsertString(String::from("x"));
         reedline.run_edit_commands(&[insertion]);
         assert_eq!(reedline.current_buffer_contents(), "67x");
+    }
+
+    /// A completer that computes in the background: the first request cannot be answered
+    /// for the line on screen, and only later ones carry its values. This is what a cold
+    /// cache looks like from the engine's side (nushell/reedline#1142).
+    struct DeferredCompleter {
+        first_answer: CompletionResult,
+        values: Vec<String>,
+        dispatched: bool,
+    }
+
+    impl DeferredCompleter {
+        /// A cold cache: nothing to show at all until the background work lands.
+        fn pending(values: &[&str]) -> Self {
+            Self::new(CompletionResult::Pending, values)
+        }
+
+        /// A warm-but-wrong cache: `stale` is answered from a neighbouring entry, so the
+        /// value is real but its span belongs to `origin_buffer` rather than the line.
+        fn stale(stale: &str, origin_buffer: &str, values: &[&str]) -> Self {
+            let first_answer = CompletionResult::Stale {
+                suggestions: vec![Suggestion {
+                    value: stale.to_string(),
+                    span: Span {
+                        start: 0,
+                        end: origin_buffer.len(),
+                    },
+                    ..Default::default()
+                }]
+                .into(),
+                origin: CompletionOrigin::new(origin_buffer, origin_buffer.len()),
+                partial: None,
+            };
+            Self::new(first_answer, values)
+        }
+
+        fn new(first_answer: CompletionResult, values: &[&str]) -> Self {
+            Self {
+                first_answer,
+                values: values.iter().map(|value| value.to_string()).collect(),
+                dispatched: false,
+            }
+        }
+    }
+
+    impl Completer for DeferredCompleter {
+        fn complete(&mut self, _line: &str, pos: usize) -> CompletionResult {
+            if !self.dispatched {
+                self.dispatched = true;
+                return self.first_answer.clone();
+            }
+            CompletionResult::fresh(
+                self.values
+                    .iter()
+                    .map(|value| Suggestion {
+                        value: value.clone(),
+                        span: Span { start: 0, end: pos },
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        }
+
+        fn poll_completion(&mut self) -> CompletionStatus {
+            if self.dispatched {
+                CompletionStatus::Ready
+            } else {
+                CompletionStatus::Idle
+            }
+        }
+    }
+
+    /// [`engine_awaiting`] with partial completions off.
+    fn engine_awaiting_completions(values: &[&str], buffer: &str, quick: bool) -> Reedline {
+        engine_awaiting(values, buffer, quick, false)
+    }
+
+    /// Engine with `quick` and `partial` completions and a background completer over
+    /// `values`, with `buffer` typed and the completion menu activated — the state right
+    /// after Tab, while the completer is still working.
+    fn engine_awaiting(values: &[&str], buffer: &str, quick: bool, partial: bool) -> Reedline {
+        let (reedline, _) = activate_menu_over(
+            Box::new(DeferredCompleter::pending(values)),
+            buffer,
+            quick,
+            partial,
+        );
+
+        // Nothing could be decided yet, the premise of every test below.
+        assert_eq!(reedline.current_buffer_contents(), buffer);
+        reedline
+    }
+
+    /// Type `buffer` and press Tab, against a completer that answers however the test
+    /// needs it to. Returns the engine and how the menu activation was handled.
+    fn activate_menu_over(
+        completer: Box<dyn Completer + Send>,
+        buffer: &str,
+        quick: bool,
+        partial: bool,
+    ) -> (Reedline, EventStatus) {
+        let completion_menu = ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name("completion_menu"),
+        ));
+        let mut reedline = Reedline::create()
+            .with_completer(completer)
+            .with_menu(completion_menu)
+            .with_quick_completions(quick)
+            .with_partial_completions(partial);
+
+        // Settling repaints, which needs a painter that believes it is on a terminal.
+        // Size first: `handle_resize` invalidates the anchor the next line pins.
+        reedline.painter.handle_resize(80, 24);
+        reedline.painter.force_prompt_anchored_for_test(0);
+
+        reedline.run_edit_commands(&[EditCommand::InsertString(buffer.to_string())]);
+        let status = reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::Menu(String::from("completion_menu")),
+            )
+            .unwrap();
+
+        (reedline, status)
+    }
+
+    fn settle(reedline: &mut Reedline) {
+        reedline
+            .settle_completions(&DefaultPrompt::default())
+            .unwrap();
+    }
+
+    /// The regression: a lone suggestion that arrives after the menu opened must still be
+    /// accepted, exactly as a synchronous completer's would have been.
+    #[test]
+    fn quick_completion_accepts_a_lone_suggestion_that_arrives_late() {
+        let mut reedline = engine_awaiting_completions(&["crates"], "cr", true);
+
+        settle(&mut reedline);
+
+        assert_eq!(reedline.current_buffer_contents(), "crates");
+        assert!(!menu_is_active(&reedline), "accepting closes the menu");
+    }
+
+    /// The decision belongs to the keystroke that asked for it. Once the user has typed
+    /// on, a late result must not rewrite the line underneath them.
+    #[test]
+    fn a_late_lone_suggestion_is_dropped_once_the_line_moved_on() {
+        let mut reedline = engine_awaiting_completions(&["crates"], "cr", true);
+
+        send_edit(&mut reedline, EditCommand::InsertChar('a'));
+        settle(&mut reedline);
+
+        assert_eq!(reedline.current_buffer_contents(), "cra");
+    }
+
+    /// Arming happens before the count is final, so settling has to re-check it: several
+    /// suggestions mean a menu, not an acceptance.
+    #[test]
+    fn late_results_with_several_suggestions_only_populate_the_menu() {
+        let mut reedline = engine_awaiting_completions(&["test", "this", "that"], "t", true);
+
+        settle(&mut reedline);
+
+        assert_eq!(reedline.current_buffer_contents(), "t");
+        assert!(menu_is_active(&reedline));
+    }
+
+    /// An arm is spent by the result that settles it, so a later request cannot inherit it.
+    #[test]
+    fn an_unsatisfied_arm_does_not_fire_on_a_later_result() {
+        let mut reedline = engine_awaiting_completions(&["test", "this", "that"], "t", true);
+
+        settle(&mut reedline);
+        assert!(reedline.deferred_menu_completion.is_none(), "arm is spent");
+
+        // A second round of results, now down to one value, with no Tab in between.
+        reedline.completer = Box::new(DeferredCompleter::pending(&["test"]));
+        reedline.completer.complete("t", 1);
+        settle(&mut reedline);
+
+        assert_eq!(reedline.current_buffer_contents(), "t");
+    }
+
+    /// The other half of the same Tab: partial completions read the same empty menu the
+    /// quick check did, so a shared prefix must be spliced in when the values land.
+    #[test]
+    fn late_results_splice_the_shared_prefix() {
+        let mut reedline = engine_awaiting(&["nu-cmd-base", "nu-cmd-lang"], "nu-cm", true, true);
+
+        settle(&mut reedline);
+
+        assert_eq!(reedline.current_buffer_contents(), "nu-cmd-");
+    }
+
+    /// A shared prefix is spliced under `partial` alone, with no quick completions.
+    #[test]
+    fn late_results_splice_the_shared_prefix_without_quick_completions() {
+        let mut reedline = engine_awaiting(&["nu-cmd-base", "nu-cmd-lang"], "nu-cm", false, true);
+
+        settle(&mut reedline);
+
+        assert_eq!(reedline.current_buffer_contents(), "nu-cmd-");
+    }
+
+    /// Accepting a lone value wins over splicing, as it does on activation.
+    #[test]
+    fn a_lone_late_suggestion_is_accepted_rather_than_spliced() {
+        let mut reedline = engine_awaiting(&["crates"], "cr", true, true);
+
+        settle(&mut reedline);
+
+        assert_eq!(reedline.current_buffer_contents(), "crates");
+        assert!(!menu_is_active(&reedline));
+    }
+
+    /// Splicing is owed to a keystroke too, and is void once the line moved on.
+    #[test]
+    fn a_late_shared_prefix_is_dropped_once_the_line_moved_on() {
+        let mut reedline = engine_awaiting(&["nu-cmd-base", "nu-cmd-lang"], "nu-cm", true, true);
+
+        send_edit(&mut reedline, EditCommand::InsertChar('d'));
+        settle(&mut reedline);
+
+        assert_eq!(reedline.current_buffer_contents(), "nu-cmd");
+    }
+
+    /// With quick completions off, late results populate the menu and nothing else.
+    #[test]
+    fn late_results_never_auto_accept_without_quick_completions() {
+        let mut reedline = engine_awaiting_completions(&["crates"], "cr", false);
+
+        settle(&mut reedline);
+
+        assert_eq!(reedline.current_buffer_contents(), "cr");
+        assert!(menu_is_active(&reedline));
+    }
+
+    /// A lone *stale* suggestion looks like a lone fresh one to the quick completion
+    /// check, but accepting it is a no-op. The Tab must still be honoured once the real
+    /// answer lands.
+    #[test]
+    fn a_lone_stale_suggestion_does_not_swallow_the_completion() {
+        let (mut reedline, _) = activate_menu_over(
+            Box::new(DeferredCompleter::stale("console", "co", &["crates"])),
+            "cr",
+            true,
+            false,
+        );
+
+        // The stale span is refused, so the buffer is untouched.
+        assert_eq!(reedline.current_buffer_contents(), "cr");
+
+        settle(&mut reedline);
+
+        assert_eq!(
+            reedline.current_buffer_contents(),
+            "crates",
+            "the fresh result was dropped because the stale one closed the menu first"
+        );
+    }
+
+    /// The same lone stale value through the second route: `MenuNext` with the menu
+    /// already open. The accept is refused downstream either way, but the `Enter` it
+    /// rode on would still deactivate the menu, so the pending completion had nothing
+    /// left to land in.
+    #[test]
+    fn menu_next_does_not_close_the_menu_over_a_lone_stale_value() {
+        let (mut reedline, _) = activate_menu_over(
+            Box::new(DeferredCompleter::stale("console", "co", &["crates"])),
+            "cr",
+            true,
+            false,
+        );
+        assert!(menu_is_active(&reedline), "setup");
+
+        reedline
+            .handle_event(&DefaultPrompt::default(), ReedlineEvent::MenuNext)
+            .unwrap();
+
+        assert!(
+            menu_is_active(&reedline),
+            "MenuNext accepted a provisional lone value and closed the menu"
+        );
+        assert_eq!(reedline.current_buffer_contents(), "cr");
+
+        // With the menu still open, the arm from the activation is still owed.
+        settle(&mut reedline);
+        assert_eq!(reedline.current_buffer_contents(), "crates");
+    }
+
+    /// The flicker: a menu opened over an answer that is not about this line stays off
+    /// screen, so a Tab that resolves to one suggestion never draws a menu at all.
+    #[test]
+    fn an_opening_menu_is_not_visible_until_answered() {
+        let (reedline, _) = activate_menu_over(
+            Box::new(DeferredCompleter::stale("console", "co", &["crates"])),
+            "cr",
+            true,
+            false,
+        );
+
+        let menu = reedline
+            .menus
+            .iter()
+            .find(|menu| menu.is_active())
+            .expect("the menu is open");
+        assert!(
+            menu.is_awaiting_first_answer(),
+            "it would only be taken away again once the real answer lands"
+        );
     }
 
     fn menu_is_active(reedline: &Reedline) -> bool {
