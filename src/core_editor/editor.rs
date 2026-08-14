@@ -1420,6 +1420,25 @@ impl Editor {
         Some((cursor.start(), cursor.end().min(self.line_buffer.len())))
     }
 
+    /// The one-grapheme cell the caret rests on inside the active selection,
+    /// or `None` when there is no selection, the cell falls outside the
+    /// selected range, or the caret geometry is a bar (emacs / vi insert rest
+    /// *between* graphemes, so no cell belongs to the cursor).
+    ///
+    /// This is the cell a distinct cursor style may claim: helix renders its
+    /// primary cursor with an own style *inside* the selection, and a flat
+    /// selection style (e.g. reverse video) painted over the whole range can
+    /// otherwise swallow the terminal cursor entirely.
+    pub(crate) fn selection_head_cell(&self) -> Option<(usize, usize)> {
+        let (from, to) = self.get_selection()?;
+        if self.caret_geometry() != CaretGeometry::Block {
+            return None;
+        }
+        let cell_start = self.insertion_point();
+        let cell_end = next_grapheme_boundary(self.get_buffer(), cell_start);
+        (cell_start < to && cell_end > from).then_some((cell_start, cell_end))
+    }
+
     fn delete_selection(&mut self) {
         if let Some((start, end)) = self.get_selection() {
             self.line_buffer.clear_range_safe(start..end);
@@ -2057,6 +2076,53 @@ mod test {
         editor.run_edit_command(&EditCommand::MoveLeft { select: true });
         // head left of anchor; get_selection returns an ordered (start, end).
         assert_eq!(editor.get_selection(), Some((1, 4)));
+    }
+
+    // --- selection_head_cell: the cell a cursor style may claim -------------
+
+    #[test]
+    fn head_cell_is_the_last_grapheme_of_a_forward_selection() {
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.move_to_position(1, false);
+        editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        assert_eq!(editor.get_selection(), Some((1, 3)), "setup");
+        assert_eq!(editor.selection_head_cell(), Some((2, 3)));
+    }
+
+    #[test]
+    fn head_cell_is_the_first_grapheme_of_a_backward_selection() {
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.move_to_position(2, false);
+        editor.run_edit_command(&EditCommand::MoveLeft { select: true });
+        assert_eq!(editor.get_selection(), Some((1, 3)), "setup");
+        assert_eq!(editor.selection_head_cell(), Some((1, 2)));
+    }
+
+    #[test]
+    fn head_cell_is_grapheme_wide() {
+        let mut editor = vi_editor("a\u{1f44d}b", PromptViMode::Normal);
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        assert_eq!(editor.get_selection(), Some((0, 5)), "setup");
+        assert_eq!(editor.selection_head_cell(), Some((1, 5)));
+    }
+
+    #[test]
+    fn no_head_cell_without_a_selection() {
+        let editor = vi_editor("hello", PromptViMode::Normal);
+        assert_eq!(editor.selection_head_cell(), None);
+    }
+
+    #[test]
+    fn no_head_cell_under_a_bar_caret() {
+        // Vi insert rests *between* graphemes: a backward selection has the
+        // caret boundary touching the range, but no cell belongs to the
+        // cursor, so the whole range keeps the selection style.
+        let mut editor = vi_editor("hello", PromptViMode::Insert);
+        editor.move_to_position(2, false);
+        editor.run_edit_command(&EditCommand::MoveLeft { select: true });
+        assert!(editor.get_selection().is_some(), "setup");
+        assert_eq!(editor.selection_head_cell(), None);
     }
 
     // BEHAVIOR(E): we follow helix — a bare cursor and a 1-grapheme selection
@@ -4248,6 +4314,30 @@ mod test {
             let mut editor = editor_with(buffer);
             editor.set_edit_mode(PromptEditMode::Helix(crate::PromptHelixMode::Normal));
             editor
+        }
+
+        #[test]
+        fn resting_cursor_cell_is_the_whole_head_cell() {
+            // A 1-wide resting selection IS the cursor: with a cursor style
+            // configured it claims the entire range and no selection style
+            // remains.
+            let mut editor = helix_editor("foo bar baz");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Move(MotionTarget::Grapheme(
+                Direction::Forward,
+            )));
+            assert_eq!(editor.get_selection(), Some((1, 2)), "setup");
+            assert_eq!(editor.selection_head_cell(), Some((1, 2)));
+        }
+
+        #[test]
+        fn head_cell_tracks_the_extending_head() {
+            let mut editor = helix_editor("foo bar baz");
+            editor.move_to_position(0, false);
+            editor.run_edit_command(&EditCommand::Select(word_start_fwd()));
+            assert_eq!(editor.get_selection(), Some((0, 4)), "setup");
+            assert_eq!(editor.insertion_point(), 3, "setup: head on the space");
+            assert_eq!(editor.selection_head_cell(), Some((3, 4)));
         }
 
         #[test]

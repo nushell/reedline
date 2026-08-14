@@ -175,6 +175,9 @@ pub struct Reedline {
 
     // Style used for visual selection
     visual_selection_style: Style,
+    /// A distinct style for the cell under the cursor inside a selection;
+    /// `None` leaves the cell on `visual_selection_style`.
+    visual_selection_cursor_style: Option<Style>,
 
     // Showcase hints based on various strategies (history, language-completion, spellcheck, etc)
     hinter: Option<Box<dyn Hinter>>,
@@ -368,6 +371,7 @@ impl Reedline {
             deferred_menu_completion: None,
             highlighter: buffer_highlighter,
             visual_selection_style,
+            visual_selection_cursor_style: None,
             hinter,
             hide_hints: false,
             validator,
@@ -597,6 +601,17 @@ impl Reedline {
     #[must_use]
     pub fn with_visual_selection_style(mut self, style: Style) -> Self {
         self.visual_selection_style = style;
+        self
+    }
+
+    /// A builder that gives the cell under the cursor its own style inside a
+    /// visual selection, the way helix styles its primary cursor distinctly
+    /// from the selection around it. Left unset, the cell keeps the plain
+    /// selection style, which can paint a flat selection (e.g. reverse video)
+    /// over the terminal cursor and hide it.
+    #[must_use]
+    pub fn with_visual_selection_cursor_style(mut self, style: Style) -> Self {
+        self.visual_selection_cursor_style = Some(style);
         self
     }
 
@@ -2415,7 +2430,23 @@ impl Reedline {
             .highlighter
             .highlight(buffer_to_paint, cursor_position_in_buffer);
         if let Some((from, to)) = self.editor.get_selection() {
-            styled_text.style_range(from, to, self.visual_selection_style);
+            // With a cursor-cell style configured, the head cell gets it and
+            // the selection style covers the rest of the range.
+            match self
+                .visual_selection_cursor_style
+                .zip(self.editor.selection_head_cell())
+            {
+                Some((cursor_style, (cell_start, cell_end))) => {
+                    if from < cell_start {
+                        styled_text.style_range(from, cell_start, self.visual_selection_style);
+                    }
+                    styled_text.style_range(cell_start, cell_end, cursor_style);
+                    if cell_end < to {
+                        styled_text.style_range(cell_end, to, self.visual_selection_style);
+                    }
+                }
+                None => styled_text.style_range(from, to, self.visual_selection_style),
+            }
         }
 
         let (before_cursor, after_cursor) = styled_text.render_around_insertion_point(
