@@ -3117,6 +3117,34 @@ mod tests {
 
     #[cfg(feature = "helix")]
     #[test]
+    fn helix_select_extends_with_arrow_keys() {
+        // The original report: `v` then arrows moved the caret but dropped the
+        // anchor, since the arrows resolved through the mode-blind normal
+        // table to `MoveRight { select: false }`.
+        let mut rl = helix_engine_with_validator();
+        drive_until_signal(
+            &mut rl,
+            &[
+                ch('"'),
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                key(KeyCode::Esc),
+                ch('g'),
+                ch('h'),
+                ch('v'),
+            ],
+        );
+        drive_until_signal(&mut rl, &[key(KeyCode::Right), key(KeyCode::Right)]);
+        assert_eq!(
+            rl.editor.get_selection(),
+            Some((0, 3)),
+            "arrows must extend like `l` does"
+        );
+    }
+
+    #[cfg(feature = "helix")]
+    #[test]
     fn helix_select_j_extends_to_the_column_normal_mode_would_land_on() {
         let mut rl = two_line_helix_engine();
         // `k` from the `f` (column 2) lands on the `b`, also column 2.
