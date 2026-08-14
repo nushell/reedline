@@ -295,7 +295,10 @@ pub use edit_mode::{
     CursorConfig, EditMode, Emacs, Keybindings, Vi,
 };
 #[cfg(feature = "helix")]
-pub use edit_mode::{default_helix_insert_keybindings, default_helix_normal_keybindings, Helix};
+pub use edit_mode::{
+    default_helix_insert_keybindings, default_helix_normal_keybindings,
+    default_helix_select_keybindings, Helix,
+};
 
 mod highlighter;
 pub use highlighter::{AbbrExpandContext, ExampleHighlighter, Highlighter, SimpleMatchHighlighter};

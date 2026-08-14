@@ -1,7 +1,10 @@
 mod helix_keybindings;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-pub use helix_keybindings::{default_helix_insert_keybindings, default_helix_normal_keybindings};
+pub use helix_keybindings::{
+    default_helix_insert_keybindings, default_helix_normal_keybindings,
+    default_helix_select_keybindings,
+};
 
 use super::{is_plain_char, is_text_char, parse_non_key_event};
 
@@ -125,6 +128,8 @@ pub struct Helix {
     insert_keybindings: Keybindings,
     /// Keybinding lookup table for normal mode
     normal_keybindings: Keybindings,
+    /// Keybinding lookup table for select mode
+    select_keybindings: Keybindings,
     mode: HelixMode,
     /// Count prefix being accumulated (`3w`).
     count: Option<usize>,
@@ -169,13 +174,22 @@ impl Helix {
         self
     }
 
-    /// Replace the normal-mode keybinding table, keeping the insert-mode
-    /// default. Shared by normal and select mode, and consulted before the
-    /// state machine, so a binding here shadows the built-in key of the same
-    /// name.
+    /// Replace the normal-mode keybinding table, keeping the insert- and
+    /// select-mode defaults. Consulted before the state machine, so a binding
+    /// here shadows the built-in key of the same name.
     #[must_use]
     pub fn with_normal_keybindings(mut self, keybindings: Keybindings) -> Self {
         self.normal_keybindings = keybindings;
+        self
+    }
+
+    /// Replace the select-mode keybinding table, keeping the other defaults.
+    /// Layer onto [`default_helix_select_keybindings`] rather than the normal
+    /// table, or the extending navigation twins (arrows, `Home`/`End`, ...)
+    /// fall back to their mode-blind normal-mode behavior.
+    #[must_use]
+    pub fn with_select_keybindings(mut self, keybindings: Keybindings) -> Self {
+        self.select_keybindings = keybindings;
         self
     }
 
@@ -205,7 +219,11 @@ impl Helix {
             // Esc must always reach the machine, otherwise modes get stranded.
             (None, code) => {
                 if self.count.is_none() && code != KeyCode::Esc {
-                    if let Some(event) = self.normal_keybindings.find_binding(key.modifiers, code) {
+                    let table = match self.mode {
+                        HelixMode::Select => &self.select_keybindings,
+                        _ => &self.normal_keybindings,
+                    };
+                    if let Some(event) = table.find_binding(key.modifiers, code) {
                         return event;
                     }
                 }
@@ -258,6 +276,7 @@ impl Default for Helix {
         Self {
             insert_keybindings: default_helix_insert_keybindings(),
             normal_keybindings: default_helix_normal_keybindings(),
+            select_keybindings: default_helix_select_keybindings(),
             mode: HelixMode::Insert,
             count: None,
             pending: None,
@@ -770,6 +789,96 @@ mod test {
         assert_eq!(
             helix.parse_event(key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
             ReedlineEvent::CtrlC
+        );
+    }
+
+    // ---- the select-mode keybinding table ----
+
+    #[test]
+    fn select_mode_consults_its_own_table() {
+        // Arrows mirror their modal siblings: `l` extends by grapheme, `k`
+        // moves by line without reaching menus or history.
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('v'));
+        assert_eq!(
+            helix.parse_event(key(KeyCode::Right, KeyModifiers::NONE)),
+            ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::Grapheme(
+                Direction::Forward
+            ))])
+        );
+        assert_eq!(
+            helix.parse_event(key(KeyCode::Up, KeyModifiers::NONE)),
+            ReedlineEvent::Edit(vec![EditCommand::MoveLineUp { select: true }])
+        );
+    }
+
+    #[test]
+    fn normal_mode_arrows_keep_menu_navigation() {
+        // The select table must not leak into normal mode, where an open menu
+        // takes the arrows first.
+        let mut helix = normal();
+        assert_eq!(
+            helix.parse_event(key(KeyCode::Left, KeyModifiers::NONE)),
+            ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuLeft, ReedlineEvent::Left])
+        );
+    }
+
+    #[test]
+    fn select_mode_backspace_extends() {
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('v'));
+        assert_eq!(
+            helix.parse_event(key(KeyCode::Backspace, KeyModifiers::NONE)),
+            ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::Grapheme(
+                Direction::Backward
+            ))])
+        );
+    }
+
+    #[test]
+    fn select_mode_home_and_end_extend_to_the_line_edges() {
+        let mut helix = normal();
+        let _ = helix.parse_event(chr('v'));
+        assert_eq!(
+            helix.parse_event(key(KeyCode::Home, KeyModifiers::NONE)),
+            ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::LineEdge(
+                Direction::Backward
+            ))])
+        );
+        assert_eq!(
+            helix.parse_event(key(KeyCode::End, KeyModifiers::NONE)),
+            ReedlineEvent::Edit(vec![EditCommand::Extend(MotionTarget::LineEdge(
+                Direction::Forward
+            ))])
+        );
+    }
+
+    #[test]
+    fn custom_select_table_shadows_the_default() {
+        let mut bindings = default_helix_select_keybindings();
+        bindings.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::Right,
+            ReedlineEvent::ClearScreen,
+        );
+        let mut helix = Helix {
+            mode: HelixMode::Normal,
+            ..Default::default()
+        }
+        .with_select_keybindings(bindings);
+        // normal mode still uses the untouched normal table
+        assert_eq!(
+            helix.parse_event(key(KeyCode::Right, KeyModifiers::NONE)),
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::HistoryHintComplete,
+                ReedlineEvent::MenuRight,
+                ReedlineEvent::Right,
+            ])
+        );
+        let _ = helix.parse_event(chr('v'));
+        assert_eq!(
+            helix.parse_event(key(KeyCode::Right, KeyModifiers::NONE)),
+            ReedlineEvent::ClearScreen
         );
     }
 
