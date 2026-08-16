@@ -150,7 +150,7 @@ impl History for SqliteBackedHistory {
         let result: i64 = self
             .db
             .prepare(&query)
-            .unwrap()
+            .map_err(map_sqlite_err)?
             .query_row(&params_borrow[..], |r| r.get(0))
             .map_err(map_sqlite_err)?;
         Ok(result)
@@ -165,7 +165,7 @@ impl History for SqliteBackedHistory {
         let results: Vec<HistoryItem> = self
             .db
             .prepare(&query)
-            .unwrap()
+            .map_err(map_sqlite_err)?
             .query_map(
                 &params_borrow[..],
                 deserialize_history_item::<IgnoreAllExtraInfo>,
@@ -317,7 +317,7 @@ impl SqliteBackedHistory {
         create index if not exists idx_history_cwd on history(cwd); -- suboptimal for many hosts
         create index if not exists idx_history_exit_status on history(exit_status);
         create index if not exists idx_history_cmd on history(command_line);
-        create index if not exists idx_history_cmd on history(session_id);
+        create index if not exists idx_history_session on history(session_id);
         -- todo: better indexes
         ",
         )
@@ -343,17 +343,17 @@ impl SqliteBackedHistory {
         let mut params: BoxedNamedParams = Vec::new();
         if let Some(start) = query.start_time {
             wheres.push(if is_asc {
-                "timestamp_start > :start_time"
+                "start_timestamp > :start_time"
             } else {
-                "timestamp_start < :start_time"
+                "start_timestamp < :start_time"
             });
             params.push((":start_time", Box::new(start.timestamp_millis())));
         }
         if let Some(end) = query.end_time {
             wheres.push(if is_asc {
-                ":end_time >= timestamp_start"
+                ":end_time >= start_timestamp"
             } else {
-                ":end_time <= timestamp_start"
+                ":end_time <= start_timestamp"
             });
             params.push((":end_time", Box::new(end.timestamp_millis())));
         }
@@ -668,6 +668,34 @@ mod tests {
             exit_status: None,
             more_info: None,
         }
+    }
+
+    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[test]
+    fn search_by_time_range_uses_existing_column() -> crate::Result<()> {
+        use crate::history::base::SearchQuery;
+        use chrono::{TimeZone, Utc};
+
+        let mut db = SqliteBackedHistory::in_memory()?;
+        for (cmd, secs) in [("early", 100), ("middle", 200), ("late", 300)] {
+            let mut item = HistoryItem::from_command_line(cmd);
+            item.start_timestamp = Some(Utc.timestamp_opt(secs, 0).unwrap());
+            db.save(item)?;
+        }
+
+        let query = || SearchQuery {
+            start_time: Some(Utc.timestamp_opt(150, 0).unwrap()),
+            end_time: Some(Utc.timestamp_opt(250, 0).unwrap()),
+            ..SearchQuery::everything(SearchDirection::Forward, None)
+        };
+        let found: Vec<String> = db
+            .search(query())?
+            .into_iter()
+            .map(|i| i.command_line)
+            .collect();
+        assert_eq!(found, vec!["middle".to_string()]);
+        assert_eq!(db.count(query())?, 1);
+        Ok(())
     }
 
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
