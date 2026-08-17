@@ -1996,16 +1996,12 @@ impl Reedline {
                         .set_line_buffer(original, UndoBehavior::HistoryNavigation);
                 }
             }
-            HistoryNavigationQuery::PrefixSearch(prefix) => {
-                if let Some(prefix_result) = self.history_cursor.string_at_cursor() {
-                    self.editor
-                        .set_buffer(prefix_result, UndoBehavior::HistoryNavigation);
-                } else {
-                    self.editor
-                        .set_buffer(prefix, UndoBehavior::HistoryNavigation);
-                }
+            HistoryNavigationQuery::PrefixSearch(prefix)
+            | HistoryNavigationQuery::SubstringSearch(prefix) => {
+                let buffer = self.history_cursor.string_at_cursor().unwrap_or(prefix);
+                self.editor
+                    .set_buffer(buffer, UndoBehavior::HistoryNavigation);
             }
-            HistoryNavigationQuery::SubstringSearch(_) => todo!(),
         }
     }
 
