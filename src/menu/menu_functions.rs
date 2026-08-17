@@ -1536,6 +1536,30 @@ mod tests {
     #[case::no_ansi_nothing_left("foobar", 3, "...")]
     #[case::trunc_with_short_segments("foobar\x1b[1;ma\x1b[2;mb\x1b[3;mc", 8, "fooba...")]
     #[case::trunc_with_long_segment("foo\x1b[1;mBarbaz\x1b[2;mExtra", 8, "foo\x1b[0mBa...")]
+    // The cases below pin which segment the cut lands in and where inside it,
+    // with well-formed SGR escapes (no trailing `;`, which the parser reads as a reset).
+    #[case::style_survives_the_cut("\x1b[1mabcdef", 4, "\x1b[1ma...")]
+    #[case::cut_on_a_segment_boundary_keeps_its_escape("ab\x1b[1mcd\x1b[2mef", 5, "ab\x1b[1m...")]
+    #[case::earlier_segment_fits_only_without_dots(
+        "ab\x1b[1mcd\x1b[2mefgh",
+        7,
+        "ab\x1b[1mcd\x1b[2m..."
+    )]
+    #[case::overflow_segment_has_no_room_left(
+        "abc\x1b[1mde\x1b[2mfghij",
+        8,
+        "abc\x1b[1mde\x1b[2m..."
+    )]
+    #[case::wide_grapheme_starts_the_overflow_segment(
+        "ab\x1b[1m\u{ff28}\u{ff28}\x1b[2mcd",
+        5,
+        "ab\x1b[1m..."
+    )]
+    #[case::empty_text_segment_between_escapes("a\x1b[1m\x1b[2mbcdefg", 5, "a\x1b[1m\x1b[2mb...")]
+    #[case::reset_inside_the_kept_part("\x1b[1mab\x1b[0mcdef", 5, "\x1b[1mab\x1b[0m...")]
+    #[case::reset_after_the_cut("\x1b[1mab\x1b[0mcdef", 4, "\x1b[1ma...")]
+    #[case::max_width_below_the_suffix("abcdef", 2, "...")]
+    #[case::max_width_zero("abcdef", 0, "...")]
     fn test_truncate_with_ansi(
         #[case] value: &str,
         #[case] max_width: usize,
