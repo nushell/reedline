@@ -1304,8 +1304,9 @@ impl Reedline {
                         }
                     }
                 }
-                // Exhausting the event handlers is still considered handled
-                Ok(EventStatus::Handled)
+                // No candidate applied, so nothing changed: report that, which
+                // also lets an enclosing `UntilFound` keep trying.
+                Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::CtrlD => {
                 if self.editor.is_empty() {
@@ -1779,7 +1780,8 @@ impl Reedline {
                         }
                     }
                 }
-                // Exhausting the event handlers is still considered handled
+                // No candidate applied, so nothing changed: report that, which
+                // also lets an enclosing `UntilFound` keep trying.
                 Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::ViChangeMode(_) => Ok(self.edit_mode.handle_mode_specific_event(event)),
