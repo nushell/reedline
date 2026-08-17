@@ -23,7 +23,7 @@ impl Hinter for DefaultHinter {
                     line.to_string(),
                     history.session(),
                 ))
-                .expect("todo: error handling")
+                .unwrap_or_default()
                 .first()
                 .map_or_else(String::new, |entry| {
                     entry
@@ -75,5 +75,64 @@ impl DefaultHinter {
     pub fn with_min_chars(mut self, min_chars: usize) -> Self {
         self.min_chars = min_chars;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        history::{HistoryItem, HistoryItemId, HistorySessionId, SearchQuery},
+        result::{ReedlineError, ReedlineErrorVariants},
+        Result,
+    };
+
+    /// A backend whose every call fails, standing in for a locked or unreadable database.
+    struct FailingHistory;
+
+    fn fail<T>() -> Result<T> {
+        Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
+            "backend down",
+        )))
+    }
+
+    impl History for FailingHistory {
+        fn save(&mut self, _: HistoryItem) -> Result<HistoryItem> {
+            fail()
+        }
+        fn load(&self, _: HistoryItemId) -> Result<HistoryItem> {
+            fail()
+        }
+        fn count(&self, _: SearchQuery) -> Result<i64> {
+            fail()
+        }
+        fn search(&self, _: SearchQuery) -> Result<Vec<HistoryItem>> {
+            fail()
+        }
+        fn update(
+            &mut self,
+            _: HistoryItemId,
+            _: &dyn Fn(HistoryItem) -> HistoryItem,
+        ) -> Result<()> {
+            fail()
+        }
+        fn clear(&mut self) -> Result<()> {
+            fail()
+        }
+        fn delete(&mut self, _: HistoryItemId) -> Result<()> {
+            fail()
+        }
+        fn sync(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn session(&self) -> Option<HistorySessionId> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_failing_history_yields_no_hint_instead_of_a_panic() {
+        let mut hinter = DefaultHinter::default();
+        assert_eq!(hinter.handle("hello ", 6, &FailingHistory, false, ""), "");
     }
 }
