@@ -13,6 +13,10 @@ use crate::{
     CompletionOrigin, CompletionResult, Editor, Partial, Suggestion, Suggestions, UndoBehavior,
 };
 
+/// Appended to whatever `truncate_with_ansi` keeps, so callers must allow at
+/// least its width.
+const TRUNCATION_SUFFIX: &str = "...";
+
 /// Index result obtained from parsing a string with an index marker
 /// For example, the next string:
 ///     "this is an example :10"
@@ -852,74 +856,131 @@ pub fn get_match_indices<'a>(
     }
 }
 
+/// Where `truncate_with_ansi` cuts: segments before `segment` are kept whole,
+/// then the first `byte` bytes of `segment`, then the suffix.
+struct Cut {
+    segment: usize,
+    /// Always a grapheme boundary within that segment's text.
+    byte: usize,
+}
+
+/// How one segment sits against the width budget once everything before it
+/// has been laid out.
+enum Fit {
+    /// The segment fits, and the suffix would still fit after it.
+    WithDots,
+    /// The segment fits, but the suffix after it would not: if anything later
+    /// overflows, the cut has to land inside this segment.
+    WithoutDots,
+    /// The segment itself does not fit.
+    Overflows,
+}
+
+fn fit(current_width: usize, segment_width: usize, suffix_width: usize, max_width: usize) -> Fit {
+    let end = current_width + segment_width;
+    if end > max_width {
+        Fit::Overflows
+    } else if end + suffix_width > max_width {
+        Fit::WithoutDots
+    } else {
+        Fit::WithDots
+    }
+}
+
+/// Byte length of the longest prefix of `text` whose display width is at most `budget`.
+///
+/// Walks graphemes so a wide or combining character is never split; a
+/// grapheme that would overshoot the budget stops the walk.
+fn prefix_len_within_width(text: &str, budget: usize) -> usize {
+    let mut remaining = budget;
+    let mut end = 0;
+    for (start, grapheme) in text.grapheme_indices(true) {
+        let width = grapheme.width();
+        if width > remaining {
+            break;
+        }
+        end = start + grapheme.len();
+        remaining -= width;
+    }
+    end
+}
+
 /// Truncate a string with ANSI escapes to the given max width, which must be >=3.
 ///
 /// If `s` is longer than `max_width`, the resulting string will end in "..."
 /// and have width at most `max_width`.
 pub(crate) fn truncate_with_ansi(s: &str, max_width: usize) -> Cow<'_, str> {
-    let trunc_suffix = "...";
-    let suffix_width = trunc_suffix.width();
+    let suffix_width = TRUNCATION_SUFFIX.width();
+    let segments = parse_ansi(s);
 
-    let ansi_segments = parse_ansi(s);
-    let mut curr_width = 0;
-    let mut should_trunc = false;
-    let mut max_ind_trunc = 0;
-    let mut trunc_grapheme_ind = 0;
-    for (i, segment) in ansi_segments.iter().enumerate() {
+    // The cut lands at the first place the suffix stops fitting: inside the
+    // first `WithoutDots` segment after a clean boundary, or failing that
+    // inside the segment that overflows. `pending` holds the former until we
+    // know whether anything overflows at all; a `WithDots` segment resets it
+    // since the suffix fits cleanly after that one again.
+    let mut current_width = 0;
+    let mut pending: Option<Cut> = None;
+    let mut cut: Option<Cut> = None;
+    for (i, segment) in segments.iter().enumerate() {
         let segment_width = segment.text.width();
-
-        should_trunc = curr_width + segment_width > max_width;
-
-        let too_long_with_dots = curr_width + segment_width + suffix_width > max_width;
-        if !too_long_with_dots {
-            max_ind_trunc = i + 1;
-        }
-
-        if should_trunc || too_long_with_dots {
-            let mut allowed_width = max_width
-                .saturating_sub(curr_width)
-                .saturating_sub(suffix_width);
-            for (ind, grapheme) in segment.text.grapheme_indices(true) {
-                let grapheme_width = grapheme.width();
-                if grapheme_width > allowed_width {
-                    break;
+        let budget = max_width
+            .saturating_sub(current_width)
+            .saturating_sub(suffix_width);
+        match fit(current_width, segment_width, suffix_width, max_width) {
+            Fit::WithDots => pending = None,
+            Fit::WithoutDots => {
+                if pending.is_none() {
+                    pending = Some(Cut {
+                        segment: i,
+                        byte: prefix_len_within_width(segment.text, budget),
+                    })
                 }
-                trunc_grapheme_ind = ind + grapheme.len();
-                allowed_width = allowed_width.saturating_sub(grapheme_width);
             }
-            if should_trunc {
+            Fit::Overflows => {
+                cut = Some(pending.take().unwrap_or_else(|| Cut {
+                    segment: i,
+                    byte: prefix_len_within_width(segment.text, budget),
+                }));
                 break;
             }
         }
-
-        curr_width += segment_width;
+        current_width += segment_width;
     }
 
-    if should_trunc {
-        let mut res = String::new();
-        for (i, segment) in ansi_segments[0..max_ind_trunc].iter().enumerate() {
-            if let Some(escape) = segment.escape {
-                res.push_str(ANSI_SGR_START);
-                res.push_str(escape);
-            } else if i > 0 {
-                // No need to put a RESET at the beginning of the string
-                res.push_str(RESET);
-            }
-            res.push_str(segment.text);
-        }
-        let last = &ansi_segments[max_ind_trunc];
-        if let Some(escape) = last.escape {
+    let Some(Cut { segment, byte }) = cut else {
+        return Cow::Borrowed(s);
+    };
+    // `segment` is an index the loop above produced, so both lookups hold; if
+    // they ever did not, an untruncated string beats a panic while painting.
+    let Some((keep, rest)) = segments.split_at_checked(segment) else {
+        return Cow::Borrowed(s);
+    };
+    let Some(last) = rest.first() else {
+        return Cow::Borrowed(s);
+    };
+
+    let mut res = String::new();
+    for (i, segment) in keep.iter().enumerate() {
+        if let Some(escape) = segment.escape {
             res.push_str(ANSI_SGR_START);
             res.push_str(escape);
-        } else if max_ind_trunc > 0 {
+        } else if i > 0 {
+            // No need to put a RESET at the beginning of the string
             res.push_str(RESET);
         }
-        res.push_str(&last.text[0..trunc_grapheme_ind]);
-        res.push_str(trunc_suffix);
-        Cow::Owned(res)
-    } else {
-        Cow::Borrowed(s)
+        res.push_str(segment.text);
     }
+    // The cut segment's escape is emitted even when none of its text survives,
+    // so the suffix carries its style.
+    if let Some(escape) = last.escape {
+        res.push_str(ANSI_SGR_START);
+        res.push_str(escape);
+    } else if segment > 0 {
+        res.push_str(RESET);
+    }
+    res.push_str(last.text.get(..byte).unwrap_or(""));
+    res.push_str(TRUNCATION_SUFFIX);
+    Cow::Owned(res)
 }
 
 #[cfg(test)]
@@ -1544,6 +1605,11 @@ mod tests {
         "ab\x1b[1mcd\x1b[2mefgh",
         7,
         "ab\x1b[1mcd\x1b[2m..."
+    )]
+    #[case::cut_lands_in_the_first_of_two_without_dots(
+        "ab\x1b[1mcd\x1b[2me\x1b[3mfghij",
+        6,
+        "ab\x1b[1mc..."
     )]
     #[case::overflow_segment_has_no_room_left(
         "abc\x1b[1mde\x1b[2mfghij",
