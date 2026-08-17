@@ -46,7 +46,6 @@ tempfile = "3.3.0"
 default = ["helix"]
 bashisms = []
 external_printer = ["crossbeam"]
-idle_callback = []
 helix = []
 sqlite = ["rusqlite/bundled", "serde_json"]
 sqlite-dynlib = ["rusqlite", "serde_json"]
@@ -68,4 +67,4 @@ required-features = ["helix"]
 [package.metadata.docs.rs]
 # Whether to pass `--all-features` to Cargo (default: false)
 all-features = false
-features = ["bashisms", "external_printer", "idle_callback", "sqlite"]
+features = ["bashisms", "external_printer", "sqlite"]

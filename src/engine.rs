@@ -231,7 +231,6 @@ pub struct Reedline {
 
     // Callback function that is called periodically while waiting for input.
     // Useful for processing external events (e.g., GUI updates) during idle time.
-    #[cfg(feature = "idle_callback")]
     idle_callback: Option<Box<dyn FnMut() + Send>>,
 }
 
@@ -390,7 +389,6 @@ impl Reedline {
             poll_interval: DEFAULT_POLL_INTERVAL,
             #[cfg(feature = "external_printer")]
             external_printer: None,
-            #[cfg(feature = "idle_callback")]
             idle_callback: None,
         }
     }
@@ -971,10 +969,7 @@ impl Reedline {
             poll |= self.external_printer.is_some();
         }
 
-        #[cfg(feature = "idle_callback")]
-        {
-            poll |= self.idle_callback.is_some();
-        }
+        poll |= self.idle_callback.is_some();
 
         poll
     }
@@ -999,7 +994,6 @@ impl Reedline {
 
         loop {
             // Call idle callback if set (for processing external events like GUI updates)
-            #[cfg(feature = "idle_callback")]
             if let Some(ref mut callback) = self.idle_callback {
                 callback();
                 // The callback owns stdout while it runs and may have
@@ -2588,9 +2582,6 @@ impl Reedline {
     /// Use [`with_poll_interval`](Self::with_poll_interval) to control how frequently
     /// the callback is invoked (default: 100ms).
     ///
-    /// ## Required feature:
-    /// `idle_callback`
-    ///
     /// # Example
     /// ```no_run
     /// use std::time::Duration;
@@ -2602,7 +2593,6 @@ impl Reedline {
     ///         // Process external events here
     ///     }));
     /// ```
-    #[cfg(feature = "idle_callback")]
     pub fn with_idle_callback(mut self, callback: Box<dyn FnMut() + Send>) -> Self {
         self.idle_callback = Some(callback);
         self
@@ -2862,7 +2852,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "idle_callback")]
     fn thread_safe_with_idle_callback() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
@@ -2883,7 +2872,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "idle_callback")]
     fn idle_callback_builder_pattern() {
         // Test that with_idle_callback can be chained with other builder methods
         let _reedline = Reedline::create()
