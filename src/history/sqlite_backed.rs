@@ -9,7 +9,7 @@ use crate::{
 };
 use chrono::{TimeZone, Utc};
 use rusqlite::{named_params, params, Connection, ToSql, TransactionBehavior};
-use std::{fmt::Write, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
 
 /// A history that stores the values to an SQLite database.
@@ -449,45 +449,34 @@ impl SqliteBackedHistory {
                 }
                 match value {
                     JsonFilterValue::Null => {
-                        write!(
-                            where_string,
-                            "json_type(more_info, :json_path_{i}) = 'null'"
-                        )
-                        .unwrap();
+                        where_string
+                            .push_str(&format!("json_type(more_info, :json_path_{i}) = 'null'"));
                     }
                     JsonFilterValue::Bool(b) => {
                         let type_str = if *b { "true" } else { "false" };
-                        write!(
-                            where_string,
+                        where_string.push_str(&format!(
                             "json_type(more_info, :json_path_{i}) = '{type_str}'"
-                        )
-                        .unwrap();
+                        ));
                     }
                     JsonFilterValue::Integer(n) => {
-                        write!(
-                            where_string,
+                        where_string.push_str(&format!(
                             "json_type(more_info, :json_path_{i}) = 'integer' \
                              AND json_extract(more_info, :json_path_{i}) = :json_val_{i}"
-                        )
-                        .unwrap();
+                        ));
                         json_params.push((format!(":json_val_{i}"), Box::new(*n)));
                     }
                     JsonFilterValue::Real(f) => {
-                        write!(
-                            where_string,
+                        where_string.push_str(&format!(
                             "json_type(more_info, :json_path_{i}) = 'real' \
-                             AND json_extract(more_info, :json_path_{i}) = :json_val_{i}"
-                        )
-                        .unwrap();
+                             AND json_extract(more_info, :json_path_{i}) = :json_val_{i}",
+                        ));
                         json_params.push((format!(":json_val_{i}"), Box::new(*f)));
                     }
                     JsonFilterValue::Text(s) => {
-                        write!(
-                            where_string,
+                        where_string.push_str(&format!(
                             "json_type(more_info, :json_path_{i}) = 'text' \
-                             AND json_extract(more_info, :json_path_{i}) = :json_val_{i}"
-                        )
-                        .unwrap();
+                             AND json_extract(more_info, :json_path_{i}) = :json_val_{i}",
+                        ));
                         json_params.push((format!(":json_val_{i}"), Box::new(s.clone())));
                     }
                 }
