@@ -315,4 +315,40 @@ mod test {
             Some(ReedlineEvent::UntilFound(vec![]))
         );
     }
+
+    #[test]
+    fn rebinding_a_key_replaces_the_previous_event() {
+        let mut kb = Keybindings::new();
+        kb.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('r'),
+            ReedlineEvent::SearchHistory,
+        );
+        kb.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('r'),
+            ReedlineEvent::ClearScreen,
+        );
+        assert_eq!(
+            kb.find_binding(KeyModifiers::CONTROL, KeyCode::Char('r')),
+            Some(ReedlineEvent::ClearScreen)
+        );
+        assert_eq!(kb.get_keybindings().len(), 1);
+    }
+
+    #[test]
+    fn remove_binding_returns_the_bound_event_and_unbinds() {
+        let mut kb = Keybindings::new();
+        kb.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::Tab,
+            ReedlineEvent::Menu("m".into()),
+        );
+        assert_eq!(
+            kb.remove_binding(KeyModifiers::NONE, KeyCode::Tab),
+            Some(ReedlineEvent::Menu("m".into()))
+        );
+        assert_eq!(kb.find_binding(KeyModifiers::NONE, KeyCode::Tab), None);
+        assert_eq!(kb.remove_binding(KeyModifiers::NONE, KeyCode::Tab), None);
+    }
 }
