@@ -15,13 +15,10 @@ pub struct CursorConfig {
     pub vi_normal: Option<SetCursorStyle>,
     /// The cursor to be used when in emacs mode
     pub emacs: Option<SetCursorStyle>,
-    #[cfg(feature = "helix")]
     /// The cursor to be used when in hx insert mode
     pub hx_insert: Option<SetCursorStyle>,
-    #[cfg(feature = "helix")]
     /// The cursor to be used when in hx normal mode
     pub hx_normal: Option<SetCursorStyle>,
-    #[cfg(feature = "helix")]
     /// The cursor to be used when in hx select mode
     pub hx_select: Option<SetCursorStyle>,
 }

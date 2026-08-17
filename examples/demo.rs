@@ -16,7 +16,6 @@ use {
 
 #[cfg(not(feature = "_sqlite"))]
 use reedline::FileBackedHistory;
-#[cfg(feature = "helix")]
 use reedline::{default_helix_insert_keybindings, default_helix_normal_keybindings, Helix};
 use reedline::{CursorConfig, MenuBuilder, OutputMode};
 
@@ -78,11 +77,8 @@ fn main() -> reedline::Result<()> {
     let cursor_config = CursorConfig {
         vi_insert: Some(SetCursorStyle::BlinkingBar),
         vi_normal: Some(SetCursorStyle::SteadyBlock),
-        #[cfg(feature = "helix")]
         hx_insert: Some(SetCursorStyle::BlinkingBar),
-        #[cfg(feature = "helix")]
         hx_normal: Some(SetCursorStyle::SteadyBlock),
-        #[cfg(feature = "helix")]
         hx_select: Some(SetCursorStyle::SteadyUnderScore),
         ..CursorConfig::default()
     };
@@ -242,7 +238,6 @@ fn vi_edit_mode() -> Box<dyn EditMode> {
     Box::new(Vi::new(insert_keybindings, normal_keybindings))
 }
 
-#[cfg(feature = "helix")]
 fn helix_edit_mode() -> Box<dyn EditMode> {
     let mut normal_keybindings = default_helix_normal_keybindings();
     let mut insert_keybindings = default_helix_insert_keybindings();
@@ -257,18 +252,6 @@ fn helix_edit_mode() -> Box<dyn EditMode> {
             .with_insert_keybindings(insert_keybindings)
             .with_normal_keybindings(normal_keybindings),
     )
-}
-
-/// `--helix` is accepted whether or not the feature is compiled in, since the
-/// example itself has no `required-features`. Say so rather than falling
-/// through to emacs silently.
-#[cfg(not(feature = "helix"))]
-fn helix_edit_mode() -> Box<dyn EditMode> {
-    eprintln!(
-        "--helix needs the feature: cargo run --example demo --features helix -- --helix\n\
-         falling back to emacs"
-    );
-    emacs_edit_mode()
 }
 
 fn add_menu_keybindings(keybindings: &mut Keybindings) {
