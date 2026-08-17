@@ -152,6 +152,21 @@ impl Write for W {
     }
 }
 
+impl W {
+    /// Where the terminal's cursor is, as `(column, row)`.
+    ///
+    /// Only the real terminal can answer, but test writers return an error so
+    /// paint paths take their "no answer" branch instead of waiting on a tty
+    /// that will never reply.
+    pub(crate) fn cursor_position(&self) -> Result<(u16, u16)> {
+        match self {
+            W::Terminal(_) => cursor::position(),
+            #[cfg(test)]
+            W::Sink(_) | W::Capture(_) => Err(std::io::Error::other("no terminal attached")),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct PainterSuspendedState {
     previous_prompt_rows_range: RangeInclusive<u16>,
@@ -482,7 +497,7 @@ impl Painter {
                 size
             }
         };
-        let prompt_selector = select_prompt_row(suspended_state, cursor::position()?);
+        let prompt_selector = select_prompt_row(suspended_state, self.stdout.cursor_position()?);
         let new_row = match prompt_selector {
             PromptRowSelector::UseExistingPrompt { start_row } => start_row,
             PromptRowSelector::MakeNewPrompt { new_row } => {
@@ -568,7 +583,7 @@ impl Painter {
             // homing to row 0, which would yank the prompt to the top. The `+1`
             // allows for output that left the cursor on the prompt row.
             // See nushell/reedline#1130.
-            let anchor = match cursor::position() {
+            let anchor = match self.stdout.cursor_position() {
                 Ok((_, cursor_row)) if cursor_row + 1 < row => cursor_row,
                 _ => row,
             };
@@ -1146,12 +1161,9 @@ impl Painter {
         // Known bug: on iterm2 and kitty, clearing the screen via CMD-K
         // doesn't reset the cursor position — possibly a `position()`
         // bug.
-        #[cfg(not(test))]
-        {
-            if let Ok(position) = cursor::position() {
-                self.prompt_start_row = PromptStartRow::Stale(position.1);
-                self.just_resized = true;
-            }
+        if let Ok(position) = self.stdout.cursor_position() {
+            self.prompt_start_row = PromptStartRow::Stale(position.1);
+            self.just_resized = true;
         }
     }
 
@@ -1272,7 +1284,7 @@ impl Painter {
         // batch of messages, not per message, so the flicker the comment above
         // guards against is unaffected.
         self.stdout.flush()?;
-        self.prompt_start_row = match cursor::position() {
+        self.prompt_start_row = match self.stdout.cursor_position() {
             // Measured, so later paints can skip the drift check.
             Ok((_, actual)) => PromptStartRow::Verified(actual),
             // No answer, so all that is left is the count this function stopped
