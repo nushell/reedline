@@ -81,8 +81,10 @@ impl DefaultHinter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
+
     use crate::{
-        history::{HistoryItem, HistoryItemId, HistorySessionId, SearchQuery},
+        history::{FileBackedHistory, HistoryItem, HistoryItemId, HistorySessionId, SearchQuery},
         result::{ReedlineError, ReedlineErrorVariants},
         Result,
     };
@@ -128,6 +130,51 @@ mod tests {
         fn session(&self) -> Option<HistorySessionId> {
             None
         }
+    }
+
+    fn history_with(lines: &[&str]) -> FileBackedHistory {
+        let mut history = FileBackedHistory::new(16).unwrap();
+        for line in lines {
+            history.save(HistoryItem::from_command_line(*line)).unwrap();
+        }
+        history
+    }
+
+    #[rstest]
+    #[case::rest_of_latest_match("hello ", "world")]
+    #[case::multibyte_prefix("café ", "latte")]
+    #[case::exact_entry_leaves_nothing("hello world", "")]
+    #[case::no_match("zzz", "")]
+    fn hint_is_the_rest_of_the_latest_matching_entry(#[case] line: &str, #[case] hint: &str) {
+        let history = history_with(&["café latte", "hello world"]);
+        let mut hinter = DefaultHinter::default();
+        assert_eq!(hinter.handle(line, line.len(), &history, false, ""), hint);
+    }
+
+    #[test]
+    fn no_hint_below_min_chars() {
+        let history = history_with(&["hello world"]);
+        let mut hinter = DefaultHinter::default().with_min_chars(3);
+        assert_eq!(hinter.handle("he", 2, &history, false, ""), "");
+        assert_eq!(hinter.handle("hel", 3, &history, false, ""), "lo world");
+    }
+
+    #[test]
+    fn accepting_exposes_the_whole_hint_and_its_first_token() {
+        let history = history_with(&["git commit --amend"]);
+        let mut hinter = DefaultHinter::default();
+        hinter.handle("git ", 4, &history, false, "");
+        assert_eq!(hinter.complete_hint(), "commit --amend");
+        assert_eq!(hinter.next_hint_token(), "commit");
+    }
+
+    #[test]
+    fn ansi_coloring_wraps_the_same_hint() {
+        let history = history_with(&["hello world"]);
+        let mut hinter = DefaultHinter::default();
+        let painted = hinter.handle("hello ", 6, &history, true, "");
+        assert_ne!(painted, "world");
+        assert_eq!(strip_ansi_escapes::strip_str(&painted), "world");
     }
 
     #[test]
