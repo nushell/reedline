@@ -116,8 +116,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
                         ParseAction::ForwardSearch
                     };
                     while let Some(&c) = input.peek() {
-                        if c.is_ascii_digit() {
-                            let c = c.to_digit(10).expect("already checked if is a digit");
+                        if let Some(c) = c.to_digit(10) {
                             let _ = input.next();
                             count *= 10;
                             count += c as usize;
