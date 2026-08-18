@@ -94,7 +94,9 @@ impl Editor {
         self.update_undo_state(undo_behavior);
     }
 
-    pub(crate) fn run_edit_command(&mut self, command: &EditCommand) {
+    pub(crate) fn run_edit_command(&mut self, command: &EditCommand) -> bool {
+        let mut successful = true;
+
         match command {
             EditCommand::MoveToStart { select } => self.move_to_start(*select),
             EditCommand::MoveToLineStart { select } => self.move_to_line_start(*select),
@@ -325,7 +327,10 @@ impl Editor {
                 self.cut_selection_to_cut_buffer(*granularity)
             }
             EditCommand::EraseSelection => self.erase_selection(),
-            EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
+            EditCommand::CopySelection => {
+                successful = self.get_selection().is_some();
+                self.copy_selection_to_cut_buffer();
+            }
             EditCommand::LowercaseSelection => self.lowercase_selection(),
             EditCommand::UppercaseSelection => self.uppercase_selection(),
             EditCommand::SwitchcaseSelection => self.switchcase_selection(),
@@ -382,7 +387,10 @@ impl Editor {
             #[cfg(feature = "system_clipboard")]
             EditCommand::CutSelectionSystem => self.cut_selection_to_system(),
             #[cfg(feature = "system_clipboard")]
-            EditCommand::CopySelectionSystem => self.copy_selection_to_system(),
+            EditCommand::CopySelectionSystem => {
+                successful = self.get_selection().is_some();
+                self.copy_selection_to_system();
+            }
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => self.paste_from_system(),
             EditCommand::CutInsidePair { left, right } => self.cut_inside_pair(*left, *right),
@@ -423,6 +431,7 @@ impl Editor {
         };
 
         self.update_undo_state(new_undo_behavior);
+        successful
     }
 
     pub(crate) fn clear_selection(&mut self) {

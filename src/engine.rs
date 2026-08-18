@@ -1685,7 +1685,11 @@ impl Reedline {
                 Ok(EventStatus::Exits(Signal::HostCommand(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
-                self.run_edit_commands(&commands);
+                let successful = self.run_edit_commands_with_status(&commands);
+                if !successful {
+                    return Ok(EventStatus::Inapplicable);
+                }
+
                 // Check if a space was just inserted and try to expand abbreviations
                 if let Some(EditCommand::InsertChar(' ')) = commands.first() {
                     if let Some(event) = self.try_expand_abbreviation_at_cursor(false) {
@@ -2073,15 +2077,19 @@ impl Reedline {
 
     /// Executes [`EditCommand`] actions by modifying the internal state appropriately. Does not output itself.
     pub fn run_edit_commands(&mut self, commands: &[EditCommand]) {
+        self.run_edit_commands_with_status(commands);
+    }
+
+    fn run_edit_commands_with_status(&mut self, commands: &[EditCommand]) -> bool {
         if self.input_mode == InputMode::HistoryTraversal {
             self.input_mode = InputMode::Regular;
         }
-        self.apply_edit_commands(commands);
+        self.apply_edit_commands(commands)
     }
 
     /// [`run_edit_commands`](Self::run_edit_commands) without ending history
     /// traversal, for the engine's own line moves inside a recalled entry.
-    fn apply_edit_commands(&mut self, commands: &[EditCommand]) {
+    fn apply_edit_commands(&mut self, commands: &[EditCommand]) -> bool {
         // Adopt the current edit mode's rest policy so these commands resolve
         // under it (e.g. block-caret selection geometry) — but *without*
         // committing the cursor first. A commit here would apply the policy's
@@ -2091,15 +2099,18 @@ impl Reedline {
         // and the pre-paint `set_edit_mode` makes the final commit.
         self.editor.sync_edit_mode(self.edit_mode.edit_mode());
 
-        // Run the commands over the edit buffer
+        // Run every command, including commands rewritten by auto-pair handling,
+        // while retaining whether the whole edit was applicable.
+        let mut successful = true;
         for command in commands {
             if let Some(command) = self.auto_pair_command(command) {
-                self.editor.run_edit_command(&command);
+                successful &= self.editor.run_edit_command(&command);
                 continue;
             }
 
-            self.editor.run_edit_command(command);
+            successful &= self.editor.run_edit_command(command);
         }
+        successful
     }
 
     fn auto_pair_command(&self, command: &EditCommand) -> Option<EditCommand> {
@@ -5451,6 +5462,88 @@ mod tests {
                 ReedlineEvent::Edit(vec![command]),
             )
             .unwrap();
+    }
+
+    #[test]
+    fn until_found_falls_through_copy_selection_without_selection() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+
+        let status = reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::Edit(vec![EditCommand::CopySelection]),
+                    ReedlineEvent::CtrlC,
+                ]),
+            )
+            .unwrap();
+
+        assert!(matches!(status, EventStatus::Exits(Signal::CtrlC)));
+    }
+
+    #[cfg(feature = "system_clipboard")]
+    #[test]
+    fn until_found_falls_through_copy_selection_system_without_selection() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+
+        let status = reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::Edit(vec![EditCommand::CopySelectionSystem]),
+                    ReedlineEvent::CtrlC,
+                ]),
+            )
+            .unwrap();
+
+        assert!(matches!(status, EventStatus::Exits(Signal::CtrlC)));
+    }
+
+    #[cfg(feature = "system_clipboard")]
+    #[test]
+    fn until_found_stops_at_copy_selection_system_with_selection() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString("abc".into()),
+            EditCommand::MoveToStart { select: false },
+            EditCommand::MoveRight { select: true },
+        ]);
+
+        let status = reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::Edit(vec![EditCommand::CopySelectionSystem]),
+                    ReedlineEvent::CtrlC,
+                ]),
+            )
+            .unwrap();
+
+        assert!(matches!(status, EventStatus::Handled));
+    }
+
+    #[test]
+    fn until_found_stops_at_copy_selection_with_selection() {
+        let mut reedline = Reedline::create();
+        reedline.run_edit_commands(&[
+            EditCommand::InsertString("abc".into()),
+            EditCommand::MoveToStart { select: false },
+            EditCommand::MoveRight { select: true },
+        ]);
+
+        let status = reedline
+            .handle_event(
+                &DefaultPrompt::default(),
+                ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::Edit(vec![EditCommand::CopySelection]),
+                    ReedlineEvent::CtrlC,
+                ]),
+            )
+            .unwrap();
+
+        assert!(matches!(status, EventStatus::Handled));
     }
 
     #[rstest]
