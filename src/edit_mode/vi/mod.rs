@@ -76,7 +76,9 @@ impl EditMode for Vi {
             Event::Key(KeyEvent {
                 code, modifiers, ..
             }) => match (self.mode, modifiers, code) {
-                (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v')) => {
+                (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v'))
+                    if self.cache.is_empty() =>
+                {
                     self.cache.clear();
                     self.mode = ViMode::Visual;
                     // Entering Visual switches the rest policy to `Block`; the
@@ -444,6 +446,27 @@ mod test {
         let result = vi.parse_event(esc);
 
         assert_eq!(result, ReedlineEvent::None);
+    }
+
+    #[test]
+    fn v_completes_pending_replace_char() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let pending = vi.parse_event(key(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert_eq!(pending, ReedlineEvent::None);
+
+        let result = vi.parse_event(key(KeyCode::Char('v'), KeyModifiers::NONE));
+
+        assert!(matches!(vi.mode, ViMode::Normal));
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::ReplaceChar(
+                'v'
+            )])])
+        );
     }
 
     #[test]
