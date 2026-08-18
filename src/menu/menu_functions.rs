@@ -174,64 +174,27 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
     }
 }
 
-/// Find differing substring between two strings
+/// Find differing substring between two strings.
+///
+/// Skips the common prefix; if the rest of `old_string` is a suffix of what
+/// remains, the difference is the text in between, otherwise everything after
+/// the prefix. Returns the byte offset of the difference and the difference.
 pub fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &'a str) {
-    if old_string.is_empty() {
-        return (0, new_string);
-    }
+    let prefix = new_string
+        .char_indices()
+        .zip(old_string.chars())
+        .take_while(|((_, n), o)| n == o)
+        .map(|((i, c), _)| i + c.len_utf8())
+        .last()
+        .unwrap_or(0);
 
-    let old_chars = old_string.char_indices().collect::<Vec<(usize, char)>>();
-    let new_chars = new_string.char_indices().collect::<Vec<(usize, char)>>();
+    // `prefix` is a char boundary of both strings by construction, so the
+    // fallbacks are unreachable; they only keep the slicing panic-free.
+    let (_, old_rest) = old_string.split_at_checked(prefix).unwrap_or_default();
+    let (head, new_rest) = new_string.split_at_checked(prefix).unwrap_or_default();
+    let diff = new_rest.strip_suffix(old_rest).unwrap_or(new_rest);
 
-    let (_, start, end) = new_chars.iter().enumerate().fold(
-        (0, None, None),
-        |(old_char_index, start, end), (new_char_index, (_, c))| {
-            let equal = if start.is_some() {
-                if (old_chars.len() - old_char_index) == (new_chars.len() - new_char_index) {
-                    let new_iter = new_chars.iter().skip(new_char_index);
-                    let old_iter = old_chars.iter().skip(old_char_index);
-
-                    new_iter
-                        .zip(old_iter)
-                        .all(|((_, new), (_, old))| new == old)
-                } else {
-                    false
-                }
-            } else {
-                old_char_index == new_char_index && *c == old_chars[old_char_index].1
-            };
-
-            if equal {
-                let old_char_index = (old_char_index + 1).min(old_chars.len() - 1);
-
-                let end = match (start, end) {
-                    (Some(_), Some(_)) => end,
-                    (Some(_), None) => Some(new_char_index),
-                    _ => None,
-                };
-
-                (old_char_index, start, end)
-            } else {
-                let start = match start {
-                    Some(_) => start,
-                    None => Some(new_char_index),
-                };
-
-                (old_char_index, start, end)
-            }
-        },
-    );
-
-    // Convert char index to byte index
-    let start = start.map(|i| new_chars[i].0);
-    let end = end.map(|i| new_chars[i].0);
-
-    match (start, end) {
-        (Some(start), Some(end)) => (start, &new_string[start..end]),
-        (Some(start), None) => (start, &new_string[start..]),
-        (None, None) => (new_string.len(), ""),
-        (None, Some(_)) => unreachable!(),
-    }
+    (head.len(), diff)
 }
 
 /// Get the part of the line that should be given as input to the completer, as well
