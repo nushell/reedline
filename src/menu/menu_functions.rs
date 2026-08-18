@@ -1127,103 +1127,33 @@ mod tests {
         assert!(matches!(res.action, ParseAction::BackwardSearch));
     }
 
-    #[test]
-    fn string_difference_test() {
-        let new_string = "this is a new string";
-        let old_string = "this is a string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new "));
-    }
-
-    #[test]
-    fn string_difference_new_larger() {
-        let new_string = "this is a new string";
-        let old_string = "this is";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (7, " a new string"));
-    }
-
-    #[test]
-    fn string_difference_new_shorter() {
-        let new_string = "this is the";
-        let old_string = "this is the original";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (11, ""));
-    }
-
-    #[test]
-    fn string_difference_inserting() {
-        let new_string = "let a = (insert) | ";
-        let old_string = "let a = () | ";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (9, "insert"));
-    }
-
-    #[test]
-    fn string_difference_longer_string() {
-        let new_string = "this is a new another";
-        let old_string = "this is a string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new another"));
-    }
-
-    #[test]
-    fn string_difference_start_same() {
-        let new_string = "this is a new something string";
-        let old_string = "this is a string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new something "));
-    }
-
-    #[test]
-    fn string_difference_empty_old() {
-        let new_string = "this new another";
-        let old_string = "";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (0, "this new another"));
-    }
-
-    #[test]
-    fn string_difference_very_difference() {
-        let new_string = "this new another";
-        let old_string = "complete different string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (0, "this new another"));
-    }
-
-    #[test]
-    fn string_difference_both_equal() {
-        let new_string = "this new another";
-        let old_string = "this new another";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (16, ""));
-    }
-
-    #[test]
-    fn string_difference_with_non_ansi() {
-        let new_string = "ｎｕｓｈｅｌｌ";
-        let old_string = "ｎｕｌｌ";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (6, "ｓｈｅ"));
-    }
-
-    #[test]
-    fn string_difference_with_repeat() {
-        let new_string = "ee";
-        let old_string = "e";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (1, "e"));
+    #[rstest]
+    #[case::inserted_word("this is a new string", "this is a string", 10, "new ")]
+    #[case::appended("this is a new string", "this is", 7, " a new string")]
+    #[case::new_shorter("this is the", "this is the original", 11, "")]
+    #[case::inserted_inside_parens("let a = (insert) | ", "let a = () | ", 9, "insert")]
+    #[case::tail_differs("this is a new another", "this is a string", 10, "new another")]
+    #[case::inserted_words(
+        "this is a new something string",
+        "this is a string",
+        10,
+        "new something "
+    )]
+    #[case::empty_old("this new another", "", 0, "this new another")]
+    #[case::nothing_shared("this new another", "complete different string", 0, "this new another")]
+    #[case::equal("this new another", "this new another", 16, "")]
+    #[case::multibyte_diff("ｎｕｓｈｅｌｌ", "ｎｕｌｌ", 6, "ｓｈｅ")]
+    #[case::multibyte_prefix("héllo wörld", "héllo", 6, " wörld")]
+    #[case::repeat("ee", "e", 1, "e")]
+    #[case::repeat_twice("eee", "e", 1, "ee")]
+    #[case::old_is_prefix_and_reappears("abcb", "ab", 2, "cb")]
+    fn string_difference_is_the_text_typed_after_the_prefix(
+        #[case] new: &str,
+        #[case] old: &str,
+        #[case] start: usize,
+        #[case] diff: &str,
+    ) {
+        assert_eq!(string_difference(new, old), (start, diff));
     }
 
     #[rstest]
