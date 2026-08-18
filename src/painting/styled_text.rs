@@ -326,6 +326,61 @@ mod test {
         assert_eq!(styled_text.buffer[1], (after_style, "d".into()));
         assert_eq!(styled_text.buffer[2], (before_style, "f".into()));
     }
+    /// The styled flag and text of each pair, so a case can state the whole
+    /// segmentation on one line.
+    fn segments(text: &StyledText, styled: Style) -> Vec<(bool, &str)> {
+        text.buffer
+            .iter()
+            .map(|(style, s)| (*style == styled, s.as_str()))
+            .collect()
+    }
+
+    // Byte offsets `from`/`to` against the "aaa" "bbb" "ccc" template. Cases
+    // where the range starts or ends on a pair boundary produce no
+    // zero-length pairs; the split-and-insert version used to leave them.
+    #[rstest]
+    #[case::empty_range_mid_pair(4, 4, &[(false, "aaa"), (false, "bbb"), (false, "ccc")])]
+    #[case::empty_range_on_boundary(3, 3, &[(false, "aaa"), (false, "bbb"), (false, "ccc")])]
+    #[case::empty_range_at_zero(0, 0, &[(false, "aaa"), (false, "bbb"), (false, "ccc")])]
+    #[case::starts_on_boundary(3, 5, &[(false, "aaa"), (true, "bb"), (false, "b"), (false, "ccc")])]
+    #[case::ends_on_boundary(1, 6, &[(false, "a"), (true, "aa"), (true, "bbb"), (false, "ccc")])]
+    #[case::exactly_one_pair(3, 6, &[(false, "aaa"), (true, "bbb"), (false, "ccc")])]
+    #[case::whole_buffer(0, 9, &[(true, "aaa"), (true, "bbb"), (true, "ccc")])]
+    #[case::runs_past_the_end(7, 20, &[(false, "aaa"), (false, "bbb"), (false, "c"), (true, "cc")])]
+    #[case::entirely_past_the_end(12, 20, &[(false, "aaa"), (false, "bbb"), (false, "ccc")])]
+    #[case::spans_all_three(1, 8, &[(false, "a"), (true, "aa"), (true, "bbb"), (true, "cc"), (false, "c")])]
+    #[case::reversed_bounds_are_swapped(8, 1, &[(false, "a"), (true, "aa"), (true, "bbb"), (true, "cc"), (false, "c")])]
+    fn style_range_segmentation(
+        #[case] from: usize,
+        #[case] to: usize,
+        #[case] expected: &[(bool, &str)],
+    ) {
+        let (mut text, _, after_style) = get_styled_text_template();
+        text.style_range(from, to, after_style);
+        assert_eq!(segments(&text, after_style), expected);
+    }
+
+    /// `from`/`to` are byte offsets; a highlighter that derives them from
+    /// chars or graphemes can land inside a multi-byte character. That must
+    /// not panic the paint path.
+    #[rstest]
+    #[case::end_inside_a_char("café", 0, 4)]
+    #[case::start_inside_a_char("café", 4, 5)]
+    #[case::both_inside_chars("ééé", 1, 3)]
+    fn style_range_inside_a_multibyte_char_does_not_panic(
+        #[case] text: &str,
+        #[case] from: usize,
+        #[case] to: usize,
+    ) {
+        let (_, before_style, after_style) = get_styled_text_template();
+        let mut styled = StyledText {
+            buffer: vec![(before_style, text.into())],
+        };
+        styled.style_range(from, to, after_style);
+        // Whatever the split policy, the text itself must survive intact.
+        assert_eq!(styled.raw_string(), text);
+    }
+
     #[test]
     fn regression_style_range_cargo_run() {
         let (_, before_style, after_style) = get_styled_text_template();
