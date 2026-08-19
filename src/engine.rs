@@ -2855,6 +2855,57 @@ mod tests {
         assert_eq!(reedline.current_buffer_contents(), multiline_command);
     }
 
+    // --- history walk across a recalled multi-line entry (#1109 regression) ---
+
+    /// History holds `older` then `one\ntwo` (newest).
+    fn two_entry_history_engine() -> Reedline {
+        let mut rl = seam_engine(Box::<Emacs>::default());
+        for cmd in ["older", "one\ntwo"] {
+            rl.history
+                .save(HistoryItem::from_command_line(cmd))
+                .expect("save history");
+        }
+        rl
+    }
+
+    #[test]
+    fn down_inside_recalled_multiline_entry_keeps_walking_forward() {
+        let mut rl = two_entry_history_engine();
+        drive(&mut rl, &[key(KeyCode::Up)]);
+        assert_eq!(rl.editor.get_buffer(), "one\ntwo", "setup");
+        assert_eq!(rl.editor.insertion_point(), 3, "setup: end of line 1");
+
+        drive(&mut rl, &[key(KeyCode::Down)]);
+        assert_eq!(rl.editor.get_buffer(), "one\ntwo", "moves to line 2 first");
+        assert!(rl.editor.insertion_point() > 3, "setup: on line 2");
+
+        drive(&mut rl, &[key(KeyCode::Down)]);
+        assert_eq!(
+            rl.editor.get_buffer(),
+            "",
+            "from the last line, Down walks forward to the empty draft"
+        );
+    }
+
+    #[test]
+    fn up_inside_recalled_multiline_entry_keeps_walking_back() {
+        let mut rl = two_entry_history_engine();
+        drive(&mut rl, &[key(KeyCode::Up), key(KeyCode::Down)]);
+        assert_eq!(rl.editor.get_buffer(), "one\ntwo", "setup");
+        assert!(rl.editor.insertion_point() > 3, "setup: on line 2");
+
+        drive(&mut rl, &[key(KeyCode::Up)]);
+        assert_eq!(rl.editor.get_buffer(), "one\ntwo", "moves to line 1 first");
+        assert!(rl.editor.insertion_point() <= 3, "setup: on line 1");
+
+        drive(&mut rl, &[key(KeyCode::Up)]);
+        assert_eq!(
+            rl.editor.get_buffer(),
+            "older",
+            "from the first line, Up walks back to the older entry"
+        );
+    }
+
     #[test]
     fn thread_safe() {
         fn f<S: Send>(_: S) {}
