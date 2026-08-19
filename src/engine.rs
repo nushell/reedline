@@ -2014,7 +2014,12 @@ impl Reedline {
         if self.input_mode == InputMode::HistoryTraversal {
             self.input_mode = InputMode::Regular;
         }
+        self.apply_edit_commands(commands);
+    }
 
+    /// [`run_edit_commands`](Self::run_edit_commands) without ending history
+    /// traversal, for the engine's own line moves inside a recalled entry.
+    fn apply_edit_commands(&mut self, commands: &[EditCommand]) {
         // Adopt the current edit mode's rest policy so these commands resolve
         // under it (e.g. block-caret selection geometry) — but *without*
         // committing the cursor first. A commit here would apply the policy's
@@ -2036,10 +2041,10 @@ impl Reedline {
             // If we're at the top, move to previous history
             self.previous_history();
         } else {
-            // Through `run_edit_commands` so the cursor settles under the mode's
+            // Through `apply_edit_commands` so the cursor settles under the mode's
             // rest policy — a bare `editor.move_line_up` skips the commit boundary,
             // leaving a vi-normal caret past the last grapheme on a short line.
-            self.run_edit_commands(&[EditCommand::MoveLineUp { select: false }]);
+            self.apply_edit_commands(&[EditCommand::MoveLineUp { select: false }]);
         }
     }
 
@@ -2050,7 +2055,7 @@ impl Reedline {
             self.next_history();
         } else {
             // See `up_command`: settle under the rest policy via the commit boundary.
-            self.run_edit_commands(&[EditCommand::MoveLineDown { select: false }]);
+            self.apply_edit_commands(&[EditCommand::MoveLineDown { select: false }]);
         }
     }
 
