@@ -585,11 +585,7 @@ impl Menu for DescriptionMenu {
     /// The buffer gets replaced in the Span location
     fn replace_in_buffer(&self, editor: &mut Editor) {
         if let Some(mut suggestion) = self.get_value() {
-            if let Some(example_index) = self.example_index {
-                let example = self
-                    .examples
-                    .get(example_index)
-                    .expect("the example index is always checked");
+            if let Some(example) = self.example_index.and_then(|i| self.examples.get(i)) {
                 suggestion.value.clone_from(example);
             }
             replace_in_buffer(Some(suggestion), editor, self.settings.output_mode);
