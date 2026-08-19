@@ -144,6 +144,8 @@ pub struct Reedline {
     history_exclusion_prefix: Option<String>,
     history_excluded_item: Option<HistoryItem>,
     history_cursor_on_excluded: bool,
+    /// Last failed `history.save`, until [`Reedline::take_history_save_error`].
+    history_save_error: Option<ReedlineError>,
     input_mode: InputMode,
 
     // State of the painter after a `ReedlineEvent::ExecuteHostCommand` was requested, used after
@@ -357,6 +359,7 @@ impl Reedline {
             history_exclusion_prefix: None,
             history_excluded_item: None,
             history_cursor_on_excluded: false,
+            history_save_error: None,
             input_mode: InputMode::Regular,
             suspended_state: None,
             last_render_snapshot: None,
@@ -892,6 +895,15 @@ impl Reedline {
                 "No command run",
             ))),
         }
+    }
+
+    /// Take the error of the last failed history save, if any.
+    ///
+    /// [`read_line`](Self::read_line) still returns the line when the [`History`]
+    /// refuses to store it; the entry is then treated like an excluded one.
+    /// Cleared on read, set at most once per `read_line`.
+    pub fn take_history_save_error(&mut self) -> Option<ReedlineError> {
+        self.history_save_error.take()
     }
 
     /// Wait for input and provide the user with a specified [`Prompt`].
@@ -2657,19 +2669,35 @@ impl Reedline {
             let mut entry = HistoryItem::from_command_line(&buffer);
             entry.session_id = self.get_history_session_id();
 
-            if self
+            let excluded = self
                 .history_exclusion_prefix
                 .as_ref()
-                .map(|prefix| buffer.starts_with(prefix))
-                .unwrap_or(false)
-            {
-                entry.id = Some(Self::FILTERED_ITEM_ID);
-                self.history_last_run_id = entry.id;
-                self.history_excluded_item = Some(entry);
+                .is_some_and(|prefix| buffer.starts_with(prefix));
+
+            let saved = if excluded {
+                None
             } else {
-                entry = self.history.save(entry).expect("todo: error handling");
-                self.history_last_run_id = entry.id;
-                self.history_excluded_item = None;
+                match self.history.save(entry.clone()) {
+                    Ok(saved) => Some(saved),
+                    Err(err) => {
+                        // Ran but not stored: the excluded shape. Keep the line,
+                        // stash the error for `take_history_save_error`.
+                        self.history_save_error = Some(err);
+                        None
+                    }
+                }
+            };
+
+            match saved {
+                Some(saved) => {
+                    self.history_last_run_id = saved.id;
+                    self.history_excluded_item = None;
+                }
+                None => {
+                    entry.id = Some(Self::FILTERED_ITEM_ID);
+                    self.history_last_run_id = entry.id;
+                    self.history_excluded_item = Some(entry);
+                }
             }
         }
         self.run_edit_commands(&[EditCommand::Clear]);
@@ -2914,6 +2942,86 @@ mod tests {
             rl.editor.get_buffer(),
             "older",
             "from the first line, Up walks back to the older entry"
+        );
+    }
+
+    // --- a history that refuses to save ---
+
+    struct RefusingHistory;
+
+    impl History for RefusingHistory {
+        fn save(&mut self, _h: HistoryItem) -> crate::Result<HistoryItem> {
+            Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
+                "refused",
+            )))
+        }
+        fn load(&self, _id: HistoryItemId) -> crate::Result<HistoryItem> {
+            unreachable!("not used")
+        }
+        fn count(&self, _query: SearchQuery) -> crate::Result<i64> {
+            Ok(0)
+        }
+        fn search(&self, _query: SearchQuery) -> crate::Result<Vec<HistoryItem>> {
+            Ok(vec![])
+        }
+        fn update(
+            &mut self,
+            _id: HistoryItemId,
+            _updater: &dyn Fn(HistoryItem) -> HistoryItem,
+        ) -> crate::Result<()> {
+            unreachable!("not used")
+        }
+        fn clear(&mut self) -> crate::Result<()> {
+            Ok(())
+        }
+        fn delete(&mut self, _h: HistoryItemId) -> crate::Result<()> {
+            Ok(())
+        }
+        fn sync(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn session(&self) -> Option<HistorySessionId> {
+            None
+        }
+    }
+
+    fn refusing_history_engine() -> Reedline {
+        let mut rl = seam_engine(Box::<Emacs>::default()).with_history(Box::new(RefusingHistory));
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl
+    }
+
+    #[test]
+    fn failed_history_save_still_returns_the_line_and_stashes_the_error() {
+        let mut rl = refusing_history_engine();
+        let signal = drive_until_signal(&mut rl, &[ch('l'), ch('s'), key(KeyCode::Enter)]);
+        assert!(
+            matches!(signal, Some(Signal::Success(ref s)) if s == "ls"),
+            "got {signal:?}"
+        );
+        let err = rl.take_history_save_error();
+        assert!(err.is_some(), "the save error is stashed");
+        assert!(rl.take_history_save_error().is_none(), "cleared on read");
+    }
+
+    #[test]
+    fn failed_history_save_keeps_the_entry_reachable() {
+        let mut rl = refusing_history_engine();
+        drive_until_signal(&mut rl, &[ch('l'), ch('s'), key(KeyCode::Enter)]);
+
+        drive(&mut rl, &[key(KeyCode::Up)]);
+        assert_eq!(rl.editor.get_buffer(), "ls", "Up recalls the unsaved entry");
+
+        rl.update_last_command_context(&|mut item| {
+            item.exit_status = Some(7);
+            item
+        })
+        .expect("context update works off the store");
+        assert_eq!(
+            rl.history_excluded_item
+                .as_ref()
+                .and_then(|i| i.exit_status),
+            Some(7)
         );
     }
 
