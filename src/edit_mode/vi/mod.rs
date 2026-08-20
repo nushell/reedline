@@ -6,6 +6,7 @@ mod vi_keybindings;
 use std::str::FromStr;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use strum::EnumString;
 pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
 use super::{is_plain_char, is_text_char, parse_non_key_event, EditMode};
@@ -15,24 +16,12 @@ use crate::{
     Direction, MotionTarget, PromptEditMode, PromptViMode,
 };
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, EnumString)]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 enum ViMode {
     Normal,
     Insert,
     Visual,
-}
-
-impl FromStr for ViMode {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "normal" => Ok(ViMode::Normal),
-            "insert" => Ok(ViMode::Insert),
-            "visual" => Ok(ViMode::Visual),
-            _ => Err(()),
-        }
-    }
 }
 
 /// This parses incoming input `Event`s like a Vi-Style editor
@@ -220,6 +209,7 @@ impl EditMode for Vi {
         match event {
             ReedlineEvent::ViChangeMode(mode_str) => match ViMode::from_str(&mode_str) {
                 Ok(mode) => {
+                    self.cache.clear();
                     self.mode = mode;
                     EventStatus::Handled
                 }
@@ -236,6 +226,7 @@ mod test {
     use crate::{Direction, Granularity, MotionTarget, WordEdge, WordKind};
     use crossterm::event::{MouseEvent, MouseEventKind};
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
         ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(code, modifiers))).unwrap()
@@ -845,5 +836,43 @@ mod test {
 
         let dot = vi.parse_event(key(KeyCode::Char('.'), KeyModifiers::NONE));
         assert_eq!(dot, ReedlineEvent::Multiple(vec![dw]));
+    }
+
+    // --- ViChangeMode ---
+
+    #[rstest]
+    #[case("insert", ViMode::Insert)]
+    #[case("Normal", ViMode::Normal)]
+    #[case("VISUAL", ViMode::Visual)]
+    fn change_mode_event_switches_the_machine(#[case] name: &str, #[case] expected: ViMode) {
+        let mut vi = Vi::default();
+        let status = vi.handle_mode_specific_event(ReedlineEvent::ViChangeMode(name.into()));
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(vi.mode, expected);
+    }
+
+    #[test]
+    fn change_mode_event_rejects_an_unknown_mode() {
+        let mut vi = Vi::default();
+        let status = vi.handle_mode_specific_event(ReedlineEvent::ViChangeMode("select".into()));
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert_eq!(vi.mode, ViMode::Insert);
+    }
+
+    #[test]
+    fn change_mode_event_abandons_a_half_typed_sequence() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        // Arm a counted find; the switch must clear the cache so the next key
+        // is not parsed as the find argument in the new mode.
+        let _ = vi.parse_event(key(KeyCode::Char('3'), KeyModifiers::NONE));
+        let _ = vi.parse_event(key(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert!(!vi.cache.is_empty(), "setup: sequence is armed");
+
+        vi.handle_mode_specific_event(ReedlineEvent::ViChangeMode("insert".into()));
+        assert!(vi.cache.is_empty());
+        assert_eq!(vi.mode, ViMode::Insert);
     }
 }
