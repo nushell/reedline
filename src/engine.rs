@@ -2234,7 +2234,7 @@ impl Reedline {
                     let history_search_by_session = self
                         .history
                         .search(SearchQuery::last_with_prefix_and_cwd(
-                            parsed.prefix.unwrap().to_string(),
+                            parsed.prefix.unwrap_or_default().to_string(),
                             self.cwd.clone().unwrap_or_else(|| {
                                 std::env::current_dir()
                                     .unwrap_or_default()
