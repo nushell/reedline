@@ -1409,7 +1409,8 @@ impl Reedline {
             | ReedlineEvent::MenuRight
             | ReedlineEvent::MenuPageNext
             | ReedlineEvent::MenuPagePrevious
-            | ReedlineEvent::ViChangeMode(_) => Ok(EventStatus::Inapplicable),
+            | ReedlineEvent::ViChangeMode(_)
+            | ReedlineEvent::HelixChangeMode(_) => Ok(EventStatus::Inapplicable),
         }
     }
 
@@ -1783,6 +1784,9 @@ impl Reedline {
                 Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::ViChangeMode(_) => Ok(self.edit_mode.handle_mode_specific_event(event)),
+            ReedlineEvent::HelixChangeMode(_) => {
+                Ok(self.edit_mode.handle_mode_specific_event(event))
+            }
             ReedlineEvent::Mouse {
                 column,
                 row,

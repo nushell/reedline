@@ -1131,6 +1131,9 @@ pub enum ReedlineEvent {
 
     /// Change mode (vi mode only)
     ViChangeMode(String),
+
+    /// Change mode (helix mode only)
+    HelixChangeMode(String),
 }
 
 pub enum EventStatus {
