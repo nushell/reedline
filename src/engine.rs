@@ -1575,15 +1575,13 @@ impl Reedline {
             ReedlineEvent::Enter | ReedlineEvent::Submit | ReedlineEvent::SubmitOrNewline
                 if self.menus.iter().any(|menu| menu.is_active()) =>
             {
-                for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
-                        menu.replace_in_buffer(&mut self.editor);
-                        menu.menu_event(MenuEvent::Deactivate);
-
-                        return Ok(EventStatus::Handled);
-                    }
+                if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
+                    menu.replace_in_buffer(&mut self.editor);
+                    menu.menu_event(MenuEvent::Deactivate);
+                    Ok(EventStatus::Handled)
+                } else {
+                    Ok(EventStatus::Inapplicable)
                 }
-                unreachable!()
             }
             ReedlineEvent::Enter => {
                 #[cfg(feature = "bashisms")]
