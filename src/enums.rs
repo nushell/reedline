@@ -1129,10 +1129,23 @@ pub enum ReedlineEvent {
     /// Open text editor
     OpenEditor,
 
-    /// Change mode (vi mode only)
+    /// Switch the vi state machine to a named mode (vi mode only).
+    ///
+    /// Accepts `normal`, `insert` or `visual`, matched case-insensitively. Any
+    /// other name leaves the mode alone and reports the event inapplicable. On
+    /// its own that is a keybinding that does nothing; inside an
+    /// [`UntilFound`](ReedlineEvent::UntilFound) it hands the key to the next
+    /// event in the list instead.
     ViChangeMode(String),
 
-    /// Change mode (helix mode only)
+    /// Switch the helix state machine to a named mode (helix mode only).
+    ///
+    /// Accepts `normal`, `insert` or `select`, matched case-insensitively. Any
+    /// other name leaves the mode alone and reports the event inapplicable. On
+    /// its own that is a keybinding that does nothing; inside an
+    /// [`UntilFound`](ReedlineEvent::UntilFound) it hands the key to the next
+    /// event in the list instead.
+    #[cfg(feature = "helix")]
     HelixChangeMode(String),
 }
 

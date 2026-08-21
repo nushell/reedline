@@ -163,6 +163,10 @@ impl EditMode for Helix {
         match event {
             ReedlineEvent::HelixChangeMode(mode_str) => match HelixMode::from_str(&mode_str) {
                 Ok(mode) => {
+                    // An invariant, not a path reachable today: `dispatch`
+                    // skips the keybinding table while `pending` or `count` is
+                    // set, so no binding fires mid-sequence. Reset anyway,
+                    // rather than lean on that guarantee from over here.
                     self.pending = None;
                     self.count = None;
                     self.mode = mode;
@@ -1473,12 +1477,15 @@ mod test {
         assert_eq!(helix.count, None);
     }
 
-    // --- HelixChangeMode ---
+    // ---- change mode event ----
 
     #[rstest]
     #[case("insert", HelixMode::Insert)]
-    #[case("Normal", HelixMode::Normal)]
+    #[case("Insert", HelixMode::Insert)]
+    #[case("SELECT", HelixMode::Select)]
     #[case("select", HelixMode::Select)]
+    #[case("normal", HelixMode::Normal)]
+    #[case("NoRmAl", HelixMode::Normal)]
     fn change_mode_event_switches_the_machine(#[case] name: &str, #[case] expected: HelixMode) {
         let mut helix = normal();
         let status = helix.handle_mode_specific_event(ReedlineEvent::HelixChangeMode(name.into()));
