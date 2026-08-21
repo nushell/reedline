@@ -225,7 +225,7 @@ fn cursor_position_for_term(
 }
 
 fn cursor_position_for_current_term(stdout: &W) -> Result<Option<(u16, u16)>> {
-    let term = std::env::var_os("TERM");
+    let term = crate::utils::environment::var_os("TERM");
     cursor_position_for_term(stdout, term.as_deref())
 }
 
