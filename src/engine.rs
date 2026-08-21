@@ -36,9 +36,9 @@ use {
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
         },
         utils::text_manipulation,
-        AbbrExpandContext, EditCommand, ExampleHighlighter, Highlighter, LineBuffer, Menu,
-        MenuEvent, MouseButton, Prompt, PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior,
-        ValidationResult, Validator,
+        AbbrExpandContext, Direction, EditCommand, ExampleHighlighter, Highlighter, LineBuffer,
+        Menu, MenuEvent, MouseButton, Prompt, PromptHistorySearch, ReedlineMenu, Signal,
+        UndoBehavior, ValidationResult, Validator,
     },
     crossterm::{
         cursor::{SetCursorStyle, Show},
@@ -1783,9 +1783,8 @@ impl Reedline {
                 // Exhausting the event handlers is still considered handled
                 Ok(EventStatus::Inapplicable)
             }
-            ReedlineEvent::ViChangeMode(_) => Ok(self.edit_mode.handle_mode_specific_event(event)),
-            ReedlineEvent::HelixChangeMode(_) => {
-                Ok(self.edit_mode.handle_mode_specific_event(event))
+            ReedlineEvent::ViChangeMode(_) | ReedlineEvent::HelixChangeMode(_) => {
+                Ok(self.change_edit_mode(event))
             }
             ReedlineEvent::Mouse {
                 column,
@@ -1799,6 +1798,34 @@ impl Reedline {
             }
             ReedlineEvent::None => Ok(EventStatus::Inapplicable),
         }
+    }
+
+    /// Route a mode-switch event to the active edit mode, then repair the cursor
+    /// the flip left behind.
+    ///
+    /// A machine's own transitions emit their repairs as events, the way `i`
+    /// collapses the selection on the way into helix insert. An event-driven
+    /// flip never reaches that path, so the repair has to happen here. The one
+    /// that bites is leaving a block caret for a bar caret: a block policy rests
+    /// as a min-width-1 selection, and `insert_char` deletes the selection
+    /// before inserting, so the first keystroke would replace the covered
+    /// grapheme.
+    ///
+    /// Stated over the `RestPolicy` rather than per machine, so helix
+    /// normal/select and vi visual are one rule instead of three cases, and a
+    /// future machine inherits it.
+    fn change_edit_mode(&mut self, event: ReedlineEvent) -> EventStatus {
+        let before = self.edit_mode.edit_mode().rest_policy();
+        let status = self.edit_mode.handle_mode_specific_event(event);
+        let after = self.edit_mode.edit_mode().rest_policy();
+        if before.is_block() && !after.is_block() {
+            // `run_edit_commands` re-syncs the policy from the mode the machine
+            // now reports, so this resolves under `after`. Collapsing under the
+            // block policy being left would re-widen the cursor and undo it.
+            // Backward is the edge `i` lands on.
+            self.run_edit_commands(&[EditCommand::CollapseSelection(Direction::Backward)]);
+        }
+        status
     }
 
     fn handle_mouse_click(&mut self, column: u16, row: u16) -> Result<()> {
@@ -2955,7 +2982,6 @@ mod tests {
     }
 
     /// Drive one key per batch, stopping at the first `Signal`.
-    #[cfg(feature = "helix")]
     fn drive_until_signal(rl: &mut Reedline, keys: &[KeyEvent]) -> Option<Signal> {
         let prompt = DefaultPrompt::default();
         for k in keys {
@@ -3054,6 +3080,86 @@ mod tests {
         );
         assert!(signal.is_none(), "incomplete input must not submit");
         assert_eq!(rl.editor.get_buffer(), "\"a\n\n");
+    }
+
+    /// A keybinding flip into insert must collapse the resting selection first,
+    /// exactly as `i` does. The helix block cursor *is* a one-grapheme
+    /// selection, and `insert_char` deletes the selection before inserting, so
+    /// without the collapse the first keystroke replaces the covered grapheme.
+    #[cfg(feature = "helix")]
+    #[test]
+    fn helix_change_mode_into_insert_keeps_the_covered_grapheme() {
+        let mut bindings = crate::default_helix_normal_keybindings();
+        bindings.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::Char('z'),
+            ReedlineEvent::HelixChangeMode("insert".into()),
+        );
+        let mut rl = Reedline::create()
+            .with_edit_mode(Box::new(
+                crate::Helix::default().with_normal_keybindings(bindings),
+            ))
+            .with_validator(Box::new(crate::DefaultValidator));
+        rl.painter.force_prompt_anchored_for_test(0);
+        // `hh` walks the caret back onto the `a`, so the cursor covers a
+        // grapheme with buffer on both sides of it.
+        let signal = drive_until_signal(
+            &mut rl,
+            &[
+                ch('"'),
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                key(KeyCode::Esc),
+                ch('h'),
+                ch('h'),
+                ch('z'),
+                ch('X'),
+            ],
+        );
+        assert!(signal.is_none(), "incomplete input must not submit");
+        // Not `"Xbc`: the covered `a` is a resting cursor, not a selection the
+        // insert should consume.
+        assert_eq!(rl.editor.get_buffer(), "\"Xabc");
+    }
+
+    /// Vi visual rests min-width-1 under `RestPolicy::Block` just as helix does,
+    /// so the same rule has to cover a `ViChangeMode` flip out of it. Without the
+    /// collapse the visual selection is still live and the first keystroke
+    /// replaces it.
+    #[test]
+    fn vi_change_mode_out_of_visual_keeps_the_covered_grapheme() {
+        let mut bindings = crate::default_vi_normal_keybindings();
+        bindings.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::Char('z'),
+            ReedlineEvent::ViChangeMode("insert".into()),
+        );
+        let mut rl = Reedline::create()
+            .with_edit_mode(Box::new(crate::Vi::new(
+                crate::default_vi_insert_keybindings(),
+                bindings,
+            )))
+            .with_validator(Box::new(crate::DefaultValidator));
+        rl.painter.force_prompt_anchored_for_test(0);
+        // `hh` walks back onto the `a`, `v` enters visual covering it.
+        let signal = drive_until_signal(
+            &mut rl,
+            &[
+                ch('"'),
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                key(KeyCode::Esc),
+                ch('h'),
+                ch('h'),
+                ch('v'),
+                ch('z'),
+                ch('X'),
+            ],
+        );
+        assert!(signal.is_none(), "incomplete input must not submit");
+        assert_eq!(rl.editor.get_buffer(), "\"Xabc");
     }
 
     /// The submitted path cannot assert on the buffer (`submit_buffer` clears
