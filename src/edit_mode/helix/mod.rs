@@ -1,24 +1,29 @@
 mod helix_keybindings;
 
+use std::str::FromStr;
+
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 pub use helix_keybindings::{
     default_helix_insert_keybindings, default_helix_normal_keybindings,
     default_helix_select_keybindings,
 };
+use strum::EnumString;
 
 use super::{is_plain_char, is_text_char, parse_non_key_event};
 
 use crate::{
-    Direction, EditCommand, EditMode, FindStop, Granularity, Keybindings, MotionTarget,
-    PromptEditMode, PromptHelixMode, ReedlineEvent, WordEdge, WordKind,
+    enums::EventStatus, Direction, EditCommand, EditMode, FindStop, Granularity, Keybindings,
+    MotionTarget, PromptEditMode, PromptHelixMode, ReedlineEvent, WordEdge, WordKind,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString)]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 enum HelixMode {
     Normal,
     Insert,
     Select,
 }
+
 /// A prefix key waiting for its argument.
 ///
 /// `Find` and `Replace` take an arbitrary char as data, so no finite key
@@ -152,6 +157,24 @@ impl EditMode for Helix {
             HelixMode::Insert => PromptEditMode::Helix(PromptHelixMode::Insert),
             HelixMode::Normal => PromptEditMode::Helix(PromptHelixMode::Normal),
             HelixMode::Select => PromptEditMode::Helix(PromptHelixMode::Select),
+        }
+    }
+    fn handle_mode_specific_event(&mut self, event: ReedlineEvent) -> EventStatus {
+        match event {
+            ReedlineEvent::HelixChangeMode(mode_str) => match HelixMode::from_str(&mode_str) {
+                Ok(mode) => {
+                    // An invariant, not a path reachable today: `dispatch`
+                    // skips the keybinding table while `pending` or `count` is
+                    // set, so no binding fires mid-sequence. Reset anyway,
+                    // rather than lean on that guarantee from over here.
+                    self.pending = None;
+                    self.count = None;
+                    self.mode = mode;
+                    EventStatus::Handled
+                }
+                Err(_) => EventStatus::Inapplicable,
+            },
+            _ => EventStatus::Inapplicable,
         }
     }
 }
@@ -1452,5 +1475,45 @@ mod test {
             ])
         );
         assert_eq!(helix.count, None);
+    }
+
+    // ---- change mode event ----
+
+    #[rstest]
+    #[case("insert", HelixMode::Insert)]
+    #[case("Insert", HelixMode::Insert)]
+    #[case("SELECT", HelixMode::Select)]
+    #[case("select", HelixMode::Select)]
+    #[case("normal", HelixMode::Normal)]
+    #[case("NoRmAl", HelixMode::Normal)]
+    fn change_mode_event_switches_the_machine(#[case] name: &str, #[case] expected: HelixMode) {
+        let mut helix = normal();
+        let status = helix.handle_mode_specific_event(ReedlineEvent::HelixChangeMode(name.into()));
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(helix.mode, expected);
+    }
+
+    #[test]
+    fn change_mode_event_rejects_an_unknown_mode() {
+        let mut helix = normal();
+        let status =
+            helix.handle_mode_specific_event(ReedlineEvent::HelixChangeMode("emacs".into()));
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert_eq!(helix.mode, HelixMode::Normal);
+    }
+
+    #[test]
+    fn change_mode_event_abandons_a_half_typed_sequence() {
+        let mut helix = normal();
+        // Arm a count and a pending find; the switch must clear both so the
+        // next key is not eaten as the find argument in the new mode.
+        helix.parse_event(chr('3'));
+        helix.parse_event(chr('f'));
+        assert!(helix.pending.is_some(), "setup: find is armed");
+
+        helix.handle_mode_specific_event(ReedlineEvent::HelixChangeMode("insert".into()));
+        assert_eq!(helix.pending, None);
+        assert_eq!(helix.count, None);
+        assert_eq!(helix.mode, HelixMode::Insert);
     }
 }
