@@ -65,8 +65,13 @@ impl EditMode for Vi {
             Event::Key(KeyEvent {
                 code, modifiers, ..
             }) => match (self.mode, modifiers, code) {
-                (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v')) => {
-                    self.cache.clear();
+                // TODO: This guard changes `2v`: the pending count keeps `cache`
+                // non-empty, so `v` no longer enters Visual mode. Decide how
+                // count-prefixed Visual entry should behave before broadening this
+                // special case.
+                (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v'))
+                    if self.cache.is_empty() =>
+                {
                     self.mode = ViMode::Visual;
                     // Entering Visual switches the rest policy to `Block`; the
                     // pre-paint commit then widens the cursor into its min-width-1
@@ -435,6 +440,77 @@ mod test {
         let result = vi.parse_event(esc);
 
         assert_eq!(result, ReedlineEvent::None);
+    }
+
+    #[test]
+    fn v_completes_pending_replace_char() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let pending = vi.parse_event(key(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert_eq!(pending, ReedlineEvent::None);
+
+        let result = vi.parse_event(key(KeyCode::Char('v'), KeyModifiers::NONE));
+
+        assert!(matches!(vi.mode, ViMode::Normal));
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::ReplaceChar(
+                'v'
+            )])])
+        );
+    }
+
+    #[test]
+    fn v_completes_pending_find_motion() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let pending = vi.parse_event(key(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert_eq!(pending, ReedlineEvent::None);
+
+        let result = vi.parse_event(key(KeyCode::Char('v'), KeyModifiers::NONE));
+
+        assert!(matches!(vi.mode, ViMode::Normal));
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Move(
+                MotionTarget::Find {
+                    ch: 'v',
+                    direction: Direction::Forward,
+                    stop: crate::FindStop::On,
+                }
+            )])])
+        );
+    }
+
+    #[test]
+    fn v_completes_pending_till_motion() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let pending = vi.parse_event(key(KeyCode::Char('t'), KeyModifiers::NONE));
+        assert_eq!(pending, ReedlineEvent::None);
+
+        let result = vi.parse_event(key(KeyCode::Char('v'), KeyModifiers::NONE));
+
+        assert!(matches!(vi.mode, ViMode::Normal));
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Move(
+                MotionTarget::Find {
+                    ch: 'v',
+                    direction: Direction::Forward,
+                    stop: crate::FindStop::Before,
+                }
+            )])])
+        );
     }
 
     #[test]
