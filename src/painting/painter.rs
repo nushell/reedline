@@ -231,8 +231,29 @@ enum PromptRowSelector {
     MakeNewPrompt { new_row: u16 },
 }
 
-// Selects the row where the next prompt should start on, taking into account and whether it should re-use a previous
-// prompt.
+/// Query the cursor position unless the terminal explicitly declares itself dumb.
+///
+/// `TERM=dumb` does not provide cursor-position reporting, so avoid issuing a
+/// query that cannot be answered. Otherwise delegate to the painter's writer,
+/// which keeps terminal I/O testable.
+fn cursor_position_for_term(
+    stdout: &W,
+    term: Option<&std::ffi::OsStr>,
+) -> Result<Option<(u16, u16)>> {
+    if term == Some(std::ffi::OsStr::new("dumb")) {
+        Ok(None)
+    } else {
+        stdout.cursor_position().map(Some)
+    }
+}
+
+fn cursor_position_for_current_term(stdout: &W) -> Result<Option<(u16, u16)>> {
+    let term = std::env::var_os("TERM");
+    cursor_position_for_term(stdout, term.as_deref())
+}
+
+// Selects the row where the next prompt should start on, taking into account whether it should
+// re-use a previous prompt.
 fn select_prompt_row(
     suspended_state: Option<&PainterSuspendedState>,
     (column, row): (u16, u16), // NOTE: Positions are 0 based here
@@ -496,7 +517,9 @@ impl Painter {
             was_flush_at_bottom: final_row >= self.screen_height().saturating_sub(1),
             // One DSR round-trip per suspension is cheap next to whatever the host
             // is about to run, and it turns "might have scrolled" into a fact.
-            cursor: self.stdout.cursor_position().ok(),
+            cursor: cursor_position_for_current_term(&self.stdout)
+                .ok()
+                .flatten(),
         }
     }
 
@@ -544,9 +567,9 @@ impl Painter {
         // undershooting guess wipes the output above the prompt with no way
         // to recover. No row is greater than the bottom, so it is the only
         // guess that always lands on the repairable side.
-        let position = match self.stdout.cursor_position() {
-            Ok(position) => position,
-            Err(_) => {
+        let position = match cursor_position_for_current_term(&self.stdout) {
+            Ok(Some(position)) => position,
+            Ok(None) | Err(_) => {
                 self.print_crlf()?;
                 self.prompt_start_row =
                     PromptStartRow::Stale(self.screen_height().saturating_sub(1));
@@ -639,8 +662,8 @@ impl Painter {
             // homing to row 0, which would yank the prompt to the top. The `+1`
             // allows for output that left the cursor on the prompt row.
             // See nushell/reedline#1130.
-            let anchor = match self.stdout.cursor_position() {
-                Ok((_, cursor_row)) if cursor_row + 1 < row => cursor_row,
+            let anchor = match cursor_position_for_current_term(&self.stdout) {
+                Ok(Some((_, cursor_row))) if cursor_row + 1 < row => cursor_row,
                 _ => row,
             };
             self.prompt_start_row.mark_verified(anchor);
@@ -1226,7 +1249,7 @@ impl Painter {
         // Known bug: on iterm2 and kitty, clearing the screen via CMD-K
         // doesn't reset the cursor position — possibly a `position()`
         // bug.
-        if let Ok(position) = self.stdout.cursor_position() {
+        if let Ok(Some(position)) = cursor_position_for_current_term(&self.stdout) {
             self.prompt_start_row = PromptStartRow::Stale(position.1);
             self.just_resized = true;
         }
@@ -1359,14 +1382,14 @@ impl Painter {
         // batch of messages, not per message, so the flicker the comment above
         // guards against is unaffected.
         self.stdout.flush()?;
-        self.prompt_start_row = match self.stdout.cursor_position() {
+        self.prompt_start_row = match cursor_position_for_current_term(&self.stdout) {
             // Measured, so later paints can skip the drift check.
-            Ok((_, actual)) => PromptStartRow::Verified(actual),
+            Ok(Some((_, actual))) => PromptStartRow::Verified(actual),
             // No answer, so all that is left is the count this function stopped
             // trusting. `Stale` at least keeps the next paint checking it;
             // `Verified` would skip the check and paint against a row the
             // terminal may never have reached.
-            Err(_) => PromptStartRow::Stale(row),
+            Ok(None) | Err(_) => PromptStartRow::Stale(row),
         };
         Ok(())
     }
@@ -1477,6 +1500,22 @@ mod tests {
         ) -> Cow<'_, str> {
             "".into()
         }
+    }
+
+    #[test]
+    fn term_dumb_skips_cursor_position_query() {
+        let stdout = W::sink();
+        let position = cursor_position_for_term(&stdout, Some(std::ffi::OsStr::new("dumb")))
+            .expect("TERM=dumb detection should not fail");
+
+        assert_eq!(position, None);
+    }
+
+    #[test]
+    fn non_dumb_term_delegates_cursor_position_query() {
+        let stdout = W::sink();
+
+        assert!(cursor_position_for_term(&stdout, Some(std::ffi::OsStr::new("xterm")),).is_err());
     }
 
     #[test]
