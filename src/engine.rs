@@ -1574,11 +1574,18 @@ impl Reedline {
                 self.painter.clear_scrollback()?;
                 Ok(EventStatus::Handled)
             }
+            // A menu with no suggestions has nothing to accept: swallowing the
+            // keypress would make Enter appear dead, so the guard ignores it
+            // and the event falls through to submit as if no menu were open
+            // (submit_buffer closes any straggler menus).
             ReedlineEvent::Enter | ReedlineEvent::Submit | ReedlineEvent::SubmitOrNewline
-                if self.menus.iter().any(|menu| menu.is_active()) =>
+                if self
+                    .menus
+                    .iter()
+                    .any(|menu| menu.is_active() && !menu.get_values().is_empty()) =>
             {
                 for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
+                    if menu.is_active() && !menu.get_values().is_empty() {
                         menu.replace_in_buffer(&mut self.editor);
                         menu.menu_event(MenuEvent::Deactivate);
 
@@ -2665,6 +2672,9 @@ impl Reedline {
     }
 
     fn submit_buffer(&mut self, prompt: &dyn Prompt) -> io::Result<EventStatus> {
+        // A menu that let the submit through (no suggestions to accept) must
+        // not stay active into the next line's editing.
+        self.deactivate_menus();
         let buffer = self.editor.get_buffer().to_string();
         self.hide_hints = true;
         // Additional repaint to show the content without hints etc.
@@ -4395,6 +4405,82 @@ mod tests {
             .unwrap();
         assert!(menu_is_active(&reedline));
         reedline
+    }
+
+    /// The menu maintenance the paint cycle runs between keystrokes — value
+    /// refresh only, no layout (the headless test painter has no width) — so
+    /// an assertion after a typed character sees what a user would on screen.
+    fn apply_menu_maintenance(reedline: &mut Reedline) {
+        for menu in reedline.menus.iter_mut() {
+            if menu.is_active() {
+                menu.update_values(
+                    &mut reedline.editor,
+                    reedline.completer.as_mut(),
+                    reedline.history.as_ref(),
+                );
+            }
+        }
+    }
+
+    // --- a stale menu must not intercept Enter ---
+    //
+    // The completion menu stays active while the user types past it, and any
+    // Enter while a menu is active is routed to the menu. Left unguarded that
+    // turns Enter into a dead key (empty menu) or an insertion of whatever the
+    // menu last highlighted (non-empty menu) at the end of a finished line.
+
+    /// A menu whose filtered suggestions are empty has nothing to accept:
+    /// Enter must close it and submit the line, not be swallowed.
+    #[test]
+    fn enter_with_an_empty_menu_submits_the_line() {
+        let mut reedline = engine_with_active_menu(false, false);
+        reedline.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+        // "thz" matches nothing; the menu refilters to empty but stays active.
+        reedline
+            .handle_event(
+                &prompt,
+                ReedlineEvent::Edit(vec![EditCommand::InsertChar('z')]),
+            )
+            .unwrap();
+        apply_menu_maintenance(&mut reedline);
+        assert!(menu_is_active(&reedline));
+
+        let status = reedline
+            .handle_event(&prompt, ReedlineEvent::Enter)
+            .unwrap();
+        assert!(
+            matches!(status, EventStatus::Exits(Signal::Success(ref s)) if s == "thz"),
+            "Enter was swallowed by an empty menu"
+        );
+        assert!(!menu_is_active(&reedline));
+    }
+
+    /// The full shape of the report this fixes: Tab opens the menu mid-line,
+    /// the user types the rest of the statement and hits Enter. Before the
+    /// fix the Enter was consumed by the stale menu instead of submitting.
+    #[test]
+    fn typing_past_a_completion_then_enter_runs_the_line() {
+        let mut reedline = engine_with_active_menu(false, false);
+        reedline.painter.force_prompt_anchored_for_test(0);
+        let prompt = DefaultPrompt::default();
+        for c in " more words".chars() {
+            reedline
+                .handle_event(
+                    &prompt,
+                    ReedlineEvent::Edit(vec![EditCommand::InsertChar(c)]),
+                )
+                .unwrap();
+        }
+        apply_menu_maintenance(&mut reedline);
+
+        let status = reedline
+            .handle_event(&prompt, ReedlineEvent::Enter)
+            .unwrap();
+        assert!(
+            matches!(status, EventStatus::Exits(Signal::Success(ref s)) if s == "th more words"),
+            "the line was not submitted intact"
+        );
     }
 
     /// Engine with a completion menu open over "th" and partial completions on, so
