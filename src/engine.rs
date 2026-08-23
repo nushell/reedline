@@ -2942,6 +2942,48 @@ mod tests {
     }
 
     #[test]
+    fn auto_pairs_backspace_after_buffer_replacement_removes_empty_pair() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+
+        // A history/menu replacement bypasses the key event that originally
+        // created the pair. Backspace must still inspect the live buffer and
+        // remove the empty pair as one operation.
+        rl.run_edit_commands(&[
+            EditCommand::InsertString("stale input".into()),
+            EditCommand::Clear,
+            EditCommand::InsertString("()".into()),
+            EditCommand::MoveLeft { select: false },
+        ]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(rl.editor.insertion_point(), 0);
+    }
+
+    #[test]
+    fn auto_pairs_backspace_after_pair_newline_keeps_closer() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+
+        // The newline separates the pair, so Backspace must remove only the
+        // newline rather than treating the surrounding characters as an empty
+        // pair.
+        rl.run_edit_commands(&[EditCommand::InsertNewline]);
+        assert_eq!(rl.editor.get_buffer(), "(\n)");
+        assert_eq!(rl.editor.insertion_point(), 2);
+
+        rl.run_edit_commands(&[EditCommand::Backspace]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
+    #[test]
     fn auto_pairs_wrap_selection_with_opener() {
         let mut rl = auto_pair_engine(&[('(', ')')]);
         rl.run_edit_commands(&[
