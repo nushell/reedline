@@ -6,7 +6,9 @@ use crate::core_editor::get_system_clipboard;
 use crate::core_editor::graphemes::{next_grapheme_boundary, prev_grapheme_boundary};
 use crate::core_editor::resolve::resolve_selection;
 use crate::core_editor::{commit, line, operator_span, resolve_motion, RestPolicy};
-use crate::enums::{EditType, TextObject, TextObjectScope, TextObjectType, UndoBehavior};
+use crate::enums::{
+    EditType, TextObject, TextObjectBrackets, TextObjectScope, TextObjectType, UndoBehavior,
+};
 use crate::prompt::PromptEditMode;
 use crate::{core_editor::get_local_clipboard, EditCommand};
 use crate::{Direction, Granularity, MotionTarget, WordEdge, WordKind};
@@ -176,6 +178,9 @@ impl Editor {
                     self.place(selection);
                 }
             },
+            EditCommand::SelectPair(t) => {
+                todo!();
+            }
             EditCommand::CollapseSelection(direction) => {
                 let cursor = self.line_buffer.cursor();
                 let pos = match direction {
@@ -363,6 +368,7 @@ impl Editor {
             EditCommand::PasteSystem => self.paste_from_system(),
             EditCommand::CutInsidePair { left, right } => self.cut_inside_pair(*left, *right),
             EditCommand::CopyInsidePair { left, right } => self.copy_inside_pair(*left, *right),
+            EditCommand::SelectInsidePair { left, right } => self.select_inside_pair(*left, *right),
             EditCommand::CutAroundPair { left, right } => self.cut_around_pair(*left, *right),
             EditCommand::CopyAroundPair { left, right } => self.copy_around_pair(*left, *right),
             EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
@@ -1712,9 +1718,17 @@ impl Editor {
     fn bracket_text_object_range(
         &self,
         text_object_scope: TextObjectScope,
+        brackets_type: TextObjectBrackets,
     ) -> Option<Range<usize>> {
-        const BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}')];
-        self.matching_pair_group_text_object_range(text_object_scope, BRACKET_PAIRS)
+        const BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
+        let pairs = match brackets_type {
+            TextObjectBrackets::Parenthesis => &BRACKET_PAIRS[0..1],
+            TextObjectBrackets::SquareBrackets => &BRACKET_PAIRS[1..2],
+            TextObjectBrackets::CurlyBrackets => &BRACKET_PAIRS[2..3],
+            TextObjectBrackets::AngleBrackets => &BRACKET_PAIRS[3..4],
+            TextObjectBrackets::All => BRACKET_PAIRS,
+        };
+        self.matching_pair_group_text_object_range(text_object_scope, pairs)
     }
 
     /// Returns `Some(Range<usize>)` for the range inside quotes (`""`, `''` or `\`\`\`)
@@ -1738,7 +1752,9 @@ impl Editor {
         match text_object.object_type {
             TextObjectType::Word => Some(self.word_text_object_range(text_object.scope)),
             TextObjectType::BigWord => Some(self.big_word_text_object_range(text_object.scope)),
-            TextObjectType::Brackets => self.bracket_text_object_range(text_object.scope),
+            TextObjectType::Brackets(brackets_type) => {
+                self.bracket_text_object_range(text_object.scope, brackets_type)
+            }
             TextObjectType::Quote => self.quote_text_object_range(text_object.scope),
         }
     }
@@ -1752,6 +1768,12 @@ impl Editor {
     fn copy_text_object(&mut self, text_object: TextObject) {
         if let Some(range) = self.text_object_range(text_object) {
             self.copy_range(range);
+        }
+    }
+
+    fn select_text_object(&mut self, text_object: TextObject) {
+        if let Some(range) = self.text_object_range(text_object) {
+            self.place(Cursor::new(range.start, range.end));
         }
     }
 
@@ -1891,6 +1913,20 @@ impl Editor {
             })
         {
             self.copy_range(range);
+        }
+    }
+
+    /// Select text strictly between matching `open_char` and `close_char`.
+    fn select_inside_pair(&mut self, open_char: char, close_char: char) {
+        if let Some(range) = self
+            .line_buffer
+            .range_inside_current_pair(open_char, close_char)
+            .or_else(|| {
+                self.line_buffer
+                    .range_inside_next_pair(open_char, close_char)
+            })
+        {
+            self.place(Cursor::new(range.start, range.end));
         }
     }
 
@@ -4021,18 +4057,18 @@ mod test {
     #[rstest]
     // Test text object jumping behavior in various scenarios
     // Cursor inside empty pairs should operate on current pair (cursor stays, nothing cut)
-    #[case(r#"foo()bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo()bar", 4, "")] // inside empty brackets
+    #[case(r#"foo()bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBrackets::All) }, "foo()bar", 4, "")] // inside empty brackets
     #[case(r#"foo""bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo\"\"bar", 4, "")] // inside empty quotes
     // Cursor outside pairs should jump to next pair (even if empty)
-    #[case(r#"foo ()bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo ()bar", 5, "")] // jump to empty brackets
+    #[case(r#"foo ()bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBrackets::All) }, "foo ()bar", 5, "")] // jump to empty brackets
     #[case(r#"foo ""bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "")] // jump to empty quote
-    #[case(r#"foo (content)bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "foo ()bar", 5, "content")] // jump to non-empty brackets
+    #[case(r#"foo (content)bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBrackets::All) }, "foo ()bar", 5, "content")] // jump to non-empty brackets
     #[case(r#"foo "content"bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "content")] // jump to non-empty quotes
     // Cursor between pairs should jump to next pair
-    #[case(r#"(first) (second)"#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets }, "(first) ()", 9, "second")] // between brackets
+    #[case(r#"(first) (second)"#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBrackets::All) }, "(first) ()", 9, "second")] // between brackets
     #[case(r#""first" "second""#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "\"first\"\"second\"", 7, " ")] // between quotes
     // Around scope should include the pair characters
-    #[case(r#"foo (bar)"#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Brackets }, "foo ", 4, "(bar)")] // around includes parentheses
+    #[case(r#"foo (bar)"#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Brackets(TextObjectBrackets::All) }, "foo ", 4, "(bar)")] // around includes parentheses
     #[case(r#"foo "bar""#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Quote }, "foo ", 4, "\"bar\"")] // around includes quotes
     fn test_text_object_jumping_behavior(
         #[case] input: &str,
@@ -4052,37 +4088,55 @@ mod test {
 
     #[rstest]
     // Test bracket_text_object_range with Inner scope - just the content inside brackets
-    #[case("foo(bar)baz", 5, TextObjectScope::Inner, Some(4..7))] // cursor inside brackets
-    #[case("foo[bar]baz", 5, TextObjectScope::Inner, Some(4..7))] // square brackets
-    #[case("foo{bar}baz", 5, TextObjectScope::Inner, Some(4..7))] // square brackets
-    #[case("foo()bar", 4, TextObjectScope::Inner, Some(4..4))] // empty brackets
-    #[case("(nested[inner]outer)", 8, TextObjectScope::Inner, Some(8..13))] // nested, innermost
-    #[case("(nested[mixed{inner}brackets]outer)", 8, TextObjectScope::Inner, Some(8..28))] // nested, innermost
-    #[case("next(nested[mixed{inner}brackets]outer)", 0, TextObjectScope::Inner, Some(5..38))] // next nested mixed
-    #[case("foo (bar)baz", 0, TextObjectScope::Inner, Some(5..8))] // next pair from line start
-    #[case("    (bar)baz", 1, TextObjectScope::Inner, Some(5..8))] // next pair from whitespace
-    #[case("foo(bar)baz", 2, TextObjectScope::Inner, Some(4..7))] // next pair from word
-    #[case("foo(bar\nbaz)qux", 8, TextObjectScope::Inner, Some(4..11))] // multi-line brackets
-    #[case("foo\n(bar\nbaz)qux", 0, TextObjectScope::Inner, Some(5..12))] // next multi-line brackets
-    #[case("foo\n(bar\nbaz)qux", 3, TextObjectScope::Around, Some(4..13))] // next multi-line brackets
-    #[case("{hello}", 3, TextObjectScope::Around, Some(0..7))] // includes curly brackets
-    #[case("foo()bar", 4, TextObjectScope::Around, Some(3..5))] // around empty brackets
-    #[case("(nested(inner)outer)", 8, TextObjectScope::Around, Some(7..14))] // nested around includes delimiters
-    #[case("start(nested(inner)outer)", 2, TextObjectScope::Around, Some(5..25))] // Next outer nested pair
-    #[case("(mixed{nested)brackets", 1, TextObjectScope::Inner, Some(1..13))] // mixed nesting
-    #[case("(unclosed(nested)brackets", 1, TextObjectScope::Inner, Some(10..16))] // unclosed bracket, find next closed
-    #[case("no brackets here", 5, TextObjectScope::Inner, None)] // no brackets found
-    #[case("(unclosed", 1, TextObjectScope::Inner, None)] // unclosed bracket
-    #[case("(mismatched}", 1, TextObjectScope::Inner, None)] // mismatched brackets
+    #[case("foo(bar)baz", 5, TextObjectScope::Inner, TextObjectBrackets::All, Some(4..7))] // cursor inside brackets
+    #[case("foo[bar]baz", 5, TextObjectScope::Inner, TextObjectBrackets::All, Some(4..7))] // square brackets
+    #[case("foo{bar}baz", 5, TextObjectScope::Inner, TextObjectBrackets::All, Some(4..7))] // curly brackets
+    #[case("foo<bar>baz", 5, TextObjectScope::Inner, TextObjectBrackets::All, Some(4..7))] // angle brackets
+    #[case("foo(bar)baz", 5, TextObjectScope::Inner, TextObjectBrackets::Parenthesis, Some(4..7))] // cursor inside brackets
+    #[case("foo[bar]baz", 5, TextObjectScope::Inner, TextObjectBrackets::SquareBrackets, Some(4..7))] // square brackets
+    #[case("foo{bar}baz", 5, TextObjectScope::Inner, TextObjectBrackets::CurlyBrackets, Some(4..7))] // curly brackets
+    #[case("foo<bar>baz", 5, TextObjectScope::Inner, TextObjectBrackets::AngleBrackets, Some(4..7))] // angle brackets
+    #[case("foo()bar", 4, TextObjectScope::Inner, TextObjectBrackets::All, Some(4..4))] // empty brackets
+    #[case("(nested[inner]outer)", 8, TextObjectScope::Inner, TextObjectBrackets::All, Some(8..13))] // nested, innermost
+    #[case("(nested[mixed{inner}brackets]outer)", 8, TextObjectScope::Inner, TextObjectBrackets::All, Some(8..28))] // nested, innermost
+    #[case("next(nested[mixed{inner}brackets]outer)", 0, TextObjectScope::Inner, TextObjectBrackets::All, Some(5..38))] // next nested mixed
+    #[case("foo (bar)baz", 0, TextObjectScope::Inner, TextObjectBrackets::All, Some(5..8))] // next pair from line start
+    #[case("    (bar)baz", 1, TextObjectScope::Inner, TextObjectBrackets::All, Some(5..8))] // next pair from whitespace
+    #[case("foo(bar)baz", 2, TextObjectScope::Inner, TextObjectBrackets::All, Some(4..7))] // next pair from word
+    #[case("foo(bar\nbaz)qux", 8, TextObjectScope::Inner, TextObjectBrackets::All, Some(4..11))] // multi-line brackets
+    #[case("foo\n(bar\nbaz)qux", 0, TextObjectScope::Inner, TextObjectBrackets::All, Some(5..12))] // next multi-line brackets
+    #[case("foo\n(bar\nbaz)qux", 3, TextObjectScope::Around, TextObjectBrackets::All, Some(4..13))] // next multi-line brackets
+    #[case("{hello}", 3, TextObjectScope::Around, TextObjectBrackets::All, Some(0..7))] // includes curly brackets
+    #[case("foo()bar", 4, TextObjectScope::Around, TextObjectBrackets::All, Some(3..5))] // around empty brackets
+    #[case("(nested(inner)outer)", 8, TextObjectScope::Around, TextObjectBrackets::All, Some(7..14))] // nested around includes delimiters
+    #[case("start(nested(inner)outer)", 2, TextObjectScope::Around, TextObjectBrackets::All, Some(5..25))] // Next outer nested pair
+    #[case("(mixed{nested)brackets", 1, TextObjectScope::Inner, TextObjectBrackets::All, Some(1..13))] // mixed nesting
+    #[case("(unclosed(nested)brackets", 1, TextObjectScope::Inner, TextObjectBrackets::All, Some(10..16))] // unclosed bracket, find next closed
+    #[case(
+        "no brackets here",
+        5,
+        TextObjectScope::Inner,
+        TextObjectBrackets::All,
+        None
+    )] // no brackets found
+    #[case("(unclosed", 1, TextObjectScope::Inner, TextObjectBrackets::All, None)] // unclosed bracket
+    #[case(
+        "(mismatched}",
+        1,
+        TextObjectScope::Inner,
+        TextObjectBrackets::All,
+        None
+    )] // mismatched brackets
     fn test_bracket_text_object_range(
         #[case] input: &str,
         #[case] cursor_pos: usize,
         #[case] scope: TextObjectScope,
+        #[case] bracket_type: TextObjectBrackets,
         #[case] expected: Option<std::ops::Range<usize>>,
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
-        let result = editor.bracket_text_object_range(scope);
+        let result = editor.bracket_text_object_range(scope, bracket_type);
         assert_eq!(result, expected);
     }
 
@@ -4125,25 +4179,26 @@ mod test {
 
     #[rstest]
     // Test edge cases and complex scenarios for both bracket and quote text objects
-    #[case("", 0, TextObjectScope::Inner, None, None)] // empty buffer
-    #[case("a", 0, TextObjectScope::Inner, None, None)] // single character
-    #[case("()", 1, TextObjectScope::Inner, Some(1..1), None)] // empty brackets, cursor inside
-    #[case(r#""""#, 1, TextObjectScope::Inner, None, Some(1..1))] // empty quotes, cursor inside
-    #[case("([{}])", 3, TextObjectScope::Inner, Some(3..3), None)] // deeply nested brackets
-    #[case(r#""'`text`'""#, 5, TextObjectScope::Inner, None, Some(3..7))] // deeply nested quotes
-    #[case("(text) and [more]", 5, TextObjectScope::Around, Some(0..6), None)] // multiple bracket types
-    #[case(r#""text" and 'more'"#, 5, TextObjectScope::Around, None, Some(0..6))] // multiple quote types
+    #[case("", 0, TextObjectScope::Inner, TextObjectBrackets::All, None, None)] // empty buffer
+    #[case("a", 0, TextObjectScope::Inner, TextObjectBrackets::All, None, None)] // single character
+    #[case("()", 1, TextObjectScope::Inner, TextObjectBrackets::All, Some(1..1), None)] // empty brackets, cursor inside
+    #[case(r#""""#, 1, TextObjectScope::Inner, TextObjectBrackets::All, None, Some(1..1))] // empty quotes, cursor inside
+    #[case("([{}])", 3, TextObjectScope::Inner, TextObjectBrackets::All, Some(3..3), None)] // deeply nested brackets
+    #[case(r#""'`text`'""#, 5, TextObjectScope::Inner, TextObjectBrackets::All, None, Some(3..7))] // deeply nested quotes
+    #[case("(text) and [more]", 5, TextObjectScope::Around, TextObjectBrackets::All, Some(0..6), None)] // multiple bracket types
+    #[case(r#""text" and 'more'"#, 5, TextObjectScope::Around, TextObjectBrackets::All, None, Some(0..6))] // multiple quote types
     fn test_text_object_edge_cases(
         #[case] input: &str,
         #[case] cursor_pos: usize,
         #[case] scope: TextObjectScope,
+        #[case] bracket_type: TextObjectBrackets,
         #[case] expected_bracket: Option<std::ops::Range<usize>>,
         #[case] expected_quote: Option<std::ops::Range<usize>>,
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
 
-        let bracket_result = editor.bracket_text_object_range(scope);
+        let bracket_result = editor.bracket_text_object_range(scope, bracket_type);
         let quote_result = editor.quote_text_object_range(scope);
 
         assert_eq!(bracket_result, expected_bracket);

@@ -57,6 +57,20 @@ pub enum TextObjectScope {
     Around,
 }
 
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum TextObjectBrackets {
+    /// (, )
+    Parenthesis,
+    /// \[, ]
+    SquareBrackets,
+    /// {, }
+    CurlyBrackets,
+    /// <, >
+    AngleBrackets,
+    /// (, ), \[, ], {, }, <, >
+    All,
+}
+
 /// Type of text object to operate on
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TextObjectType {
@@ -64,8 +78,8 @@ pub enum TextObjectType {
     Word,
     /// WORD (delimited only by whitespace)
     BigWord,
-    /// (, ), \[, ], {, }
-    Brackets,
+    /// Brackets pairs (`(`, `)`, `[`, `]`, `{`, `}`, `<`, `>`)
+    Brackets(TextObjectBrackets),
     /// ", ', `
     Quote,
 }
