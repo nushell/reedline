@@ -1,5 +1,5 @@
-// Create a reedline object with automatic pairs, plus a `Highlighter` that vetoes
-// the auto-pairing in a couple of syntactic positions.
+// Create a reedline object with automatic pairs, plus a context-sensitive
+// `Highlighter` that demonstrates an auto-pair veto.
 // cargo run --example auto_pairs
 
 use reedline::{
@@ -8,20 +8,12 @@ use reedline::{
 };
 use std::io;
 
-/// Characters that, when auto-pairs would insert `(open, close)` right at the
-/// cursor, allow the pair to actually be typed. This is an illustrative,
-/// context-sensitive policy; applications should normally use the parser or
-/// language state they already maintain.
-///
-/// 1. **Same-quote containment (quotes only)**: inside an *unclosed* string of
-///    the same quote kind, typing that quote character closes the string
-///    instead of opening a new pair. Brackets are not subject to this rule:
-///    `(` and `[` still pair normally *inside* a string, e.g. typing `(` after
-///    `"foo` produces `"foo()`. Only same-kind quote nesting is special-cased,
-///    and quote kinds don't interfere with each other: e.g. in `'foo"`, the
-///    `"` is plain text inside the still-open single-quoted string, not a
-///    string delimiter, so typing `"` there still opens a new double-quote
-///    pair.
+/// This illustrative, context-sensitive policy leaves all actions enabled
+/// except opening a same-character pair inside an unclosed region delimited
+/// by that same character. An active selection is always allowed, so Reedline
+/// wraps it; other pairs and actions remain at their default behaviour.
+/// Applications should normally make this decision from the parser or language
+/// state they already maintain.
 struct ContextAwareHighlighter;
 
 impl Highlighter for ContextAwareHighlighter {
