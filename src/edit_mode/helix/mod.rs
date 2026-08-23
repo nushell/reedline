@@ -9,8 +9,9 @@ pub use helix_keybindings::{
 use super::{is_plain_char, is_text_char, parse_non_key_event};
 
 use crate::{
-    Direction, EditCommand, EditMode, FindStop, Granularity, Keybindings, MotionTarget,
-    PromptEditMode, PromptHelixMode, ReedlineEvent, WordEdge, WordKind,
+    enums::TextObjectBrackets, Direction, EditCommand, EditMode, FindStop, Granularity,
+    Keybindings, MotionTarget, PromptEditMode, PromptHelixMode, ReedlineEvent, TextObject,
+    TextObjectScope, TextObjectType, WordEdge, WordKind,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +35,10 @@ enum Pending {
     Replace,
     /// `g` is waiting for the goto target (`h`/`l`/`g`/`e`).
     Goto,
+    /// `m` is waiting for the matching action
+    MatchStepOne,
+    /// `m`-`a`/`i`/`s`/`d` is waiting for the surrounding character
+    MatchStepTwo(MatchAction),
 }
 
 /// Every parse_event will result in one of three outcomes:
@@ -70,6 +75,45 @@ enum Verb {
     /// of line movement and history traversal applies is decided by the engine
     /// against the *whole* buffer, above where a motion resolves.
     LineOrHistory(Direction),
+    /// `m`. Apply action onto surrounding characters
+    Match(Match),
+}
+
+/// Every matching action possible
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MatchAction {
+    /// `i`. Inside surrounding characters
+    Inner,
+    /// `a`. Around surrounding characters
+    Around,
+    /// `s`
+    Set,
+    /// `d`. Delete surrounding characters
+    Delete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MatchSurroundingChar {
+    /// `(`/`)`
+    Parenthesis,
+    /// `{`/`}`
+    CurlyBrackets,
+    /// `[`/`]`
+    SquareBrackets,
+    /// `<`/`>`
+    AngleBrackets,
+    /// `'`
+    SingleQuote,
+    /// `"`
+    DoubleQuote,
+    /// any other character
+    Other(char),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Match {
+    text_object: TextObjectType,
+    action: MatchAction,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,7 +177,7 @@ pub struct Helix {
     mode: HelixMode,
     /// Count prefix being accumulated (`3w`).
     count: Option<usize>,
-    /// Prefix key waiting for its argument (`f`/`r`/`g`).
+    /// Prefix key waiting for its argument (`f`/`r`/`g`/`m`).
     pending: Option<Pending>,
 }
 
@@ -313,6 +357,34 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
             };
             exec(count, Verb::CollapsingMotion(target), None)
         }
+        Pending::MatchStepOne => {
+            let target = match ch {
+                'a' => MatchAction::Around,
+                'i' => MatchAction::Inner,
+                _ => return Outcome::Reject,
+            };
+            Outcome::Absorb(Pending::MatchStepTwo(target))
+        }
+        Pending::MatchStepTwo(action) => {
+            let text_object = match ch {
+                'w' => TextObjectType::Word,
+                'W' => TextObjectType::BigWord,
+                '(' | ')' => TextObjectType::Brackets(TextObjectBrackets::Parenthesis),
+                '{' | '}' => TextObjectType::Brackets(TextObjectBrackets::CurlyBrackets),
+                '[' | ']' => TextObjectType::Brackets(TextObjectBrackets::SquareBrackets),
+                '<' | '>' => TextObjectType::Brackets(TextObjectBrackets::AngleBrackets),
+                '\'' | '"' => TextObjectType::Quote,
+                _ => return Outcome::Reject,
+            };
+            exec(
+                count,
+                Verb::Match(Match {
+                    text_object,
+                    action,
+                }),
+                None,
+            )
+        }
     }
 }
 
@@ -353,6 +425,7 @@ fn interpret(mode: HelixMode, count: Option<usize>, key: KeyEvent) -> Outcome {
                 stop: FindStop::Before,
             }),
             'r' => Outcome::Absorb(Pending::Replace),
+            'm' => Outcome::Absorb(Pending::MatchStepOne),
             'w' => exec(
                 count,
                 Verb::SelectingMotion(word(WordKind::Word, WordEdge::Start, Direction::Forward)),
@@ -533,6 +606,18 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
         // command repeated: it re-reads the selection every time.
         Verb::SelectAll => ReedlineEvent::Edit(vec![EditCommand::SelectAll]),
         Verb::SelectLine => action.repeated(EditCommand::SelectLine),
+        Verb::Match(m) => match m.action {
+            MatchAction::Inner => action.repeated(EditCommand::SelectPair(TextObject {
+                scope: TextObjectScope::Inner,
+                object_type: m.text_object,
+            })),
+            MatchAction::Around => action.repeated(EditCommand::SelectPair(TextObject {
+                scope: TextObjectScope::Around,
+                object_type: m.text_object,
+            })),
+            MatchAction::Set => todo!(),
+            MatchAction::Delete => todo!(),
+        },
         Verb::Deselect => ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint]),
         Verb::ChangeMode => ReedlineEvent::None,
         // `Up`/`Down` already carry the whole rule: move by line while another

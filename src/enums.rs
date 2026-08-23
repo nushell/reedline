@@ -409,6 +409,9 @@ pub enum EditCommand {
     /// move the head to the target, so the selection covers the span just traveled.
     Select(MotionTarget),
 
+    /// Select a [`TextObject`]
+    SelectPair(TextObject),
+
     /// Cut like [`EditCommand::Cut`], except that a `LineWise` span keeps its
     /// line terminators: only the lines' *content* is consumed, so one blank
     /// line remains — the vi change operator's linewise semantics
@@ -922,7 +925,9 @@ impl EditCommand {
             EditCommand::Move(_) => EditType::MoveCursor { select: false },
             EditCommand::Extend(_) => EditType::MoveCursor { select: true },
             EditCommand::CollapseSelection(_) => EditType::MoveCursor { select: false },
-            EditCommand::Select(_) => EditType::MoveCursor { select: true },
+            EditCommand::Select(_) | EditCommand::SelectPair(_) => {
+                EditType::MoveCursor { select: true }
+            }
             EditCommand::Cut { .. } => EditType::EditText,
             EditCommand::Copy { .. } => EditType::NoOp,
             EditCommand::Change { .. } => EditType::EditText,
