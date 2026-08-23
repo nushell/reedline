@@ -9,13 +9,11 @@ use reedline::{
 use std::io;
 
 /// Characters that, when auto-pairs would insert `(open, close)` right at the
-/// cursor, allow the pair to actually be typed. These are the same rules an R
-/// console (radian, arf) applies:
+/// cursor, allow the pair to actually be typed. This is an illustrative,
+/// context-sensitive policy; applications should normally use the parser or
+/// language state they already maintain.
 ///
-/// 1. **Position**: only pair when the cursor is at the end of the buffer, or
-///    immediately before one of these closing characters. Typing `(` in the
-///    middle of a word (e.g. between `fo|o`) inserts just `(`, not `()`.
-/// 2. **Same-quote containment (quotes only)**: inside an *unclosed* string of
+/// 1. **Same-quote containment (quotes only)**: inside an *unclosed* string of
 ///    the same quote kind, typing that quote character closes the string
 ///    instead of opening a new pair. Brackets are not subject to this rule:
 ///    `(` and `[` still pair normally *inside* a string, e.g. typing `(` after
@@ -24,11 +22,9 @@ use std::io;
 ///    `"` is plain text inside the still-open single-quoted string, not a
 ///    string delimiter, so typing `"` there still opens a new double-quote
 ///    pair.
-const FOLLOWING_CLOSERS: [char; 5] = [')', ']', '}', '"', '\''];
+struct ContextAwareHighlighter;
 
-struct RConsoleHighlighter;
-
-impl Highlighter for RConsoleHighlighter {
+impl Highlighter for ContextAwareHighlighter {
     fn highlight(&self, line: &str, _cursor: usize) -> StyledText {
         // This example only cares about `should_auto_pair`; return the buffer
         // unstyled.
@@ -48,18 +44,12 @@ impl Highlighter for RConsoleHighlighter {
         let buffer = context.buffer();
         let insertion_point = context.insertion_point();
 
-        // Rule 1: position. Pair only at the end of the buffer, or right
-        // before one of the recognized closing characters.
-        let positionally_ok = insertion_point == buffer.len()
-            || matches!(
-                buffer[insertion_point..].chars().next(),
-                Some(next) if FOLLOWING_CLOSERS.contains(&next)
-            );
-        if !positionally_ok {
-            return false;
+        // An active selection is a deliberate wrapping request.
+        if context.selection().is_some() {
+            return true;
         }
 
-        // Rule 2: same-quote containment. Only applies when both halves of the
+        // Same-quote containment only applies when both halves of the
         // pair are the same character (i.e. a quote, not a bracket).
         let (open, close) = context.pair();
         if open == close && is_inside_unclosed_quote(buffer, insertion_point, open) {
@@ -110,11 +100,12 @@ fn main() -> io::Result<()> {
     let auto_pairs = AutoPairs::new([('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('\'', '\'')]);
     let mut line_editor = Reedline::create()
         .with_auto_pairs(auto_pairs)
-        .with_highlighter(Box::new(RConsoleHighlighter))
+        .with_highlighter(Box::new(ContextAwareHighlighter))
         // Auto-pairs and pasting don't mix well without bracketed paste: without
         // it, pasted text is indistinguishable from typing and gets auto-paired
         // character by character (see `Reedline::with_auto_pairs` for details).
-        // This mirrors what nushell itself does.
+        // This keeps pasted input from being interpreted as a stream of typed
+        // characters.
         .use_bracketed_paste(cfg!(not(target_os = "windows")));
     let prompt = DefaultPrompt::default();
 

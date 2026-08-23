@@ -604,10 +604,14 @@ impl Reedline {
     /// pasting text that has an opener without its closer (e.g. `foo(bar`) inserts a
     /// closing character that was never in the clipboard content. For this reason it
     /// is recommended to combine `with_auto_pairs` with
-    /// `use_bracketed_paste(cfg!(not(target_os = "windows")))`, the same guard
-    /// nushell itself uses. On Windows, stock crossterm reads console input through
+    /// `use_bracketed_paste(cfg!(not(target_os = "windows")))`. On Windows,
+    /// stock crossterm reads console input through
     /// the Win32 console API and has no ANSI input parser, so there is no
     /// `Event::Paste` path to enable there (see crossterm-rs/crossterm#737).
+    ///
+    /// Auto-pairing applies to edits in the regular line buffer. Reverse-history
+    /// search edits a separate search query and are not passed through the
+    /// auto-pairing machinery.
     #[must_use]
     pub fn with_auto_pairs(mut self, auto_pairs: AutoPairs) -> Self {
         self.auto_pairs = Some(auto_pairs);
@@ -3242,15 +3246,12 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "(hel)lo");
     }
 
-    /// Implements arf's real auto-pair rules as a spec example:
-    /// 1. positional — pair only at the end of the buffer or right before a
-    ///    closing bracket;
-    /// 2. same-quote containment — inside an unclosed string of the *same*
-    ///    quote character, that quote closes the string instead of pairing
-    ///    (brackets are unaffected and still pair inside strings).
-    struct ArfLikeAutoPairHighlighter;
+    /// A small context-sensitive policy used to exercise the consumer-facing
+    /// `Highlighter` hook. It demonstrates that syntax-aware consumers can
+    /// veto opening a pair while leaving the other auto-pair actions alone.
+    struct ContextAwareAutoPairHighlighter;
 
-    impl ArfLikeAutoPairHighlighter {
+    impl ContextAwareAutoPairHighlighter {
         fn inside_unclosed_quote(buffer: &str, point: usize, quote: char) -> bool {
             let mut in_quote = false;
             let mut escaped = false;
@@ -3269,7 +3270,7 @@ mod tests {
         }
     }
 
-    impl Highlighter for ArfLikeAutoPairHighlighter {
+    impl Highlighter for ContextAwareAutoPairHighlighter {
         fn highlight(&self, _line: &str, _cursor: usize) -> crate::StyledText {
             crate::StyledText::new()
         }
@@ -3287,32 +3288,29 @@ mod tests {
                 return false;
             }
 
-            let after = &buffer[point..];
-            after.is_empty() || after.starts_with([')', ']', '}'])
+            true
         }
     }
 
-    fn arf_like_engine() -> Reedline {
+    fn context_aware_auto_pair_engine() -> Reedline {
         auto_pair_engine(&[('(', ')'), ('"', '"')])
-            .with_highlighter(Box::new(ArfLikeAutoPairHighlighter))
+            .with_highlighter(Box::new(ContextAwareAutoPairHighlighter))
     }
 
     #[test]
-    fn arf_like_rules_bracket_pairs_inside_an_unclosed_string() {
-        let mut rl = arf_like_engine();
+    fn context_policy_allows_non_quote_pair_inside_unclosed_region() {
+        let mut rl = context_aware_auto_pair_engine();
         rl.run_edit_commands(&[EditCommand::InsertString("\"abc".into())]);
 
-        // Cursor is at the end of the buffer, so the positional rule allows
-        // pairing even though we are inside an unterminated string: brackets
-        // pair inside strings in arf.
+        // A non-quote pair is allowed even inside an unclosed region.
         rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
         assert_eq!(rl.editor.get_buffer(), "\"abc()");
         assert_eq!(rl.editor.insertion_point(), 5);
     }
 
     #[test]
-    fn arf_like_rules_quote_does_not_pair_inside_unclosed_same_quote() {
-        let mut rl = arf_like_engine();
+    fn context_policy_vetoes_same_delimiter_inside_unclosed_region() {
+        let mut rl = context_aware_auto_pair_engine();
         rl.run_edit_commands(&[EditCommand::InsertString("\"".into())]);
         assert_eq!(rl.editor.insertion_point(), 1);
 
@@ -3322,22 +3320,6 @@ mod tests {
         rl.run_edit_commands(&[EditCommand::InsertChar('"')]);
         assert_eq!(rl.editor.get_buffer(), "\"\"");
         assert_eq!(rl.editor.insertion_point(), 2, "literal insert advances past the closing quote, unlike a paired insert which would leave the cursor at 1");
-    }
-
-    #[test]
-    fn arf_like_rules_no_pairing_mid_word() {
-        let mut rl = arf_like_engine();
-        rl.run_edit_commands(&[
-            EditCommand::InsertString("ab".into()),
-            EditCommand::MoveLeft { select: false },
-        ]);
-        assert_eq!(rl.editor.insertion_point(), 1);
-
-        // Cursor sits between 'a' and 'b': neither at the end of the buffer
-        // nor before a closing bracket, so the opener is typed literally.
-        rl.run_edit_commands(&[EditCommand::InsertChar('(')]);
-        assert_eq!(rl.editor.get_buffer(), "a(b");
-        assert_eq!(rl.editor.insertion_point(), 2);
     }
 
     // --- undo granularity across all six action x veto combinations --------
@@ -3554,6 +3536,22 @@ mod tests {
         // has no matching closer.
         assert_eq!(rl.editor.get_buffer(), "(a");
         assert_eq!(rl.editor.insertion_point(), 2);
+    }
+
+    #[test]
+    fn auto_pairs_do_not_rewrite_reverse_history_search_query() {
+        let mut rl = auto_pair_engine(&[('(', ')')]);
+        rl.enter_history_search();
+
+        rl.handle_history_search_event(ReedlineEvent::Edit(vec![EditCommand::InsertChar('(')]))
+            .expect("history search event handled");
+
+        assert_eq!(rl.input_mode, InputMode::HistorySearch);
+        assert_eq!(rl.editor.get_buffer(), "");
+        assert_eq!(
+            rl.history_cursor.get_navigation(),
+            HistoryNavigationQuery::SubstringSearch("(".into())
+        );
     }
 
     // FLIP SAFETY NET (Group C) — visual operability at the engine seam.
