@@ -79,8 +79,7 @@ impl ParsedViSequence {
 
     fn apply_multiplier(&self, raw_events: Option<Vec<ReedlineOption>>) -> ReedlineEvent {
         if let Some(raw_events) = raw_events {
-            let events = std::iter::repeat(raw_events)
-                .take(self.total_multiplier())
+            let events = std::iter::repeat_n(raw_events, self.total_multiplier())
                 .flatten()
                 .filter_map(ReedlineOption::into_reedline_event)
                 .collect::<Vec<ReedlineEvent>>();
@@ -112,7 +111,12 @@ impl ParsedViSequence {
             (Some(Command::Change), ParseResult::Incomplete) if mode == ViMode::Visual => {
                 Some(ViMode::Insert)
             }
-            (Some(Command::Delete), ParseResult::Incomplete) if mode == ViMode::Visual => {
+            (Some(Command::Delete), ParseResult::Incomplete)
+            | (Some(Command::Lowercase), ParseResult::Incomplete)
+            | (Some(Command::Uppercase), ParseResult::Incomplete)
+            | (Some(Command::Switchcase), ParseResult::Incomplete)
+                if mode == ViMode::Visual =>
+            {
                 Some(ViMode::Normal)
             }
             // `r<char>` in Visual replaces and returns to Normal; without this it
@@ -237,6 +241,36 @@ mod tests {
             direction,
             stop,
         }
+    }
+
+    #[test]
+    fn test_delete_char_backward() {
+        let input = ['X'];
+        let output = vi_parse(&input);
+        assert_eq!(
+            output,
+            ParsedViSequence {
+                multiplier: None,
+                command: Some(Command::DeleteCharBackward),
+                count: None,
+                motion: ParseResult::Incomplete,
+            }
+        );
+    }
+
+    #[test]
+    fn test_two_delete_char_backward() {
+        let input = ['2', 'X'];
+        let output = vi_parse(&input);
+        assert_eq!(
+            output,
+            ParsedViSequence {
+                multiplier: Some(2),
+                command: Some(Command::DeleteCharBackward),
+                count: None,
+                motion: ParseResult::Incomplete,
+            }
+        );
     }
 
     #[test]
@@ -719,7 +753,7 @@ mod tests {
         ReedlineEvent::Edit(vec![EditCommand::Undo])
         ]))]
     #[case(&['d'], ReedlineEvent::Multiple(vec![
-        ReedlineEvent::Edit(vec![EditCommand::CutSelection])]))]
+        ReedlineEvent::Edit(vec![EditCommand::CutSelection { granularity: Granularity::CharWise }]),]))]
     fn test_reedline_move_in_visual_mode(#[case] input: &[char], #[case] expected: ReedlineEvent) {
         let mut vi = Vi {
             mode: ViMode::Visual,

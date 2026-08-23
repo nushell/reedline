@@ -5,34 +5,23 @@ mod vi_keybindings;
 
 use std::str::FromStr;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use strum::EnumString;
 pub use vi_keybindings::{default_vi_insert_keybindings, default_vi_normal_keybindings};
 
-use super::EditMode;
+use super::{is_plain_char, is_text_char, parse_non_key_event, EditMode};
 use crate::{
     edit_mode::{keybindings::Keybindings, vi::parser::parse},
     enums::{EditCommand, EventStatus, ReedlineEvent, ReedlineRawEvent},
     Direction, MotionTarget, PromptEditMode, PromptViMode,
 };
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, EnumString)]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 enum ViMode {
     Normal,
     Insert,
     Visual,
-}
-
-impl FromStr for ViMode {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "normal" => Ok(ViMode::Normal),
-            "insert" => Ok(ViMode::Insert),
-            "visual" => Ok(ViMode::Visual),
-            _ => Err(()),
-        }
-    }
 }
 
 /// This parses incoming input `Event`s like a Vi-Style editor
@@ -76,8 +65,13 @@ impl EditMode for Vi {
             Event::Key(KeyEvent {
                 code, modifiers, ..
             }) => match (self.mode, modifiers, code) {
-                (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v')) => {
-                    self.cache.clear();
+                // TODO: This guard changes `2v`: the pending count keeps `cache`
+                // non-empty, so `v` no longer enters Visual mode. Decide how
+                // count-prefixed Visual entry should behave before broadening this
+                // special case.
+                (ViMode::Normal, KeyModifiers::NONE, KeyCode::Char('v'))
+                    if self.cache.is_empty() =>
+                {
                     self.mode = ViMode::Visual;
                     // Entering Visual switches the rest policy to `Block`; the
                     // pre-paint commit then widens the cursor into its min-width-1
@@ -91,8 +85,7 @@ impl EditMode for Vi {
                     let binding = self
                         .normal_keybindings
                         .find_binding(modifiers, KeyCode::Char(c));
-                    let is_typeable =
-                        modifier == KeyModifiers::NONE || modifier == KeyModifiers::SHIFT;
+                    let is_typeable = is_plain_char(modifier);
 
                     // A pending multi-key motion (e.g. `f<char>`) must be completed
                     // before a custom keybinding can claim the next key; otherwise a
@@ -142,14 +135,7 @@ impl EditMode for Vi {
                     self.insert_keybindings
                         .find_binding(modifier, KeyCode::Char(c))
                         .unwrap_or_else(|| {
-                            if modifier == KeyModifiers::NONE
-                                || modifier == KeyModifiers::SHIFT
-                                || modifier == KeyModifiers::CONTROL | KeyModifiers::ALT
-                                || modifier
-                                    == KeyModifiers::CONTROL
-                                        | KeyModifiers::ALT
-                                        | KeyModifiers::SHIFT
-                            {
+                            if is_text_char(modifier) {
                                 ReedlineEvent::Edit(vec![EditCommand::InsertChar(
                                     if modifier == KeyModifiers::SHIFT {
                                         c.to_ascii_uppercase()
@@ -210,23 +196,7 @@ impl EditMode for Vi {
                     }),
             },
 
-            Event::Mouse(MouseEvent {
-                kind: MouseEventKind::Down(button),
-                column,
-                row,
-                modifiers: KeyModifiers::NONE,
-            }) => ReedlineEvent::Mouse {
-                column,
-                row,
-                button: button.into(),
-            },
-            Event::Mouse(_) => ReedlineEvent::None,
-            Event::Resize(width, height) => ReedlineEvent::Resize(width, height),
-            Event::FocusGained => ReedlineEvent::None,
-            Event::FocusLost => ReedlineEvent::None,
-            Event::Paste(body) => ReedlineEvent::Edit(vec![EditCommand::InsertString(
-                body.replace("\r\n", "\n").replace('\r', "\n"),
-            )]),
+            event => parse_non_key_event(event),
         }
     }
 
@@ -244,6 +214,7 @@ impl EditMode for Vi {
         match event {
             ReedlineEvent::ViChangeMode(mode_str) => match ViMode::from_str(&mode_str) {
                 Ok(mode) => {
+                    self.cache.clear();
                     self.mode = mode;
                     EventStatus::Handled
                 }
@@ -258,7 +229,9 @@ impl EditMode for Vi {
 mod test {
     use super::*;
     use crate::{Direction, Granularity, MotionTarget, WordEdge, WordKind};
+    use crossterm::event::{MouseEvent, MouseEventKind};
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> ReedlineRawEvent {
         ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(code, modifiers))).unwrap()
@@ -470,6 +443,77 @@ mod test {
     }
 
     #[test]
+    fn v_completes_pending_replace_char() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let pending = vi.parse_event(key(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert_eq!(pending, ReedlineEvent::None);
+
+        let result = vi.parse_event(key(KeyCode::Char('v'), KeyModifiers::NONE));
+
+        assert!(matches!(vi.mode, ViMode::Normal));
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::ReplaceChar(
+                'v'
+            )])])
+        );
+    }
+
+    #[test]
+    fn v_completes_pending_find_motion() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let pending = vi.parse_event(key(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert_eq!(pending, ReedlineEvent::None);
+
+        let result = vi.parse_event(key(KeyCode::Char('v'), KeyModifiers::NONE));
+
+        assert!(matches!(vi.mode, ViMode::Normal));
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Move(
+                MotionTarget::Find {
+                    ch: 'v',
+                    direction: Direction::Forward,
+                    stop: crate::FindStop::On,
+                }
+            )])])
+        );
+    }
+
+    #[test]
+    fn v_completes_pending_till_motion() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+
+        let pending = vi.parse_event(key(KeyCode::Char('t'), KeyModifiers::NONE));
+        assert_eq!(pending, ReedlineEvent::None);
+
+        let result = vi.parse_event(key(KeyCode::Char('v'), KeyModifiers::NONE));
+
+        assert!(matches!(vi.mode, ViMode::Normal));
+        assert_eq!(
+            result,
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::Move(
+                MotionTarget::Find {
+                    ch: 'v',
+                    direction: Direction::Forward,
+                    stop: crate::FindStop::Before,
+                }
+            )])])
+        );
+    }
+
+    #[test]
     fn v_in_normal_enters_visual() {
         let mut vi = Vi {
             mode: ViMode::Normal,
@@ -578,7 +622,9 @@ mod test {
 
         assert_eq!(
             result,
-            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutSelection])]),
+            ReedlineEvent::Multiple(vec![ReedlineEvent::Edit(vec![EditCommand::CutSelection {
+                granularity: Granularity::CharWise
+            }])]),
         );
         assert!(matches!(vi.mode, ViMode::Normal));
     }
@@ -866,5 +912,43 @@ mod test {
 
         let dot = vi.parse_event(key(KeyCode::Char('.'), KeyModifiers::NONE));
         assert_eq!(dot, ReedlineEvent::Multiple(vec![dw]));
+    }
+
+    // --- ViChangeMode ---
+
+    #[rstest]
+    #[case("insert", ViMode::Insert)]
+    #[case("Normal", ViMode::Normal)]
+    #[case("VISUAL", ViMode::Visual)]
+    fn change_mode_event_switches_the_machine(#[case] name: &str, #[case] expected: ViMode) {
+        let mut vi = Vi::default();
+        let status = vi.handle_mode_specific_event(ReedlineEvent::ViChangeMode(name.into()));
+        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(vi.mode, expected);
+    }
+
+    #[test]
+    fn change_mode_event_rejects_an_unknown_mode() {
+        let mut vi = Vi::default();
+        let status = vi.handle_mode_specific_event(ReedlineEvent::ViChangeMode("select".into()));
+        assert!(matches!(status, EventStatus::Inapplicable));
+        assert_eq!(vi.mode, ViMode::Insert);
+    }
+
+    #[test]
+    fn change_mode_event_abandons_a_half_typed_sequence() {
+        let mut vi = Vi {
+            mode: ViMode::Normal,
+            ..Default::default()
+        };
+        // Arm a counted find; the switch must clear the cache so the next key
+        // is not parsed as the find argument in the new mode.
+        let _ = vi.parse_event(key(KeyCode::Char('3'), KeyModifiers::NONE));
+        let _ = vi.parse_event(key(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert!(!vi.cache.is_empty(), "setup: sequence is armed");
+
+        vi.handle_mode_specific_event(ReedlineEvent::ViChangeMode("insert".into()));
+        assert!(vi.cache.is_empty());
+        assert_eq!(vi.mode, ViMode::Insert);
     }
 }

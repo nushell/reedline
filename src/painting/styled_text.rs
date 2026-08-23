@@ -169,6 +169,20 @@ impl StyledText {
     }
 }
 
+/// Whether `style` would make a blank cell look different from unstyled text.
+///
+/// A space has no glyph, so a foreground colour and every weight-ish attribute
+/// (bold, dim, italic, blink) have nothing to act on. A background paints the
+/// cell, reversed colours paint the foreground *as* the background, and a rule
+/// through or under the cell is drawn regardless of what is in it.
+///
+/// `Style::reverse()` is the one that matters in practice: it is the natural way
+/// to write a selection style and it leaves `background` at `None`, so a check
+/// for a background alone silently excludes it.
+fn shows_on_a_blank_cell(style: &Style) -> bool {
+    style.background.is_some() || style.is_reverse || style.is_underline || style.is_strikethrough
+}
+
 fn render_as_string(
     renderable: &(Style, String),
     prompt_style: &Style,
@@ -191,11 +205,38 @@ fn render_as_string(
         format!("\n{multiline_prompt}")
     };
 
-    for (line_number, line) in renderable.1.split('\n').enumerate() {
-        if line_number != 0 {
+    // `split` consumes the `\n`, so a terminator has no glyph left to carry the
+    // style and a selection covering it paints nothing. Every piece but the last
+    // had one consumed after it: give those a cell, and the `\n` itself comes
+    // back with the multiline prompt.
+    //
+    // Only when the style would actually show on a blank cell, or a highlighter
+    // that emits the buffer as one plain chunk would gain a stray space per line
+    // in every mode. The `\r` of a CRLF is the terminator's own, thus the cell
+    // replaces it; a trailing `\r` on the *last* piece is buffer content, stays.
+    //
+    // The cell is a real column, so `required_lines` and `cursor_pos` count it.
+    // That shows up only on a selected line which exactly fills the terminal.
+    let mut lines = renderable.1.split('\n').peekable();
+    while let Some(line) = lines.next() {
+        let terminated = lines.peek().is_some();
+        let line = if terminated {
+            line.strip_suffix('\r').unwrap_or(line)
+        } else {
+            line
+        };
+
+        // One `paint` for line and cell together: two would wrap each in its own
+        // escape pair, and the rendered string is asserted verbatim.
+        if terminated && shows_on_a_blank_cell(&renderable.0) {
+            rendered.push_str(&renderable.0.paint(format!("{line} ")).to_string());
+        } else {
+            rendered.push_str(&renderable.0.paint(line).to_string());
+        }
+
+        if terminated {
             rendered.push_str(&prompt_style.paint(&formatted_multiline_prompt).to_string());
         }
-        rendered.push_str(&renderable.0.paint(line).to_string());
     }
     rendered
 }
@@ -204,7 +245,9 @@ fn render_as_string(
 mod test {
     use nu_ansi_term::{Color, Style};
 
+    use super::strip_ansi;
     use crate::StyledText;
+    use rstest::rstest;
 
     fn get_styled_text_template() -> (super::StyledText, Style, Style) {
         let before_style = Style::new().on(Color::Black);
@@ -345,5 +388,185 @@ mod test {
             super::render_as_string(&renderable, &prompt_style, multiline_prompt, Some(&markers));
         assert!(!result.contains("\x1b]133;A;k=s"));
         assert!(!result.contains("\x1b]133;B"));
+    }
+
+    // --- the terminator cell (helix block cursor on a `\n`) ---
+
+    #[test]
+    fn lone_terminator_chunk_gets_a_painted_cell() {
+        let style = Style::new().on(Color::LightGray);
+        for text in ["\n", "\r\n"] {
+            let result =
+                super::render_as_string(&(style, text.to_string()), &Style::new(), "::: ", None);
+            assert!(
+                strip_ansi(&result).starts_with(' '),
+                "{text:?} rendered {result:?}"
+            );
+            assert_eq!(
+                result,
+                format!("{}\n::: {}", style.paint(" "), style.paint(""))
+            );
+        }
+    }
+
+    #[test]
+    fn the_cell_survives_the_split_at_the_caret() {
+        // The real path. Helix rests the caret at the *start* of the covered
+        // grapheme, so the insertion point lands exactly on the chunk boundary
+        // and the terminator stays whole rather than being split in half.
+        let sel = Style::new().on(Color::LightGray);
+        let mut styled = StyledText {
+            buffer: vec![(Style::new(), "ab\ncd".into())],
+        };
+        styled.style_range(2, 3, sel);
+        let (left, right) =
+            styled.render_around_insertion_point(2, &crate::DefaultPrompt::default(), false, None);
+        assert_eq!(left, "ab");
+        assert!(right.starts_with(' '), "right was {right:?}");
+    }
+
+    #[rstest]
+    #[case::reverse(Style::new().reverse(), true)]
+    #[case::background(Style::new().on(Color::LightGray), true)]
+    #[case::underline(Style::new().underline(), true)]
+    #[case::strikethrough(Style::new().strikethrough(), true)]
+    #[case::foreground(Style::new().fg(Color::Green), false)]
+    #[case::bold(Style::new().bold(), false)]
+    #[case::plain(Style::new(), false)]
+    fn only_a_style_that_shows_on_a_blank_cell_gets_one(
+        #[case] style: Style,
+        #[case] expected: bool,
+    ) {
+        // `examples/helix.rs` styles its selection with `Style::new().reverse()`,
+        // which leaves `background` at `None` — a background-only check paints
+        // nothing there, which is the whole selection invisible on a terminator.
+        // A foreground or a weight has no glyph to act on in a space, so those
+        // still get no cell.
+        let mut styled = StyledText {
+            buffer: vec![(Style::new(), "ab\ncd".into())],
+        };
+        styled.style_range(1, 4, style);
+        let rendered: String = styled
+            .buffer
+            .iter()
+            .map(|p| super::render_as_string(p, &Style::new(), "> ", None))
+            .collect();
+        let expected = if expected { "ab \n> cd" } else { "ab\n> cd" };
+        assert_eq!(strip_ansi(&rendered), expected);
+    }
+
+    #[test]
+    fn a_terminator_inside_a_wider_chunk_gets_a_cell_too() {
+        // A word motion or any multi-grapheme selection crossing a line hands
+        // the terminator over *inside* a wider chunk, which is the common case:
+        // the terminator-only chunk above only happens stepping onto a `\n` from
+        // an empty line. Every piece but the last had a `\n` consumed after it.
+        let style = Style::new().on(Color::LightGray);
+        let result =
+            super::render_as_string(&(style, "a\nb".to_string()), &Style::new(), "::: ", None);
+        assert_eq!(strip_ansi(&result), "a \n::: b");
+    }
+
+    #[test]
+    fn a_trailing_terminator_in_a_wider_chunk_gets_a_cell() {
+        // The shape a selection through the end of a line produces: content and
+        // terminator in one chunk, nothing after it.
+        let style = Style::new().on(Color::LightGray);
+        for text in ["bar\n", "o bar\n"] {
+            let result =
+                super::render_as_string(&(style, text.to_string()), &Style::new(), "::: ", None);
+            let first = strip_ansi(&result);
+            let first = first.split('\n').next().unwrap().to_string();
+            assert!(
+                first.ends_with(' '),
+                "{text:?} rendered first line {first:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_crlf_terminator_paints_a_cell_and_drops_the_carriage_return() {
+        // `split('\n')` leaves the `\r` on the piece, so painting it raw emits a
+        // real carriage return mid-line and snaps the terminal to column 0. The
+        // `\r` belongs to the terminator, thus the cell replaces it.
+        //
+        // Asserted on the *raw* string: `strip_ansi` discards `\r` as a control
+        // character, so a stripped assertion here would hold either way.
+        let style = Style::new().on(Color::LightGray);
+        let result =
+            super::render_as_string(&(style, "bar\r\n".to_string()), &Style::new(), "::: ", None);
+        assert!(!result.contains('\r'), "leaked a CR: {result:?}");
+        assert_eq!(strip_ansi(&result).split('\n').next().unwrap(), "bar ");
+    }
+
+    #[test]
+    fn a_trailing_carriage_return_is_not_a_terminator() {
+        // The contrast with the case above: with no `\n` after it the `\r` is
+        // buffer content on the last piece, so it survives and gains no cell.
+        // Raw again, for the same reason.
+        let style = Style::new().on(Color::LightGray);
+        let result =
+            super::render_as_string(&(style, "bar\r".to_string()), &Style::new(), "::: ", None);
+        assert!(result.contains('\r'), "ate buffer content: {result:?}");
+        assert_eq!(strip_ansi(&result), "bar");
+    }
+
+    #[test]
+    fn an_unstyled_wider_terminator_chunk_gains_nothing() {
+        // The guard `008df78` cared about, at the generalized predicate: a
+        // highlighter emitting the whole buffer as one unstyled chunk must not
+        // gain a space on every line in every mode.
+        let result = super::render_as_string(
+            &(Style::new(), "a\nb\nc".to_string()),
+            &Style::new(),
+            "::: ",
+            None,
+        );
+        assert_eq!(strip_ansi(&result), "a\n::: b\n::: c");
+    }
+
+    #[test]
+    fn an_unstyled_terminator_chunk_gains_nothing() {
+        // The non-helix exposure: a highlighter that pushes the whole buffer as
+        // one chunk emits a bare `"\n"` for a newline-only buffer, with no
+        // `style_range` involved. Every mode would gain a stray space.
+        use crate::{Highlighter, SimpleMatchHighlighter};
+        let styled = SimpleMatchHighlighter::default().highlight("\n", 0);
+        assert_eq!(styled.buffer[0].0.background, None, "premise of this test");
+        let (left, right) =
+            styled.render_around_insertion_point(0, &crate::DefaultPrompt::default(), false, None);
+        assert_eq!((left.as_str(), right.starts_with(' ')), ("", false));
+
+        // A foreground-only style is the same case: nothing to show on a blank
+        // cell, so no cell.
+        let fg = Style::new().fg(Color::Green);
+        let out = super::render_as_string(&(fg, "\n".to_string()), &Style::new(), "> ", None);
+        assert_eq!(strip_ansi(&out), "\n> ");
+    }
+
+    #[test]
+    fn an_empty_chunk_is_not_given_a_cell() {
+        // `render_around_insertion_point` splits pairs and can hand us an empty
+        // string; that must not gain a stray space.
+        let style = Style::new().on(Color::LightGray);
+        let result = super::render_as_string(&(style, String::new()), &Style::new(), "::: ", None);
+        assert_eq!(strip_ansi(&result), "");
+    }
+
+    #[test]
+    fn selecting_only_the_newline_paints_a_cell_end_to_end() {
+        let sel = Style::new().on(Color::LightGray);
+        let mut styled = StyledText {
+            buffer: vec![(Style::new(), "ab\ncd".into())],
+        };
+        styled.style_range(2, 3, sel);
+        assert_eq!(styled.buffer[1], (sel, "\n".into()));
+
+        let rendered: String = styled
+            .buffer
+            .iter()
+            .map(|p| super::render_as_string(p, &Style::new(), "> ", None))
+            .collect();
+        assert_eq!(strip_ansi(&rendered), "ab \n> cd");
     }
 }

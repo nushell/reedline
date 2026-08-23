@@ -184,6 +184,29 @@
 //!     Reedline::create().with_mouse_click(MouseClickMode::EnabledWithOsc133);
 //! ```
 //!
+//! ## Use `Helix` edit mode
+//!
+//! Selection-first editing: motions carry the selection, verbs act on it.
+//! Requires the `helix` feature (enabled by default), which also gates the
+//! types below.
+//!
+//! ```rust
+//! # #[cfg(feature = "helix")] {
+//! use reedline::{default_helix_normal_keybindings, Helix, Reedline};
+//!
+//! let mut normal_keybindings = default_helix_normal_keybindings();
+//! // normal_keybindings.add_binding(..);
+//!
+//! let line_editor = Reedline::create().with_edit_mode(Box::new(
+//!     Helix::default().with_normal_keybindings(normal_keybindings),
+//! ));
+//! # }
+//! ```
+//!
+//! Run `cargo run --example helix` for the mode on its own, or
+//! `cargo run --example demo -- --helix` to exercise it against the demo's
+//! history and menus.
+//!
 //! ## Crate features
 //!
 //! - `clipboard`: Enable support to use the `SystemClipboard`. Enabling this feature will return a `SystemClipboard` instead of a local clipboard when calling `get_default_clipboard()`.
@@ -191,6 +214,7 @@
 //! - `sqlite`: Provides the `SqliteBackedHistory` to store richer information in the history. Statically links the required sqlite version.
 //! - `sqlite-dynlib`: Alternative to the feature `sqlite`. Will not statically link. Requires `sqlite >= 3.38` to link dynamically!
 //! - `external_printer`: **Experimental:** Thread-safe `ExternalPrinter` handle to print lines from concurrently running threads.
+//! - `helix`: Selection-first `Helix`/Kakoune-style edit mode, where a motion moves the selection and a verb acts on it. On by default; the `Helix` type and its keybinding defaults are gated behind it, so `default-features = false` builds compile without the mode.
 //!
 //! ## Are we prompt yet? (Development status)
 //!
@@ -257,6 +281,8 @@ pub use history::{
 };
 
 mod prompt;
+#[cfg(feature = "helix")]
+pub use prompt::PromptHelixMode;
 pub use prompt::{
     DefaultPrompt, DefaultPromptSegment, Prompt, PromptEditMode, PromptEditModeDiscriminants,
     PromptHistorySearch, PromptHistorySearchStatus, PromptViMode, DEFAULT_INDICATOR_COLOR,
@@ -264,11 +290,14 @@ pub use prompt::{
 };
 
 mod edit_mode;
-#[cfg(feature = "helix")]
-pub use edit_mode::Helix;
 pub use edit_mode::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     CursorConfig, EditMode, Emacs, Keybindings, Vi,
+};
+#[cfg(feature = "helix")]
+pub use edit_mode::{
+    default_helix_insert_keybindings, default_helix_normal_keybindings,
+    default_helix_select_keybindings, Helix,
 };
 
 mod highlighter;
@@ -279,7 +308,8 @@ pub use highlighter::{
 
 mod completion;
 pub use completion::{
-    Completer, CompletionResult, CompletionStatus, DefaultCompleter, Span, Suggestion, Suggestions,
+    Completer, CompletionOrigin, CompletionResult, CompletionStatus, DefaultCompleter, Partial,
+    Span, Suggestion, Suggestions,
 };
 
 mod hinter;

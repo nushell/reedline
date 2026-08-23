@@ -44,7 +44,7 @@ impl Default for MenuTextStyle {
     }
 }
 
-/// Defines all possible events that could happen with a menu.
+/// Menu events.
 #[derive(Clone)]
 pub enum MenuEvent {
     /// Activation event for the menu. When the bool is true it means that the values
@@ -98,7 +98,35 @@ pub trait Menu: Send {
     /// Checks if the menu is active
     fn is_active(&self) -> bool;
 
-    /// Selects what type of event happened with the menu
+    /// Set active state
+    fn set_active(&mut self, active: bool);
+
+    /// Clear input
+    fn clear_input(&mut self);
+
+    /// Called after Activate event.
+    fn on_activate(&mut self) {}
+
+    /// Called after Deactivate event.
+    fn on_deactivate(&mut self) {}
+
+    /// Handle Activate/Deactivate events.
+    fn handle_menu_event(&mut self, event: &MenuEvent) {
+        match event {
+            MenuEvent::Activate(_) => {
+                self.set_active(true);
+                self.on_activate();
+            }
+            MenuEvent::Deactivate => {
+                self.set_active(false);
+                self.clear_input();
+                self.on_deactivate();
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle menu event
     fn menu_event(&mut self, event: MenuEvent);
 
     /// A menu may not be allowed to quick complete because it needs to stay
@@ -159,6 +187,31 @@ pub trait Menu: Send {
 
     /// Gets cached values from menu that will be displayed
     fn get_values(&self) -> &[Suggestion];
+
+    /// Whether the values currently held may still be superseded, because the
+    /// last request came back [`Pending`](crate::CompletionResult::Pending) or
+    /// [`Stale`](crate::CompletionResult::Stale).
+    ///
+    /// Such values display and navigate normally, but nothing final may be
+    /// decided from them: a lone stale suggestion cannot be accepted, since its
+    /// span belongs to another line.
+    fn results_are_provisional(&self) -> bool {
+        false
+    }
+
+    /// Whether the menu is activated but not yet drawn, having heard no answer
+    /// about the line on screen. It claims no prompt indicator and reserves no
+    /// rows, so a menu about to be closed by a lone suggestion never appears.
+    fn is_awaiting_first_answer(&self) -> bool {
+        false
+    }
+
+    /// Whether the menu is on screen. An active menu still awaiting its first answer
+    /// is not: it takes input, but claims no indicator and reserves no rows.
+    fn is_visible(&self) -> bool {
+        self.is_active() && !self.is_awaiting_first_answer()
+    }
+
     /// Sets the position of the cursor (currently only required by the IDE menu)
     fn set_cursor_pos(&mut self, _pos: (u16, u16)) {
         // empty implementation to make it optional
@@ -173,8 +226,7 @@ pub struct MenuSettings {
     color: MenuTextStyle,
     /// Menu marker when active
     marker: String,
-    /// Calls the completer using only the line buffer difference
-    /// after the menu was activated. Ignored if `input_mode` is set.
+    /// Use buffer diff after activation. Ignored if input_mode set.
     only_buffer_difference: bool,
     /// Optional override for completer input handling.
     /// If `Some`, takes precedence over `only_buffer_difference`.
@@ -212,7 +264,7 @@ impl MenuSettings {
         self
     }
 
-    /// MenuSettings builder with marker
+    /// Set marker
     #[must_use]
     pub fn with_marker(mut self, marker: &str) -> Self {
         self.marker = marker.to_string();
@@ -340,8 +392,7 @@ pub trait MenuBuilder: Menu + Sized {
         self
     }
 
-    /// Menu builder with new value for only_buffer_difference.
-    /// Ignored when `input_mode` is set; consider `with_input_mode` for finer control.
+    /// Set only_buffer_difference. Ignored when input_mode set.
     #[must_use]
     fn with_only_buffer_difference(mut self, only_buffer_difference: bool) -> Self {
         self.settings_mut().only_buffer_difference = only_buffer_difference;
@@ -393,6 +444,19 @@ impl ReedlineMenu {
             | Self::HistoryMenu(menu)
             | Self::WithCompleter { menu, .. } => menu.as_mut(),
         }
+    }
+
+    /// Whether updating this menu runs a completer supplied by the host.
+    ///
+    /// Host completers own the tty while they run and may shell out to a program that
+    /// scrolls the terminal (nushell's external completer running `fzf --height`),
+    /// leaving the painter's cached prompt anchor pointing at the wrong row.
+    /// Reedline cannot tell whether a given completer does that, so any host completer
+    /// is assumed to. [`HistoryMenu`](Self::HistoryMenu) is the one case it can rule
+    /// out: it is answered by reedline's own in-process [`HistoryCompleter`], which
+    /// never yields the terminal. See #1130.
+    pub(crate) fn queries_host_completer(&self) -> bool {
+        !matches!(self, Self::HistoryMenu(_))
     }
 
     pub(crate) fn can_partially_complete(
@@ -480,6 +544,14 @@ impl Menu for ReedlineMenu {
         self.as_ref().is_active()
     }
 
+    fn set_active(&mut self, active: bool) {
+        self.as_mut().set_active(active);
+    }
+
+    fn clear_input(&mut self) {
+        self.as_mut().clear_input();
+    }
+
     fn menu_event(&mut self, event: MenuEvent) {
         self.as_mut().menu_event(event);
     }
@@ -563,6 +635,14 @@ impl Menu for ReedlineMenu {
         self.as_ref().get_values()
     }
 
+    fn results_are_provisional(&self) -> bool {
+        self.as_ref().results_are_provisional()
+    }
+
+    fn is_awaiting_first_answer(&self) -> bool {
+        self.as_ref().is_awaiting_first_answer()
+    }
+
     fn set_cursor_pos(&mut self, pos: (u16, u16)) {
         self.as_mut().set_cursor_pos(pos);
     }
@@ -571,7 +651,26 @@ impl Menu for ReedlineMenu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DefaultCompleter;
     use rstest::rstest;
+
+    /// The prompt anchor is only re-verified for menus that can run host code, since
+    /// that is the only thing reedline cannot see past. A history menu is answered
+    /// in-process, so it must not pay a `cursor::position()` round-trip per keystroke.
+    /// See #1130.
+    #[test]
+    fn only_a_host_completer_can_have_scrolled_the_terminal() {
+        let menu = || Box::new(ColumnarMenu::default()) as Box<dyn Menu>;
+
+        assert!(ReedlineMenu::EngineCompleter(menu()).queries_host_completer());
+        assert!(ReedlineMenu::WithCompleter {
+            menu: menu(),
+            completer: Box::<DefaultCompleter>::default(),
+        }
+        .queries_host_completer());
+
+        assert!(!ReedlineMenu::HistoryMenu(menu()).queries_host_completer());
+    }
 
     #[rstest]
     #[case::bool_only_false(false, None, InputMode::CursorPrefix)]

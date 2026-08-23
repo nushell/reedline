@@ -2,9 +2,8 @@ use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
-        available_lines, can_partially_complete, get_match_indices, replace_in_buffer,
-        resolve_completer_input, scroll_offset, style_suggestion, truncate_with_ansi,
-        CompletionDisplay,
+        available_lines, get_match_indices, resolve_completer_input, scroll_offset,
+        style_suggestion, truncate_with_ansi, CompletionDisplay, CompletionPhase,
     },
     painting::Painter,
     Completer, Suggestion,
@@ -72,11 +71,11 @@ pub struct ColumnarMenu {
     working_details: ColumnDetails,
     /// Suggestions currently displayed and their derived display metrics
     completions: CompletionDisplay,
-    /// Whether a background completion is still in flight with nothing to show
-    /// yet. While set, the menu draws nothing rather than a premature
-    /// "NO RECORDS FOUND" (which is reserved for a settled, genuinely empty result).
-    awaiting_results: bool,
-    /// column position of the cursor. Starts from 0
+    /// Where the menu stands between activation and a final answer about the
+    /// line on screen: visibility, what may be decided from the values, and
+    /// whether an empty menu means "still computing" or "no records".
+    phase: CompletionPhase,
+    /// Column position
     col_pos: u16,
     /// row position in the menu. Starts from 0
     row_pos: u16,
@@ -98,7 +97,7 @@ impl Default for ColumnarMenu {
             min_rows: 3,
             working_details: ColumnDetails::default(),
             completions: CompletionDisplay::default(),
-            awaiting_results: false,
+            phase: CompletionPhase::Unasked,
             col_pos: 0,
             row_pos: 0,
             skip_rows: 0,
@@ -165,7 +164,7 @@ impl ColumnarMenu {
     fn move_previous(&mut self) {
         let new_index = match self.index().checked_sub(1) {
             Some(index) => index,
-            None => self.completions.values.len().saturating_sub(1),
+            None => self.completions.suggestions().len().saturating_sub(1),
         };
 
         (self.row_pos, self.col_pos) = self.position_from_index(new_index);
@@ -299,19 +298,14 @@ impl ColumnarMenu {
         index.into()
     }
 
-    /// Get selected value from the menu
-    fn get_value(&self) -> Option<Suggestion> {
-        self.get_values().get(self.index()).cloned()
-    }
-
     /// Calculates how many rows the menu will use
     fn get_rows(&self) -> u16 {
         match self.get_values().len() as u16 {
             // No reason to save space if we're waiting for results.
-            0 if self.awaiting_results => 0,
+            0 if self.phase.awaiting_results() => 0,
             // Should be one row for actual empty results
             0 => 1,
-            total_values => (total_values + self.get_cols() - 1) / self.get_cols(),
+            total_values => total_values.div_ceil(self.get_cols()),
         }
     }
 
@@ -327,7 +321,7 @@ impl ColumnarMenu {
         match self.default_details.traversal_dir {
             TraversalDirection::Vertical => {
                 let cols = values / self.get_rows();
-                if values % self.get_rows() != 0 {
+                if !values.is_multiple_of(self.get_rows()) {
                     cols + 1
                 } else {
                     cols
@@ -578,7 +572,7 @@ impl Menu for ColumnarMenu {
         &self.settings
     }
 
-    /// Deactivates context menu
+    /// Active status
     fn is_active(&self) -> bool {
         self.active
     }
@@ -602,9 +596,9 @@ impl Menu for ColumnarMenu {
             self.update_values(editor, completer);
         }
 
-        if can_partially_complete(self.get_values(), editor) {
-            // The values need to be updated because the spans need to be
-            // recalculated for accurate replacement in the string
+        // Stale results can't splice wrong span
+        if self.completions.common_prefix(editor) {
+            // Recalculate spans after replacement
             self.update_values(editor, completer);
 
             true
@@ -613,17 +607,23 @@ impl Menu for ColumnarMenu {
         }
     }
 
-    /// Selects what type of event happened with the menu
-    fn menu_event(&mut self, event: MenuEvent) {
-        match &event {
-            MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => {
-                self.active = false;
-                self.input = None;
-            }
-            _ => {}
-        }
+    fn set_active(&mut self, active: bool) {
+        self.active = active;
+    }
 
+    fn clear_input(&mut self) {
+        self.input = None;
+    }
+
+    fn on_activate(&mut self) {
+        // Reset completions on activation
+        self.completions = CompletionDisplay::default();
+        self.phase.on_activate();
+    }
+
+    /// Queue menu event
+    fn menu_event(&mut self, event: MenuEvent) {
+        self.handle_menu_event(&event);
         self.event = Some(event);
     }
 
@@ -637,7 +637,7 @@ impl Menu for ColumnarMenu {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
 
         let (result, base_ranges) = completer.complete_with_base_ranges(&input, pos);
-        self.awaiting_results = result.is_pending();
+        self.phase.note(&result);
         if let Some(completions) = CompletionDisplay::from_result(result, &base_ranges, editor) {
             self.completions = completions;
             self.reset_position();
@@ -659,9 +659,10 @@ impl Menu for ColumnarMenu {
         self.recompute_layout(painter);
     }
 
-    /// The buffer gets replaced in the Span location
+    /// Replace buffer at span via completion display
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        replace_in_buffer(self.get_value(), editor, self.settings.output_mode);
+        self.completions
+            .accept(self.index(), editor, self.settings.output_mode);
     }
 
     /// Minimum rows that should be displayed by the menu
@@ -671,7 +672,15 @@ impl Menu for ColumnarMenu {
 
     /// Gets values from filler that will be displayed in the menu
     fn get_values(&self) -> &[Suggestion] {
-        &self.completions.values
+        self.completions.suggestions()
+    }
+
+    fn results_are_provisional(&self) -> bool {
+        self.phase.provisional()
+    }
+
+    fn is_awaiting_first_answer(&self) -> bool {
+        self.phase.awaiting_first_answer()
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
@@ -680,7 +689,7 @@ impl Menu for ColumnarMenu {
 
     fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String {
         if self.get_values().is_empty() {
-            if self.awaiting_results {
+            if self.phase.awaiting_results() {
                 // A background completion is still running; draw nothing rather
                 // than flashing "NO RECORDS FOUND" before the results land.
                 String::new()
@@ -751,7 +760,7 @@ impl Menu for ColumnarMenu {
 mod tests {
     use crate::painting::W;
 
-    use crate::{Span, UndoBehavior};
+    use crate::{CompletionOrigin, Span, UndoBehavior};
 
     use super::*;
 
@@ -1023,6 +1032,242 @@ mod tests {
         assert_eq!(menu.get_rows(), 0);
         assert_eq!(menu.menu_required_lines(30), 0);
         assert!(menu.menu_string(10, false).is_empty());
+    }
+
+    /// Completer with fixed value and span
+    struct SpanCompleter {
+        value: String,
+        span: Span,
+    }
+
+    impl Completer for SpanCompleter {
+        fn complete(&mut self, _line: &str, _pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::fresh(vec![Suggestion {
+                value: self.value.clone(),
+                span: self.span,
+                ..Default::default()
+            }])
+        }
+    }
+
+    /// Stale completer with fixed origin
+    struct StaleSpanCompleter {
+        value: String,
+        span: Span,
+        origin: CompletionOrigin,
+    }
+
+    impl StaleSpanCompleter {
+        fn new(
+            value: &str,
+            span: Span,
+            origin_buffer: &str,
+            origin_insertion_point: usize,
+        ) -> Self {
+            Self {
+                value: value.to_string(),
+                span,
+                origin: CompletionOrigin::new(origin_buffer, origin_insertion_point),
+            }
+        }
+    }
+
+    impl Completer for StaleSpanCompleter {
+        fn complete(&mut self, _line: &str, _pos: usize) -> crate::CompletionResult {
+            crate::CompletionResult::Stale {
+                suggestions: vec![Suggestion {
+                    value: self.value.clone(),
+                    span: self.span,
+                    ..Default::default()
+                }]
+                .into(),
+                origin: self.origin.clone(),
+                partial: None,
+            }
+        }
+    }
+
+    /// A menu drawn and then taken away a few frames later reads as the prompt
+    /// flickering, so it stays off screen until it hears about the line on screen.
+    #[test]
+    fn an_opening_menu_is_not_visible_until_answered() {
+        let mut menu = ColumnarMenu::default();
+        let mut editor = Editor::default();
+        editor.set_buffer("cr".to_string(), UndoBehavior::CreateUndoPoint);
+
+        menu.menu_event(MenuEvent::Activate(true));
+        menu.update_values(
+            &mut editor,
+            &mut StaleSpanCompleter::new("console", Span::new(0, 2), "co", 2),
+        );
+        assert!(
+            menu.is_awaiting_first_answer(),
+            "a cached answer about another line does not open the menu"
+        );
+
+        menu.update_values(
+            &mut editor,
+            &mut SpanCompleter {
+                value: String::from("crates"),
+                span: Span::new(0, 2),
+            },
+        );
+        assert!(
+            !menu.is_awaiting_first_answer(),
+            "the first real answer makes it visible"
+        );
+    }
+
+    /// Freshness describes the line the menu is open over, so re-opening it must not
+    /// inherit the last line's answer. The engine reads this to decide whether anything
+    /// is still owed, and with quick and partial completions both off nothing queries
+    /// the completer, so a leftover `true` would arm a replay that can never come.
+    #[test]
+    fn re_activating_forgets_the_previous_lines_answer() {
+        let mut menu = ColumnarMenu::default();
+        let mut editor = Editor::default();
+        editor.set_buffer("cr".to_string(), UndoBehavior::CreateUndoPoint);
+
+        menu.menu_event(MenuEvent::Activate(true));
+        menu.update_values(
+            &mut editor,
+            &mut StaleSpanCompleter::new("console", Span::new(0, 2), "co", 2),
+        );
+        assert!(menu.results_are_provisional());
+
+        menu.menu_event(MenuEvent::Deactivate);
+        menu.menu_event(MenuEvent::Activate(true));
+
+        assert!(
+            !menu.results_are_provisional(),
+            "nothing has been asked about the new line yet"
+        );
+    }
+
+    /// Once open it is the other way round: stale values beat blanking the menu on
+    /// every keystroke, which is what they exist for.
+    #[test]
+    fn an_open_menu_keeps_showing_stale_values() {
+        let mut menu = ColumnarMenu::default();
+        let mut editor = Editor::default();
+        editor.set_buffer("cr".to_string(), UndoBehavior::CreateUndoPoint);
+
+        // A final answer opens the menu for real and ends the opening phase.
+        menu.menu_event(MenuEvent::Activate(true));
+        let mut fresh = SpanCompleter {
+            value: String::from("crates"),
+            span: Span::new(0, 2),
+        };
+        menu.update_values(&mut editor, &mut fresh);
+        assert_eq!(menu.get_values().len(), 1);
+
+        // A later request that can only answer with cached values still populates it.
+        let mut stale = StaleSpanCompleter::new("console", Span::new(0, 2), "co", 2);
+        menu.update_values(&mut editor, &mut stale);
+
+        assert_eq!(menu.get_values().len(), 1, "stale values are still shown");
+        assert_eq!(menu.get_values()[0].value, "console");
+    }
+
+    /// Stale span not spliced into changed buffer
+    #[test]
+    fn stale_pending_span_is_not_spliced() {
+        let mut menu = ColumnarMenu::default();
+        let mut editor = Editor::default();
+
+        // Replace CODE_ token
+        editor.set_buffer("open CODE_".to_string(), UndoBehavior::CreateUndoPoint);
+        let mut file = SpanCompleter {
+            value: "CODE_OF_CONDUCT.md".to_string(),
+            span: Span { start: 5, end: 10 },
+        };
+
+        // Verify span applies to original buffer
+        menu.can_partially_complete(false, &mut editor, &mut file);
+        assert_eq!(editor.get_buffer(), "open CODE_OF_CONDUCT.md");
+
+        // Buffer changed, stale span must not apply
+        editor.set_buffer(
+            "open CODE_OF_CONDUCT.md | from csv --sep".to_string(),
+            UndoBehavior::CreateUndoPoint,
+        );
+        let mut pending = PendingCompleter;
+        let before = editor.get_buffer().to_string();
+
+        // Decline stale partial completion
+        assert!(!menu.can_partially_complete(false, &mut editor, &mut pending));
+        assert_eq!(
+            editor.get_buffer(),
+            before,
+            "partial completion spliced a stale span"
+        );
+
+        // No-op on stale accept
+        menu.replace_in_buffer(&mut editor);
+        assert_eq!(editor.get_buffer(), before, "accept spliced a stale span");
+    }
+
+    /// Stale result with mismatched origin rejected
+    #[test]
+    fn stale_result_with_mismatched_origin_is_not_spliced() {
+        let mut menu = ColumnarMenu::default();
+        let mut editor = Editor::default();
+
+        editor.set_buffer("open CODE_".to_string(), UndoBehavior::CreateUndoPoint);
+        let mut file = SpanCompleter {
+            value: "CODE_OF_CONDUCT.md".to_string(),
+            span: Span { start: 5, end: 10 },
+        };
+        menu.can_partially_complete(false, &mut editor, &mut file);
+        assert_eq!(editor.get_buffer(), "open CODE_OF_CONDUCT.md");
+
+        editor.set_buffer(
+            "open CODE_OF_CONDUCT.md | from csv --sep".to_string(),
+            UndoBehavior::CreateUndoPoint,
+        );
+        let before = editor.get_buffer().to_string();
+
+        // Stale result with old buffer origin
+        let mut stale = StaleSpanCompleter::new(
+            "CODE_OF_CONDUCT.md",
+            Span { start: 5, end: 10 },
+            "open CODE_",
+            10,
+        );
+
+        assert!(!menu.can_partially_complete(false, &mut editor, &mut stale));
+        assert_eq!(
+            editor.get_buffer(),
+            before,
+            "partial completion spliced a span from a Stale result whose origin doesn't match the live buffer"
+        );
+
+        menu.replace_in_buffer(&mut editor);
+        assert_eq!(
+            editor.get_buffer(),
+            before,
+            "accept spliced a span from a Stale result whose origin doesn't match the live buffer"
+        );
+    }
+
+    /// Default completer partial completion
+    #[test]
+    fn default_completer_partial_completion_matches_demo_example() {
+        use crate::DefaultCompleter;
+
+        let words = vec![
+            "abaaacas".to_string(),
+            "abaaac".to_string(),
+            "abaaaxyc".to_string(),
+            "abaaarabc".to_string(),
+        ];
+        let mut completer = DefaultCompleter::new_with_wordlen(words, 2);
+        let mut menu = ColumnarMenu::default();
+        let mut editor = Editor::default();
+        editor.set_buffer("ab".to_string(), UndoBehavior::CreateUndoPoint);
+
+        assert!(menu.can_partially_complete(false, &mut editor, &mut completer));
+        assert_eq!(editor.get_buffer(), "abaaa");
     }
 
     #[test]

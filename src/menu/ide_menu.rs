@@ -2,9 +2,8 @@ use super::{Menu, MenuBuilder, MenuEvent, MenuSettings};
 use crate::{
     core_editor::Editor,
     menu_functions::{
-        available_lines, can_partially_complete, get_match_indices, replace_in_buffer,
-        resolve_completer_input, scroll_offset, style_suggestion, truncate_with_ansi,
-        CompletionDisplay,
+        available_lines, get_match_indices, resolve_completer_input, scroll_offset,
+        style_suggestion, truncate_with_ansi, CompletionDisplay, CompletionPhase,
     },
     painting::Painter,
     Completer, Suggestion,
@@ -144,11 +143,11 @@ pub struct IdeMenu {
     working_details: IdeMenuDetails,
     /// Suggestions currently displayed and their derived display metrics
     completions: CompletionDisplay,
-    /// Whether a background completion is still in flight with nothing to show
-    /// yet. While set, the menu draws nothing rather than a premature
-    /// "NO RECORDS FOUND" (which is reserved for a settled, genuinely empty result).
-    awaiting_results: bool,
-    /// Selected value. Starts at 0
+    /// Where the menu stands between activation and a final answer about the
+    /// line on screen: visibility, what may be decided from the values, and
+    /// whether an empty menu means "still computing" or "no records".
+    phase: CompletionPhase,
+    /// Selected index
     selected: u16,
     /// Number of values that are skipped when printing,
     /// depending on selected value and terminal height
@@ -167,7 +166,7 @@ impl Default for IdeMenu {
             default_details: DefaultIdeMenuDetails::default(),
             working_details: IdeMenuDetails::default(),
             completions: CompletionDisplay::default(),
-            awaiting_results: false,
+            phase: CompletionPhase::Unasked,
             selected: 0,
             skip_values: 0,
             event: None,
@@ -295,7 +294,7 @@ impl IdeMenu {
 // Menu functionality
 impl IdeMenu {
     fn move_next(&mut self) {
-        if self.selected < (self.completions.values.len() as u16).saturating_sub(1) {
+        if self.selected < (self.completions.suggestions().len() as u16).saturating_sub(1) {
             self.selected += 1;
         } else {
             self.selected = 0;
@@ -306,7 +305,7 @@ impl IdeMenu {
         if self.selected > 0 {
             self.selected -= 1;
         } else {
-            self.selected = self.completions.values.len().saturating_sub(1) as u16;
+            self.selected = self.completions.suggestions().len().saturating_sub(1) as u16;
         }
     }
 
@@ -315,7 +314,7 @@ impl IdeMenu {
     }
 
     fn get_value(&self) -> Option<Suggestion> {
-        self.completions.values.get(self.index()).cloned()
+        self.completions.suggestions().get(self.index()).cloned()
     }
 
     /// Calculates how many rows the Menu will try to use (if available)
@@ -326,7 +325,7 @@ impl IdeMenu {
             // While a background completion is still in flight there is nothing to
             // show yet, so reserve no space; otherwise the empty menu is a settled
             // result and reserves 1 line for the no_records_msg.
-            return if self.awaiting_results { 0 } else { 1 };
+            return if self.phase.awaiting_results() { 0 } else { 1 };
         }
 
         if self.default_details.border.is_some() {
@@ -750,7 +749,7 @@ impl Menu for IdeMenu {
         &self.settings
     }
 
-    /// Deactivates context menu
+    /// Active status
     fn is_active(&self) -> bool {
         self.active
     }
@@ -772,9 +771,9 @@ impl Menu for IdeMenu {
             self.update_values(editor, completer);
         }
 
-        if can_partially_complete(self.get_values(), editor) {
-            // The values need to be updated because the spans need to be
-            // recalculated for accurate replacement in the string
+        // `common_prefix` guards against stale completions
+        if self.completions.common_prefix(editor) {
+            // Recalculate spans for replacement
             self.update_values(editor, completer);
 
             true
@@ -783,17 +782,23 @@ impl Menu for IdeMenu {
         }
     }
 
-    /// Selects what type of event happened with the menu
-    fn menu_event(&mut self, event: MenuEvent) {
-        match &event {
-            MenuEvent::Activate(_) => self.active = true,
-            MenuEvent::Deactivate => {
-                self.active = false;
-                self.input = None;
-            }
-            _ => {}
-        }
+    fn set_active(&mut self, active: bool) {
+        self.active = active;
+    }
 
+    fn clear_input(&mut self) {
+        self.input = None;
+    }
+
+    fn on_activate(&mut self) {
+        // Clear stale completions from previous activation
+        self.completions = CompletionDisplay::default();
+        self.phase.on_activate();
+    }
+
+    /// Queue menu event
+    fn menu_event(&mut self, event: MenuEvent) {
+        self.handle_menu_event(&event);
         self.event = Some(event);
     }
 
@@ -805,7 +810,7 @@ impl Menu for IdeMenu {
     fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         let (input, pos) = resolve_completer_input(editor, &mut self.input, &self.settings);
         let (result, base_ranges) = completer.complete_with_base_ranges(&input, pos);
-        self.awaiting_results = result.is_pending();
+        self.phase.note(&result);
         if let Some(completions) = CompletionDisplay::from_result(result, &base_ranges, editor) {
             self.completions = completions;
             self.reset_position();
@@ -827,9 +832,10 @@ impl Menu for IdeMenu {
         self.recompute_layout(painter);
     }
 
-    /// The buffer gets replaced in the Span location
+    /// Apply via `CompletionDisplay::accept` (guards against stale spans)
     fn replace_in_buffer(&self, editor: &mut Editor) {
-        replace_in_buffer(self.get_value(), editor, self.settings.output_mode);
+        self.completions
+            .accept(self.index(), editor, self.settings.output_mode);
     }
 
     /// Minimum rows that should be displayed by the menu
@@ -838,7 +844,15 @@ impl Menu for IdeMenu {
     }
 
     fn get_values(&self) -> &[Suggestion] {
-        &self.completions.values
+        self.completions.suggestions()
+    }
+
+    fn results_are_provisional(&self) -> bool {
+        self.phase.provisional()
+    }
+
+    fn is_awaiting_first_answer(&self) -> bool {
+        self.phase.awaiting_first_answer()
     }
 
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
@@ -848,7 +862,7 @@ impl Menu for IdeMenu {
 
     fn menu_string(&self, available_lines: u16, use_ansi_coloring: bool) -> String {
         if self.get_values().is_empty() {
-            if self.awaiting_results {
+            if self.phase.awaiting_results() {
                 // A background completion is still running; draw nothing rather
                 // than flashing "NO RECORDS FOUND" before the results land.
                 String::new()

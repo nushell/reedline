@@ -34,54 +34,123 @@ impl Span {
     }
 }
 
-/// The outcome of a [`Completer::complete`] request.
+/// Buffer text and cursor position the completion was computed against.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompletionOrigin {
+    pub(crate) buffer: String,
+    pub(crate) insertion_point: usize,
+}
+
+impl CompletionOrigin {
+    /// Buffer/cursor for stale results.
+    pub fn new(buffer: impl Into<String>, insertion_point: usize) -> Self {
+        Self {
+            buffer: buffer.into(),
+            insertion_point,
+        }
+    }
+
+    /// Whether `buffer` and `insertion_point` are still exactly what this was
+    /// stamped for. Anything else means the line moved on and results computed
+    /// against this origin no longer describe it.
+    pub fn matches(&self, buffer: &str, insertion_point: usize) -> bool {
+        // Cursor first: it rules out most drift without comparing the line.
+        self.insertion_point == insertion_point && self.buffer == buffer
+    }
+}
+
+/// Longest common prefix extension computed by the completer.
 ///
-/// A synchronous completer only ever produces [`Fresh`](Self::Fresh). An
-/// asynchronous completer that computes in the background reports its progress
-/// through this type.
+/// When present, reedline splices `insert` over `span` verbatim.
+/// Absent — reedline uses its own LCP derivation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Partial {
+    /// Buffer range to replace.
+    pub span: Span,
+    /// Text to splice in.
+    pub insert: String,
+}
+
+/// Outcome of a [`Completer::complete`] request.
 #[derive(Debug, Clone)]
 pub enum CompletionResult {
-    /// Final, authoritative results. No further computation is in flight.
-    Fresh(Suggestions),
-    /// Best-effort results to show in the moment; a fresh computation is still running and
-    /// will replace these once it finishes.
-    Stale(Suggestions),
-    /// No results are available yet; a computation is spinning in the background.
+    /// Authoritative results.
+    Fresh {
+        /// The suggestions.
+        suggestions: Suggestions,
+        /// Partial completion prefix.
+        partial: Option<Partial>,
+    },
+    /// Best-effort results while computation is in flight.
+    Stale {
+        /// The suggestions.
+        suggestions: Suggestions,
+        /// Buffer/cursor these were computed against.
+        origin: CompletionOrigin,
+        /// Partial completion prefix.
+        partial: Option<Partial>,
+    },
+    /// No results yet; computation in progress.
     Pending,
 }
 
 impl CompletionResult {
-    /// Wrap authoritative results.
+    /// Wrap authoritative results with no partial.
     pub fn fresh(suggestions: impl Into<Suggestions>) -> Self {
-        CompletionResult::Fresh(suggestions.into())
+        CompletionResult::Fresh {
+            suggestions: suggestions.into(),
+            partial: None,
+        }
     }
 
-    /// Best-effort fallback while an authoritative result is still computing:
-    /// [`Stale`](Self::Stale) when there is something to show now, else
-    /// [`Pending`](Self::Pending).
-    pub fn stale_or_pending(fallback: Suggestions) -> Self {
+    /// Stale result if there is something to show, else Pending.
+    pub fn stale_or_pending(fallback: Suggestions, origin: CompletionOrigin) -> Self {
         if fallback.is_empty() {
             CompletionResult::Pending
         } else {
-            CompletionResult::Stale(fallback)
+            CompletionResult::Stale {
+                suggestions: fallback,
+                origin,
+                partial: None,
+            }
         }
+    }
+
+    /// Attach a partial completion prefix.
+    pub fn with_partial(mut self, partial: Option<Partial>) -> Self {
+        match &mut self {
+            Self::Fresh { partial: slot, .. } | Self::Stale { partial: slot, .. } => {
+                *slot = partial;
+            }
+            Self::Pending => {}
+        }
+        self
     }
 
     /// Borrow the suggestions this result carries (empty for [`Pending`](Self::Pending)).
     pub fn suggestions(&self) -> &[Suggestion] {
         match self {
-            CompletionResult::Fresh(values) | CompletionResult::Stale(values) => values,
+            CompletionResult::Fresh { suggestions, .. }
+            | CompletionResult::Stale { suggestions, .. } => suggestions,
             CompletionResult::Pending => &[],
         }
     }
 
-    /// Move the shared suggestion list out of the result without copying.
-    ///
-    /// Returns `None` for [`Pending`](Self::Pending) nothing is settled yet, so
-    /// callers should keep whatever they are already displaying.
+    /// The completer-supplied partial completion, if any.
+    pub fn partial(&self) -> Option<&Partial> {
+        match self {
+            CompletionResult::Fresh { partial, .. } | CompletionResult::Stale { partial, .. } => {
+                partial.as_ref()
+            }
+            CompletionResult::Pending => None,
+        }
+    }
+
+    /// Move the shared suggestion list out without copying.
     pub fn into_shared(self) -> Option<Suggestions> {
         match self {
-            CompletionResult::Fresh(values) | CompletionResult::Stale(values) => Some(values),
+            CompletionResult::Fresh { suggestions, .. }
+            | CompletionResult::Stale { suggestions, .. } => Some(suggestions),
             CompletionResult::Pending => None,
         }
     }
@@ -90,6 +159,12 @@ impl CompletionResult {
     /// When `true`, callers should preserve any results already displayed.
     pub fn is_pending(&self) -> bool {
         matches!(self, CompletionResult::Pending)
+    }
+
+    /// Whether a later result may still supersede this one: either nothing has
+    /// arrived yet, or what arrived was computed against a different line.
+    pub fn is_provisional(&self) -> bool {
+        !matches!(self, CompletionResult::Fresh { .. })
     }
 }
 
