@@ -888,7 +888,7 @@ impl Reedline {
     ) -> crate::Result<()> {
         match &self.history_last_run_id {
             Some(Self::FILTERED_ITEM_ID) => {
-                self.history_excluded_item = Some(f(self.history_excluded_item.take().unwrap()));
+                self.history_excluded_item = self.history_excluded_item.take().map(f);
                 Ok(())
             }
             Some(r) => self.history.update(*r, f),
@@ -2005,15 +2005,15 @@ impl Reedline {
     /// When using the up/down traversal or fish/zsh style prefix search update the main line buffer accordingly.
     /// Not used for the separate modal reverse search!
     fn update_buffer_from_history(&mut self) {
+        if self.history_cursor_on_excluded {
+            if let Some(item) = &self.history_excluded_item {
+                self.editor
+                    .set_buffer(item.command_line.clone(), UndoBehavior::HistoryNavigation);
+            }
+            return;
+        }
+
         match self.history_cursor.get_navigation() {
-            _ if self.history_cursor_on_excluded => self.editor.set_buffer(
-                self.history_excluded_item
-                    .as_ref()
-                    .unwrap()
-                    .command_line
-                    .clone(),
-                UndoBehavior::HistoryNavigation,
-            ),
             HistoryNavigationQuery::Normal(original) => {
                 if let Some(buffer_to_paint) = self.history_cursor.string_at_cursor() {
                     self.editor
