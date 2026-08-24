@@ -1,5 +1,5 @@
 use chrono::Utc;
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+#[cfg(feature = "_sqlite")]
 use rusqlite::ToSql;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Display, time::Duration};
@@ -22,9 +22,10 @@ impl Display for HistoryItemId {
 
 /// Unique ID for the session in which reedline was run to disambiguate different sessions
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HistorySessionId(pub(crate) i64);
+pub struct HistorySessionId(pub i64);
 impl HistorySessionId {
-    pub(crate) const fn new(i: i64) -> HistorySessionId {
+    /// Wrap a raw session id, e.g. one read back from the history store.
+    pub const fn new(i: i64) -> HistorySessionId {
         HistorySessionId(i)
     }
 }
@@ -35,7 +36,7 @@ impl Display for HistorySessionId {
     }
 }
 
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+#[cfg(feature = "_sqlite")]
 impl ToSql for HistorySessionId {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
         Ok(rusqlite::types::ToSqlOutput::Owned(

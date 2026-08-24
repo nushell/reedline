@@ -12,8 +12,8 @@ use crate::{
 #[cfg(feature = "external_printer")]
 use {
     crate::external_printer::ExternalPrinter,
-    crossbeam::channel::TryRecvError,
     std::io::{Error, ErrorKind},
+    std::sync::mpsc::TryRecvError,
 };
 use {
     crate::{
@@ -144,6 +144,8 @@ pub struct Reedline {
     history_exclusion_prefix: Option<String>,
     history_excluded_item: Option<HistoryItem>,
     history_cursor_on_excluded: bool,
+    /// Last failed `history.save`, until [`Reedline::take_history_save_error`].
+    history_save_error: Option<ReedlineError>,
     input_mode: InputMode,
 
     // State of the painter after a `ReedlineEvent::ExecuteHostCommand` was requested, used after
@@ -231,7 +233,6 @@ pub struct Reedline {
 
     // Callback function that is called periodically while waiting for input.
     // Useful for processing external events (e.g., GUI updates) during idle time.
-    #[cfg(feature = "idle_callback")]
     idle_callback: Option<Box<dyn FnMut() + Send>>,
 }
 
@@ -358,6 +359,7 @@ impl Reedline {
             history_exclusion_prefix: None,
             history_excluded_item: None,
             history_cursor_on_excluded: false,
+            history_save_error: None,
             input_mode: InputMode::Regular,
             suspended_state: None,
             last_render_snapshot: None,
@@ -390,7 +392,6 @@ impl Reedline {
             poll_interval: DEFAULT_POLL_INTERVAL,
             #[cfg(feature = "external_printer")]
             external_printer: None,
-            #[cfg(feature = "idle_callback")]
             idle_callback: None,
         }
     }
@@ -816,8 +817,7 @@ impl Reedline {
     pub fn print_history(&mut self) -> Result<()> {
         let history: Vec<_> = self
             .history
-            .search(SearchQuery::everything(SearchDirection::Forward, None))
-            .expect("todo: error handling");
+            .search(SearchQuery::everything(SearchDirection::Forward, None))?;
 
         for (i, entry) in history.iter().enumerate() {
             self.print_line(&format!("{}\t{}", i, entry.command_line))?;
@@ -827,13 +827,10 @@ impl Reedline {
 
     /// Output the complete [`History`] for this session, chronologically with numbering to the terminal
     pub fn print_history_session(&mut self) -> Result<()> {
-        let history: Vec<_> = self
-            .history
-            .search(SearchQuery::everything(
-                SearchDirection::Forward,
-                self.get_history_session_id(),
-            ))
-            .expect("todo: error handling");
+        let history: Vec<_> = self.history.search(SearchQuery::everything(
+            SearchDirection::Forward,
+            self.get_history_session_id(),
+        ))?;
 
         for (i, entry) in history.iter().enumerate() {
             self.print_line(&format!("{}\t{}", i, entry.command_line))?;
@@ -890,7 +887,7 @@ impl Reedline {
     ) -> crate::Result<()> {
         match &self.history_last_run_id {
             Some(Self::FILTERED_ITEM_ID) => {
-                self.history_excluded_item = Some(f(self.history_excluded_item.take().unwrap()));
+                self.history_excluded_item = self.history_excluded_item.take().map(f);
                 Ok(())
             }
             Some(r) => self.history.update(*r, f),
@@ -898,6 +895,15 @@ impl Reedline {
                 "No command run",
             ))),
         }
+    }
+
+    /// Take the error of the last failed history save, if any.
+    ///
+    /// [`read_line`](Self::read_line) still returns the line when the [`History`]
+    /// refuses to store it; the entry is then treated like an excluded one.
+    /// Cleared on read, set at most once per `read_line`.
+    pub fn take_history_save_error(&mut self) -> Option<ReedlineError> {
+        self.history_save_error.take()
     }
 
     /// Wait for input and provide the user with a specified [`Prompt`].
@@ -971,10 +977,7 @@ impl Reedline {
             poll |= self.external_printer.is_some();
         }
 
-        #[cfg(feature = "idle_callback")]
-        {
-            poll |= self.idle_callback.is_some();
-        }
+        poll |= self.idle_callback.is_some();
 
         poll
     }
@@ -999,7 +1002,6 @@ impl Reedline {
 
         loop {
             // Call idle callback if set (for processing external events like GUI updates)
-            #[cfg(feature = "idle_callback")]
             if let Some(ref mut callback) = self.idle_callback {
                 callback();
                 // The callback owns stdout while it runs and may have
@@ -1304,8 +1306,9 @@ impl Reedline {
                         }
                     }
                 }
-                // Exhausting the event handlers is still considered handled
-                Ok(EventStatus::Handled)
+                // No candidate applied, so nothing changed: report that, which
+                // also lets an enclosing `UntilFound` keep trying.
+                Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::CtrlD => {
                 if self.editor.is_empty() {
@@ -1313,7 +1316,7 @@ impl Reedline {
                     self.editor.reset_undo_stack();
                     Ok(EventStatus::Exits(Signal::CtrlD))
                 } else {
-                    self.run_history_commands(&[EditCommand::Delete]);
+                    self.run_history_commands(&[EditCommand::Delete])?;
                     Ok(EventStatus::Handled)
                 }
             }
@@ -1347,7 +1350,7 @@ impl Reedline {
                 Ok(EventStatus::Exits(Signal::HostCommand(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
-                self.run_history_commands(&commands);
+                self.run_history_commands(&commands)?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Mouse {
@@ -1370,20 +1373,14 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::PreviousHistory | ReedlineEvent::Up | ReedlineEvent::SearchHistory => {
-                self.history_cursor
-                    .back(self.history.as_ref())
-                    .expect("todo: error handling");
+                self.history_cursor.back(self.history.as_ref())?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::NextHistory | ReedlineEvent::Down => {
-                self.history_cursor
-                    .forward(self.history.as_ref())
-                    .expect("todo: error handling");
+                self.history_cursor.forward(self.history.as_ref())?;
                 // Hacky way to ensure that we don't fall of into failed search going forward
                 if self.history_cursor.string_at_cursor().is_none() {
-                    self.history_cursor
-                        .back(self.history.as_ref())
-                        .expect("todo: error handling");
+                    self.history_cursor.back(self.history.as_ref())?;
                 }
                 Ok(EventStatus::Handled)
             }
@@ -1410,7 +1407,6 @@ impl Reedline {
             | ReedlineEvent::MenuPageNext
             | ReedlineEvent::MenuPagePrevious
             | ReedlineEvent::ViChangeMode(_) => Ok(EventStatus::Inapplicable),
-            #[cfg(feature = "helix")]
             ReedlineEvent::HelixChangeMode(_) => Ok(EventStatus::Inapplicable),
         }
     }
@@ -1577,15 +1573,13 @@ impl Reedline {
             ReedlineEvent::Enter | ReedlineEvent::Submit | ReedlineEvent::SubmitOrNewline
                 if self.menus.iter().any(|menu| menu.is_active()) =>
             {
-                for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
-                        menu.replace_in_buffer(&mut self.editor);
-                        menu.menu_event(MenuEvent::Deactivate);
-
-                        return Ok(EventStatus::Handled);
-                    }
+                if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
+                    menu.replace_in_buffer(&mut self.editor);
+                    menu.menu_event(MenuEvent::Deactivate);
+                    Ok(EventStatus::Handled)
+                } else {
+                    Ok(EventStatus::Inapplicable)
                 }
-                unreachable!()
             }
             ReedlineEvent::Enter => {
                 #[cfg(feature = "bashisms")]
@@ -1710,19 +1704,19 @@ impl Reedline {
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::PreviousHistory => {
-                self.previous_history();
+                self.previous_history()?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::NextHistory => {
-                self.next_history();
+                self.next_history()?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Up => {
-                self.up_command();
+                self.up_command()?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Down => {
-                self.down_command();
+                self.down_command()?;
                 Ok(EventStatus::Handled)
             }
             ReedlineEvent::Left => {
@@ -1781,11 +1775,11 @@ impl Reedline {
                         }
                     }
                 }
-                // Exhausting the event handlers is still considered handled
+                // No candidate applied, so nothing changed: report that, which
+                // also lets an enclosing `UntilFound` keep trying.
                 Ok(EventStatus::Inapplicable)
             }
             ReedlineEvent::ViChangeMode(_) => Ok(self.change_edit_mode(event)),
-            #[cfg(feature = "helix")]
             ReedlineEvent::HelixChangeMode(_) => Ok(self.change_edit_mode(event)),
             ReedlineEvent::Mouse {
                 column,
@@ -1861,7 +1855,7 @@ impl Reedline {
             .for_each(|menu| menu.menu_event(MenuEvent::Deactivate));
     }
 
-    fn previous_history(&mut self) {
+    fn previous_history(&mut self) -> io::Result<()> {
         self.history_cursor_on_excluded = false;
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
@@ -1876,9 +1870,8 @@ impl Reedline {
         }
 
         if !self.history_cursor_on_excluded {
-            self.history_cursor
-                .back(self.history.as_ref())
-                .expect("todo: error handling");
+            // On `Err` the next press retries on the fresh cursor; no rollback.
+            self.history_cursor.back(self.history.as_ref())?;
         }
         self.update_buffer_from_history();
         self.editor.move_to_start(false);
@@ -1888,9 +1881,10 @@ impl Reedline {
         self.editor.commit_cursor();
         self.editor
             .update_undo_state(UndoBehavior::HistoryNavigation);
+        Ok(())
     }
 
-    fn next_history(&mut self) {
+    fn next_history(&mut self) -> io::Result<()> {
         if self.input_mode != InputMode::HistoryTraversal {
             self.input_mode = InputMode::HistoryTraversal;
             self.history_cursor = HistoryCursor::new(
@@ -1903,9 +1897,7 @@ impl Reedline {
             self.history_cursor_on_excluded = false;
         } else {
             let cursor_was_on_item = self.history_cursor.string_at_cursor().is_some();
-            self.history_cursor
-                .forward(self.history.as_ref())
-                .expect("todo: error handling");
+            self.history_cursor.forward(self.history.as_ref())?;
 
             if cursor_was_on_item
                 && self.history_cursor.string_at_cursor().is_none()
@@ -1923,7 +1915,8 @@ impl Reedline {
         // See `previous_history`: settle the out-of-band cursor under the policy.
         self.editor.commit_cursor();
         self.editor
-            .update_undo_state(UndoBehavior::HistoryNavigation)
+            .update_undo_state(UndoBehavior::HistoryNavigation);
+        Ok(())
     }
 
     /// Enable the search and navigation through the history from the line buffer prompt
@@ -1961,7 +1954,7 @@ impl Reedline {
     /// Dispatches the applicable [`EditCommand`] actions for editing the history search string.
     ///
     /// Only modifies internal state, does not perform regular output!
-    fn run_history_commands(&mut self, commands: &[EditCommand]) {
+    fn run_history_commands(&mut self, commands: &[EditCommand]) -> io::Result<()> {
         for command in commands {
             match command {
                 EditCommand::InsertChar(c) => {
@@ -1978,9 +1971,7 @@ impl Reedline {
                             self.get_history_session_id(),
                         );
                     }
-                    self.history_cursor
-                        .back(self.history.as_mut())
-                        .expect("todo: error handling");
+                    self.history_cursor.back(self.history.as_mut())?;
                 }
                 EditCommand::Backspace => {
                     let navigation = self.history_cursor.get_navigation();
@@ -1992,9 +1983,7 @@ impl Reedline {
                             HistoryNavigationQuery::SubstringSearch(new_substring.to_string()),
                             self.get_history_session_id(),
                         );
-                        self.history_cursor
-                            .back(self.history.as_mut())
-                            .expect("todo: error handling");
+                        self.history_cursor.back(self.history.as_mut())?
                     }
                 }
                 _ => {
@@ -2002,6 +1991,7 @@ impl Reedline {
                 }
             }
         }
+        Ok(())
     }
 
     /// Set the buffer contents for history traversal/search in the standard prompt
@@ -2009,15 +1999,15 @@ impl Reedline {
     /// When using the up/down traversal or fish/zsh style prefix search update the main line buffer accordingly.
     /// Not used for the separate modal reverse search!
     fn update_buffer_from_history(&mut self) {
+        if self.history_cursor_on_excluded {
+            if let Some(item) = &self.history_excluded_item {
+                self.editor
+                    .set_buffer(item.command_line.clone(), UndoBehavior::HistoryNavigation);
+            }
+            return;
+        }
+
         match self.history_cursor.get_navigation() {
-            _ if self.history_cursor_on_excluded => self.editor.set_buffer(
-                self.history_excluded_item
-                    .as_ref()
-                    .unwrap()
-                    .command_line
-                    .clone(),
-                UndoBehavior::HistoryNavigation,
-            ),
             HistoryNavigationQuery::Normal(original) => {
                 if let Some(buffer_to_paint) = self.history_cursor.string_at_cursor() {
                     self.editor
@@ -2028,16 +2018,12 @@ impl Reedline {
                         .set_line_buffer(original, UndoBehavior::HistoryNavigation);
                 }
             }
-            HistoryNavigationQuery::PrefixSearch(prefix) => {
-                if let Some(prefix_result) = self.history_cursor.string_at_cursor() {
-                    self.editor
-                        .set_buffer(prefix_result, UndoBehavior::HistoryNavigation);
-                } else {
-                    self.editor
-                        .set_buffer(prefix, UndoBehavior::HistoryNavigation);
-                }
+            HistoryNavigationQuery::PrefixSearch(prefix)
+            | HistoryNavigationQuery::SubstringSearch(prefix) => {
+                let buffer = self.history_cursor.string_at_cursor().unwrap_or(prefix);
+                self.editor
+                    .set_buffer(buffer, UndoBehavior::HistoryNavigation);
             }
-            HistoryNavigationQuery::SubstringSearch(_) => todo!(),
         }
     }
 
@@ -2046,7 +2032,12 @@ impl Reedline {
         if self.input_mode == InputMode::HistoryTraversal {
             self.input_mode = InputMode::Regular;
         }
+        self.apply_edit_commands(commands);
+    }
 
+    /// [`run_edit_commands`](Self::run_edit_commands) without ending history
+    /// traversal, for the engine's own line moves inside a recalled entry.
+    fn apply_edit_commands(&mut self, commands: &[EditCommand]) {
         // Adopt the current edit mode's rest policy so these commands resolve
         // under it (e.g. block-caret selection geometry) — but *without*
         // committing the cursor first. A commit here would apply the policy's
@@ -2062,27 +2053,29 @@ impl Reedline {
         }
     }
 
-    fn up_command(&mut self) {
+    fn up_command(&mut self) -> io::Result<()> {
         // If we're at the top, then:
         if self.editor.is_cursor_at_first_line() {
             // If we're at the top, move to previous history
-            self.previous_history();
+            self.previous_history()
         } else {
-            // Through `run_edit_commands` so the cursor settles under the mode's
+            // Through `apply_edit_commands` so the cursor settles under the mode's
             // rest policy — a bare `editor.move_line_up` skips the commit boundary,
             // leaving a vi-normal caret past the last grapheme on a short line.
-            self.run_edit_commands(&[EditCommand::MoveLineUp { select: false }]);
+            self.apply_edit_commands(&[EditCommand::MoveLineUp { select: false }]);
+            Ok(())
         }
     }
 
-    fn down_command(&mut self) {
+    fn down_command(&mut self) -> io::Result<()> {
         // If we're at the top, then:
         if self.editor.is_cursor_at_last_line() {
             // If we're at the top, move to previous history
-            self.next_history();
+            self.next_history()
         } else {
             // See `up_command`: settle under the rest policy via the commit boundary.
-            self.run_edit_commands(&[EditCommand::MoveLineDown { select: false }]);
+            self.apply_edit_commands(&[EditCommand::MoveLineDown { select: false }]);
+            Ok(())
         }
     }
 
@@ -2268,7 +2261,7 @@ impl Reedline {
                     let history_search_by_session = self
                         .history
                         .search(SearchQuery::last_with_prefix_and_cwd(
-                            parsed.prefix.unwrap().to_string(),
+                            parsed.prefix.unwrap_or_default().to_string(),
                             self.cwd.clone().unwrap_or_else(|| {
                                 std::env::current_dir()
                                     .unwrap_or_default()
@@ -2620,9 +2613,6 @@ impl Reedline {
     /// Use [`with_poll_interval`](Self::with_poll_interval) to control how frequently
     /// the callback is invoked (default: 100ms).
     ///
-    /// ## Required feature:
-    /// `idle_callback`
-    ///
     /// # Example
     /// ```no_run
     /// use std::time::Duration;
@@ -2634,7 +2624,6 @@ impl Reedline {
     ///         // Process external events here
     ///     }));
     /// ```
-    #[cfg(feature = "idle_callback")]
     pub fn with_idle_callback(mut self, callback: Box<dyn FnMut() + Send>) -> Self {
         self.idle_callback = Some(callback);
         self
@@ -2678,19 +2667,35 @@ impl Reedline {
             let mut entry = HistoryItem::from_command_line(&buffer);
             entry.session_id = self.get_history_session_id();
 
-            if self
+            let excluded = self
                 .history_exclusion_prefix
                 .as_ref()
-                .map(|prefix| buffer.starts_with(prefix))
-                .unwrap_or(false)
-            {
-                entry.id = Some(Self::FILTERED_ITEM_ID);
-                self.history_last_run_id = entry.id;
-                self.history_excluded_item = Some(entry);
+                .is_some_and(|prefix| buffer.starts_with(prefix));
+
+            let saved = if excluded {
+                None
             } else {
-                entry = self.history.save(entry).expect("todo: error handling");
-                self.history_last_run_id = entry.id;
-                self.history_excluded_item = None;
+                match self.history.save(entry.clone()) {
+                    Ok(saved) => Some(saved),
+                    Err(err) => {
+                        // Ran but not stored: the excluded shape. Keep the line,
+                        // stash the error for `take_history_save_error`.
+                        self.history_save_error = Some(err);
+                        None
+                    }
+                }
+            };
+
+            match saved {
+                Some(saved) => {
+                    self.history_last_run_id = saved.id;
+                    self.history_excluded_item = None;
+                }
+                None => {
+                    entry.id = Some(Self::FILTERED_ITEM_ID);
+                    self.history_last_run_id = entry.id;
+                    self.history_excluded_item = Some(entry);
+                }
             }
         }
         self.run_edit_commands(&[EditCommand::Clear]);
@@ -2859,7 +2864,7 @@ mod tests {
             .expect("Failed to save history");
 
         // Navigate to previous history
-        reedline.previous_history();
+        reedline.previous_history().expect("history ok");
 
         // Get the initial insertion point after history navigation
         let initial_insertion_point = reedline.current_insertion_point();
@@ -2887,6 +2892,137 @@ mod tests {
         assert_eq!(reedline.current_buffer_contents(), multiline_command);
     }
 
+    // --- history walk across a recalled multi-line entry (#1109 regression) ---
+
+    /// History holds `older` then `one\ntwo` (newest).
+    fn two_entry_history_engine() -> Reedline {
+        let mut rl = seam_engine(Box::<Emacs>::default());
+        for cmd in ["older", "one\ntwo"] {
+            rl.history
+                .save(HistoryItem::from_command_line(cmd))
+                .expect("save history");
+        }
+        rl
+    }
+
+    #[test]
+    fn down_inside_recalled_multiline_entry_keeps_walking_forward() {
+        let mut rl = two_entry_history_engine();
+        drive(&mut rl, &[key(KeyCode::Up)]);
+        assert_eq!(rl.editor.get_buffer(), "one\ntwo", "setup");
+        assert_eq!(rl.editor.insertion_point(), 3, "setup: end of line 1");
+
+        drive(&mut rl, &[key(KeyCode::Down)]);
+        assert_eq!(rl.editor.get_buffer(), "one\ntwo", "moves to line 2 first");
+        assert!(rl.editor.insertion_point() > 3, "setup: on line 2");
+
+        drive(&mut rl, &[key(KeyCode::Down)]);
+        assert_eq!(
+            rl.editor.get_buffer(),
+            "",
+            "from the last line, Down walks forward to the empty draft"
+        );
+    }
+
+    #[test]
+    fn up_inside_recalled_multiline_entry_keeps_walking_back() {
+        let mut rl = two_entry_history_engine();
+        drive(&mut rl, &[key(KeyCode::Up), key(KeyCode::Down)]);
+        assert_eq!(rl.editor.get_buffer(), "one\ntwo", "setup");
+        assert!(rl.editor.insertion_point() > 3, "setup: on line 2");
+
+        drive(&mut rl, &[key(KeyCode::Up)]);
+        assert_eq!(rl.editor.get_buffer(), "one\ntwo", "moves to line 1 first");
+        assert!(rl.editor.insertion_point() <= 3, "setup: on line 1");
+
+        drive(&mut rl, &[key(KeyCode::Up)]);
+        assert_eq!(
+            rl.editor.get_buffer(),
+            "older",
+            "from the first line, Up walks back to the older entry"
+        );
+    }
+
+    // --- a history that refuses to save ---
+
+    struct RefusingHistory;
+
+    impl History for RefusingHistory {
+        fn save(&mut self, _h: HistoryItem) -> crate::Result<HistoryItem> {
+            Err(ReedlineError(ReedlineErrorVariants::OtherHistoryError(
+                "refused",
+            )))
+        }
+        fn load(&self, _id: HistoryItemId) -> crate::Result<HistoryItem> {
+            unreachable!("not used")
+        }
+        fn count(&self, _query: SearchQuery) -> crate::Result<i64> {
+            Ok(0)
+        }
+        fn search(&self, _query: SearchQuery) -> crate::Result<Vec<HistoryItem>> {
+            Ok(vec![])
+        }
+        fn update(
+            &mut self,
+            _id: HistoryItemId,
+            _updater: &dyn Fn(HistoryItem) -> HistoryItem,
+        ) -> crate::Result<()> {
+            unreachable!("not used")
+        }
+        fn clear(&mut self) -> crate::Result<()> {
+            Ok(())
+        }
+        fn delete(&mut self, _h: HistoryItemId) -> crate::Result<()> {
+            Ok(())
+        }
+        fn sync(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn session(&self) -> Option<HistorySessionId> {
+            None
+        }
+    }
+
+    fn refusing_history_engine() -> Reedline {
+        let mut rl = seam_engine(Box::<Emacs>::default()).with_history(Box::new(RefusingHistory));
+        rl.painter.force_prompt_anchored_for_test(0);
+        rl
+    }
+
+    #[test]
+    fn failed_history_save_still_returns_the_line_and_stashes_the_error() {
+        let mut rl = refusing_history_engine();
+        let signal = drive_until_signal(&mut rl, &[ch('l'), ch('s'), key(KeyCode::Enter)]);
+        assert!(
+            matches!(signal, Some(Signal::Success(ref s)) if s == "ls"),
+            "got {signal:?}"
+        );
+        let err = rl.take_history_save_error();
+        assert!(err.is_some(), "the save error is stashed");
+        assert!(rl.take_history_save_error().is_none(), "cleared on read");
+    }
+
+    #[test]
+    fn failed_history_save_keeps_the_entry_reachable() {
+        let mut rl = refusing_history_engine();
+        drive_until_signal(&mut rl, &[ch('l'), ch('s'), key(KeyCode::Enter)]);
+
+        drive(&mut rl, &[key(KeyCode::Up)]);
+        assert_eq!(rl.editor.get_buffer(), "ls", "Up recalls the unsaved entry");
+
+        rl.update_last_command_context(&|mut item| {
+            item.exit_status = Some(7);
+            item
+        })
+        .expect("context update works off the store");
+        assert_eq!(
+            rl.history_excluded_item
+                .as_ref()
+                .and_then(|i| i.exit_status),
+            Some(7)
+        );
+    }
+
     #[test]
     fn thread_safe() {
         fn f<S: Send>(_: S) {}
@@ -2894,7 +3030,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "idle_callback")]
     fn thread_safe_with_idle_callback() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
@@ -2915,7 +3050,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "idle_callback")]
     fn idle_callback_builder_pattern() {
         // Test that with_idle_callback can be chained with other builder methods
         let _reedline = Reedline::create()
@@ -2999,7 +3133,6 @@ mod tests {
 
     /// `DefaultValidator` reads an unclosed `"` as incomplete, so `Enter` breaks
     /// the line instead of submitting it and leaves the buffer inspectable.
-    #[cfg(feature = "helix")]
     fn helix_engine_with_validator() -> Reedline {
         let mut rl = Reedline::create()
             .with_edit_mode(Box::<crate::Helix>::default())
@@ -3016,7 +3149,6 @@ mod tests {
     // branch the one that can observe it: a submitted buffer is cleared before
     // anything can be asserted about it.
 
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_normal_submit_keeps_the_grapheme_under_the_cursor() {
         let mut rl = helix_engine_with_validator();
@@ -3037,7 +3169,6 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "\"abc\n");
     }
 
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_normal_submit_breaks_at_the_cursor_not_past_it() {
         let mut rl = helix_engine_with_validator();
@@ -3064,7 +3195,6 @@ mod tests {
 
     /// Helix rests *on* the line terminator under `BlockOverNewline`, which vi
     /// never does, so a break from there is a case vi's handling never answers.
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_normal_submit_breaks_from_a_terminator() {
         let mut rl = helix_engine_with_validator();
@@ -3087,7 +3217,6 @@ mod tests {
     /// exactly as `i` does. The helix block cursor *is* a one-grapheme
     /// selection, and `insert_char` deletes the selection before inserting, so
     /// without the collapse the first keystroke replaces the covered grapheme.
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_change_mode_into_insert_keeps_the_covered_grapheme() {
         let mut bindings = crate::default_helix_normal_keybindings();
@@ -3165,7 +3294,6 @@ mod tests {
 
     /// The submitted path cannot assert on the buffer (`submit_buffer` clears
     /// it), so pin it through the returned signal instead.
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_normal_submit_returns_the_whole_buffer() {
         let mut rl = Reedline::create().with_edit_mode(Box::<crate::Helix>::default());
@@ -3194,7 +3322,6 @@ mod tests {
 
     /// Two lines, built through the incomplete branch since a bare Enter would
     /// submit. Leaves the caret on the second line, in insert mode.
-    #[cfg(feature = "helix")]
     fn two_line_helix_engine() -> Reedline {
         let mut rl = helix_engine_with_validator();
         drive_until_signal(
@@ -3217,7 +3344,6 @@ mod tests {
         rl
     }
 
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_normal_k_moves_a_line_before_it_reaches_history() {
         let mut rl = two_line_helix_engine();
@@ -3234,7 +3360,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_normal_k_recalls_history_at_the_first_line() {
         let mut rl = seam_engine(Box::<crate::Helix>::default());
@@ -3257,7 +3382,6 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "one");
     }
 
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_select_extends_with_arrow_keys() {
         // The original report: `v` then arrows moved the caret but dropped the
@@ -3285,7 +3409,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_select_j_extends_to_the_column_normal_mode_would_land_on() {
         let mut rl = two_line_helix_engine();
@@ -3309,7 +3432,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_tilde_switches_case_and_keeps_the_selection() {
         let mut rl = seam_engine(Box::<crate::Helix>::default());
@@ -3324,7 +3446,6 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "ab");
     }
 
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_backtick_lowercases_and_alt_backtick_uppercases() {
         let alt_backtick = KeyEvent::new(KeyCode::Char('`'), KeyModifiers::ALT);
@@ -3343,7 +3464,6 @@ mod tests {
 
     // --- `%`, `A`, `I` ---
 
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_percent_selects_the_whole_buffer() {
         let mut rl = seam_engine(Box::<crate::Helix>::default());
@@ -3356,7 +3476,6 @@ mod tests {
 
     /// Appending has to land *past* the last grapheme: the block cursor rests on
     /// it, while insert mode sits between graphemes.
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_capital_a_appends_past_the_last_grapheme() {
         use crate::PromptHelixMode;
@@ -3377,7 +3496,6 @@ mod tests {
     }
 
     /// The leading space is what separates this from a plain line start.
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_capital_i_inserts_at_the_first_non_blank() {
         let mut rl = seam_engine(Box::<crate::Helix>::default());
@@ -3391,7 +3509,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "helix")]
     fn with_edit_mode_builder_accepts_custom_helix_mode() {
         use crate::PromptHelixMode;
 
@@ -3918,7 +4035,7 @@ mod tests {
         let history = HistoryItem::from_command_line(input);
         reedline.history.save(history).unwrap();
 
-        reedline.previous_history();
+        reedline.previous_history().expect("history ok");
 
         let move_to_start = EditCommand::MoveToLineStart { select: false };
         reedline.run_edit_commands(&[move_to_start]);
@@ -3957,7 +4074,7 @@ mod tests {
         let history = HistoryItem::from_command_line(input);
         reedline.history.save(history).unwrap();
 
-        reedline.previous_history();
+        reedline.previous_history().expect("history ok");
 
         let move_to_start = EditCommand::MoveToLineStart { select: false };
         reedline.run_edit_commands(&[move_to_start]);
@@ -3980,9 +4097,9 @@ mod tests {
         let history = HistoryItem::from_command_line(input);
         reedline.history.save(history).unwrap();
 
-        reedline.previous_history();
+        reedline.previous_history().expect("history ok");
 
-        reedline.down_command();
+        reedline.down_command().expect("history ok");
 
         let move_to_start = EditCommand::MoveToLineStart { select: false };
         reedline.run_edit_commands(&[move_to_start]);
@@ -4008,7 +4125,7 @@ mod tests {
         let history = HistoryItem::from_command_line(input);
         reedline.history.save(history).unwrap();
 
-        reedline.previous_history();
+        reedline.previous_history().expect("history ok");
 
         let move_to_end = EditCommand::MoveToEnd { select: false };
         reedline.run_edit_commands(&[move_to_end]);
@@ -4036,7 +4153,7 @@ mod tests {
         // Save "6" to the history and scroll back to it
         let history = HistoryItem::from_command_line("6");
         reedline.history.save(history).unwrap();
-        reedline.previous_history();
+        reedline.previous_history().expect("history ok");
         assert_eq!(reedline.current_buffer_contents(), "6");
 
         // Perform quick completion
@@ -4563,7 +4680,7 @@ mod tests {
             EditCommand::MoveRight { select: false },
             EditCommand::MoveRight { select: false },
         ]); // caret on 'c' (col 2 of line 1)
-        rl.down_command();
+        rl.down_command().expect("history ok");
         assert_eq!(rl.editor.insertion_point(), 4); // on 'd', not 5 (past it)
     }
 
@@ -4589,7 +4706,7 @@ mod tests {
         let mut rl = seam_engine(Box::<crate::Vi>::default());
         rl.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
         drive(&mut rl, &[key(KeyCode::Esc)]); // vi normal, on 'c'
-        rl.down_command(); // last line -> next_history (no forward entry -> draft)
+        rl.down_command().expect("history ok"); // last line -> next_history (no forward entry -> draft)
         assert_eq!(rl.editor.insertion_point(), 2); // 'c', not 3 (past it)
     }
 

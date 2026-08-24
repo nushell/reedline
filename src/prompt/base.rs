@@ -66,7 +66,6 @@ pub enum PromptEditMode {
     Vi(PromptViMode),
 
     /// A helix/Kakoune like mode
-    #[cfg(feature = "helix")]
     Helix(PromptHelixMode),
 
     /// A custom mode
@@ -82,10 +81,8 @@ impl PromptEditMode {
             PromptEditMode::Vi(PromptViMode::Visual) => RestPolicy::Block,
             // Helix counts the line terminator as a cell, so `l` reaches it and
             // `d` there joins the lines; vi visual stops short of it.
-            #[cfg(feature = "helix")]
             PromptEditMode::Helix(PromptHelixMode::Normal)
             | PromptEditMode::Helix(PromptHelixMode::Select) => RestPolicy::BlockOverNewline,
-            #[cfg(feature = "helix")]
             PromptEditMode::Helix(PromptHelixMode::Insert) => RestPolicy::Between,
             PromptEditMode::Vi(PromptViMode::Insert)
             | PromptEditMode::Default
@@ -106,7 +103,6 @@ impl PromptEditMode {
     /// paint a highlight there.
     pub(crate) fn retains_selection_after_edit(&self) -> bool {
         match self {
-            #[cfg(feature = "helix")]
             PromptEditMode::Helix(_) => true,
             PromptEditMode::Vi(_)
             | PromptEditMode::Default
@@ -124,7 +120,6 @@ impl PromptEditMode {
             // exclusive for the word/line/grapheme motions they emit (a forward
             // find stays inclusive, matching its operator span), so the
             // gap-indexed `Span` is the natural reading.
-            #[cfg(feature = "helix")]
             PromptEditMode::Helix(_) => SelectionExtent::Span,
             PromptEditMode::Default | PromptEditMode::Emacs | PromptEditMode::Custom(_) => {
                 SelectionExtent::Span
@@ -149,7 +144,6 @@ pub enum PromptViMode {
 }
 
 /// The helix/Kakoune like modes that the prompt can be in
-#[cfg(feature = "helix")]
 #[derive(Serialize, Deserialize, Clone, Debug, EnumIter, Default, PartialEq, Eq)]
 pub enum PromptHelixMode {
     /// Normal mode carries an at least 1 grapheme wide selection and
@@ -186,17 +180,14 @@ pub enum PromptEditModeDiscriminants {
     ViInsert,
 
     /// Helix normal mode
-    #[cfg(feature = "helix")]
     #[strum(serialize = "HelixNormal", serialize = "helix_normal")]
     HelixNormal,
 
     /// Helix insert mode
-    #[cfg(feature = "helix")]
     #[strum(serialize = "HelixInsert", serialize = "helix_insert")]
     HelixInsert,
 
     /// Helix select mode
-    #[cfg(feature = "helix")]
     #[strum(serialize = "HelixSelect", serialize = "helix_select")]
     HelixSelect,
 
@@ -212,7 +203,6 @@ impl From<PromptViMode> for PromptEditMode {
 
 impl Display for PromptEditMode {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        #[cfg(feature = "helix")]
         use PromptHelixMode as Helix;
         use PromptViMode as Vi;
         match self {
@@ -221,11 +211,8 @@ impl Display for PromptEditMode {
             Self::Vi(Vi::Normal) => write!(f, "Vi_Normal"),
             Self::Vi(Vi::Insert) => write!(f, "Vi_Insert"),
             Self::Vi(Vi::Visual) => write!(f, "Vi_Visual"),
-            #[cfg(feature = "helix")]
             Self::Helix(Helix::Normal) => write!(f, "Helix_Normal"),
-            #[cfg(feature = "helix")]
             Self::Helix(Helix::Insert) => write!(f, "Helix_Insert"),
-            #[cfg(feature = "helix")]
             Self::Helix(Helix::Select) => write!(f, "Helix_Select"),
             Self::Custom(s) => write!(f, "Custom_{s}"),
         }
@@ -236,7 +223,6 @@ impl IntoDiscriminant for PromptEditMode {
     type Discriminant = PromptEditModeDiscriminants;
 
     fn discriminant(&self) -> Self::Discriminant {
-        #[cfg(feature = "helix")]
         use PromptHelixMode as Helix;
         use PromptViMode as Vi;
         match self {
@@ -247,11 +233,8 @@ impl IntoDiscriminant for PromptEditMode {
             // Splitting that pair is its own change.
             Self::Vi(Vi::Normal | Vi::Visual) => Self::Discriminant::ViNormal,
             Self::Vi(Vi::Insert) => Self::Discriminant::ViInsert,
-            #[cfg(feature = "helix")]
             Self::Helix(Helix::Normal) => Self::Discriminant::HelixNormal,
-            #[cfg(feature = "helix")]
             Self::Helix(Helix::Insert) => Self::Discriminant::HelixInsert,
-            #[cfg(feature = "helix")]
             Self::Helix(Helix::Select) => Self::Discriminant::HelixSelect,
             Self::Custom(_) => Self::Discriminant::Custom,
         }
@@ -331,7 +314,6 @@ mod test {
         );
     }
 
-    #[cfg(feature = "helix")]
     #[test]
     fn each_helix_mode_gets_its_own_discriminant() {
         use PromptEditModeDiscriminants as D;
@@ -359,7 +341,6 @@ mod test {
         );
     }
 
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_discriminants_round_trip_through_their_names() {
         use std::str::FromStr;

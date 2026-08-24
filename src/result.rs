@@ -5,7 +5,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum ReedlineErrorVariants {
     // todo: we should probably be more specific here
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     /// Error within history database
     #[error("error within history database: {0}")]
     HistoryDatabaseError(String),
@@ -48,3 +48,12 @@ impl std::error::Error for ReedlineError {}
 
 /// Standard [`std::result::Result`], with [`ReedlineError`] as the error variant
 pub type Result<T> = std::result::Result<T, ReedlineError>;
+
+impl From<ReedlineError> for std::io::Error {
+    fn from(err: ReedlineError) -> Self {
+        match err.0 {
+            ReedlineErrorVariants::IOError(io) => io,
+            other => std::io::Error::other(ReedlineError(other)),
+        }
+    }
+}

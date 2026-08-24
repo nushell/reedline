@@ -10,7 +10,7 @@ pub(crate) fn coerce_crlf(input: &str) -> Cow<'_, str> {
     let mut result = Cow::Borrowed(input);
     let mut cursor: usize = 0;
     for (idx, _) in input.match_indices('\n') {
-        if !(idx > 0 && input.as_bytes()[idx - 1] == b'\r') {
+        if !(idx > 0 && input.as_bytes().get(idx - 1) == Some(&b'\r')) {
             match &mut result {
                 Cow::Borrowed(_) => {
                     // Best case 1 allocation, worst case 2 allocations.

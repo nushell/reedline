@@ -20,7 +20,6 @@ chrono = { version = "0.4.19", default-features = false, features = [
     "clock",
     "serde",
 ] }
-crossbeam = { version = "0.8.2", optional = true }
 crossterm = { version = "0.29.0", features = ["serde"] }
 fd-lock = "4.0.2"
 itertools = "0.15.0"
@@ -43,13 +42,13 @@ serde_json = "1.0"
 tempfile = "3.3.0"
 
 [features]
-default = ["helix"]
+default = []
 bashisms = []
-external_printer = ["crossbeam"]
-idle_callback = []
-helix = []
-sqlite = ["rusqlite/bundled", "serde_json"]
-sqlite-dynlib = ["rusqlite", "serde_json"]
+external_printer = []
+sqlite = ["rusqlite/bundled", "serde_json", "_sqlite"]
+sqlite-dynlib = ["rusqlite", "serde_json", "_sqlite"]
+# Internal marker enabled by both sqlite features; never enable it directly.
+_sqlite = []
 system_clipboard = ["arboard"]
 libc = ["crossterm/libc"]
 
@@ -61,11 +60,7 @@ required-features = ["sqlite"]
 name = "external_printer"
 required-features = ["external_printer"]
 
-[[example]]
-name = "helix"
-required-features = ["helix"]
-
 [package.metadata.docs.rs]
 # Whether to pass `--all-features` to Cargo (default: false)
 all-features = false
-features = ["bashisms", "external_printer", "idle_callback", "sqlite"]
+features = ["bashisms", "external_printer", "sqlite"]

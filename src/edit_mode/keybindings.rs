@@ -39,22 +39,14 @@ impl Keybindings {
 
     /// Adds a keybinding
     ///
-    /// # Panics
-    ///
-    /// If `command` is an empty [`ReedlineEvent::UntilFound`]
+    /// An empty [`ReedlineEvent::UntilFound`] is accepted; it never matches
+    /// anything and behaves like an unbound key.
     pub fn add_binding(
         &mut self,
         modifier: KeyModifiers,
         key_code: KeyCode,
         command: ReedlineEvent,
     ) {
-        if let ReedlineEvent::UntilFound(subcommands) = &command {
-            assert!(
-                !subcommands.is_empty(),
-                "UntilFound should contain a series of potential events to handle"
-            );
-        }
-
         let key_combo = KeyCombination { modifier, key_code };
         self.bindings.insert(key_combo, command);
     }
@@ -304,4 +296,59 @@ pub fn add_common_selection_bindings(kb: &mut Keybindings) {
         KC::Char('a'),
         edit_bind(EC::SelectAll),
     );
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn empty_until_found_is_accepted() {
+        let mut kb = Keybindings::new();
+        kb.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::Char('x'),
+            ReedlineEvent::UntilFound(vec![]),
+        );
+        assert_eq!(
+            kb.find_binding(KeyModifiers::NONE, KeyCode::Char('x')),
+            Some(ReedlineEvent::UntilFound(vec![]))
+        );
+    }
+
+    #[test]
+    fn rebinding_a_key_replaces_the_previous_event() {
+        let mut kb = Keybindings::new();
+        kb.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('r'),
+            ReedlineEvent::SearchHistory,
+        );
+        kb.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('r'),
+            ReedlineEvent::ClearScreen,
+        );
+        assert_eq!(
+            kb.find_binding(KeyModifiers::CONTROL, KeyCode::Char('r')),
+            Some(ReedlineEvent::ClearScreen)
+        );
+        assert_eq!(kb.get_keybindings().len(), 1);
+    }
+
+    #[test]
+    fn remove_binding_returns_the_bound_event_and_unbinds() {
+        let mut kb = Keybindings::new();
+        kb.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::Tab,
+            ReedlineEvent::Menu("m".into()),
+        );
+        assert_eq!(
+            kb.remove_binding(KeyModifiers::NONE, KeyCode::Tab),
+            Some(ReedlineEvent::Menu("m".into()))
+        );
+        assert_eq!(kb.find_binding(KeyModifiers::NONE, KeyCode::Tab), None);
+        assert_eq!(kb.remove_binding(KeyModifiers::NONE, KeyCode::Tab), None);
+    }
 }

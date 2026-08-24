@@ -14,6 +14,7 @@ pub(crate) use clip_buffer::get_system_clipboard;
 pub(crate) use clip_buffer::{get_local_clipboard, Clipboard};
 pub(crate) use cursor::{CaretGeometry, Cursor, Movement, SelectionExtent};
 pub use editor::Editor;
+pub(crate) use graphemes::{ensure_grapheme_boundary_next, ensure_grapheme_boundary_prev};
 pub use line_buffer::LineBuffer;
 pub(crate) use resolve::{operator_span, resolve_motion};
 pub(crate) use rest_policy::{commit, recohere, RestPolicy};
