@@ -368,7 +368,6 @@ impl Editor {
             EditCommand::PasteSystem => self.paste_from_system(),
             EditCommand::CutInsidePair { left, right } => self.cut_inside_pair(*left, *right),
             EditCommand::CopyInsidePair { left, right } => self.copy_inside_pair(*left, *right),
-            EditCommand::SelectInsidePair { left, right } => self.select_inside_pair(*left, *right),
             EditCommand::CutAroundPair { left, right } => self.cut_around_pair(*left, *right),
             EditCommand::CopyAroundPair { left, right } => self.copy_around_pair(*left, *right),
             EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
@@ -1913,20 +1912,6 @@ impl Editor {
             })
         {
             self.copy_range(range);
-        }
-    }
-
-    /// Select text strictly between matching `open_char` and `close_char`.
-    fn select_inside_pair(&mut self, open_char: char, close_char: char) {
-        if let Some(range) = self
-            .line_buffer
-            .range_inside_current_pair(open_char, close_char)
-            .or_else(|| {
-                self.line_buffer
-                    .range_inside_next_pair(open_char, close_char)
-            })
-        {
-            self.place(Cursor::new(range.start, range.end));
         }
     }
 
