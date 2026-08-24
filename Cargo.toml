@@ -20,7 +20,6 @@ chrono = { version = "0.4.19", default-features = false, features = [
     "clock",
     "serde",
 ] }
-crossbeam = { version = "0.8.2", optional = true }
 crossterm = { version = "0.29.0", features = ["serde"] }
 fd-lock = "4.0.2"
 itertools = "0.15.0"
@@ -45,7 +44,7 @@ tempfile = "3.3.0"
 [features]
 default = ["helix"]
 bashisms = []
-external_printer = ["crossbeam"]
+external_printer = []
 helix = []
 sqlite = ["rusqlite/bundled", "serde_json", "_sqlite"]
 sqlite-dynlib = ["rusqlite", "serde_json", "_sqlite"]

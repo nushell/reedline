@@ -12,8 +12,8 @@ use crate::{
 #[cfg(feature = "external_printer")]
 use {
     crate::external_printer::ExternalPrinter,
-    crossbeam::channel::TryRecvError,
     std::io::{Error, ErrorKind},
+    std::sync::mpsc::TryRecvError,
 };
 use {
     crate::{
