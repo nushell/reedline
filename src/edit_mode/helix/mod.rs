@@ -12,7 +12,7 @@ use strum::EnumString;
 use super::{is_plain_char, is_text_char, parse_non_key_event};
 
 use crate::{
-    enums::{EventStatus, TextObjectBrackets},
+    enums::{EventStatus, TextObjectBracket},
     Direction, EditCommand, EditMode, FindStop, Granularity, Keybindings, MotionTarget,
     PromptEditMode, PromptHelixMode, ReedlineEvent, TextObject, TextObjectScope, TextObjectType,
     WordEdge, WordKind,
@@ -96,24 +96,6 @@ enum MatchAction {
     Set,
     /// `d`. Delete surrounding characters
     Delete,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MatchSurroundingChar {
-    /// `(`/`)`
-    Parenthesis,
-    /// `{`/`}`
-    CurlyBrackets,
-    /// `[`/`]`
-    SquareBrackets,
-    /// `<`/`>`
-    AngleBrackets,
-    /// `'`
-    SingleQuote,
-    /// `"`
-    DoubleQuote,
-    /// any other character
-    Other(char),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -393,10 +375,10 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
             let text_object = match ch {
                 'w' => TextObjectType::Word,
                 'W' => TextObjectType::BigWord,
-                '(' | ')' => TextObjectType::Brackets(TextObjectBrackets::Parenthesis),
-                '{' | '}' => TextObjectType::Brackets(TextObjectBrackets::CurlyBrackets),
-                '[' | ']' => TextObjectType::Brackets(TextObjectBrackets::SquareBrackets),
-                '<' | '>' => TextObjectType::Brackets(TextObjectBrackets::AngleBrackets),
+                '(' | ')' => TextObjectType::Brackets(TextObjectBracket::Parenthesis),
+                '{' | '}' => TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
+                '[' | ']' => TextObjectType::Brackets(TextObjectBracket::SquareBracket),
+                '<' | '>' => TextObjectType::Brackets(TextObjectBracket::AngleBracket),
                 '\'' | '"' => TextObjectType::Quote,
                 _ => return Outcome::Reject,
             };
