@@ -8,20 +8,24 @@ use {
     nu_ansi_term::{Color, Style},
     reedline::{
         default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-        ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, DefaultValidator,
-        EditCommand, EditMode, Emacs, ExampleHighlighter, Keybindings, ListMenu, Reedline,
-        ReedlineEvent, ReedlineMenu, Signal, Vi,
+        default_vi_visual_keybindings, ColumnarMenu, DefaultCompleter, DefaultHinter,
+        DefaultPrompt, DefaultValidator, EditCommand, EditMode, Emacs, ExampleHighlighter,
+        Keybindings, ListMenu, Reedline, ReedlineEvent, ReedlineMenu, Signal, Vi,
     },
 };
 
-#[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+#[cfg(not(feature = "_sqlite"))]
 use reedline::FileBackedHistory;
-#[cfg(feature = "helix")]
-use reedline::{default_helix_insert_keybindings, default_helix_normal_keybindings, Helix};
+use reedline::{
+    default_helix_insert_keybindings, default_helix_normal_keybindings,
+    default_helix_select_keybindings, Helix,
+};
 use reedline::{CursorConfig, MenuBuilder, OutputMode};
+use reedline::{PromptEditMode, PromptHelixMode, PromptViMode};
 
 fn main() -> reedline::Result<()> {
     println!("Ctrl-D to quit");
+    println!("F5 / F6 / F7 switch to emacs / vi normal / helix normal");
     // quick command like parameter handling
     let mode_arg = std::env::args().nth(1);
 
@@ -34,7 +38,7 @@ fn main() -> reedline::Result<()> {
         None
     };
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     let history = Box::new(
         reedline::SqliteBackedHistory::with_file(
             "history.sqlite3".into(),
@@ -43,7 +47,7 @@ fn main() -> reedline::Result<()> {
         )
         .map_err(std::io::Error::other)?,
     );
-    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+    #[cfg(not(feature = "_sqlite"))]
     let history = Box::new(FileBackedHistory::with_file(50, "history.txt".into())?);
     let commands = vec![
         "test".into(),
@@ -75,16 +79,16 @@ fn main() -> reedline::Result<()> {
     ];
     let completer = Box::new(DefaultCompleter::new_with_wordlen(commands.clone(), 2));
 
+    // Each mode names its shape. `None` would mean "leave the terminal as
+    // is", which after a switch keeps the previous mode's shape.
     let cursor_config = CursorConfig {
+        emacs: Some(SetCursorStyle::BlinkingBar),
         vi_insert: Some(SetCursorStyle::BlinkingBar),
         vi_normal: Some(SetCursorStyle::SteadyBlock),
-        #[cfg(feature = "helix")]
+        vi_visual: Some(SetCursorStyle::SteadyUnderScore),
         hx_insert: Some(SetCursorStyle::BlinkingBar),
-        #[cfg(feature = "helix")]
         hx_normal: Some(SetCursorStyle::SteadyBlock),
-        #[cfg(feature = "helix")]
         hx_select: Some(SetCursorStyle::SteadyUnderScore),
-        ..CursorConfig::default()
     };
 
     let mut line_editor = Reedline::create()
@@ -115,13 +119,17 @@ fn main() -> reedline::Result<()> {
                 .with_output_mode(OutputMode::FullBuffer),
         )));
 
-    let edit_mode: Box<dyn EditMode> = match mode_arg.as_deref() {
-        Some("--vi") => vi_edit_mode(),
-        Some("--helix") => helix_edit_mode(),
-        _ => emacs_edit_mode(),
+    // Every machine is registered so the F5 / F6 / F7 bindings can switch
+    // between them; the flag only picks which one starts active.
+    let (active, standby) = match mode_arg.as_deref() {
+        Some("--vi") => (vi_edit_mode(), [emacs_edit_mode(), helix_edit_mode()]),
+        Some("--helix") => (helix_edit_mode(), [emacs_edit_mode(), vi_edit_mode()]),
+        _ => (emacs_edit_mode(), [vi_edit_mode(), helix_edit_mode()]),
     };
-
-    line_editor = line_editor.with_edit_mode(edit_mode);
+    line_editor = standby.into_iter().fold(
+        line_editor.with_edit_mode(active),
+        Reedline::with_additional_edit_mode,
+    );
 
     // Adding vi as text editor
     let temp_file = temp_dir().join("temp_file.nu");
@@ -139,10 +147,10 @@ fn main() -> reedline::Result<()> {
                 break;
             }
             Ok(Signal::Success(buffer)) => {
-                #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+                #[cfg(feature = "_sqlite")]
                 let start = std::time::Instant::now();
                 // save timestamp, cwd, hostname to history
-                #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+                #[cfg(feature = "_sqlite")]
                 if !buffer.is_empty() {
                     line_editor
                         .update_last_command_context(&|mut c: reedline::HistoryItem| {
@@ -197,7 +205,7 @@ fn main() -> reedline::Result<()> {
                     continue;
                 }
                 println!("Our buffer: {buffer}");
-                #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+                #[cfg(feature = "_sqlite")]
                 if !buffer.is_empty() {
                     line_editor
                         .update_last_command_context(&|mut c| {
@@ -225,6 +233,7 @@ fn main() -> reedline::Result<()> {
 fn emacs_edit_mode() -> Box<dyn EditMode> {
     let mut keybindings = default_emacs_keybindings();
     add_menu_keybindings(&mut keybindings);
+    add_switch_mode_keybindings(&mut keybindings);
     add_newline_keybinding(&mut keybindings);
 
     Box::new(Emacs::new(keybindings))
@@ -233,42 +242,63 @@ fn emacs_edit_mode() -> Box<dyn EditMode> {
 fn vi_edit_mode() -> Box<dyn EditMode> {
     let mut normal_keybindings = default_vi_normal_keybindings();
     let mut insert_keybindings = default_vi_insert_keybindings();
+    let mut visual_keybindings = default_vi_visual_keybindings();
 
-    add_menu_keybindings(&mut normal_keybindings);
-    add_menu_keybindings(&mut insert_keybindings);
+    for keybindings in [
+        &mut normal_keybindings,
+        &mut insert_keybindings,
+        &mut visual_keybindings,
+    ] {
+        add_menu_keybindings(keybindings);
+        add_switch_mode_keybindings(keybindings);
+    }
 
     add_newline_keybinding(&mut insert_keybindings);
 
-    Box::new(Vi::new(insert_keybindings, normal_keybindings))
+    Box::new(Vi::new(
+        insert_keybindings,
+        normal_keybindings,
+        visual_keybindings,
+    ))
 }
 
-#[cfg(feature = "helix")]
 fn helix_edit_mode() -> Box<dyn EditMode> {
     let mut normal_keybindings = default_helix_normal_keybindings();
     let mut insert_keybindings = default_helix_insert_keybindings();
+    let mut select_keybindings = default_helix_select_keybindings();
 
-    add_menu_keybindings(&mut normal_keybindings);
-    add_menu_keybindings(&mut insert_keybindings);
+    for keybindings in [
+        &mut normal_keybindings,
+        &mut insert_keybindings,
+        &mut select_keybindings,
+    ] {
+        add_menu_keybindings(keybindings);
+        add_switch_mode_keybindings(keybindings);
+    }
 
     add_newline_keybinding(&mut insert_keybindings);
 
     Box::new(
         Helix::default()
             .with_insert_keybindings(insert_keybindings)
-            .with_normal_keybindings(normal_keybindings),
+            .with_normal_keybindings(normal_keybindings)
+            .with_select_keybindings(select_keybindings),
     )
 }
 
-/// `--helix` is accepted whether or not the feature is compiled in, since the
-/// example itself has no `required-features`. Say so rather than falling
-/// through to emacs silently.
-#[cfg(not(feature = "helix"))]
-fn helix_edit_mode() -> Box<dyn EditMode> {
-    eprintln!(
-        "--helix needs the feature: cargo run --example demo --features helix -- --helix\n\
-         falling back to emacs"
-    );
-    emacs_edit_mode()
+/// F5, F6 and F7 jump to emacs, vi normal and helix normal from any table.
+/// Function keys, since Alt arrives as an escape prefix on some terminals.
+fn add_switch_mode_keybindings(keybindings: &mut Keybindings) {
+    for (key, target) in [
+        (KeyCode::F(5), PromptEditMode::Emacs),
+        (KeyCode::F(6), PromptEditMode::Vi(PromptViMode::Normal)),
+        (
+            KeyCode::F(7),
+            PromptEditMode::Helix(PromptHelixMode::Normal),
+        ),
+    ] {
+        keybindings.add_binding(KeyModifiers::NONE, key, ReedlineEvent::SwitchMode(target));
+    }
 }
 
 fn add_menu_keybindings(keybindings: &mut Keybindings) {

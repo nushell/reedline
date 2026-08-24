@@ -441,7 +441,7 @@ impl Menu for ListMenu {
             };
 
             let end = end.min(self.total_values());
-            &self.values[start..end]
+            self.values.get(start..end).unwrap_or(&[])
         }
     }
 

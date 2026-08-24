@@ -161,6 +161,30 @@ impl LineBuffer {
         self.cursor = Cursor::point(self.insertion_point());
     }
 
+    /// The selected byte range, ascending, or `None` for a point cursor.
+    pub(crate) fn get_selection(&self) -> Option<(usize, usize)> {
+        // `None` exactly when the cursor is empty (head == anchor): with the
+        // collapsed `Cursor` storage, `selection_anchor()` is derived from
+        // `!is_empty()`, so an anchor on the head is simply no selection.
+        self.selection_anchor()?;
+        let cursor = self.cursor();
+
+        // Inclusivity is geometric (widened by put_cursor).
+        Some((cursor.start(), cursor.end().min(self.len())))
+    }
+
+    /// Deletes the selected text, if any, and leaves a point cursor where it was.
+    ///
+    /// Collapses with [`collapse_to_caret`](Self::collapse_to_caret), not
+    /// [`clear_selection`](Self::clear_selection): that one collapses to the
+    /// head, which under `Block` sits one grapheme past the visible position.
+    pub(crate) fn delete_selection(&mut self) {
+        if let Some((start, end)) = self.get_selection() {
+            self.clear_range_safe(start..end);
+            self.collapse_to_caret();
+        }
+    }
+
     /// Moves the cursor head to `pos`. If `select` is true, preserves any
     /// existing selection anchor (or plants one at the current head if none
     /// exists). If `select` is false, clears the selection.
@@ -2159,5 +2183,29 @@ mod test {
         assert_eq!(result, expected);
         // Verify buffer remains valid after operations
         assert!(buf.is_valid());
+    }
+    // The head sits on opposite ends for the two directions, so this pins that
+    // the collapse lands on the start of the deleted range either way.
+    #[rstest]
+    #[case::forward("foo bar baz", Cursor::new(4, 7), "foo  baz", 4)]
+    #[case::backward("foo bar baz", Cursor::new(7, 4), "foo  baz", 4)]
+    #[case::forward_multibyte("aäöb", Cursor::new(1, 5), "ab", 1)]
+    #[case::backward_multibyte("aäöb", Cursor::new(5, 1), "ab", 1)]
+    #[case::to_buffer_end("foo bar", Cursor::new(4, 7), "foo ", 4)]
+    #[case::point_is_a_no_op("foo bar", Cursor::point(3), "foo bar", 3)]
+    fn delete_selection_collapses_to_range_start(
+        #[case] input: &str,
+        #[case] cursor: Cursor,
+        #[case] expected_buffer: &str,
+        #[case] expected_position: usize,
+    ) {
+        let mut line_buffer = buffer_with(input);
+        line_buffer.set_cursor(cursor);
+
+        line_buffer.delete_selection();
+
+        assert_eq!(line_buffer.get_buffer(), expected_buffer);
+        assert_eq!(line_buffer.cursor(), Cursor::point(expected_position));
+        line_buffer.assert_valid();
     }
 }

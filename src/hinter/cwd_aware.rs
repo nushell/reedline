@@ -42,8 +42,8 @@ impl Hinter for CwdAwareHinter {
                     }
                 })
                 .unwrap_or_default();
-            if !with_cwd.is_empty() {
-                with_cwd[0]
+            if let Some(first) = with_cwd.first() {
+                first
                     .command_line
                     .get(line.len()..)
                     .unwrap_or_default()

@@ -251,19 +251,26 @@ impl Motion {
     pub fn to_reedline(&self, vi_state: &mut Vi) -> Vec<ReedlineOption> {
         let select_mode = vi_state.mode == ViMode::Visual;
         match self {
-            Motion::Left => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::MenuLeft,
-                ReedlineEvent::Edit(vec![EditCommand::MoveLeft {
-                    select: select_mode,
-                }]),
-            ]))],
-            Motion::Right => vec![ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::HistoryHintComplete,
-                ReedlineEvent::MenuRight,
-                ReedlineEvent::Edit(vec![EditCommand::MoveRight {
-                    select: select_mode,
-                }]),
-            ]))],
+            // In visual the four direction keys only extend. A hint accepted
+            // by `l` would insert text under a held selection, and a menu has
+            // no more claim on `h`/`l` than it has on `j`/`k` below.
+            Motion::Left => vec![if select_mode {
+                ReedlineOption::Edit(EditCommand::MoveLeft { select: true })
+            } else {
+                ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::MenuLeft,
+                    ReedlineEvent::Edit(vec![EditCommand::MoveLeft { select: false }]),
+                ]))
+            }],
+            Motion::Right => vec![if select_mode {
+                ReedlineOption::Edit(EditCommand::MoveRight { select: true })
+            } else {
+                ReedlineOption::Event(ReedlineEvent::UntilFound(vec![
+                    ReedlineEvent::HistoryHintComplete,
+                    ReedlineEvent::MenuRight,
+                    ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }]),
+                ]))
+            }],
             Motion::Up => vec![if select_mode {
                 ReedlineOption::Edit(EditCommand::MoveLineUp { select: true })
             } else {

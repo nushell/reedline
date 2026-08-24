@@ -8,10 +8,6 @@ use crate::{
     painting::Painter,
     Completer, Suggestion,
 };
-use itertools::{
-    EitherOrBoth::{Both, Left, Right},
-    Itertools,
-};
 use nu_ansi_term::ansi::RESET;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -946,73 +942,64 @@ impl Menu for IdeMenu {
 
             let distance_left = &" ".repeat(self.working_details.space_left as usize);
 
+            let rows = strings.len().max(description_lines.len());
+
             // Horizontally join the description lines with the suggestion lines
             if self.working_details.description_is_right {
-                for (idx, pair) in strings
-                    .clone()
-                    .iter()
-                    .zip_longest(description_lines.iter())
-                    .enumerate()
-                {
-                    match pair {
-                        Both(_suggestion_line, description_line) => {
-                            strings[idx] = format!(
+                for i in 0..rows {
+                    match (strings.get(i), description_lines.get(i)) {
+                        (Some(_), Some(desc)) => {
+                            strings[i] = format!(
                                 "{}{}{}{}",
                                 distance_left,
-                                strings[idx],
+                                strings[i],
                                 " ".repeat(self.working_details.description_offset as usize),
-                                description_line,
+                                desc,
                             )
                         }
-                        Left(suggestion_line) => {
-                            strings[idx] = format!("{distance_left}{suggestion_line}");
+                        (Some(sug), None) => {
+                            strings[i] = format!("{distance_left}{sug}");
                         }
-                        Right(description_line) => strings.push(format!(
+                        (None, Some(desc)) => strings.push(format!(
                             "{}{}",
                             " ".repeat(
                                 (self.working_details.completion_width
                                     + self.working_details.description_offset)
                                     as usize
                             ) + distance_left,
-                            description_line,
+                            desc,
                         )),
+                        (None, None) => {}
                     }
                 }
             } else {
-                for (idx, pair) in strings
-                    .clone()
-                    .iter()
-                    .zip_longest(description_lines.iter())
-                    .enumerate()
-                {
-                    match pair {
-                        Both(suggestion_line, description_line) => {
-                            strings[idx] = format!(
+                for i in 0..rows {
+                    match (strings.get(i), description_lines.get(i)) {
+                        (Some(sug), Some(desc)) => {
+                            strings[i] = format!(
                                 "{}{}{}{}",
                                 distance_left,
-                                description_line,
+                                desc,
                                 " ".repeat(self.working_details.description_offset as usize),
-                                suggestion_line,
+                                sug,
                             )
                         }
-                        Left(suggestion_line) => {
-                            strings[idx] = format!(
+                        (Some(sug), None) => {
+                            strings[i] = format!(
                                 "{}{}",
                                 " ".repeat(
                                     (self.working_details.description_width
                                         + self.working_details.description_offset)
                                         as usize
                                 ) + distance_left,
-                                suggestion_line,
+                                sug,
                             );
                         }
-                        Right(description_line) => {
-                            strings.push(format!("{distance_left}{description_line}",))
-                        }
+                        (None, Some(desc)) => strings.push(format!("{distance_left}{desc}",)),
+                        (None, None) => {}
                     }
                 }
             }
-
             strings.join("\r\n")
         }
     }
