@@ -7,7 +7,8 @@ use crate::core_editor::graphemes::{next_grapheme_boundary, prev_grapheme_bounda
 use crate::core_editor::resolve::resolve_selection;
 use crate::core_editor::{commit, line, operator_span, resolve_motion, RestPolicy};
 use crate::enums::{
-    EditType, TextObject, TextObjectBracket, TextObjectScope, TextObjectType, UndoBehavior,
+    EditType, TextObject, TextObjectBracket, TextObjectQuote, TextObjectScope, TextObjectType,
+    UndoBehavior,
 };
 use crate::prompt::PromptEditMode;
 use crate::{core_editor::get_local_clipboard, EditCommand};
@@ -1741,9 +1742,19 @@ impl Editor {
     ///
     /// If multiple quote types exist, returns the innermost pair that surrounds
     /// the cursor. Handles empty quotes as zero-length ranges inside quote.
-    fn quote_text_object_range(&self, text_object_scope: TextObjectScope) -> Option<Range<usize>> {
-        const QUOTE_PAIRS: &[(char, char)] = &[('"', '"'), ('\'', '\''), ('`', '`')];
-        self.matching_pair_group_text_object_range(text_object_scope, QUOTE_PAIRS)
+    fn quote_text_object_range(
+        &self,
+        text_object_scope: TextObjectScope,
+        quote_type: TextObjectQuote,
+    ) -> Option<Range<usize>> {
+        const QUOTE_PAIRS: &[(char, char)] = &[('\'', '\''), ('"', '"'), ('`', '`')];
+        let pairs = match quote_type {
+            TextObjectQuote::SingleQuote => &QUOTE_PAIRS[0..1],
+            TextObjectQuote::DoubleQuote => &QUOTE_PAIRS[1..2],
+            TextObjectQuote::Tick => &QUOTE_PAIRS[2..3],
+            TextObjectQuote::All => QUOTE_PAIRS,
+        };
+        self.matching_pair_group_text_object_range(text_object_scope, pairs)
     }
 
     /// Get the bounds for a text object operation
@@ -1754,7 +1765,9 @@ impl Editor {
             TextObjectType::Brackets(brackets_type) => {
                 self.bracket_text_object_range(text_object.scope, brackets_type)
             }
-            TextObjectType::Quote => self.quote_text_object_range(text_object.scope),
+            TextObjectType::Quotes(quote_type) => {
+                self.quote_text_object_range(text_object.scope, quote_type)
+            }
         }
     }
 
@@ -4043,18 +4056,18 @@ mod test {
     // Test text object jumping behavior in various scenarios
     // Cursor inside empty pairs should operate on current pair (cursor stays, nothing cut)
     #[case(r#"foo()bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All) }, "foo()bar", 4, "")] // inside empty brackets
-    #[case(r#"foo""bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo\"\"bar", 4, "")] // inside empty quotes
+    #[case(r#"foo""bar"#, 4, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All) }, "foo\"\"bar", 4, "")] // inside empty quotes
     // Cursor outside pairs should jump to next pair (even if empty)
     #[case(r#"foo ()bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All) }, "foo ()bar", 5, "")] // jump to empty brackets
-    #[case(r#"foo ""bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "")] // jump to empty quote
+    #[case(r#"foo ""bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All) }, "foo \"\"bar", 5, "")] // jump to empty quote
     #[case(r#"foo (content)bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All) }, "foo ()bar", 5, "content")] // jump to non-empty brackets
-    #[case(r#"foo "content"bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "foo \"\"bar", 5, "content")] // jump to non-empty quotes
+    #[case(r#"foo "content"bar"#, 2, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All) }, "foo \"\"bar", 5, "content")] // jump to non-empty quotes
     // Cursor between pairs should jump to next pair
     #[case(r#"(first) (second)"#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Brackets(TextObjectBracket::All) }, "(first) ()", 9, "second")] // between brackets
-    #[case(r#""first" "second""#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quote }, "\"first\"\"second\"", 7, " ")] // between quotes
+    #[case(r#""first" "second""#, 8, TextObject { scope: TextObjectScope::Inner, object_type: TextObjectType::Quotes(TextObjectQuote::All) }, "\"first\"\"second\"", 7, " ")] // between quotes
     // Around scope should include the pair characters
     #[case(r#"foo (bar)"#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Brackets(TextObjectBracket::All) }, "foo ", 4, "(bar)")] // around includes parentheses
-    #[case(r#"foo "bar""#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Quote }, "foo ", 4, "\"bar\"")] // around includes quotes
+    #[case(r#"foo "bar""#, 2, TextObject { scope: TextObjectScope::Around, object_type: TextObjectType::Quotes(TextObjectQuote::All) }, "foo ", 4, "\"bar\"")] // around includes quotes
     fn test_text_object_jumping_behavior(
         #[case] input: &str,
         #[case] cursor_pos: usize,
@@ -4127,64 +4140,103 @@ mod test {
 
     #[rstest]
     // Test quote_text_object_range with Inner scope - just the content inside quotes
-    #[case(r#"foo"bar"baz"#, 5, TextObjectScope::Inner, Some(4..7))] // cursor inside double quotes
-    #[case("foo'bar'baz", 5, TextObjectScope::Inner, Some(4..7))] // single quotes
-    #[case("foo`bar`baz", 5, TextObjectScope::Inner, Some(4..7))] // backticks
-    #[case(r#"foo""bar"#, 4, TextObjectScope::Inner, Some(4..4))] // empty quotes
-    #[case(r#""nested'inner'outer""#, 8, TextObjectScope::Inner, Some(8..13))] // nested, innermost
-    #[case(r#""nested`mixed'inner'backticks`outer""#, 8, TextObjectScope::Inner, Some(8..29))] // nested, innermost
-    #[case(r#"next"nested'mixed`inner`quotes'outer""#, 0, TextObjectScope::Inner, Some(5..36))] // next nested mixed
-    #[case(r#"foo "bar"baz"#, 0, TextObjectScope::Inner, Some(5..8))] // next pair
-    #[case(r#"foo"bar"baz"#, 2, TextObjectScope::Inner, Some(4..7))] // next from inside word
-    #[case(r#"foo"bar"baz"#, 4, TextObjectScope::Around, Some(3..8))] // around includes quotes
-    #[case(r#"foo"bar"baz"#, 3, TextObjectScope::Around, Some(3..8))] // around on opening quote
-    #[case(r#"foo"bar"baz"#, 2, TextObjectScope::Around, Some(3..8))] // around next quotes
-    #[case(r#"foo""bar"#, 4, TextObjectScope::Around, Some(3..5))] // around empty quotes
-    #[case(r#"foo""bar"#, 1, TextObjectScope::Around, Some(3..5))] // around empty quotes
-    #[case(r#""nested"inner"outer""#, 8, TextObjectScope::Around, Some(7..14))] // nested around includes delimiters
-    #[case(r#"start"nested'inner'outer""#, 2, TextObjectScope::Around, Some(5..25))] // Next outer nested pair
-    #[case("no quotes here", 5, TextObjectScope::Inner, None)] // no quotes found
-    #[case(r#"foo"bar"#, 1, TextObjectScope::Inner, None)] // unclosed quote
-    #[case("foo'bar\nbaz'qux", 5, TextObjectScope::Inner, None)] // quotes don't span multiple lines
-    #[case("foo'bar\nbaz'qux", 0, TextObjectScope::Inner, None)] // quotes don't span multiple lines
-    #[case("foobar\n`baz`qux", 6, TextObjectScope::Inner, None)] // quotes don't span multiple lines
-    #[case("foo\n(bar\nbaz)qux", 0, TextObjectScope::Inner, None)] // next multi-line brackets
-    #[case("foo\n(bar\nbaz)qux", 3, TextObjectScope::Around, None)] // next multi-line brackets
+    #[case(r#"foo"bar"baz"#, 5, TextObjectScope::Inner, TextObjectQuote::All, Some(4..7))] // cursor inside double quotes
+    #[case("foo'bar'baz", 5, TextObjectScope::Inner, TextObjectQuote::All, Some(4..7))] // single quotes
+    #[case("foo`bar`baz", 5, TextObjectScope::Inner, TextObjectQuote::All, Some(4..7))] // backticks
+    #[case(r#"foo"bar"baz"#, 5, TextObjectScope::Inner, TextObjectQuote::DoubleQuote, Some(4..7))] // cursor inside double quotes
+    #[case("foo'bar'baz", 5, TextObjectScope::Inner, TextObjectQuote::SingleQuote, Some(4..7))] // single quotes
+    #[case("foo`bar`baz", 5, TextObjectScope::Inner, TextObjectQuote::Tick, Some(4..7))] // backticks
+    #[case(r#"foo""bar"#, 4, TextObjectScope::Inner, TextObjectQuote::All, Some(4..4))] // empty quotes
+    #[case(r#""nested'inner'outer""#, 8, TextObjectScope::Inner, TextObjectQuote::All, Some(8..13))] // nested, innermost
+    #[case(r#""nested`mixed'inner'backticks`outer""#, 8, TextObjectScope::Inner, TextObjectQuote::All, Some(8..29))] // nested, innermost
+    #[case(r#"next"nested'mixed`inner`quotes'outer""#, 0, TextObjectScope::Inner, TextObjectQuote::All, Some(5..36))] // next nested mixed
+    #[case(r#"foo "bar"baz"#, 0, TextObjectScope::Inner, TextObjectQuote::All, Some(5..8))] // next pair
+    #[case(r#"foo"bar"baz"#, 2, TextObjectScope::Inner, TextObjectQuote::All, Some(4..7))] // next from inside word
+    #[case(r#"foo"bar"baz"#, 4, TextObjectScope::Around, TextObjectQuote::All, Some(3..8))] // around includes quotes
+    #[case(r#"foo"bar"baz"#, 3, TextObjectScope::Around, TextObjectQuote::All, Some(3..8))] // around on opening quote
+    #[case(r#"foo"bar"baz"#, 2, TextObjectScope::Around, TextObjectQuote::All, Some(3..8))] // around next quotes
+    #[case(r#"foo""bar"#, 4, TextObjectScope::Around, TextObjectQuote::All, Some(3..5))] // around empty quotes
+    #[case(r#"foo""bar"#, 1, TextObjectScope::Around, TextObjectQuote::All, Some(3..5))] // around empty quotes
+    #[case(r#""nested"inner"outer""#, 8, TextObjectScope::Around, TextObjectQuote::All, Some(7..14))] // nested around includes delimiters
+    #[case(r#"start"nested'inner'outer""#, 2, TextObjectScope::Around, TextObjectQuote::All, Some(5..25))] // Next outer nested pair
+    #[case(
+        "no quotes here",
+        5,
+        TextObjectScope::Inner,
+        TextObjectQuote::All,
+        None
+    )] // no quotes found
+    #[case(r#"foo"bar"#, 1, TextObjectScope::Inner, TextObjectQuote::All, None)] // unclosed quote
+    #[case(
+        "foo'bar\nbaz'qux",
+        5,
+        TextObjectScope::Inner,
+        TextObjectQuote::All,
+        None
+    )] // quotes don't span multiple lines
+    #[case(
+        "foo'bar\nbaz'qux",
+        0,
+        TextObjectScope::Inner,
+        TextObjectQuote::All,
+        None
+    )] // quotes don't span multiple lines
+    #[case(
+        "foobar\n`baz`qux",
+        6,
+        TextObjectScope::Inner,
+        TextObjectQuote::All,
+        None
+    )] // quotes don't span multiple lines
+    #[case(
+        "foo\n(bar\nbaz)qux",
+        0,
+        TextObjectScope::Inner,
+        TextObjectQuote::All,
+        None
+    )] // next multi-line brackets
+    #[case(
+        "foo\n(bar\nbaz)qux",
+        3,
+        TextObjectScope::Around,
+        TextObjectQuote::All,
+        None
+    )] // next multi-line brackets
     fn test_quote_text_object_range(
         #[case] input: &str,
         #[case] cursor_pos: usize,
         #[case] scope: TextObjectScope,
+        #[case] quote_type: TextObjectQuote,
         #[case] expected: Option<std::ops::Range<usize>>,
     ) {
         let mut editor = editor_with(input);
         editor.line_buffer.set_insertion_point(cursor_pos);
-        let result = editor.quote_text_object_range(scope);
+        let result = editor.quote_text_object_range(scope, quote_type);
         assert_eq!(result, expected);
     }
 
     #[rstest]
     // Test edge cases and complex scenarios for both bracket and quote text objects
-    #[case("", 0, TextObjectScope::Inner, TextObjectBracket::All, None, None)] // empty buffer
-    #[case("a", 0, TextObjectScope::Inner, TextObjectBracket::All, None, None)] // single character
-    #[case("()", 1, TextObjectScope::Inner, TextObjectBracket::All, Some(1..1), None)] // empty brackets, cursor inside
-    #[case(r#""""#, 1, TextObjectScope::Inner, TextObjectBracket::All, None, Some(1..1))] // empty quotes, cursor inside
-    #[case("([{}])", 3, TextObjectScope::Inner, TextObjectBracket::All, Some(3..3), None)] // deeply nested brackets
-    #[case(r#""'`text`'""#, 5, TextObjectScope::Inner, TextObjectBracket::All, None, Some(3..7))] // deeply nested quotes
-    #[case("(text) and [more]", 5, TextObjectScope::Around, TextObjectBracket::All, Some(0..6), None)] // multiple bracket types
-    #[case(r#""text" and 'more'"#, 5, TextObjectScope::Around, TextObjectBracket::All, None, Some(0..6))] // multiple quote types
+    #[case("", 0, TextObjectScope::Inner, None, None)] // empty buffer
+    #[case("a", 0, TextObjectScope::Inner, None, None)] // single character
+    #[case("()", 1, TextObjectScope::Inner, Some(1..1), None)] // empty brackets, cursor inside
+    #[case(r#""""#, 1, TextObjectScope::Inner, None, Some(1..1))] // empty quotes, cursor inside
+    #[case("([{}])", 3, TextObjectScope::Inner, Some(3..3), None)] // deeply nested brackets
+    #[case(r#""'`text`'""#, 5, TextObjectScope::Inner, None, Some(3..7))] // deeply nested quotes
+    #[case("(text) and [more]", 5, TextObjectScope::Around, Some(0..6), None)] // multiple bracket types
+    #[case(r#""text" and 'more'"#, 5, TextObjectScope::Around, None, Some(0..6))] // multiple quote types
     fn test_text_object_edge_cases(
         #[case] input: &str,
         #[case] cursor_pos: usize,
         #[case] scope: TextObjectScope,
-        #[case] bracket_type: TextObjectBracket,
         #[case] expected_bracket: Option<std::ops::Range<usize>>,
         #[case] expected_quote: Option<std::ops::Range<usize>>,
     ) {
         let mut editor = editor_with(input);
         editor.move_to_position(cursor_pos, false);
 
-        let bracket_result = editor.bracket_text_object_range(scope, bracket_type);
-        let quote_result = editor.quote_text_object_range(scope);
+        let bracket_result = editor.bracket_text_object_range(scope, TextObjectBracket::All);
+        let quote_result = editor.quote_text_object_range(scope, TextObjectQuote::All);
 
         assert_eq!(bracket_result, expected_bracket);
         assert_eq!(quote_result, expected_quote);

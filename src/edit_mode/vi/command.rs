@@ -1,5 +1,7 @@
 use super::{motion::Motion, parser::ReedlineOption, ViMode};
-use crate::enums::{TextObject, TextObjectBracket, TextObjectScope, TextObjectType};
+use crate::enums::{
+    TextObject, TextObjectBracket, TextObjectQuote, TextObjectScope, TextObjectType,
+};
 use crate::{Direction, EditCommand, Granularity, MotionTarget, ReedlineEvent, Vi};
 use std::iter::Peekable;
 
@@ -589,7 +591,7 @@ fn char_to_text_object(c: char, scope: TextObjectScope) -> Option<TextObject> {
         }),
         'q' => Some(TextObject {
             scope,
-            object_type: TextObjectType::Quote,
+            object_type: TextObjectType::Quotes(TextObjectQuote::All),
         }),
         _ => None,
     }

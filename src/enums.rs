@@ -57,6 +57,19 @@ pub enum TextObjectScope {
     Around,
 }
 
+/// Text object quote types
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum TextObjectQuote {
+    /// '
+    SingleQuote,
+    /// "
+    DoubleQuote,
+    /// \`
+    Tick,
+    /// (, ), \[, ], {, }, <, >
+    All,
+}
+
 /// Text object bracket types
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TextObjectBracket {
@@ -81,8 +94,8 @@ pub enum TextObjectType {
     BigWord,
     /// Brackets pairs (`(`, `)`, `[`, `]`, `{`, `}`, `<`, `>`)
     Brackets(TextObjectBracket),
-    /// ", ', `
-    Quote,
+    /// Quotes pairs (`"`, `'`, `\``)
+    Quotes(TextObjectQuote),
 }
 
 /// Text objects that can be operated on with vim-style commands

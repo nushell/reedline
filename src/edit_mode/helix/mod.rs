@@ -12,7 +12,7 @@ use strum::EnumString;
 use super::{is_plain_char, is_text_char, parse_non_key_event};
 
 use crate::{
-    enums::{EventStatus, TextObjectBracket},
+    enums::{EventStatus, TextObjectBracket, TextObjectQuote},
     Direction, EditCommand, EditMode, FindStop, Granularity, Keybindings, MotionTarget,
     PromptEditMode, PromptHelixMode, ReedlineEvent, TextObject, TextObjectScope, TextObjectType,
     WordEdge, WordKind,
@@ -379,7 +379,9 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
                 '{' | '}' => TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
                 '[' | ']' => TextObjectType::Brackets(TextObjectBracket::SquareBracket),
                 '<' | '>' => TextObjectType::Brackets(TextObjectBracket::AngleBracket),
-                '\'' | '"' => TextObjectType::Quote,
+                '\'' => TextObjectType::Quotes(TextObjectQuote::SingleQuote),
+                '"' => TextObjectType::Quotes(TextObjectQuote::DoubleQuote),
+                '`' => TextObjectType::Quotes(TextObjectQuote::Tick),
                 _ => return Outcome::Reject,
             };
             exec(
