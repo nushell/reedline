@@ -177,64 +177,27 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
     }
 }
 
-/// Find differing substring between two strings
+/// Find differing substring between two strings.
+///
+/// Skips the common prefix; if the rest of `old_string` is a suffix of what
+/// remains, the difference is the text in between, otherwise everything after
+/// the prefix. Returns the byte offset of the difference and the difference.
 pub fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &'a str) {
-    if old_string.is_empty() {
-        return (0, new_string);
-    }
+    let prefix = new_string
+        .char_indices()
+        .zip(old_string.chars())
+        .take_while(|((_, n), o)| n == o)
+        .map(|((i, c), _)| i + c.len_utf8())
+        .last()
+        .unwrap_or(0);
 
-    let old_chars = old_string.char_indices().collect::<Vec<(usize, char)>>();
-    let new_chars = new_string.char_indices().collect::<Vec<(usize, char)>>();
+    // `prefix` is a char boundary of both strings by construction, so the
+    // fallbacks are unreachable; they only keep the slicing panic-free.
+    let (_, old_rest) = old_string.split_at_checked(prefix).unwrap_or_default();
+    let (head, new_rest) = new_string.split_at_checked(prefix).unwrap_or_default();
+    let diff = new_rest.strip_suffix(old_rest).unwrap_or(new_rest);
 
-    let (_, start, end) = new_chars.iter().enumerate().fold(
-        (0, None, None),
-        |(old_char_index, start, end), (new_char_index, (_, c))| {
-            let equal = if start.is_some() {
-                if (old_chars.len() - old_char_index) == (new_chars.len() - new_char_index) {
-                    let new_iter = new_chars.iter().skip(new_char_index);
-                    let old_iter = old_chars.iter().skip(old_char_index);
-
-                    new_iter
-                        .zip(old_iter)
-                        .all(|((_, new), (_, old))| new == old)
-                } else {
-                    false
-                }
-            } else {
-                old_char_index == new_char_index && *c == old_chars[old_char_index].1
-            };
-
-            if equal {
-                let old_char_index = (old_char_index + 1).min(old_chars.len() - 1);
-
-                let end = match (start, end) {
-                    (Some(_), Some(_)) => end,
-                    (Some(_), None) => Some(new_char_index),
-                    _ => None,
-                };
-
-                (old_char_index, start, end)
-            } else {
-                let start = match start {
-                    Some(_) => start,
-                    None => Some(new_char_index),
-                };
-
-                (old_char_index, start, end)
-            }
-        },
-    );
-
-    // Convert char index to byte index
-    let start = start.map(|i| new_chars[i].0);
-    let end = end.map(|i| new_chars[i].0);
-
-    match (start, end) {
-        (Some(start), Some(end)) => (start, &new_string[start..end]),
-        (Some(start), None) => (start, &new_string[start..]),
-        (None, None) => (new_string.len(), ""),
-        (None, Some(_)) => unreachable!(),
-    }
+    (head.len(), diff)
 }
 
 /// Get the part of the line that should be given as input to the completer, as well
@@ -1187,103 +1150,33 @@ mod tests {
         assert!(matches!(res.action, ParseAction::BackwardSearch));
     }
 
-    #[test]
-    fn string_difference_test() {
-        let new_string = "this is a new string";
-        let old_string = "this is a string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new "));
-    }
-
-    #[test]
-    fn string_difference_new_larger() {
-        let new_string = "this is a new string";
-        let old_string = "this is";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (7, " a new string"));
-    }
-
-    #[test]
-    fn string_difference_new_shorter() {
-        let new_string = "this is the";
-        let old_string = "this is the original";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (11, ""));
-    }
-
-    #[test]
-    fn string_difference_inserting() {
-        let new_string = "let a = (insert) | ";
-        let old_string = "let a = () | ";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (9, "insert"));
-    }
-
-    #[test]
-    fn string_difference_longer_string() {
-        let new_string = "this is a new another";
-        let old_string = "this is a string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new another"));
-    }
-
-    #[test]
-    fn string_difference_start_same() {
-        let new_string = "this is a new something string";
-        let old_string = "this is a string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new something "));
-    }
-
-    #[test]
-    fn string_difference_empty_old() {
-        let new_string = "this new another";
-        let old_string = "";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (0, "this new another"));
-    }
-
-    #[test]
-    fn string_difference_very_difference() {
-        let new_string = "this new another";
-        let old_string = "complete different string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (0, "this new another"));
-    }
-
-    #[test]
-    fn string_difference_both_equal() {
-        let new_string = "this new another";
-        let old_string = "this new another";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (16, ""));
-    }
-
-    #[test]
-    fn string_difference_with_non_ansi() {
-        let new_string = "ｎｕｓｈｅｌｌ";
-        let old_string = "ｎｕｌｌ";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (6, "ｓｈｅ"));
-    }
-
-    #[test]
-    fn string_difference_with_repeat() {
-        let new_string = "ee";
-        let old_string = "e";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (1, "e"));
+    #[rstest]
+    #[case::inserted_word("this is a new string", "this is a string", 10, "new ")]
+    #[case::appended("this is a new string", "this is", 7, " a new string")]
+    #[case::new_shorter("this is the", "this is the original", 11, "")]
+    #[case::inserted_inside_parens("let a = (insert) | ", "let a = () | ", 9, "insert")]
+    #[case::tail_differs("this is a new another", "this is a string", 10, "new another")]
+    #[case::inserted_words(
+        "this is a new something string",
+        "this is a string",
+        10,
+        "new something "
+    )]
+    #[case::empty_old("this new another", "", 0, "this new another")]
+    #[case::nothing_shared("this new another", "complete different string", 0, "this new another")]
+    #[case::equal("this new another", "this new another", 16, "")]
+    #[case::multibyte_diff("ｎｕｓｈｅｌｌ", "ｎｕｌｌ", 6, "ｓｈｅ")]
+    #[case::multibyte_prefix("héllo wörld", "héllo", 6, " wörld")]
+    #[case::repeat("ee", "e", 1, "e")]
+    #[case::repeat_twice("eee", "e", 1, "ee")]
+    #[case::old_is_prefix_and_reappears("abcb", "ab", 2, "cb")]
+    fn string_difference_is_the_text_typed_after_the_prefix(
+        #[case] new: &str,
+        #[case] old: &str,
+        #[case] start: usize,
+        #[case] diff: &str,
+    ) {
+        assert_eq!(string_difference(new, old), (start, diff));
     }
 
     #[rstest]
