@@ -1939,11 +1939,8 @@ fn insert_clipboard_content_before(line_buffer: &mut LineBuffer, clipboard: &mut
             line_buffer.insert_str(&content);
         }
         (mut content, Granularity::LineWise) => {
-            // TODO: Simplify that?
             line_buffer.move_to_line_start();
-            line_buffer.move_line_up();
             if !content.ends_with('\n') {
-                // TODO: Make sure platform requirements are met
                 content.push('\n');
             }
             line_buffer.insert_str(&content);
@@ -2530,6 +2527,23 @@ mod test {
     }
 
     #[test]
+    fn paste_before_over_selection_replaces_it() {
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.cut_buffer.set("xyz", Granularity::CharWise);
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 0,
+            select: false,
+        });
+        for _ in 0..2 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+        assert_eq!(editor.get_selection(), Some((0, 3))); // "hel"
+        editor.run_edit_command(&EditCommand::PasteCutBufferBefore);
+        assert_eq!(editor.get_buffer(), "xyzlo");
+        assert_eq!(editor.get_selection(), None);
+    }
+
+    #[test]
     fn paste_after_linewise_on_last_line_lands_below() {
         // Regression: `p` on the last line fell back to the line start (no line
         // below), pasting *above* like `P`.
@@ -2557,6 +2571,24 @@ mod test {
         editor.line_buffer.set_insertion_point(0); // on line "a"
         editor.run_edit_command(&EditCommand::PasteCutBufferAfter);
         assert_eq!(editor.get_buffer(), "a\nX\nb");
+    }
+
+    #[test]
+    fn paste_before_linewise_on_first_line_lands_above() {
+        let mut editor = editor_with("a\nb\nc");
+        editor.cut_buffer.set("x\n", Granularity::LineWise);
+        editor.line_buffer.set_insertion_point(0); // on line "a"
+        editor.run_edit_command(&EditCommand::PasteCutBufferBefore);
+        assert_eq!(editor.get_buffer(), "x\na\nb\nc");
+    }
+
+    #[test]
+    fn paste_before_linewise_middle_line_lands_above() {
+        let mut editor = editor_with("a\nb\nc");
+        editor.cut_buffer.set("x\n", Granularity::LineWise);
+        editor.line_buffer.set_insertion_point(2); // on line "b"
+        editor.run_edit_command(&EditCommand::PasteCutBufferBefore);
+        assert_eq!(editor.get_buffer(), "a\nx\nb\nc");
     }
 
     #[test]
