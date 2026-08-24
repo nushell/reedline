@@ -22,7 +22,7 @@ pub(crate) fn end_of_line(buf: &str, pos: usize) -> usize {
         None => buf.len(),
         Some(i) => {
             let newline = pos + i;
-            if newline > 0 && buf.as_bytes()[newline - 1] == b'\r' {
+            if newline > 0 && buf.as_bytes().get(newline - 1) == Some(&b'\r') {
                 newline - 1
             } else {
                 newline
