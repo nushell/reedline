@@ -294,12 +294,10 @@ impl Editor {
                 self.move_left_until_char(*c, true, true, *select)
             }
             EditCommand::SelectAll => self.select_all(),
-            #[cfg(feature = "helix")]
             EditCommand::SelectLine => self.select_line(),
             EditCommand::CutSelection { granularity } => {
                 self.cut_selection_to_cut_buffer(*granularity)
             }
-            #[cfg(feature = "helix")]
             EditCommand::EraseSelection => self.erase_selection(),
             EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
             EditCommand::LowercaseSelection => self.lowercase_selection(),
@@ -1306,7 +1304,6 @@ impl Editor {
     /// express: [`Select`](EditCommand::Select) re-anchors at the origin and
     /// [`Extend`](EditCommand::Extend) keeps its anchor, so neither can move
     /// both edges to line boundaries *and* notice they were there already.
-    #[cfg(feature = "helix")]
     fn select_line(&mut self) {
         let buf = self.line_buffer.get_buffer();
         let cursor = self.line_buffer.cursor();
@@ -1352,7 +1349,6 @@ impl Editor {
     ///
     /// `OperatorVerb::Erase` is the register-free deletion the motion-shaped
     /// `Erase` already uses; only the span differs.
-    #[cfg(feature = "helix")]
     fn erase_selection(&mut self) {
         if let Some((start, end)) = self.get_selection() {
             let sel = Cursor::new(start, end);
@@ -4337,7 +4333,6 @@ mod test {
 
     /// Helix-only editor behaviour. One gate for the whole block so it
     /// lifts in a single edit once helix stops being feature gated.
-    #[cfg(feature = "helix")]
     mod helix {
         use super::*;
         use pretty_assertions::assert_eq;

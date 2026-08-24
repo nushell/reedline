@@ -42,10 +42,9 @@ serde_json = "1.0"
 tempfile = "3.3.0"
 
 [features]
-default = ["helix"]
+default = []
 bashisms = []
 external_printer = []
-helix = []
 sqlite = ["rusqlite/bundled", "serde_json", "_sqlite"]
 sqlite-dynlib = ["rusqlite", "serde_json", "_sqlite"]
 # Internal marker enabled by both sqlite features; never enable it directly.
@@ -60,10 +59,6 @@ required-features = ["sqlite"]
 [[example]]
 name = "external_printer"
 required-features = ["external_printer"]
-
-[[example]]
-name = "helix"
-required-features = ["helix"]
 
 [package.metadata.docs.rs]
 # Whether to pass `--all-features` to Cargo (default: false)

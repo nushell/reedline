@@ -949,7 +949,6 @@ pub(crate) fn truncate_with_ansi(s: &str, max_width: usize) -> Cow<'_, str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "helix")]
     use crate::PromptHelixMode;
     use crate::{EditCommand, LineBuffer, PromptEditMode, PromptViMode, Span};
     use nu_ansi_term::Color;
@@ -959,16 +958,10 @@ mod tests {
     /// count that grapheme as part of the word instead of stranding it after the
     /// replacement (`foo` + `foobar` used to yield `foobaro`).
     #[rstest]
-    #[cfg_attr(
-        feature = "helix",
-        case::helix_normal(PromptEditMode::Helix(PromptHelixMode::Normal), "foo", "foobar")
-    )]
+    #[case::helix_normal(PromptEditMode::Helix(PromptHelixMode::Normal), "foo", "foobar")]
     #[case::vi_normal(PromptEditMode::Vi(PromptViMode::Normal), "foo", "foobar")]
     // The covered grapheme is multi-byte: stepping by bytes would split it.
-    #[cfg_attr(
-        feature = "helix",
-        case::multibyte(PromptEditMode::Helix(PromptHelixMode::Normal), "café", "cafétería")
-    )]
+    #[case::multibyte(PromptEditMode::Helix(PromptHelixMode::Normal), "café", "cafétería")]
     fn completion_covers_the_caret_grapheme(
         #[case] mode: PromptEditMode,
         #[case] buffer: &str,

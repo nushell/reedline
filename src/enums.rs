@@ -185,7 +185,6 @@ pub enum MotionTarget {
     LineEdge(Direction),
     /// First non-whitespace character on the current line (helix `gs`). A blank
     /// line has none, so the motion stays put.
-    #[cfg(feature = "helix")]
     LineStartNonBlank,
     /// Whole-buffer edge: `Backward` = start (`gg`), `Forward` = end (`G`).
     BufferEdge(Direction),
@@ -241,7 +240,6 @@ impl MotionTarget {
             // Destination-shaped targets go here. Where they lie depends on the
             // cursor, so callers resolve first and compare after.
             MotionTarget::Position(_) => None,
-            #[cfg(feature = "helix")]
             MotionTarget::LineStartNonBlank => None,
         }
     }
@@ -625,14 +623,12 @@ pub enum EditCommand {
     ///
     /// Repeating therefore grows it a line at a time, so a count is the command
     /// applied that many times.
-    #[cfg(feature = "helix")]
     SelectLine,
 
     /// Delete the selection without filling the cut buffer (helix `Alt-d`).
     ///
     /// [`CutSelection`](EditCommand::CutSelection) clobbers the register, which
     /// is exactly what this avoids when the text is not wanted back.
-    #[cfg(feature = "helix")]
     EraseSelection,
 
     /// Cut selection to local buffer
@@ -811,9 +807,7 @@ impl EditCommand {
             EditCommand::SwapCursorAndAnchor => EditType::MoveCursor { select: true },
 
             EditCommand::SelectAll => EditType::MoveCursor { select: true },
-            #[cfg(feature = "helix")]
             EditCommand::EraseSelection => EditType::EditText,
-            #[cfg(feature = "helix")]
             EditCommand::SelectLine => EditType::MoveCursor { select: true },
             // Text edits
             EditCommand::InsertChar(_)
@@ -1145,7 +1139,6 @@ pub enum ReedlineEvent {
     /// its own that is a keybinding that does nothing; inside an
     /// [`UntilFound`](ReedlineEvent::UntilFound) it hands the key to the next
     /// event in the list instead.
-    #[cfg(feature = "helix")]
     HelixChangeMode(String),
 }
 
@@ -1190,17 +1183,5 @@ impl TryFrom<Event> for ReedlineRawEvent {
 impl From<ReedlineRawEvent> for Event {
     fn from(event: ReedlineRawEvent) -> Self {
         event.0
-    }
-}
-
-#[cfg(feature = "helix")]
-impl TryFrom<ReedlineRawEvent> for KeyEvent {
-    type Error = ReedlineRawEvent;
-
-    fn try_from(event: ReedlineRawEvent) -> Result<Self, Self::Error> {
-        match event.0 {
-            Event::Key(key_event) => Ok(key_event),
-            other => Err(ReedlineRawEvent(other)),
-        }
     }
 }
