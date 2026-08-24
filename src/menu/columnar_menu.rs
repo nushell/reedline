@@ -355,6 +355,19 @@ impl ColumnarMenu {
         self.working_details.columns.max(1)
     }
 
+    /// Width of the suggestion at `index`, 0 when out of range.
+    ///
+    /// `display_widths` is built from the same `values` in
+    /// [`CompletionDisplay::new`], so the index holds today; 0 keeps a
+    /// mismatch painting (unpadded) instead of aborting mid-repaint.
+    fn display_width(&self, index: usize) -> usize {
+        self.completions
+            .display_widths
+            .get(index)
+            .copied()
+            .unwrap_or(0)
+    }
+
     /// Creates default string that represents one suggestion from the menu
     pub fn create_string(
         &self,
@@ -386,7 +399,7 @@ impl ColumnarMenu {
         let display_value = suggestion.display_value();
 
         // Calculate the remaining space after the suggestion text
-        let empty_space = terminal_width.saturating_sub(self.completions.display_widths[index]);
+        let empty_space = terminal_width.saturating_sub(self.display_width(index));
         let marker = if is_selected { ">" } else { "" };
         let description = suggestion.description.as_deref().unwrap_or("");
 
@@ -424,7 +437,7 @@ impl ColumnarMenu {
         let is_selected = index == self.index();
         let terminal_width = self.get_width();
         let display_value = suggestion.display_value();
-        let display_width = self.completions.display_widths[index];
+        let display_width = self.display_width(index);
         let color_settings = &self.settings.color;
 
         // TODO(ysthakur): let the user strip quotes, rather than doing it here
