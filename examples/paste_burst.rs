@@ -70,7 +70,7 @@ impl TimingBurstDetector {
     fn is_fast(state: &DetectorState, now: Instant) -> bool {
         state
             .last_char
-            .map_or(false, |last| now.duration_since(last) < BURST_GAP)
+            .is_some_and(|last| now.duration_since(last) < BURST_GAP)
     }
 
     fn take_last_burst(&self) -> Option<String> {

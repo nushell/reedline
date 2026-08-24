@@ -1381,7 +1381,7 @@ impl Reedline {
         let burst_batch = self
             .paste_burst
             .as_ref()
-            .map_or(false, |h| h.is_burst_active());
+            .is_some_and(|h| h.is_burst_active());
         if burst_batch {
             let mut coalesced = String::new();
             // Every Enter drained into this batch is coalesced as an embedded
