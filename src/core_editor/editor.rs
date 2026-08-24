@@ -373,6 +373,7 @@ impl Editor {
             EditCommand::CopyAroundPair { left, right } => self.copy_around_pair(*left, *right),
             EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
             EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
+            EditCommand::AddTextObject { text_object } => self.add_text_object(*text_object),
         }
         let leaves_selection = matches!(command.edit_type(), EditType::MoveCursor { select: true })
             || matches!(command, EditCommand::PasteAtSelectionEdge { .. })
@@ -1781,6 +1782,26 @@ impl Editor {
         if let Some(range) = self.text_object_range(text_object) {
             self.copy_range(range);
         }
+    }
+
+    fn add_text_object(&mut self, text_object: TextObjectType) {
+        let pair = match text_object {
+            TextObjectType::Brackets(TextObjectBracket::Parenthesis) => ('(', ')'),
+            TextObjectType::Brackets(TextObjectBracket::SquareBracket) => ('[', ']'),
+            TextObjectType::Brackets(TextObjectBracket::CurlyBracket) => ('{', '}'),
+            TextObjectType::Brackets(TextObjectBracket::AngleBracket) => ('<', '>'),
+            TextObjectType::Quotes(TextObjectQuote::SingleQuote) => ('\'', '\''),
+            TextObjectType::Quotes(TextObjectQuote::DoubleQuote) => ('"', '"'),
+            TextObjectType::Quotes(TextObjectQuote::Tick) => ('`', '`'),
+            _ => return,
+        };
+        let cursor = self.line_buffer.cursor();
+        let cursor_lefted = cursor.with_direction(super::cursor::Direction::Forward);
+        self.line_buffer.set_cursor(cursor_lefted);
+        self.line_buffer.insert_char(pair.1);
+        self.line_buffer.set_cursor(cursor_lefted.flip());
+        self.line_buffer.insert_char(pair.0);
+        self.line_buffer.set_cursor(cursor);
     }
 
     fn select_text_object(&mut self, text_object: TextObject) {

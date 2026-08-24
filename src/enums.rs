@@ -808,6 +808,11 @@ pub enum EditCommand {
         /// The text object to operate on
         text_object: TextObject,
     },
+    /// Add the specified text object around the selection
+    AddTextObject {
+        /// The text object to operate on
+        text_object: TextObjectType,
+    },
 }
 
 impl EditCommand {
@@ -930,7 +935,8 @@ impl EditCommand {
             | EditCommand::CopyLeftBefore(_)
             | EditCommand::CopyInsidePair { .. }
             | EditCommand::CopyAroundPair { .. }
-            | EditCommand::CopyTextObject { .. } => EditType::NoOp,
+            | EditCommand::CopyTextObject { .. }
+            | EditCommand::AddTextObject { .. } => EditType::NoOp,
 
             // The six MotionTarget verbs. `Move`/`Extend` carry the old `select`
             // bool in the verb itself (Extend must be `select: true` so the editor
