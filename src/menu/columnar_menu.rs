@@ -9,6 +9,7 @@ use crate::{
     Completer, Suggestion,
 };
 use nu_ansi_term::ansi::RESET;
+use std::num::{NonZero, NonZeroUsize};
 
 /// The traversal direction of the menu
 #[derive(Debug, PartialEq, Eq)]
@@ -211,14 +212,12 @@ impl ColumnarMenu {
     fn position_from_index(&self, index: usize) -> (u16, u16) {
         match self.default_details.traversal_dir {
             TraversalDirection::Vertical => {
-                let row = index % self.get_rows() as usize;
-                let col = index / self.get_rows() as usize;
-                (row as u16, col as u16)
+                let rows = NonZeroUsize::from(self.grid_rows());
+                ((index % rows) as u16, (index / rows) as u16)
             }
             TraversalDirection::Horizontal => {
-                let row = index / self.get_used_cols() as usize;
-                let col = index % self.get_used_cols() as usize;
-                (row as u16, col as u16)
+                let cols = NonZeroUsize::from(self.grid_cols());
+                ((index / cols) as u16, (index % cols) as u16)
             }
         }
     }
@@ -228,9 +227,9 @@ impl ColumnarMenu {
         let num_values = self.get_values().len() as u16;
         match self.default_details.traversal_dir {
             TraversalDirection::Vertical => {
-                if col_pos >= self.get_used_cols() - 1 {
+                if col_pos >= self.grid_cols().get() - 1 {
                     // Last column, might not be full
-                    let mod_val = num_values % self.get_rows();
+                    let mod_val = num_values % self.grid_rows();
                     if mod_val == 0 {
                         // Full column
                         self.get_rows().saturating_sub(1)
@@ -244,7 +243,7 @@ impl ColumnarMenu {
                 }
             }
             TraversalDirection::Horizontal => {
-                let mod_val = num_values % self.get_used_cols();
+                let mod_val = num_values % self.grid_cols();
                 if mod_val > 0 && col_pos >= mod_val {
                     // Column with last row empty
                     self.get_rows().saturating_sub(2)
@@ -261,7 +260,7 @@ impl ColumnarMenu {
         let num_values = self.get_values().len() as u16;
         match self.default_details.traversal_dir {
             TraversalDirection::Vertical => {
-                let mod_val = num_values % self.get_rows();
+                let mod_val = num_values % self.grid_rows();
                 if mod_val > 0 && row_pos >= mod_val {
                     // Row with last column empty
                     self.get_used_cols().saturating_sub(2)
@@ -271,9 +270,9 @@ impl ColumnarMenu {
                 }
             }
             TraversalDirection::Horizontal => {
-                if row_pos >= self.get_rows() - 1 {
+                if row_pos >= self.grid_rows().get() - 1 {
                     // Last row, might not be full
-                    let mod_val = num_values % self.get_used_cols();
+                    let mod_val = num_values % self.grid_cols();
                     if mod_val == 0 {
                         // Full row
                         self.get_used_cols().saturating_sub(1)
@@ -291,44 +290,56 @@ impl ColumnarMenu {
 
     /// Menu index based on column and row position
     fn index(&self) -> usize {
-        let index = match self.default_details.traversal_dir {
-            TraversalDirection::Vertical => self.col_pos * self.get_rows() + self.row_pos,
-            TraversalDirection::Horizontal => self.row_pos * self.get_used_cols() + self.col_pos,
-        };
-        index.into()
+        // Widened to usize so a large grid cannot overflow u16.
+        match self.default_details.traversal_dir {
+            TraversalDirection::Vertical => {
+                usize::from(self.col_pos) * usize::from(self.grid_rows().get())
+                    + usize::from(self.row_pos)
+            }
+            TraversalDirection::Horizontal => {
+                usize::from(self.row_pos) * usize::from(self.grid_cols().get())
+                    + usize::from(self.col_pos)
+            }
+        }
     }
 
     /// Calculates how many rows the menu will use
+    ///
+    /// The *layout* answer, so it may be 0 while a completion is still in
+    /// flight; grid arithmetic asks [`grid_rows`](Self::grid_rows) instead.
     fn get_rows(&self) -> u16 {
-        match self.get_values().len() as u16 {
+        if self.get_values().is_empty() && self.phase.awaiting_results() {
             // No reason to save space if we're waiting for results.
-            0 if self.phase.awaiting_results() => 0,
-            // Should be one row for actual empty results
-            0 => 1,
-            total_values => total_values.div_ceil(self.get_cols()),
+            0
+        } else {
+            self.grid_rows().get()
         }
+    }
+
+    /// How many rows the value grid has, at least 1 by construction: `%` and
+    /// `/` by it cannot panic and need no per-site zero check.
+    fn grid_rows(&self) -> NonZero<u16> {
+        let values = self.get_values().len() as u16;
+        NonZero::new(values.div_ceil(self.get_cols())).unwrap_or(NonZero::<u16>::MIN)
     }
 
     /// Calculates how many columns will be used to display values
     fn get_used_cols(&self) -> u16 {
+        self.grid_cols().get()
+    }
+
+    /// The column counterpart of [`grid_rows`](Self::grid_rows), likewise at
+    /// least 1 by construction.
+    fn grid_cols(&self) -> NonZero<u16> {
         let values = self.get_values().len() as u16;
-
-        if values == 0 {
-            // When the values are empty the "NO RECORDS FOUND" message is shown, taking 1 column
-            return 1;
-        }
-
-        match self.default_details.traversal_dir {
+        let cols = match self.default_details.traversal_dir {
             TraversalDirection::Vertical => {
-                let cols = values / self.get_rows();
-                if !values.is_multiple_of(self.get_rows()) {
-                    cols + 1
-                } else {
-                    cols
-                }
+                let rows = self.grid_rows();
+                values / rows + u16::from(!values.is_multiple_of(rows.get()))
             }
             TraversalDirection::Horizontal => self.get_cols().min(values),
-        }
+        };
+        NonZero::new(cols).unwrap_or(NonZero::<u16>::MIN)
     }
 
     /// Returns working details col width
@@ -525,6 +536,8 @@ impl ColumnarMenu {
                 self.reload(updated, editor, completer)
             }
             MenuEvent::Deactivate => {}
+            // No values, no grid: nothing to move over.
+            _ if self.get_values().is_empty() => {}
             MenuEvent::NextElement => self.move_next(),
             MenuEvent::PreviousElement => self.move_previous(),
             MenuEvent::MoveUp => self.move_up(),
@@ -1025,6 +1038,47 @@ mod tests {
         fn complete(&mut self, _line: &str, _pos: usize) -> crate::CompletionResult {
             crate::CompletionResult::Pending
         }
+    }
+
+    /// Movement over an empty, still-pending menu is a no-op instead of
+    /// dividing by the 0 rows the awaiting phase reports (vertical panicked).
+    #[test]
+    fn movement_on_an_awaiting_empty_menu_is_a_noop() {
+        let mut menu = ColumnarMenu::default()
+            .with_name("testmenu")
+            .with_traversal_direction(TraversalDirection::Vertical);
+        let mut editor = Editor::default();
+        let mut pending = PendingCompleter;
+        setup_menu(&mut menu, &mut editor, &mut pending, (30, 10));
+        assert_eq!(menu.get_rows(), 0, "setup: layout reserves no lines");
+
+        let mut painter = Painter::new(W::sink());
+        painter.handle_resize(30, 10);
+        for event in [
+            MenuEvent::NextElement,
+            MenuEvent::PreviousElement,
+            MenuEvent::MoveUp,
+            MenuEvent::MoveDown,
+            MenuEvent::MoveLeft,
+            MenuEvent::MoveRight,
+        ] {
+            menu.menu_event(event);
+            menu.update_working_details(&mut editor, &mut pending, &painter);
+        }
+        assert_eq!(menu.index(), 0, "the cursor stays on the home cell");
+    }
+
+    /// The divisors never collapse to 0, even while the layout answer is 0.
+    #[test]
+    fn grid_dimensions_stay_nonzero_while_awaiting() {
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut pending = PendingCompleter;
+        setup_menu(&mut menu, &mut editor, &mut pending, (30, 10));
+        assert_eq!(menu.get_rows(), 0);
+        assert_eq!(menu.grid_rows().get(), 1);
+        assert_eq!(menu.grid_cols().get(), 1);
+        assert_eq!(menu.position_from_index(0), (0, 0));
     }
 
     #[test]
