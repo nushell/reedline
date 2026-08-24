@@ -113,7 +113,9 @@ impl<'prompt> PromptLines<'prompt> {
         let cursor_y = (estimate_required_lines(&buffer_width_prompt, terminal_columns) as u16)
             .saturating_sub(1); // 0 based
 
-        let cursor_x = (total_width % terminal_columns as usize) as u16;
+        // Floored: terminals report a 0 width mid-resize (#842), like
+        // `estimate_single_line_wraps` already handles.
+        let cursor_x = (total_width % terminal_columns.max(1) as usize) as u16;
 
         (cursor_x, cursor_y as u16)
     }
@@ -231,6 +233,15 @@ mod tests {
         "this is a text that contains newlines\n::: and very loooooooooooooooong text that wraps",
         40,
         (8, 3)
+    )]
+    // A mid-resize terminal can report width 0 (#842); the cursor lands on
+    // the home column instead of dividing by zero.
+    #[case(
+        "~/path/",
+        "❯ ",
+        "input",
+        0,
+        (0, 0)
     )]
 
     fn test_cursor_pos(

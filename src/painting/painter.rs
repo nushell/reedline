@@ -1241,11 +1241,12 @@ impl Painter {
                     // the first line has to deal with the prompt
                     let first_line_len = line.len() + prompt_len;
                     // at least, it is one line
-                    ((first_line_len as u16) / (self.screen_width())) + 1
+                    // max(1): a mid-resize terminal can report width 0 (#842)
+                    ((first_line_len as u16) / self.screen_width().max(1)) + 1
                 }
                 _ => {
                     // the n-th line, no prompt, at least, it is one line
-                    ((line.len() as u16) / self.screen_width()) + 1
+                    ((line.len() as u16) / self.screen_width().max(1)) + 1
                 }
             };
             // count up screen-lines
