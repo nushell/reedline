@@ -568,17 +568,21 @@ impl ColumnarMenu {
         } else {
             // If no default width is found, then the total screen width is used to estimate
             // the column width based on the default number of columns
+            // Floored: `with_columns(0)` is representable.
             let default_width = self
                 .default_details
                 .col_width
-                .unwrap_or_else(|| screen_width / self.default_details.columns as usize);
+                .unwrap_or_else(|| screen_width / self.default_details.columns.max(1) as usize);
 
             // Adjusting the working width of the column based the max line width found
             // in the menu values
             let required_width =
                 self.completions.longest_suggestion + self.default_details.col_padding;
 
-            self.working_details.col_width = required_width.max(default_width).min(screen_width);
+            // Floored: 0 on a 0-width terminal, and `possible_columns`
+            // divides by this.
+            self.working_details.col_width =
+                required_width.max(default_width).min(screen_width).max(1);
 
             // The working columns is adjusted based on possible number of columns
             // that could be fitted in the screen with the calculated column width
@@ -728,7 +732,9 @@ impl Menu for ColumnarMenu {
             // This reduces the flickering when printing the menu
             match self.default_details.traversal_dir {
                 TraversalDirection::Vertical => {
-                    let num_rows: usize = self.get_rows().into();
+                    // `grid_rows`, since `step_by(0)` panics: the type proves
+                    // what the enclosing non-empty branch implies.
+                    let num_rows: usize = NonZeroUsize::from(self.grid_rows()).get();
                     let rows_to_draw = num_rows.min(available_lines.into());
                     let mut menu_string = String::new();
                     for line in 0..rows_to_draw {
@@ -750,8 +756,11 @@ impl Menu for ColumnarMenu {
                     menu_string
                 }
                 TraversalDirection::Horizontal => {
-                    let available_values = (available_lines * self.get_cols()) as usize;
-                    let skip_values = (self.skip_rows * self.get_used_cols()) as usize;
+                    // Widened to usize so the products cannot overflow u16.
+                    let available_values =
+                        usize::from(available_lines) * usize::from(self.get_cols());
+                    let skip_values =
+                        usize::from(self.skip_rows) * usize::from(self.grid_cols().get());
 
                     self.get_values()
                         .iter()
@@ -1038,6 +1047,28 @@ mod tests {
         fn complete(&mut self, _line: &str, _pos: usize) -> crate::CompletionResult {
             crate::CompletionResult::Pending
         }
+    }
+
+    /// `with_columns(0)` reaches the layout's screen-width division.
+    #[test]
+    fn zero_configured_columns_does_not_panic_the_layout() {
+        let mut menu = ColumnarMenu::default()
+            .with_name("testmenu")
+            .with_columns(0);
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["alpha", "beta", "gamma"]);
+        setup_menu(&mut menu, &mut editor, &mut completer, (30, 10));
+        assert!(!menu.menu_string(10, false).is_empty());
+    }
+
+    /// A 0x0 terminal clamps `col_width` to 0, which `possible_columns`
+    /// divides by.
+    #[test]
+    fn zero_width_terminal_does_not_panic_the_layout() {
+        let mut menu = ColumnarMenu::default().with_name("testmenu");
+        let mut editor = Editor::default();
+        let mut completer = FakeCompleter::new(&["alpha", "beta", "gamma"]);
+        setup_menu(&mut menu, &mut editor, &mut completer, (0, 0));
     }
 
     /// Movement over an empty, still-pending menu is a no-op instead of
