@@ -1572,15 +1572,13 @@ impl Reedline {
             ReedlineEvent::Enter | ReedlineEvent::Submit | ReedlineEvent::SubmitOrNewline
                 if self.menus.iter().any(|menu| menu.is_active()) =>
             {
-                for menu in self.menus.iter_mut() {
-                    if menu.is_active() {
-                        menu.replace_in_buffer(&mut self.editor);
-                        menu.menu_event(MenuEvent::Deactivate);
-
-                        return Ok(EventStatus::Handled);
-                    }
+                if let Some(menu) = self.menus.iter_mut().find(|menu| menu.is_active()) {
+                    menu.replace_in_buffer(&mut self.editor);
+                    menu.menu_event(MenuEvent::Deactivate);
+                    Ok(EventStatus::Handled)
+                } else {
+                    Ok(EventStatus::Inapplicable)
                 }
-                unreachable!()
             }
             ReedlineEvent::Enter => {
                 #[cfg(feature = "bashisms")]
@@ -2265,7 +2263,7 @@ impl Reedline {
                     let history_search_by_session = self
                         .history
                         .search(SearchQuery::last_with_prefix_and_cwd(
-                            parsed.prefix.unwrap().to_string(),
+                            parsed.prefix.unwrap_or_default().to_string(),
                             self.cwd.clone().unwrap_or_else(|| {
                                 std::env::current_dir()
                                     .unwrap_or_default()
