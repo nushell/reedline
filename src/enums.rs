@@ -410,7 +410,7 @@ pub enum EditCommand {
     Select(MotionTarget),
 
     /// Select a [`TextObject`]
-    SelectPair(TextObject),
+    SelectTextObject(TextObject),
 
     /// Cut like [`EditCommand::Cut`], except that a `LineWise` span keeps its
     /// line terminators: only the lines' *content* is consumed, so one blank
@@ -925,7 +925,7 @@ impl EditCommand {
             EditCommand::Move(_) => EditType::MoveCursor { select: false },
             EditCommand::Extend(_) => EditType::MoveCursor { select: true },
             EditCommand::CollapseSelection(_) => EditType::MoveCursor { select: false },
-            EditCommand::Select(_) | EditCommand::SelectPair(_) => {
+            EditCommand::Select(_) | EditCommand::SelectTextObject(_) => {
                 EditType::MoveCursor { select: true }
             }
             EditCommand::Cut { .. } => EditType::EditText,

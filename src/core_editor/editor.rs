@@ -178,8 +178,8 @@ impl Editor {
                     self.place(selection);
                 }
             },
-            EditCommand::SelectPair(t) => {
-                todo!();
+            EditCommand::SelectTextObject(t) => {
+                self.select_text_object(*t);
             }
             EditCommand::CollapseSelection(direction) => {
                 let cursor = self.line_buffer.cursor();

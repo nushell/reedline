@@ -631,11 +631,11 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
         Verb::SelectAll => ReedlineEvent::Edit(vec![EditCommand::SelectAll]),
         Verb::SelectLine => action.repeated(EditCommand::SelectLine),
         Verb::Match(m) => match m.action {
-            MatchAction::Inner => action.repeated(EditCommand::SelectPair(TextObject {
+            MatchAction::Inner => action.repeated(EditCommand::SelectTextObject(TextObject {
                 scope: TextObjectScope::Inner,
                 object_type: m.text_object,
             })),
-            MatchAction::Around => action.repeated(EditCommand::SelectPair(TextObject {
+            MatchAction::Around => action.repeated(EditCommand::SelectTextObject(TextObject {
                 scope: TextObjectScope::Around,
                 object_type: m.text_object,
             })),
