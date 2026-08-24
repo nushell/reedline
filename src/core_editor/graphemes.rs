@@ -245,6 +245,13 @@ mod tests {
     }
 
     #[test]
+    fn ensure_accepts_a_position_inside_a_multibyte_char() {
+        // "é" occupies bytes 3..5, so 4 is not even a char boundary
+        assert_eq!(ensure_grapheme_boundary_prev("café", 4), 3);
+        assert_eq!(ensure_grapheme_boundary_next("café", 4), 5);
+    }
+
+    #[test]
     fn ensure_is_idempotent() {
         // applying twice equals applying once, at every char boundary
         let buf = "a日e\u{0301}👨‍👩‍👧";

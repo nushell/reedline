@@ -187,11 +187,8 @@
 //! ## Use `Helix` edit mode
 //!
 //! Selection-first editing: motions carry the selection, verbs act on it.
-//! Requires the `helix` feature (enabled by default), which also gates the
-//! types below.
 //!
 //! ```rust
-//! # #[cfg(feature = "helix")] {
 //! use reedline::{default_helix_normal_keybindings, Helix, Reedline};
 //!
 //! let mut normal_keybindings = default_helix_normal_keybindings();
@@ -200,7 +197,6 @@
 //! let line_editor = Reedline::create().with_edit_mode(Box::new(
 //!     Helix::default().with_normal_keybindings(normal_keybindings),
 //! ));
-//! # }
 //! ```
 //!
 //! Run `cargo run --example helix` for the mode on its own, or
@@ -213,8 +209,7 @@
 //! - `bashisms`: Enable support for special text sequences that recall components from the history. e.g. `!!` and `!$`. For use in shells like `bash` or [`nushell`](https://nushell.sh).
 //! - `sqlite`: Provides the `SqliteBackedHistory` to store richer information in the history. Statically links the required sqlite version.
 //! - `sqlite-dynlib`: Alternative to the feature `sqlite`. Will not statically link. Requires `sqlite >= 3.38` to link dynamically!
-//! - `external_printer`: **Experimental:** Thread-safe `ExternalPrinter` handle to print lines from concurrently running threads.
-//! - `helix`: Selection-first `Helix`/Kakoune-style edit mode, where a motion moves the selection and a verb acts on it. On by default; the `Helix` type and its keybinding defaults are gated behind it, so `default-features = false` builds compile without the mode.
+//! - `external_printer`: **Experimental:** `ExternalPrinter` to print lines from concurrently running threads; each thread gets its own thread-safe sender via `ExternalPrinter::sender()`.
 //!
 //! ## Are we prompt yet? (Development status)
 //!
@@ -255,6 +250,9 @@
 mod core_editor;
 pub use core_editor::{Editor, LineBuffer};
 
+mod auto_pairs;
+pub use auto_pairs::{AutoPairAction, AutoPairContext, AutoPairs};
+
 mod enums;
 pub use enums::{
     Direction, EditCommand, EditCommandDiscriminants, FindStop, Granularity, MotionTarget,
@@ -273,7 +271,7 @@ mod result;
 pub use result::{ReedlineError, ReedlineErrorVariants, Result};
 
 mod history;
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+#[cfg(feature = "_sqlite")]
 pub use history::SqliteBackedHistory;
 pub use history::{
     CommandLineSearch, FileBackedHistory, History, HistoryItem, HistoryItemExtraInfo,
@@ -282,12 +280,13 @@ pub use history::{
 };
 
 mod prompt;
-#[cfg(feature = "helix")]
 pub use prompt::PromptHelixMode;
 pub use prompt::{
     DefaultPrompt, DefaultPromptSegment, Prompt, PromptEditMode, PromptEditModeDiscriminants,
     PromptHistorySearch, PromptHistorySearchStatus, PromptViMode, DEFAULT_INDICATOR_COLOR,
-    DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_MULTILINE_COLOR, DEFAULT_PROMPT_RIGHT_COLOR,
+    DEFAULT_INSERT_PROMPT_INDICATOR, DEFAULT_MULTILINE_INDICATOR, DEFAULT_NORMAL_PROMPT_INDICATOR,
+    DEFAULT_PROMPT_COLOR, DEFAULT_PROMPT_INDICATOR, DEFAULT_PROMPT_MULTILINE_COLOR,
+    DEFAULT_PROMPT_RIGHT_COLOR, DEFAULT_SELECT_PROMPT_INDICATOR,
 };
 
 mod edit_mode;
@@ -295,7 +294,6 @@ pub use edit_mode::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     CursorConfig, EditMode, Emacs, Keybindings, Vi,
 };
-#[cfg(feature = "helix")]
 pub use edit_mode::{
     default_helix_insert_keybindings, default_helix_normal_keybindings,
     default_helix_select_keybindings, Helix,
@@ -320,8 +318,8 @@ pub use validator::{DefaultValidator, ValidationResult, Validator};
 mod menu;
 pub use menu::{
     menu_functions, ColumnarMenu, DescriptionMenu, DescriptionMode, DescriptionPosition, IdeMenu,
-    InputMode, ListMenu, Menu, MenuBuilder, MenuEvent, MenuTextStyle, OutputMode, ReedlineMenu,
-    TraversalDirection,
+    InputMode, ListMenu, Menu, MenuBuilder, MenuEvent, MenuSettings, MenuTextStyle, OutputMode,
+    ReedlineMenu, TraversalDirection,
 };
 
 mod terminal_extensions;

@@ -42,6 +42,13 @@ pub struct Editor {
     cross_line_cursor: bool,
 }
 
+/// Whether an [`EditCommand`] could be applied in the current editor state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EditCommandStatus {
+    Applied,
+    Inapplicable,
+}
+
 enum OperatorVerb {
     Cut,
     Copy,
@@ -97,7 +104,10 @@ impl Editor {
         self.update_undo_state(undo_behavior);
     }
 
-    pub(crate) fn run_edit_command(&mut self, command: &EditCommand) {
+    pub(crate) fn run_edit_command(&mut self, command: &EditCommand) -> EditCommandStatus {
+        let initial_cursor = self.line_buffer.cursor();
+        let mut status = EditCommandStatus::Applied;
+
         match command {
             EditCommand::MoveToStart { select } => self.move_to_start(*select),
             EditCommand::MoveToLineStart { select } => self.move_to_line_start(*select),
@@ -131,18 +141,42 @@ impl Editor {
             // covered turns on which side of the *anchor* it falls, which only
             // `put_cursor` can see. Helix lowers its own (`gs`) through
             // `put_cursor` in select mode too, so take that path either way.
-            EditCommand::Extend(t) if t.direction().is_none() => {
-                let head = self.resolve_head(*t);
-                self.move_head_to(head, true);
-            }
+            EditCommand::Extend(t) if t.direction().is_none() => self.apply_move(*t, true),
             EditCommand::Extend(t) => match self.caret_extent() {
-                SelectionExtent::CoverLanding => {
-                    let head = self.resolve_head(*t);
-                    self.move_head_to(head, true);
+                SelectionExtent::CoverLanding => self.apply_move(*t, true),
+                // Backward travel departs from the visible caret, which under a
+                // block caret already sits one grapheme inside the head.
+                // `extend_span` would park the head on `op_end` and the caret is
+                // rendered one grapheme back again, so that offset lands twice
+                // and one press moves two cells (#1190). Only while the cursor
+                // is still forward: once a press reverses it the caret *is* the
+                // head and the offset cancels, which is why the doubling shows
+                // up on the first press out of a forward selection and not after.
+                //
+                // `put_cursor` instead places the head so the caret comes to rest
+                // exactly on the resolved target. That is `CoverLanding`'s head
+                // placement inside a `Span` mode, which the two are otherwise
+                // orthogonal to (see `SelectionExtent`): backward travel is the
+                // one direction where `Span` has no inclusivity of its own to
+                // encode, since `op_end` and the caret disagree about the same
+                // grapheme.
+                //
+                // Forward keeps `extend_span`, since it departs from the head and
+                // has no offset to undo.
+                SelectionExtent::Span if t.direction() == Some(Direction::Backward) => {
+                    self.apply_move(*t, true)
                 }
                 SelectionExtent::Span => {
+                    // Only forward travel reaches here: the arms above take the
+                    // directionless and backward targets. Forward departs from
+                    // the head rather than the visible caret, since a forward
+                    // block selection puts the caret on the near edge of its head
+                    // grapheme and the head on the far edge. Departing from the
+                    // caret would make an exclusive forward motion a no-op,
+                    // landing on the boundary the previous `Extend` parked the
+                    // head on.
                     let geom = self.caret_geometry();
-                    let origin = self.motion_origin(*t);
+                    let origin = self.line_buffer.cursor().head();
                     let op_end = resolve_motion(self.get_buffer(), origin, *t, geom).op_end;
                     let next =
                         self.line_buffer
@@ -238,12 +272,14 @@ impl Editor {
             EditCommand::InsertChar(c) => self.insert_char(*c),
             EditCommand::Complete => {}
             EditCommand::InsertString(str) => self.insert_str(str),
+            EditCommand::InsertPair { open, close } => self.insert_pair(*open, *close),
             EditCommand::InsertNewline => self.insert_newline(),
             EditCommand::InsertNewlineAbove => self.insert_newline_above(),
             EditCommand::InsertNewlineBelow => self.insert_newline_below(),
             EditCommand::ReplaceChar(chr) => self.replace_char(*chr),
             EditCommand::ReplaceChars(n_chars, str) => self.replace_chars(*n_chars, str),
             EditCommand::Backspace => self.backspace(),
+            EditCommand::BackspacePair { open, close } => self.backspace_pair(*open, *close),
             EditCommand::Delete => self.delete(),
             EditCommand::CutChar => self.cut_char(),
             EditCommand::CutCharLeft => self.cut_char_left(),
@@ -270,8 +306,8 @@ impl Editor {
             EditCommand::CutBigWordRight => self.cut_big_word_right(),
             EditCommand::CutWordRightToNext => self.cut_word_right_to_next(),
             EditCommand::CutBigWordRightToNext => self.cut_big_word_right_to_next(),
-            EditCommand::PasteCutBufferBefore => self.insert_cut_buffer_before(),
-            EditCommand::PasteCutBufferAfter => self.insert_cut_buffer_after(),
+            EditCommand::PasteCutBufferBefore => self.paste_cut_buffer_before(),
+            EditCommand::PasteCutBufferAfter => self.paste_cut_buffer_after(),
             EditCommand::PasteAtSelectionEdge { direction, count } => {
                 self.paste_at_selection_edge(*direction, *count)
             }
@@ -300,18 +336,19 @@ impl Editor {
                 self.move_left_until_char(*c, true, true, *select)
             }
             EditCommand::SelectAll => self.select_all(),
-            #[cfg(feature = "helix")]
             EditCommand::SelectLine => self.select_line(),
             EditCommand::CutSelection { granularity } => {
                 self.cut_selection_to_cut_buffer(*granularity)
             }
-            #[cfg(feature = "helix")]
             EditCommand::EraseSelection => self.erase_selection(),
-            EditCommand::CopySelection => self.copy_selection_to_cut_buffer(),
+            EditCommand::CopySelection => {
+                status = self.copy_selection_to_cut_buffer();
+            }
             EditCommand::LowercaseSelection => self.lowercase_selection(),
             EditCommand::UppercaseSelection => self.uppercase_selection(),
             EditCommand::SwitchcaseSelection => self.switchcase_selection(),
-            EditCommand::Paste => self.paste_cut_buffer(),
+            // Same command as `PasteCutBufferBefore`, both names are public
+            EditCommand::Paste => self.paste_cut_buffer_before(),
             EditCommand::CopyFromStart => self.copy_from_start(),
             EditCommand::CopyFromStartLinewise => self.copy_from_start_linewise(),
             EditCommand::CopyFromLineStart => self.copy_from_line_start(),
@@ -364,7 +401,9 @@ impl Editor {
             #[cfg(feature = "system_clipboard")]
             EditCommand::CutSelectionSystem => self.cut_selection_to_system(),
             #[cfg(feature = "system_clipboard")]
-            EditCommand::CopySelectionSystem => self.copy_selection_to_system(),
+            EditCommand::CopySelectionSystem => {
+                status = self.copy_selection_to_system();
+            }
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => self.paste_from_system(),
             EditCommand::CutInsidePair { left, right } => self.cut_inside_pair(*left, *right),
@@ -390,6 +429,12 @@ impl Editor {
 
         self.commit_cursor();
 
+        if matches!(command.edit_type(), EditType::MoveCursor { .. })
+            && self.line_buffer.cursor() == initial_cursor
+        {
+            return EditCommandStatus::Inapplicable;
+        }
+
         let new_undo_behavior = match (command, command.edit_type()) {
             (_, EditType::MoveCursor { .. }) => UndoBehavior::MoveCursor,
             (EditCommand::InsertChar(c), EditType::EditText) => UndoBehavior::InsertCharacter(*c),
@@ -406,16 +451,11 @@ impl Editor {
         };
 
         self.update_undo_state(new_undo_behavior);
+        status
     }
 
     pub(crate) fn clear_selection(&mut self) {
-        // Collapse to the caret (the visible position), not merely drop the
-        // anchor: under `Block` the stored head sits on the far edge, so dropping
-        // the anchor alone would strand the cursor one grapheme past where it
-        // shows. Collapsing to `point(caret)` keeps it put; the commit boundary
-        // re-widens it under the active policy.
-        let caret = self.line_buffer.insertion_point();
-        self.line_buffer.set_cursor(Cursor::point(caret));
+        self.line_buffer.collapse_to_caret();
     }
 
     fn operate(&mut self, selection: Cursor, verb: OperatorVerb, granularity: Granularity) {
@@ -723,14 +763,12 @@ impl Editor {
         if let Some(target) = self.line_buffer.line_up_target() {
             self.move_head_to(target, select);
         }
-        self.update_undo_state(UndoBehavior::MoveCursor);
     }
 
     pub(crate) fn move_line_down(&mut self, select: bool) {
         if let Some(target) = self.line_buffer.line_down_target() {
             self.move_head_to(target, select);
         }
-        self.update_undo_state(UndoBehavior::MoveCursor);
     }
 
     /// Get the text of the current [`LineBuffer`]
@@ -767,27 +805,6 @@ impl Editor {
             cursor.head()
         } else {
             cursor.caret(self.line_buffer.get_buffer())
-        }
-    }
-
-    /// The edge `target` departs from — the origin an `Extend` resolves against,
-    /// as opposed to [`insertion_point`](Self::insertion_point)'s *where the
-    /// cursor is*.
-    ///
-    /// A forward block selection puts the caret on the near edge of its head
-    /// grapheme and the head on the far edge, so forward travel departs from the
-    /// head and backward travel from the caret. Departing from the caret both
-    /// ways makes an exclusive forward motion a no-op — it lands on the very
-    /// boundary the previous `Extend` parked the head on.
-    ///
-    /// Which way `target` travels is read against the *visible* cursor, so the
-    /// answer never depends on the edge being picked. Under `Between` both edges
-    /// are the head, so this is a no-op there.
-    fn motion_origin(&self, target: MotionTarget) -> usize {
-        let reference = self.insertion_point();
-        match target.direction() {
-            Some(Direction::Forward) => self.line_buffer.cursor().head(),
-            _ => reference,
         }
     }
 
@@ -832,25 +849,31 @@ impl Editor {
     pub(crate) fn is_cursor_at_buffer_end(&self) -> bool {
         let buf = self.get_buffer();
         let cursor = self.line_buffer.cursor();
-        // An active selection is never a clean end-of-buffer point. Completing a
-        // history hint (or appending) here would run through `delete_selection`
-        // and clobber the selection — so report `false`, matching the old
-        // caret-based check, which a forward selection's caret (one inward from
-        // `len`) already failed.
-        if !cursor.is_empty() {
+        // A selection is never a clean end-of-buffer point: accepting a hint
+        // here would run through `prepare_append_at_buffer_end` and silently
+        // drop it. Under a bar caret the resting cursor is an empty point, so
+        // any non-empty cursor is a selection and shape settles it. A block
+        // caret rests as a min-width-1 range, so shape alone cannot tell a
+        // resting caret from a `v`-started one-grapheme selection covering the
+        // last grapheme; only the mode can. Asking the mode under a bar caret
+        // too would miss the shift-selections emacs and vi insert can hold.
+        let selection = if self.caret_geometry() == CaretGeometry::Block {
+            next_grapheme_boundary(buf, cursor.start()) < cursor.end()
+                || (!cursor.is_empty() && self.edit_mode.is_selection_mode())
+        } else {
+            !cursor.is_empty()
+        };
+        if selection {
             return false;
         }
+        // Measure from the visible caret: `insertion_point` already resolves
+        // the covered grapheme for Block and the trailing gap for Bar, whether
+        // the cursor is a point or a min-width-1 block.
+        let caret = self.insertion_point();
         if self.caret_geometry() == CaretGeometry::Block {
-            // Cell caret (vi normal): the resting point sits *on* the last
-            // grapheme, one inward from `len`. "At the end" means that cell is the
-            // final one — nothing lies to its right. (A bare `head == len` check
-            // never holds here, which is why a history hint stopped completing in
-            // normal mode after the cursor became the single source of truth.)
-            next_grapheme_boundary(buf, cursor.head()) == buf.len()
+            next_grapheme_boundary(buf, caret) == buf.len()
         } else {
-            // Bar caret (emacs / vi insert): at the end iff the head rests past
-            // the last grapheme.
-            cursor.head() == buf.len()
+            caret == buf.len()
         }
     }
 
@@ -1095,56 +1118,6 @@ impl Editor {
         }
     }
 
-    fn insert_cut_buffer_before(&mut self) {
-        self.delete_selection();
-        insert_clipboard_content_before(&mut self.line_buffer, self.cut_buffer.deref_mut())
-    }
-
-    fn insert_cut_buffer_after(&mut self) {
-        // After replacing a selection the cursor already sits at the deletion
-        // point, so it must NOT skip a grapheme; only the plain no-selection `p`
-        // steps past the grapheme under the cursor before inserting.
-        let had_selection = self.line_buffer.selection_anchor().is_some();
-        self.delete_selection();
-        match self.cut_buffer.get() {
-            (content, Granularity::CharWise) => {
-                if !had_selection {
-                    self.line_buffer.move_right();
-                }
-                self.line_buffer.insert_str(&content);
-            }
-            (mut content, Granularity::LineWise) => {
-                if !content.ends_with('\n') {
-                    content.push('\n');
-                }
-                let ip = self.line_buffer.insertion_point();
-                match line::start_of_next_line(self.line_buffer.get_buffer(), ip) {
-                    // A line exists below: insert at its start so the pasted lines
-                    // land between current and next — i.e. below the current line.
-                    Some(next) => {
-                        self.line_buffer.set_insertion_point(next);
-                        self.line_buffer.insert_str(&content);
-                    }
-                    // Last line: no line below, so append after the current line's
-                    // terminator. Drop the trailing `\n` so no blank line is added,
-                    // otherwise the paste would land *above* (like `P`).
-                    None => {
-                        let trimmed = content.strip_suffix('\n').unwrap_or(&content);
-                        if self.line_buffer.is_empty() {
-                            // No current line to append below — insert as-is so an
-                            // empty buffer (e.g. after `dd` on the only line) does
-                            // not gain a leading blank line.
-                            self.line_buffer.insert_str(trimmed);
-                        } else {
-                            self.line_buffer.set_insertion_point(self.line_buffer.len());
-                            self.line_buffer.insert_str(&format!("\n{trimmed}"));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     fn paste_at_selection_edge(&mut self, direction: Direction, count: usize) {
         let at = match direction {
             Direction::Forward => self.line_buffer.cursor().end(),
@@ -1313,7 +1286,6 @@ impl Editor {
     /// express: [`Select`](EditCommand::Select) re-anchors at the origin and
     /// [`Extend`](EditCommand::Extend) keeps its anchor, so neither can move
     /// both edges to line boundaries *and* notice they were there already.
-    #[cfg(feature = "helix")]
     fn select_line(&mut self) {
         let buf = self.line_buffer.get_buffer();
         let cursor = self.line_buffer.cursor();
@@ -1359,7 +1331,6 @@ impl Editor {
     ///
     /// `OperatorVerb::Erase` is the register-free deletion the motion-shaped
     /// `Erase` already uses; only the span differs.
-    #[cfg(feature = "helix")]
     fn erase_selection(&mut self) {
         if let Some((start, end)) = self.get_selection() {
             let sel = Cursor::new(start, end);
@@ -1369,18 +1340,24 @@ impl Editor {
     }
 
     #[cfg(feature = "system_clipboard")]
-    fn copy_selection_to_system(&mut self) {
-        if let Some((start, end)) = self.get_selection() {
-            let cut_slice = &self.line_buffer.get_buffer()[start..end];
-            self.system_clipboard.set(cut_slice, Granularity::CharWise);
-        }
+    fn copy_selection_to_system(&mut self) -> EditCommandStatus {
+        let Some((start, end)) = self.get_selection() else {
+            return EditCommandStatus::Inapplicable;
+        };
+
+        let cut_slice = &self.line_buffer.get_buffer()[start..end];
+        self.system_clipboard.set(cut_slice, Granularity::CharWise);
+        EditCommandStatus::Applied
     }
 
-    fn copy_selection_to_cut_buffer(&mut self) {
-        if let Some((start, end)) = self.get_selection() {
-            let cut_slice = &self.line_buffer.get_buffer()[start..end];
-            self.cut_buffer.set(cut_slice, Granularity::CharWise);
-        }
+    fn copy_selection_to_cut_buffer(&mut self) -> EditCommandStatus {
+        let Some((start, end)) = self.get_selection() else {
+            return EditCommandStatus::Inapplicable;
+        };
+
+        let cut_slice = &self.line_buffer.get_buffer()[start..end];
+        self.cut_buffer.set(cut_slice, Granularity::CharWise);
+        EditCommandStatus::Applied
     }
 
     fn lowercase_selection(&mut self) {
@@ -1417,14 +1394,7 @@ impl Editor {
     /// If a selection is active returns the selected range, otherwise None.
     /// The range is guaranteed to be ascending.
     pub fn get_selection(&self) -> Option<(usize, usize)> {
-        // `None` exactly when the cursor is empty (head == anchor): with the
-        // collapsed `Cursor` storage, `selection_anchor()` is derived from
-        // `!is_empty()`, so an anchor on the head is simply no selection.
-        self.line_buffer.selection_anchor()?;
-        let cursor = self.line_buffer.cursor();
-
-        // Inclusivity is geometric (widened by put_cursor).
-        Some((cursor.start(), cursor.end().min(self.line_buffer.len())))
+        self.line_buffer.get_selection()
     }
 
     /// The one-grapheme cell the caret rests on inside the active selection,
@@ -1446,16 +1416,9 @@ impl Editor {
         (cell_start < to && cell_end > from).then_some((cell_start, cell_end))
     }
 
-    fn delete_selection(&mut self) {
-        if let Some((start, end)) = self.get_selection() {
-            self.line_buffer.clear_range_safe(start..end);
-            self.clear_selection();
-        }
-    }
-
     fn backspace(&mut self) {
         if self.line_buffer.selection_anchor().is_some() {
-            self.delete_selection();
+            self.line_buffer.delete_selection();
         } else {
             self.line_buffer.delete_left_grapheme();
         }
@@ -1481,7 +1444,7 @@ impl Editor {
 
     fn delete(&mut self) {
         if self.line_buffer.selection_anchor().is_some() {
-            self.delete_selection();
+            self.line_buffer.delete_selection();
         } else {
             self.line_buffer.delete_right_grapheme();
         }
@@ -1552,18 +1515,54 @@ impl Editor {
         .head
     }
 
+    fn insert_pair(&mut self, open: char, close: char) {
+        if let Some((start, end)) = self.get_selection() {
+            let selected = self.line_buffer.get_buffer()[start..end].to_string();
+            let replacement = format!("{open}{selected}{close}");
+            self.line_buffer.replace_range(start..end, &replacement);
+            self.line_buffer.set_cursor(Cursor::point(
+                start + open.len_utf8() + selected.len() + close.len_utf8(),
+            ));
+        } else {
+            self.line_buffer.insert_char(open);
+            let inner = self.line_buffer.insertion_point();
+            self.line_buffer.insert_char(close);
+            self.line_buffer.set_cursor(Cursor::point(inner));
+        }
+    }
+
+    pub(crate) fn is_auto_pair_closer_at_cursor(&self, close: char) -> bool {
+        self.line_buffer.selection_anchor().is_none()
+            && self.line_buffer.grapheme_right().starts_with(close)
+    }
+
+    pub(crate) fn is_empty_auto_pair_at_cursor(&self, open: char, close: char) -> bool {
+        self.line_buffer.selection_anchor().is_none()
+            && self.line_buffer.grapheme_left().starts_with(open)
+            && self.line_buffer.grapheme_right().starts_with(close)
+    }
+
+    fn backspace_pair(&mut self, open: char, close: char) {
+        if !self.is_empty_auto_pair_at_cursor(open, close) {
+            return;
+        }
+
+        self.line_buffer.delete_right_grapheme();
+        self.line_buffer.delete_left_grapheme();
+    }
+
     fn insert_char(&mut self, c: char) {
-        self.delete_selection();
+        self.line_buffer.delete_selection();
         self.line_buffer.insert_char(c);
     }
 
     fn insert_str(&mut self, str: &str) {
-        self.delete_selection();
+        self.line_buffer.delete_selection();
         self.line_buffer.insert_str(str);
     }
 
     fn insert_newline(&mut self) {
-        self.delete_selection();
+        self.line_buffer.delete_selection();
         self.line_buffer.insert_newline();
     }
 
@@ -1589,13 +1588,15 @@ impl Editor {
 
     #[cfg(feature = "system_clipboard")]
     fn paste_from_system(&mut self) {
-        self.delete_selection();
         insert_clipboard_content_before(&mut self.line_buffer, self.system_clipboard.deref_mut());
     }
 
-    fn paste_cut_buffer(&mut self) {
-        self.delete_selection();
+    fn paste_cut_buffer_before(&mut self) {
         insert_clipboard_content_before(&mut self.line_buffer, self.cut_buffer.deref_mut());
+    }
+
+    fn paste_cut_buffer_after(&mut self) {
+        insert_clipboard_content_after(&mut self.line_buffer, self.cut_buffer.deref_mut());
     }
 
     fn cut_range(&mut self, range: Range<usize>) {
@@ -1988,20 +1989,67 @@ impl Editor {
     }
 }
 
+/// Replaces the selection, if any, then inserts the clipboard content before
+/// the caret. Linewise content lands above the current line (vi `P`).
 fn insert_clipboard_content_before(line_buffer: &mut LineBuffer, clipboard: &mut dyn Clipboard) {
+    line_buffer.delete_selection();
     match clipboard.get() {
         (content, Granularity::CharWise) => {
             line_buffer.insert_str(&content);
         }
         (mut content, Granularity::LineWise) => {
-            // TODO: Simplify that?
             line_buffer.move_to_line_start();
-            line_buffer.move_line_up();
             if !content.ends_with('\n') {
-                // TODO: Make sure platform requirements are met
                 content.push('\n');
             }
             line_buffer.insert_str(&content);
+        }
+    }
+}
+
+/// Replaces the selection, if any, then inserts the clipboard content after
+/// the caret. Linewise content lands below the current line (vi `p`).
+fn insert_clipboard_content_after(line_buffer: &mut LineBuffer, clipboard: &mut dyn Clipboard) {
+    // After replacing a selection the cursor already sits at the deletion
+    // point, so it must NOT skip a grapheme; only the plain no-selection `p`
+    // steps past the grapheme under the cursor before inserting.
+    let had_selection = line_buffer.selection_anchor().is_some();
+    line_buffer.delete_selection();
+    match clipboard.get() {
+        (content, Granularity::CharWise) => {
+            if !had_selection {
+                line_buffer.move_right();
+            }
+            line_buffer.insert_str(&content);
+        }
+        (mut content, Granularity::LineWise) => {
+            if !content.ends_with('\n') {
+                content.push('\n');
+            }
+            let ip = line_buffer.insertion_point();
+            match line::start_of_next_line(line_buffer.get_buffer(), ip) {
+                // A line exists below: insert at its start so the pasted lines
+                // land between current and next — i.e. below the current line.
+                Some(next) => {
+                    line_buffer.set_insertion_point(next);
+                    line_buffer.insert_str(&content);
+                }
+                // Last line: no line below, so append after the current line's
+                // terminator. Drop the trailing `\n` so no blank line is added,
+                // otherwise the paste would land *above* (like `P`).
+                None => {
+                    let trimmed = content.strip_suffix('\n').unwrap_or(&content);
+                    if line_buffer.is_empty() {
+                        // No current line to append below — insert as-is so an
+                        // empty buffer (e.g. after `dd` on the only line) does
+                        // not gain a leading blank line.
+                        line_buffer.insert_str(trimmed);
+                    } else {
+                        line_buffer.set_insertion_point(line_buffer.len());
+                        line_buffer.insert_str(&format!("\n{trimmed}"));
+                    }
+                }
+            }
         }
     }
 }
@@ -2585,6 +2633,23 @@ mod test {
     }
 
     #[test]
+    fn paste_before_over_selection_replaces_it() {
+        let mut editor = vi_editor("hello", PromptViMode::Normal);
+        editor.cut_buffer.set("xyz", Granularity::CharWise);
+        editor.run_edit_command(&EditCommand::MoveToPosition {
+            position: 0,
+            select: false,
+        });
+        for _ in 0..2 {
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+        }
+        assert_eq!(editor.get_selection(), Some((0, 3))); // "hel"
+        editor.run_edit_command(&EditCommand::PasteCutBufferBefore);
+        assert_eq!(editor.get_buffer(), "xyzlo");
+        assert_eq!(editor.get_selection(), None);
+    }
+
+    #[test]
     fn paste_after_linewise_on_last_line_lands_below() {
         // Regression: `p` on the last line fell back to the line start (no line
         // below), pasting *above* like `P`.
@@ -2612,6 +2677,24 @@ mod test {
         editor.line_buffer.set_insertion_point(0); // on line "a"
         editor.run_edit_command(&EditCommand::PasteCutBufferAfter);
         assert_eq!(editor.get_buffer(), "a\nX\nb");
+    }
+
+    #[test]
+    fn paste_before_linewise_on_first_line_lands_above() {
+        let mut editor = editor_with("a\nb\nc");
+        editor.cut_buffer.set("x\n", Granularity::LineWise);
+        editor.line_buffer.set_insertion_point(0); // on line "a"
+        editor.run_edit_command(&EditCommand::PasteCutBufferBefore);
+        assert_eq!(editor.get_buffer(), "x\na\nb\nc");
+    }
+
+    #[test]
+    fn paste_before_linewise_middle_line_lands_above() {
+        let mut editor = editor_with("a\nb\nc");
+        editor.cut_buffer.set("x\n", Granularity::LineWise);
+        editor.line_buffer.set_insertion_point(2); // on line "b"
+        editor.run_edit_command(&EditCommand::PasteCutBufferBefore);
+        assert_eq!(editor.get_buffer(), "a\nx\nb\nc");
     }
 
     #[test]
@@ -3373,6 +3456,28 @@ mod test {
     }
 
     #[test]
+    fn cursor_at_buffer_end_fails_on_a_bar_caret_selection() {
+        // A bar caret rests as an empty point, so any non-empty cursor is a
+        // real selection however narrow: a one-grapheme shift-selection covering
+        // the last grapheme is not `multi_grapheme` and emacs is not a selection
+        // mode, so shape and mode each miss it on their own. Completing a hint
+        // here would collapse the cursor and drop the selection.
+        for mode in [
+            PromptEditMode::Emacs,
+            PromptEditMode::Default,
+            PromptEditMode::Vi(PromptViMode::Insert),
+        ] {
+            let mut editor = editor_with("abc");
+            editor.set_edit_mode(mode.clone());
+            editor.run_edit_command(&EditCommand::MoveToLineEnd { select: false });
+            editor.run_edit_command(&EditCommand::MoveLeft { select: false });
+            editor.run_edit_command(&EditCommand::MoveRight { select: true });
+            assert_eq!(editor.get_selection(), Some((2, 3)), "{mode:?}");
+            assert!(!editor.is_cursor_at_buffer_end(), "{mode:?}");
+        }
+    }
+
+    #[test]
     fn test_vi_normal_mode_inclusive_selection() {
         let mut editor = editor_with("This is some test content");
         editor.line_buffer.set_insertion_point(0);
@@ -3597,7 +3702,7 @@ mod test {
         assert_eq!(editor.insertion_point(), 5); // Cursor should return to original position
 
         // Test yanked content by pasting
-        editor.paste_cut_buffer();
+        editor.paste_cut_buffer_before();
         assert_eq!(editor.get_buffer(), "foo(bbarar)baz");
 
         // Test with cursor outside brackets
@@ -3636,7 +3741,7 @@ mod test {
         assert_eq!(editor.cut_buffer.get().0, "baz");
 
         // Test yanked content by pasting
-        editor.paste_cut_buffer();
+        editor.paste_cut_buffer_before();
         assert_eq!(editor.get_buffer(), "foo(bar(bazbaz)qux)quux");
 
         editor.move_to_position(4, false); // Move inside outer brackets
@@ -4418,7 +4523,6 @@ mod test {
 
     /// Helix-only editor behaviour. One gate for the whole block so it
     /// lifts in a single edit once helix stops being feature gated.
-    #[cfg(feature = "helix")]
     mod helix {
         use super::*;
         use pretty_assertions::assert_eq;
@@ -4427,6 +4531,20 @@ mod test {
             let mut editor = editor_with(buffer);
             editor.set_edit_mode(PromptEditMode::Helix(crate::PromptHelixMode::Normal));
             editor
+        }
+
+        #[test]
+        fn cursor_at_buffer_end_holds_for_the_resting_block_caret() {
+            // Regression: the resting cursor is a min-width-1 block
+            // `[len-1, len)`, not an empty point, so "at buffer end" must still
+            // hold there, or up/`k` does plain history traversal instead of the
+            // prefix search vi normal gets.
+            let mut editor = helix_editor("abc");
+            editor.run_edit_command(&EditCommand::MoveToLineEnd { select: false });
+            assert!(editor.is_cursor_at_buffer_end());
+            // Not at the end: a min-width-1 block on the first grapheme.
+            editor.run_edit_command(&EditCommand::MoveToLineStart { select: false });
+            assert!(!editor.is_cursor_at_buffer_end());
         }
 
         #[test]
@@ -4859,10 +4977,64 @@ mod test {
             let mut editor = helix_select_editor("foo bar baz");
             editor.move_to_position(4, false);
             editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+            // "bar " with the caret on the trailing space, thus one `h` walks it
+            // onto `r` and the selection reads "bar". This pinned 6 back when the
+            // backward rebuild moved the caret two cells (#1190).
             editor.run_edit_command(&EditCommand::Extend(MotionTarget::Grapheme(
                 Direction::Backward,
             )));
-            assert_eq!(editor.line_buffer.cursor(), Cursor::new(4, 6));
+            assert_eq!(editor.line_buffer.cursor(), Cursor::new(4, 7));
+            assert_eq!(editor.get_selection(), Some((4, 7)));
+        }
+
+        // --- the caret rests on the resolved target (#1190) ---
+        //
+        // Every case starts from a selection left *forward* and wider than one
+        // grapheme, since that is the only shape the two-cell step shows up in.
+        // From the resting block the first press reverses the cursor, and a
+        // backward cursor's caret is its head, thus the doubling cancels there.
+        //
+        // For a grapheme target that reads as one cell per press; for the word
+        // and line targets it reads as landing on the target rather than one
+        // past it. Both are the same invariant. The anchor is pinned alongside,
+        // since a rebuild that got the caret right and the anchor wrong would
+        // draw the wrong highlight.
+
+        #[rstest]
+        #[case::grapheme(MotionTarget::Grapheme(Direction::Backward), vec![4, 3, 2, 1, 0])]
+        #[case::word_start(word_start_bwd(), vec![4, 0, 0])]
+        #[case::line_start(MotionTarget::LineEdge(Direction::Backward), vec![0, 0])]
+        fn helix_extend_backward_rests_the_caret_on_the_target(
+            #[case] target: MotionTarget,
+            #[case] carets: Vec<usize>,
+        ) {
+            let mut editor = helix_select_editor("abc de");
+            editor.run_edit_command(&EditCommand::SelectAll);
+            assert_eq!(editor.insertion_point(), 5);
+            for expected in carets {
+                editor.run_edit_command(&EditCommand::Extend(target));
+                assert_eq!(editor.insertion_point(), expected);
+                assert_eq!(
+                    editor.get_selection(),
+                    Some((0, expected + 1)),
+                    "the anchor stays where `%` left it"
+                );
+            }
+        }
+
+        #[test]
+        fn helix_extend_backward_still_flips_the_resting_block() {
+            // The case that was already right, pinned so the backward rebuild
+            // cannot regress it: the press reverses the cursor and keeps `e`
+            // covered rather than shrinking to a point.
+            let mut editor = helix_select_editor("abc de");
+            editor.run_edit_command(&EditCommand::MoveToLineEnd { select: false });
+            assert_eq!(editor.line_buffer.cursor(), Cursor::new(5, 6));
+            editor.run_edit_command(&EditCommand::Extend(MotionTarget::Grapheme(
+                Direction::Backward,
+            )));
+            assert_eq!(editor.line_buffer.cursor(), Cursor::new(6, 4));
+            assert_eq!(editor.insertion_point(), 4);
         }
 
         // --- the newline as a cell (helix `l` / `h`) ---

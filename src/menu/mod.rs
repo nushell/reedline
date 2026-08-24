@@ -76,14 +76,11 @@ pub enum MenuEvent {
 /// Trait that defines how a menu will be printed by the painter
 pub trait Menu: Send {
     /// Get MenuSettings
-    fn settings(&self) -> &MenuSettings {
-        // We panic here, so this function has base implementation
-        // so existing menus will not break.
-        // if a breaking change is ok, this can be removed
-        panic!(
-            "`settings` requires a manual implementation per menu. It has a base implementation to not break existing menus"
-        )
-    }
+    ///
+    /// The default `name` and `indicator` read through here, and the engine
+    /// looks a menu up by `name` on every menu event, so a menu has to own a
+    /// [`MenuSettings`] and hand it out.
+    fn settings(&self) -> &MenuSettings;
 
     /// Menu name
     fn name(&self) -> &str {
@@ -234,6 +231,10 @@ pub struct MenuSettings {
     /// Optional override for the buffer range replaced on selection.
     /// If `None`, the menu uses `Suggestion::span` as-is.
     output_mode: Option<OutputMode>,
+    /// Punctuation that extends a completable word, when the menu should close
+    /// at the end of the word it was opened for. `None` keeps it open for the
+    /// rest of the line.
+    word_chars: Option<String>,
 }
 
 impl Default for MenuSettings {
@@ -245,6 +246,7 @@ impl Default for MenuSettings {
             only_buffer_difference: false,
             input_mode: None,
             output_mode: None,
+            word_chars: None,
         }
     }
 }
@@ -292,6 +294,22 @@ impl MenuSettings {
     pub fn with_output_mode(mut self, mode: OutputMode) -> Self {
         self.output_mode = Some(mode);
         self
+    }
+
+    /// Close the menu once a typed character can no longer extend the word it
+    /// was opened for. See [`MenuBuilder::with_word_chars`].
+    #[must_use]
+    pub fn with_word_chars(mut self, word_chars: impl Into<String>) -> Self {
+        self.word_chars = Some(word_chars.into());
+        self
+    }
+
+    /// Whether `c` ends the word this menu was opened for. Always false when
+    /// the menu has no word characters set, which is the default.
+    pub fn word_ends_at(&self, c: char) -> bool {
+        self.word_chars
+            .as_ref()
+            .is_some_and(|word_chars| !c.is_alphanumeric() && !word_chars.contains(c))
     }
 
     /// Resolves input_mode and only_buffer_difference into concrete InputMode.
@@ -410,6 +428,23 @@ pub trait MenuBuilder: Menu + Sized {
     #[must_use]
     fn with_output_mode(mut self, mode: OutputMode) -> Self {
         self.settings_mut().output_mode = Some(mode);
+        self
+    }
+
+    /// Close this menu once a typed character can no longer extend the word it
+    /// was opened for, instead of refiltering for the rest of the line.
+    ///
+    /// An alphanumeric character always extends a word; `word_chars` lists the
+    /// punctuation that also does. `"_."` suits SQL identifiers, `"_-./"`
+    /// suits paths. A menu that never calls this keeps the default, no word
+    /// characters, and stays open for the rest of the line, which is what a
+    /// menu filtering on whole command lines, such as a history menu, wants.
+    ///
+    /// Only characters typed into the line end a word; text inserted whole,
+    /// such as a bracketed paste, does not.
+    #[must_use]
+    fn with_word_chars(mut self, word_chars: impl Into<String>) -> Self {
+        self.settings_mut().word_chars = Some(word_chars.into());
         self
     }
 }

@@ -1,7 +1,6 @@
 mod base;
 mod cursors;
 mod emacs;
-#[cfg(feature = "helix")]
 mod helix;
 mod keybindings;
 mod vi;
@@ -9,7 +8,6 @@ mod vi;
 pub use base::EditMode;
 pub use cursors::CursorConfig;
 pub use emacs::{default_emacs_keybindings, Emacs};
-#[cfg(feature = "helix")]
 pub use helix::{
     default_helix_insert_keybindings, default_helix_normal_keybindings,
     default_helix_select_keybindings, Helix,
@@ -61,4 +59,11 @@ fn is_text_char(modifiers: KeyModifiers) -> bool {
     is_plain_char(modifiers)
         || modifiers == KeyModifiers::CONTROL | KeyModifiers::ALT
         || modifiers == KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
+}
+
+/// A keypress carrying Alt alone or with Shift: the meta chord of the readline
+/// tradition, where `Alt-x` stands for `Esc` followed by `x`. Deliberately
+/// excludes the Ctrl-Alt pairs [`is_text_char`] accepts for AltGr.
+fn is_meta_char(modifiers: KeyModifiers) -> bool {
+    modifiers == KeyModifiers::ALT || modifiers == KeyModifiers::ALT | KeyModifiers::SHIFT
 }

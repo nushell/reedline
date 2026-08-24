@@ -108,7 +108,6 @@ pub fn get_reedline_default_keybindings() -> Vec<(String, String, String, String
 
     // Only the table layer; the bulk of the helix bindings live in its state
     // machine, which `Keybindings` iteration cannot see.
-    #[cfg(feature = "helix")]
     options.extend([
         ("helix_normal", crate::default_helix_normal_keybindings()),
         ("helix_insert", crate::default_helix_insert_keybindings()),

@@ -182,11 +182,12 @@ where
         Some(x) if x.is_ascii_digit() => {
             let mut count: usize = 0;
             while let Some(&c) = input.peek() {
-                if c.is_ascii_digit() {
-                    let c = c.to_digit(10).expect("already checked if is a digit");
+                if let Some(d) = c.to_digit(10) {
                     let _ = input.next();
-                    count *= 10;
-                    count += c as usize;
+                    count = count
+                        .saturating_mul(10)
+                        .saturating_add(d as usize)
+                        .min(u16::MAX as usize);
                 } else {
                     return Some(count);
                 }
@@ -271,6 +272,16 @@ mod tests {
                 motion: ParseResult::Incomplete,
             }
         );
+    }
+
+    #[test]
+    fn oversized_count_saturates_instead_of_overflowing() {
+        // 20 digits overflow usize; the count clamps like helix does.
+        let mut input: Vec<char> = "99999999999999999999".chars().collect();
+        input.push('x');
+        let output = vi_parse(&input);
+        assert_eq!(output.multiplier, Some(u16::MAX as usize));
+        assert_eq!(output.command, Some(Command::DeleteChar));
     }
 
     #[test]

@@ -83,18 +83,14 @@ pub(crate) fn locate_word(
     edge: WordEdge,
     direction: Direction,
 ) -> usize {
-    // `Unicode` (emacs) is the one flavor not expressible as a char-class
-    // boundary predicate — it uses UAX-29 segmentation, with its own scan.
-    if kind == WordKind::Unicode {
-        return locate_unicode_word(buf, origin, edge, direction);
-    }
     let forward = direction == Direction::Forward;
 
-    // Every other flavor only changes which transitions count as a boundary.
     let is_boundary: fn(char, char) -> bool = match kind {
         WordKind::Word => is_word_boundary,
         WordKind::LongWord => is_long_word_boundary,
-        WordKind::Unicode => unreachable!("handled above"),
+        // `Unicode` (emacs) is the one flavor not expressible as a char-class
+        // boundary predicate — it uses UAX-29 segmentation, with its own scan.
+        WordKind::Unicode => return locate_unicode_word(buf, origin, edge, direction),
     };
 
     // Is `ch` (with neighbors `before`/`after`, `None` at the buffer edges) the

@@ -1,5 +1,6 @@
 use nu_ansi_term::Style;
 
+use crate::core_editor::{ensure_grapheme_boundary_next, ensure_grapheme_boundary_prev};
 use crate::terminal_extensions::semantic_prompt::{PromptKind, SemanticPromptMarkers};
 use crate::Prompt;
 
@@ -29,65 +30,40 @@ impl StyledText {
         self.buffer.push(styled_string);
     }
 
-    /// Style range with the provided style
+    /// Restyle the byte range `from..to` of the whole buffer.
+    ///
+    /// The bounds are snapped outward to grapheme boundaries, so a range that
+    /// lands inside a multi-byte character or a combining sequence styles the
+    /// whole grapheme instead of splitting it. Pairs the range does not touch
+    /// are kept whole; no zero-length pair is ever produced.
     pub fn style_range(&mut self, from: usize, to: usize, new_style: Style) {
-        let (from, to) = if from > to { (to, from) } else { (from, to) };
-        let mut current_idx = 0;
-        let mut pair_idx = 0;
-        while pair_idx < self.buffer.len() {
-            let pair = &mut self.buffer[pair_idx];
-            let end_idx = current_idx + pair.1.len();
-            enum Position {
-                Before,
-                In,
-                After,
-            }
-            let start_position = if current_idx < from {
-                Position::Before
-            } else if current_idx >= to {
-                Position::After
-            } else {
-                Position::In
-            };
-            let end_position = if end_idx < from {
-                Position::Before
-            } else if end_idx > to {
-                Position::After
-            } else {
-                Position::In
-            };
-            match (start_position, end_position) {
-                (Position::Before, Position::After) => {
-                    let mut in_range = pair.1.split_off(from - current_idx);
-                    let after_range = in_range.split_off(to - from);
-                    let in_range = (new_style, in_range);
-                    let after_range = (pair.0, after_range);
-                    self.buffer.insert(pair_idx + 1, in_range);
-                    self.buffer.insert(pair_idx + 2, after_range);
-                    break;
-                }
-                (Position::Before, Position::In) => {
-                    let in_range = pair.1.split_off(from - current_idx);
-                    pair_idx += 1; // Additional increment for the split pair, since the new insertion is already correctly styled and can be skipped next iteration
-                    self.buffer.insert(pair_idx, (new_style, in_range));
-                }
-                (Position::In, Position::After) => {
-                    let after_range = pair.1.split_off(to - current_idx);
-                    let old_style = pair.0;
-                    pair.0 = new_style;
-                    if !after_range.is_empty() {
-                        self.buffer.insert(pair_idx + 1, (old_style, after_range));
-                    }
-                    break;
-                }
-                (Position::In, Position::In) => pair.0 = new_style,
+        let (from, to) = (from.min(to), from.max(to));
+        let mut rebuilt = Vec::with_capacity(self.buffer.len() + 2);
+        let mut start = 0;
+        for (style, text) in std::mem::take(&mut self.buffer) {
+            let end = start + text.len();
+            // Where the range meets this pair, in the pair's own byte offsets.
+            let lo = ensure_grapheme_boundary_prev(&text, from.clamp(start, end) - start);
+            let hi = ensure_grapheme_boundary_next(&text, to.clamp(start, end) - start);
 
-                (Position::After, _) => break,
-                _ => (),
+            match (text.get(..lo), text.get(lo..hi), text.get(hi..)) {
+                (Some(before), Some(styled), Some(after)) if lo < hi => {
+                    let pieces = [(style, before), (new_style, styled), (style, after)];
+                    rebuilt.extend(
+                        pieces
+                            .into_iter()
+                            .filter(|(_, piece)| !piece.is_empty())
+                            .map(|(style, piece)| (style, piece.to_string())),
+                    );
+                }
+                // The range does not touch this pair, or (after snapping, which
+                // makes this unreachable) a bound is not a char boundary: keep
+                // the pair whole either way.
+                _ => rebuilt.push((style, text)),
             }
-            current_idx = end_idx;
-            pair_idx += 1;
+            start = end;
         }
+        self.buffer = rebuilt;
     }
 
     /// Render the styled string. We use the insertion point to render around so that
@@ -326,6 +302,61 @@ mod test {
         assert_eq!(styled_text.buffer[1], (after_style, "d".into()));
         assert_eq!(styled_text.buffer[2], (before_style, "f".into()));
     }
+    /// The styled flag and text of each pair, so a case can state the whole
+    /// segmentation on one line.
+    fn segments(text: &StyledText, styled: Style) -> Vec<(bool, &str)> {
+        text.buffer
+            .iter()
+            .map(|(style, s)| (*style == styled, s.as_str()))
+            .collect()
+    }
+
+    // Byte offsets `from`/`to` against the "aaa" "bbb" "ccc" template. Cases
+    // where the range starts or ends on a pair boundary produce no
+    // zero-length pairs; the split-and-insert version used to leave them.
+    #[rstest]
+    #[case::empty_range_mid_pair(4, 4, &[(false, "aaa"), (false, "bbb"), (false, "ccc")])]
+    #[case::empty_range_on_boundary(3, 3, &[(false, "aaa"), (false, "bbb"), (false, "ccc")])]
+    #[case::empty_range_at_zero(0, 0, &[(false, "aaa"), (false, "bbb"), (false, "ccc")])]
+    #[case::starts_on_boundary(3, 5, &[(false, "aaa"), (true, "bb"), (false, "b"), (false, "ccc")])]
+    #[case::ends_on_boundary(1, 6, &[(false, "a"), (true, "aa"), (true, "bbb"), (false, "ccc")])]
+    #[case::exactly_one_pair(3, 6, &[(false, "aaa"), (true, "bbb"), (false, "ccc")])]
+    #[case::whole_buffer(0, 9, &[(true, "aaa"), (true, "bbb"), (true, "ccc")])]
+    #[case::runs_past_the_end(7, 20, &[(false, "aaa"), (false, "bbb"), (false, "c"), (true, "cc")])]
+    #[case::entirely_past_the_end(12, 20, &[(false, "aaa"), (false, "bbb"), (false, "ccc")])]
+    #[case::spans_all_three(1, 8, &[(false, "a"), (true, "aa"), (true, "bbb"), (true, "cc"), (false, "c")])]
+    #[case::reversed_bounds_are_swapped(8, 1, &[(false, "a"), (true, "aa"), (true, "bbb"), (true, "cc"), (false, "c")])]
+    fn style_range_segmentation(
+        #[case] from: usize,
+        #[case] to: usize,
+        #[case] expected: &[(bool, &str)],
+    ) {
+        let (mut text, _, after_style) = get_styled_text_template();
+        text.style_range(from, to, after_style);
+        assert_eq!(segments(&text, after_style), expected);
+    }
+
+    /// `from`/`to` are byte offsets; a highlighter that derives them from
+    /// chars or graphemes can land inside a multi-byte character. That must
+    /// not panic the paint path.
+    #[rstest]
+    #[case::end_inside_a_char("café", 0, 4)]
+    #[case::start_inside_a_char("café", 4, 5)]
+    #[case::both_inside_chars("ééé", 1, 3)]
+    fn style_range_inside_a_multibyte_char_does_not_panic(
+        #[case] text: &str,
+        #[case] from: usize,
+        #[case] to: usize,
+    ) {
+        let (_, before_style, after_style) = get_styled_text_template();
+        let mut styled = StyledText {
+            buffer: vec![(before_style, text.into())],
+        };
+        styled.style_range(from, to, after_style);
+        // Whatever the split policy, the text itself must survive intact.
+        assert_eq!(styled.raw_string(), text);
+    }
+
     #[test]
     fn regression_style_range_cargo_run() {
         let (_, before_style, after_style) = get_styled_text_template();
