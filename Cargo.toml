@@ -47,8 +47,10 @@ default = ["helix"]
 bashisms = []
 external_printer = ["crossbeam"]
 helix = []
-sqlite = ["rusqlite/bundled", "serde_json"]
-sqlite-dynlib = ["rusqlite", "serde_json"]
+sqlite = ["rusqlite/bundled", "serde_json", "_sqlite"]
+sqlite-dynlib = ["rusqlite", "serde_json", "_sqlite"]
+# Internal marker enabled by both sqlite features; never enable it directly.
+_sqlite = []
 system_clipboard = ["arboard"]
 libc = ["crossterm/libc"]
 

@@ -244,9 +244,9 @@ pub trait History: Send {
 
 #[cfg(test)]
 mod test {
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     const IS_FILE_BASED: bool = false;
-    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+    #[cfg(not(feature = "_sqlite"))]
     const IS_FILE_BASED: bool = true;
 
     use crate::HistorySessionId;
@@ -268,11 +268,11 @@ mod test {
 
     use super::*;
     fn create_filled_example_history() -> Result<Box<dyn History>> {
-        #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+        #[cfg(feature = "_sqlite")]
         let mut history = crate::SqliteBackedHistory::in_memory()?;
-        #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+        #[cfg(not(feature = "_sqlite"))]
         let mut history = crate::FileBackedHistory::default();
-        #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+        #[cfg(not(feature = "_sqlite"))]
         history.save(create_item(1, "/", "dummy", 0))?; // add dummy item so ids start with 1
         history.save(create_item(1, "/home/me", "cd ~/Downloads", 0))?; // 1
         history.save(create_item(1, "/home/me/Downloads", "unzp foo.zip", 1))?; // 2
@@ -290,7 +290,7 @@ mod test {
         Ok(Box::new(history))
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn update_item() -> Result<()> {
         let mut history = create_filled_example_history()?;
@@ -432,7 +432,7 @@ mod test {
     // test that clear() works as expected across multiple instances of History
     #[test]
     fn clear_history_with_backing_file() -> Result<()> {
-        #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+        #[cfg(feature = "_sqlite")]
         fn open_history() -> Box<dyn History> {
             Box::new(
                 crate::SqliteBackedHistory::with_file("target/test-history.db".into(), None, None)
@@ -440,7 +440,7 @@ mod test {
             )
         }
 
-        #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+        #[cfg(not(feature = "_sqlite"))]
         fn open_history() -> Box<dyn History> {
             Box::new(
                 crate::FileBackedHistory::with_file(100, "target/test-history.txt".into()).unwrap(),
@@ -468,7 +468,7 @@ mod test {
         Ok(())
     }
 
-    #[cfg(not(any(feature = "sqlite", feature = "sqlite-dynlib")))]
+    #[cfg(not(feature = "_sqlite"))]
     #[test]
     fn history_size_zero() -> Result<()> {
         let mut history = crate::FileBackedHistory::new(0)?;

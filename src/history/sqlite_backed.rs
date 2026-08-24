@@ -659,7 +659,7 @@ mod tests {
         }
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn search_by_time_range_uses_existing_column() -> crate::Result<()> {
         use crate::history::base::SearchQuery;
@@ -708,7 +708,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn save_with_extra_null_more_info_roundtrips() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
@@ -721,7 +721,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn search_with_extra_more_info_json_matches() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
@@ -777,7 +777,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn search_with_extra_null_more_info_not_matched() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
@@ -801,7 +801,7 @@ mod tests {
 
     /// Verify that Bool, Integer, and Text filters do not collide with each other
     /// even when the raw JSON bytes look similar (e.g. `true` vs `1` vs `"1"`).
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn json_filter_value_no_type_collisions() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
@@ -917,7 +917,7 @@ mod tests {
     }
 
     /// Verify that Real(f) does not collide with Integer values stored at the same path.
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn json_filter_value_real_vs_integer() -> crate::Result<()> {
         // Two structs so we can store the same path ($.score) as either real or integer.
@@ -994,7 +994,7 @@ mod tests {
 
     /// Verify that Null matches JSON null at a path but not SQL-NULL more_info
     /// or a path that is simply absent from the JSON object.
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn json_filter_value_null_vs_missing_path() -> crate::Result<()> {
         #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -1074,7 +1074,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn typed_and_untyped_interop() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
@@ -1095,7 +1095,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn trait_update_preserves_typed_more_info() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
@@ -1129,7 +1129,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn trait_update_missing_id_errors() {
         let mut db = SqliteBackedHistory::in_memory().unwrap();
@@ -1137,7 +1137,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn update_with_extra_modifies_typed_more_info() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
