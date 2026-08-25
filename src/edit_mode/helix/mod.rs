@@ -368,6 +368,7 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
                 'a' => MatchAction::Around,
                 'i' => MatchAction::Inner,
                 's' => MatchAction::Set,
+                'd' => MatchAction::Delete,
                 _ => return Outcome::Reject,
             };
             Outcome::Absorb(Pending::MatchStepTwo(target))
@@ -627,7 +628,9 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             MatchAction::Set => ReedlineEvent::Edit(vec![EditCommand::AddTextObject {
                 text_object: m.text_object,
             }]),
-            MatchAction::Delete => todo!(),
+            MatchAction::Delete => ReedlineEvent::Edit(vec![EditCommand::RemoveTextObject {
+                text_object: m.text_object,
+            }]),
         },
         Verb::Deselect => ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint]),
         Verb::ChangeMode => ReedlineEvent::None,
