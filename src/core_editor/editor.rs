@@ -436,6 +436,9 @@ impl Editor {
         }
 
         let new_undo_behavior = match (command, command.edit_type()) {
+            (EditCommand::AddTextObject { .. }, EditType::MoveCursor { .. }) => {
+                UndoBehavior::CreateUndoPoint
+            }
             (_, EditType::MoveCursor { .. }) => UndoBehavior::MoveCursor,
             (EditCommand::InsertChar(c), EditType::EditText) => UndoBehavior::InsertCharacter(*c),
             (EditCommand::Delete, EditType::EditText) => {
