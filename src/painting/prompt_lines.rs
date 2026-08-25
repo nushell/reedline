@@ -1,4 +1,4 @@
-use super::utils::{coerce_crlf, estimate_required_lines, line_width};
+use super::utils::{coerce_crlf, estimate_required_lines, line_width, resolve_wrap, wrap_position};
 use crate::{
     menu::{Menu, ReedlineMenu},
     prompt::PromptEditMode,
@@ -73,7 +73,12 @@ impl<'prompt> PromptLines<'prompt> {
             }
         }
 
-        let lines = estimate_required_lines(&input, terminal_columns);
+        // The cursor can rest on a row no glyph reaches: a filled row or a
+        // trailing newline leaves it one past the last drawn one, and
+        // `menu_start_row` opens the menu below *that*. Reserving only the
+        // rows text occupies runs the menu past the reservation.
+        let lines = estimate_required_lines(&input, terminal_columns)
+            .max(self.distance_from_prompt(terminal_columns) as usize + 1);
 
         if let Some(menu) = menu {
             lines as u16 + menu.menu_required_lines(terminal_columns)
@@ -82,12 +87,23 @@ impl<'prompt> PromptLines<'prompt> {
         }
     }
 
-    /// Estimated distance of the cursor to the prompt.
-    /// This considers line wrapping
+    /// Rows from the prompt's first row to the row the cursor rests on.
+    ///
+    /// Places a cursor, so a filled row resolves to the next one. That row is
+    /// what `menu_start_row` opens the menu below.
     pub(crate) fn distance_from_prompt(&self, terminal_columns: u16) -> u16 {
-        let input = self.prompt_str_left.to_string() + &self.prompt_indicator + &self.before_cursor;
-        let lines = estimate_required_lines(&input, terminal_columns);
-        lines.saturating_sub(1) as u16
+        let Some(end) = wrap_position(
+            [
+                &*self.prompt_str_left,
+                &self.prompt_indicator,
+                &self.before_cursor,
+            ],
+            terminal_columns,
+        ) else {
+            return 0;
+        };
+
+        resolve_wrap(end, terminal_columns).1
     }
 
     /// Calculate the cursor pos, based on the buffer and prompt.
@@ -98,26 +114,12 @@ impl<'prompt> PromptLines<'prompt> {
         // The Cursor position will be relative to this
         let last_prompt_str = prompt_str.lines().last().unwrap_or_default();
 
-        let is_multiline = self.before_cursor.contains('\n');
-        let buffer_width = line_width(self.before_cursor.lines().last().unwrap_or_default());
-
-        let total_width = if is_multiline {
-            // The buffer already contains the multiline prompt
-            buffer_width
-        } else {
-            buffer_width + line_width(last_prompt_str)
+        let Some(end) = wrap_position([last_prompt_str, &self.before_cursor], terminal_columns)
+        else {
+            return (0, 0);
         };
 
-        let buffer_width_prompt = format!("{}{}", last_prompt_str, self.before_cursor);
-
-        let cursor_y = (estimate_required_lines(&buffer_width_prompt, terminal_columns) as u16)
-            .saturating_sub(1); // 0 based
-
-        // Floored: terminals report a 0 width mid-resize (#842), like
-        // `estimate_single_line_wraps` already handles.
-        let cursor_x = (total_width % terminal_columns.max(1) as usize) as u16;
-
-        (cursor_x, cursor_y as u16)
+        resolve_wrap(end, terminal_columns)
     }
 
     /// Total lines that the prompt uses considering that it may wrap the screen
@@ -243,6 +245,56 @@ mod tests {
         0,
         (0, 0)
     )]
+    // A filled row leaves the cursor pending at the margin, which resolves to
+    // the home column of the next row (#1141), not of the row it filled.
+    #[case(
+        "",
+        "",
+        "hello",
+        5,
+        (0, 1)
+    )]
+    // Wide graphemes cannot straddle the margin, so the terminal blanks the
+    // trailing column and wraps early. Division read these as exact rows:
+    // (1, 1) and (0, 1), the second a whole row adrift.
+    #[case(
+        "",
+        "",
+        "日本語日本語",
+        11,
+        (2, 1)
+    )]
+    #[case(
+        "",
+        "",
+        "日本語日本語日本語日本",
+        11,
+        (2, 2)
+    )]
+    #[case(
+        "",
+        "",
+        "日a日a日a日a",
+        7,
+        (6, 1)
+    )]
+    // A ZWJ sequence is one grapheme two columns wide, not three of six.
+    #[case(
+        "",
+        "",
+        "👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧",
+        5,
+        (2, 1)
+    )]
+    // The prompt tail and the buffer lay out end to end, so the indicator
+    // pushes the first wide grapheme off the row it would otherwise fit.
+    #[case(
+        "",
+        "❯ ",
+        "日本語",
+        5,
+        (4, 1)
+    )]
 
     fn test_cursor_pos(
         #[case] prompt_str_left: &str,
@@ -264,5 +316,82 @@ mod tests {
         let pos = prompt_lines.cursor_pos(terminal_columns);
 
         assert_eq!(pos, expected);
+    }
+
+    /// The reservation has to cover the row the cursor rests on, since
+    /// `menu_start_row` opens the menu below it. A filled row and a trailing
+    /// newline both put the cursor past the last row any glyph reaches, so
+    /// counting drawn rows alone leaves the menu hanging off the end.
+    #[rstest]
+    #[case("> ", "abc", "", 20, 1)]
+    // "> " plus 18 columns fills the row; the cursor is on the next one.
+    #[case("> ", &"a".repeat(18), "", 20, 2)]
+    // Same buffer, but text after the cursor already reaches that row.
+    #[case("> ", &"a".repeat(18), "xyz", 20, 2)]
+    #[case("> ", "ab\n", "", 20, 2)]
+    // One column short of the margin, so nothing extra is owed.
+    #[case("> ", &"a".repeat(17), "", 20, 1)]
+    fn test_required_lines_covers_the_cursor_row(
+        #[case] prompt_indicator: &str,
+        #[case] before_cursor: &str,
+        #[case] after_cursor: &str,
+        #[case] terminal_columns: u16,
+        #[case] expected: u16,
+    ) {
+        let prompt_lines = PromptLines {
+            prompt_str_left: Cow::Borrowed(""),
+            prompt_str_right: Cow::Borrowed(""),
+            prompt_indicator: Cow::Borrowed(prompt_indicator),
+            before_cursor: Cow::Borrowed(before_cursor),
+            after_cursor: Cow::Borrowed(after_cursor),
+            hint: Cow::Borrowed(""),
+            right_prompt_on_last_line: false,
+        };
+
+        assert_eq!(
+            prompt_lines.required_lines(terminal_columns, false, None),
+            expected
+        );
+    }
+
+    /// Rows down to the cursor, not rows the text occupies: a buffer ending on
+    /// a newline draws nothing on the row the cursor sits on, and one filling
+    /// the width exactly draws nothing on the row the wrap resolves to.
+    #[rstest]
+    #[case("", "> ", "abc", 20, 0)]
+    // `.lines()` drops a trailing newline, so counting lines missed the row
+    // the cursor had already moved to.
+    #[case("", "> ", "abc\n", 20, 1)]
+    #[case("", "> ", "ab\ncd\n", 20, 2)]
+    // "> " plus 18 columns fills the row exactly.
+    #[case("", "> ", &"a".repeat(18), 20, 1)]
+    // A wide grapheme cannot straddle the margin, so the run takes a row
+    // division could not see.
+    #[case("", "> ", "日本語日本語", 11, 1)]
+    // A multiline prompt puts its own wrapped rows between the two.
+    #[case("~/p\n", "> ", "abc", 20, 1)]
+    // Mid-resize width (#842).
+    #[case("", "> ", "abc", 0, 0)]
+    fn test_distance_from_prompt(
+        #[case] prompt_str_left: &str,
+        #[case] prompt_indicator: &str,
+        #[case] before_cursor: &str,
+        #[case] terminal_columns: u16,
+        #[case] expected: u16,
+    ) {
+        let prompt_lines = PromptLines {
+            prompt_str_left: Cow::Borrowed(prompt_str_left),
+            prompt_str_right: Cow::Borrowed(""),
+            prompt_indicator: Cow::Borrowed(prompt_indicator),
+            before_cursor: Cow::Borrowed(before_cursor),
+            after_cursor: Cow::Borrowed(""),
+            hint: Cow::Borrowed(""),
+            right_prompt_on_last_line: false,
+        };
+
+        assert_eq!(
+            prompt_lines.distance_from_prompt(terminal_columns),
+            expected
+        );
     }
 }
