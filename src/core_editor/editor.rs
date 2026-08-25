@@ -372,6 +372,7 @@ impl Editor {
             EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
             EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
             EditCommand::AddTextObject { text_object } => self.add_text_object(*text_object),
+            EditCommand::RemoveTextObject { text_object } => self.remove_text_object(*text_object),
         }
         let leaves_selection = matches!(command.edit_type(), EditType::MoveCursor { select: true })
             || matches!(command, EditCommand::PasteAtSelectionEdge { .. })
@@ -389,9 +390,10 @@ impl Editor {
         self.commit_cursor();
 
         let new_undo_behavior = match (command, command.edit_type()) {
-            (EditCommand::AddTextObject { .. }, EditType::MoveCursor { .. }) => {
-                UndoBehavior::CreateUndoPoint
-            }
+            (
+                EditCommand::AddTextObject { .. } | EditCommand::RemoveTextObject { .. },
+                EditType::MoveCursor { .. },
+            ) => UndoBehavior::CreateUndoPoint,
             (_, EditType::MoveCursor { .. }) => UndoBehavior::MoveCursor,
             (EditCommand::InsertChar(c), EditType::EditText) => UndoBehavior::InsertCharacter(*c),
             (EditCommand::Delete, EditType::EditText) => {
@@ -1801,6 +1803,38 @@ impl Editor {
         self.line_buffer.set_cursor(cursor_lefted.flip());
         self.line_buffer.insert_char(pair.0);
         self.place(Cursor::new(cursor.anchor() + 1, cursor.head() + 1));
+    }
+
+    fn remove_text_object(&mut self, text_object: TextObjectType) {
+        if !matches!(
+            text_object,
+            TextObjectType::Brackets(_) | TextObjectType::Quotes(_)
+        ) {
+            return;
+        }
+        let cursor = self.line_buffer.cursor();
+        self.line_buffer.set_cursor(Cursor::point(cursor.head()));
+        // TODO: Ya un bug dans la fonction text_object_range,
+        // un range est trouvé lorsque le curseur se trouve hors du text object
+        // inclus brackets et quotes
+        let Some(range) = self.text_object_range(TextObject {
+            scope: TextObjectScope::Inner,
+            object_type: text_object,
+        }) else {
+            self.line_buffer.set_cursor(cursor);
+            return;
+        };
+        self.line_buffer.clear_range(range.end..range.end + 1);
+        self.line_buffer.clear_range(range.start - 1..range.start);
+        let new_cursor = Cursor::new(
+            if cursor.anchor() > range.start {
+                cursor.anchor() - 1
+            } else {
+                cursor.anchor()
+            },
+            cursor.head() - 1,
+        );
+        self.place(new_cursor);
     }
 
     fn select_text_object(&mut self, text_object: TextObject) {
