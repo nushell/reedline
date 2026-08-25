@@ -1797,7 +1797,7 @@ impl Editor {
         self.line_buffer.insert_char(pair.1);
         self.line_buffer.set_cursor(cursor_lefted.flip());
         self.line_buffer.insert_char(pair.0);
-        self.line_buffer.set_cursor(cursor);
+        self.place(Cursor::new(cursor.anchor() + 1, cursor.head() + 1));
     }
 
     fn select_text_object(&mut self, text_object: TextObject) {
