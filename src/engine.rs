@@ -18,7 +18,7 @@ use {
 use {
     crate::{
         completion::{Completer, CompletionOrigin, CompletionStatus, DefaultCompleter},
-        core_editor::Editor,
+        core_editor::{EditCommandStatus, Editor},
         edit_mode::{EditMode, Emacs},
         enums::{EventStatus, ReedlineEvent},
         highlighter::SimpleMatchHighlighter,
@@ -1685,8 +1685,8 @@ impl Reedline {
                 Ok(EventStatus::Exits(Signal::HostCommand(host_command)))
             }
             ReedlineEvent::Edit(commands) => {
-                let successful = self.run_edit_commands_with_status(&commands);
-                if !successful {
+                let status = self.run_edit_commands_with_status(&commands);
+                if status == EditCommandStatus::Inapplicable {
                     return Ok(EventStatus::Inapplicable);
                 }
 
@@ -2080,7 +2080,7 @@ impl Reedline {
         self.run_edit_commands_with_status(commands);
     }
 
-    fn run_edit_commands_with_status(&mut self, commands: &[EditCommand]) -> bool {
+    fn run_edit_commands_with_status(&mut self, commands: &[EditCommand]) -> EditCommandStatus {
         if self.input_mode == InputMode::HistoryTraversal {
             self.input_mode = InputMode::Regular;
         }
@@ -2089,7 +2089,7 @@ impl Reedline {
 
     /// [`run_edit_commands`](Self::run_edit_commands) without ending history
     /// traversal, for the engine's own line moves inside a recalled entry.
-    fn apply_edit_commands(&mut self, commands: &[EditCommand]) -> bool {
+    fn apply_edit_commands(&mut self, commands: &[EditCommand]) -> EditCommandStatus {
         // Adopt the current edit mode's rest policy so these commands resolve
         // under it (e.g. block-caret selection geometry) — but *without*
         // committing the cursor first. A commit here would apply the policy's
@@ -2099,18 +2099,22 @@ impl Reedline {
         // and the pre-paint `set_edit_mode` makes the final commit.
         self.editor.sync_edit_mode(self.edit_mode.edit_mode());
 
-        // Run every command, including commands rewritten by auto-pair handling,
-        // while retaining whether the whole edit was applicable.
-        let mut successful = true;
+        // Run all commands even when one is inapplicable, while retaining the
+        // aggregate status for callers such as `UntilFound`.
+        let mut status = EditCommandStatus::Applied;
         for command in commands {
             if let Some(command) = self.auto_pair_command(command) {
-                successful &= self.editor.run_edit_command(&command);
+                if self.editor.run_edit_command(&command) == EditCommandStatus::Inapplicable {
+                    status = EditCommandStatus::Inapplicable;
+                }
                 continue;
             }
 
-            successful &= self.editor.run_edit_command(command);
+            if self.editor.run_edit_command(command) == EditCommandStatus::Inapplicable {
+                status = EditCommandStatus::Inapplicable;
+            }
         }
-        successful
+        status
     }
 
     fn auto_pair_command(&self, command: &EditCommand) -> Option<EditCommand> {

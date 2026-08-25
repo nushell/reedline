@@ -39,6 +39,12 @@ pub struct Editor {
     cross_line_cursor: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EditCommandStatus {
+    Applied,
+    Inapplicable,
+}
+
 enum OperatorVerb {
     Cut,
     Copy,
@@ -94,8 +100,8 @@ impl Editor {
         self.update_undo_state(undo_behavior);
     }
 
-    pub(crate) fn run_edit_command(&mut self, command: &EditCommand) -> bool {
-        let mut successful = true;
+    pub(crate) fn run_edit_command(&mut self, command: &EditCommand) -> EditCommandStatus {
+        let mut status = EditCommandStatus::Applied;
 
         match command {
             EditCommand::MoveToStart { select } => self.move_to_start(*select),
@@ -328,7 +334,9 @@ impl Editor {
             }
             EditCommand::EraseSelection => self.erase_selection(),
             EditCommand::CopySelection => {
-                successful = self.get_selection().is_some();
+                if self.get_selection().is_none() {
+                    status = EditCommandStatus::Inapplicable;
+                }
                 self.copy_selection_to_cut_buffer();
             }
             EditCommand::LowercaseSelection => self.lowercase_selection(),
@@ -388,7 +396,9 @@ impl Editor {
             EditCommand::CutSelectionSystem => self.cut_selection_to_system(),
             #[cfg(feature = "system_clipboard")]
             EditCommand::CopySelectionSystem => {
-                successful = self.get_selection().is_some();
+                if self.get_selection().is_none() {
+                    status = EditCommandStatus::Inapplicable;
+                }
                 self.copy_selection_to_system();
             }
             #[cfg(feature = "system_clipboard")]
@@ -431,7 +441,7 @@ impl Editor {
         };
 
         self.update_undo_state(new_undo_behavior);
-        successful
+        status
     }
 
     pub(crate) fn clear_selection(&mut self) {
