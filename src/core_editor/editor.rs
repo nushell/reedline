@@ -113,6 +113,7 @@ impl Editor {
             EditCommand::MoveWordLeft { select } => self.move_word_left(*select),
             EditCommand::MoveBigWordLeft { select } => self.move_big_word_left(*select),
             EditCommand::MoveWordRight { select } => self.move_word_right(*select),
+            EditCommand::MoveBigWordRight { select } => self.move_big_word_right(*select),
             EditCommand::MoveWordRightStart { select } => self.move_word_right_start(*select),
             EditCommand::MoveBigWordRightStart { select } => {
                 self.move_big_word_right_start(*select)
@@ -1494,6 +1495,15 @@ impl Editor {
         // emacs M-f: end of current word, no skip.
         self.apply_move(
             word_target(WordKind::Unicode, WordEdge::End, Direction::Forward),
+            select,
+        );
+    }
+
+    fn move_big_word_right(&mut self, select: bool) {
+        // Big-word sibling of `move_word_right`: same end-of-word landing, but
+        // WORD boundaries (whitespace-delimited) rather than unicode words.
+        self.apply_move(
+            word_target(WordKind::LongWord, WordEdge::End, Direction::Forward),
             select,
         );
     }
@@ -5207,6 +5217,9 @@ mod test {
                     (EditCommand::MoveWordRight { select: false }, |lb| {
                         wb(lb, WordKind::Unicode, WordEdge::End, true, false)
                     }),
+                    (EditCommand::MoveBigWordRight { select: false }, |lb| {
+                        wb(lb, WordKind::LongWord, WordEdge::End, true, false)
+                    }),
                     (EditCommand::MoveWordRightStart { select: false }, |lb| {
                         wb(lb, WordKind::Unicode, WordEdge::Start, true, false)
                     }),
@@ -5317,6 +5330,17 @@ mod test {
         editor.move_to_position(0, false);
         editor.run_edit_command(&EditCommand::MoveWordRight { select: false });
         assert_eq!(editor.insertion_point(), 3);
+    }
+
+    #[test]
+    fn move_big_word_right_spans_punctuation() {
+        // Big-word motion is whitespace-delimited, so from byte 0 it rests after
+        // the whole "foo-bar" (byte 7); `MoveWordRight` would have stopped after
+        // "foo" at byte 3 because the hyphen is a unicode word boundary.
+        let mut editor = editor_with("foo-bar baz");
+        editor.move_to_position(0, false);
+        editor.run_edit_command(&EditCommand::MoveBigWordRight { select: false });
+        assert_eq!(editor.insertion_point(), 7);
     }
 
     #[test]
