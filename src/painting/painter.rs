@@ -217,7 +217,7 @@ fn cursor_position_for_term(
     stdout: &W,
     term: Option<&std::ffi::OsStr>,
 ) -> Result<Option<(u16, u16)>> {
-    if term == Some(std::ffi::OsStr::new("dumb")) {
+    if crate::utils::environment::term_is_dumb(term) {
         Ok(None)
     } else {
         stdout.cursor_position().map(Some)
