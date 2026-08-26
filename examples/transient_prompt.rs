@@ -4,7 +4,7 @@
 // Prompts for previous lines will be replaced with a shorter prompt
 
 use nu_ansi_term::{Color, Style};
-#[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+#[cfg(feature = "_sqlite")]
 use reedline::SqliteBackedHistory;
 use reedline::{
     default_emacs_keybindings, ColumnarMenu, DefaultCompleter, DefaultHinter, DefaultPrompt, Emacs,
@@ -110,7 +110,7 @@ fn main() -> io::Result<()> {
         .with_ansi_colors(true)
         .with_history_exclusion_prefix(Some(String::from(" ")))
         .with_transient_prompt(Box::new(TransientPrompt {}));
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     {
         line_editor = line_editor.with_history(Box::new(SqliteBackedHistory::in_memory().unwrap()));
     }

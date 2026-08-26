@@ -66,17 +66,14 @@ impl Highlighter for ExampleHighlighter {
                     acc
                 }
             });
-            let buffer_split: Vec<&str> = line.splitn(2, &longest_match).collect();
-
-            styled_text.push((
-                Style::new().fg(self.neutral_color),
-                buffer_split[0].to_string(),
-            ));
-            styled_text.push((Style::new().fg(self.match_color), longest_match));
-            styled_text.push((
-                Style::new().bold().fg(self.neutral_color),
-                buffer_split[1].to_string(),
-            ));
+            if let Some((before, after)) = line.split_once(&longest_match) {
+                styled_text.push((Style::new().fg(self.neutral_color), before.to_string()));
+                styled_text.push((Style::new().fg(self.match_color), longest_match));
+                styled_text.push((
+                    Style::new().bold().fg(self.neutral_color),
+                    after.to_string(),
+                ));
+            }
         } else if self.external_commands.is_empty() {
             styled_text.push((Style::new().fg(self.neutral_color), line.to_string()));
         } else {

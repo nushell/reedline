@@ -32,7 +32,6 @@ pub(crate) enum RestPolicy {
     /// [`Block`](RestPolicy::Block) with the terminator counted as a cell, so
     /// `l` walks onto the `\n` and an operator there joins the lines. Helix
     /// normal / select, whose `Range` is over the newline like any other char.
-    #[cfg(feature = "helix")]
     BlockOverNewline,
 }
 
@@ -42,7 +41,6 @@ impl RestPolicy {
     pub(crate) fn is_block(self) -> bool {
         match self {
             RestPolicy::Block => true,
-            #[cfg(feature = "helix")]
             RestPolicy::BlockOverNewline => true,
             RestPolicy::Between | RestPolicy::OnGrapheme => false,
         }
@@ -53,7 +51,6 @@ impl RestPolicy {
     pub(crate) fn covers_terminator(self) -> bool {
         match self {
             RestPolicy::Between | RestPolicy::OnGrapheme | RestPolicy::Block => false,
-            #[cfg(feature = "helix")]
             RestPolicy::BlockOverNewline => true,
         }
     }
@@ -122,7 +119,6 @@ pub(crate) fn commit(buf: &str, c: Cursor, policy: RestPolicy) -> Cursor {
             }
         }
         RestPolicy::Block => block(buf, c, false),
-        #[cfg(feature = "helix")]
         RestPolicy::BlockOverNewline => block(buf, c, true),
     }
 }
@@ -377,7 +373,6 @@ mod tests {
 
     // --- commit: BlockOverNewline --------------------------------------------
 
-    #[cfg(feature = "helix")]
     #[test]
     fn block_over_newline_widens_onto_the_terminator() {
         // The one difference from `Block`: "ab\ncd" at the `\n` (byte 2) covers
@@ -392,7 +387,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "helix")]
     #[test]
     fn block_over_newline_covers_a_whole_crlf() {
         // CRLF is one grapheme, so the cell is both bytes: "ab\r\ncd" at 2.
@@ -402,7 +396,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "helix")]
     #[test]
     fn block_over_newline_still_will_not_widen_across_a_line() {
         // The *backward* guard is kept: at the end of a buffer ending in `\n`
@@ -419,7 +412,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "helix")]
     #[test]
     fn block_over_newline_matches_block_away_from_terminators() {
         for (buf, pos) in [("hello", 2), ("caf\u{e9}", 3), ("hello", 5), ("", 0)] {
@@ -442,7 +434,6 @@ mod tests {
             RestPolicy::Between,
             RestPolicy::OnGrapheme,
             RestPolicy::Block,
-            #[cfg(feature = "helix")]
             RestPolicy::BlockOverNewline,
         ] {
             for buf in [MIXED, MULTILINE] {

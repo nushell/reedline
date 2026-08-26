@@ -9,7 +9,7 @@ use crate::{
 };
 use chrono::{TimeZone, Utc};
 use rusqlite::{named_params, params, Connection, ToSql, TransactionBehavior};
-use std::{fmt::Write, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 const SQLITE_APPLICATION_ID: i32 = 1151497937;
 
 /// A history that stores the values to an SQLite database.
@@ -150,7 +150,7 @@ impl History for SqliteBackedHistory {
         let result: i64 = self
             .db
             .prepare(&query)
-            .unwrap()
+            .map_err(map_sqlite_err)?
             .query_row(&params_borrow[..], |r| r.get(0))
             .map_err(map_sqlite_err)?;
         Ok(result)
@@ -165,7 +165,7 @@ impl History for SqliteBackedHistory {
         let results: Vec<HistoryItem> = self
             .db
             .prepare(&query)
-            .unwrap()
+            .map_err(map_sqlite_err)?
             .query_map(
                 &params_borrow[..],
                 deserialize_history_item::<IgnoreAllExtraInfo>,
@@ -317,7 +317,7 @@ impl SqliteBackedHistory {
         create index if not exists idx_history_cwd on history(cwd); -- suboptimal for many hosts
         create index if not exists idx_history_exit_status on history(exit_status);
         create index if not exists idx_history_cmd on history(command_line);
-        create index if not exists idx_history_cmd on history(session_id);
+        create index if not exists idx_history_session on history(session_id);
         -- todo: better indexes
         ",
         )
@@ -343,17 +343,17 @@ impl SqliteBackedHistory {
         let mut params: BoxedNamedParams = Vec::new();
         if let Some(start) = query.start_time {
             wheres.push(if is_asc {
-                "timestamp_start > :start_time"
+                "start_timestamp > :start_time"
             } else {
-                "timestamp_start < :start_time"
+                "start_timestamp < :start_time"
             });
             params.push((":start_time", Box::new(start.timestamp_millis())));
         }
         if let Some(end) = query.end_time {
             wheres.push(if is_asc {
-                ":end_time >= timestamp_start"
+                ":end_time >= start_timestamp"
             } else {
-                ":end_time <= timestamp_start"
+                ":end_time <= start_timestamp"
             });
             params.push((":end_time", Box::new(end.timestamp_millis())));
         }
@@ -449,45 +449,34 @@ impl SqliteBackedHistory {
                 }
                 match value {
                     JsonFilterValue::Null => {
-                        write!(
-                            where_string,
-                            "json_type(more_info, :json_path_{i}) = 'null'"
-                        )
-                        .unwrap();
+                        where_string
+                            .push_str(&format!("json_type(more_info, :json_path_{i}) = 'null'"));
                     }
                     JsonFilterValue::Bool(b) => {
                         let type_str = if *b { "true" } else { "false" };
-                        write!(
-                            where_string,
+                        where_string.push_str(&format!(
                             "json_type(more_info, :json_path_{i}) = '{type_str}'"
-                        )
-                        .unwrap();
+                        ));
                     }
                     JsonFilterValue::Integer(n) => {
-                        write!(
-                            where_string,
+                        where_string.push_str(&format!(
                             "json_type(more_info, :json_path_{i}) = 'integer' \
                              AND json_extract(more_info, :json_path_{i}) = :json_val_{i}"
-                        )
-                        .unwrap();
+                        ));
                         json_params.push((format!(":json_val_{i}"), Box::new(*n)));
                     }
                     JsonFilterValue::Real(f) => {
-                        write!(
-                            where_string,
+                        where_string.push_str(&format!(
                             "json_type(more_info, :json_path_{i}) = 'real' \
-                             AND json_extract(more_info, :json_path_{i}) = :json_val_{i}"
-                        )
-                        .unwrap();
+                             AND json_extract(more_info, :json_path_{i}) = :json_val_{i}",
+                        ));
                         json_params.push((format!(":json_val_{i}"), Box::new(*f)));
                     }
                     JsonFilterValue::Text(s) => {
-                        write!(
-                            where_string,
+                        where_string.push_str(&format!(
                             "json_type(more_info, :json_path_{i}) = 'text' \
-                             AND json_extract(more_info, :json_path_{i}) = :json_val_{i}"
-                        )
-                        .unwrap();
+                             AND json_extract(more_info, :json_path_{i}) = :json_val_{i}",
+                        ));
                         json_params.push((format!(":json_val_{i}"), Box::new(s.clone())));
                     }
                 }
@@ -670,6 +659,34 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "_sqlite")]
+    #[test]
+    fn search_by_time_range_uses_existing_column() -> crate::Result<()> {
+        use crate::history::base::SearchQuery;
+        use chrono::{TimeZone, Utc};
+
+        let mut db = SqliteBackedHistory::in_memory()?;
+        for (cmd, secs) in [("early", 100), ("middle", 200), ("late", 300)] {
+            let mut item = HistoryItem::from_command_line(cmd);
+            item.start_timestamp = Some(Utc.timestamp_opt(secs, 0).unwrap());
+            db.save(item)?;
+        }
+
+        let query = || SearchQuery {
+            start_time: Some(Utc.timestamp_opt(150, 0).unwrap()),
+            end_time: Some(Utc.timestamp_opt(250, 0).unwrap()),
+            ..SearchQuery::everything(SearchDirection::Forward, None)
+        };
+        let found: Vec<String> = db
+            .search(query())?
+            .into_iter()
+            .map(|i| i.command_line)
+            .collect();
+        assert_eq!(found, vec!["middle".to_string()]);
+        assert_eq!(db.count(query())?, 1);
+        Ok(())
+    }
+
     #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
     #[test]
     fn save_and_load_with_extra() -> crate::Result<()> {
@@ -691,7 +708,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn save_with_extra_null_more_info_roundtrips() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
@@ -704,7 +721,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn search_with_extra_more_info_json_matches() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
@@ -760,7 +777,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn search_with_extra_null_more_info_not_matched() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
@@ -784,7 +801,7 @@ mod tests {
 
     /// Verify that Bool, Integer, and Text filters do not collide with each other
     /// even when the raw JSON bytes look similar (e.g. `true` vs `1` vs `"1"`).
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn json_filter_value_no_type_collisions() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
@@ -900,7 +917,7 @@ mod tests {
     }
 
     /// Verify that Real(f) does not collide with Integer values stored at the same path.
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn json_filter_value_real_vs_integer() -> crate::Result<()> {
         // Two structs so we can store the same path ($.score) as either real or integer.
@@ -977,7 +994,7 @@ mod tests {
 
     /// Verify that Null matches JSON null at a path but not SQL-NULL more_info
     /// or a path that is simply absent from the JSON object.
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn json_filter_value_null_vs_missing_path() -> crate::Result<()> {
         #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -1057,7 +1074,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn typed_and_untyped_interop() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
@@ -1078,7 +1095,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn trait_update_preserves_typed_more_info() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;
@@ -1112,7 +1129,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn trait_update_missing_id_errors() {
         let mut db = SqliteBackedHistory::in_memory().unwrap();
@@ -1120,7 +1137,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(any(feature = "sqlite", feature = "sqlite-dynlib"))]
+    #[cfg(feature = "_sqlite")]
     #[test]
     fn update_with_extra_modifies_typed_more_info() -> crate::Result<()> {
         let mut db = SqliteBackedHistory::in_memory()?;

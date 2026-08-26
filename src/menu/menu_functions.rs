@@ -13,6 +13,10 @@ use crate::{
     CompletionOrigin, CompletionResult, Editor, Partial, Suggestion, Suggestions, UndoBehavior,
 };
 
+/// Appended to whatever `truncate_with_ansi` keeps, so callers must allow at
+/// least its width.
+const TRUNCATION_SUFFIX: &str = "...";
+
 /// Index result obtained from parsing a string with an index marker
 /// For example, the next string:
 ///     "this is an example :10"
@@ -116,8 +120,7 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
                         ParseAction::ForwardSearch
                     };
                     while let Some(&c) = input.peek() {
-                        if c.is_ascii_digit() {
-                            let c = c.to_digit(10).expect("already checked if is a digit");
+                        if let Some(c) = c.to_digit(10) {
                             let _ = input.next();
                             count *= 10;
                             count += c as usize;
@@ -174,64 +177,27 @@ pub fn parse_selection_char(buffer: &str, marker: char) -> ParseResult<'_> {
     }
 }
 
-/// Find differing substring between two strings
+/// Find differing substring between two strings.
+///
+/// Skips the common prefix; if the rest of `old_string` is a suffix of what
+/// remains, the difference is the text in between, otherwise everything after
+/// the prefix. Returns the byte offset of the difference and the difference.
 pub fn string_difference<'a>(new_string: &'a str, old_string: &str) -> (usize, &'a str) {
-    if old_string.is_empty() {
-        return (0, new_string);
-    }
+    let prefix = new_string
+        .char_indices()
+        .zip(old_string.chars())
+        .take_while(|((_, n), o)| n == o)
+        .map(|((i, c), _)| i + c.len_utf8())
+        .last()
+        .unwrap_or(0);
 
-    let old_chars = old_string.char_indices().collect::<Vec<(usize, char)>>();
-    let new_chars = new_string.char_indices().collect::<Vec<(usize, char)>>();
+    // `prefix` is a char boundary of both strings by construction, so the
+    // fallbacks are unreachable; they only keep the slicing panic-free.
+    let (_, old_rest) = old_string.split_at_checked(prefix).unwrap_or_default();
+    let (head, new_rest) = new_string.split_at_checked(prefix).unwrap_or_default();
+    let diff = new_rest.strip_suffix(old_rest).unwrap_or(new_rest);
 
-    let (_, start, end) = new_chars.iter().enumerate().fold(
-        (0, None, None),
-        |(old_char_index, start, end), (new_char_index, (_, c))| {
-            let equal = if start.is_some() {
-                if (old_chars.len() - old_char_index) == (new_chars.len() - new_char_index) {
-                    let new_iter = new_chars.iter().skip(new_char_index);
-                    let old_iter = old_chars.iter().skip(old_char_index);
-
-                    new_iter
-                        .zip(old_iter)
-                        .all(|((_, new), (_, old))| new == old)
-                } else {
-                    false
-                }
-            } else {
-                old_char_index == new_char_index && *c == old_chars[old_char_index].1
-            };
-
-            if equal {
-                let old_char_index = (old_char_index + 1).min(old_chars.len() - 1);
-
-                let end = match (start, end) {
-                    (Some(_), Some(_)) => end,
-                    (Some(_), None) => Some(new_char_index),
-                    _ => None,
-                };
-
-                (old_char_index, start, end)
-            } else {
-                let start = match start {
-                    Some(_) => start,
-                    None => Some(new_char_index),
-                };
-
-                (old_char_index, start, end)
-            }
-        },
-    );
-
-    // Convert char index to byte index
-    let start = start.map(|i| new_chars[i].0);
-    let end = end.map(|i| new_chars[i].0);
-
-    match (start, end) {
-        (Some(start), Some(end)) => (start, &new_string[start..end]),
-        (Some(start), None) => (start, &new_string[start..]),
-        (None, None) => (new_string.len(), ""),
-        (None, Some(_)) => unreachable!(),
-    }
+    (head.len(), diff)
 }
 
 /// Get the part of the line that should be given as input to the completer, as well
@@ -853,80 +819,136 @@ pub fn get_match_indices<'a>(
     }
 }
 
+/// Where `truncate_with_ansi` cuts: segments before `segment` are kept whole,
+/// then the first `byte` bytes of `segment`, then the suffix.
+struct Cut {
+    segment: usize,
+    /// Always a grapheme boundary within that segment's text.
+    byte: usize,
+}
+
+/// How one segment sits against the width budget once everything before it
+/// has been laid out.
+enum Fit {
+    /// The segment fits, and the suffix would still fit after it.
+    WithDots,
+    /// The segment fits, but the suffix after it would not: if anything later
+    /// overflows, the cut has to land inside this segment.
+    WithoutDots,
+    /// The segment itself does not fit.
+    Overflows,
+}
+
+fn fit(current_width: usize, segment_width: usize, suffix_width: usize, max_width: usize) -> Fit {
+    let end = current_width + segment_width;
+    if end > max_width {
+        Fit::Overflows
+    } else if end + suffix_width > max_width {
+        Fit::WithoutDots
+    } else {
+        Fit::WithDots
+    }
+}
+
+/// Byte length of the longest prefix of `text` whose display width is at most `budget`.
+///
+/// Walks graphemes so a wide or combining character is never split; a
+/// grapheme that would overshoot the budget stops the walk.
+fn prefix_len_within_width(text: &str, budget: usize) -> usize {
+    let mut remaining = budget;
+    let mut end = 0;
+    for (start, grapheme) in text.grapheme_indices(true) {
+        let width = grapheme.width();
+        if width > remaining {
+            break;
+        }
+        end = start + grapheme.len();
+        remaining -= width;
+    }
+    end
+}
+
 /// Truncate a string with ANSI escapes to the given max width, which must be >=3.
 ///
 /// If `s` is longer than `max_width`, the resulting string will end in "..."
 /// and have width at most `max_width`.
 pub(crate) fn truncate_with_ansi(s: &str, max_width: usize) -> Cow<'_, str> {
-    let trunc_suffix = "...";
-    let suffix_width = trunc_suffix.width();
+    let suffix_width = TRUNCATION_SUFFIX.width();
+    let segments = parse_ansi(s);
 
-    let ansi_segments = parse_ansi(s);
-    let mut curr_width = 0;
-    let mut should_trunc = false;
-    let mut max_ind_trunc = 0;
-    let mut trunc_grapheme_ind = 0;
-    for (i, segment) in ansi_segments.iter().enumerate() {
+    // The cut lands at the first place the suffix stops fitting: inside the
+    // first `WithoutDots` segment after a clean boundary, or failing that
+    // inside the segment that overflows. `pending` holds the former until we
+    // know whether anything overflows at all; a `WithDots` segment resets it
+    // since the suffix fits cleanly after that one again.
+    let mut current_width = 0;
+    let mut pending: Option<Cut> = None;
+    let mut cut: Option<Cut> = None;
+    for (i, segment) in segments.iter().enumerate() {
         let segment_width = segment.text.width();
-
-        should_trunc = curr_width + segment_width > max_width;
-
-        let too_long_with_dots = curr_width + segment_width + suffix_width > max_width;
-        if !too_long_with_dots {
-            max_ind_trunc = i + 1;
-        }
-
-        if should_trunc || too_long_with_dots {
-            let mut allowed_width = max_width
-                .saturating_sub(curr_width)
-                .saturating_sub(suffix_width);
-            for (ind, grapheme) in segment.text.grapheme_indices(true) {
-                let grapheme_width = grapheme.width();
-                if grapheme_width > allowed_width {
-                    break;
+        let budget = max_width
+            .saturating_sub(current_width)
+            .saturating_sub(suffix_width);
+        match fit(current_width, segment_width, suffix_width, max_width) {
+            Fit::WithDots => pending = None,
+            Fit::WithoutDots => {
+                if pending.is_none() {
+                    pending = Some(Cut {
+                        segment: i,
+                        byte: prefix_len_within_width(segment.text, budget),
+                    })
                 }
-                trunc_grapheme_ind = ind + grapheme.len();
-                allowed_width = allowed_width.saturating_sub(grapheme_width);
             }
-            if should_trunc {
+            Fit::Overflows => {
+                cut = Some(pending.take().unwrap_or_else(|| Cut {
+                    segment: i,
+                    byte: prefix_len_within_width(segment.text, budget),
+                }));
                 break;
             }
         }
-
-        curr_width += segment_width;
+        current_width += segment_width;
     }
 
-    if should_trunc {
-        let mut res = String::new();
-        for (i, segment) in ansi_segments[0..max_ind_trunc].iter().enumerate() {
-            if let Some(escape) = segment.escape {
-                res.push_str(ANSI_SGR_START);
-                res.push_str(escape);
-            } else if i > 0 {
-                // No need to put a RESET at the beginning of the string
-                res.push_str(RESET);
-            }
-            res.push_str(segment.text);
-        }
-        let last = &ansi_segments[max_ind_trunc];
-        if let Some(escape) = last.escape {
+    let Some(Cut { segment, byte }) = cut else {
+        return Cow::Borrowed(s);
+    };
+    // `segment` is an index the loop above produced, so both lookups hold; if
+    // they ever did not, an untruncated string beats a panic while painting.
+    let Some((keep, rest)) = segments.split_at_checked(segment) else {
+        return Cow::Borrowed(s);
+    };
+    let Some(last) = rest.first() else {
+        return Cow::Borrowed(s);
+    };
+
+    let mut res = String::new();
+    for (i, segment) in keep.iter().enumerate() {
+        if let Some(escape) = segment.escape {
             res.push_str(ANSI_SGR_START);
             res.push_str(escape);
-        } else if max_ind_trunc > 0 {
+        } else if i > 0 {
+            // No need to put a RESET at the beginning of the string
             res.push_str(RESET);
         }
-        res.push_str(&last.text[0..trunc_grapheme_ind]);
-        res.push_str(trunc_suffix);
-        Cow::Owned(res)
-    } else {
-        Cow::Borrowed(s)
+        res.push_str(segment.text);
     }
+    // The cut segment's escape is emitted even when none of its text survives,
+    // so the suffix carries its style.
+    if let Some(escape) = last.escape {
+        res.push_str(ANSI_SGR_START);
+        res.push_str(escape);
+    } else if segment > 0 {
+        res.push_str(RESET);
+    }
+    res.push_str(last.text.get(..byte).unwrap_or(""));
+    res.push_str(TRUNCATION_SUFFIX);
+    Cow::Owned(res)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "helix")]
     use crate::PromptHelixMode;
     use crate::{EditCommand, LineBuffer, PromptEditMode, PromptViMode, Span};
     use nu_ansi_term::Color;
@@ -936,16 +958,10 @@ mod tests {
     /// count that grapheme as part of the word instead of stranding it after the
     /// replacement (`foo` + `foobar` used to yield `foobaro`).
     #[rstest]
-    #[cfg_attr(
-        feature = "helix",
-        case::helix_normal(PromptEditMode::Helix(PromptHelixMode::Normal), "foo", "foobar")
-    )]
+    #[case::helix_normal(PromptEditMode::Helix(PromptHelixMode::Normal), "foo", "foobar")]
     #[case::vi_normal(PromptEditMode::Vi(PromptViMode::Normal), "foo", "foobar")]
     // The covered grapheme is multi-byte: stepping by bytes would split it.
-    #[cfg_attr(
-        feature = "helix",
-        case::multibyte(PromptEditMode::Helix(PromptHelixMode::Normal), "café", "cafétería")
-    )]
+    #[case::multibyte(PromptEditMode::Helix(PromptHelixMode::Normal), "café", "cafétería")]
     fn completion_covers_the_caret_grapheme(
         #[case] mode: PromptEditMode,
         #[case] buffer: &str,
@@ -1127,103 +1143,33 @@ mod tests {
         assert!(matches!(res.action, ParseAction::BackwardSearch));
     }
 
-    #[test]
-    fn string_difference_test() {
-        let new_string = "this is a new string";
-        let old_string = "this is a string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new "));
-    }
-
-    #[test]
-    fn string_difference_new_larger() {
-        let new_string = "this is a new string";
-        let old_string = "this is";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (7, " a new string"));
-    }
-
-    #[test]
-    fn string_difference_new_shorter() {
-        let new_string = "this is the";
-        let old_string = "this is the original";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (11, ""));
-    }
-
-    #[test]
-    fn string_difference_inserting() {
-        let new_string = "let a = (insert) | ";
-        let old_string = "let a = () | ";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (9, "insert"));
-    }
-
-    #[test]
-    fn string_difference_longer_string() {
-        let new_string = "this is a new another";
-        let old_string = "this is a string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new another"));
-    }
-
-    #[test]
-    fn string_difference_start_same() {
-        let new_string = "this is a new something string";
-        let old_string = "this is a string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (10, "new something "));
-    }
-
-    #[test]
-    fn string_difference_empty_old() {
-        let new_string = "this new another";
-        let old_string = "";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (0, "this new another"));
-    }
-
-    #[test]
-    fn string_difference_very_difference() {
-        let new_string = "this new another";
-        let old_string = "complete different string";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (0, "this new another"));
-    }
-
-    #[test]
-    fn string_difference_both_equal() {
-        let new_string = "this new another";
-        let old_string = "this new another";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (16, ""));
-    }
-
-    #[test]
-    fn string_difference_with_non_ansi() {
-        let new_string = "ｎｕｓｈｅｌｌ";
-        let old_string = "ｎｕｌｌ";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (6, "ｓｈｅ"));
-    }
-
-    #[test]
-    fn string_difference_with_repeat() {
-        let new_string = "ee";
-        let old_string = "e";
-
-        let res = string_difference(new_string, old_string);
-        assert_eq!(res, (1, "e"));
+    #[rstest]
+    #[case::inserted_word("this is a new string", "this is a string", 10, "new ")]
+    #[case::appended("this is a new string", "this is", 7, " a new string")]
+    #[case::new_shorter("this is the", "this is the original", 11, "")]
+    #[case::inserted_inside_parens("let a = (insert) | ", "let a = () | ", 9, "insert")]
+    #[case::tail_differs("this is a new another", "this is a string", 10, "new another")]
+    #[case::inserted_words(
+        "this is a new something string",
+        "this is a string",
+        10,
+        "new something "
+    )]
+    #[case::empty_old("this new another", "", 0, "this new another")]
+    #[case::nothing_shared("this new another", "complete different string", 0, "this new another")]
+    #[case::equal("this new another", "this new another", 16, "")]
+    #[case::multibyte_diff("ｎｕｓｈｅｌｌ", "ｎｕｌｌ", 6, "ｓｈｅ")]
+    #[case::multibyte_prefix("héllo wörld", "héllo", 6, " wörld")]
+    #[case::repeat("ee", "e", 1, "e")]
+    #[case::repeat_twice("eee", "e", 1, "ee")]
+    #[case::old_is_prefix_and_reappears("abcb", "ab", 2, "cb")]
+    fn string_difference_is_the_text_typed_after_the_prefix(
+        #[case] new: &str,
+        #[case] old: &str,
+        #[case] start: usize,
+        #[case] diff: &str,
+    ) {
+        assert_eq!(string_difference(new, old), (start, diff));
     }
 
     #[rstest]
@@ -1537,6 +1483,35 @@ mod tests {
     #[case::no_ansi_nothing_left("foobar", 3, "...")]
     #[case::trunc_with_short_segments("foobar\x1b[1;ma\x1b[2;mb\x1b[3;mc", 8, "fooba...")]
     #[case::trunc_with_long_segment("foo\x1b[1;mBarbaz\x1b[2;mExtra", 8, "foo\x1b[0mBa...")]
+    // The cases below pin which segment the cut lands in and where inside it,
+    // with well-formed SGR escapes (no trailing `;`, which the parser reads as a reset).
+    #[case::style_survives_the_cut("\x1b[1mabcdef", 4, "\x1b[1ma...")]
+    #[case::cut_on_a_segment_boundary_keeps_its_escape("ab\x1b[1mcd\x1b[2mef", 5, "ab\x1b[1m...")]
+    #[case::earlier_segment_fits_only_without_dots(
+        "ab\x1b[1mcd\x1b[2mefgh",
+        7,
+        "ab\x1b[1mcd\x1b[2m..."
+    )]
+    #[case::cut_lands_in_the_first_of_two_without_dots(
+        "ab\x1b[1mcd\x1b[2me\x1b[3mfghij",
+        6,
+        "ab\x1b[1mc..."
+    )]
+    #[case::overflow_segment_has_no_room_left(
+        "abc\x1b[1mde\x1b[2mfghij",
+        8,
+        "abc\x1b[1mde\x1b[2m..."
+    )]
+    #[case::wide_grapheme_starts_the_overflow_segment(
+        "ab\x1b[1m\u{ff28}\u{ff28}\x1b[2mcd",
+        5,
+        "ab\x1b[1m..."
+    )]
+    #[case::empty_text_segment_between_escapes("a\x1b[1m\x1b[2mbcdefg", 5, "a\x1b[1m\x1b[2mb...")]
+    #[case::reset_inside_the_kept_part("\x1b[1mab\x1b[0mcdef", 5, "\x1b[1mab\x1b[0m...")]
+    #[case::reset_after_the_cut("\x1b[1mab\x1b[0mcdef", 4, "\x1b[1ma...")]
+    #[case::max_width_below_the_suffix("abcdef", 2, "...")]
+    #[case::max_width_zero("abcdef", 0, "...")]
     fn test_truncate_with_ansi(
         #[case] value: &str,
         #[case] max_width: usize,
