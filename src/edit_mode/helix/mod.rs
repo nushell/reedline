@@ -43,8 +43,10 @@ enum Pending {
     Goto,
     /// `m` is waiting for the matching action
     MatchStepOne,
-    /// `m`-`a`/`i`/`s`/`d` is waiting for the surrounding character
+    /// `m`-`a`/`i`/`s`/`d`/`r` is waiting for the surrounding character
     MatchStepTwo(MatchAction),
+    /// `mr` is waiting for the second text object
+    MatchReplace(TextObjectType),
 }
 
 /// Every parse_event will result in one of three outcomes:
@@ -88,19 +90,23 @@ enum Verb {
 /// Every matching action possible
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MatchAction {
-    /// `i`. Inside surrounding characters
+    /// `i`. Selects inside a text object
     Inner,
-    /// `a`. Around surrounding characters
+    /// `a`. Select around a text object
     Around,
-    /// `s`
+    /// `s`. Insert a text object around the selection
     Set,
-    /// `d`. Delete surrounding characters
+    /// `d`. Delete the nearest text object around the cursor head
     Delete,
+    /// `r`. Replace a text object by another around the cursor head
+    Replace,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Match {
     text_object: TextObjectType,
+    /// Useful for replace match action
+    text_object2: Option<TextObjectType>,
     action: MatchAction,
 }
 
@@ -149,6 +155,21 @@ fn word(kind: WordKind, edge: WordEdge, direction: Direction) -> MotionTarget {
         kind,
         edge,
         direction,
+    }
+}
+
+fn char_to_text_object(ch: char) -> Option<TextObjectType> {
+    match ch {
+        'w' => Some(TextObjectType::Word),
+        'W' => Some(TextObjectType::BigWord),
+        '(' | ')' => Some(TextObjectType::Brackets(TextObjectBracket::Parenthesis)),
+        '{' | '}' => Some(TextObjectType::Brackets(TextObjectBracket::CurlyBracket)),
+        '[' | ']' => Some(TextObjectType::Brackets(TextObjectBracket::SquareBracket)),
+        '<' | '>' => Some(TextObjectType::Brackets(TextObjectBracket::AngleBracket)),
+        '\'' => Some(TextObjectType::Quotes(TextObjectQuote::SingleQuote)),
+        '"' => Some(TextObjectType::Quotes(TextObjectQuote::DoubleQuote)),
+        '`' => Some(TextObjectType::Quotes(TextObjectQuote::Tick)),
+        _ => None,
     }
 }
 
@@ -369,28 +390,39 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
                 'i' => MatchAction::Inner,
                 's' => MatchAction::Set,
                 'd' => MatchAction::Delete,
+                'r' => MatchAction::Replace,
                 _ => return Outcome::Reject,
             };
             Outcome::Absorb(Pending::MatchStepTwo(target))
         }
         Pending::MatchStepTwo(action) => {
-            let text_object = match ch {
-                'w' => TextObjectType::Word,
-                'W' => TextObjectType::BigWord,
-                '(' | ')' => TextObjectType::Brackets(TextObjectBracket::Parenthesis),
-                '{' | '}' => TextObjectType::Brackets(TextObjectBracket::CurlyBracket),
-                '[' | ']' => TextObjectType::Brackets(TextObjectBracket::SquareBracket),
-                '<' | '>' => TextObjectType::Brackets(TextObjectBracket::AngleBracket),
-                '\'' => TextObjectType::Quotes(TextObjectQuote::SingleQuote),
-                '"' => TextObjectType::Quotes(TextObjectQuote::DoubleQuote),
-                '`' => TextObjectType::Quotes(TextObjectQuote::Tick),
-                _ => return Outcome::Reject,
+            let Some(text_object) = char_to_text_object(ch) else {
+                return Outcome::Reject;
             };
+            if matches!(action, MatchAction::Replace) {
+                return Outcome::Absorb(Pending::MatchReplace(text_object));
+            }
             exec(
                 count,
                 Verb::Match(Match {
                     text_object,
+                    text_object2: None,
                     action,
+                }),
+                None,
+            )
+        }
+        Pending::MatchReplace(old) => {
+            let Some(new) = char_to_text_object(ch) else {
+                return Outcome::Reject;
+            };
+
+            exec(
+                count,
+                Verb::Match(Match {
+                    text_object: old,
+                    text_object2: Some(new),
+                    action: MatchAction::Replace,
                 }),
                 None,
             )
@@ -631,6 +663,16 @@ fn lower(action: Action, mode: HelixMode) -> ReedlineEvent {
             MatchAction::Delete => ReedlineEvent::Edit(vec![EditCommand::RemoveTextObject {
                 text_object: m.text_object,
             }]),
+            MatchAction::Replace => {
+                let Some(new) = m.text_object2 else {
+                    // Should not happened, but just in case...
+                    return ReedlineEvent::None;
+                };
+                ReedlineEvent::Edit(vec![EditCommand::ReplaceTextObject {
+                    old: m.text_object,
+                    new,
+                }])
+            }
         },
         Verb::Deselect => ReedlineEvent::Multiple(vec![ReedlineEvent::Esc, ReedlineEvent::Repaint]),
         Verb::ChangeMode => ReedlineEvent::None,
