@@ -814,6 +814,13 @@ pub enum EditCommand {
         /// The text object to operate on
         text_object: TextObjectType,
     },
+    /// Replace the nearest specified text object around the cursor head
+    ReplaceTextObject {
+        /// The old text object to replace
+        old: TextObjectType,
+        /// The new text object to replace with
+        new: TextObjectType,
+    },
 }
 
 impl EditCommand {
@@ -936,9 +943,9 @@ impl EditCommand {
             | EditCommand::CopyAroundPair { .. }
             | EditCommand::CopyTextObject { .. } => EditType::NoOp,
 
-            EditCommand::AddTextObject { .. } | EditCommand::RemoveTextObject { .. } => {
-                EditType::MoveCursor { select: true }
-            }
+            EditCommand::AddTextObject { .. }
+            | EditCommand::RemoveTextObject { .. }
+            | EditCommand::ReplaceTextObject { .. } => EditType::MoveCursor { select: true },
 
             // The six MotionTarget verbs. `Move`/`Extend` carry the old `select`
             // bool in the verb itself (Extend must be `select: true` so the editor

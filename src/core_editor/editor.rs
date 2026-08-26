@@ -373,6 +373,7 @@ impl Editor {
             EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
             EditCommand::AddTextObject { text_object } => self.add_text_object(*text_object),
             EditCommand::RemoveTextObject { text_object } => self.remove_text_object(*text_object),
+            EditCommand::ReplaceTextObject { old, new } => self.replace_text_object(*old, *new),
         }
         let leaves_selection = matches!(command.edit_type(), EditType::MoveCursor { select: true })
             || matches!(command, EditCommand::PasteAtSelectionEdge { .. })
@@ -1832,6 +1833,31 @@ impl Editor {
             cursor.head() - 1,
         );
         self.place(new_cursor);
+    }
+    fn replace_text_object(&mut self, old: TextObjectType, new: TextObjectType) {
+        if !matches!(
+            (old, new),
+            (
+                TextObjectType::Brackets(_) | TextObjectType::Quotes(_),
+                TextObjectType::Brackets(_) | TextObjectType::Quotes(_)
+            )
+        ) {
+            return;
+        }
+        let cursor = self.line_buffer.cursor();
+        self.line_buffer.set_cursor(Cursor::point(cursor.head()));
+        let Some(range) = self.text_object_range(TextObject {
+            scope: TextObjectScope::Inner,
+            object_type: old,
+        }) else {
+            self.line_buffer.set_cursor(cursor);
+            return;
+        };
+        self.remove_text_object(old);
+        self.line_buffer
+            .set_cursor(Cursor::new(range.start - 1, range.end - 1));
+        self.add_text_object(new);
+        self.place(cursor);
     }
 
     fn select_text_object(&mut self, text_object: TextObject) {
