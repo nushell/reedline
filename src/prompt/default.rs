@@ -6,10 +6,27 @@ use {
     std::{borrow::Cow, env},
 };
 
-/// The default prompt indicator
+/// The default prompt indicator, and the one the modal insert modes share.
+///
+/// Every indicator here is two columns of ASCII, thus switching modes never
+/// reflows the input line and no terminal needs a font it might not have.
+///
+/// The modal three are named for the state, not the dialect: vi and helix
+/// share every value, and the one state whose name they disagree on (vi's
+/// visual, helix's select) would otherwise have nowhere to sit.
 pub static DEFAULT_PROMPT_INDICATOR: &str = "> ";
-pub static DEFAULT_VI_INSERT_PROMPT_INDICATOR: &str = ": ";
-pub static DEFAULT_VI_NORMAL_PROMPT_INDICATOR: &str = "> ";
+/// Modal insert. The same glyph as [`DEFAULT_PROMPT_INDICATOR`] on purpose:
+/// both `Vi::default` and `Helix::default` start here, and nothing about
+/// typing differs from emacs, so the mode a newcomer lands in should not look
+/// like a mode they do not know.
+pub static DEFAULT_INSERT_PROMPT_INDICATOR: &str = "> ";
+/// Modal normal. Keystrokes are commands here, which is what the ex prompt's
+/// `:` has meant all along.
+pub static DEFAULT_NORMAL_PROMPT_INDICATOR: &str = ": ";
+/// Vi visual and helix select: the mode whose motions grow a span.
+pub static DEFAULT_SELECT_PROMPT_INDICATOR: &str = "+ ";
+/// Continuation lines, in every edit mode. Wider than the indicators on
+/// purpose: it marks a line the prompt did not start, not a mode.
 pub static DEFAULT_MULTILINE_INDICATOR: &str = "::: ";
 
 /// Simple [`Prompt`] displaying a configurable left and a right prompt.
@@ -64,17 +81,14 @@ impl Prompt for DefaultPrompt {
         match edit_mode {
             PromptEditMode::Default | PromptEditMode::Emacs => DEFAULT_PROMPT_INDICATOR.into(),
             PromptEditMode::Helix(hx_mode) => match hx_mode {
-                PromptHelixMode::Normal | PromptHelixMode::Select => {
-                    DEFAULT_VI_NORMAL_PROMPT_INDICATOR.into()
-                }
-                PromptHelixMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
+                PromptHelixMode::Normal => DEFAULT_NORMAL_PROMPT_INDICATOR.into(),
+                PromptHelixMode::Select => DEFAULT_SELECT_PROMPT_INDICATOR.into(),
+                PromptHelixMode::Insert => DEFAULT_INSERT_PROMPT_INDICATOR.into(),
             },
             PromptEditMode::Vi(vi_mode) => match vi_mode {
-                // Visual reuses the normal indicator (no distinct default glyph yet).
-                PromptViMode::Normal | PromptViMode::Visual => {
-                    DEFAULT_VI_NORMAL_PROMPT_INDICATOR.into()
-                }
-                PromptViMode::Insert => DEFAULT_VI_INSERT_PROMPT_INDICATOR.into(),
+                PromptViMode::Normal => DEFAULT_NORMAL_PROMPT_INDICATOR.into(),
+                PromptViMode::Visual => DEFAULT_SELECT_PROMPT_INDICATOR.into(),
+                PromptViMode::Insert => DEFAULT_INSERT_PROMPT_INDICATOR.into(),
             },
             PromptEditMode::Custom(str) => format!("({str})").into(),
         }
@@ -156,8 +170,34 @@ fn get_now() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::format_working_dir;
+    use super::{format_working_dir, DefaultPrompt};
+    use crate::{Prompt, PromptEditMode, PromptHelixMode, PromptViMode};
     use std::path::{Path, PathBuf};
+
+    /// The whole point of the assignment, pinned as a table: insert shares
+    /// emacs's glyph since every modal session starts there, and the three
+    /// states whose keys mean different things each render differently. Equal
+    /// width keeps a mode switch from reflowing the input line.
+    #[test]
+    fn indicator_table_splits_the_modal_states_at_equal_width() {
+        let prompt = DefaultPrompt::default();
+        let table = [
+            (PromptEditMode::Default, "> "),
+            (PromptEditMode::Emacs, "> "),
+            (PromptEditMode::Vi(PromptViMode::Insert), "> "),
+            (PromptEditMode::Vi(PromptViMode::Normal), ": "),
+            (PromptEditMode::Vi(PromptViMode::Visual), "+ "),
+            (PromptEditMode::Helix(PromptHelixMode::Insert), "> "),
+            (PromptEditMode::Helix(PromptHelixMode::Normal), ": "),
+            (PromptEditMode::Helix(PromptHelixMode::Select), "+ "),
+        ];
+        for (mode, expected) in table {
+            let label = format!("{mode:?}");
+            assert_eq!(prompt.render_prompt_indicator(mode), expected, "{label}");
+            assert!(expected.is_ascii(), "{label} must stay ASCII");
+            assert_eq!(expected.len(), 2, "{label} must stay two columns");
+        }
+    }
 
     #[cfg(unix)]
     #[test]

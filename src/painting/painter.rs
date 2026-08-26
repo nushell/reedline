@@ -1338,6 +1338,12 @@ mod tests {
     use std::borrow::Cow;
     use std::sync::{Arc, Mutex};
 
+    /// A prompt fragment for the layout tests: any two ASCII columns will do.
+    /// Deliberately not [`crate::DefaultPrompt`]'s indicator, since these tests
+    /// assert column arithmetic against a hard-coded 2, and changing the
+    /// shipped glyph must not rewrite what they measure.
+    const TEST_PROMPT: &str = "> ";
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum MarkerCall {
         PromptPrimary,
@@ -1371,7 +1377,7 @@ mod tests {
 
     impl Prompt for TestPrompt {
         fn render_prompt_left(&self) -> Cow<'_, str> {
-            "> ".into()
+            TEST_PROMPT.into()
         }
 
         fn render_prompt_right(&self) -> Cow<'_, str> {
@@ -1526,7 +1532,7 @@ mod tests {
             prompt_start_row: 0,
             prompt_height: 1,
             large_buffer: false,
-            prompt_str_left: "> ".to_string(),
+            prompt_str_left: TEST_PROMPT.to_string(),
             prompt_indicator: "".to_string(),
             before_cursor: "".to_string(),
             after_cursor: "".to_string(),
@@ -1789,7 +1795,7 @@ mod tests {
     /// this bug each satisfied some and broke another, so any one of them alone
     /// passes a broken painter.
     ///
-    /// `"> "` is 2 columns of a 20-column terminal, so `n == 18` and `n == 38`
+    /// `TEST_PROMPT` is 2 columns of a 20-column terminal, so `n == 18` and `n == 38`
     /// land the cursor exactly on a margin.
     #[rstest]
     #[case(17, "")]
@@ -1806,7 +1812,7 @@ mod tests {
         #[case] after: &str,
     ) {
         let before = "a".repeat(n);
-        let lines = make_lines("> ", "", "", &before, after);
+        let lines = make_lines(TEST_PROMPT, "", "", &before, after);
         let (out, reserved, _) = capture_repaint(&lines, 0);
 
         let (first, second) = (replay(&out, 20, true), replay(&out, 20, false));
@@ -1849,7 +1855,7 @@ mod tests {
     fn a_large_buffer_paint_pins_the_cursor_too(#[case] n: usize) {
         let before = "a".repeat(n);
         let after = "y".repeat(220);
-        let lines = make_lines("> ", "", "", &before, &after);
+        let lines = make_lines(TEST_PROMPT, "", "", &before, &after);
         let (out, _reserved, large) = capture_repaint(&lines, 0);
         assert!(large, "n={n}: meant to exercise the large-buffer path");
 
@@ -1871,7 +1877,7 @@ mod tests {
     #[test]
     fn a_large_buffer_keeps_the_prompts_trailing_newline() {
         let after = "y".repeat(200);
-        let lines = make_lines("ab\n", "> ", "", "Z", &after);
+        let lines = make_lines("ab\n", TEST_PROMPT, "", "Z", &after);
         let (out, _reserved, large) = capture_repaint(&lines, 0);
         assert!(large, "meant to exercise the large-buffer path");
 
@@ -1956,14 +1962,14 @@ mod tests {
     /// Emitting the move anyway gets it clamped to the bottom row's first
     /// column, which is further from the text than the save already was.
     ///
-    /// 20x10 terminal, `"> "` is 2 columns, so `n == 198` fills all ten rows.
+    /// 20x10 terminal, `TEST_PROMPT` is 2 columns, so `n == 198` fills all ten rows.
     #[rstest]
     #[case(198)]
     #[case(218)]
     #[case(238)]
     fn a_paint_that_fills_the_screen_does_not_move_off_it(#[case] n: usize) {
         let before = "a".repeat(n);
-        let lines = make_lines("> ", "", "", &before, "");
+        let lines = make_lines(TEST_PROMPT, "", "", &before, "");
         let (out, ..) = capture_repaint(&lines, 0);
 
         // crossterm encodes MoveTo(0, row) as "\x1b[{row+1};1H"; rows 10 and up
@@ -1986,7 +1992,7 @@ mod tests {
         // as "\x1b[J", so that contiguous pair is exactly the bug (#1062).
         // Deliberately coupled to crossterm's escape encoding — it's the
         // byte-level contract we care about.
-        let (out, ..) = capture_repaint(&make_lines("> ", "", "RP", "hello", ""), 0);
+        let (out, ..) = capture_repaint(&make_lines(TEST_PROMPT, "", "RP", "hello", ""), 0);
         assert!(
             !out.contains("\x1b[1;1H\x1b[J"),
             "erase-below at home cell (0,0) would make tmux snapshot the prompt to history; emitted: {out:?}"
@@ -1998,7 +2004,7 @@ mod tests {
         // Sanity: away from the home cell the plain MoveTo + erase-below is
         // correct (tmux is not triggered), so the workaround must not apply
         // there. MoveTo(0,3) == "\x1b[4;1H".
-        let (out, ..) = capture_repaint(&make_lines("> ", "", "RP", "hello", ""), 3);
+        let (out, ..) = capture_repaint(&make_lines(TEST_PROMPT, "", "RP", "hello", ""), 3);
         assert!(
             out.contains("\x1b[4;1H\x1b[J"),
             "expected an erase-below from the anchor row; emitted: {out:?}"
@@ -2126,7 +2132,7 @@ mod tests {
     ) {
         let menu = menu_rows
             .map(|rows| ReedlineMenu::EngineCompleter(Box::new(TestMenu(rows.to_string()))));
-        let mut lines = make_lines("> ", "", "", before, after);
+        let mut lines = make_lines(TEST_PROMPT, "", "", before, after);
         lines.hint = Cow::Borrowed(hint);
 
         let replayed = capture_repaint_then_exit(&lines, menu.as_ref());
@@ -2172,20 +2178,20 @@ mod tests {
     #[test]
     fn test_layout_small_buffer_defaults() {
         let painter = make_painter(20, 10, false);
-        let lines = make_lines("> ", "", "", "hello", "");
+        let lines = make_lines(TEST_PROMPT, "", "", "hello", "");
         let layout = painter.compute_layout(&lines, None);
 
         assert_eq!(layout.extra_rows, 0);
         assert_eq!(layout.extra_rows_after_prompt, 0);
         assert_eq!(layout.large_buffer_offset, None);
-        assert_eq!(layout.first_buffer_col, 2); // "> " is 2 chars wide
+        assert_eq!(layout.first_buffer_col, 2); // TEST_PROMPT is 2 chars wide
         assert_eq!(layout.menu_start_row, None);
     }
 
     #[test]
     fn test_layout_right_prompt_rendered() {
         let painter = make_painter(40, 10, false);
-        let lines = make_lines("> ", "", "RP", "hi", "");
+        let lines = make_lines(TEST_PROMPT, "", "RP", "hi", "");
         let layout = painter.compute_layout(&lines, None);
 
         let rp = layout
@@ -2199,9 +2205,9 @@ mod tests {
     #[test]
     fn test_layout_right_prompt_hidden_when_input_too_wide() {
         let painter = make_painter(10, 10, false);
-        // Prompt "> " (2) + before "12345678" (8) = 10 which equals start_position (10-2=8)
+        // Prompt TEST_PROMPT (2) + before "12345678" (8) = 10 which equals start_position (10-2=8)
         // input_width(10) > start_position(8) so right prompt should not render
-        let lines = make_lines("> ", "", "RP", "12345678", "");
+        let lines = make_lines(TEST_PROMPT, "", "RP", "12345678", "");
         let layout = painter.compute_layout(&lines, None);
 
         assert!(layout.right_prompt.is_none());
@@ -2210,14 +2216,14 @@ mod tests {
     #[test]
     fn test_layout_large_buffer_extra_rows() {
         // Screen is 5 lines tall, buffer content exceeds it.
-        // prompt_lines_with_wrap(""> ") = 0
+        // prompt_lines_with_wrap(TEST_PROMPT) = 0
         // prompt_indicator_lines("") = 0
         // before_cursor has 7 lines
         // total_lines_before = 0 + 0 + 7 - 1 = 6
         // extra_rows = 6 - 5 = 1
         // extra_rows_after_prompt = 1 - 0 = 1
         let painter = make_painter(20, 5, true);
-        let lines = make_lines("> ", "", "", "l1\nl2\nl3\nl4\nl5\nl6\nl7", "");
+        let lines = make_lines(TEST_PROMPT, "", "", "l1\nl2\nl3\nl4\nl5\nl6\nl7", "");
         let layout = painter.compute_layout(&lines, None);
 
         assert_eq!(layout.extra_rows, 1);
@@ -2230,7 +2236,7 @@ mod tests {
         // When extra_rows > 0 the prompt has scrolled off, so right prompt
         // should not be rendered — this was a bug in the old render_snapshot.
         let painter = make_painter(20, 5, true);
-        let lines = make_lines("> ", "", "RP", "l1\nl2\nl3\nl4\nl5\nl6\nl7", "");
+        let lines = make_lines(TEST_PROMPT, "", "RP", "l1\nl2\nl3\nl4\nl5\nl6\nl7", "");
         let layout = painter.compute_layout(&lines, None);
 
         assert!(layout.extra_rows > 0);
@@ -2242,7 +2248,7 @@ mod tests {
         // Large buffer flag set but content fits — extra_rows == 0
         // Right prompt should still render
         let painter = make_painter(20, 10, true);
-        let lines = make_lines("> ", "", "RP", "short", "");
+        let lines = make_lines(TEST_PROMPT, "", "RP", "short", "");
         let layout = painter.compute_layout(&lines, None);
 
         assert_eq!(layout.extra_rows, 0);
@@ -2408,8 +2414,11 @@ mod tests {
     /// sequences, on the small-buffer path.
     #[test]
     fn default_prompt_colors_emit_expected_sgr() {
-        let (out, _) =
-            capture_repaint_ansi(&TestPrompt, &make_lines("> ", "", "RP", "hi", ""), true);
+        let (out, _) = capture_repaint_ansi(
+            &TestPrompt,
+            &make_lines(TEST_PROMPT, "", "RP", "hi", ""),
+            true,
+        );
 
         assert!(
             out.contains(SGR_GREEN),
@@ -2432,7 +2441,8 @@ mod tests {
             indicator: Color::Default,
             right: Color::Default,
         };
-        let (out, _) = capture_repaint_ansi(&prompt, &make_lines("> ", "", "RP", "hi", ""), true);
+        let (out, _) =
+            capture_repaint_ansi(&prompt, &make_lines(TEST_PROMPT, "", "RP", "hi", ""), true);
 
         assert!(
             out.contains(SGR_DEFAULT_FG),
@@ -2453,8 +2463,11 @@ mod tests {
     #[test]
     fn large_buffer_path_emits_prompt_colors() {
         let tall = "line\n".repeat(15);
-        let (out, large) =
-            capture_repaint_ansi(&TestPrompt, &make_lines("> ", "", "RP", "hi", &tall), true);
+        let (out, large) = capture_repaint_ansi(
+            &TestPrompt,
+            &make_lines(TEST_PROMPT, "", "RP", "hi", &tall),
+            true,
+        );
 
         assert!(large, "expected the large-buffer path to be taken");
         assert!(
@@ -2472,8 +2485,11 @@ mod tests {
     /// color sequences only — `repaint_buffer` always emits a leading `\x1b[0m`.
     #[test]
     fn no_prompt_colors_when_ansi_coloring_disabled() {
-        let (out, _) =
-            capture_repaint_ansi(&TestPrompt, &make_lines("> ", "", "RP", "hi", ""), false);
+        let (out, _) = capture_repaint_ansi(
+            &TestPrompt,
+            &make_lines(TEST_PROMPT, "", "RP", "hi", ""),
+            false,
+        );
 
         for sgr in [SGR_GREEN, SGR_CYAN, SGR_PURPLE] {
             assert!(
