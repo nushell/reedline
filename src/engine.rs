@@ -2348,50 +2348,46 @@ impl Reedline {
     }
 
     fn open_editor(&mut self) -> Result<()> {
-        match &mut self.buffer_editor {
-            Some(BufferEditor {
-                ref mut command,
-                ref temp_file,
-            }) => {
-                {
-                    let mut file = File::create(temp_file)?;
-                    write!(file, "{}", self.editor.get_buffer())?;
-                }
-                // Capture the prompt's screen range so that an editor
-                // that leaves the cursor untouched (e.g. an editor that
-                // uses the alternate screen only) re-uses the existing
-                // prompt rows instead of starting a new prompt a row
-                // below the old one.
-                let suspended_state = self.painter.state_before_suspension();
-                {
-                    let mut child = command.spawn()?;
-                    // The child owns the tty now; invalidate eagerly so
-                    // any `?` early-return below still leaves the
-                    // painter in a safe state.
-                    self.painter.invalidate_prompt_start_row();
-                    child.wait()?;
-                }
+        let Some(buffer_editor) = &mut self.buffer_editor else {
+            return Ok(());
+        };
 
-                // On the success path, re-initialize position and size
-                // (covers a resize-during-editor with no SIGWINCH). If
-                // the editor moved the cursor out of the prompt's rows
-                // (it printed output), a fresh prompt starts below that
-                // output. On query failure, the eager invalidate above
-                // is our floor — losing the size refresh is acceptable;
-                // losing the user's edited buffer below is not.
-                let _ = self
-                    .painter
-                    .initialize_prompt_position(Some(&suspended_state));
-
-                let res = std::fs::read_to_string(temp_file)?;
-                let res = res.trim_end().to_string();
-
-                self.editor.set_buffer(res, UndoBehavior::CreateUndoPoint);
-
-                Ok(())
-            }
-            _ => Ok(()),
+        {
+            let mut file = File::create(&buffer_editor.temp_file)?;
+            write!(file, "{}", self.editor.get_buffer())?;
         }
+        // Capture the prompt's screen range so that an editor
+        // that leaves the cursor untouched (e.g. an editor that
+        // uses the alternate screen only) re-uses the existing
+        // prompt rows instead of starting a new prompt a row
+        // below the old one.
+        let suspended_state = self.painter.state_before_suspension();
+        {
+            let mut child = buffer_editor.command.spawn()?;
+            // The child owns the tty now; invalidate eagerly so
+            // any `?` early-return below still leaves the
+            // painter in a safe state.
+            self.painter.invalidate_prompt_start_row();
+            child.wait()?;
+        }
+
+        // On the success path, re-initialize position and size
+        // (covers a resize-during-editor with no SIGWINCH). If
+        // the editor moved the cursor out of the prompt's rows
+        // (it printed output), a fresh prompt starts below that
+        // output. On query failure, the eager invalidate above
+        // is our floor — losing the size refresh is acceptable;
+        // losing the user's edited buffer below is not.
+        let _ = self
+            .painter
+            .initialize_prompt_position(Some(&suspended_state));
+
+        let res = std::fs::read_to_string(&buffer_editor.temp_file)?;
+        let res = res.trim_end().to_string();
+
+        self.editor.set_buffer(res, UndoBehavior::CreateUndoPoint);
+
+        Ok(())
     }
 
     /// Repaint logic for the history reverse search
