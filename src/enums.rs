@@ -119,7 +119,9 @@ pub enum WordKind {
     LongWord,
     /// Emacs `M-f`/`M-b` — Unicode (UAX-29) word segmentation, so e.g. `can't`
     /// and `3.14` stay single words. The one flavor that isn't a thin char-class
-    /// predicate; see `locate_word`. (Follow-up: collapse onto a class predicate.)
+    /// predicate; see `locate_word`. Holding those together turns on the
+    /// characters flanking a `'` or a `.` rather than on their class, thus it
+    /// stays a separate scan instead of collapsing onto a boundary predicate.
     Unicode,
 }
 
