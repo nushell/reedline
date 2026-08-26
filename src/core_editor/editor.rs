@@ -1814,9 +1814,6 @@ impl Editor {
         }
         let cursor = self.line_buffer.cursor();
         self.line_buffer.set_cursor(Cursor::point(cursor.head()));
-        // TODO: Ya un bug dans la fonction text_object_range,
-        // un range est trouvé lorsque le curseur se trouve hors du text object
-        // inclus brackets et quotes
         let Some(range) = self.text_object_range(TextObject {
             scope: TextObjectScope::Inner,
             object_type: text_object,
