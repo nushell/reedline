@@ -137,6 +137,20 @@ impl Editor {
                     let head = self.resolve_head(*t);
                     self.move_head_to(head, true);
                 }
+                // `motion_origin` departs backward travel from the visible
+                // caret, which under a block caret already sits one grapheme
+                // inside the head. `extend_span` would park the head on `op_end`
+                // and the caret is rendered one grapheme back again, so that
+                // offset lands twice and one press moves two cells (#1190).
+                // `put_cursor` instead places the head so the caret comes to rest
+                // exactly on the resolved target.
+                //
+                // Forward keeps `extend_span`, since it departs from the head and
+                // has no offset to undo.
+                SelectionExtent::Span if t.direction() == Some(Direction::Backward) => {
+                    let head = self.resolve_head(*t);
+                    self.move_head_to(head, true);
+                }
                 SelectionExtent::Span => {
                     let geom = self.caret_geometry();
                     let origin = self.motion_origin(*t);
@@ -774,6 +788,9 @@ impl Editor {
     /// Which way `target` travels is read against the *visible* cursor, so the
     /// answer never depends on the edge being picked. Under `Between` both edges
     /// are the head, so this is a no-op there.
+    ///
+    /// Only half the answer: which rebuild consumes the origin matters just as
+    /// much, see the `Span` arms of the `Extend` dispatch.
     fn motion_origin(&self, target: MotionTarget) -> usize {
         let reference = self.insertion_point();
         match target.direction() {
@@ -4773,10 +4790,53 @@ mod test {
             let mut editor = helix_select_editor("foo bar baz");
             editor.move_to_position(4, false);
             editor.run_edit_command(&EditCommand::Extend(word_start_fwd()));
+            // "bar " with the caret on the trailing space, thus one `h` walks it
+            // onto `r` and the selection reads "bar". Pinned 6 while the backward
+            // rebuild still moved the caret two cells (#1190).
             editor.run_edit_command(&EditCommand::Extend(MotionTarget::Grapheme(
                 Direction::Backward,
             )));
-            assert_eq!(editor.line_buffer.cursor(), Cursor::new(4, 6));
+            assert_eq!(editor.line_buffer.cursor(), Cursor::new(4, 7));
+            assert_eq!(editor.get_selection(), Some((4, 7)));
+        }
+
+        // --- one cell per backward press (#1190) ---
+        //
+        // Every case starts from a selection left *forward* and wider than one
+        // grapheme, since that is the only shape the two-cell step shows up in.
+        // From the resting block the first press reverses the cursor, and a
+        // backward cursor's caret is its head, thus the doubling cancels there.
+
+        #[rstest]
+        #[case::grapheme(MotionTarget::Grapheme(Direction::Backward), vec![4, 3, 2, 1, 0])]
+        #[case::word_start(word_start_bwd(), vec![4, 0, 0])]
+        #[case::line_start(MotionTarget::LineEdge(Direction::Backward), vec![0, 0])]
+        fn helix_extend_backward_walks_one_cell_per_press(
+            #[case] target: MotionTarget,
+            #[case] carets: Vec<usize>,
+        ) {
+            let mut editor = helix_select_editor("abc de");
+            editor.run_edit_command(&EditCommand::SelectAll);
+            assert_eq!(editor.insertion_point(), 5);
+            for expected in carets {
+                editor.run_edit_command(&EditCommand::Extend(target));
+                assert_eq!(editor.insertion_point(), expected);
+            }
+        }
+
+        #[test]
+        fn helix_extend_backward_still_flips_the_resting_block() {
+            // The case that was already right, pinned so the backward rebuild
+            // cannot regress it: the press reverses the cursor and keeps `e`
+            // covered rather than shrinking to a point.
+            let mut editor = helix_select_editor("abc de");
+            editor.run_edit_command(&EditCommand::MoveToLineEnd { select: false });
+            assert_eq!(editor.line_buffer.cursor(), Cursor::new(5, 6));
+            editor.run_edit_command(&EditCommand::Extend(MotionTarget::Grapheme(
+                Direction::Backward,
+            )));
+            assert_eq!(editor.line_buffer.cursor(), Cursor::new(6, 4));
+            assert_eq!(editor.insertion_point(), 4);
         }
 
         // --- the newline as a cell (helix `l` / `h`) ---

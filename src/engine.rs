@@ -3474,6 +3474,41 @@ mod tests {
         assert_eq!(rl.editor.get_selection(), Some((0, 3)));
     }
 
+    /// `#1190`: `%` leaves a forward selection wider than one grapheme, and a
+    /// backward extend from one used to move the caret two cells per press.
+    #[rstest]
+    #[case::h(ch('h'))]
+    #[case::left(key(KeyCode::Left))]
+    fn helix_select_left_walks_one_cell_after_select_all(#[case] left: KeyEvent) {
+        let mut rl = seam_engine(Box::<crate::Helix>::default());
+        drive_until_signal(
+            &mut rl,
+            &[
+                ch('a'),
+                ch('b'),
+                ch('c'),
+                ch('d'),
+                key(KeyCode::Esc),
+                ch('%'),
+                ch('v'),
+            ],
+        );
+        assert_eq!(rl.editor.get_selection(), Some((0, 4)));
+        assert_eq!(
+            rl.editor.insertion_point(),
+            3,
+            "caret rests on the final `d`"
+        );
+        for expected in [2, 1, 0] {
+            drive_until_signal(&mut rl, &[left]);
+            assert_eq!(
+                rl.editor.insertion_point(),
+                expected,
+                "one cell per press, not two"
+            );
+        }
+    }
+
     /// Appending has to land *past* the last grapheme: the block cursor rests on
     /// it, while insert mode sits between graphemes.
     #[test]
