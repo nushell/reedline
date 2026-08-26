@@ -425,29 +425,9 @@ impl Painter {
             None
         };
 
-        // Right prompt layout — only visible when the prompt itself hasn't scrolled off
-        let right_prompt =
-            if lines.prompt_str_right.is_empty() || self.large_buffer && extra_rows > 0 {
-                None
-            } else {
-                let prompt_length_right = line_width(&lines.prompt_str_right);
-                let start_position = screen_width.saturating_sub(prompt_length_right as u16);
-                let input_width = lines.estimate_right_prompt_line_width(screen_width);
-
-                if input_width <= start_position {
-                    let mut row = self.prompt_start_row.last_known_row();
-                    if lines.right_prompt_on_last_line {
-                        row += lines.prompt_lines_with_wrap(screen_width);
-                    }
-                    Some(RightPromptBounds {
-                        row,
-                        start_col: start_position,
-                        end_col: start_position.saturating_add(prompt_length_right as u16),
-                    })
-                } else {
-                    None
-                }
-            };
+        // Right prompt layout
+        let term = crate::utils::environment::var_os("TERM");
+        let right_prompt = self.compute_right_prompt_for_term(lines, extra_rows, term.as_deref());
 
         // Menu start row
         let menu_start_row = menu.map(|menu| {
@@ -481,6 +461,41 @@ impl Painter {
             menu_start_row,
             first_buffer_col,
         }
+    }
+
+    /// Computes the right prompt position when the terminal can position it.
+    fn compute_right_prompt_for_term(
+        &self,
+        lines: &PromptLines,
+        extra_rows: usize,
+        term: Option<&std::ffi::OsStr>,
+    ) -> Option<RightPromptBounds> {
+        if crate::utils::environment::term_is_dumb(term)
+            || lines.prompt_str_right.is_empty()
+            || self.large_buffer && extra_rows > 0
+        {
+            return None;
+        }
+
+        let screen_width = self.screen_width();
+        let prompt_length_right = line_width(&lines.prompt_str_right);
+        let start_position = screen_width.saturating_sub(prompt_length_right as u16);
+        let input_width = lines.estimate_right_prompt_line_width(screen_width);
+
+        if input_width > start_position {
+            return None;
+        }
+
+        let mut row = self.prompt_start_row.last_known_row();
+        if lines.right_prompt_on_last_line {
+            row += lines.prompt_lines_with_wrap(screen_width);
+        }
+
+        Some(RightPromptBounds {
+            row,
+            start_col: start_position,
+            end_col: start_position.saturating_add(prompt_length_right as u16),
+        })
     }
 
     /// Returns the state necessary before suspending the painter (to run a host command event).
@@ -2228,14 +2243,23 @@ mod tests {
     fn test_layout_right_prompt_rendered() {
         let painter = make_painter(40, 10, false);
         let lines = make_lines("> ", "", "RP", "hi", "");
-        let layout = painter.compute_layout(&lines, None);
-
-        let rp = layout
-            .right_prompt
+        let rp = painter
+            .compute_right_prompt_for_term(&lines, 0, Some(std::ffi::OsStr::new("xterm-256color")))
             .expect("right prompt should be rendered");
         assert_eq!(rp.row, 0);
         assert_eq!(rp.start_col, 38); // 40 - 2
         assert_eq!(rp.end_col, 40);
+    }
+
+    #[test]
+    fn test_layout_right_prompt_hidden_for_term_dumb() {
+        let painter = make_painter(40, 10, false);
+        let lines = make_lines("> ", "", "RP", "hi", "");
+
+        let right_prompt =
+            painter.compute_right_prompt_for_term(&lines, 0, Some(std::ffi::OsStr::new("dumb")));
+
+        assert!(right_prompt.is_none());
     }
 
     #[test]
@@ -2286,9 +2310,14 @@ mod tests {
         let painter = make_painter(20, 10, true);
         let lines = make_lines("> ", "", "RP", "short", "");
         let layout = painter.compute_layout(&lines, None);
+        let right_prompt = painter.compute_right_prompt_for_term(
+            &lines,
+            layout.extra_rows,
+            Some(std::ffi::OsStr::new("xterm-256color")),
+        );
 
         assert_eq!(layout.extra_rows, 0);
-        assert!(layout.right_prompt.is_some());
+        assert!(right_prompt.is_some());
     }
 
     #[test]
