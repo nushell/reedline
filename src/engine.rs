@@ -3541,7 +3541,6 @@ mod tests {
         assert_eq!(rl.editor.insertion_point(), 1);
     }
 
-    #[cfg(feature = "helix")]
     #[test]
     fn helix_insert_mode_auto_pair_routes_through_veto() {
         let mut rl = seam_engine(Box::<crate::Helix>::default())
