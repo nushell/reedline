@@ -1,6 +1,5 @@
 use std::{collections::HashMap, ffi::OsStr, ops::ControlFlow, path::PathBuf};
 
-use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
 
 use crate::{enums::ReedlineRawEvent, CursorConfig};
@@ -745,7 +744,7 @@ impl Reedline {
     /// // ...and the filename will be appended at the end of the command
     /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
     ///
-    /// // optionally, {file}, {line}, and {col} placeholders can used.
+    /// // optionally, {file}, {line}, and {col} placeholders can be used.
     /// // they will be replaced with the corresponding filename and current cursor position
     /// let mut command = Command::new("hx");
     /// command.args(["+{line}:{col}", "{file}"]);
@@ -2768,6 +2767,7 @@ mod tests {
         ColumnarMenu, CompletionOrigin, CompletionResult, DefaultPrompt, MenuBuilder, PromptViMode,
         Span, Suggestion,
     };
+    use itertools::Itertools;
     use rstest::rstest;
 
     fn seam_engine(edit_mode: Box<dyn EditMode>) -> Reedline {
