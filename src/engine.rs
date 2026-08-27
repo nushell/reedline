@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::ControlFlow, path::PathBuf};
+use std::{collections::HashMap, ffi::OsStr, ops::ControlFlow, path::PathBuf};
 
 use itertools::Itertools;
 use nu_ansi_term::{Color, Style};
@@ -239,6 +239,43 @@ pub struct Reedline {
 struct BufferEditor {
     command: Command,
     temp_file: PathBuf,
+}
+
+impl BufferEditor {
+    /// Renders the editor command template,
+    /// substituting `{file}`, `{line}`, and `{col}` where present.
+    pub(crate) fn render_command(&self, line_buffer: &LineBuffer) -> Command {
+        let mut cmd = Command::new(self.command.get_program());
+
+        const FILE: &str = "{file}";
+        const LINE: &str = "{line}";
+        const COL: &str = "{col}";
+
+        let has_file_placeholder = self
+            .command
+            .get_args()
+            .map(OsStr::to_string_lossy)
+            .any(|arg| arg.contains(FILE));
+
+        let file = self.temp_file.to_string_lossy();
+        let line = (line_buffer.line() + 1).to_string();
+        let col = (line_buffer.col() + 1).to_string();
+
+        let args = self
+            .command
+            .get_args()
+            .map(OsStr::to_string_lossy)
+            .map(|arg| arg.replace(FILE, &file))
+            .map(|arg| arg.replace(LINE, &line))
+            .map(|arg| arg.replace(COL, &col));
+
+        cmd.args(args);
+        if !has_file_placeholder {
+            cmd.arg(&self.temp_file);
+        }
+
+        cmd
+    }
 }
 
 /// The completions the [`Menu`](ReedlineEvent::Menu) event could not decide, because the
@@ -685,20 +722,27 @@ impl Reedline {
     /// use std::env::temp_dir;
     /// use std::process::Command;
     ///
-    /// let temp_file = std::env::temp_dir().join("my-random-unique.file");
+    /// let temp = std::env::temp_dir().join("my-random-unique.file");
     /// let mut command = Command::new("vim");
     /// // you can provide additional flags:
-    /// command.arg("-p"); // open in a vim tab (just for demonstration)
-    /// // you don't have to pass the filename to the command
-    /// let mut line_editor =
-    /// Reedline::create().with_buffer_editor(command, temp_file);
+    /// command.arg("-p"); // open in a new vim tab
+    /// // ...and the filename will be appended at the end of the command
+    /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
+    ///
+    /// // optionally, {file}, {line}, and {col} placeholders can used.
+    /// // they will be replaced with the corresponding filename and current cursor position
+    /// let mut command = Command::new("hx");
+    /// command.args(["+{line}:{col}", "{file}"]);
+    /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
+    ///
+    /// // if {file} is omitted, the filename is still appended at the end,
+    /// // as in the above example
+    /// let mut command = Command::new("emacs");
+    /// command.arg("+{line}:{col}");
+    /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp);
     /// ```
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
-        let mut editor = editor;
-        if !editor.get_args().contains(&temp_file.as_os_str()) {
-            editor.arg(&temp_file);
-        }
         self.buffer_editor = Some(BufferEditor {
             command: editor,
             temp_file,
@@ -2363,7 +2407,9 @@ impl Reedline {
         // below the old one.
         let suspended_state = self.painter.state_before_suspension();
         {
-            let mut child = buffer_editor.command.spawn()?;
+            let mut child = buffer_editor
+                .render_command(self.editor.line_buffer())
+                .spawn()?;
             // The child owns the tty now; invalidate eagerly so
             // any `?` early-return below still leaves the
             // painter in a safe state.
@@ -2382,8 +2428,9 @@ impl Reedline {
             .painter
             .initialize_prompt_position(Some(&suspended_state));
 
-        let res = std::fs::read_to_string(&buffer_editor.temp_file)?;
-        let res = res.trim_end().to_string();
+        let mut res = std::fs::read_to_string(&buffer_editor.temp_file)?;
+        let content_len = res.trim_end().len();
+        res.truncate(content_len);
 
         self.editor.set_buffer(res, UndoBehavior::CreateUndoPoint);
 
@@ -4781,5 +4828,51 @@ mod tests {
         assert_eq!(rl.editor.insertion_point(), 1);
         drive(&mut rl, &[ch('l')]); // crosses down to 'c' (start of line 2)
         assert_eq!(rl.editor.insertion_point(), 3);
+    }
+
+    fn command_from_strs(command: &[&str]) -> Command {
+        let (program, args) = command.split_first().unwrap();
+        let mut command = Command::new(program);
+        command.args(args);
+        command
+    }
+
+    fn command_into_string(command: Command) -> String {
+        use std::iter::once;
+
+        once(command.get_program())
+            .chain(command.get_args())
+            .map(|os_str| os_str.to_str().unwrap())
+            .join(" ")
+    }
+
+    #[rstest]
+    #[case(&["nano"], "nano foo.rs")]
+    #[case(&["code", "--goto", "{file}:{line}:{col}"], "code --goto foo.rs:2:4")]
+    #[case(&["hx", "{file}:{line}:{col}"], "hx foo.rs:2:4")]
+    #[case(&["nvim", "{file}", "\"call cursor({line}, {col})\""], "nvim foo.rs \"call cursor(2, 4)\"")]
+    #[case(&["vim", "+{line}", "{file}"], "vim +2 foo.rs")]
+    #[case(&["emacs", "+{line}:{col}", "{file}"], "emacs +2:4 foo.rs")]
+    #[case(&["emacs", "+{line}:{col}"], "emacs +2:4 foo.rs")]
+    fn render_editor_command_with_pattern(#[case] command: &[&str], #[case] expected: &str) {
+        let buffer_editor = BufferEditor {
+            command: command_from_strs(command),
+            temp_file: PathBuf::from("foo.rs"),
+        };
+
+        let line_buffer = {
+            let mut line_buffer = LineBuffer::new();
+            line_buffer.insert_str("a mulatto\n");
+            line_buffer.insert_str("an albino\n");
+            line_buffer.insert_str("a mosquito\n");
+            line_buffer.insert_str("my libido\n");
+            line_buffer.move_line_up();
+            line_buffer.move_line_up();
+            line_buffer.move_left_before(' ', false);
+            line_buffer
+        };
+
+        let actual = buffer_editor.render_command(&line_buffer);
+        assert_eq!(command_into_string(actual), expected);
     }
 }
