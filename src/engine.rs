@@ -276,6 +276,22 @@ impl BufferEditor {
 
         cmd
     }
+
+    /// writes the buffer to the temp file,
+    /// in preparation for spawning the buffer editor
+    pub(crate) fn write_current_buffer(&self, buffer_contents: &str) -> Result<()> {
+        let mut file = File::create(&self.temp_file)?;
+        write!(file, "{buffer_contents}")
+    }
+
+    /// reads the buffer from the temp file,
+    /// expected to be called after the buffer editor exits
+    pub(crate) fn get_edited_buffer(&mut self) -> Result<String> {
+        let mut res = std::fs::read_to_string(&self.temp_file)?;
+        let content_len = res.trim_end().len();
+        res.truncate(content_len);
+        Ok(res)
+    }
 }
 
 /// The completions the [`Menu`](ReedlineEvent::Menu) event could not decide, because the
@@ -2396,10 +2412,8 @@ impl Reedline {
             return Ok(());
         };
 
-        {
-            let mut file = File::create(&buffer_editor.temp_file)?;
-            write!(file, "{}", self.editor.get_buffer())?;
-        }
+        buffer_editor.write_current_buffer(self.editor.get_buffer())?;
+
         // Capture the prompt's screen range so that an editor
         // that leaves the cursor untouched (e.g. an editor that
         // uses the alternate screen only) re-uses the existing
@@ -2428,9 +2442,7 @@ impl Reedline {
             .painter
             .initialize_prompt_position(Some(&suspended_state));
 
-        let mut res = std::fs::read_to_string(&buffer_editor.temp_file)?;
-        let content_len = res.trim_end().len();
-        res.truncate(content_len);
+        let res = buffer_editor.get_edited_buffer()?;
 
         self.editor.set_buffer(res, UndoBehavior::CreateUndoPoint);
 
