@@ -419,10 +419,10 @@ pub enum EditCommand {
 
     /// Insert a character pair around the selection or insertion point
     InsertPair {
-        /// Left character of the pair
-        left: char,
-        /// Right character of the pair
-        right: char,
+        /// Opening character of the pair
+        open: char,
+        /// Closing character of the pair
+        close: char,
     },
 
     /// Inserts the system specific new line character
@@ -454,10 +454,10 @@ pub enum EditCommand {
 
     /// Backspace delete an empty character pair
     BackspacePair {
-        /// Left character of the pair
-        left: char,
-        /// Right character of the pair
-        right: char,
+        /// Opening character of the pair
+        open: char,
+        /// Closing character of the pair
+        close: char,
     },
 
     /// Delete in-place from the current insertion point

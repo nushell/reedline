@@ -36,7 +36,7 @@ use {
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
         },
         utils::text_manipulation,
-        AbbrExpandContext, AutoPairAction, AutoPairContext, Direction, EditCommand,
+        AbbrExpandContext, AutoPairAction, AutoPairContext, AutoPairs, Direction, EditCommand,
         ExampleHighlighter, Highlighter, LineBuffer, Menu, MenuEvent, MouseButton, Prompt,
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
     },
@@ -110,36 +110,6 @@ pub enum MouseClickMode {
 impl MouseClickMode {
     fn is_enabled(self) -> bool {
         matches!(self, Self::Enabled | Self::EnabledWithOsc133)
-    }
-}
-
-/// Configuration for automatic pair insertion.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct AutoPairs {
-    pairs: Vec<(char, char)>,
-}
-
-impl AutoPairs {
-    /// Create automatic pair insertion configuration from `(open, close)` pairs.
-    pub fn new<I>(pairs: I) -> Self
-    where
-        I: IntoIterator<Item = (char, char)>,
-    {
-        Self {
-            pairs: pairs.into_iter().collect(),
-        }
-    }
-
-    fn opening_pair(&self, ch: char) -> Option<(char, char)> {
-        self.pairs.iter().find(|pair| pair.0 == ch).copied()
-    }
-
-    fn closing_pair(&self, ch: char) -> Option<(char, char)> {
-        self.pairs.iter().find(|pair| pair.1 == ch).copied()
-    }
-
-    fn pairs(&self) -> impl Iterator<Item = (char, char)> + '_ {
-        self.pairs.iter().copied()
     }
 }
 
@@ -2153,26 +2123,26 @@ impl Reedline {
                         AutoPairAction::SkipExistingCloser,
                         EditCommand::MoveRight { select: false },
                     )
-                } else if let Some((left, right)) = auto_pairs.opening_pair(*ch) {
+                } else if let Some((open, close)) = auto_pairs.opening_pair(*ch) {
                     (
-                        (left, right),
+                        (open, close),
                         AutoPairAction::Open,
-                        EditCommand::InsertPair { left, right },
+                        EditCommand::InsertPair { open, close },
                     )
                 } else {
                     return None;
                 }
             }
             EditCommand::Backspace => {
-                let pair = auto_pairs.pairs().find(|(left, right)| {
-                    self.editor.is_empty_auto_pair_at_cursor(*left, *right)
+                let pair = auto_pairs.pairs().find(|(open, close)| {
+                    self.editor.is_empty_auto_pair_at_cursor(*open, *close)
                 })?;
                 (
                     pair,
                     AutoPairAction::BackspacePair,
                     EditCommand::BackspacePair {
-                        left: pair.0,
-                        right: pair.1,
+                        open: pair.0,
+                        close: pair.1,
                     },
                 )
             }

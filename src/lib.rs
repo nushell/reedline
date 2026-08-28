@@ -250,6 +250,9 @@
 mod core_editor;
 pub use core_editor::{Editor, LineBuffer};
 
+mod auto_pairs;
+pub use auto_pairs::{AutoPairAction, AutoPairContext, AutoPairs};
+
 mod enums;
 pub use enums::{
     Direction, EditCommand, EditCommandDiscriminants, FindStop, Granularity, MotionTarget,
@@ -261,7 +264,7 @@ mod painting;
 pub use painting::{Painter, StyledText};
 
 mod engine;
-pub use engine::{AutoPairs, MouseClickMode, Reedline};
+pub use engine::{MouseClickMode, Reedline};
 
 mod result;
 pub use result::{ReedlineError, ReedlineErrorVariants, Result};
@@ -294,10 +297,7 @@ pub use edit_mode::{
 };
 
 mod highlighter;
-pub use highlighter::{
-    AbbrExpandContext, AutoPairAction, AutoPairContext, ExampleHighlighter, Highlighter,
-    SimpleMatchHighlighter,
-};
+pub use highlighter::{AbbrExpandContext, ExampleHighlighter, Highlighter, SimpleMatchHighlighter};
 
 mod completion;
 pub use completion::{
