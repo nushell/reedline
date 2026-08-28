@@ -7,6 +7,7 @@ use {
     crate::{
         menu::{Menu, ReedlineMenu},
         painting::PromptLines,
+        utils::environment::{term_is_dumb, var_os},
         Prompt,
     },
     crossterm::{
@@ -15,6 +16,7 @@ use {
         terminal::{self, Clear, ClearType},
         QueueableCommand,
     },
+    std::ffi::OsStr,
     std::io::{Result, Write},
     std::ops::RangeInclusive,
     unicode_segmentation::UnicodeSegmentation,
@@ -213,11 +215,8 @@ enum PromptRowSelector {
 /// `TERM=dumb` does not provide cursor-position reporting, so avoid issuing a
 /// query that cannot be answered. Otherwise delegate to the painter's writer,
 /// which keeps terminal I/O testable.
-fn cursor_position_for_term(
-    stdout: &W,
-    term: Option<&std::ffi::OsStr>,
-) -> Result<Option<(u16, u16)>> {
-    if crate::utils::environment::term_is_dumb(term) {
+fn cursor_position_for_term(stdout: &W, term: Option<&OsStr>) -> Result<Option<(u16, u16)>> {
+    if term_is_dumb(term) {
         Ok(None)
     } else {
         stdout.cursor_position().map(Some)
@@ -225,7 +224,7 @@ fn cursor_position_for_term(
 }
 
 fn cursor_position_for_current_term(stdout: &W) -> Result<Option<(u16, u16)>> {
-    let term = crate::utils::environment::var_os("TERM");
+    let term = var_os("TERM");
     cursor_position_for_term(stdout, term.as_deref())
 }
 
@@ -426,7 +425,7 @@ impl Painter {
         };
 
         // Right prompt layout
-        let term = crate::utils::environment::var_os("TERM");
+        let term = var_os("TERM");
         let right_prompt = self.compute_right_prompt_for_term(lines, extra_rows, term.as_deref());
 
         // Menu start row
@@ -468,9 +467,9 @@ impl Painter {
         &self,
         lines: &PromptLines,
         extra_rows: usize,
-        term: Option<&std::ffi::OsStr>,
+        term: Option<&OsStr>,
     ) -> Option<RightPromptBounds> {
-        if crate::utils::environment::term_is_dumb(term)
+        if term_is_dumb(term)
             || lines.prompt_str_right.is_empty()
             || self.large_buffer && extra_rows > 0
         {
@@ -532,7 +531,8 @@ impl Painter {
                 size
             }
         };
-        let prompt_selector = match cursor_position_for_current_term(&self.stdout)? {
+        let cursor_position = cursor_position_for_current_term(&self.stdout)?;
+        let prompt_selector = match cursor_position {
             Some(position) => select_prompt_row(suspended_state, position),
             None => PromptRowSelector::MakeNewPrompt {
                 new_row: self.prompt_start_row.last_known_row(),
@@ -553,10 +553,13 @@ impl Painter {
                 }
             }
         };
-        // Matches the cursor row we just measured; mark verified so
-        // subsequent paints can skip the possibly-expensive
-        // drift-detection call to cursor::position().
-        self.prompt_start_row.mark_verified(new_row);
+        self.prompt_start_row = match cursor_position {
+            // A successfully measured cursor position makes the new anchor trustworthy.
+            Some(_) => PromptStartRow::Verified(new_row),
+            // Without a measurement, retain the best-known row but require later
+            // reconciliation instead of treating the guessed anchor as verified.
+            None => PromptStartRow::Stale(new_row),
+        };
         Ok(())
     }
 
@@ -1438,7 +1441,7 @@ mod tests {
     #[test]
     fn term_dumb_skips_cursor_position_query() {
         let stdout = W::sink();
-        let position = cursor_position_for_term(&stdout, Some(std::ffi::OsStr::new("dumb")))
+        let position = cursor_position_for_term(&stdout, Some(OsStr::new("dumb")))
             .expect("TERM=dumb detection should not fail");
 
         assert_eq!(position, None);
@@ -1448,7 +1451,7 @@ mod tests {
     fn non_dumb_term_delegates_cursor_position_query() {
         let stdout = W::sink();
 
-        assert!(cursor_position_for_term(&stdout, Some(std::ffi::OsStr::new("xterm"))).is_err());
+        assert!(cursor_position_for_term(&stdout, Some(OsStr::new("xterm"))).is_err());
     }
 
     #[test]
@@ -2243,8 +2246,10 @@ mod tests {
     fn test_layout_right_prompt_rendered() {
         let painter = make_painter(40, 10, false);
         let lines = make_lines("> ", "", "RP", "hi", "");
-        let rp = painter
-            .compute_right_prompt_for_term(&lines, 0, Some(std::ffi::OsStr::new("xterm-256color")))
+        let layout = painter.compute_layout(&lines, None);
+
+        let rp = layout
+            .right_prompt
             .expect("right prompt should be rendered");
         assert_eq!(rp.row, 0);
         assert_eq!(rp.start_col, 38); // 40 - 2
@@ -2257,7 +2262,7 @@ mod tests {
         let lines = make_lines("> ", "", "RP", "hi", "");
 
         let right_prompt =
-            painter.compute_right_prompt_for_term(&lines, 0, Some(std::ffi::OsStr::new("dumb")));
+            painter.compute_right_prompt_for_term(&lines, 0, Some(OsStr::new("dumb")));
 
         assert!(right_prompt.is_none());
     }
@@ -2310,14 +2315,9 @@ mod tests {
         let painter = make_painter(20, 10, true);
         let lines = make_lines("> ", "", "RP", "short", "");
         let layout = painter.compute_layout(&lines, None);
-        let right_prompt = painter.compute_right_prompt_for_term(
-            &lines,
-            layout.extra_rows,
-            Some(std::ffi::OsStr::new("xterm-256color")),
-        );
 
         assert_eq!(layout.extra_rows, 0);
-        assert!(right_prompt.is_some());
+        assert!(layout.right_prompt.is_some());
     }
 
     #[test]
