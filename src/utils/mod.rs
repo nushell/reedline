@@ -1,4 +1,6 @@
 mod query;
+
+pub(crate) mod environment;
 pub(crate) mod text_manipulation;
 
 pub use query::{

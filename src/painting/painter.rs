@@ -7,6 +7,7 @@ use {
     crate::{
         menu::{Menu, ReedlineMenu},
         painting::PromptLines,
+        utils::environment::{term_is_dumb, var_os},
         Prompt,
     },
     crossterm::{
@@ -15,6 +16,7 @@ use {
         terminal::{self, Clear, ClearType},
         QueueableCommand,
     },
+    std::ffi::OsStr,
     std::io::{Result, Write},
     std::ops::RangeInclusive,
     unicode_segmentation::UnicodeSegmentation,
@@ -208,8 +210,26 @@ enum PromptRowSelector {
     MakeNewPrompt { new_row: u16 },
 }
 
-// Selects the row where the next prompt should start on, taking into account and whether it should re-use a previous
-// prompt.
+/// Query the cursor position unless the terminal explicitly declares itself dumb.
+///
+/// `TERM=dumb` does not provide cursor-position reporting, so avoid issuing a
+/// query that cannot be answered. Otherwise delegate to the painter's writer,
+/// which keeps terminal I/O testable.
+fn cursor_position_for_term(stdout: &W, term: Option<&OsStr>) -> Result<Option<(u16, u16)>> {
+    if term_is_dumb(term) {
+        Ok(None)
+    } else {
+        stdout.cursor_position().map(Some)
+    }
+}
+
+fn cursor_position_for_current_term(stdout: &W) -> Result<Option<(u16, u16)>> {
+    let term = var_os("TERM");
+    cursor_position_for_term(stdout, term.as_deref())
+}
+
+// Selects the row where the next prompt should start on, taking into account whether it should
+// re-use a previous prompt.
 fn select_prompt_row(
     suspended_state: Option<&PainterSuspendedState>,
     (column, row): (u16, u16), // NOTE: Positions are 0 based here
@@ -404,29 +424,9 @@ impl Painter {
             None
         };
 
-        // Right prompt layout — only visible when the prompt itself hasn't scrolled off
-        let right_prompt =
-            if lines.prompt_str_right.is_empty() || self.large_buffer && extra_rows > 0 {
-                None
-            } else {
-                let prompt_length_right = line_width(&lines.prompt_str_right);
-                let start_position = screen_width.saturating_sub(prompt_length_right as u16);
-                let input_width = lines.estimate_right_prompt_line_width(screen_width);
-
-                if input_width <= start_position {
-                    let mut row = self.prompt_start_row.last_known_row();
-                    if lines.right_prompt_on_last_line {
-                        row += lines.prompt_lines_with_wrap(screen_width);
-                    }
-                    Some(RightPromptBounds {
-                        row,
-                        start_col: start_position,
-                        end_col: start_position.saturating_add(prompt_length_right as u16),
-                    })
-                } else {
-                    None
-                }
-            };
+        // Right prompt layout
+        let term = var_os("TERM");
+        let right_prompt = self.compute_right_prompt_for_term(lines, extra_rows, term.as_deref());
 
         // Menu start row
         let menu_start_row = menu.map(|menu| {
@@ -460,6 +460,41 @@ impl Painter {
             menu_start_row,
             first_buffer_col,
         }
+    }
+
+    /// Computes the right prompt position when the terminal can position it.
+    fn compute_right_prompt_for_term(
+        &self,
+        lines: &PromptLines,
+        extra_rows: usize,
+        term: Option<&OsStr>,
+    ) -> Option<RightPromptBounds> {
+        if term_is_dumb(term)
+            || lines.prompt_str_right.is_empty()
+            || self.large_buffer && extra_rows > 0
+        {
+            return None;
+        }
+
+        let screen_width = self.screen_width();
+        let prompt_length_right = line_width(&lines.prompt_str_right);
+        let start_position = screen_width.saturating_sub(prompt_length_right as u16);
+        let input_width = lines.estimate_right_prompt_line_width(screen_width);
+
+        if input_width > start_position {
+            return None;
+        }
+
+        let mut row = self.prompt_start_row.last_known_row();
+        if lines.right_prompt_on_last_line {
+            row += lines.prompt_lines_with_wrap(screen_width);
+        }
+
+        Some(RightPromptBounds {
+            row,
+            start_col: start_position,
+            end_col: start_position.saturating_add(prompt_length_right as u16),
+        })
     }
 
     /// Returns the state necessary before suspending the painter (to run a host command event).
@@ -496,7 +531,13 @@ impl Painter {
                 size
             }
         };
-        let prompt_selector = select_prompt_row(suspended_state, self.stdout.cursor_position()?);
+        let cursor_position = cursor_position_for_current_term(&self.stdout)?;
+        let prompt_selector = match cursor_position {
+            Some(position) => select_prompt_row(suspended_state, position),
+            None => PromptRowSelector::MakeNewPrompt {
+                new_row: self.prompt_start_row.last_known_row(),
+            },
+        };
         let new_row = match prompt_selector {
             PromptRowSelector::UseExistingPrompt { start_row } => start_row,
             PromptRowSelector::MakeNewPrompt { new_row } => {
@@ -512,10 +553,13 @@ impl Painter {
                 }
             }
         };
-        // Matches the cursor row we just measured; mark verified so
-        // subsequent paints can skip the possibly-expensive
-        // drift-detection call to cursor::position().
-        self.prompt_start_row.mark_verified(new_row);
+        self.prompt_start_row = match cursor_position {
+            // A successfully measured cursor position makes the new anchor trustworthy.
+            Some(_) => PromptStartRow::Verified(new_row),
+            // Without a measurement, retain the best-known row but require later
+            // reconciliation instead of treating the guessed anchor as verified.
+            None => PromptStartRow::Stale(new_row),
+        };
         Ok(())
     }
 
@@ -582,8 +626,8 @@ impl Painter {
             // homing to row 0, which would yank the prompt to the top. The `+1`
             // allows for output that left the cursor on the prompt row.
             // See nushell/reedline#1130.
-            let anchor = match self.stdout.cursor_position() {
-                Ok((_, cursor_row)) if cursor_row + 1 < row => cursor_row,
+            let anchor = match cursor_position_for_current_term(&self.stdout) {
+                Ok(Some((_, cursor_row))) if cursor_row + 1 < row => cursor_row,
                 _ => row,
             };
             self.prompt_start_row.mark_verified(anchor);
@@ -1157,7 +1201,7 @@ impl Painter {
         // Known bug: on iterm2 and kitty, clearing the screen via CMD-K
         // doesn't reset the cursor position — possibly a `position()`
         // bug.
-        if let Ok(position) = self.stdout.cursor_position() {
+        if let Ok(Some(position)) = cursor_position_for_current_term(&self.stdout) {
             self.prompt_start_row = PromptStartRow::Stale(position.1);
             self.just_resized = true;
         }
@@ -1281,14 +1325,14 @@ impl Painter {
         // batch of messages, not per message, so the flicker the comment above
         // guards against is unaffected.
         self.stdout.flush()?;
-        self.prompt_start_row = match self.stdout.cursor_position() {
+        self.prompt_start_row = match cursor_position_for_current_term(&self.stdout) {
             // Measured, so later paints can skip the drift check.
-            Ok((_, actual)) => PromptStartRow::Verified(actual),
+            Ok(Some((_, actual))) => PromptStartRow::Verified(actual),
             // No answer, so all that is left is the count this function stopped
             // trusting. `Stale` at least keeps the next paint checking it;
             // `Verified` would skip the check and paint against a row the
             // terminal may never have reached.
-            Err(_) => PromptStartRow::Stale(row),
+            Ok(None) | Err(_) => PromptStartRow::Stale(row),
         };
         Ok(())
     }
@@ -1392,6 +1436,22 @@ mod tests {
         ) -> Cow<'_, str> {
             "".into()
         }
+    }
+
+    #[test]
+    fn term_dumb_skips_cursor_position_query() {
+        let stdout = W::sink();
+        let position = cursor_position_for_term(&stdout, Some(OsStr::new("dumb")))
+            .expect("TERM=dumb detection should not fail");
+
+        assert_eq!(position, None);
+    }
+
+    #[test]
+    fn non_dumb_term_delegates_cursor_position_query() {
+        let stdout = W::sink();
+
+        assert!(cursor_position_for_term(&stdout, Some(OsStr::new("xterm"))).is_err());
     }
 
     #[test]
@@ -2194,6 +2254,17 @@ mod tests {
         assert_eq!(rp.row, 0);
         assert_eq!(rp.start_col, 38); // 40 - 2
         assert_eq!(rp.end_col, 40);
+    }
+
+    #[test]
+    fn test_layout_right_prompt_hidden_for_term_dumb() {
+        let painter = make_painter(40, 10, false);
+        let lines = make_lines("> ", "", "RP", "hi", "");
+
+        let right_prompt =
+            painter.compute_right_prompt_for_term(&lines, 0, Some(OsStr::new("dumb")));
+
+        assert!(right_prompt.is_none());
     }
 
     #[test]

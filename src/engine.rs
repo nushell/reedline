@@ -35,7 +35,10 @@ use {
             kitty::KittyProtocolGuard,
             semantic_prompt::{Osc133ClickEventsMarkers, SemanticPromptMarkers},
         },
-        utils::text_manipulation,
+        utils::{
+            environment::{term_supports_ansi, var_os},
+            text_manipulation,
+        },
         AbbrExpandContext, Direction, EditCommand, ExampleHighlighter, Highlighter, LineBuffer,
         Menu, MenuEvent, MouseButton, Prompt, PromptHistorySearch, ReedlineMenu, Signal,
         UndoBehavior, ValidationResult, Validator,
@@ -542,6 +545,15 @@ impl Reedline {
     pub fn with_persistent_menus(mut self, persistent_menus: bool) -> Self {
         self.persistent_menus = persistent_menus;
         self
+    }
+
+    /// Whether ANSI coloring should be used for the current terminal.
+    ///
+    /// The explicit Reedline configuration remains authoritative, while
+    /// `TERM=dumb` disables ANSI output for terminals that cannot interpret it.
+    fn effective_ansi_coloring(&self) -> bool {
+        let term = var_os("TERM");
+        self.use_ansi_coloring && term_supports_ansi(term.as_deref())
     }
 
     /// A builder which enables or disables the use of ansi coloring in the prompt
@@ -2399,6 +2411,7 @@ impl Reedline {
     /// Overwrites the prompt indicator and highlights the search string
     /// separately from the result buffer.
     fn history_search_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+        let use_ansi_coloring = self.effective_ansi_coloring();
         let navigation = self.history_cursor.get_navigation();
 
         if let HistoryNavigationQuery::SubstringSearch(substring) = navigation {
@@ -2414,7 +2427,7 @@ impl Reedline {
             let res_string = self.history_cursor.string_at_cursor().unwrap_or_default();
 
             // Highlight matches
-            let res_string = if self.use_ansi_coloring {
+            let res_string = if use_ansi_coloring {
                 let match_highlighter = SimpleMatchHighlighter::new(substring);
                 let styled = match_highlighter.highlight(&res_string, 0);
                 styled.render_simple()
@@ -2436,7 +2449,7 @@ impl Reedline {
                 &lines,
                 self.prompt_edit_mode(),
                 None,
-                self.use_ansi_coloring,
+                use_ansi_coloring,
                 &self.cursor_shapes,
             )?;
         }
@@ -2448,6 +2461,7 @@ impl Reedline {
     ///
     /// Includes the highlighting and hinting calls.
     fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+        let use_ansi_coloring = self.effective_ansi_coloring();
         let cursor_position_in_buffer = self.editor.insertion_point();
         let buffer_to_paint = self.editor.get_buffer();
 
@@ -2477,7 +2491,7 @@ impl Reedline {
         let (before_cursor, after_cursor) = styled_text.render_around_insertion_point(
             cursor_position_in_buffer,
             prompt,
-            self.use_ansi_coloring,
+            use_ansi_coloring,
             self.painter.semantic_markers(),
         );
 
@@ -2487,7 +2501,7 @@ impl Reedline {
                     buffer_to_paint,
                     cursor_position_in_buffer,
                     self.history.as_ref(),
-                    self.use_ansi_coloring,
+                    use_ansi_coloring,
                     &self.cwd.clone().unwrap_or_else(|| {
                         std::env::current_dir()
                             .unwrap_or_default()
@@ -2550,7 +2564,7 @@ impl Reedline {
             &lines,
             self.prompt_edit_mode(),
             menu,
-            self.use_ansi_coloring,
+            use_ansi_coloring,
             &self.cursor_shapes,
         )?;
 
