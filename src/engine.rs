@@ -3523,6 +3523,17 @@ mod tests {
         assert_eq!(rl.editor.insertion_point(), 1);
     }
 
+    #[test]
+    fn helix_insert_mode_auto_pair_still_pairs_when_not_vetoed() {
+        let mut rl = seam_engine(Box::<crate::Helix>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]));
+
+        type_each(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "()");
+        assert_eq!(rl.editor.insertion_point(), 1);
+    }
+
     // --- `Event::Paste` must never be rewritten -----------------------------
 
     #[test]
