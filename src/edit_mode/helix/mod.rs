@@ -158,21 +158,6 @@ fn word(kind: WordKind, edge: WordEdge, direction: Direction) -> MotionTarget {
     }
 }
 
-fn char_to_text_object(ch: char) -> Option<TextObjectType> {
-    match ch {
-        'w' => Some(TextObjectType::Word),
-        'W' => Some(TextObjectType::BigWord),
-        '(' | ')' => Some(TextObjectType::Brackets(TextObjectBracket::Parenthesis)),
-        '{' | '}' => Some(TextObjectType::Brackets(TextObjectBracket::CurlyBracket)),
-        '[' | ']' => Some(TextObjectType::Brackets(TextObjectBracket::SquareBracket)),
-        '<' | '>' => Some(TextObjectType::Brackets(TextObjectBracket::AngleBracket)),
-        '\'' => Some(TextObjectType::Quotes(TextObjectQuote::SingleQuote)),
-        '"' => Some(TextObjectType::Quotes(TextObjectQuote::DoubleQuote)),
-        '`' => Some(TextObjectType::Quotes(TextObjectQuote::Tick)),
-        _ => None,
-    }
-}
-
 /// This parses incoming input `Event`s like a Helix/Kakoune-style editor: motions are
 /// selection first, lowered onto the editor's [`MotionTarget`](crate::MotionTarget) verb vocabulary.
 #[derive(Debug, Clone)]
@@ -396,7 +381,7 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
             Outcome::Absorb(Pending::MatchStepTwo(target))
         }
         Pending::MatchStepTwo(action) => {
-            let Some(text_object) = char_to_text_object(ch) else {
+            let Some(text_object) = TextObjectType::from_char(ch) else {
                 return Outcome::Reject;
             };
             if matches!(action, MatchAction::Replace) {
@@ -413,7 +398,7 @@ fn complete_pending(pending: Pending, count: usize, key: KeyEvent) -> Outcome {
             )
         }
         Pending::MatchReplace(old) => {
-            let Some(new) = char_to_text_object(ch) else {
+            let Some(new) = TextObjectType::from_char(ch) else {
                 return Outcome::Reject;
             };
 
