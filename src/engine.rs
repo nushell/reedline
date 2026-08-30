@@ -4623,6 +4623,10 @@ mod tests {
         seam_engine(Box::<crate::Vi>::default()).with_hinter(Box::new(FixedHinter(hint)))
     }
 
+    fn helix_with_hint(hint: &'static str) -> Reedline {
+        seam_engine(Box::<crate::Helix>::default()).with_hinter(Box::new(FixedHinter(hint)))
+    }
+
     #[test]
     fn vi_normal_history_hint_appends_at_buffer_end() {
         // The reported bug: a block caret rests on the last grapheme, so the
@@ -4658,8 +4662,7 @@ mod tests {
     /// a history hint never completes in normal mode.
     #[test]
     fn helix_normal_history_hint_appends_at_buffer_end() {
-        let mut rl =
-            seam_engine(Box::<crate::Helix>::default()).with_hinter(Box::new(FixedHinter("def")));
+        let mut rl = helix_with_hint("def");
         type_each(&mut rl, &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc)]);
         assert!(
             !rl.editor.line_buffer().cursor().is_empty(),
@@ -4676,8 +4679,7 @@ mod tests {
     /// A `v`-started helix selection is still protected, like vi visual.
     #[test]
     fn helix_select_selection_blocks_hint_completion() {
-        let mut rl =
-            seam_engine(Box::<crate::Helix>::default()).with_hinter(Box::new(FixedHinter("def")));
+        let mut rl = helix_with_hint("def");
         type_each(
             &mut rl,
             &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc), ch('v')],
@@ -4695,8 +4697,7 @@ mod tests {
     /// normal is not a selection mode.
     #[test]
     fn helix_normal_motion_selection_blocks_hint_completion() {
-        let mut rl =
-            seam_engine(Box::<crate::Helix>::default()).with_hinter(Box::new(FixedHinter("def")));
+        let mut rl = helix_with_hint("def");
         type_each(
             &mut rl,
             &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc), ch('b')],
@@ -4712,6 +4713,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    /// The issue as filed pressed a key, not an event: `Right` reaches
+    /// `HistoryHintComplete` through the keymap's `UntilFound` chain, so this
+    /// covers the wiring the event-level tests above skip past.
+    #[test]
+    fn helix_normal_right_key_completes_the_hint() {
+        let mut rl = helix_with_hint("def");
+        type_each(&mut rl, &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc)]);
+        drive(&mut rl, &[key(KeyCode::Right)]);
+        assert_eq!(rl.editor.get_buffer(), "abcdef");
     }
 
     /// The prefix-search side of the same guard: helix normal's resting block
