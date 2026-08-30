@@ -136,35 +136,56 @@ pub(crate) fn wrap_position<'a>(
     pieces: impl IntoIterator<Item = &'a str>,
     terminal_columns: u16,
 ) -> Option<(u16, u16)> {
-    let columns: usize = terminal_columns.into();
-    if columns == 0 {
+    if terminal_columns == 0 {
         return None;
     }
-    let (mut row, mut col) = (0u16, 0usize);
+    let (mut row, mut col) = (0u16, 0u16);
     for piece in pieces {
         for grapheme in strip_ansi(piece).graphemes(true) {
-            match grapheme {
-                "\n" => (row, col) = (row.saturating_add(1), 0),
-                "\r" => col = 0,
-                _ => {
-                    let width = grapheme.width();
-                    // The wrap this grapheme's arrival was deferred until.
-                    // Both checks can fire for one grapheme, so a single `||`
-                    // loses a row: a zero-width one trips only this.
-                    if col >= columns {
-                        (row, col) = (row.saturating_add(1), 0);
-                    }
-                    // No room for the whole grapheme: the trailing column stays
-                    // blank and the terminal wraps before drawing it.
-                    if col + width > columns {
-                        (row, col) = (row.saturating_add(1), 0);
-                    }
-                    col += width;
-                }
-            }
+            let (at, width) = advance_grapheme((row, col), grapheme, terminal_columns);
+            (row, col) = at;
+            col = col.saturating_add(width);
         }
     }
-    Some((col as u16, row))
+    Some((col, row))
+}
+
+/// One step of the [`wrap_position`] walk: where `grapheme` is drawn starting
+/// from `(row, col)`, and how many columns it occupies.
+///
+/// The caller advances by adding the returned width, so the returned position
+/// is where the grapheme *is*, not where the cursor ends up. Split out because
+/// the reverse mapping in `Painter::screen_to_buffer_offset` has to walk the
+/// same rule to turn a screen position back into a buffer offset, and the two
+/// disagreeing is how a click lands on the wrong grapheme.
+pub(crate) fn advance_grapheme(
+    (row, col): (u16, u16),
+    grapheme: &str,
+    terminal_columns: u16,
+) -> ((u16, u16), u16) {
+    match grapheme {
+        "\n" => ((row.saturating_add(1), 0), 0),
+        "\r" => ((row, 0), 0),
+        _ => {
+            let width = grapheme.width() as u16;
+            let (mut row, mut col) = (row, col);
+            // The wrap this grapheme's arrival was deferred until.
+            // Both checks can fire for one grapheme, so a single `||`
+            // loses a row: a zero-width one trips only this.
+            if col >= terminal_columns {
+                (row, col) = (row.saturating_add(1), 0);
+            }
+            // No room for the whole grapheme: the trailing column stays
+            // blank and the terminal wraps before drawing it. Only from a
+            // column the run has already reached, since a grapheme wider
+            // than the whole terminal has no row it would fit on and
+            // wrapping it again would spend a row per glyph.
+            if col > 0 && col.saturating_add(width) > terminal_columns {
+                (row, col) = (row.saturating_add(1), 0);
+            }
+            ((row, col), width)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -280,9 +301,10 @@ mod test {
     // A zero-width grapheme at the margin, which the straddle check cannot
     // see since adding nothing never exceeds the width.
     #[case(&format!("{}\u{200b}", "a".repeat(20)), 20, Some((0, 1)))]
-    // Wider than the whole terminal, so the column ends past the margin and
-    // the next grapheme spends a row on each check.
-    #[case("日日", 1, Some((2, 3)))]
+    // Wider than the whole terminal: there is no row it would fit on, so it
+    // overflows the one it is on rather than wrapping to another. The column
+    // ends past the margin and `resolve_wrap` moves the cursor off it.
+    #[case("日日", 1, Some((2, 1)))]
     // No layout exists without columns to lay out in.
     #[case(&"a".repeat(20), 0, None)]
     fn wrap_position_reports_the_landing_column(

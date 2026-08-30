@@ -54,9 +54,13 @@ impl<'prompt> PromptLines<'prompt> {
         }
     }
 
-    /// The required lines to paint the buffer are calculated by counting the
-    /// number of newlines in all the strings that form the prompt and buffer.
-    /// The plus 1 is to indicate that there should be at least one line.
+    /// Rows to reserve for the prompt and buffer, laid out end to end.
+    ///
+    /// Floored at [`Self::distance_from_prompt`] plus one: the cursor can rest
+    /// on a row no glyph reaches, since a filled row or a trailing newline
+    /// leaves it one past the last drawn one, and `menu_start_row` opens the
+    /// menu below *that*. Reserving only the rows text occupies runs the menu
+    /// past the reservation.
     pub(crate) fn required_lines(
         &self,
         terminal_columns: u16,
@@ -73,10 +77,6 @@ impl<'prompt> PromptLines<'prompt> {
             }
         }
 
-        // The cursor can rest on a row no glyph reaches: a filled row or a
-        // trailing newline leaves it one past the last drawn one, and
-        // `menu_start_row` opens the menu below *that*. Reserving only the
-        // rows text occupies runs the menu past the reservation.
         let lines = estimate_required_lines(&input, terminal_columns)
             .max(self.distance_from_prompt(terminal_columns) as usize + 1);
 
@@ -365,10 +365,12 @@ mod tests {
     #[case("", "> ", "ab\ncd\n", 20, 2)]
     // "> " plus 18 columns fills the row exactly.
     #[case("", "> ", &"a".repeat(18), 20, 1)]
-    // A wide grapheme cannot straddle the margin, so the run takes a row
-    // division could not see.
+    // A wide grapheme cannot straddle the margin, so the walk spends a row on
+    // the one that will not fit where division reads an exact fit: eleven of
+    // them on eleven columns is five per row, not five and a half.
     #[case("", "> ", "日本語日本語", 11, 1)]
-    // A multiline prompt puts its own wrapped rows between the two.
+    #[case("", "", &"日".repeat(11), 11, 2)]
+    // A multiline prompt puts its own rows between the two.
     #[case("~/p\n", "> ", "abc", 20, 1)]
     // Mid-resize width (#842).
     #[case("", "> ", "abc", 0, 0)]
