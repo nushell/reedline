@@ -39,6 +39,7 @@ pub struct Editor {
     cross_line_cursor: bool,
 }
 
+/// Whether an [`EditCommand`] could be applied in the current editor state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EditCommandStatus {
     Applied,
@@ -334,10 +335,7 @@ impl Editor {
             }
             EditCommand::EraseSelection => self.erase_selection(),
             EditCommand::CopySelection => {
-                if self.get_selection().is_none() {
-                    status = EditCommandStatus::Inapplicable;
-                }
-                self.copy_selection_to_cut_buffer();
+                status = self.copy_selection_to_cut_buffer();
             }
             EditCommand::LowercaseSelection => self.lowercase_selection(),
             EditCommand::UppercaseSelection => self.uppercase_selection(),
@@ -396,10 +394,7 @@ impl Editor {
             EditCommand::CutSelectionSystem => self.cut_selection_to_system(),
             #[cfg(feature = "system_clipboard")]
             EditCommand::CopySelectionSystem => {
-                if self.get_selection().is_none() {
-                    status = EditCommandStatus::Inapplicable;
-                }
-                self.copy_selection_to_system();
+                status = self.copy_selection_to_system();
             }
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => self.paste_from_system(),
@@ -1388,18 +1383,24 @@ impl Editor {
     }
 
     #[cfg(feature = "system_clipboard")]
-    fn copy_selection_to_system(&mut self) {
-        if let Some((start, end)) = self.get_selection() {
-            let cut_slice = &self.line_buffer.get_buffer()[start..end];
-            self.system_clipboard.set(cut_slice, Granularity::CharWise);
-        }
+    fn copy_selection_to_system(&mut self) -> EditCommandStatus {
+        let Some((start, end)) = self.get_selection() else {
+            return EditCommandStatus::Inapplicable;
+        };
+
+        let cut_slice = &self.line_buffer.get_buffer()[start..end];
+        self.system_clipboard.set(cut_slice, Granularity::CharWise);
+        EditCommandStatus::Applied
     }
 
-    fn copy_selection_to_cut_buffer(&mut self) {
-        if let Some((start, end)) = self.get_selection() {
-            let cut_slice = &self.line_buffer.get_buffer()[start..end];
-            self.cut_buffer.set(cut_slice, Granularity::CharWise);
-        }
+    fn copy_selection_to_cut_buffer(&mut self) -> EditCommandStatus {
+        let Some((start, end)) = self.get_selection() else {
+            return EditCommandStatus::Inapplicable;
+        };
+
+        let cut_slice = &self.line_buffer.get_buffer()[start..end];
+        self.cut_buffer.set(cut_slice, Granularity::CharWise);
+        EditCommandStatus::Applied
     }
 
     fn lowercase_selection(&mut self) {

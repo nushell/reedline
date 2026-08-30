@@ -2099,21 +2099,23 @@ impl Reedline {
         // and the pre-paint `set_edit_mode` makes the final commit.
         self.editor.sync_edit_mode(self.edit_mode.edit_mode());
 
-        // Run all commands even when one is inapplicable, while retaining the
-        // aggregate status for callers such as `UntilFound`.
-        let mut status = EditCommandStatus::Applied;
+        // Run every command, but report the edit as applied if any command applied.
+        // This mirrors `Multiple`, where any handled event wins.
+        let mut status = EditCommandStatus::Inapplicable;
+
         for command in commands {
             if let Some(command) = self.auto_pair_command(command) {
-                if self.editor.run_edit_command(&command) == EditCommandStatus::Inapplicable {
-                    status = EditCommandStatus::Inapplicable;
+                if self.editor.run_edit_command(&command) == EditCommandStatus::Applied {
+                    status = EditCommandStatus::Applied;
                 }
                 continue;
             }
 
-            if self.editor.run_edit_command(command) == EditCommandStatus::Inapplicable {
-                status = EditCommandStatus::Inapplicable;
+            if self.editor.run_edit_command(command) == EditCommandStatus::Applied {
+                status = EditCommandStatus::Applied;
             }
         }
+
         status
     }
 
@@ -5468,86 +5470,69 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
-    fn until_found_falls_through_copy_selection_without_selection() {
+    #[rstest]
+    #[case::local_without_selection(EditCommand::CopySelection, false)]
+    #[case::local_with_selection(EditCommand::CopySelection, true)]
+    #[cfg_attr(
+        feature = "system_clipboard",
+        case::system_without_selection(EditCommand::CopySelectionSystem, false)
+    )]
+    #[cfg_attr(
+        feature = "system_clipboard",
+        case::system_with_selection(EditCommand::CopySelectionSystem, true)
+    )]
+    fn until_found_copy_selection_status(
+        #[case] command: EditCommand,
+        #[case] with_selection: bool,
+    ) {
         let mut reedline = Reedline::create();
-        reedline.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
+        let mut setup = vec![EditCommand::InsertString("abc".into())];
+
+        if with_selection {
+            setup.extend([
+                EditCommand::MoveToStart { select: false },
+                EditCommand::MoveRight { select: true },
+            ]);
+        }
+
+        reedline.run_edit_commands(&setup);
 
         let status = reedline
             .handle_event(
                 &DefaultPrompt::default(),
                 ReedlineEvent::UntilFound(vec![
-                    ReedlineEvent::Edit(vec![EditCommand::CopySelection]),
+                    ReedlineEvent::Edit(vec![command]),
                     ReedlineEvent::CtrlC,
                 ]),
             )
             .unwrap();
 
-        assert!(matches!(status, EventStatus::Exits(Signal::CtrlC)));
+        if with_selection {
+            assert!(matches!(status, EventStatus::Handled));
+        } else {
+            assert!(matches!(status, EventStatus::Exits(Signal::CtrlC)));
+        }
     }
 
-    #[cfg(feature = "system_clipboard")]
     #[test]
-    fn until_found_falls_through_copy_selection_system_without_selection() {
+    fn edit_status_is_applied_when_any_command_applies() {
         let mut reedline = Reedline::create();
-        reedline.run_edit_commands(&[EditCommand::InsertString("abc".into())]);
 
         let status = reedline
             .handle_event(
                 &DefaultPrompt::default(),
                 ReedlineEvent::UntilFound(vec![
-                    ReedlineEvent::Edit(vec![EditCommand::CopySelectionSystem]),
-                    ReedlineEvent::CtrlC,
-                ]),
-            )
-            .unwrap();
-
-        assert!(matches!(status, EventStatus::Exits(Signal::CtrlC)));
-    }
-
-    #[cfg(feature = "system_clipboard")]
-    #[test]
-    fn until_found_stops_at_copy_selection_system_with_selection() {
-        let mut reedline = Reedline::create();
-        reedline.run_edit_commands(&[
-            EditCommand::InsertString("abc".into()),
-            EditCommand::MoveToStart { select: false },
-            EditCommand::MoveRight { select: true },
-        ]);
-
-        let status = reedline
-            .handle_event(
-                &DefaultPrompt::default(),
-                ReedlineEvent::UntilFound(vec![
-                    ReedlineEvent::Edit(vec![EditCommand::CopySelectionSystem]),
+                    ReedlineEvent::Edit(vec![
+                        EditCommand::InsertString("abc".into()),
+                        EditCommand::CopySelection,
+                    ]),
                     ReedlineEvent::CtrlC,
                 ]),
             )
             .unwrap();
 
         assert!(matches!(status, EventStatus::Handled));
-    }
-
-    #[test]
-    fn until_found_stops_at_copy_selection_with_selection() {
-        let mut reedline = Reedline::create();
-        reedline.run_edit_commands(&[
-            EditCommand::InsertString("abc".into()),
-            EditCommand::MoveToStart { select: false },
-            EditCommand::MoveRight { select: true },
-        ]);
-
-        let status = reedline
-            .handle_event(
-                &DefaultPrompt::default(),
-                ReedlineEvent::UntilFound(vec![
-                    ReedlineEvent::Edit(vec![EditCommand::CopySelection]),
-                    ReedlineEvent::CtrlC,
-                ]),
-            )
-            .unwrap();
-
-        assert!(matches!(status, EventStatus::Handled));
+        assert_eq!(reedline.current_buffer_contents(), "abc");
     }
 
     #[rstest]
