@@ -98,6 +98,23 @@ pub enum TextObjectType {
     Quotes(TextObjectQuote),
 }
 
+impl TextObjectType {
+    pub fn from_char(ch: char) -> Option<Self> {
+        match ch {
+            'w' => Some(Self::Word),
+            'W' => Some(Self::BigWord),
+            '(' | ')' => Some(Self::Brackets(TextObjectBracket::Parenthesis)),
+            '[' | ']' => Some(Self::Brackets(TextObjectBracket::SquareBracket)),
+            '{' | '}' => Some(Self::Brackets(TextObjectBracket::CurlyBracket)),
+            '<' | '>' => Some(Self::Brackets(TextObjectBracket::AngleBracket)),
+            '"' => Some(Self::Quotes(TextObjectQuote::DoubleQuote)),
+            '\'' => Some(Self::Quotes(TextObjectQuote::SingleQuote)),
+            '`' => Some(Self::Quotes(TextObjectQuote::Tick)),
+            _ => None,
+        }
+    }
+}
+
 /// Text objects that can be operated on with vim-style commands
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct TextObject {
@@ -768,39 +785,12 @@ pub enum EditCommand {
     #[cfg(feature = "system_clipboard")]
     PasteSystem,
 
-    /// Delete text between matching characters atomically
-    CutInsidePair {
-        /// Left character of the pair
-        left: char,
-        /// Right character of the pair (usually matching bracket)
-        right: char,
-    },
-    /// Yank text between matching characters atomically
-    CopyInsidePair {
-        /// Left character of the pair
-        left: char,
-        /// Right character of the pair (usually matching bracket)
-        right: char,
-    },
-    /// Delete text around matching characters atomically (including the pair characters)
-    CutAroundPair {
-        /// Left character of the pair
-        left: char,
-        /// Right character of the pair (usually matching bracket)
-        right: char,
-    },
-    /// Yank text around matching characters atomically (including the pair characters)
-    CopyAroundPair {
-        /// Left character of the pair
-        left: char,
-        /// Right character of the pair (usually matching bracket)
-        right: char,
-    },
     /// Cut the specified text object
     CutTextObject {
         /// The text object to operate on
         text_object: TextObject,
     },
+
     /// Copy the specified text object
     CopyTextObject {
         /// The text object to operate on
@@ -908,8 +898,6 @@ impl EditCommand {
             | EditCommand::UppercaseSelection
             | EditCommand::SwitchcaseSelection
             | EditCommand::Paste
-            | EditCommand::CutInsidePair { .. }
-            | EditCommand::CutAroundPair { .. }
             | EditCommand::CutTextObject { .. }
             | EditCommand::PasteAtSelectionEdge { .. } => EditType::EditText,
 
@@ -941,8 +929,6 @@ impl EditCommand {
             | EditCommand::CopyRightBefore(_)
             | EditCommand::CopyLeftUntil(_)
             | EditCommand::CopyLeftBefore(_)
-            | EditCommand::CopyInsidePair { .. }
-            | EditCommand::CopyAroundPair { .. }
             | EditCommand::CopyTextObject { .. } => EditType::NoOp,
 
             EditCommand::AddTextObject { .. }

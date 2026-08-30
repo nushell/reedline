@@ -365,10 +365,6 @@ impl Editor {
             EditCommand::CopySelectionSystem => self.copy_selection_to_system(),
             #[cfg(feature = "system_clipboard")]
             EditCommand::PasteSystem => self.paste_from_system(),
-            EditCommand::CutInsidePair { left, right } => self.cut_inside_pair(*left, *right),
-            EditCommand::CopyInsidePair { left, right } => self.copy_inside_pair(*left, *right),
-            EditCommand::CutAroundPair { left, right } => self.cut_around_pair(*left, *right),
-            EditCommand::CopyAroundPair { left, right } => self.copy_around_pair(*left, *right),
             EditCommand::CutTextObject { text_object } => self.cut_text_object(*text_object),
             EditCommand::CopyTextObject { text_object } => self.copy_text_object(*text_object),
             EditCommand::AddTextObject { text_object } => self.add_text_object(*text_object),

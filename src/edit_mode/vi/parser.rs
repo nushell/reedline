@@ -122,7 +122,6 @@ impl ParsedViSequence {
             // `r<char>` in Visual replaces and returns to Normal; without this it
             // would fall through to `None` and leave the editor stuck in Visual.
             (Some(Command::ReplaceChar(_)), _) if mode == ViMode::Visual => Some(ViMode::Normal),
-            (Some(Command::ChangeInsidePair { .. }), _) => Some(ViMode::Insert),
             (Some(Command::ChangeTextObject { .. }), _) => Some(ViMode::Insert),
             (Some(Command::Delete), ParseResult::Incomplete)
             | (Some(Command::DeleteChar), ParseResult::Incomplete)
@@ -132,8 +131,8 @@ impl ParsedViSequence {
             | (Some(Command::DeleteToEnd), ParseResult::Valid(_))
             | (Some(Command::Yank), ParseResult::Valid(_))
             | (Some(Command::Yank), ParseResult::Incomplete)
-            | (Some(Command::DeleteInsidePair { .. }), _)
-            | (Some(Command::YankInsidePair { .. }), _) => Some(ViMode::Normal),
+            | (Some(Command::DeleteTextObject { .. }), _)
+            | (Some(Command::YankTextObject { .. }), _) => Some(ViMode::Normal),
             _ => None,
         }
     }
