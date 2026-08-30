@@ -1621,20 +1621,6 @@ impl Editor {
         }
     }
 
-    /// Delete text strictly between matching `open_char` and `close_char`.
-    fn cut_inside_pair(&mut self, open_char: char, close_char: char) {
-        if let Some(range) = self
-            .line_buffer
-            .range_inside_current_pair(open_char, close_char)
-            .or_else(|| {
-                self.line_buffer
-                    .range_inside_next_pair(open_char, close_char)
-            })
-        {
-            self.cut_range(range)
-        }
-    }
-
     /// Return the range of the word under the cursor.
     /// A word consists of a sequence of letters, digits and underscores,
     /// separated with white space.
@@ -1989,56 +1975,12 @@ impl Editor {
         }
     }
 
-    /// Copy text strictly between matching `open_char` and `close_char`.
-    fn copy_inside_pair(&mut self, open_char: char, close_char: char) {
-        if let Some(range) = self
-            .line_buffer
-            .range_inside_current_pair(open_char, close_char)
-            .or_else(|| {
-                self.line_buffer
-                    .range_inside_next_pair(open_char, close_char)
-            })
-        {
-            self.copy_range(range);
-        }
-    }
-
     /// Expand the range to include `open_char` and `close_char`
     fn expand_range_to_include_pair(&self, range: Range<usize>) -> Option<Range<usize>> {
         let start = self.line_buffer.grapheme_left_index_from_pos(range.start);
         let end = self.line_buffer.grapheme_right_index_from_pos(range.end);
 
         Some(start..end)
-    }
-
-    /// Delete text around matching `open_char` and `close_char` (including the pair characters).
-    fn cut_around_pair(&mut self, open_char: char, close_char: char) {
-        if let Some(around_range) = self
-            .line_buffer
-            .range_inside_current_pair(open_char, close_char)
-            .or_else(|| {
-                self.line_buffer
-                    .range_inside_next_pair(open_char, close_char)
-            })
-            .and_then(|range| self.expand_range_to_include_pair(range))
-        {
-            self.cut_range(around_range);
-        }
-    }
-
-    /// Copy text around matching `open_char` and `close_char` (including the pair characters).
-    fn copy_around_pair(&mut self, open_char: char, close_char: char) {
-        if let Some(around_range) = self
-            .line_buffer
-            .range_inside_current_pair(open_char, close_char)
-            .or_else(|| {
-                self.line_buffer
-                    .range_inside_next_pair(open_char, close_char)
-            })
-            .and_then(|range| self.expand_range_to_include_pair(range))
-        {
-            self.copy_range(around_range);
-        }
     }
 }
 
@@ -3605,131 +3547,6 @@ mod test {
             editor.run_edit_command(&EditCommand::PasteSystem);
             pretty_assertions::assert_eq!(editor.line_buffer.len(), s.len() * 2);
         }
-    }
-
-    #[test]
-    fn test_cut_inside_brackets() {
-        let mut editor = editor_with("foo(bar)baz");
-        editor.move_to_position(5, false); // Move inside brackets
-        editor.cut_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo()baz");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "bar");
-
-        // Test with cursor outside brackets
-        let mut editor = editor_with("foo(bar)baz");
-        editor.move_to_position(0, false);
-        editor.cut_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo()baz");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "bar");
-
-        // Test with no matching brackets
-        let mut editor = editor_with("foo bar baz");
-        editor.move_to_position(4, false);
-        editor.cut_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo bar baz");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "");
-    }
-
-    #[test]
-    fn test_cut_inside_quotes() {
-        let mut editor = editor_with("foo\"bar\"baz");
-        editor.move_to_position(5, false); // Move inside quotes
-        editor.cut_inside_pair('"', '"');
-        assert_eq!(editor.get_buffer(), "foo\"\"baz");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "bar");
-
-        // Test with cursor outside quotes
-        let mut editor = editor_with("foo\"bar\"baz");
-        editor.move_to_position(0, false);
-        editor.cut_inside_pair('"', '"');
-        assert_eq!(editor.get_buffer(), "foo\"\"baz");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "bar");
-
-        // Test with no matching quotes
-        let mut editor = editor_with("foo bar baz");
-        editor.move_to_position(4, false);
-        editor.cut_inside_pair('"', '"');
-        assert_eq!(editor.get_buffer(), "foo bar baz");
-        assert_eq!(editor.insertion_point(), 4);
-    }
-
-    #[test]
-    fn test_cut_inside_nested() {
-        let mut editor = editor_with("foo(bar(baz)qux)quux");
-        editor.move_to_position(8, false); // Move inside inner brackets
-        editor.cut_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo(bar()qux)quux");
-        assert_eq!(editor.insertion_point(), 8);
-        assert_eq!(editor.cut_buffer.get().0, "baz");
-
-        editor.move_to_position(4, false); // Move inside outer brackets
-        editor.cut_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo()quux");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "bar()qux");
-    }
-
-    #[test]
-    fn test_yank_inside_brackets() {
-        let mut editor = editor_with("foo(bar)baz");
-        editor.move_to_position(5, false); // Move inside brackets
-        editor.copy_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo(bar)baz"); // Buffer shouldn't change
-        assert_eq!(editor.insertion_point(), 5); // Cursor should return to original position
-
-        // Test yanked content by pasting
-        editor.paste_cut_buffer();
-        assert_eq!(editor.get_buffer(), "foo(bbarar)baz");
-
-        // Test with cursor outside brackets
-        let mut editor = editor_with("foo(bar)baz");
-        editor.move_to_position(0, false);
-        editor.copy_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo(bar)baz");
-        assert_eq!(editor.insertion_point(), 0);
-    }
-
-    #[test]
-    fn test_yank_inside_quotes() {
-        let mut editor = editor_with("foo\"bar\"baz");
-        editor.move_to_position(5, false); // Move inside quotes
-        editor.copy_inside_pair('"', '"');
-        assert_eq!(editor.get_buffer(), "foo\"bar\"baz"); // Buffer shouldn't change
-        assert_eq!(editor.insertion_point(), 5); // Cursor should return to original position
-        assert_eq!(editor.cut_buffer.get().0, "bar");
-
-        // Test with no matching quotes
-        let mut editor = editor_with("foo bar baz");
-        editor.move_to_position(4, false);
-        editor.copy_inside_pair('"', '"');
-        assert_eq!(editor.get_buffer(), "foo bar baz");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "");
-    }
-
-    #[test]
-    fn test_yank_inside_nested() {
-        let mut editor = editor_with("foo(bar(baz)qux)quux");
-        editor.move_to_position(8, false); // Move inside inner brackets
-        editor.copy_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo(bar(baz)qux)quux"); // Buffer shouldn't change
-        assert_eq!(editor.insertion_point(), 8);
-        assert_eq!(editor.cut_buffer.get().0, "baz");
-
-        // Test yanked content by pasting
-        editor.paste_cut_buffer();
-        assert_eq!(editor.get_buffer(), "foo(bar(bazbaz)qux)quux");
-
-        editor.move_to_position(4, false); // Move inside outer brackets
-        editor.copy_inside_pair('(', ')');
-        assert_eq!(editor.get_buffer(), "foo(bar(bazbaz)qux)quux");
-        assert_eq!(editor.insertion_point(), 4);
-        assert_eq!(editor.cut_buffer.get().0, "bar(bazbaz)qux");
     }
 
     #[test]
