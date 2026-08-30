@@ -99,6 +99,7 @@ pub enum TextObjectType {
 }
 
 impl TextObjectType {
+    /// Convert a character to its corresponding [`TextObjectType`](Self)
     pub fn from_char(ch: char) -> Option<Self> {
         match ch {
             'w' => Some(Self::Word),
